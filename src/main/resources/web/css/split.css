@@ -1,50 +1,225 @@
-/* ===== Schedule Section (top of sidebar) ===== */
-#schedule-section {
-  flex-shrink: 0;
-  max-height: 200px;
-  overflow-y: auto;
-  scrollbar-color: var(--color-frame-border) transparent;
+/* ===== Explorer Section ===== */
+#explorer-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.schedule-header {
+.explorer-header {
   padding: 10px 14px 4px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
 }
-.schedule-title {
+.explorer-title {
   font-size: 11px;
   font-weight: 600;
   color: var(--color-frame-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.schedule-header-right {
+.explorer-folder-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: 5px;
+  opacity: 0.4;
+  transition: opacity 0.15s, background 0.15s;
 }
-.schedule-count {
-  font-size: 10px;
-  color: var(--color-frame-text-muted);
-  opacity: 0.5;
+.explorer-folder-btn:hover {
+  opacity: 0.8;
+  background: var(--color-hover, rgba(128, 128, 128, 0.1));
 }
-#schedule-list {
-  padding: 4px 6px 8px;
-  min-height: 40px;
-  max-height: 160px;
+.explorer-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+.explorer-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: 5px;
+  opacity: 0.4;
+  transition: opacity 0.15s, background 0.15s;
+}
+.explorer-action-btn:hover {
+  opacity: 0.8;
+  background: var(--color-hover, rgba(128, 128, 128, 0.1));
+}
+
+/* ── Inline name input (create file/folder) ── */
+.explorer-name-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--color-primary, #3b82f6);
+  border-radius: 4px;
+  background: var(--color-bg, #fff);
+  color: var(--color-text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 2px 6px;
+  outline: none;
+  margin-left: 4px;
+}
+.explorer-creating {
+  display: flex;
+  align-items: center;
+}
+
+/* ── Context Menu ── */
+.explorer-context-menu {
+  position: fixed;
+  z-index: 5000;
+  background: var(--glass-bg, rgba(255,255,255,0.92));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
+  border: 1px solid var(--glass-border, rgba(0,0,0,0.08));
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  padding: 4px;
+  min-width: 120px;
+}
+.explorer-context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 10px;
+  border: none;
+  background: none;
+  color: var(--color-text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+.explorer-context-menu button:hover {
+  background: var(--color-hover, rgba(128,128,128,0.1));
+}
+.explorer-context-menu button.danger {
+  color: #e53935;
+}
+.explorer-context-menu button.danger:hover {
+  background: rgba(229,57,53,0.08);
+}
+.explorer-context-menu hr {
+  border: none;
+  border-top: 1px solid var(--glass-border, rgba(0,0,0,0.06));
+  margin: 4px 0;
+}
+#explorer-tree {
+  padding: 2px 0 8px;
+  flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
-#schedule-list::-webkit-scrollbar { width: 4px; }
-#schedule-list::-webkit-scrollbar-thumb {
+#explorer-tree::-webkit-scrollbar { width: 4px; }
+#explorer-tree::-webkit-scrollbar-thumb {
   background: rgba(128, 128, 128, 0.15);
   border-radius: 2px;
 }
 
-/* Section divider between schedule and sessions */
-.sidebar-section-divider {
-  height: 1px;
-  background: var(--glass-border);
+/* ── Tree items ── */
+.explorer-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.1s;
+}
+.explorer-item:hover {
+  background: rgba(128, 128, 128, 0.07);
+}
+.explorer-item.explorer-file {
+  color: var(--color-text-muted);
+}
+.explorer-item.explorer-file:hover {
+  color: var(--color-text);
+}
+.explorer-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
+  color: var(--color-text-muted);
+  opacity: 0.5;
+  transition: transform 0.15s;
+}
+.explorer-chevron.expanded {
+  transform: rotate(90deg);
+}
+.explorer-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.explorer-folder .explorer-icon {
+  color: var(--color-text-muted);
+}
+.explorer-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── File type colors ── */
+.explorer-file-icon.f-scala { color: #e06c75; opacity: 0.7; }
+.explorer-file-icon.f-java  { color: #e5c07b; opacity: 0.7; }
+.explorer-file-icon.f-py    { color: #61afef; opacity: 0.7; }
+.explorer-file-icon.f-js    { color: #e5c07b; opacity: 0.7; }
+.explorer-file-icon.f-ts    { color: #56b6c2; opacity: 0.7; }
+.explorer-file-icon.f-css   { color: #c678dd; opacity: 0.7; }
+.explorer-file-icon.f-html  { color: #ea580c; opacity: 0.7; }
+.explorer-file-icon.f-json  { color: #98c379; opacity: 0.7; }
+.explorer-file-icon.f-md    { color: #61afef; opacity: 0.7; }
+.explorer-file-icon.f-yaml  { color: #98c379; opacity: 0.7; }
+.explorer-file-icon.f-default { opacity: 0.4; }
+
+/* ── Loading / Empty / Error ── */
+.explorer-loading {
+  padding: 4px 20px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  opacity: 0.4;
+}
+.explorer-empty {
+  padding: 4px 20px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  opacity: 0.3;
+}
+.explorer-error {
+  padding: 4px 20px;
+  font-size: 11px;
+  color: rgb(239, 68, 68);
+  opacity: 0.6;
 }
 
 /* ===== Agent Badge ===== */
@@ -72,79 +247,80 @@
 
 /* ===== Canvas Panel (画板) ===== */
 /* Generic display container on the right side.
-   Hidden by default; shown via body.canvas-open.
-   Content is injected by canvas.js — NOT a ChatView. */
+   Always display:flex (never display:none) — mirrors the sidebar pattern.
+   Collapsed state: flex-basis:0 + opacity:0 (clipped by overflow:hidden).
+   Open state: body.canvas-open sets flex-basis to --canvas-width.
+
+   CSS-driven animation: toggling body.canvas-open is all JS needs to do.
+   #main stays flex:1 — the browser redistributes space naturally. */
 #canvas-panel {
-  display: none;
+  display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 0 0 0;
   min-width: 0;
   position: relative;
-  background: var(--color-bg);
-  border-left: 1px solid var(--color-border);
-}
-#canvas-panel.visible {
-  display: flex;
-}
-#canvas-panel.hidden {
-  display: none;
-}
-
-/* Canvas header — glassmorphism bar matching primary header style */
-.canvas-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  margin: 8px;
-  border-radius: 20px;
-  border: 1px solid var(--glass-border);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  opacity: 0;
+  overflow: hidden;
+  margin: 16px 10px 10px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+  transition: flex-basis var(--panel-duration) var(--panel-ease),
+              opacity var(--panel-duration) var(--panel-ease);
+}
+body.canvas-open #canvas-panel {
+  flex-basis: var(--canvas-width, 45vw);
+  opacity: 1;
+}
+
+/* Slide layer — no transform animation. overflow:hidden on #canvas-panel
+   clips content during the flex-basis transition, exactly like sidebar. */
+#canvas-slide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Canvas header — sits inside the glass panel container.
+   No border/margin of its own; the panel provides the glass card.
+   A bottom border separates header from tab content, like sidebar-divider. */
+.canvas-header {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 16px;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid var(--glass-border);
+  background: transparent;
   color: var(--color-frame-text-bright);
   font-size: 14px;
   font-weight: 500;
   flex-shrink: 0;
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 30;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255,255,255,0.25),
-    0px 2px 8px rgba(0,0,0,0.04),
-    0px 8px 24px rgba(0,0,0,0.06);
+  box-shadow: none;
 }
-.canvas-header::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 10%;
-  right: 10%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent 10%, var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%, transparent 90%);
-  pointer-events: none;
-  z-index: 1;
-}
-.canvas-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-frame-text-bright);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/* (Header ::before bump is defined later with the panel drag-handle styles) */
 
 /* Canvas close button */
 .canvas-close-btn {
-  width: 28px;
-  height: 28px;
+  width: 18px;
+  height: 18px;
   border: none;
   background: none;
   color: var(--color-text-muted);
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -156,31 +332,814 @@
   color: var(--color-text);
 }
 .canvas-close-btn svg {
-  width: 16px;
-  height: 16px;
+  width: 10px;
+  height: 10px;
 }
 
-/* Canvas content area — scrollable container for future use */
+/* Canvas content area — follows header in normal flow.
+   No margin-top hack needed — flex stacking handles spacing. */
 #canvas-content {
   flex: 1;
-  overflow-y: auto;
-  padding: 64px 12px 12px 12px;
+  overflow: hidden;
+  margin-top: 4px;
+  padding: 0 0 8px;
   display: flex;
   flex-direction: column;
+  position: relative;
+  min-height: 0;
+}
+
+/* ── Tab bar — grey track slightly larger than tabs ── */
+.canvas-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: rgba(128, 128, 128, 0.08);
+  border-radius: 10px;
+  padding: 3px;
+}
+.canvas-tab-bar::-webkit-scrollbar { display: none; }
+
+/* ── Individual tab ── */
+@keyframes canvas-tab-enter {
+  from { opacity: 0; transform: scale(0.8); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.canvas-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 1 1 0;
+  min-width: 60px;
+  max-width: 180px;
+  overflow: hidden;
+  transition: flex 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              background 0.15s, color 0.15s;
+  animation: canvas-tab-enter 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+}
+/* Hover — same rounded shape as active, gray distinguishable from track (0.08) */
+.canvas-tab:not(.active):hover {
+  background: rgba(128, 128, 128, 0.15);
+  border-radius: 6px;
+}
+.canvas-tab:not(.active):hover::after {
+  opacity: 0;
+}
+/* Grey divider between non-active tabs */
+.canvas-tab:not(.active)::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 25%;
+  bottom: 25%;
+  width: 1px;
+  background: rgba(128, 128, 128, 0.25);
+  transition: opacity 0.15s;
+}
+.canvas-tab:last-child::after { display: none; }
+/* Active — glass quality matching header brightness */
+.canvas-tab.active {
+  flex: 3 1 0;
+  min-width: 120px;
+  max-width: 180px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.65), rgba(255,255,255,0.4));
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.4);
+  color: var(--color-text);
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.4);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.5),
+    0 1px 3px rgba(0,0,0,0.06);
+}
+/* Active hover — slightly deeper gray on top of the glass base */
+.canvas-tab.active:hover {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.35)),
+    rgba(128, 128, 128, 0.06);
+}
+.canvas-tab.active::after { display: none; }
+@media (prefers-color-scheme: dark) {
+  .canvas-tab-bar {
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .canvas-tab:not(.active):hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .canvas-tab.active {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.32), rgba(255,255,255,0.14));
+    border: 1px solid rgba(255,255,255,0.16);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.1),
+      0 1px 3px rgba(0,0,0,0.2);
+  }
+  .canvas-tab.active:hover {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.28), rgba(255,255,255,0.1)),
+      rgba(255, 255, 255, 0.04);
+  }
+}
+.canvas-tab-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+/* ── Drag-to-reorder visual feedback ── */
+.canvas-tab.dragging {
+  opacity: 0.4;
+}
+.canvas-tab.drop-before::before,
+.canvas-tab.drop-after::before {
+  content: '';
+  position: absolute;
+  top: 15%;
+  bottom: 15%;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--color-primary, #3b82f6);
+  z-index: 5;
+}
+.canvas-tab.drop-before::before { left: -1px; }
+.canvas-tab.drop-after::before { right: -1px; }
+.canvas-tab.preview .canvas-tab-label {
+  font-style: italic;
+  opacity: 0.8;
+}
+.canvas-tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+/* Close button appears on hover */
+.canvas-tab:hover .canvas-tab-close {
+  opacity: 0.5;
+}
+.canvas-tab-close:hover {
+  opacity: 0.9 !important;
+  background: rgba(128, 128, 128, 0.18);
+  color: var(--color-text);
+}
+
+/* ── Tab panes — seamless fill inside canvas panel ──────────── */
+.canvas-tab-pane {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+.canvas-tab-pane.active {
+  display: flex;
+}
+.canvas-tab-pane.scrollable {
+  overflow-y: auto;
   scrollbar-color: var(--color-frame-border) transparent;
 }
 
-/* Canvas open body state — split layout */
-body.canvas-open #main {
-  flex: 1;
+/* ── Content viewers ─────────────────────────────────────── */
+.canvas-tab-pane .canvas-monaco-container {
+  border-radius: 0;
+  overflow: hidden;
 }
-body.canvas-open #canvas-panel.visible {
+.canvas-monaco-container .monaco-editor,
+.canvas-monaco-container .monaco-editor .overflow-guard {
+  border-radius: 0;
+}
+/* Remove Monaco's default focus border (blue outline) */
+.canvas-monaco-container .monaco-editor .overflow-guard,
+.canvas-monaco-container .monaco-editor,
+.canvas-monaco-container .monaco-editor .margin {
+  border: none !important;
+  outline: none !important;
+}
+
+/* Dirty indicator on tab label */
+.canvas-tab-label.dirty::before {
+  content: '• ';
+  color: var(--color-primary, #3b82f6);
+  font-weight: bold;
+}
+
+.canvas-md-viewer {
+  padding: 20px 24px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-text);
+  word-break: break-word;
+}
+/* Markdown element styling — mirrors .bubble.ai */
+.canvas-md-viewer p { margin: 4px 0; }
+.canvas-md-viewer p:first-child { margin-top: 0; }
+.canvas-md-viewer p:last-child { margin-bottom: 0; }
+.canvas-md-viewer ul, .canvas-md-viewer ol { margin: 4px 0 4px 18px; padding: 0; }
+.canvas-md-viewer li { margin: 2px 0; }
+.canvas-md-viewer h1, .canvas-md-viewer h2, .canvas-md-viewer h3, .canvas-md-viewer h4 {
+  margin: 8px 0 4px 0;
+  font-weight: 600;
+}
+.canvas-md-viewer h1 { font-size: 16px; }
+.canvas-md-viewer h2 { font-size: 15px; }
+.canvas-md-viewer h3 { font-size: 14px; }
+/* Code block wrapper & copy button — mirror .bubble.ai styles */
+.canvas-md-viewer .code-block-wrap {
+  position: relative;
+  margin: 6px 0;
+}
+.canvas-md-viewer .code-block-wrap pre {
+  margin: 0;
+  padding-top: 30px; /* leave room for the copy button */
+}
+
+.canvas-md-viewer pre {
+  background: var(--color-frame-input-bg, #f5f5f5);
+  padding: 8px 12px 10px;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 12px;
+  margin: 6px 0;
+  line-height: 1.4;
+  scrollbar-color: rgba(128,128,128,0.2) transparent;
+}
+.canvas-md-viewer pre::-webkit-scrollbar { height: 4px; }
+.canvas-md-viewer pre::-webkit-scrollbar-track { background: transparent; }
+.canvas-md-viewer pre::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.2); border-radius: 2px; }
+.canvas-md-viewer pre code { background: none; padding: 0; font-size: 12px; }
+.canvas-md-viewer code {
+  background: rgba(128,128,128,0.1);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.canvas-md-viewer blockquote {
+  border-left: 3px solid var(--color-border);
+  margin: 6px 0;
+  padding-left: 10px;
+  color: var(--color-text-muted);
+}
+.canvas-md-viewer table {
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 12px;
+}
+.canvas-md-viewer th, .canvas-md-viewer td {
+  border: 1px solid var(--color-border);
+  padding: 4px 8px;
+}
+.canvas-md-viewer th { background: var(--color-surface, #f5f5f5); font-weight: 600; }
+.canvas-md-viewer a { color: var(--color-primary); }
+.canvas-md-viewer hr { border: none; border-top: 1px solid var(--color-border); margin: 8px 0; }
+.canvas-md-viewer strong { font-weight: 600; }
+.canvas-md-viewer img { max-width: 100%; border-radius: 8px; }
+
+/* ── EPUB Reader — paginated ── */
+.epub-reader {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
+}
+.epub-reader-header {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 8px 16px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.epub-reader-viewport {
   flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  cursor: text;
+}
+.epub-reader-content {
+  padding: 24px 36px;
+  font-size: 16px;
+  line-height: 1.8;
+}
+.epub-reader-content p {
+  margin: 0 0 1em;
+  text-align: justify;
+}
+.epub-reader-content h1, .epub-reader-content h2, .epub-reader-content h3 {
+  margin: 0.8em 0 0.4em;
+  font-weight: 600;
+}
+.epub-reader-content h1 { font-size: 22px; }
+.epub-reader-content h2 { font-size: 18px; }
+.epub-reader-content h3 { font-size: 16px; }
+.epub-reader-content img { max-width: 100%; border-radius: 8px; }
+.epub-reader-content blockquote {
+  margin: 1em 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+.epub-reader-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-border);
+}
+.epub-nav-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
+}
+.epub-nav-btn:hover { background: var(--color-frame-hover); color: var(--color-text); }
+.epub-nav-btn:disabled { opacity: 0.3; cursor: default; }
+.epub-nav-info {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+/* ── YAML viewer ── */
+.canvas-yaml-viewer {
+  padding: 16px 0;
+  font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.canvas-yaml-viewer pre {
+  margin: 0;
+  padding: 0 16px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.canvas-yaml-viewer code {
+  font-family: inherit;
+}
+.canvas-code-viewer {
+  padding: 12px 0;
+}
+.canvas-code-viewer pre {
+  margin: 0;
+  border-radius: 8px;
+}
+.canvas-html-viewer {
+  padding: 16px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* ── Image viewer ── */
+.canvas-image-viewer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px;
+  gap: 10px;
+  height: 100%;
+}
+.canvas-image-viewer .image-info {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+.canvas-image-viewer img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+/* ── PDF viewer ── */
+.canvas-pdf-viewer {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.canvas-pdf-viewer iframe {
+  flex: 1;
+  border-radius: 0;
+}
+
+/* ── XLSX viewer ── */
+.canvas-xlsx-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.xlsx-sheet-bar {
+  display: flex;
+  gap: 2px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+.xlsx-sheet-bar::-webkit-scrollbar { display: none; }
+.xlsx-sheet-tab {
+  padding: 4px 12px;
+  font-size: 11px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.xlsx-sheet-tab:hover { background: var(--color-hover, rgba(128,128,128,0.08)); color: var(--color-text); }
+.xlsx-sheet-tab.active {
+  background: var(--color-surface);
+  border-color: var(--glass-border);
+  color: var(--color-text);
+}
+.xlsx-sheet-content {
+  flex: 1;
+  overflow: auto;
+  padding: 0;
+}
+.xlsx-sheet-content table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.xlsx-sheet-content td,
+.xlsx-sheet-content th {
+  border: 1px solid var(--color-border, rgba(128,128,128,0.12));
+  padding: 3px 8px;
+  white-space: nowrap;
+  text-align: left;
+}
+.xlsx-sheet-content tr:first-child td {
+  background: var(--color-surface, rgba(128,128,128,0.04));
+  font-weight: 600;
+}
+
+/* ── CSV table ── */
+.canvas-csv-viewer {
+  padding: 12px;
+  overflow: auto;
+}
+.csv-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.csv-table th,
+.csv-table td {
+  border: 1px solid var(--color-border, rgba(128,128,128,0.15));
+  padding: 6px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+.csv-table th {
+  background: var(--color-surface);
+  font-weight: 600;
+  color: var(--color-text);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.csv-table td {
+  color: var(--color-text-muted);
+}
+.csv-table tr:hover td {
+  background: var(--color-hover, rgba(128,128,128,0.05));
+}
+
+/* ── Text viewer ── */
+.canvas-text-viewer {
+  padding: 12px;
+}
+.canvas-text-viewer .text-file-info {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  opacity: 0.5;
+  margin-bottom: 8px;
+}
+.canvas-text-viewer pre {
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── Error / Empty ── */
+.canvas-error {
+  padding: 24px;
+  text-align: center;
+  color: rgb(239, 68, 68);
+  font-size: 13px;
+}
+.canvas-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+.canvas-loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-text-muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  opacity: 0.4;
+  animation: canvas-spin 0.7s linear infinite;
+}
+@keyframes canvas-spin {
+  to { transform: rotate(360deg); }
+}
+.canvas-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--color-text-muted);
+  opacity: 0.4;
+  font-size: 13px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Three-column layout: unified cards + draggable resizers
+   ─ Sidebar | resizer | Main | resizer | Canvas | Edge bar
+   Defaults: Sidebar is a fixed-width card; Main/Canvas fill available space.
+   colResizer.js pins exact pixel widths (flex: 0 0 <px>) on drag so the
+   rendered width matches the drag 1:1, and persists them to localStorage.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── UI initialization lock — prevents transition jitter on page load ──
+   Added by inline <head> script before body renders, removed by JS after
+   all layout initialization (width restoration, panel ordering) completes.
+   Without this, sidebar's transition: flex-basis animates the initial
+   width pin, causing visible jitter. */
+html.ui-init #sidebar,
+html.ui-init #main,
+html.ui-init #canvas-panel {
+  transition: none !important;
+}
+
+/* Right edge bar — structural anchor, invisible.
+   Mirrors activity-bar on the left: fixed width, flex-shrink:0, provides
+   a stable right boundary so canvas panel always fits within viewport. */
+.edge-bar-right {
+  flex: 0 0 0;
+  flex-shrink: 0;
+  align-self: stretch;
+  background: transparent;
+  z-index: 20;
+}
+
+/* Sidebar — default fixed width; JS overrides via inline flex on drag.
+   #sidebar-panel previously had a fixed 220px width; now it fills #sidebar. */
+#sidebar {
+  flex: 0 0 236px;
+  min-width: 0;
+}
+#sidebar-panel { width: 100%; }
+
+/* Main — fills remaining space (flex:1).
+   Left/right margins create gaps with adjacent panels.
+   position: relative anchors absolute-positioned children (header, dropdowns). */
+#main {
+  flex: 1;
+  min-width: 0;
+  margin: 0 10px;
+  position: relative;
+}
+
+/* ── Column resizer handles ─────────────────────────────────────────────── */
+/* Zero-width flex items — they stay in the flex flow (same layer) but take
+   NO space. All panel spacing comes from panel margins (8px each side).
+   The drag hit area (::after) overflows symmetrically into both adjacent
+   panels' margins via absolute positioning. The grip (::before) is a
+   visual indicator centered on the boundary. */
+.col-resizer {
+  flex: 0 0 0;
+  position: relative;
+  z-index: 40;
+  cursor: col-resize;
+  display: none;             /* panelDragger.js controls visibility */
+}
+/* Invisible drag hit area — only around the grip, not the full height */
+.col-resizer::after {
+  content: '';
+  position: absolute;
+  top: calc(50% - 32px);
+  height: 64px;
+  left: -8px;
+  width: 16px;
+  z-index: 1;
+}
+/* Visible grip pill — centered, dim gray by default, brightens on hover/drag */
+.col-resizer::before {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px; height: 36px;
+  border-radius: 4px;
+  background: var(--color-text-muted);
+  opacity: 0.25;
+  transition: opacity 0.2s, background 0.2s, height 0.2s, width 0.2s;
+  pointer-events: none;
+  z-index: 2;
+}
+.col-resizer:hover::before,
+.col-resizer.dragging::before,
+.col-resizer.drop-target::before {
+  opacity: 0.9;
+  background: var(--color-primary);
+  height: 48px;
+  width: 5px;
+}
+/* While reordering panels, suppress the resize handle's own :hover so only the
+   drop-target handle lights up (otherwise the handle under the cursor also
+   highlights, making the indicator look wrong — especially when dragging left). */
+body.panel-dragging .col-resizer:hover::before {
+  opacity: 0.35;
+  background: var(--color-text-muted);
+  height: 36px;
+  width: 4px;
+}
+/* Drop-target highlight must beat the hover suppression above so the
+   indicator stays bright even when the cursor is directly over it. */
+body.panel-dragging .col-resizer.drop-target::before {
+  opacity: 0.9;
+  background: var(--color-primary);
+  height: 48px;
+  width: 5px;
+}
+/* During panel drag, make highlight changes feel instant (no 200ms fade). */
+body.panel-dragging .col-resizer::before {
+  transition: opacity 0.05s, background 0.05s;
+}
+/* While dragging, prevent text selection / iframe pointer events interfering. */
+body.col-resizing { cursor: col-resize; user-select: none; }
+body.col-resizing iframe { pointer-events: none; }
+/* Disable panel transitions during resize — the open/close transition on the
+   panels (sidebar collapse, canvas toggle, main re-flow) makes resizer dragging
+   feel laggy if left active. Re-enabled once dragging ends. */
+body.col-resizing #sidebar,
+body.col-resizing #main,
+body.col-resizing #canvas-panel { transition: none; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Panel drag-to-reorder (panelDragger.js)
+   Drag a panel header to move it between positions.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Drag-handle pill — simple horizontal bar on each header ──
+   No bump, no edge styling. Just a grab indicator that lights up on hover. */
+
+/* Both need position:relative for ::after drag-handle pill */
+.sidebar-topbar { position: relative; z-index: 1; }
+/* .canvas-header already has position:relative in its main rule */
+
+/* Pill indicator */
+.sidebar-topbar::after,
+#header::after,
+.canvas-header::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--color-text-muted);
+  opacity: 0.3;
+  pointer-events: none;
+  transition: opacity 0.2s, background 0.2s, width 0.2s, height 0.2s;
+  z-index: 3;
+}
+
+/* Hover/drag lights up the pill */
+.sidebar-topbar.bump-hover::after,
+#header.bump-hover::after,
+.canvas-header.bump-hover::after,
+body.panel-dragging .panel-drag-source > .sidebar-topbar::after,
+body.panel-dragging .panel-drag-source > #header::after,
+body.panel-dragging .panel-drag-source > .canvas-header::after {
+  opacity: 0.9;
+  background: var(--color-primary);
+  width: 48px;
+  height: 5px;
+}
+
+/* Invisible hover hit zone — only the pill area triggers hover on main/canvas */
+.bump-zone {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80px;
+  height: 14px;
+  z-index: 4;
+  background: transparent;
+  cursor: grab;
+}
+
+/* Buttons & interactive elements inside headers keep pointer cursor */
+.sidebar-topbar button,
+#header button,
+#header .ctx-bar-wrap {
+  cursor: pointer;
+}
+#header input,
+#header textarea {
+  cursor: text;
+}
+
+/* While dragging: suppress text selection & iframe pointer events */
+body.panel-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+body.panel-dragging iframe {
+  pointer-events: none;
+}
+body.panel-dragging .bump-zone {
+  cursor: grabbing;
+}
+
+/* Source panel being dragged — dimmed to show it's the moving one */
+.panel-drag-source {
+  opacity: 0.25;
+  transition: opacity 0.15s;
+}
+
+/* Ghost — floating label following the cursor during drag */
+.panel-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  transform: translate(-50%, -50%);
+  padding: 6px 14px;
+  background: var(--glass-bg, rgba(255,255,255,0.7));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px));
+  backdrop-filter: blur(var(--glass-blur, 20px));
+  border: 1px solid var(--glass-border, rgba(0,0,0,0.08));
+  border-radius: 9999px;
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  pointer-events: none;
+  z-index: 9999;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  white-space: nowrap;
 }
 
 /* ── Dark Theme — Canvas Panel ────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
-  .canvas-header {
+  #canvas-panel {
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 2px 8px rgba(0, 0, 0, 0.20),

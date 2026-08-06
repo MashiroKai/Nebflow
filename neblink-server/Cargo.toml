@@ -1,0 +1,35 @@
+[package]
+name = "neblink-server"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.8"
+axum-extra = { version = "0.10", features = ["cookie-signed"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+dashmap = "6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tower-http = { version = "0.6", features = ["catch-panic", "trace", "cors"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+jsonwebtoken = "9"
+# OAuth: GitHub login flow. rustls-tls to avoid an OpenSSL build dependency.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# HMAC for P2P request signing between devices.
+hmac = "0.12"
+# Reserved for optional future email+password accounts.
+argon2 = "0.5"
+# Cookie max-age durations (re-exported by the cookie crate as `cookie::time`).
+time = "0.3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1

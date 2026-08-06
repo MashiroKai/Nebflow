@@ -63,7 +63,7 @@ export function applyLocaleToHtml() {
     'sidebar-toggle': ['title', 'sidebar.toggle'],
     'search-input': ['placeholder', 'sidebar.searchPlaceholder'],
     'panel-title-settings': ['text', 'sidebar.settingsTitle'],
-    'memory-btn': ['text', 'header.memory'],
+    'memory-btn': ['title', 'header.memory'],
     'bypass-toggle': ['title', 'bypass.toggle'],
     'input': ['placeholder', 'input.placeholder'],
     'voice-text': ['text', 'input.voiceListening'],
@@ -95,7 +95,6 @@ export function applyLocaleToHtml() {
 
   // Buttons/titles not covered by the map above
   const extras = [
-    ['new-session-btn', 'title', 'sidebar.newSession'],
     ['search-clear', 'title', 'search.clear'],
     ['sidebar-edge', 'title', 'sidebar.edgeToggle'],
     ['new-agent-btn', 'title', 'nav.newAgent'],

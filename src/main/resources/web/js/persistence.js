@@ -5,9 +5,31 @@
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
-import { createDurationBadgeElement, formatHm, toggleTimeFormat } from './chat.js';
+import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard } from './chat.js';
+
+// ---------- AI message badge (no duration) ----------
+// Builds a duration-badge pill with timestamp + copy button, matching
+// the style used by finishAi() in chat.js for live messages.
+function createAiCopyBadge(timestamp, text) {
+  const badge = document.createElement('div');
+  badge.className = 'duration-badge';
+  if (timestamp && timestamp > 0) {
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'duration-badge-time';
+    timeSpan.setAttribute('data-ts', timestamp);
+    timeSpan.textContent = formatHm(timestamp);
+    timeSpan.title = '点击切换 12/24 小时制';
+    timeSpan.addEventListener('click', toggleTimeFormat);
+    badge.appendChild(timeSpan);
+    const div = document.createElement('span');
+    div.className = 'duration-badge-divider';
+    badge.appendChild(div);
+  }
+  if (text) badge.appendChild(createMsgCopyButton(text));
+  return badge;
+}
 
 // ---------- Duration formatting (mirrors chat.js formatDuration) ----------
 function formatDurationPersisted(ms) {
@@ -43,9 +65,79 @@ function pruneAndRetrySetSessions(all, keepSid) {
   return safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all));
 }
 
+// ---------- Emergency cleanup: purge bloated localStorage on startup ----------
+// If localStorage is near quota, old unsanitized data (from before size limits)
+// prevents any new write. This re-reads all sessions, re-sanitizes every entry,
+// and writes back a compact version. Called once on startup.
+export function emergencyCacheCleanup() {
+  try {
+    const raw = localStorage.getItem(LS_SESSIONS_KEY);
+    if (!raw) return;
+    // If already under 2MB, no need to clean
+    if (raw.length < 2_000_000) return;
+    console.debug('[persistence] cache size ' + Math.round(raw.length / 1024) + 'KB — running emergency cleanup');
+    const all = JSON.parse(raw);
+    // Re-sanitize every entry in every session and enforce message cap
+    for (const sid of Object.keys(all)) {
+      const arr = all[sid];
+      if (!Array.isArray(arr)) { delete all[sid]; continue; }
+      all[sid] = arr.slice(-MAX_MSGS_PER_SESSION).map(e => {
+        try { return sanitizeForCache(e); } catch { return null; }
+      }).filter(Boolean);
+      if (all[sid].length === 0) delete all[sid];
+    }
+    // Write back compact version; if still too large, keep only the active session
+    let compacted = JSON.stringify(all);
+    if (compacted.length > 2_000_000 && state.activeSessionId) {
+      const trimmed = { [state.activeSessionId]: all[state.activeSessionId] || [] };
+      compacted = JSON.stringify(trimmed);
+    }
+    if (compacted.length > 3_000_000) {
+      // Still too large — drop everything
+      localStorage.removeItem(LS_SESSIONS_KEY);
+      console.debug('[persistence] cache dropped entirely after cleanup attempt');
+    } else {
+      localStorage.setItem(LS_SESSIONS_KEY, compacted);
+      console.debug('[persistence] cache cleaned: ' + Math.round(compacted.length / 1024) + 'KB');
+    }
+  } catch (e) {
+    // If anything goes wrong, drop the cache
+    try { localStorage.removeItem(LS_SESSIONS_KEY); } catch {}
+  }
+}
+
 // ---------- Safe JSON parse from localStorage ----------
 function safeGetJSON(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); } catch(e) { return fallback; }
+}
+
+// ---------- Sanitize entry for localStorage (prevent quota bloat) ----------
+// Tool content and attachment previews can be enormous (entire files, base64 images).
+// Since backend is the source of truth, we truncate aggressively for the local cache.
+const MAX_CONTENT_LEN = 500;   // tool result content
+const MAX_INPUT_LEN = 500;     // tool input args
+const MAX_THINKING_LEN = 2000; // AI thinking text
+const MAX_TEXT_LEN = 5000;     // AI response text
+const MAX_MSGS_PER_SESSION = 80;
+
+function sanitizeForCache(entry) {
+  if (!entry || typeof entry !== 'object') return entry;
+  const e = { ...entry };
+  if (typeof e.content === 'string' && e.content.length > MAX_CONTENT_LEN)
+    e.content = e.content.slice(0, MAX_CONTENT_LEN) + '…';
+  if (typeof e.input === 'string' && e.input.length > MAX_INPUT_LEN)
+    e.input = e.input.slice(0, MAX_INPUT_LEN) + '…';
+  if (typeof e.thinking === 'string' && e.thinking.length > MAX_THINKING_LEN)
+    e.thinking = e.thinking.slice(0, MAX_THINKING_LEN) + '…';
+  if (typeof e.text === 'string' && e.text.length > MAX_TEXT_LEN)
+    e.text = e.text.slice(0, MAX_TEXT_LEN) + '…';
+  if (typeof e.answer === 'string' && e.answer.length > MAX_TEXT_LEN)
+    e.answer = e.answer.slice(0, MAX_TEXT_LEN) + '…';
+  // Strip base64 attachment previews — they can be multi-MB
+  if (e.attachments) {
+    e.attachments = e.attachments.map(a => ({ type: a.type, name: a.name }));
+  }
+  return e;
 }
 
 // ---------- Save a message entry to localStorage (best-effort cache) ----------
@@ -55,7 +147,9 @@ export function saveMsg(entry, sessionId) {
   try {
     const all = safeGetJSON(LS_SESSIONS_KEY, {});
     const arr = all[sid] || [];
-    arr.push(entry);
+    arr.push(sanitizeForCache(entry));
+    // Cap messages per session to prevent unbounded growth
+    if (arr.length > MAX_MSGS_PER_SESSION) arr.splice(0, arr.length - MAX_MSGS_PER_SESSION);
     all[sid] = arr;
     if (!safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all))) {
       // Quota exceeded — prune old sessions and retry once
@@ -130,6 +224,27 @@ export function restoreFromStorage() {
         }
         row.appendChild(bubble);
       });
+      // Timestamp + copy button (pill style, matching AI duration badge)
+      if (m.timestamp && m.timestamp > 0) {
+        const badge = document.createElement('div');
+        badge.className = 'duration-badge';
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'duration-badge-time';
+        timeSpan.setAttribute('data-ts', m.timestamp);
+        timeSpan.textContent = formatHm(m.timestamp);
+        timeSpan.title = '点击切换 12/24 小时制';
+        timeSpan.addEventListener('click', toggleTimeFormat);
+        badge.appendChild(timeSpan);
+        if (m.text) {
+          const div = document.createElement('span');
+          div.className = 'duration-badge-divider';
+          badge.appendChild(div);
+          badge.appendChild(createMsgCopyButton(m.text));
+        }
+        row.appendChild(badge);
+      } else if (m.text) {
+        row.appendChild(createAiCopyBadge(m.timestamp, m.text));
+      }
       chat.appendChild(row);
     } else if (m.type === 'ai') {
       // Thinking bubble (if present)
@@ -169,8 +284,10 @@ export function restoreFromStorage() {
         bubble.innerHTML = renderMarkdownWithMath(m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
           row.appendChild(badge);
+        } else {
+          row.appendChild(createAiCopyBadge(m.timestamp, m.text));
         }
         chat.appendChild(row);
       }
@@ -439,15 +556,24 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         }
         row.appendChild(bubble);
       });
-      // Timestamp
+      // Timestamp + copy button (pill style, matching AI duration badge)
       if (m.timestamp && m.timestamp > 0) {
-        const timeEl = document.createElement('div');
-        timeEl.className = 'msg-time';
-        timeEl.setAttribute('data-ts', m.timestamp);
-        timeEl.textContent = formatHm(m.timestamp);
-        timeEl.title = '点击切换 12/24 小时制';
-        timeEl.addEventListener('click', toggleTimeFormat);
-        row.appendChild(timeEl);
+        const badge = document.createElement('div');
+        badge.className = 'duration-badge';
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'duration-badge-time';
+        timeSpan.setAttribute('data-ts', m.timestamp);
+        timeSpan.textContent = formatHm(m.timestamp);
+        timeSpan.title = '点击切换 12/24 小时制';
+        timeSpan.addEventListener('click', toggleTimeFormat);
+        badge.appendChild(timeSpan);
+        if (m.text) {
+          const div = document.createElement('span');
+          div.className = 'duration-badge-divider';
+          badge.appendChild(div);
+          badge.appendChild(createMsgCopyButton(m.text));
+        }
+        row.appendChild(badge);
       }
       fragment.appendChild(row);
     } else if (m.type === 'ai') {
@@ -488,8 +614,10 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         deferMd(bubble, m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
           row.appendChild(badge);
+        } else {
+          row.appendChild(createAiCopyBadge(m.timestamp, m.text));
         }
         fragment.appendChild(row);
       }
@@ -520,6 +648,11 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         renderWithRegistry(cardContainer, m.content);
       } else {
         const isError = m.isError;
+        // Pop tool: rainbow filename + clickable card (shared with live renderTool)
+        if (applyPopCard(card, m.label, m.summary, m.input, isError)) {
+          row.appendChild(card);
+          fragment.appendChild(row);
+        } else {
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const detailHtml = buildToolDetail(m.input, m.label);
@@ -540,6 +673,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         row.appendChild(card);
         fragment.appendChild(row);
         if (hasBody) attachToolClick(card);
+        }
       }
     } else if (m.type === 'askUser') {
       const row = document.createElement('div');

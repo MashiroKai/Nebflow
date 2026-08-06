@@ -300,7 +300,7 @@ object TransferFileTool extends Tool:
         Left(
           ToolError(
             if peers.isEmpty then
-              s"No peer devices discovered. Ensure Tailscale is running on both machines and both Nebflow instances are connected."
+              s"No peer devices discovered. Ensure NebLink Server is configured on both machines and both Nebflow instances are connected."
             else s"Device '$deviceName' not found among ${peers.size} peer(s). Available: ${available.mkString(", ")}"
           )
         )

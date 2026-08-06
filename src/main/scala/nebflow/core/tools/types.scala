@@ -36,7 +36,6 @@ case class ToolContext(
   sharedResources: Option[SharedResources] = None,
   actorSystem: Option[ActorSystem] = None,
   messages: List[Message] = Nil,
-  liveFileTracker: Option[LiveFileTracker] = None,
   toolCallId: String = "",
   /**
    * True when this call originates from another Nebflow instance via remote-exec.
@@ -56,3 +55,13 @@ trait Tool:
   def summarize(input: JsonObject): String
   def summarizeResult(input: JsonObject, result: String): String
   def maxResultSizeChars: Int = Defaults.DefaultMaxResultSizeChars
+
+  /**
+   * Extract image content blocks from a successful tool result.
+   * Override in tools that produce image data (e.g. Read on image files).
+   * Returns None for text-only results. When present, these blocks are
+   * injected into the LLM message alongside the tool_result so vision
+   * APIs can process the image.
+   */
+  def extractImages(input: JsonObject, result: String): Option[List[ContentBlock.Image]] = None
+end Tool

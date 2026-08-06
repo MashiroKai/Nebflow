@@ -10,7 +10,7 @@ import java.time.{LocalDateTime, ZoneId}
 /**
  * Periodic backup of critical ~/.nebflow files.
  *
- * Backs up: sessions, folders, agent memory, NEBFLOW.md, nebflow.json, auth.json
+ * Backs up: sessions, folders, agent memory, User.md, nebflow.json, auth.json
  * Skips: history, uploads, tasks (regenerable or large), pid files
  * Keeps the latest MaxBackups snapshots, prunes the rest.
  *
@@ -27,7 +27,7 @@ object NebflowBackup:
   /** File patterns to back up (relative to ~/.nebflow/). */
   private val includePatterns: List[String => Boolean] = List(
     // Top-level config files
-    _ == "NEBFLOW.md",
+    _ == "User.md",
     _ == "nebflow.json",
     _ == "auth.json",
     _ == "input_history.jsonl",

@@ -44,3 +44,24 @@ credentials.json
 dist/
 beta.md
 typescript
+
+# ZCode agent workspace
+.zcode/
+
+# Node / Playwright
+node_modules/
+test-results/
+package.json
+package-lock.json
+playwright.config.mjs
+
+# Test artifacts
+gui-test-screenshots/
+swarm/
+
+# Temp review reports
+.code-review-report.html
+.nebflow-review.html
+
+# Internal handover doc (contains server credentials)
+NEBLINK_HANDOVER.md

@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import nebflow.agent.*
 import nebflow.bridge.*
 import nebflow.core.*
+import nebflow.core.daemon.{DaemonService, DaemonStore}
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
@@ -136,8 +137,33 @@ object GatewayMain extends IOApp.Simple:
       _ <- agentLibrary.loadAll()
       _ <- logger.info("Initializing global MCP servers...")
       _ <- manager.startAll(fromConfig)
+      _ <- startAgentMcpServers(manager)
       _ <- logger.info("MCP servers initialized")
       _ <- loadExternalTools()
+    yield ()
+
+  end startMcpServers
+
+  /**
+   * Start agent-scoped MCP servers (agent directory `tools/mcp/`, one `*.json`
+   * per server) at startup. Each server is started independently; a failing
+   * server is logged and skipped so one bad config can't block the rest of the
+   * boot.
+   */
+  private def startAgentMcpServers(mcpManager: McpManager): IO[Unit] =
+    for
+      servers <- AgentMcpLoader.scanAll()
+      _ <- servers.traverse_ { case (_, serverId, cfg) =>
+        if cfg.isEnabled then
+          mcpManager
+            .startServer(serverId, cfg)
+            .timeout(5.seconds)
+            .handleErrorWith(e => logger.warn(s"Agent MCP server '$serverId' failed: ${e.getMessage}"))
+        else logger.info(s"Agent MCP server '$serverId' is disabled, skipping")
+      }
+      _ <-
+        if servers.nonEmpty then logger.info(s"Started ${servers.size} agent MCP server(s)")
+        else IO.unit
     yield ()
 
   private def loadExternalTools(): IO[Unit] =
@@ -149,27 +175,20 @@ object GatewayMain extends IOApp.Simple:
   /**
    * Background heartbeat loop for NebLink server mode.
    * Every 30 seconds: send heartbeat, update peer list + trusted IPs.
-   * Runs as a fire-and-forget fiber via `.start`.
+   * Uses the discovery's current client (hot-swappable).
+   * Returns the fiber so the caller can cancel/restart it.
    */
   private def startHeartbeatLoop(
-    client: nebflow.neblink.CoordClient,
-    neblinkService: NeblinkService
-  ): IO[Unit] =
-    val hbLogger = NebflowLogger.forName("nebflow.neblink.heartbeat")
+    discovery: nebflow.neblink.NeblinkDiscovery
+  ): IO[cats.effect.Fiber[IO, Throwable, Unit]] =
     def loop: IO[Unit] =
-      IO.sleep(30.seconds) *> client.heartbeat.flatMap {
-        case Right(coordPeers) =>
-          val neblinkPeers = client.toNeblinkPeers(coordPeers)
-          val peerIps = client.peerAddresses(coordPeers)
-          neblinkPeers.traverse_(p => neblinkService.upsertPeer(p)) *>
-            neblinkService.updateTrustedIps(peerIps) *>
-            neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
-        case Left(err) =>
-          hbLogger.warn(s"Heartbeat failed: $err")
-      } *> IO.defer(loop)
-    loop
-
-  end startHeartbeatLoop
+      for
+        delay <- discovery.currentDelay
+        _ <- IO.sleep(delay)
+        _ <- discovery.heartbeatCycle
+        _ <- IO.defer(loop)
+      yield ()
+    loop.start
 
   private lazy val defaultConfig: NebflowServiceConfig = NebflowServiceConfig(
     llm = ServiceLlmConfig(
@@ -213,301 +232,338 @@ object GatewayMain extends IOApp.Simple:
             // Global session state shared across all connections
             val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")
             val sessionModelOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)
-            sessionStore.load.flatMap { _ =>
-              LlmInterface.createLlm(sessionModelOverrides, configRef = Some(configRef)).flatMap {
-                case (handle, registry, healthMonitor, releaseBackend) =>
-                  // Clear per-session model overrides on restart so all sessions
-                  // follow the global fallback order from config.
-                  sessionStore.clearAllSessionModels() *> McpManager.create.flatMap { mcpManager =>
-                    // --- Fast path: only essential init before server start ---
-                    val chatRoutes = new ChatRoutes(handle, token)
-                    val isConfigured = config.llm.providers.nonEmpty
-                    val contextWindow =
-                      if !isConfigured then Defaults.ContextWindow
-                      else
-                        try
-                          val (providerId, modelId) = Config.parseModelRef(config.llm.model.default)
-                          config.llm.providers
-                            .get(providerId)
-                            .flatMap(_.models.find(_.id == modelId))
-                            .map(_.contextWindow)
-                            .getOrElse(Defaults.ContextWindow)
-                        catch case _: Exception => Defaults.ContextWindow
-                    val baseUrl = s"http://localhost:${cfg.port}"
-                    val url = s"$baseUrl?token=$token"
-                    sys.props.update("nebflow.url", baseUrl)
+            sessionStore.load
+              .flatMap { _ =>
+                // Single-session architecture: guarantee the primary agent Nebula
+                // has exactly one session and that it is the active session shown in
+                // the Main window, before any WS client connects. Adopts legacy
+                // agentless sessions (preserving history) and activates as needed.
+                sessionStore.ensureActiveAgentSession("Nebula").void
+              }
+              .flatMap { _ =>
+                LlmInterface.createLlm(sessionModelOverrides, configRef = Some(configRef)).flatMap {
+                  case (handle, registry, healthMonitor, releaseBackend) =>
+                    // Clear per-session model overrides on restart so all sessions
+                    // follow the global fallback order from config.
+                    sessionStore.clearAllSessionModels() *> McpManager.create.flatMap { mcpManager =>
+                      // --- Fast path: only essential init before server start ---
+                      val chatRoutes = new ChatRoutes(handle, token)
+                      val isConfigured = config.llm.providers.nonEmpty
+                      val contextWindow =
+                        if !isConfigured then Defaults.ContextWindow
+                        else
+                          try
+                            val (providerId, modelId) = Config.parseModelRef(config.llm.model.default)
+                            config.llm.providers
+                              .get(providerId)
+                              .flatMap(_.models.find(_.id == modelId))
+                              .map(_.contextWindow)
+                              .getOrElse(Defaults.ContextWindow)
+                          catch case _: Exception => Defaults.ContextWindow
+                      val baseUrl = s"http://localhost:${cfg.port}"
+                      val url = s"$baseUrl?token=$token"
+                      sys.props.update("nebflow.url", baseUrl)
 
-                    // Initialize thinking config from nebflow.json (default enabled=true)
-                    val initialThinking = config.thinkingConfig.getOrElse(nebflow.llm.ThinkingConfig())
-                    val thinkingConfigRef: Ref[IO, nebflow.llm.ThinkingConfig] = Ref.unsafe(initialThinking)
-                    logger.info(s"nebflow v${nebflow.Version.string}") *>
-                      (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
-                       else logger.info(s"Context window: $contextWindow tokens (from ${config.llm.model.default})")) *>
-                      RateLimiter.create().flatMap { rateLimiter =>
-                        FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
-                          // Create Dispatcher for the multi-agent runtime, then start server
-                          cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
-                            val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
-                            cats.effect.std.Semaphore[IO](1).flatMap { askSemaphore =>
-                              nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
-                                val hooksConfig = HooksConfigLoader.load(os.pwd)
-                                val hookEngine = HookEngine(hooksConfig)
-                                val actorSystem = nebflow.actor.ActorSystem("local")
-                                val voiceMutedRef: Ref[IO, Boolean] = Ref.unsafe(false)
-                                val sharedResources = SharedResources(
-                                  llm = handle,
-                                  dispatcher = dispatcher,
-                                  sessionStore = sessionStore,
-                                  projectRoot = os.pwd,
-                                  thinkingConfigRef = thinkingConfigRef,
-                                  rateLimiter = rateLimiter,
-                                  fileChangeTracker = fileTracker,
-                                  contextWindow = contextWindow,
-                                  agentLibrary = agentLibrary,
-                                  askSemaphore = askSemaphore,
-                                  taskStore = FileTaskStore,
-                                  historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd),
-                                  fileLockManager = fileLockMgr,
-                                  sessionModelOverrides = sessionModelOverrides,
-                                  providerRegistry = registry,
-                                  healthMonitor = healthMonitor,
-                                  actorSystem = actorSystem,
-                                  hookEngine = hookEngine,
-                                  voiceMutedRef = voiceMutedRef
-                                )
-                                // Initialize telemetry (opt-out aware, fire-and-forget on failure)
-                                val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>
-                                  logger.warn(s"Telemetry init failed: ${e.getMessage}").as(None)
-                                }
-                                telemetryIO.flatMap { telemetry =>
-                                  val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
-                                  val sessionService = new SessionService(sessionStore)
-                                  val agentService = new AgentService(agentLibrary)
-                                  val configService = ConfigService
+                      // Initialize thinking config from nebflow.json (default enabled=true)
+                      val initialThinking = config.thinkingConfig.getOrElse(nebflow.llm.ThinkingConfig())
+                      val thinkingConfigRef: Ref[IO, nebflow.llm.ThinkingConfig] = Ref.unsafe(initialThinking)
+                      logger.info(s"nebflow v${nebflow.Version.string}") *>
+                        (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
+                         else
+                           logger.info(s"Context window: $contextWindow tokens (from ${config.llm.model.default})")) *>
+                        RateLimiter.create().flatMap { rateLimiter =>
+                          FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
+                            // Create Dispatcher for the multi-agent runtime, then start server
+                            cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
+                              val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
+                              cats.effect.std.Semaphore[IO](1).flatMap { askSemaphore =>
+                                nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
+                                  val hooksConfig = HooksConfigLoader.load(os.pwd)
+                                  val hookEngine = HookEngine(hooksConfig)
+                                  val actorSystem = nebflow.actor.ActorSystem("local")
+                                  val voiceMutedRef: Ref[IO, Boolean] = Ref.unsafe(false)
+                                  val sharedResources = SharedResources(
+                                    llm = handle,
+                                    dispatcher = dispatcher,
+                                    sessionStore = sessionStore,
+                                    projectRoot = os.pwd,
+                                    thinkingConfigRef = thinkingConfigRef,
+                                    rateLimiter = rateLimiter,
+                                    fileChangeTracker = fileTracker,
+                                    contextWindow = contextWindow,
+                                    agentLibrary = agentLibrary,
+                                    askSemaphore = askSemaphore,
+                                    taskStore = FileTaskStore,
+                                    historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd),
+                                    fileLockManager = fileLockMgr,
+                                    sessionModelOverrides = sessionModelOverrides,
+                                    providerRegistry = registry,
+                                    healthMonitor = healthMonitor,
+                                    actorSystem = actorSystem,
+                                    hookEngine = hookEngine,
+                                    voiceMutedRef = voiceMutedRef
+                                  )
+                                  // Initialize telemetry (opt-out aware, fire-and-forget on failure)
+                                  val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>
+                                    logger.warn(s"Telemetry init failed: ${e.getMessage}").as(None)
+                                  }
+                                  telemetryIO.flatMap { telemetry =>
+                                    val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
+                                    val sessionService = new SessionService(sessionStore)
+                                    val agentService = new AgentService(agentLibrary)
+                                    val configService = ConfigService
 
-                                  val wsHub = new WsHub()
+                                    val wsHub = new WsHub()
 
-                                  // --- Bridge Manager (plugins: telegram, etc.) ---
-                                  val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =
-                                    Ref.unsafe(None)
+                                    // --- Bridge Manager (plugins: telegram, etc.) ---
+                                    val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =
+                                      Ref.unsafe(None)
 
-                                  // Holder for wsRoutes so we can wire bridge refs after safe construction
-                                  var wsRoutesHolder: Option[WebSocketRoutes] = None
+                                    // Holder for wsRoutes so we can wire bridge refs after safe construction
+                                    var wsRoutesHolder: Option[WebSocketRoutes] = None
 
-                                  val bridgeCtx = new BridgeContext:
-                                    def injectMessage(sessionId: String, content: String, senderId: Option[String])
-                                      : IO[Unit] =
-                                      bridgeInjectRef.get.flatMap(_.fold(IO.unit)(_(sessionId, content, senderId)))
-                                    def interruptAgent(sessionId: String): IO[Unit] =
-                                      wsRoutesHolder match
-                                        case Some(routes) =>
-                                          routes.handleBridgeAgentCommand(sessionId, AgentCommand.Interrupt())
-                                        case None => IO.unit
-                                    def sessionMeta(sessionId: String): IO[Option[SessionMeta]] =
-                                      sessionStore.getSessionMeta(sessionId)
-                                    def listSessions: IO[List[SessionMeta]] =
-                                      sessionStore.listSessions
-                                    def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json])
-                                      : IO[Unit] =
-                                      sessionStore.updateSessionBridge(sessionId, platform, config)
+                                    val bridgeCtx = new BridgeContext:
+                                      def injectMessage(sessionId: String, content: String, senderId: Option[String])
+                                        : IO[Unit] =
+                                        bridgeInjectRef.get.flatMap(_.fold(IO.unit)(_(sessionId, content, senderId)))
+                                      def interruptAgent(sessionId: String): IO[Unit] =
+                                        wsRoutesHolder match
+                                          case Some(routes) =>
+                                            routes.handleBridgeAgentCommand(sessionId, AgentCommand.Interrupt())
+                                          case None => IO.unit
+                                      def sessionMeta(sessionId: String): IO[Option[SessionMeta]] =
+                                        sessionStore.getSessionMeta(sessionId)
+                                      def listSessions: IO[List[SessionMeta]] =
+                                        sessionStore.listSessions
+                                      def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json])
+                                        : IO[Unit] =
+                                        sessionStore.updateSessionBridge(sessionId, platform, config)
 
-                                  val bridgeSetup: IO[BridgeManager] =
-                                    BridgeManager.create(bridgeCtx)
+                                    val bridgeSetup: IO[BridgeManager] =
+                                      BridgeManager.create(bridgeCtx)
 
-                                  // Create neblink service (device discovery only, no file sync)
-                                  val neblinkServiceF: IO[NeblinkService] =
-                                    NeblinkService.create(cfg.port.value, dispatcher)
+                                    // Create neblink service (device discovery only, no file sync)
+                                    val neblinkServiceF: IO[NeblinkService] =
+                                      NeblinkService.create(cfg.port.value, dispatcher)
 
-                                  bridgeSetup.flatMap { bridgeManager =>
-                                    neblinkServiceF.flatMap { neblinkService =>
-                                      // Register remote executor for cross-device tool dispatch (P2P only)
-                                      RemoteExecutor.initialize(neblinkService, dispatcher)
-                                      // Presence WS service — maintains real-time online/offline via persistent WebSocket connections
-                                      val presenceService =
-                                        new nebflow.neblink.NeblinkPresenceService(neblinkService, cfg.port.value)(
-                                          dispatcher
+                                    bridgeSetup.flatMap { bridgeManager =>
+                                      neblinkServiceF.flatMap { neblinkService =>
+                                        // Register remote executor for cross-device tool dispatch (P2P only)
+                                        RemoteExecutor.initialize(neblinkService, dispatcher)
+                                        // Presence WS service — maintains real-time online/offline via persistent WebSocket connections
+                                        val presenceService =
+                                          new nebflow.neblink.NeblinkPresenceService(neblinkService, cfg.port.value)(
+                                            dispatcher
+                                          )
+                                        // Check if NebLink Server is configured; if so, create client for NebLink-based discovery
+                                        val neblinkClient: Option[nebflow.neblink.NeblinkClient] =
+                                          neblinkService.neblinkConfig.unsafeRunSync() match
+                                            case nc if nc.neblinkServer.isDefined =>
+                                              Some(
+                                                new nebflow.neblink.NeblinkClient(nc.neblinkServer.get, cfg.port.value)
+                                              )
+                                            case _ => None
+                                        // Discovery service — uses NebLink Server for discovery
+                                        val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
+                                          neblinkService,
+                                          cfg.port.value,
+                                          presenceService,
+                                          neblinkClient
                                         )
-                                      // Check if NebLink server is configured; if so, create client for NebLink-based discovery
-                                      val coordClient: Option[nebflow.neblink.CoordClient] =
-                                        neblinkService.neblinkConfig.unsafeRunSync() match
-                                          case nc if nc.coordinator.isDefined =>
-                                            Some(new nebflow.neblink.CoordClient(nc.coordinator.get, cfg.port.value))
-                                          case _ => None
-                                      // Discovery service — uses NebLink server if configured, otherwise Tailscale
-                                      val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
-                                        neblinkService,
-                                        cfg.port.value,
-                                        presenceService,
-                                        coordClient
-                                      )
-                                      neblinkService.setDiscoveryHook(
-                                        tsDiscovery.discoverCycle
-                                          .handleErrorWith(e => logger.debug(s"Discovery error: ${e.getMessage}").void)
-                                      ) *> neblinkService.setDiagnostic(tsDiscovery.diagnosticScan) *>
-                                        neblinkService.addPeerChangeCallback(
-                                          wsHub.broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
-                                        ) *>
-                                        // Wire the WS data channel send function so other services
-                                        // (e.g. DropboxService) can send P2P messages via presenceService.
-                                        neblinkService.setSendDataFn((deviceId, channel, payload) =>
-                                          presenceService.sendData(deviceId, channel, payload)
-                                        ) *>
-                                        // Trigger an immediate discovery cycle now that the hook is wired.
-                                        neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
-                                        // Start NebLink server heartbeat loop (if configured) — maintains
-                                        // session liveness and updates peer list every 30 seconds.
-                                        coordClient
-                                          .traverse_(client => startHeartbeatLoop(client, neblinkService).start.void) *>
-                                        // Create Dropbox service (cross-device messaging & file transfer)
-                                        nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
-                                          dropboxService =>
-                                            val sharedResourcesWithBridge =
-                                              sharedResourcesWithTelemetry.copy(
-                                                bridgeManager = Some(bridgeManager),
-                                                neblinkService = Some(neblinkService),
-                                                dropboxService = Some(dropboxService)
+                                        neblinkService.setDiscoveryHook(
+                                          tsDiscovery.discoverCycle
+                                            .handleErrorWith(e =>
+                                              logger.debug(s"Discovery error: ${e.getMessage}").void
+                                            )
+                                        ) *> neblinkService.setDiagnostic(tsDiscovery.diagnosticScan) *>
+                                          neblinkService.addPeerChangeCallback(
+                                            wsHub.broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
+                                          ) *>
+                                          // Wire the WS data channel send function so other services
+                                          // (e.g. DropboxService) can send P2P messages via presenceService.
+                                          neblinkService.setSendDataFn((deviceId, channel, payload) =>
+                                            presenceService.sendData(deviceId, channel, payload)
+                                          ) *>
+                                          // Trigger an immediate discovery cycle now that the hook is wired.
+                                          neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
+                                          // Start NebLink Server heartbeat loop (if configured) — maintains
+                                          // session liveness and updates peer list every 30 seconds.
+                                          // The fiber is stored so it can be cancelled/restarted on hot-swap.
+                                          startHeartbeatLoop(tsDiscovery).void *>
+                                          // Create Dropbox service (cross-device messaging & file transfer)
+                                          nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
+                                            dropboxService =>
+                                              val sharedResourcesWithBridge =
+                                                sharedResourcesWithTelemetry.copy(
+                                                  bridgeManager = Some(bridgeManager),
+                                                  neblinkService = Some(neblinkService),
+                                                  dropboxService = Some(dropboxService)
+                                                )
+
+                                              // --- Create Scheduled Task Service before wsRoutes ---
+                                              // routeToAgent needs wsRoutesHolder, which is set below (same pattern as bridge)
+                                              val scheduledTaskService = new ScheduledTaskService(
+                                                sharedResourcesWithBridge.dispatcher,
+                                                sharedResourcesWithBridge.scheduledTaskStore,
+                                                (sid, event) =>
+                                                  wsRoutesHolder match
+                                                    case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
+                                                    case None => IO.unit,
+                                                wsHub.broadcast,
+                                                sessionStore
+                                              )
+                                              dispatcher.unsafeRunAndForget(scheduledTaskService.start())
+                                              val sharedResourcesFinal = sharedResourcesWithBridge.copy(
+                                                scheduledTaskService = Some(scheduledTaskService)
                                               )
 
-                                            // --- Create Scheduled Task Service before wsRoutes ---
-                                            // routeToAgent needs wsRoutesHolder, which is set below (same pattern as bridge)
-                                            val scheduledTaskService = new ScheduledTaskService(
-                                              sharedResourcesWithBridge.dispatcher,
-                                              sharedResourcesWithBridge.scheduledTaskStore,
-                                              (sid, event) =>
-                                                wsRoutesHolder match
-                                                  case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
-                                                  case None => IO.unit,
-                                              wsHub.broadcast
-                                            )
-                                            dispatcher.unsafeRunAndForget(scheduledTaskService.start())
-                                            val sharedResourcesFinal = sharedResourcesWithBridge.copy(
-                                              scheduledTaskService = Some(scheduledTaskService)
-                                            )
-
-                                            TtsService.create().flatMap { ttsService =>
-                                              EmberServerBuilder
-                                                .default[IO]
-                                                .withHost(cfg.host)
-                                                .withPort(cfg.port)
-                                                .withIdleTimeout(1.hour)
-                                                .withHttpWebSocketApp { wsb =>
-                                                  val wsRoutes = new WebSocketRoutes(
-                                                    wsb,
-                                                    sessionService,
-                                                    agentService,
-                                                    configService,
-                                                    configRef,
-                                                    rateLimiter,
-                                                    token,
-                                                    fileTracker,
-                                                    sessionStore,
-                                                    wsHub,
-                                                    contextWindow,
-                                                    sharedResourcesFinal,
-                                                    mcpManager
+                                              // --- Daemon Service (external process lifecycle) ---
+                                              val daemonService = new DaemonService(dispatcher)
+                                              val sharedResourcesWithDaemon = sharedResourcesFinal.copy(
+                                                daemonService = Some(daemonService)
+                                              )
+                                              // Auto-start daemons configured with autoStart=true
+                                              dispatcher.unsafeRunAndForget(
+                                                IO.sleep(2.seconds) *> daemonService
+                                                  .autoStart(DaemonStore())
+                                                  .handleErrorWith(e =>
+                                                    logger.warn(s"Daemon auto-start failed: ${e.getMessage}")
                                                   )
-                                                  wsRoutesHolder = Some(wsRoutes)
+                                              )
 
-                                                  // REST API routes for CLI consumption
-                                                  val restApiRoutes = new RestApiRoutes(
-                                                    token,
-                                                    configRef,
-                                                    sharedResourcesFinal,
-                                                    sessionStore,
-                                                    wsRoutes,
-                                                    neblinkService = Some(neblinkService),
-                                                    ttsService = ttsService
-                                                  )
-
-                                                  Router(
-                                                    "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
-                                                      .presenceWsRoutes(wsb)),
-                                                    "/" -> wsRoutes.routes
-                                                  ).orNotFound
-                                                }
-                                                .build
-                                                .use { _ =>
-                                                  // Wire bridge inject ref
-                                                  val wireBridge = wsRoutesHolder match
-                                                    case Some(wsRoutes) =>
-                                                      bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage))
-                                                    case None => IO.unit
-                                                  wireBridge *> (for
-                                                    _ <- logger.info(s"gateway listening on ${cfg.host}:${cfg.port}")
-                                                    _ <- logger.info(
-                                                      s"access URL: $baseUrl (token in ~/.nebflow/.token)"
-                                                    )
-                                                    // Telemetry: app_start
-                                                    _ <- telemetry.fold(IO.unit)(
-                                                      _.record("app_start", io.circe.JsonObject.empty)
-                                                    )
-                                                    // Register bridge as WsHub listener for agent events
-                                                    _ <- wsHub.register(json =>
-                                                      val sessionId =
-                                                        json.hcursor.downField("sessionId").as[String].getOrElse("")
-                                                      if sessionId.nonEmpty then
-                                                        bridgeManager.dispatchAgentEvent(sessionId, json)
-                                                      else IO.unit
-                                                    )
-                                                    _ <- bridgeManager.startAll.start // start in background
-                                                    // --- Background: LLM provider health monitoring ---
-                                                    _ <- healthMonitor.start().void.start
-                                                    _ <- if GatewayConfig.noBrowser then IO.unit else openBrowser(url)
-                                                    // --- Background init: skills dir, MCP servers ---
-                                                    _ <- SkillService
-                                                      .ensureDefaults()
-                                                      .handleErrorWith(e =>
-                                                        logger.warn(s"Skills init failed: ${e.getMessage}")
+                                              TtsService.create().flatMap { ttsService =>
+                                                SttService.create().flatMap { sttService =>
+                                                  EmberServerBuilder
+                                                    .default[IO]
+                                                    .withHost(cfg.host)
+                                                    .withPort(cfg.port)
+                                                    .withIdleTimeout(1.hour)
+                                                    .withHttpWebSocketApp { wsb =>
+                                                      val wsRoutes = new WebSocketRoutes(
+                                                        wsb,
+                                                        sessionService,
+                                                        agentService,
+                                                        configService,
+                                                        configRef,
+                                                        rateLimiter,
+                                                        token,
+                                                        fileTracker,
+                                                        sessionStore,
+                                                        wsHub,
+                                                        contextWindow,
+                                                        sharedResourcesWithDaemon,
+                                                        mcpManager,
+                                                        sttService = sttService
                                                       )
-                                                      .start
-                                                    // --- Background init: MCP servers ---
-                                                    _ <- startMcpServers(config, mcpManager, agentLibrary)
-                                                      .flatMap { _ =>
-                                                        // Broadcast updated MCP server list to all connected clients
-                                                        mcpManager.listServers
-                                                          .map(_.map { case (id, enabled) =>
-                                                            io.circe.Json
-                                                              .obj("id" -> id.asJson, "enabled" -> enabled.asJson)
-                                                          })
-                                                          .flatMap { mcpJson =>
-                                                            wsHub.broadcast(
-                                                              io.circe.Json.obj(
-                                                                "type" -> "mcpServersUpdate".asJson,
-                                                                "mcpServers" -> mcpJson.asJson
-                                                              )
-                                                            )
+                                                      wsRoutesHolder = Some(wsRoutes)
+
+                                                      // REST API routes for CLI consumption
+                                                      val restApiRoutes = new RestApiRoutes(
+                                                        token,
+                                                        configRef,
+                                                        sharedResourcesWithDaemon,
+                                                        sessionStore,
+                                                        wsRoutes,
+                                                        neblinkService = Some(neblinkService),
+                                                        ttsService = ttsService,
+                                                        neblinkDiscovery = Some(tsDiscovery),
+                                                        gatewayPort = cfg.port.value
+                                                      )
+
+                                                      Router(
+                                                        "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
+                                                          .presenceWsRoutes(wsb)),
+                                                        "/" -> wsRoutes.routes
+                                                      ).orNotFound
+                                                    }
+                                                    .build
+                                                    .use { _ =>
+                                                      // Wire bridge inject ref
+                                                      val wireBridge = wsRoutesHolder match
+                                                        case Some(wsRoutes) =>
+                                                          bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage))
+                                                        case None => IO.unit
+                                                      wireBridge *> (for
+                                                        _ <- logger.info(
+                                                          s"gateway listening on ${cfg.host}:${cfg.port}"
+                                                        )
+                                                        _ <- logger.info(
+                                                          s"access URL: $baseUrl (token in ~/.nebflow/.token)"
+                                                        )
+                                                        // Telemetry: app_start
+                                                        _ <- telemetry.fold(IO.unit)(
+                                                          _.record("app_start", io.circe.JsonObject.empty)
+                                                        )
+                                                        // Register bridge as WsHub listener for agent events
+                                                        _ <- wsHub.register(json =>
+                                                          val sessionId =
+                                                            json.hcursor.downField("sessionId").as[String].getOrElse("")
+                                                          if sessionId.nonEmpty then
+                                                            bridgeManager.dispatchAgentEvent(sessionId, json)
+                                                          else IO.unit
+                                                        )
+                                                        _ <- bridgeManager.startAll.start // start in background
+                                                        // --- Background: LLM provider health monitoring ---
+                                                        _ <- healthMonitor.start().void.start
+                                                        _ <-
+                                                          if GatewayConfig.noBrowser then IO.unit else openBrowser(url)
+                                                        // --- Background init: skills dir, MCP servers ---
+                                                        _ <- SkillService
+                                                          .ensureDefaults()
+                                                          .handleErrorWith(e =>
+                                                            logger.warn(s"Skills init failed: ${e.getMessage}")
+                                                          )
+                                                          .start
+                                                        // --- Background init: MCP servers ---
+                                                        _ <- startMcpServers(config, mcpManager, agentLibrary)
+                                                          .flatMap { _ =>
+                                                            // Broadcast updated MCP server list to all connected clients
+                                                            mcpManager.listServers
+                                                              .map(_.map { case (id, enabled) =>
+                                                                io.circe.Json
+                                                                  .obj("id" -> id.asJson, "enabled" -> enabled.asJson)
+                                                              })
+                                                              .flatMap { mcpJson =>
+                                                                wsHub.broadcast(
+                                                                  io.circe.Json.obj(
+                                                                    "type" -> "mcpServersUpdate".asJson,
+                                                                    "mcpServers" -> mcpJson.asJson
+                                                                  )
+                                                                )
+                                                              }
                                                           }
-                                                      }
-                                                      .handleErrorWith { e =>
-                                                        logger.warn(s"Background init failed: ${e.getMessage}")
-                                                      }
-                                                      .start
-                                                    // --- NebLink: sync is event-driven (actor), no background loops needed ---
-                                                    _ <- logger.info(
-                                                      "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
-                                                    ) *> waitForQuit
-                                                  yield ())
-                                                }
-                                                .guarantee(
-                                                  logger.info("shutting down...") *>
-                                                    coordClient.traverse_(_.logout) *>
-                                                    telemetry.fold(IO.unit)(_.shutdown) *>
-                                                    mcpManager.stopAll() *>
-                                                    releaseBackend
-                                                )
-                                            } // end ttsService
-                                        } // end neblinkService setup block
-                                    } // end neblinkService
-                                  } // end bridgeManager
-                                } // end telemetry.flatMap
-                              } // end fileLockMgr
-                            } // end askSemaphore
-                          } // end dispatcher.use
-                        } // end fileTracker
-                      } // end rateLimiter
-                  } // end mcpManager
+                                                          .handleErrorWith { e =>
+                                                            logger.warn(s"Background init failed: ${e.getMessage}")
+                                                          }
+                                                          .start
+                                                        // --- NebLink: sync is event-driven (actor), no background loops needed ---
+                                                        _ <- logger.info(
+                                                          "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
+                                                        ) *> waitForQuit
+                                                      yield ())
+                                                    }
+                                                    .guarantee(
+                                                      logger.info("shutting down...") *>
+                                                        daemonService.stopAll() *>
+                                                        neblinkClient.traverse_(_.logout) *>
+                                                        telemetry.fold(IO.unit)(_.shutdown) *>
+                                                        mcpManager.stopAll() *>
+                                                        releaseBackend
+                                                    )
+                                                } // end sttService
+                                              } // end ttsService
+                                          } // end neblinkService setup block
+                                      } // end neblinkService
+                                    } // end bridgeManager
+                                  } // end telemetry.flatMap
+                                } // end fileLockMgr
+                              } // end askSemaphore
+                            } // end dispatcher.use
+                          } // end fileTracker
+                        } // end rateLimiter
+                    } // end mcpManager
+                }
               }
-            }
           } // end config flatMap
         }
       }

@@ -9,6 +9,10 @@ import nebflow.shared.*
 
 sealed trait AgentCommand
 
+/** Restart level for supervisor-triggered agent restart. */
+enum RestartLevel:
+  case Soft, Rollback, Prune, Full
+
 object AgentCommand:
 
   case class UserInput(
@@ -116,11 +120,27 @@ object AgentCommand:
   /** Frontend → agent: user cancelled plan mode. */
   case object PlanCancelled extends AgentCommand
 
+  case class ResumeTurn(
+    turnStartMessageCount: Int,
+    turnIdx: Int
+  ) extends AgentCommand
+
   case class Stop(reason: String) extends AgentCommand
   case object ClearReadTracker extends AgentCommand
   case object ResetSession extends AgentCommand
+  case object CheckDream extends AgentCommand
+  case class DreamComplete(facts: List[String], messageCountAtDream: Int) extends AgentCommand
 
   case class UpdateGitBranch(branch: Option[String]) extends AgentCommand
+
+  /**
+   * Supervisor-triggered restart. Levels:
+   *  - Soft: cancel current work, re-dispatch LLM call (same messages)
+   *  - Rollback: truncate last tool call pair, inject error, re-dispatch
+   *  - Prune: (future) context prune + restart
+   *  - Full: (future) reset to empty, reload from persisted history
+   */
+  case class RestartAgent(level: RestartLevel) extends AgentCommand
 
   case class BackgroundTaskNotification(
     taskId: String,
@@ -204,142 +224,162 @@ enum AgentStreamEvent:
   case ExternalEventReceived(source: String, eventType: String, correlationId: Option[String])
   case Interrupted
 
-  def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json = this match
-    case TextDelta(text) =>
+  def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json =
+    // For subagent events, inject nodeSessionId so the frontend can persist
+    // messages to the correct flow agent session's ui.json.
+    val withNodeSession: Json => Json =
       if isSubagent then
-        Json.obj("type" -> "agentTextDelta".asJson, "agentId" -> agentId.asJson, "delta" -> text.asJson)
-      else Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> text.asJson)
-    case ToolStart(label) =>
-      if isSubagent then
-        Json.obj("type" -> "agentToolStart".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
-      else Json.obj("type" -> "toolStart".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
-    case ToolEnd(label, summary, content, isError, input) =>
-      val base =
+        sessionId match
+          case Some(sid) => _.deepMerge(Json.obj("nodeSessionId" -> sid.asJson))
+          case None => identity
+      else identity
+    withNodeSession(this match
+      case TextDelta(text) =>
+        if isSubagent then
+          Json.obj("type" -> "agentTextDelta".asJson, "agentId" -> agentId.asJson, "delta" -> text.asJson)
+        else Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> text.asJson)
+      case ToolStart(label) =>
+        if isSubagent then
+          Json.obj("type" -> "agentToolStart".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
+        else Json.obj("type" -> "toolStart".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
+      case ToolEnd(label, summary, content, isError, input) =>
+        val base =
+          if isSubagent then
+            Json.obj(
+              "type" -> "agentToolEnd".asJson,
+              "agentId" -> agentId.asJson,
+              "label" -> label.asJson,
+              "summary" -> summary.asJson,
+              "content" -> content.asJson,
+              "isError" -> isError.asJson
+            )
+          else
+            Json.obj(
+              "type" -> "toolEnd".asJson,
+              "sessionId" -> sessionId.asJson,
+              "label" -> label.asJson,
+              "summary" -> summary.asJson,
+              "content" -> content.asJson,
+              "isError" -> isError.asJson
+            )
+        input.fold(base)(i => base.deepMerge(Json.obj("input" -> Json.fromJsonObject(i))))
+      case AgentStart(name, agentType, taskDescription) =>
+        val base = Json.obj(
+          "type" -> "agentStart".asJson,
+          "agentId" -> agentId.asJson,
+          "name" -> name.asJson,
+          "agentType" -> agentType.asJson
+        )
+        taskDescription.fold(base)(desc => base.deepMerge(Json.obj("taskDescription" -> desc.asJson)))
+      case AgentEnd(name) => Json.obj("type" -> "agentEnd".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
+      case Thinking =>
+        if isSubagent then Json.obj("type" -> "agentThinking".asJson, "agentId" -> agentId.asJson)
+        else Json.obj("type" -> "thinking".asJson, "sessionId" -> sessionId.asJson)
+      case ToolCallDetected(name) =>
+        if isSubagent then
+          Json.obj("type" -> "agentToolCallDetected".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
+        else Json.obj("type" -> "toolCallDetected".asJson, "sessionId" -> sessionId.asJson, "name" -> name.asJson)
+      case RetryStatus(message) =>
+        if isSubagent then
+          Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
+        else Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
+      case Done(model, contextWindow, inputTokens, compactThreshold) =>
+        val base =
+          if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
+          else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
+        val withModel = model.fold(base)(m => base.deepMerge(Json.obj("model" -> m.asJson)))
+        val withCw = contextWindow.fold(withModel)(cw => withModel.deepMerge(Json.obj("contextWindow" -> cw.asJson)))
+        val withIt = inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
+        compactThreshold.fold(withIt)(ct => withIt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
+      case UsageUpdate(inputTokens, contextWindow, compactThreshold) =>
         if isSubagent then
           Json.obj(
-            "type" -> "agentToolEnd".asJson,
-            "agentId" -> agentId.asJson,
-            "label" -> label.asJson,
-            "summary" -> summary.asJson,
-            "content" -> content.asJson,
-            "isError" -> isError.asJson
+            "type" -> "usageUpdate".asJson,
+            "sessionId" -> sessionId.asJson,
+            "nodeSessionId" -> sessionId.asJson,
+            "inputTokens" -> inputTokens.asJson,
+            "contextWindow" -> contextWindow.asJson,
+            "compactThreshold" -> compactThreshold.asJson
           )
         else
           Json.obj(
-            "type" -> "toolEnd".asJson,
+            "type" -> "usageUpdate".asJson,
             "sessionId" -> sessionId.asJson,
-            "label" -> label.asJson,
-            "summary" -> summary.asJson,
-            "content" -> content.asJson,
-            "isError" -> isError.asJson
+            "inputTokens" -> inputTokens.asJson,
+            "contextWindow" -> contextWindow.asJson,
+            "compactThreshold" -> compactThreshold.asJson
           )
-      input.fold(base)(i => base.deepMerge(Json.obj("input" -> Json.fromJsonObject(i))))
-    case AgentStart(name, agentType, taskDescription) =>
-      val base = Json.obj(
-        "type" -> "agentStart".asJson,
-        "agentId" -> agentId.asJson,
-        "name" -> name.asJson,
-        "agentType" -> agentType.asJson
-      )
-      taskDescription.fold(base)(desc => base.deepMerge(Json.obj("taskDescription" -> desc.asJson)))
-    case AgentEnd(name) => Json.obj("type" -> "agentEnd".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
-    case Thinking =>
-      if isSubagent then Json.obj("type" -> "agentThinking".asJson, "agentId" -> agentId.asJson)
-      else Json.obj("type" -> "thinking".asJson, "sessionId" -> sessionId.asJson)
-    case ToolCallDetected(name) =>
-      if isSubagent then
-        Json.obj("type" -> "agentToolCallDetected".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
-      else Json.obj("type" -> "toolCallDetected".asJson, "sessionId" -> sessionId.asJson, "name" -> name.asJson)
-    case RetryStatus(message) =>
-      if isSubagent then
-        Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
-      else Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
-    case Done(model, contextWindow, inputTokens, compactThreshold) =>
-      val base =
-        if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
-        else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
-      val withModel = model.fold(base)(m => base.deepMerge(Json.obj("model" -> m.asJson)))
-      val withCw = contextWindow.fold(withModel)(cw => withModel.deepMerge(Json.obj("contextWindow" -> cw.asJson)))
-      val withIt = inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
-      compactThreshold.fold(withIt)(ct => withIt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
-    case UsageUpdate(inputTokens, contextWindow, compactThreshold) =>
-      Json.obj(
-        "type" -> "usageUpdate".asJson,
-        "sessionId" -> sessionId.asJson,
-        "inputTokens" -> inputTokens.asJson,
-        "contextWindow" -> contextWindow.asJson,
-        "compactThreshold" -> compactThreshold.asJson
-      )
-    case CompactStart(mode, inputTokens, threshold) =>
-      if isSubagent then
-        Json.obj(
-          "type" -> "agentCompactStart".asJson,
-          "agentId" -> agentId.asJson,
-          "mode" -> mode.asJson,
-          "inputTokens" -> inputTokens.asJson,
-          "threshold" -> threshold.asJson
-        )
-      else
-        Json.obj(
-          "type" -> "compactStart".asJson,
-          "sessionId" -> sessionId.asJson,
-          "mode" -> mode.asJson,
-          "inputTokens" -> inputTokens.asJson,
-          "threshold" -> threshold.asJson
-        )
-    case CompactComplete(before, after, reportPath) =>
-      val base =
+      case CompactStart(mode, inputTokens, threshold) =>
         if isSubagent then
           Json.obj(
-            "type" -> "agentCompactComplete".asJson,
+            "type" -> "agentCompactStart".asJson,
             "agentId" -> agentId.asJson,
-            "before" -> before.asJson,
-            "after" -> after.asJson
+            "mode" -> mode.asJson,
+            "inputTokens" -> inputTokens.asJson,
+            "threshold" -> threshold.asJson
           )
         else
           Json.obj(
-            "type" -> "compactComplete".asJson,
+            "type" -> "compactStart".asJson,
             "sessionId" -> sessionId.asJson,
-            "before" -> before.asJson,
-            "after" -> after.asJson
+            "mode" -> mode.asJson,
+            "inputTokens" -> inputTokens.asJson,
+            "threshold" -> threshold.asJson
           )
-      reportPath.fold(base)(p => base.deepMerge(Json.obj("reportPath" -> p.asJson)))
-    case CompactFailed(reason, attempt, maxAttempts) =>
-      if isSubagent then
+      case CompactComplete(before, after, reportPath) =>
+        val base =
+          if isSubagent then
+            Json.obj(
+              "type" -> "agentCompactComplete".asJson,
+              "agentId" -> agentId.asJson,
+              "before" -> before.asJson,
+              "after" -> after.asJson
+            )
+          else
+            Json.obj(
+              "type" -> "compactComplete".asJson,
+              "sessionId" -> sessionId.asJson,
+              "before" -> before.asJson,
+              "after" -> after.asJson
+            )
+        reportPath.fold(base)(p => base.deepMerge(Json.obj("reportPath" -> p.asJson)))
+      case CompactFailed(reason, attempt, maxAttempts) =>
+        if isSubagent then
+          Json.obj(
+            "type" -> "agentCompactFailed".asJson,
+            "agentId" -> agentId.asJson,
+            "reason" -> reason.asJson,
+            "attempt" -> attempt.asJson,
+            "maxAttempts" -> maxAttempts.asJson
+          )
+        else
+          Json.obj(
+            "type" -> "compactFailed".asJson,
+            "sessionId" -> sessionId.asJson,
+            "reason" -> reason.asJson,
+            "attempt" -> attempt.asJson,
+            "maxAttempts" -> maxAttempts.asJson
+          )
+      case BackgroundTaskUpdate(taskId, description, status) =>
         Json.obj(
-          "type" -> "agentCompactFailed".asJson,
-          "agentId" -> agentId.asJson,
-          "reason" -> reason.asJson,
-          "attempt" -> attempt.asJson,
-          "maxAttempts" -> maxAttempts.asJson
+          "type" -> "backgroundTaskUpdate".asJson,
+          "taskId" -> taskId.asJson,
+          "description" -> description.asJson,
+          "status" -> status.asJson,
+          "sessionId" -> sessionId.asJson
         )
-      else
-        Json.obj(
-          "type" -> "compactFailed".asJson,
-          "sessionId" -> sessionId.asJson,
-          "reason" -> reason.asJson,
-          "attempt" -> attempt.asJson,
-          "maxAttempts" -> maxAttempts.asJson
-        )
-    case BackgroundTaskUpdate(taskId, description, status) =>
-      Json.obj(
-        "type" -> "backgroundTaskUpdate".asJson,
-        "taskId" -> taskId.asJson,
-        "description" -> description.asJson,
-        "status" -> status.asJson,
-        "sessionId" -> sessionId.asJson
-      )
-    case ExternalEventReceived(source, eventType, correlationId) =>
-      val base =
-        Json.obj("type" -> "externalEventReceived".asJson, "source" -> source.asJson, "eventType" -> eventType.asJson)
-      val withSession =
+      case ExternalEventReceived(source, eventType, correlationId) =>
+        val base =
+          Json.obj("type" -> "externalEventReceived".asJson, "source" -> source.asJson, "eventType" -> eventType.asJson)
+        val withSession =
+          if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
+          else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
+        correlationId.fold(withSession)(id => withSession.deepMerge(Json.obj("correlationId" -> id.asJson)))
+      case Interrupted =>
+        val base = Json.obj("type" -> "interrupted".asJson)
         if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
-        else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
-      correlationId.fold(withSession)(id => withSession.deepMerge(Json.obj("correlationId" -> id.asJson)))
-    case Interrupted =>
-      val base = Json.obj("type" -> "interrupted".asJson)
-      if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
-      else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
+        else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson)))
+  end toJson
 end AgentStreamEvent
 
 case class AgentInfo(
@@ -388,7 +428,7 @@ case class TurnContext(
   branchChange: Option[SystemReminder] = None,
   currentBranch: Option[String] = None,
   skillCatalog: String = "",
-  flowCatalog: String = "",
+  teamCatalog: String = "",
   memoryBlock: String = ""
 )
 
@@ -400,7 +440,6 @@ case class SessionContext(
   depth: Int = 0,
   readTracker: Option[nebflow.core.tools.ReadTracker] = None,
   fileHistory: Option[nebflow.core.tools.FileHistory] = None,
-  liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = None,
   contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
   askMode: Option[String] = None,
   language: Option[String] = None,
@@ -412,7 +451,22 @@ case class SessionContext(
   safetyMode: String = "confirm-edits",
   pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
   pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
-  pendingAskUserReplyTo: Option[ActorRef[List[String]]] = None
+  pendingAskUserReplyTo: Option[ActorRef[List[String]]] = None,
+  /**
+   * When true, agent must call Mail at least once before finishing.
+   *  Used by flow agents to enforce structured result reporting.
+   */
+  expectsMail: Boolean = false,
+  /** Message index where the current mail turn started (for progress extraction). */
+  mailTurnStart: Option[Int] = None,
+  /** Total mail turns completed in this session. */
+  mailTurnCount: Int = 0,
+  /** Last dream mode timestamp (epoch millis). */
+  lastDreamAt: Option[Long] = None,
+  /** Message count at last dream (to track new material). */
+  lastDreamMessageCount: Int = 0,
+  /** Last experience extraction timestamp. */
+  lastExperienceAt: Option[Long] = None
 )
 
 case class InteractionState(
@@ -438,7 +492,23 @@ case class ExecutionContext(
   emptyResponseRetries: Int = 0,
   lastDispatch: Option[LastDispatch] = None,
   delegateCount: Int = 0,
-  lastMaintenanceDelegateCount: Int = 0
+  lastMaintenanceDelegateCount: Int = 0,
+  // Snapshot of messages.size at turn start. Used to scope the expectsMail
+  // check so only Mail calls within the current turn count. Persisted to
+  // TurnStateStore for crash recovery — restored via ResumeTurn.
+  turnStartMessageCount: Int = 0,
+  // Per-turn flag: true once the agent called the Mail tool at any point during
+  // the current turn (set in ToolsComplete, reset when a new turn starts). This
+  // is an event-driven flag, NOT a message-index scan, so it survives
+  // compaction (which rewrites/shortens `messages` and would invalidate any
+  // index-based check). It captures the user's intent: "from user input → to
+  // LLM finish/badge, did any tool call in that whole span include Mail?"
+  mailUsedThisTurn: Boolean = false,
+  // How many "you must call Mail" system-reminders have been injected this turn
+  // without the agent subsequently calling Mail. Bounded by MaxMailReminders so
+  // a flow agent that keeps producing text-without-Mail cannot loop forever —
+  // after the cap it is allowed to finishTurn (emit agentDone, release busy).
+  mailReminders: Int = 0
 )
 
 object ExecutionContext:
@@ -452,7 +522,10 @@ object ExecutionContext:
       interaction = None,
       pendingEvents = Nil,
       pendingImmediateInputs = Nil,
-      emptyResponseRetries = 0
+      emptyResponseRetries = 0,
+      turnStartMessageCount = 0,
+      mailUsedThisTurn = false,
+      mailReminders = 0
     )
 end ExecutionContext
 
@@ -514,14 +587,14 @@ object AgentState:
     wsSend: Json => IO[Unit] = _ => IO.unit,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
     fileHistory: Option[nebflow.core.tools.FileHistory] = None,
-    liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = None,
     recentMessageIds: List[String] = Nil,
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
     folderId: Option[String] = None,
     safetyMode: String = "confirm-edits",
-    gitBranch: Option[String] = None
+    gitBranch: Option[String] = None,
+    expectsMail: Boolean = false
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -535,13 +608,13 @@ object AgentState:
         depth = depth,
         readTracker = readTracker,
         fileHistory = fileHistory,
-        liveFileTracker = liveFileTracker,
         contextWindow = contextWindow,
         folderId = folderId,
         projectRoot = projectRoot,
         rulesMd = rulesMd,
         gitBranch = gitBranch,
-        safetyMode = safetyMode
+        safetyMode = safetyMode,
+        expectsMail = expectsMail
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
@@ -567,13 +640,14 @@ extension (s: AgentState)
   def latestUsage: Option[TokenUsage] = s.compaction.latestUsage
   def lastModel: Option[String] = s.compaction.lastModel
   def emptyResponseRetries: Int = s.execution.emptyResponseRetries
+  def mailUsedThisTurn: Boolean = s.execution.mailUsedThisTurn
+  def mailReminders: Int = s.execution.mailReminders
   def pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = s.execution.interaction.flatMap(_.pendingAskUser)
 
   def pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] =
     s.execution.interaction.flatMap(_.pendingPermission)
   def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
   def fileHistory: Option[nebflow.core.tools.FileHistory] = s.session.fileHistory
-  def liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = s.session.liveFileTracker
   def contextWindow: Int = s.session.contextWindow
   def askMode: Option[String] = s.session.askMode
   def language: Option[String] = s.session.language
@@ -582,6 +656,7 @@ extension (s: AgentState)
   def folderId: Option[String] = s.session.folderId
   def gitBranch: Option[String] = s.session.gitBranch
   def safetyMode: String = s.session.safetyMode
+  def expectsMail: Boolean = s.session.expectsMail
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)
@@ -590,7 +665,16 @@ extension (s: AgentState)
   def withMessages(msgs: List[Message]): AgentState = s.copy(execution = s.execution.copy(messages = msgs))
   def withStatus(st: AgentStatus): AgentState = s.copy(execution = s.execution.copy(status = st))
   def withTurnIdx(idx: Int): AgentState = s.copy(execution = s.execution.copy(turnIdx = idx))
+
+  def withTurnStart(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(turnStartMessageCount = count))
   def withCurrentTurnId(id: Long): AgentState = s.copy(execution = s.execution.copy(currentTurnId = id))
+
+  def withMailUsedThisTurn(b: Boolean): AgentState =
+    s.copy(execution = s.execution.copy(mailUsedThisTurn = b))
+
+  def withMailReminders(n: Int): AgentState =
+    s.copy(execution = s.execution.copy(mailReminders = n))
 
   def withInteraction(interaction: Option[InteractionState]): AgentState =
     s.copy(execution = s.execution.copy(interaction = interaction))
@@ -617,6 +701,18 @@ extension (s: AgentState)
   def withContextWindow(window: Int): AgentState = s.copy(session = s.session.copy(contextWindow = window))
   def withAskMode(mode: Option[String]): AgentState = s.copy(session = s.session.copy(askMode = mode))
   def withLanguage(lang: Option[String]): AgentState = s.copy(session = s.session.copy(language = lang))
+  def mailTurnStart: Option[Int] = s.session.mailTurnStart
+  def mailTurnCount: Int = s.session.mailTurnCount
+  def withMailTurnStart(idx: Option[Int]): AgentState = s.copy(session = s.session.copy(mailTurnStart = idx))
+  def withMailTurnCount(count: Int): AgentState = s.copy(session = s.session.copy(mailTurnCount = count))
+  def lastDreamAt: Option[Long] = s.session.lastDreamAt
+  def lastDreamMessageCount: Int = s.session.lastDreamMessageCount
+  def withLastDreamAt(ts: Long): AgentState = s.copy(session = s.session.copy(lastDreamAt = Some(ts)))
+
+  def withLastDreamMessageCount(count: Int): AgentState =
+    s.copy(session = s.session.copy(lastDreamMessageCount = count))
+  def lastExperienceAt: Option[Long] = s.session.lastExperienceAt
+  def withLastExperienceAt(ts: Long): AgentState = s.copy(session = s.session.copy(lastExperienceAt = Some(ts)))
 
   def withPendingCompaction(job: Option[CompactionJob]): AgentState =
     s.copy(compaction = s.compaction.copy(pendingJob = job))

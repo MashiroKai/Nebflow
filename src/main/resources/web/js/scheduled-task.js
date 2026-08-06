@@ -14,6 +14,42 @@ let tasks = [];
 let isCreating = false;
 let panelOpen = false;
 
+// ── Persistence ────────────────────────────────────────────────────────
+// Cache tasks per-session in localStorage so the panel shows instantly
+// on page reload or session switch, before the WS response arrives.
+const TASKS_CACHE_PREFIX = 'nebflow_tasks_';
+const PANEL_OPEN_KEY = 'nebflow_reminder_panel_open';
+
+function loadCachedTasks(sessionId) {
+  if (!sessionId) return [];
+  try {
+    const raw = localStorage.getItem(TASKS_CACHE_PREFIX + sessionId);
+    return raw ? JSON.parse(raw) : [];
+  } catch (_) { return []; }
+}
+
+function saveCachedTasks(sessionId, taskList) {
+  if (!sessionId) return;
+  try {
+    localStorage.setItem(TASKS_CACHE_PREFIX + sessionId, JSON.stringify(taskList));
+  } catch (_) {}
+}
+
+function loadPanelOpen() {
+  try { return localStorage.getItem(PANEL_OPEN_KEY) === 'true'; }
+  catch (_) { return false; }
+}
+
+function savePanelOpen(open) {
+  try { localStorage.setItem(PANEL_OPEN_KEY, open ? 'true' : 'false'); }
+  catch (_) {}
+}
+
+function clearCachedTasks(sessionId) {
+  if (!sessionId) return;
+  try { localStorage.removeItem(TASKS_CACHE_PREFIX + sessionId); } catch (_) {}
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function $(sel) { return document.querySelector(sel); }
@@ -47,9 +83,9 @@ function pendingCount() {
 }
 
 function defaultTriggerAt() {
-  // Always recalculate from NOW to avoid stale past times
+  // 1-hour from now, rounded UP to the next minute.
   const d = new Date(Date.now() + 3600000);
-  d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5, 0, 0);
+  d.setSeconds(0, 0);
   return d;
 }
 
@@ -67,21 +103,33 @@ function escapeHtml(str) {
 // ── Badge ──────────────────────────────────────────────────────────────
 
 function updateBadge() {
-  return;
+  const btn = $('#reminder-btn');
+  if (!btn) return;
+  let badge = btn.querySelector('.reminder-badge');
+  const count = pendingCount();
+  if (count > 0) {
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'reminder-badge';
+      btn.appendChild(badge);
+    }
+    badge.textContent = count > 9 ? '9+' : count;
+  } else if (badge) {
+    badge.remove();
+  }
 }
 
 // ── Render ─────────────────────────────────────────────────────────────
 
 function renderList() {
-  const body = $('#schedule-list');
+  const body = $('#reminder-panel .reminder-panel-body');
   if (!body) return;
 
   const pending = tasks.filter(t => !t.triggered);
-  const triggered = tasks.filter(t => t.triggered);
 
   // Update header count
-  const countEl = $('.schedule-count');
-  if (countEl) countEl.textContent = pending.length > 0 ? t('task.pendingCount', { count: pending.length }) : '';
+  const countEl = $('#reminder-panel .reminder-panel-count');
+  if (countEl) countEl.textContent = pending.length > 0 ? pending.length : '';
 
   // Clear and rebuild
   body.innerHTML = '';
@@ -90,7 +138,6 @@ function renderList() {
     body.appendChild(buildEmptyState());
   } else {
     for (const r of pending) body.appendChild(buildRow(r, false));
-    for (const r of triggered.slice(0, 3)) body.appendChild(buildRow(r, true));
   }
 
   // Create form (always at bottom)
@@ -126,6 +173,7 @@ function buildRow(r, isTriggered) {
   const row = document.createElement('div');
   row.className = 'reminder-row' + (isTriggered ? ' triggered' : '');
   if (!isTriggered && isOverdue(r)) row.classList.add('overdue');
+  if (r.enabled === false) row.classList.add('disabled');
   row.dataset.id = r.id;
 
   // Circle button
@@ -144,7 +192,7 @@ function buildRow(r, isTriggered) {
     });
   }
 
-  // Content area — single line
+  // Content area
   const content = document.createElement('div');
   content.className = 'reminder-row-content';
 
@@ -152,13 +200,15 @@ function buildRow(r, isTriggered) {
   textSpan.className = 'reminder-row-text';
   textSpan.textContent = r.content;
 
+  // Time info: show next trigger + last triggered when available
   const timeSpan = document.createElement('span');
   timeSpan.className = 'reminder-row-time';
   if (isTriggered) {
     timeSpan.textContent = t('task.triggered') + ' ' + formatTriggerTime(r.triggerAt);
   } else {
-    timeSpan.textContent = formatTriggerTime(r.triggerAt);
-    if (isOverdue(r)) {
+    const nextTime = r.nextTrigger || r.triggerAt;
+    timeSpan.textContent = formatTriggerTime(nextTime);
+    if (isOverdue({ triggered: false, triggerAt: nextTime })) {
       const tag = document.createElement('span');
       tag.className = 'reminder-overdue-tag';
       tag.textContent = t('task.overdue');
@@ -169,10 +219,41 @@ function buildRow(r, isTriggered) {
   content.appendChild(textSpan);
   content.appendChild(timeSpan);
 
+  // Last triggered sub-text (if available)
+  if (r.lastTriggered) {
+    const lastEl = document.createElement('div');
+    lastEl.className = 'reminder-row-last';
+    lastEl.textContent = t('task.lastTriggered') + ' ' + formatTriggerTime(r.lastTriggered);
+    content.appendChild(lastEl);
+  }
+
   row.appendChild(circle);
   row.appendChild(content);
+
+  // Toggle switch (enabled/disabled) — only for non-triggered tasks
+  if (!isTriggered) {
+    const toggle = document.createElement('button');
+    toggle.className = 'reminder-toggle' + (r.enabled !== false ? ' on' : '');
+    toggle.title = r.enabled !== false ? t('task.enabled') : t('task.disabled');
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleTask(r.id, r.enabled === false);
+    });
+    row.appendChild(toggle);
+  }
+
   return row;
 }
+
+function toggleTask(id, enable) {
+  if (!state.activeSessionId) return;
+  // Optimistic UI update
+  tasks = tasks.map(t => t.id === id ? { ...t, enabled: enable } : t);
+  renderList();
+  // Backend toggles automatically based on id — no need to send enabled state
+  sendWs({ type: 'toggleScheduledTask', sessionId: state.activeSessionId, id });
+}
+
 
 function buildInlineCreate() {
   const wrap = document.createElement('div');
@@ -225,18 +306,32 @@ function buildInlineCreate() {
 // ── Actions ────────────────────────────────────────────────────────────
 
 function openPanel() {
+  const panel = $('#reminder-panel');
+  if (!panel) return;
+  panelOpen = true;
+  isCreating = false;
+  panel.classList.add('open');
+  savePanelOpen(true);
+
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+
   if (state.activeSessionId) {
     sendWs({ type: 'listScheduledTasks', sessionId: state.activeSessionId });
   }
-  renderList();
 }
 
 function closePanel() {
-  // No-op: schedule is always visible in sidebar
+  const panel = $('#reminder-panel');
+  if (!panel) return;
+  panelOpen = false;
+  isCreating = false;
+  panel.classList.remove('open');
+  savePanelOpen(false);
 }
 
 function togglePanel() {
-  // No-op: schedule is always visible in sidebar
+  if (panelOpen) closePanel();
+  else openPanel();
 }
 
 function startInlineCreate() {
@@ -267,10 +362,12 @@ function saveInlineTask() {
     return;
   }
 
-  // If time is in the past, auto-bump to 5 min from now
+  // If time is within 1 minute of now, auto-bump to 2 min from now.
+  // This prevents race conditions where a near-future time expires by the
+  // time the WS message round-trips to the server.
   const now = Date.now();
-  const effectiveTriggerAt = triggerAt <= now
-    ? (() => { const d = new Date(now + 300000); d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5, 0, 0); return d.getTime(); })()
+  const effectiveTriggerAt = triggerAt <= now + 60000
+    ? now + 120000
     : triggerAt;
 
   sendWs({
@@ -291,6 +388,7 @@ function saveInlineTask() {
     triggeredAt: null,
     referencePath: null
   });
+  if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
   isCreating = false;
   renderList();
   updateBadge();
@@ -307,12 +405,14 @@ function deleteTask(id) {
     setTimeout(() => {
       sendWs({ type: 'deleteScheduledTask', sessionId: state.activeSessionId, id: id });
       tasks = tasks.filter(t => t.id !== id);
+      saveCachedTasks(state.activeSessionId, tasks);
       renderList();
       updateBadge();
     }, 350);
   } else {
     sendWs({ type: 'deleteScheduledTask', sessionId: state.activeSessionId, id: id });
     tasks = tasks.filter(t => t.id !== id);
+    saveCachedTasks(state.activeSessionId, tasks);
     renderList();
     updateBadge();
   }
@@ -322,6 +422,7 @@ function deleteTask(id) {
 
 onMessage('scheduledTaskList', (msg) => {
   tasks = msg.tasks || [];
+  if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
   renderList();
   updateBadge();
 });
@@ -339,6 +440,14 @@ onMessage('scheduledTaskDeleted', (msg) => {
   updateBadge();
 });
 
+onMessage('scheduledTaskToggled', (msg) => {
+  // Server confirmed toggle — update local state
+  tasks = tasks.map(t => t.id === msg.id ? { ...t, enabled: msg.enabled } : t);
+  if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
+  renderList();
+  updateBadge();
+});
+
 onMessage('scheduledTaskTriggered', (msg) => {
   // Show persistent notification regardless of active session, so it survives session switches
   if (msg.task && msg.task.content) {
@@ -346,11 +455,9 @@ onMessage('scheduledTaskTriggered', (msg) => {
   }
 
   if (msg.sessionId === state.activeSessionId) {
-    tasks = tasks.map(t =>
-      t.id === (msg.task && msg.task.id)
-        ? { ...t, triggered: true, triggeredAt: Date.now() }
-        : t
-    );
+    // Remove the triggered task from the list immediately
+    tasks = tasks.filter(t => t.id !== (msg.task && msg.task.id));
+    if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
     renderList();
     updateBadge();
 
@@ -390,8 +497,17 @@ onMessage('scheduledTaskTriggered', (msg) => {
 // ── Public Init ────────────────────────────────────────────────────────
 
 export function initScheduledTask() {
-  // "+" button in schedule header
-  const createBtn = $('#schedule-add-btn');
+  // Header clock button — toggle panel
+  const reminderBtn = $('#reminder-btn');
+  if (reminderBtn) {
+    reminderBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePanel();
+    });
+  }
+
+  // "+" button in panel header
+  const createBtn = $('#reminder-create-btn');
   if (createBtn) {
     createBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -403,8 +519,8 @@ export function initScheduledTask() {
     });
   }
 
-  // Body click: click empty area to create/save
-  const body = $('#schedule-list');
+  // Panel body click: click empty area to create/save
+  const body = $('#reminder-panel .reminder-panel-body');
   if (body) {
     body.addEventListener('click', (e) => {
       if (e.target.closest('button, input, a, .reminder-row')) return;
@@ -413,19 +529,50 @@ export function initScheduledTask() {
     });
   }
 
+  // Outside click: close panel
+  document.addEventListener('click', (e) => {
+    const panel = $('#reminder-panel');
+    if (panel && panelOpen && !panel.contains(e.target) && !e.target.closest('#reminder-btn')) {
+      closePanel();
+    }
+  });
+
+  // Restore panel open state from last session
+  if (loadPanelOpen()) {
+    const panel = $('#reminder-panel');
+    if (panel) {
+      panelOpen = true;
+      panel.classList.add('open');
+    }
+  }
+
   // Auto-load tasks for active session
   if (state.activeSessionId) {
+    // Show cached tasks instantly, then refresh from server
+    tasks = loadCachedTasks(state.activeSessionId);
+    renderList();
+    updateBadge();
     sendWs({ type: 'listScheduledTasks', sessionId: state.activeSessionId });
+  } else {
+    // No active session yet — still render cached tasks for when session arrives
+    tasks = loadCachedTasks(state.activeSessionId) || [];
+    renderList();
+    updateBadge();
   }
 }
 
 /** Called when session switches — refresh task list */
 export function refreshScheduledTasks(sessionId) {
-  tasks = [];
   isCreating = false;
   if (sessionId) {
+    // Show cached tasks instantly, then refresh from server
+    tasks = loadCachedTasks(sessionId);
+    renderList();
+    updateBadge();
     sendWs({ type: 'listScheduledTasks', sessionId: sessionId });
   } else {
+    tasks = [];
     renderList();
+    updateBadge();
   }
 }

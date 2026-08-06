@@ -103,6 +103,33 @@ docs/
 
 ## Development Log
 
+### 2026-07-25: Project-level config via projects directory
+
+**Feature:** Project-level rules, agents, and flows are loaded from the existing projects directory (`~/.nebflow/agents/<agent>/projects/<project>/`), NOT from the project folder on disk. This keeps all Nebflow config centralized in `~/.nebflow/`.
+
+**Structure** (`~/.nebflow/projects/<project>/`):
+- `NEBFLOW.md` — Project rules (injected into system prompt as "Project Rules", merged with personal folder rules)
+- `agents/<name>/` — Project agent definitions (override global `~/.nebflow/agents/` on name conflict)
+- `flows/<name>/` — Project flow definitions (merged with global flows, project takes priority)
+
+**Loading priority:** Projects dir > Global `~/.nebflow/`. The projects dir is computed from `folderId`, independent of `projectRoot` (which points to the actual project on disk).
+
+**Changes:**
+- `ContextRefresher.scala` — `resolveProjectsDir()` computes the projects dir from folderId, loads `NEBFLOW.md` + agent overrides from there
+- `AgentLibrary.scala` — Extracted `loadFromDir()` for reuse
+
+### 2026-08-03: Architecture refactor — Team/Flow entity system
+
+**Major changes:**
+- **Removed YAML format**: All flows now use `~/.nebflow/flows/<name>.json` (DAG format). Deleted `FlowDefLoader`, `FlowDef`/`FlowAgentDef` types, all `flow.yaml` directories. `EntityLoader` is the single source of truth.
+- **Team/Flow/Agent separation**: `~/.nebflow/teams/<name>.json` (TeamDef), `~/.nebflow/flows/<name>.json` (FlowDagDef), `~/.nebflow/agents/<name>/agent.json` (AgentDef). `EntityLoader` loads/saves all three.
+- **Mail three-way dispatch**: `MailTool.deliverToShortName` resolves address as: (1) team name → load team.json → forward to lead, (2) agent name → FlowMembership.resolveSessionId, (3) flow name → spawn FlowDagRunner.
+- **Removed Dispatch tool**: Agents cannot be called directly. Flow via Mail, Team via Mail.
+- **Auto-mount teams on startup**: `FlowTreeActor.restoreFlows` scans `~/.nebflow/teams/*.json` and mounts all teams.
+- **Frontend tab split**: Teams and Flows are separate Canvas tabs (not sub-tabs). Flows tab auto-opens when running flows are detected.
+- **RunningFlowRegistry**: Tracks running DAG instances for frontend progress visualization. `cleanupStale` removes completed flows after 5 minutes.
+- **FlowDagRunner**: One-shot actor spawned by MailTool for flow name dispatch. Executes DAG nodes synchronously, Mails result back to caller.
+
 ### 2026-07-19: Proactive learning instructions in system-prefix.md
 
 **Problem:** Nebflow stores all user input in session files, but this data was never used to learn user preferences. The 4-level memory system existed but relied entirely on the agent's own initiative to write — without explicit guidance on what signals to capture.

@@ -1,6 +1,6 @@
 /**
- * NebLink — Tailscale P2P device discovery.
- * No login, no relay server. Tailscale is the trust boundary.
+ * NebLink — P2P device discovery via NebLink Server.
+ * Device pairing: nebflow.space login → auto-configure NebLink.
  */
 import state from './state.js';
 import { escapeHtml } from './utils.js';
@@ -8,10 +8,33 @@ import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
 import { openDropbox } from './dropbox.js';
 
+/** Transient success banner shown after NebLink pairing completes. */
+function showLoginSuccessBanner(message) {
+  const banner = document.createElement('div');
+  banner.textContent = message;
+  banner.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);background:var(--color-surface,rgba(20,25,35,0.92));color:var(--color-text);padding:8px 16px;border-radius:8px;z-index:1000;font-size:13px;box-shadow:0 2px 12px rgba(0,0,0,0.15);border:1px solid var(--glass-border);transition:opacity 0.3s;';
+  document.body.appendChild(banner);
+  setTimeout(() => { banner.style.opacity = '0'; }, 2700);
+  setTimeout(() => banner.remove(), 3000);
+}
+
 let neblinkState = {
   device: null,
-  peers: []
+  peers: [],
+  paired: false,
+  pairing: false,
+  pairError: '',
+  enrollMsg: '',
+  // Device-flow state: 'idle' | 'waiting' | 'success'
+  flowState: 'idle',
+  userCode: '',
+  deviceCode: ''
 };
+
+/** Read-only accessor for the current NebLink state (used by the Activity Bar). */
+export function getNeblinkState() {
+  return neblinkState;
+}
 
 // Per-device remote update state: 'idle' | 'select' | 'updating' | 'done' | 'error'
 let deviceUpdateState = {};
@@ -37,7 +60,8 @@ export async function fetchNeblinkStatus() {
       deviceName: d.name,
       platform: d.platform,
       capabilities: d.capabilities || {},
-      userDescription: d.userDescription || ''
+      userDescription: d.userDescription || '',
+      avatarUrl: d.avatarUrl || ''
     } : null;
     neblinkState.peers = data.peers || [];
   } catch (e) {
@@ -51,10 +75,105 @@ export async function refreshNeblink() {
   _rerender?.();
 }
 
+// ---- Pairing flow ----
+
+/** Check URL for pairing redirect from nebflow.space/connect */
+export function checkPairingRedirect() {
+  const params = new URLSearchParams(window.location.search);
+  const server = params.get('server');
+  const networkId = params.get('networkId');
+  const secret = params.get('secret');
+  // Optional account avatar URL, if nebflow.space includes it on the redirect.
+  const avatar = params.get('avatar');
+
+  if (server && networkId && secret) {
+    // Capture the auth token BEFORE wiping the URL. On the very first load
+    // after the nebflow.space redirect, ws.js connect() (which stores the
+    // ?token= URL param into localStorage) has NOT run yet, so localStorage is
+    // still empty. Read the token from the URL first, fall back to localStorage
+    // (subsequent pairing attempts). The backend /api/neblink/pair route is
+    // guarded by checkAuth, which only accepts Authorization: Bearer or a
+    // ?token= query param — without this header the POST returns Forbidden and
+    // login silently fails ("登陆了都没反应").
+    const token = params.get('token') || getAuthToken();
+    // Clean URL — strip all params (incl. the secret/token) from history.
+    const cleanUrl = window.location.origin + window.location.pathname;
+    window.history.replaceState({}, document.title, cleanUrl);
+
+    // Send pairing config to backend
+    neblinkState.pairing = true;
+    _rerender?.();
+    const pairBody = { server, networkId, secret };
+    if (avatar) pairBody.avatar = avatar;
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    fetch('/api/neblink/pair', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(pairBody)
+    }).then(r => r.json()).then(data => {
+      if (data.ok) {
+        neblinkState.pairing = false;
+        neblinkState.paired = true;
+        neblinkState.pairError = '';
+        showLoginSuccessBanner('登录成功，设备已连接');
+        setTimeout(() => fetchNeblinkStatus().then(() => _rerender?.()), 1500);
+      } else {
+        neblinkState.pairing = false;
+        const err = data.error || '配对失败';
+        neblinkState.pairError = err === 'Unauthorized'
+          ? '认证失败。请从 Nebflow 终端重新打开浏览器页面，然后重试登录。'
+          : err;
+      }
+      _rerender?.();
+    }).catch(e => {
+      neblinkState.pairing = false;
+      neblinkState.pairError = '网络错误: ' + e.message;
+      _rerender?.();
+    });
+    return true;
+  }
+  return false;
+}
+
 // ---- Settings section HTML ----
 export function neblinkSettingsHTML() {
   const local = neblinkState.device || {};
   const peers = neblinkState.peers || [];
+
+  // If pairing in progress
+  if (neblinkState.pairing) {
+    return `<div class="neblink-login-section">
+      <div class="neblink-pairing-status">${t('neblink.pairing') || '正在配对...'}</div>
+    </div>`;
+  }
+
+  // If no device configured — show device-flow login button
+  if (!local.deviceId) {
+    const pairErr = neblinkState.pairError
+      ? `<div class="neblink-error">${escapeHtml(neblinkState.pairError)}</div>` : '';
+    // Device-flow states: idle | waiting (showing user code) | success
+    const flowState = neblinkState.flowState || 'idle';
+    const userCode = neblinkState.userCode || '';
+    let flowUI = '';
+    if (flowState === 'waiting') {
+      flowUI = `
+        <div style="margin-top:14px;padding:16px;border:1px solid var(--border,#2d2d4a);border-radius:8px;background:var(--bg,#0f0f17);text-align:center">
+          <div style="font-size:13px;color:var(--text-muted,#8888aa);margin-bottom:8px">在浏览器中完成 GitHub 授权以连接此设备</div>
+          <div style="font-family:'SF Mono','Fira Code',monospace;font-size:24px;font-weight:600;color:var(--success,#4ecdc4);letter-spacing:2px;margin-bottom:8px">${escapeHtml(userCode)}</div>
+          <div style="font-size:12px;color:var(--text-muted,#8888aa)">授权码（已在新标签页打开）</div>
+          <div style="margin-top:10px;font-size:12px;color:var(--text-muted,#8888aa)" id="neblink-flow-waiting">等待授权完成...</div>
+        </div>`;
+    } else if (flowState === 'success') {
+      flowUI = `<div class="neblink-error" style="color:var(--success,#4ecdc4)">✓ 连接成功！设备已加入网络。</div>`;
+    }
+    return `<div class="neblink-login-section">
+      <div class="neblink-login-hint">${t('neblink.loginHint') || '登录后，所有设备自动互相可见'}</div>
+      ${pairErr}
+      <button class="neblink-login-btn" id="neblink-device-flow-btn">${t('neblink.login') || '登录连接设备'}</button>
+      ${flowUI}
+    </div>`;
+  }
 
   const allDevices = [
     { ...local, isLocal: true },
@@ -91,25 +210,29 @@ export function neblinkSettingsHTML() {
 
     const did = escapeHtml(d.deviceId || '');
     const descVal = escapeHtml(d.userDescription || '');
+    // Display name: prefer the user-set description, fall back to the device's
+    // host name. Raw device names look technical; the friendly name reads better.
+    const displayName = escapeHtml(d.userDescription || d.deviceName || t('neblink.unknownDevice') || 'Unknown');
+    const platformLabel = platformDisplay(d.platform);
 
     return `
       <div class="neblink-peer">
-        <span class="neblink-peer-dot dot-on"></span>
+        <span class="neblink-peer-icon">${platformLabel.icon}</span>
         <span class="neblink-peer-name dropbox-clickable"
           data-device-id="${did}"
           data-device-name="${escapeHtml(d.deviceName || '')}"
           data-platform="${escapeHtml(d.platform || '')}"
           data-desc="${descVal}"
-          data-is-local="${d.isLocal ? '1' : '0'}">${escapeHtml(d.deviceName || d.platform || 'Unknown')}</span>
+          data-is-local="${d.isLocal ? '1' : '0'}">${displayName}</span>
         ${d.isLocal
           ? '<span class="neblink-peer-status local-tag">' + t('neblink.thisDevice') + '</span>'
-          : '<span class="neblink-peer-status">' + t('neblink.connected') + '</span>'}
+          : '<span class="neblink-peer-status">' + platformLabel.text + '</span>'}
         ${updateUI}
       </div>`;
   }).join('');
 
   const peerHint = peers.length === 0
-    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure Tailscale is running on both device.'}</div>`
+    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure NebLink Server is configured on both devices.'}</div>`
     : '';
 
   return `
@@ -120,9 +243,126 @@ export function neblinkSettingsHTML() {
     </div>`;
 }
 
+/** Map a raw platform string (e.g. "macos", "windows") to a friendly label +
+ *  inline SVG icon for the device row. Falls back to a generic device icon. */
+function platformDisplay(platform) {
+  const p = (platform || '').toLowerCase();
+  const mac = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M16.36 12.93c.02 2.3 2.02 3.07 2.04 3.08-.02.05-.32 1.1-1.06 2.18-.64.93-1.3 1.86-2.34 1.88-1.02.02-1.35-.6-2.52-.6-1.17 0-1.53.58-2.5.62-1 .04-1.77-1-2.42-1.93-1.32-1.9-2.33-5.39-.97-7.74.67-1.17 1.88-1.91 3.19-1.93.99-.02 1.92.66 2.52.66.6 0 1.74-.82 2.93-.7.5.02 1.9.2 2.8 1.52-.07.05-1.67.98-1.65 2.92M14.6 5.4c.55-.67.92-1.6.82-2.52-.79.03-1.75.53-2.32 1.2-.51.59-.96 1.53-.84 2.44.88.07 1.79-.45 2.34-1.12"/></svg>';
+  const win = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M3 5.48 10.4 4.4v7.1H3V5.48m0 13.04V13.4h7.4v7.1L3 18.52M11.4 4.26 21 3v8.5H11.4V4.26m0 15.48V13.4H21V21l-9.6-1.26"/></svg>';
+  const linux = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M12.5 2c-1.3 0-2 1.1-2 2.4 0 .4.1.8.2 1.1-.5.5-1 1.4-1.4 2.5-.4 1.2-1 2.2-1.5 2.7-.5.4-1 .9-1.3 1.6-.3.7-.4 1.9.3 2.7-.3.5-.6 1.4-.3 2.3.2.7.7 1.2.8 1.7.1.5 0 .9.3 1.3.4.5 1 .5 1.6.3.4.6 1.1.9 1.9.9.9 0 1.6-.4 2-1 .4.2.9.3 1.4.1.8-.3 1.2-1 1.2-1.8 0-.4-.1-.7-.2-1 .3-.4.6-.9.6-1.6 0-.6-.2-1.1-.5-1.5.2-.4.3-.9.1-1.5-.2-.7-.7-1.2-.8-1.7-.1-.5 0-.9-.3-1.3-.4-.5-1-.5-1.6-.3-.4-.6-1.1-.9-1.9-.9-.5 0-.9.1-1.3.3.1-.3.2-.7.2-1.1 0-1.3-.7-2.4-2-2.4"/></svg>';
+  const generic = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="15" height="15"><rect x="3" y="4" width="18" height="12" rx="1"/><path d="M8 20h8M12 16v4"/></svg>';
+  if (p.includes('mac')) return { icon: mac, text: 'macOS' };
+  if (p.includes('win')) return { icon: win, text: 'Windows' };
+  if (p.includes('linux')) return { icon: linux, text: 'Linux' };
+  return { icon: generic, text: platform || 'Device' };
+}
+
+// ---- Device-flow polling ----
+
+/**
+ * Poll the local gateway's /api/neblink/device-flow/poll until the device is
+ * approved (or expired/errored). On success, the Scala backend persists the
+ * credential and hot-swaps the client — the UI just needs to refresh state.
+ */
+let _flowPollTimer = null;
+function pollDeviceFlow(deviceCode, interval, expiresInSeconds) {
+  // Cancel any existing poll.
+  if (_flowPollTimer) clearTimeout(_flowPollTimer);
+  const deadline = Date.now() + expiresInSeconds * 1000;
+
+  const poll = async () => {
+    if (Date.now() > deadline) {
+      neblinkState.flowState = 'idle';
+      neblinkState.pairError = '授权超时，请重试';
+      neblinkState.userCode = '';
+      neblinkState.deviceCode = '';
+      if (_rerender) _rerender();
+      return;
+    }
+    try {
+      const resp = await fetch('/api/neblink/device-flow/poll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
+        body: JSON.stringify({ deviceCode })
+      });
+      const data = await resp.json();
+      if (resp.ok && data.ok) {
+        // Success — device enrolled, client hot-swapped.
+        neblinkState.flowState = 'success';
+        neblinkState.pairError = '';
+        neblinkState.userCode = '';
+        neblinkState.deviceCode = '';
+        if (_rerender) _rerender();
+        // Refresh neblink status after a short delay so the new device shows up.
+        setTimeout(() => fetchNeblinkStatus(), 1500);
+        return;
+      }
+      if (data.error === 'authorization_pending') {
+        // Keep polling.
+        _flowPollTimer = setTimeout(poll, interval * 1000);
+        return;
+      }
+      // Other error (expired, denied, etc.)
+      neblinkState.flowState = 'idle';
+      neblinkState.pairError = data.error || '授权失败';
+      neblinkState.userCode = '';
+      neblinkState.deviceCode = '';
+      if (_rerender) _rerender();
+    } catch (e) {
+      neblinkState.flowState = 'idle';
+      neblinkState.pairError = '网络错误: ' + e.message;
+      neblinkState.userCode = '';
+      neblinkState.deviceCode = '';
+      if (_rerender) _rerender();
+    }
+  };
+  _flowPollTimer = setTimeout(poll, interval * 1000);
+}
+
 // ---- Bind events after HTML insert ----
 export function bindNeblinkEvents(rerender) {
   _rerender = rerender;
+
+  // Device-flow login button — initiates the Tailscale-style authorization
+  // flow: POST /api/neblink/device-flow/start → get userCode + verificationUri
+  // → open browser → poll /api/neblink/device-flow/poll until approved.
+  const flowBtn = document.getElementById('neblink-device-flow-btn');
+  if (flowBtn) {
+    flowBtn.addEventListener('click', async () => {
+      flowBtn.disabled = true;
+      flowBtn.textContent = '...';
+      neblinkState.pairError = '';
+      try {
+        // Start the device flow.
+        const startResp = await fetch('/api/neblink/device-flow/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
+        });
+        const startData = await startResp.json();
+        if (!startResp.ok) {
+          neblinkState.pairError = startData.error || '启动设备流程失败';
+          neblinkState.flowState = 'idle';
+          rerender();
+          return;
+        }
+        // Store the codes and show the waiting UI.
+        neblinkState.deviceCode = startData.deviceCode;
+        neblinkState.userCode = startData.userCode;
+        neblinkState.flowState = 'waiting';
+        // Open the verification URI in a new tab for the user to authorize.
+        if (startData.verificationUri) {
+          window.open(startData.verificationUri, '_blank');
+        }
+        rerender();
+        // Start polling.
+        pollDeviceFlow(startData.deviceCode, startData.interval || 3, startData.expiresIn || 900);
+      } catch (e) {
+        neblinkState.pairError = '网络错误: ' + e.message;
+        neblinkState.flowState = 'idle';
+        rerender();
+      }
+    });
+  }
 
   // Peer update buttons
   document.querySelectorAll('.neblink-peer-update-btn').forEach(btn => {

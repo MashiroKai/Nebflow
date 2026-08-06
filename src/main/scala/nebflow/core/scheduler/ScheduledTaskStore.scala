@@ -52,6 +52,16 @@ class ScheduledTaskStore(baseDir: os.Path):
       saveTasks(sessionId, updated)
     }
 
+  /** Reschedule a recurring task — bump triggerAt forward, keep triggered=false. */
+  def rescheduleTask(sessionId: String, taskId: String, nextTriggerAt: Long): IO[Unit] =
+    loadTasks(sessionId).flatMap { existing =>
+      val updated = existing.map { t =>
+        if t.id == taskId then t.copy(triggered = false, triggeredAt = None, triggerAt = nextTriggerAt)
+        else t
+      }
+      saveTasks(sessionId, updated)
+    }
+
   /** Get all due (untriggered, past triggerAt) tasks across all sessions. */
   def getAllDueTasks: IO[List[ScheduledTask]] = IO.blocking {
     if !os.exists(baseDir) then Nil
@@ -62,7 +72,7 @@ class ScheduledTaskStore(baseDir: os.Path):
         .toList
         .flatMap { f =>
           decode[List[ScheduledTask]](os.read(f)) match
-            case Right(list) => list.filter(t => !t.triggered && t.triggerAt <= now)
+            case Right(list) => list.filter(t => !t.triggered && t.triggerAt <= now && t.enabled)
             case Left(_) => Nil
         }
     end if
@@ -86,5 +96,16 @@ class ScheduledTaskStore(baseDir: os.Path):
   /** Get pending (untriggered) task count for a session. */
   def getPendingCount(sessionId: String): IO[Int] =
     loadTasks(sessionId).map(_.count(!_.triggered))
+
+  /** Toggle the enabled state of a task. Returns the updated enabled value. */
+  def toggleTask(sessionId: String, taskId: String): IO[Boolean] =
+    loadTasks(sessionId).flatMap { existing =>
+      val updated = existing.map { t =>
+        if t.id == taskId then t.copy(enabled = !t.enabled)
+        else t
+      }
+      saveTasks(sessionId, updated) *>
+        IO.pure(updated.find(_.id == taskId).map(_.enabled).getOrElse(true))
+    }
 
 end ScheduledTaskStore

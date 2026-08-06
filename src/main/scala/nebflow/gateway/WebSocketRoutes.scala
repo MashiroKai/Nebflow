@@ -9,6 +9,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorSystem as NebulaActorSystem
 import nebflow.agent.*
+import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.skill.SkillService
@@ -39,7 +40,8 @@ class WebSocketRoutes(
   wsHub: WsHub,
   contextWindow: Int = Defaults.ContextWindow,
   sharedResources: SharedResources,
-  mcpManager: McpManager
+  mcpManager: McpManager,
+  sttService: Option[SttService] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
   private val nebulaSystem = sharedResources.actorSystem
@@ -47,6 +49,37 @@ class WebSocketRoutes(
   /** Map of sessionId -> root AgentActor ref. Concurrent-safe via Ref. */
   private val rootAgents: Ref[IO, Map[String, nebflow.actor.ActorRef[AgentCommand]]] =
     Ref.unsafe(Map.empty)
+
+  /** Resolve agent definition: global agent → flow agent from disk → Nebula fallback. */
+  private def resolveAgentDef(
+    sessionId: String,
+    metaOpt: Option[nebflow.shared.SessionMeta],
+    sharedResources: SharedResources
+  ): IO[AgentDef] =
+    metaOpt.flatMap(_.agentName) match
+      case Some(agentName) =>
+        sharedResources.agentLibrary.get(agentName).flatMap {
+          case Some(defn) => IO.pure(defn)
+          case None =>
+            metaOpt.flatMap(_.flowName) match
+              case Some(fn) =>
+                nebflow.core.flow.FlowAgentActivator.resolveAgentFromDisk(fn, agentName, sharedResources).flatMap {
+                  case Some(defn) => IO.pure(defn)
+                  case None => nebulaFallback(agentName)
+                }
+              case None => nebulaFallback(agentName)
+        }
+      case None =>
+        sharedResources.agentLibrary.get("Nebula").flatMap {
+          case Some(d) => IO.pure(d)
+          case None => IO.raiseError(new RuntimeException("No default agent available"))
+        }
+
+  private def nebulaFallback(agentName: String): IO[AgentDef] =
+    sharedResources.agentLibrary.get("Nebula").flatMap {
+      case Some(d) => IO.pure(d)
+      case None => IO.raiseError(new RuntimeException(s"Agent not found: $agentName, and no default agent"))
+    }
 
   /** Get or create a root AgentActor for the given session. Idempotent. */
   private def ensureRootAgent(sessionId: String): IO[nebflow.actor.ActorRef[AgentCommand]] =
@@ -59,46 +92,23 @@ class WebSocketRoutes(
           val agentIo = for
             history <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
             metaOpt <- sharedResources.sessionStore.getSessionMeta(sessionId)
-            agentDef <- metaOpt.flatMap(_.agentName) match
-              case Some(agentName) =>
-                sharedResources.agentLibrary.get(agentName).flatMap {
-                  case Some(defn) => IO.pure(defn)
-                  case None =>
-                    sharedResources.agentLibrary.get("Nebula").flatMap {
-                      case Some(d) => IO.pure(d)
-                      case None =>
-                        IO.raiseError(new RuntimeException(s"Agent not found: $agentName, and no default agent"))
-                    }
-                }
-              case None =>
-                sharedResources.agentLibrary.get("Nebula").flatMap {
-                  case Some(d) => IO.pure(d)
-                  case None => IO.raiseError(new RuntimeException("No default agent available"))
-                }
+            agentDef <- resolveAgentDef(sessionId, metaOpt, sharedResources)
             readTracker <- nebflow.core.tools.ReadTracker.create
             fileHistory <- nebflow.core.tools.FileHistory.create()
-            liveFileTracker <- nebflow.core.tools.LiveFileTracker.create
             modelOverrides <- sharedResources.sessionModelOverrides.get
             contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
             // Resolve folder-level projectRoot and inherited rules
             folderId = metaOpt.flatMap(_.folderId)
             resolvedProjectRoot <- sharedResources.sessionStore.resolveProjectRoot(folderId)
             agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-            // Compute effective projectRoot: folder setting → agent workspace default
+            // Compute effective projectRoot: folder setting → unified ~/.nebflow/projects
             effectiveProjectRoot <- resolvedProjectRoot match
               case Some(pr) => IO.pure(Some(pr))
               case None =>
-                folderId match
-                  case Some(fid) =>
-                    // Find folder name for default workspace directory
-                    val folderName = sharedResources.sessionStore
-                      .getFolderName(fid)
-                      .getOrElse(fid.take(8))
-                    val defaultPath = PathUtil.dataRoot / "agents" / agentName / "projects" / folderName
-                    IO.blocking {
-                      if !os.exists(defaultPath) then os.makeDir.all(defaultPath)
-                    }.as(Some(defaultPath.toString))
-                  case None => IO.pure(None)
+                val projectsDir = PathUtil.dataRoot / "projects"
+                IO.blocking {
+                  if !os.exists(projectsDir) then os.makeDir.all(projectsDir)
+                }.as(Some(projectsDir.toString))
             // Resolve inherited rules from folder chain
             resolvedRules = folderId.map { fid =>
               nebflow.service.RulesStore.resolveInheritedRules(
@@ -118,7 +128,6 @@ class WebSocketRoutes(
                 initialMessages = history,
                 readTracker = Some(readTracker),
                 fileHistory = Some(fileHistory),
-                liveFileTracker = Some(liveFileTracker),
                 contextWindow = contextWindow,
                 projectRoot = effectiveProjectRoot,
                 rulesMd = resolvedRules,
@@ -147,7 +156,10 @@ class WebSocketRoutes(
               }
               .void *>
               rootAgents.update(_ + (sessionId -> ref)) *>
-              initFlowTree(sessionId, ref, pr, safetyMode).start.as(ref)
+              initFlowTree(sessionId, ref, pr, safetyMode)
+                .handleErrorWith(e => logger.error(s"initFlowTree failed for session $sessionId: ${e.getMessage}"))
+                .start
+                .as(ref)
           }
     }
 
@@ -257,7 +269,10 @@ class WebSocketRoutes(
 
           receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
             case WebSocketFrame.Text(text, _) =>
-              handleMessage(text, perConnWsSend)
+              handleMessage(text, perConnWsSend).handleErrorWith { e =>
+                logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
+                IO.unit
+              }
             case _ => IO.unit
           }.onFinalize(
             wsHub.unregister(hubConnId)
@@ -357,7 +372,12 @@ class WebSocketRoutes(
             "woff2",
             "ttf",
             "otf",
-            "pdf"
+            "pdf",
+            "docx",
+            "xlsx",
+            "xlsm",
+            "pptx",
+            "epub"
           )
           if !allowedExt.contains(ext) then BadRequest("File type not allowed")
           else if !java.nio.file.Files.exists(path) || !java.nio.file.Files.isRegularFile(path) then NotFound()
@@ -366,22 +386,42 @@ class WebSocketRoutes(
       end if
 
     case req @ GET -> Root =>
-      StaticFile.fromResource("web/index.html", Some(req)).getOrElseF(NotFound())
+      StaticFile
+        .fromResource("web/index.html", Some(req))
+        .map(_.putHeaders("Cache-Control" -> "no-cache"))
+        .getOrElseF(NotFound())
 
     case req @ GET -> Root / "css" / file =>
-      StaticFile.fromResource(s"web/css/$file", Some(req)).getOrElseF(NotFound())
+      StaticFile
+        .fromResource(s"web/css/$file", Some(req))
+        .map(_.putHeaders("Cache-Control" -> "no-cache"))
+        .getOrElseF(NotFound())
 
     case req @ GET -> Root / "js" / "locales" / file =>
       StaticFile.fromResource(s"web/js/locales/$file", Some(req)).getOrElseF(NotFound())
 
     case req @ GET -> Root / "js" / file =>
       // no-cache: revalidate (Last-Modified) every time so the browser picks up
-      // the rebuilt classpath resource during development instead of serving a
+      // the rebuilt classpath resources during development instead of serving a
       // stale heuristic-cached copy.
       StaticFile
         .fromResource(s"web/js/$file", Some(req))
         .map(_.putHeaders("Cache-Control" -> "no-cache"))
         .getOrElseF(NotFound())
+
+    case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/monaco/") =>
+      // Serve monaco editor files from bundled resources (supports nested paths).
+      // Uses manual path parsing because http4s DSL only matches single path segments.
+      val segs = req.uri.path.segments.map(_.encoded).toList
+      if segs.sizeIs < 3 then NotFound()
+      else
+        val relParts = segs.drop(2) // drop "vendor" and "monaco"
+        // Block path traversal
+        if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+        else
+          val path = relParts.mkString("/")
+          StaticFile.fromResource(s"web/vendor/monaco/$path", Some(req)).getOrElseF(NotFound())
+      end if
 
     case req @ GET -> Root / "vendor" / file =>
       StaticFile.fromResource(s"web/vendor/$file", Some(req)).getOrElseF(NotFound())
@@ -390,8 +430,13 @@ class WebSocketRoutes(
       StaticFile.fromResource(s"web/vendor/fonts/$file", Some(req)).getOrElseF(NotFound())
 
     case req @ GET -> Root / fileName =>
-      val allowed = Set("style.css", "app.js", "favicon.svg", "favicon-32.png", "favicon-16.png", "favicon.ico")
-      if allowed.contains(fileName) then StaticFile.fromResource(s"web/$fileName", Some(req)).getOrElseF(NotFound())
+      val allowed =
+        Set("style.css", "app.js", "favicon.svg", "logo.svg", "favicon-32.png", "favicon-16.png", "favicon.ico")
+      if allowed.contains(fileName) then
+        StaticFile
+          .fromResource(s"web/$fileName", Some(req))
+          .map(_.putHeaders("Cache-Control" -> "no-cache"))
+          .getOrElseF(NotFound())
       else NotFound()
 
     case req @ GET -> Root / "agents" / "manifest.json" =>
@@ -431,6 +476,22 @@ class WebSocketRoutes(
               StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
             else NotFound()
       end if
+
+    case req @ GET -> _ if req.uri.path.renderString.startsWith("/voice-models/") =>
+      // Serve pre-downloaded voice model files from ~/.nebflow/voice-models/
+      // Allows offline Whisper inference without CDN dependency.
+      val segs = req.uri.path.segments.map(_.encoded).toList
+      if segs.sizeIs < 2 then NotFound()
+      else
+        val relParts = segs.drop(1) // drop "voice-models"
+        // Block path traversal
+        if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+        else
+          val modelBase = PathUtil.dataRoot / "voice-models"
+          val filePath = modelBase / os.RelPath(relParts.mkString("/"))
+          if filePath.startsWith(modelBase) && os.exists(filePath) && os.isFile(filePath) then
+            StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+          else NotFound()
   }
 
   private val inputHistoryPath = PathUtil.dataRoot / "input_history.jsonl"
@@ -589,1459 +650,2142 @@ class WebSocketRoutes(
   ): IO[Unit] =
     if text.length > MaxMessageSize then logger.warn(s"Dropping oversized WebSocket message (${text.length} bytes)")
     else
-      parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor.downField("type").as[String].getOrElse("") match
-        case "askUserAnswer" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val hc = json.hcursor
-          (hc.downField("answers").as[List[String]], hc.downField("sessionId").as[String]) match
-            case (Right(answers), Right(askSessionId)) =>
-              val answerText = answers.mkString("\n")
-              sessionStore.appendUiMessages(
-                askSessionId,
-                List(UiMessage.User(answerText, timestamp = System.currentTimeMillis()))
-              ) *>
-                routeToAgent(askSessionId)(ref => ref ! AgentCommand.UserAnswered(answers))
-            case _ => IO.unit
-
-        case "permissionAnswer" =>
-          val approved = parse(text).flatMap(_.hcursor.downField("approved").as[Boolean]).getOrElse(false)
-          val permSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-          logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
-            routeToAgent(permSessionId)(ref => ref ! AgentCommand.PermissionAnswered(approved))
-
-        case "planApprove" =>
-          val planSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-          logger.info(s"Plan approved for session $planSessionId") *>
-            routeToAgent(planSessionId)(ref => ref ! AgentCommand.PlanApproved)
-
-        case "planFeedback" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val fbSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-          val fbText = json.hcursor.downField("text").as[String].getOrElse("")
-          if fbSessionId.nonEmpty && fbText.nonEmpty then
-            logger.info(s"Plan feedback for session $fbSessionId: ${fbText.take(60)}") *>
-              routeToAgent(fbSessionId)(ref => ref ! AgentCommand.PlanFeedback(fbText))
-          else IO.unit
-
-        case "planCancel" =>
-          val cancelSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-          logger.info(s"Plan cancelled for session $cancelSessionId") *>
-            routeToAgent(cancelSessionId)(ref => ref ! AgentCommand.PlanCancelled)
-
-        case "interrupt" =>
-          val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-          logger.info("User interrupted") *> routeToAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
-
-        case "immediateInput" =>
-          val immJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val immSessionId = immJson.hcursor.downField("sessionId").as[String].getOrElse("")
-          val immContent = immJson.hcursor.downField("content").as[String].getOrElse("")
-          if immSessionId.nonEmpty && immContent.nonEmpty then
-            logger.info(s"Immediate input for session $immSessionId (${immContent.length} chars)") *>
-              sessionStore.appendUiMessages(
-                immSessionId,
-                List(UiMessage.User(immContent, Nil, timestamp = System.currentTimeMillis()))
-              ) *>
-              routeToAgent(immSessionId)(ref => ref ! AgentCommand.ImmediateInput(immContent))
-          else IO.unit
-
-        case "command" =>
-          val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
-          command match
-            case "clear" =>
-              val clearSessionId =
-                parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-              logger.info("Session cleared") *>
-                sessionStore.saveMessagesForSession(clearSessionId, Nil) *>
+      val parsed = parse(text).toOption.getOrElse(io.circe.Json.Null)
+      val sessionIdForTracking = parsed.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
+      val msgType = parsed.hcursor.downField("type").as[String].getOrElse("")
+      for
+        _ <- sharedResources.lastWsActivity.set(System.currentTimeMillis())
+        _ <- nebflow.core.UsageTracker.record("ws_message", sessionIdForTracking)
+        _ <- msgType match
+          case "askUserAnswer" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            (hc.downField("answers").as[List[String]], hc.downField("sessionId").as[String]) match
+              case (Right(answers), Right(askSessionId)) =>
+                val answerText = answers.mkString("\n")
                 sessionStore.appendUiMessages(
-                  clearSessionId,
-                  List(UiMessage.System("Context cleared. LLM memory reset.", Some("slash.clearDone")))
+                  askSessionId,
+                  List(UiMessage.User(answerText, timestamp = System.currentTimeMillis()))
                 ) *>
-                sharedResources.taskStore.deleteAll(clearSessionId) *>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "taskListUpdate".asJson,
-                    "tasks" -> io.circe.Json.arr(),
-                    "sessionId" -> clearSessionId.asJson
-                  )
+                  routeToAgent(askSessionId)(ref => ref ! AgentCommand.UserAnswered(answers))
+              case _ => IO.unit
+
+          case "permissionAnswer" =>
+            val approved = parse(text).flatMap(_.hcursor.downField("approved").as[Boolean]).getOrElse(false)
+            val permSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+            logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
+              routeToAgent(permSessionId)(ref => ref ! AgentCommand.PermissionAnswered(approved))
+
+          case "planApprove" =>
+            val planSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+            logger.info(s"Plan approved for session $planSessionId") *>
+              routeToAgent(planSessionId)(ref => ref ! AgentCommand.PlanApproved)
+
+          case "planFeedback" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val fbSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val fbText = json.hcursor.downField("text").as[String].getOrElse("")
+            if fbSessionId.nonEmpty && fbText.nonEmpty then
+              logger.info(s"Plan feedback for session $fbSessionId: ${fbText.take(60)}") *>
+                routeToAgent(fbSessionId)(ref => ref ! AgentCommand.PlanFeedback(fbText))
+            else IO.unit
+
+          case "planCancel" =>
+            val cancelSessionId =
+              parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+            logger.info(s"Plan cancelled for session $cancelSessionId") *>
+              routeToAgent(cancelSessionId)(ref => ref ! AgentCommand.PlanCancelled)
+
+          case "interrupt" =>
+            val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+            logger.info("User interrupted") *> routeToAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
+
+          case "restartAgent" =>
+            val rJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val rSessionId = rJson.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
+            val rLevel = rJson.hcursor.downField("level").as[String].toOption.getOrElse("soft") match
+              case "rollback" => nebflow.agent.RestartLevel.Rollback
+              case "prune" => nebflow.agent.RestartLevel.Prune
+              case "full" => nebflow.agent.RestartLevel.Full
+              case _ => nebflow.agent.RestartLevel.Soft
+            if rSessionId.nonEmpty then
+              logger.info(s"Restart agent (level=$rLevel) for session $rSessionId") *>
+                routeToAgent(rSessionId)(ref => ref ! nebflow.agent.AgentCommand.RestartAgent(rLevel))
+            else IO.unit
+
+          case "immediateInput" =>
+            val immJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val immSessionId = immJson.hcursor.downField("sessionId").as[String].getOrElse("")
+            val immContent = immJson.hcursor.downField("content").as[String].getOrElse("")
+            if immSessionId.nonEmpty && immContent.nonEmpty then
+              logger.info(s"Immediate input for session $immSessionId (${immContent.length} chars)") *>
+                sessionStore.appendUiMessages(
+                  immSessionId,
+                  List(UiMessage.User(immContent, Nil, timestamp = System.currentTimeMillis()))
                 ) *>
-                routeToAgent(clearSessionId)(ref => ref ! AgentCommand.ResetSession)
-            case "compact" =>
-              val compactSessionId =
-                parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-              val instruction =
-                parse(text).flatMap(_.hcursor.downField("instruction").as[String]).toOption.filter(_.nonEmpty)
-              logger.info("Manual compaction triggered") *>
-                routeToAgent(compactSessionId)(ref =>
-                  ref ! AgentCommand.TriggerCompaction("full", postCompactInstruction = instruction)
-                )
-            case "plan" =>
-              val planSessionId =
-                parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-              val planTask = parse(text).flatMap(_.hcursor.downField("task").as[String]).toOption.getOrElse("")
-              if planSessionId.nonEmpty && planTask.nonEmpty then
-                logger.info(s"Plan mode started: ${planTask.take(60)}") *>
-                  routeToAgent(planSessionId)(ref => ref ! AgentCommand.StartPlan(planTask))
-              else IO.unit
-            case "fork" =>
-              val forkSessionId =
-                parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-              for
-                sourceMetaOpt <- sessionStore.getSessionMeta(forkSessionId)
-                sourceName = sourceMetaOpt.map(_.name).getOrElse("Session")
-                _ <- logger.info(s"Forking session $forkSessionId ($sourceName)")
-                newMeta <- sessionStore.forkSession(forkSessionId, s"Fork of $sourceName")
-                _ <- (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
+                routeToAgent(immSessionId)(ref => ref ! AgentCommand.ImmediateInput(immContent))
+            else IO.unit
+
+          case "command" =>
+            val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
+            command match
+              case "clear" =>
+                val clearSessionId =
+                  parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+                logger.info("Session cleared") *>
+                  sessionStore.saveMessagesForSession(clearSessionId, Nil) *>
+                  sessionStore.appendUiMessages(
+                    clearSessionId,
+                    List(UiMessage.System("Context cleared. LLM memory reset.", Some("slash.clearDone")))
+                  ) *>
+                  sharedResources.taskStore.deleteAll(clearSessionId) *>
                   wsSend(
                     io.circe.Json.obj(
-                      "type" -> "sessionList".asJson,
-                      "sessions" -> sessions.asJson,
-                      "folders" -> folders.asJson,
-                      "activeId" -> forkSessionId.asJson
+                      "type" -> "taskListUpdate".asJson,
+                      "tasks" -> io.circe.Json.arr(),
+                      "sessionId" -> clearSessionId.asJson
+                    )
+                  ) *>
+                  routeToAgent(clearSessionId)(ref => ref ! AgentCommand.ResetSession)
+              case "compact" =>
+                val compactSessionId =
+                  parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+                val instruction =
+                  parse(text).flatMap(_.hcursor.downField("instruction").as[String]).toOption.filter(_.nonEmpty)
+                logger.info("Manual compaction triggered") *>
+                  routeToAgent(compactSessionId)(ref =>
+                    ref ! AgentCommand.TriggerCompaction("full", postCompactInstruction = instruction)
+                  )
+              case "plan" =>
+                val planSessionId =
+                  parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+                val planTask = parse(text).flatMap(_.hcursor.downField("task").as[String]).toOption.getOrElse("")
+                if planSessionId.nonEmpty && planTask.nonEmpty then
+                  logger.info(s"Plan mode started: ${planTask.take(60)}") *>
+                    routeToAgent(planSessionId)(ref => ref ! AgentCommand.StartPlan(planTask))
+                else IO.unit
+              case "fork" =>
+                val forkSessionId =
+                  parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+                for
+                  sourceMetaOpt <- sessionStore.getSessionMeta(forkSessionId)
+                  sourceName = sourceMetaOpt.map(_.name).getOrElse("Session")
+                  _ <- logger.info(s"Forking session $forkSessionId ($sourceName)")
+                  newMeta <- sessionStore.forkSession(forkSessionId, s"Fork of $sourceName")
+                  _ <- (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
+                    val rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "sessionList".asJson,
+                        "sessions" -> sessions.asJson,
+                        "folders" -> folders.asJson,
+                        "activeId" -> forkSessionId.asJson,
+                        "foldersWithRules" -> rulesFolderIds.asJson
+                      )
+                    )
+                  }
+                  _ <- wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "forkComplete".asJson,
+                      "sessionId" -> newMeta.id.asJson,
+                      "name" -> newMeta.name.asJson
                     )
                   )
-                }
+                yield ()
+                end for
+              case _ => IO.unit
+            end match
+
+          case "recallMessage" =>
+            val recallSessionId =
+              parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+            if recallSessionId.nonEmpty then
+              for
+                deleted <- sessionStore.deleteLastUserMessage(recallSessionId)
                 _ <- wsSend(
                   io.circe.Json.obj(
-                    "type" -> "forkComplete".asJson,
-                    "sessionId" -> newMeta.id.asJson,
-                    "name" -> newMeta.name.asJson
+                    "type" -> "messageRecalled".asJson,
+                    "sessionId" -> recallSessionId.asJson,
+                    "success" -> deleted.asJson
                   )
                 )
               yield ()
-              end for
-            case _ => IO.unit
-          end match
+            else IO.unit
 
-        case "setThinking" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val hc = json.hcursor
-          val thinkingOpt = hc.downField("thinking").as[Option[io.circe.Json]].toOption.flatten
-          // null/absent means toggled off; {enabled: false} also means off; otherwise default true
-          val enabled = thinkingOpt match
-            case None | Some(io.circe.Json.Null) => false
-            case Some(v) => v.hcursor.downField("enabled").as[Boolean].getOrElse(true)
-          val budgetTokens = thinkingOpt match
-            case None | Some(io.circe.Json.Null) => 32000
-            case Some(v) => v.hcursor.downField("budgetTokens").as[Int].getOrElse(32000)
-          val tc = ThinkingConfig(enabled, budgetTokens)
-          logger.info(s"Thinking mode set to: enabled=$enabled budgetTokens=$budgetTokens") *>
-            sharedResources.thinkingConfigRef.set(tc) *>
-            persistThinkingConfig(tc) *>
-            broadcastServerConfig
+          case "setThinking" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val thinkingOpt = hc.downField("thinking").as[Option[io.circe.Json]].toOption.flatten
+            // null/absent means toggled off; {enabled: false} also means off; otherwise default true
+            val enabled = thinkingOpt match
+              case None | Some(io.circe.Json.Null) => false
+              case Some(v) => v.hcursor.downField("enabled").as[Boolean].getOrElse(true)
+            val budgetTokens = thinkingOpt match
+              case None | Some(io.circe.Json.Null) => 32000
+              case Some(v) => v.hcursor.downField("budgetTokens").as[Int].getOrElse(32000)
+            val tc = ThinkingConfig(enabled, budgetTokens)
+            logger.info(s"Thinking mode set to: enabled=$enabled budgetTokens=$budgetTokens") *>
+              sharedResources.thinkingConfigRef.set(tc) *>
+              persistThinkingConfig(tc) *>
+              broadcastServerConfig
 
-        case "setVoiceMuted" =>
-          val muted = parse(text).toOption
-            .flatMap(_.hcursor.downField("muted").as[Boolean].toOption)
-            .getOrElse(false)
-          sharedResources.voiceMutedRef.set(muted)
+          case "setVoiceMuted" =>
+            val muted = parse(text).toOption
+              .flatMap(_.hcursor.downField("muted").as[Boolean].toOption)
+              .getOrElse(false)
+            sharedResources.voiceMutedRef.set(muted)
 
-        case "setLlmLog" =>
-          val enabled = parse(text).toOption
-            .flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
-            .getOrElse(true)
-          LlmLogWriter.setEnabled(enabled)
-          logger.info(s"LLM log set to: $enabled") *>
-            wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> enabled.asJson))
+          case "setLlmLog" =>
+            val enabled = parse(text).toOption
+              .flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
+              .getOrElse(true)
+            LlmLogWriter.setEnabled(enabled)
+            logger.info(s"LLM log set to: $enabled") *>
+              wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> enabled.asJson))
 
-        case "getLlmLog" =>
-          wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> LlmLogWriter.isEnabled.asJson))
+          case "getLlmLog" =>
+            wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> LlmLogWriter.isEnabled.asJson))
 
-        case "getModelOptions" =>
-          val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-          sharedResources.providerRegistry.getAllModelsDetailed().flatMap { models =>
-            sharedResources.sessionModelOverrides.get.flatMap { overrides =>
-              val currentOpt = overrides.get(sessionId).map(c => s"${c.providerId}/${c.model}")
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "modelOptions".asJson,
-                  "sessionId" -> sessionId.asJson,
-                  "models" -> models.map { case (ref, label, desc) =>
-                    io.circe.Json.obj(
-                      "ref" -> ref.asJson,
-                      "label" -> label.asJson,
-                      "description" -> desc.asJson
-                    )
-                  }.asJson,
-                  "current" -> currentOpt.asJson
-                )
-              )
-            }
-          }
-
-        case "setSessionModel" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-          val modelRef = json.hcursor.downField("modelRef").as[Option[String]].getOrElse(None)
-          if sessionId.nonEmpty then
-            (modelRef match
-              case Some(ref) =>
-                sharedResources.providerRegistry.getCandidateForRef(ref).flatMap {
-                  case Some(candidate) =>
-                    sharedResources.sessionModelOverrides.update(_ + (sessionId -> candidate)) *>
-                      sessionStore
-                        .updateSessionModel(sessionId, Some(ref))
-                        .as(Right(s"${candidate.providerId}/${candidate.model}"))
-                  case None =>
-                    IO.pure(Left(s"Unknown model: $ref"))
-                }
-              case None =>
-                sharedResources.sessionModelOverrides.update(_ - sessionId) *>
-                  sessionStore.updateSessionModel(sessionId, None).as(Right("default"))
-            ).flatMap {
-              case Right(ref) =>
-                // Notify agent actor of context window change for compaction threshold
-                val notifyAgent = sharedResources.sessionModelOverrides.get.flatMap { overrides =>
-                  overrides.get(sessionId) match
-                    case Some(candidate) =>
-                      routeToAgent(sessionId)(ref => ref ! AgentCommand.UpdateContextWindow(candidate.contextWindow))
-                    case None => IO.unit
-                }
-                notifyAgent *> wsSend(io.circe.Json.obj("type" -> "sessionModelSet".asJson, "modelRef" -> ref.asJson))
-              case Left(err) =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
-            }
-          else IO.unit
-          end if
-
-        case "switchSession" =>
-          val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-          if sessionId.nonEmpty then
-            // Emit session_end for the session being left
-            sessionStore.getActiveId.flatMap { oldId =>
-              if oldId.nonEmpty && oldId != sessionId then emitSessionEnd(oldId)
-              else IO.unit
-            } *>
-              sessionService
-                .switchSession(sessionId)
-                .flatMap { _ =>
-                  val telStart = sharedResources.telemetry.fold(IO.unit)(
-                    _.record("session_start", io.circe.JsonObject("session_id" -> sessionId.asJson))
+          case "getModelOptions" =>
+            val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            sharedResources.providerRegistry.getAllModelsDetailed().flatMap { models =>
+              sharedResources.sessionModelOverrides.get.flatMap { overrides =>
+                val currentOpt = overrides.get(sessionId).map(c => s"${c.providerId}/${c.model}")
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "modelOptions".asJson,
+                    "sessionId" -> sessionId.asJson,
+                    "models" -> models.map { case (ref, label, desc) =>
+                      io.circe.Json.obj(
+                        "ref" -> ref.asJson,
+                        "label" -> label.asJson,
+                        "description" -> desc.asJson
+                      )
+                    }.asJson,
+                    "current" -> currentOpt.asJson
                   )
-                  sendAgentSessionList(wsSend, sessionId) *>
-                    sendMemoryStatus(wsSend, sessionId) *> telStart
+                )
+              }
+            }
+
+          case "setSessionModel" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val modelRef = json.hcursor.downField("modelRef").as[Option[String]].getOrElse(None)
+            if sessionId.nonEmpty then
+              (modelRef match
+                case Some(ref) =>
+                  sharedResources.providerRegistry.getCandidateForRef(ref).flatMap {
+                    case Some(candidate) =>
+                      sharedResources.sessionModelOverrides.update(_ + (sessionId -> candidate)) *>
+                        sessionStore
+                          .updateSessionModel(sessionId, Some(ref))
+                          .as(Right(s"${candidate.providerId}/${candidate.model}"))
+                    case None =>
+                      IO.pure(Left(s"Unknown model: $ref"))
+                  }
+                case None =>
+                  sharedResources.sessionModelOverrides.update(_ - sessionId) *>
+                    sessionStore.updateSessionModel(sessionId, None).as(Right("default"))
+              ).flatMap {
+                case Right(ref) =>
+                  // Notify agent actor of context window change for compaction threshold
+                  val notifyAgent = sharedResources.sessionModelOverrides.get.flatMap { overrides =>
+                    overrides.get(sessionId) match
+                      case Some(candidate) =>
+                        routeToAgent(sessionId)(ref => ref ! AgentCommand.UpdateContextWindow(candidate.contextWindow))
+                      case None => IO.unit
+                  }
+                  notifyAgent *> wsSend(io.circe.Json.obj("type" -> "sessionModelSet".asJson, "modelRef" -> ref.asJson))
+                case Left(err) =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+              }
+            else IO.unit
+            end if
+
+          case "switchSession" =>
+            val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            if sessionId.nonEmpty then
+              // Emit session_end for the session being left
+              sessionStore.getActiveId.flatMap { oldId =>
+                if oldId.nonEmpty && oldId != sessionId then emitSessionEnd(oldId)
+                else IO.unit
+              } *>
+                sessionService
+                  .switchSession(sessionId)
+                  .flatMap { _ =>
+                    val telStart = sharedResources.telemetry.fold(IO.unit)(
+                      _.record("session_start", io.circe.JsonObject("session_id" -> sessionId.asJson))
+                    )
+                    sendAgentSessionList(wsSend, sessionId) *>
+                      sendMemoryStatus(wsSend, sessionId) *> telStart
+                  }
+                  .handleErrorWith { e =>
+                    wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+                  }
+            else IO.unit
+            end if
+
+          case "createSession" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val name = json.hcursor.downField("name").as[String].getOrElse("New Session")
+            val agentName = json.hcursor.downField("agentName").as[Option[String]].getOrElse(None)
+            val folderId = json.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
+            sessionService
+              .createSession(name, agentName = agentName, folderId = folderId)
+              .flatMap { meta =>
+                val tel = sharedResources.telemetry
+                val telStart =
+                  tel.fold(IO.unit)(_.record("session_start", io.circe.JsonObject("session_id" -> meta.id.asJson)))
+                // Send unified session list (all agents)
+                val sendList = agentName match
+                  case Some(an) =>
+                    sendAgentSessionListByName(wsSend, an)
+                  case None =>
+                    sessionService.sendSessionList(wsSend, "Nebula")
+                sendList *> telStart
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+
+          case "deleteSession" =>
+            val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            if sessionId.nonEmpty then
+              // Get agent name before deleting so we can send filtered list
+              sessionStore
+                .getSessionMeta(sessionId)
+                .flatMap { metaOpt =>
+                  val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                  // Emit session_end telemetry before cleanup
+                  emitSessionEnd(sessionId).handleErrorWith(_ => IO.unit) *>
+                    // Clean up text buffers for deleted session to prevent memory leak
+                    sessionTextBuffers.update(_ - sessionId) *>
+                    sessionThinkingBuffers.update(_ - sessionId) *>
+                    sessionTurnStarts.update(_ - sessionId) *>
+                    removeRootAgent(sessionId) *> sessionService
+                      .deleteSession(sessionId)
+                      .flatMap { _ =>
+                        sendAgentSessionListByName(wsSend, agentName)
+                      }
                 }
                 .handleErrorWith { e =>
                   wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
                 }
-          else IO.unit
-          end if
+            else IO.unit
+            end if
 
-        case "createSession" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val name = json.hcursor.downField("name").as[String].getOrElse("New Session")
-          val agentName = json.hcursor.downField("agentName").as[Option[String]].getOrElse(None)
-          val folderId = json.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
-          sessionService
-            .createSession(name, agentName = agentName, folderId = folderId)
-            .flatMap { meta =>
-              val tel = sharedResources.telemetry
-              val telStart =
-                tel.fold(IO.unit)(_.record("session_start", io.circe.JsonObject("session_id" -> meta.id.asJson)))
-              // Send unified session list (all agents)
-              val sendList = agentName match
-                case Some(an) =>
-                  (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "agentSessionList".asJson,
-                        "agentName" -> an.asJson,
-                        "sessions" -> sessions.asJson,
-                        "folders" -> folders.asJson
-                      )
-                    )
-                  }
-                case None =>
-                  sessionService.sendSessionList(wsSend, "Nebula")
-              sendList *> telStart
-            }
-            .handleErrorWith { e =>
-              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-            }
-
-        case "deleteSession" =>
-          val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-          if sessionId.nonEmpty then
-            // Get agent name before deleting so we can send filtered list
-            sessionStore
-              .getSessionMeta(sessionId)
-              .flatMap { metaOpt =>
-                val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                // Emit session_end telemetry before cleanup
-                emitSessionEnd(sessionId).handleErrorWith(_ => IO.unit) *>
-                  // Clean up text buffers for deleted session to prevent memory leak
-                  sessionTextBuffers.update(_ - sessionId) *>
-                  sessionThinkingBuffers.update(_ - sessionId) *>
-                  sessionTurnStarts.update(_ - sessionId) *>
-                  removeRootAgent(sessionId) *> sessionService
-                    .deleteSession(sessionId)
+          case "batchDeleteSessions" =>
+            val sessionIds = parse(text).flatMap(_.hcursor.downField("sessionIds").as[List[String]]).getOrElse(Nil)
+            if sessionIds.nonEmpty then
+              sessionStore
+                .getSessionMeta(sessionIds.head)
+                .flatMap { metaOpt =>
+                  val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                  sessionIds
+                    .traverse_ { sid =>
+                      sessionTextBuffers.update(_ - sid) *>
+                        sessionThinkingBuffers.update(_ - sid) *>
+                        sessionTurnStarts.update(_ - sid) *>
+                        removeRootAgent(sid) *>
+                        sessionService.deleteSession(sid)
+                    }
                     .flatMap { _ =>
                       sendAgentSessionListByName(wsSend, agentName)
                     }
-              }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-          else IO.unit
-          end if
+                }
+                .handleErrorWith { e =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+                }
+            else IO.unit
+            end if
 
-        case "batchDeleteSessions" =>
-          val sessionIds = parse(text).flatMap(_.hcursor.downField("sessionIds").as[List[String]]).getOrElse(Nil)
-          if sessionIds.nonEmpty then
-            sessionStore
-              .getSessionMeta(sessionIds.head)
-              .flatMap { metaOpt =>
-                val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                sessionIds
-                  .traverse_ { sid =>
-                    sessionTextBuffers.update(_ - sid) *>
-                      sessionThinkingBuffers.update(_ - sid) *>
-                      sessionTurnStarts.update(_ - sid) *>
-                      removeRootAgent(sid) *>
-                      sessionService.deleteSession(sid)
-                  }
-                  .flatMap { _ =>
-                    sendAgentSessionListByName(wsSend, agentName)
-                  }
-              }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-          else IO.unit
-          end if
+          case "renameSession" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val newName = json.hcursor.downField("name").as[String].getOrElse("")
+            if sessionId.nonEmpty && newName.nonEmpty then
+              sessionService
+                .renameSession(sessionId, newName)
+                .flatMap { _ =>
+                  sendAgentSessionList(wsSend, sessionId)
+                }
+                .handleErrorWith { e =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+                }
+            else IO.unit
 
-        case "renameSession" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-          val newName = json.hcursor.downField("name").as[String].getOrElse("")
-          if sessionId.nonEmpty && newName.nonEmpty then
-            sessionService
-              .renameSession(sessionId, newName)
-              .flatMap { _ =>
-                sendAgentSessionList(wsSend, sessionId)
-              }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-          else IO.unit
+          case "setSafetyMode" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val mode = json.hcursor.downField("safetyMode").as[String].getOrElse("confirm-edits")
+            if sid.nonEmpty then
+              sessionStore
+                .setSafetyMode(sid, mode)
+                .flatMap { _ =>
+                  routeToAgent(sid)(ref =>
+                    ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))
+                  ) *>
+                    sendAgentSessionList(wsSend, sid)
+                }
+                .handleErrorWith { e =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+                }
+            else IO.unit
 
-        case "setSafetyMode" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
-          val mode = json.hcursor.downField("safetyMode").as[String].getOrElse("confirm-edits")
-          if sid.nonEmpty then
-            sessionStore
-              .setSafetyMode(sid, mode)
-              .flatMap { _ =>
-                routeToAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
-                  sendAgentSessionList(wsSend, sid)
-              }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-          else IO.unit
+          case "setBypass" =>
+            // Backward compat: old clients send { bypass: Boolean }
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val bypass = json.hcursor.downField("bypass").as[Boolean].getOrElse(false)
+            val mode = if bypass then "auto-all" else "confirm-edits"
+            if sid.nonEmpty then
+              sessionStore
+                .setSafetyMode(sid, mode)
+                .flatMap { _ =>
+                  routeToAgent(sid)(ref =>
+                    ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))
+                  ) *>
+                    sendAgentSessionList(wsSend, sid)
+                }
+                .handleErrorWith { e =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+                }
+            else IO.unit
 
-        case "setBypass" =>
-          // Backward compat: old clients send { bypass: Boolean }
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
-          val bypass = json.hcursor.downField("bypass").as[Boolean].getOrElse(false)
-          val mode = if bypass then "auto-all" else "confirm-edits"
-          if sid.nonEmpty then
-            sessionStore
-              .setSafetyMode(sid, mode)
-              .flatMap { _ =>
-                routeToAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
-                  sendAgentSessionList(wsSend, sid)
-              }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-          else IO.unit
-
-        case "ask" =>
-          val askJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val question = askJson.hcursor.downField("question").as[String].getOrElse("")
-          val askSessionId = askJson.hcursor.downField("sessionId").as[String].getOrElse("")
-          if question.nonEmpty && askSessionId.nonEmpty then
-            executeAsk(askSessionId, question, wsSend).handleErrorWith { e =>
-              logger.warn(s"Ask failed for session $askSessionId: ${e.getMessage}")
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "askError".asJson,
-                  "sessionId" -> askSessionId.asJson,
-                  "message" -> s"Ask failed: ${e.getMessage.take(200)}".asJson
-                )
-              )
-            }
-          else IO.unit
-
-        case "getSkills" =>
-          SkillService.listSkills().flatMap { skills =>
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "skillList".asJson,
-                "skills" -> skills.asJson
-              )
-            )
-          }
-
-        case "skill" =>
-          val skillJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val skillName = skillJson.hcursor.downField("skillName").as[String].getOrElse("")
-          val skillInput = skillJson.hcursor.downField("input").as[String].getOrElse("")
-          val skillSessionId = skillJson.hcursor.downField("sessionId").as[String].getOrElse("")
-          if skillName.nonEmpty && skillSessionId.nonEmpty then
-            // Persist user message and skill activation system bubble to session history,
-            // so they survive session switching (frontend rebuilds DOM from backend history).
-            sharedResources.sessionStore.appendUiMessages(
-              skillSessionId,
-              List(
-                UiMessage.User(skillInput, timestamp = System.currentTimeMillis()),
-                UiMessage.System(
-                  s"Using skill: $skillName",
-                  Some("slash.skillActivated"),
-                  Some(io.circe.Json.obj("skillName" -> skillName.asJson))
-                )
-              )
-            ) *>
-              executeSkill(skillName, skillInput, skillSessionId, wsSend).handleErrorWith { e =>
-                logger.warn(s"Skill '$skillName' failed for session $skillSessionId: ${e.getMessage}")
+          case "ask" =>
+            val askJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val question = askJson.hcursor.downField("question").as[String].getOrElse("")
+            val askSessionId = askJson.hcursor.downField("sessionId").as[String].getOrElse("")
+            if question.nonEmpty && askSessionId.nonEmpty then
+              executeAsk(askSessionId, question, wsSend).handleErrorWith { e =>
+                logger.warn(s"Ask failed for session $askSessionId: ${e.getMessage}")
                 wsSend(
                   io.circe.Json.obj(
-                    "type" -> "skillError".asJson,
-                    "sessionId" -> skillSessionId.asJson,
-                    "message" -> s"Skill failed: ${e.getMessage.take(200)}".asJson
+                    "type" -> "askError".asJson,
+                    "sessionId" -> askSessionId.asJson,
+                    "message" -> s"Ask failed: ${e.getMessage.take(200)}".asJson
                   )
                 )
               }
-          else IO.unit
-          end if
+            else IO.unit
 
-        case "deleteSkill" =>
-          val delJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val delName = delJson.hcursor.downField("name").as[String].getOrElse("")
-          if delName.nonEmpty then
-            SkillService.deleteSkill(delName).flatMap { success =>
-              wsSend(
+          case "getSkills" =>
+            for
+              skills <- SkillService.listSkills()
+              _ <- wsSend(
                 io.circe.Json.obj(
-                  "type" -> "skillDeleted".asJson,
-                  "name" -> delName.asJson,
-                  "success" -> success.asJson
+                  "type" -> "skillList".asJson,
+                  "skills" -> skills.asJson
+                )
+              )
+            yield ()
+
+          case "getTeams" =>
+            for
+              teams <- EntityLoader.listTeams()
+              flows <- EntityLoader.listFlows()
+              teamEntries = teams.values.toList
+                .sortBy(_.name)
+                .map(t =>
+                  io.circe.Json
+                    .obj("name" -> t.name.asJson, "description" -> t.description.asJson, "type" -> "team".asJson)
+                )
+              flowEntries = flows.values.toList
+                .sortBy(_.name)
+                .map(f =>
+                  io.circe.Json
+                    .obj("name" -> f.name.asJson, "description" -> f.description.asJson, "type" -> "flow".asJson)
+                )
+              _ <- wsSend(
+                io.circe.Json.obj(
+                  "type" -> "teamList".asJson,
+                  "teams" -> teamEntries.asJson,
+                  "flows" -> flowEntries.asJson
+                )
+              )
+            yield ()
+
+          case "skill" =>
+            val skillJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val skillName = skillJson.hcursor.downField("skillName").as[String].getOrElse("")
+            val skillInput = skillJson.hcursor.downField("input").as[String].getOrElse("")
+            val skillSessionId = skillJson.hcursor.downField("sessionId").as[String].getOrElse("")
+            if skillName.nonEmpty && skillSessionId.nonEmpty then
+              // Persist user message and skill activation system bubble to session history,
+              // so they survive session switching (frontend rebuilds DOM from backend history).
+              sharedResources.sessionStore.appendUiMessages(
+                skillSessionId,
+                List(
+                  UiMessage.User(skillInput, timestamp = System.currentTimeMillis()),
+                  UiMessage.System(
+                    s"Using skill: $skillName",
+                    Some("slash.skillActivated"),
+                    Some(io.circe.Json.obj("skillName" -> skillName.asJson))
+                  )
                 )
               ) *>
-                SkillService.listSkills().flatMap { skills =>
+                executeSkill(skillName, skillInput, skillSessionId, wsSend).handleErrorWith { e =>
+                  logger.warn(s"Skill '$skillName' failed for session $skillSessionId: ${e.getMessage}")
                   wsSend(
                     io.circe.Json.obj(
-                      "type" -> "skillList".asJson,
-                      "skills" -> skills.asJson
+                      "type" -> "skillError".asJson,
+                      "sessionId" -> skillSessionId.asJson,
+                      "message" -> s"Skill failed: ${e.getMessage.take(200)}".asJson
                     )
                   )
                 }
-            }
-          else IO.unit
-          end if
+            else IO.unit
+            end if
 
-        // ===== Scheduled Task Management =====
-
-        case "createScheduledTask" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val hc = json.hcursor
-          val crSessionId = hc.downField("sessionId").as[String].getOrElse("")
-          val crContent = hc.downField("content").as[String].getOrElse("")
-          val crTriggerAt = hc.downField("triggerAt").as[Long].getOrElse(0L)
-          val crRefPath = hc.downField("referencePath").as[Option[String]].getOrElse(None)
-          if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
-            val task = nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath)
-            sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
-              sharedResources.scheduledTaskService.foreach(_.notifyTaskChange())
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "scheduledTaskCreated".asJson,
-                  "task" -> io.circe.Json.obj(
-                    "id" -> task.id.asJson,
-                    "content" -> task.content.asJson,
-                    "triggerAt" -> task.triggerAt.asJson,
-                    "createdAt" -> task.createdAt.asJson,
-                    "referencePath" -> task.referencePath.asJson
-                  )
-                )
-              )
-            }
-          else
-            val reason =
-              if crSessionId.isEmpty then "missing sessionId"
-              else if crContent.isEmpty then "missing content"
-              else if crTriggerAt <= System.currentTimeMillis() then "triggerAt must be in the future"
-              else "unknown"
-            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid scheduled task: $reason".asJson))
-          end if
-
-        case "listScheduledTasks" =>
-          val lrSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-          if lrSessionId.nonEmpty then
-            sharedResources.scheduledTaskStore.loadTasks(lrSessionId).flatMap { tasks =>
-              val taskJsons = tasks.map { t =>
-                io.circe.Json.obj(
-                  "id" -> t.id.asJson,
-                  "content" -> t.content.asJson,
-                  "triggerAt" -> t.triggerAt.asJson,
-                  "createdAt" -> t.createdAt.asJson,
-                  "triggered" -> t.triggered.asJson,
-                  "triggeredAt" -> t.triggeredAt.asJson,
-                  "referencePath" -> t.referencePath.asJson
-                )
-              }
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "scheduledTaskList".asJson,
-                  "tasks" -> taskJsons.asJson,
-                  "sessionId" -> lrSessionId.asJson
-                )
-              )
-            }
-          else IO.unit
-          end if
-
-        case "deleteScheduledTask" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val drSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-          val drId = json.hcursor.downField("id").as[String].getOrElse("")
-          if drSessionId.nonEmpty && drId.nonEmpty then
-            sharedResources.scheduledTaskStore.deleteTask(drSessionId, drId).flatMap { _ =>
-              sharedResources.scheduledTaskService.foreach(_.notifyTaskChange())
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "scheduledTaskDeleted".asJson,
-                  "id" -> drId.asJson,
-                  "sessionId" -> drSessionId.asJson
-                )
-              )
-            }
-          else IO.unit
-
-        case "ping" => IO.unit
-
-        case "getActiveBgTasks" =>
-          nebflow.core.tools.BgTaskRegistry.activeTasksJson.flatMap { tasksJson =>
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "activeBgTasks".asJson,
-                "tasks" -> tasksJson
-              )
-            )
-          }
-
-        case "cancelBackgroundJob" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val cancelSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-          val jobId = json.hcursor.downField("jobId").as[String].getOrElse("")
-          if cancelSessionId.nonEmpty && jobId.nonEmpty then
-            nebflow.core.tools.ShellSession
-              .forSession(cancelSessionId)
-              .flatMap { shell =>
-                shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
-                  val logMsg =
-                    if cancelled then s"Cancelled background job $jobId"
-                    else s"Background job $jobId not found or already completed"
-                  logger.info(logMsg, "sessionId" -> cancelSessionId, "jobId" -> jobId) *>
-                    // Notify agent so it can process cancellation
-                    routeToAgent(cancelSessionId) { ref =>
-                      ref ! AgentCommand.ExternalEvent(
-                        source = "background-task",
-                        eventType = "cancelled",
-                        payload = s"[Background task cancelled] Job ID: $jobId",
-                        metadata = io.circe.JsonObject(
-                          "jobId" -> jobId.asJson
-                        ),
-                        correlationId = Some(jobId)
-                      )
-                    } *>
-                    // Send completion update to frontend so the task is removed from the dropdown
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "backgroundTaskUpdate".asJson,
-                        "sessionId" -> cancelSessionId.asJson,
-                        "taskId" -> jobId.asJson,
-                        "description" -> "".asJson,
-                        "status" -> "completed".asJson
-                      )
-                    )
-                }
-              }
-              .handleErrorWith { e =>
-                logger.warn(s"cancelBackgroundJob failed for session=$cancelSessionId job=$jobId: ${e.getMessage}")
-                // Send a completion update even on error, so the frontend removes the task
+          case "deleteSkill" =>
+            val delJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val delName = delJson.hcursor.downField("name").as[String].getOrElse("")
+            if delName.nonEmpty then
+              SkillService.deleteSkill(delName).flatMap { success =>
                 wsSend(
                   io.circe.Json.obj(
-                    "type" -> "backgroundTaskUpdate".asJson,
-                    "sessionId" -> cancelSessionId.asJson,
-                    "taskId" -> jobId.asJson,
-                    "description" -> "".asJson,
-                    "status" -> "failed".asJson
+                    "type" -> "skillDeleted".asJson,
+                    "name" -> delName.asJson,
+                    "success" -> success.asJson
                   )
-                ).handleErrorWith(_ => IO.unit)
-              }
-          else IO.unit
-          end if
-
-        case "getHistory" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-          val limit = json.hcursor.downField("limit").as[Int].getOrElse(50)
-          val beforeIndex = json.hcursor.downField("beforeIndex").as[Option[Int]].getOrElse(None)
-          if sessionId.nonEmpty then
-            (sharedResources.sessionStore
-              .getHistoryPage(sessionId, limit, beforeIndex)
-              .attempt
-              .flatMap {
-                case Right((msgs, total, offset, hasMore)) =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "historyPage".asJson,
-                      "sessionId" -> sessionId.asJson,
-                      "messages" -> msgs.asJson,
-                      "total" -> total.asJson,
-                      "offset" -> offset.asJson,
-                      "hasMore" -> hasMore.asJson
+                ) *>
+                  SkillService.listSkills().flatMap { skills =>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "skillList".asJson,
+                        "skills" -> skills.asJson
+                      )
                     )
-                  )
-                case Left(_) =>
-                  // Send empty historyPage so the frontend doesn't get stuck
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "historyPage".asJson,
-                      "sessionId" -> sessionId.asJson,
-                      "messages" -> List.empty[io.circe.Json].asJson,
-                      "total" -> 0.asJson,
-                      "offset" -> 0.asJson,
-                      "hasMore" -> false.asJson
-                    )
-                  )
-              })
-              .handleErrorWith { e =>
-                wsSend(
-                  io.circe.Json.obj("type" -> "error".asJson, "message" -> s"getHistory failed: ${e.getMessage}".asJson)
-                )
-              }
-          else IO.unit
-          end if
-
-        case "listAgents" =>
-          agentService.listAgents.flatMap { agents =>
-            val agentsJson = agents.map { a =>
-              io.circe.Json.obj(
-                "name" -> a.name.asJson,
-                "description" -> a.description.asJson,
-                "displayName" -> a.displayName.getOrElse(a.name).asJson,
-                "avatar" -> a.avatar.asJson,
-                "tools" -> a.tools.asJson
-              )
-            }
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "agentList".asJson,
-                "agents" -> agentsJson.asJson
-              )
-            )
-          }
-
-        case "listAgentSessions" =>
-          val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
-          if agentName.nonEmpty then
-            // Return ALL sessions and folders (unified list)
-            (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "agentSessionList".asJson,
-                  "agentName" -> agentName.asJson,
-                  "sessions" -> sessions.asJson,
-                  "folders" -> folders.asJson
-                )
-              )
-            }
-          else IO.unit
-          end if
-
-        // ===== Folder Management =====
-
-        case "createFolder" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val name = json.hcursor.downField("name").as[String].getOrElse("New Folder")
-          val parentId = json.hcursor.downField("parentId").as[Option[String]].getOrElse(None)
-          val agentNameFromMsg = json.hcursor.downField("agentName").as[String].getOrElse("")
-          if name.nonEmpty then
-            val agentNameIO =
-              if agentNameFromMsg.nonEmpty then IO.pure(agentNameFromMsg)
-              else sessionStore.getActiveMeta.map(_.flatMap(_.agentName).getOrElse("Nebula"))
-            agentNameIO
-              .flatMap { agentName =>
-                sessionService.createFolder(name, parentId, agentName).flatMap { _ =>
-                  sendAgentSessionListByName(wsSend, agentName)
-                }
-              }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-          else IO.unit
-
-        case "renameFolder" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-          val newName = json.hcursor.downField("name").as[String].getOrElse("")
-          if folderId.nonEmpty && newName.nonEmpty then
-            sessionService
-              .renameFolder(folderId, newName)
-              .flatMap { _ =>
-                sessionStore.getActiveMeta.flatMap { metaOpt =>
-                  val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                  sendAgentSessionListByName(wsSend, agentName)
-                }
-              }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-          else IO.unit
-
-        case "deleteFolder" =>
-          val folderId = parse(text).flatMap(_.hcursor.downField("folderId").as[String]).getOrElse("")
-          if folderId.nonEmpty then
-            sessionService
-              .deleteFolder(folderId)
-              .flatMap { _ =>
-                sessionStore.getActiveMeta.flatMap { metaOpt =>
-                  val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                  sendAgentSessionListByName(wsSend, agentName)
-                }
-              }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-          else IO.unit
-
-        case "moveSessionToFolder" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-          val folderId = json.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
-          if sessionId.nonEmpty then
-            sessionService
-              .moveSessionToFolder(sessionId, folderId)
-              .flatMap { _ =>
-                sendAgentSessionList(wsSend, sessionId)
-              }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-          else IO.unit
-
-        case "moveFolder" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-          val parentId = json.hcursor.downField("parentId").as[Option[String]].getOrElse(None)
-          if folderId.nonEmpty then
-            sessionService
-              .moveFolder(folderId, parentId)
-              .flatMap { _ =>
-                sessionStore.getActiveMeta.flatMap { metaOpt =>
-                  val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                  sendAgentSessionListByName(wsSend, agentName)
-                }
-              }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-          else IO.unit
-
-        case "setFolderProjectRoot" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-          val projectRoot = json.hcursor.downField("projectRoot").as[Option[String]].getOrElse(None)
-          if folderId.nonEmpty then
-            sessionService
-              .setFolderProjectRoot(folderId, projectRoot)
-              .flatMap {
-                case Right(_) =>
-                  // Use the folder's own agent name, not the active session's,
-                  // to ensure the frontend receives the update regardless of which agent tab is active.
-                  sessionStore.getFolderAgentName(folderId).flatMap { agentOpt =>
-                    val agentName = agentOpt.getOrElse("Nebula")
-                    sendAgentSessionListByName(wsSend, agentName)
                   }
-                case Left(err) =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
               }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-          else IO.unit
-          end if
+            else IO.unit
+            end if
 
-        // Directory browser for project root selection
-        case "browsePath" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val path = json.hcursor.downField("path").as[String].getOrElse("~")
-          val expanded = if path.startsWith("~") then System.getProperty("user.home") + path.drop(1) else path
-          IO.blocking {
-            val dir = os.Path(expanded, os.pwd)
-            if os.isDir(dir) then
-              val entries = os.list(dir).filter(os.isDir).sortBy(_.last)
-              val result = entries.take(200).map { p =>
-                io.circe.Json.obj("name" -> p.last.asJson, "path" -> p.toString.asJson)
+          // ===== Scheduled Task Management =====
+
+          case "createScheduledTask" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val crSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            val crContent = hc.downField("content").as[String].getOrElse("")
+            val crTriggerAt = hc.downField("triggerAt").as[Long].getOrElse(0L)
+            val crRefPath = hc.downField("referencePath").as[Option[String]].getOrElse(None)
+            val crRepeat = hc.downField("repeat").as[Option[String]].getOrElse(None)
+            if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
+              val task =
+                nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath, crRepeat)
+              sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
+                sharedResources.scheduledTaskService.foreach(_.notifyTaskChange())
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "scheduledTaskCreated".asJson,
+                    "task" -> io.circe.Json.obj(
+                      "id" -> task.id.asJson,
+                      "content" -> task.content.asJson,
+                      "triggerAt" -> task.triggerAt.asJson,
+                      "createdAt" -> task.createdAt.asJson,
+                      "referencePath" -> task.referencePath.asJson,
+                      "repeat" -> task.repeat.asJson
+                    )
+                  )
+                )
               }
-              io.circe.Json.obj(
-                "type" -> "browseResult".asJson,
-                "path" -> dir.toString.asJson,
-                "entries" -> result.asJson
-              )
             else
-              io.circe.Json.obj(
-                "type" -> "browseResult".asJson,
-                "path" -> path.asJson,
-                "entries" -> io.circe.Json.arr()
+              val reason =
+                if crSessionId.isEmpty then "missing sessionId"
+                else if crContent.isEmpty then "missing content"
+                else if crTriggerAt <= System.currentTimeMillis() then "triggerAt must be in the future"
+                else "unknown"
+              wsSend(
+                io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid scheduled task: $reason".asJson)
               )
             end if
-          }.flatMap(wsSend)
-            .handleErrorWith { e =>
+
+          case "listScheduledTasks" =>
+            val lrSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            if lrSessionId.nonEmpty then
+              sharedResources.scheduledTaskStore.loadTasks(lrSessionId).flatMap { allTasks =>
+                // Only return pending (untriggered) tasks — triggered tasks are
+                // deleted from storage on firing, but filter as a safety net.
+                val tasks = allTasks.filterNot(_.triggered)
+                val taskJsons = tasks.map { t =>
+                  io.circe.Json.obj(
+                    "id" -> t.id.asJson,
+                    "content" -> t.content.asJson,
+                    "triggerAt" -> t.triggerAt.asJson,
+                    "createdAt" -> t.createdAt.asJson,
+                    "triggered" -> t.triggered.asJson,
+                    "triggeredAt" -> t.triggeredAt.asJson,
+                    "referencePath" -> t.referencePath.asJson,
+                    "repeat" -> t.repeat.asJson,
+                    "enabled" -> t.enabled.asJson
+                  )
+                }
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "scheduledTaskList".asJson,
+                    "tasks" -> taskJsons.asJson,
+                    "sessionId" -> lrSessionId.asJson
+                  )
+                )
+              }
+            else IO.unit
+            end if
+
+          case "deleteScheduledTask" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val drSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val drId = json.hcursor.downField("id").as[String].getOrElse("")
+            if drSessionId.nonEmpty && drId.nonEmpty then
+              sharedResources.scheduledTaskStore.deleteTask(drSessionId, drId).flatMap { _ =>
+                sharedResources.scheduledTaskService.foreach(_.notifyTaskChange())
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "scheduledTaskDeleted".asJson,
+                    "id" -> drId.asJson,
+                    "sessionId" -> drSessionId.asJson
+                  )
+                )
+              }
+            else IO.unit
+
+          case "toggleScheduledTask" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val tgSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val tgId = json.hcursor.downField("id").as[String].getOrElse("")
+            if tgSessionId.nonEmpty && tgId.nonEmpty then
+              sharedResources.scheduledTaskStore.toggleTask(tgSessionId, tgId).flatMap { newEnabled =>
+                sharedResources.scheduledTaskService.foreach(_.notifyTaskChange())
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "scheduledTaskToggled".asJson,
+                    "id" -> tgId.asJson,
+                    "sessionId" -> tgSessionId.asJson,
+                    "enabled" -> newEnabled.asJson
+                  )
+                )
+              }
+            else IO.unit
+
+          // ===== Task List (fetch on session switch / reconnect) =====
+
+          case "getTaskList" =>
+            val tlsSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            if tlsSessionId.nonEmpty then
+              sharedResources.taskStore.listVisible(tlsSessionId).flatMap { tasks =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "taskListUpdate".asJson,
+                    "sessionId" -> tlsSessionId.asJson,
+                    "tasks" -> tasks.asJson
+                  )
+                )
+              }
+            else IO.unit
+
+          // ===== Dismiss Task (user clears completed/failed tasks) =====
+
+          case "dismissTask" =>
+            val dtSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            val dtTaskId = parse(text).flatMap(_.hcursor.downField("taskId").as[String]).getOrElse("")
+            if dtSessionId.nonEmpty && dtTaskId.nonEmpty then
+              sharedResources.taskStore.dismiss(dtSessionId, dtTaskId).attempt.flatMap {
+                case Right(Some(_)) =>
+                  // Return updated task list (without dismissed tasks)
+                  sharedResources.taskStore.listVisible(dtSessionId).flatMap { tasks =>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "taskListUpdate".asJson,
+                        "sessionId" -> dtSessionId.asJson,
+                        "tasks" -> tasks.asJson
+                      )
+                    )
+                  }
+                case Right(None) =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Task not found: $dtTaskId".asJson))
+                case Left(err) =>
+                  // IllegalStateException — active task cannot be dismissed
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "taskError".asJson,
+                      "error" -> s"Cannot dismiss: ${err.getMessage}".asJson,
+                      "taskId" -> dtTaskId.asJson
+                    )
+                  )
+              }
+            else IO.unit
+            end if
+
+          // ===== Workspace Knowledge =====
+
+          case "listWorkspaceItems" =>
+            val wsSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            if wsSessionId.nonEmpty then
+              sharedResources.knowledgeStore.loadItems(wsSessionId).flatMap { items =>
+                val itemJsons = items.map { it =>
+                  io.circe.Json.obj(
+                    "id" -> it.id.asJson,
+                    "sessionId" -> it.sessionId.asJson,
+                    "title" -> it.title.asJson,
+                    "itemType" -> it.itemType.asJson,
+                    "content" -> it.content.asJson,
+                    "createdAt" -> it.createdAt.asJson
+                  )
+                }
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "workspaceItemList".asJson,
+                    "items" -> itemJsons.asJson,
+                    "sessionId" -> wsSessionId.asJson
+                  )
+                )
+              }
+            else IO.unit
+            end if
+
+          case "saveWorkspaceItem" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val svSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            val svTitle = hc.downField("title").as[String].getOrElse("")
+            val svType = hc.downField("itemType").as[String].getOrElse("markdown")
+            val svContent = hc.downField("content").as[String].getOrElse("")
+            if svSessionId.nonEmpty && svTitle.nonEmpty then
+              val item = nebflow.core.workspace.WorkspaceItem.create(svSessionId, svTitle, svType, svContent)
+              sharedResources.knowledgeStore.addItem(item).flatMap { _ =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "workspaceItemSaved".asJson,
+                    "item" -> io.circe.Json.obj(
+                      "id" -> item.id.asJson,
+                      "sessionId" -> item.sessionId.asJson,
+                      "title" -> item.title.asJson,
+                      "itemType" -> item.itemType.asJson,
+                      "content" -> item.content.asJson,
+                      "createdAt" -> item.createdAt.asJson
+                    )
+                  )
+                )
+              }
+            else IO.unit
+            end if
+
+          case "deleteWorkspaceItem" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val delSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val delId = json.hcursor.downField("id").as[String].getOrElse("")
+            if delSessionId.nonEmpty && delId.nonEmpty then
+              sharedResources.knowledgeStore.deleteItem(delSessionId, delId).flatMap { _ =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "workspaceItemDeleted".asJson,
+                    "id" -> delId.asJson,
+                    "sessionId" -> delSessionId.asJson
+                  )
+                )
+              }
+            else IO.unit
+
+          // ===== Explorer (File Tree) =====
+
+          case "listDir" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val exSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            val subPath = hc.downField("path").as[String].getOrElse("")
+            if exSessionId.nonEmpty then
+              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+              (for
+                pr <- overrideRoot match
+                  case Some(root) => IO.pure(root)
+                  case None =>
+                    for
+                      metaOpt <- sessionStore.getSessionMeta(exSessionId)
+                      folderId = metaOpt.flatMap(_.folderId)
+                      prOpt <- sessionStore.resolveProjectRoot(folderId)
+                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+                basePath = if subPath.isEmpty then os.Path(pr) else PathUtil.resolvePath(subPath, os.Path(pr))
+                canonicalBase = basePath.toIO.getCanonicalPath
+                canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+                _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
+                  new RuntimeException("path outside project root")
+                )
+                entries <- IO.blocking {
+                  if os.exists(basePath) && os.isDir(basePath) then
+                    os.list(basePath)
+                      .sortBy { p =>
+                        (if os.isDir(p) then 0 else 1, p.last.toLowerCase)
+                      }
+                      .map { p =>
+                        val isDir = os.isDir(p)
+                        io.circe.Json.obj(
+                          "name" -> p.last.asJson,
+                          "type" -> (if isDir then "dir" else "file").asJson,
+                          "size" -> (if !isDir then os.size(p) else 0L).asJson
+                        )
+                      }
+                  else Nil
+                }
+              yield (basePath.toString, entries))
+                .flatMap { case (resolvedPath, entries) =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "dirListing".asJson,
+                      "path" -> subPath.asJson,
+                      "resolvedPath" -> resolvedPath.asJson,
+                      "entries" -> entries.asJson
+                    )
+                  )
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"listDir failed: ${e.getMessage}")
+                    *> wsSend(io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> e.getMessage.asJson))
+                }
+            else IO.unit
+            end if
+
+          case "readFile" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val rdSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            val filePath = hc.downField("path").as[String].getOrElse("")
+            if rdSessionId.nonEmpty && filePath.nonEmpty then
+              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten.filter(_.nonEmpty)
+              (for
+                pr <- overrideRoot match
+                  case Some(root) => IO.pure(root)
+                  case None =>
+                    for
+                      metaOpt <- sessionStore.getSessionMeta(rdSessionId)
+                      folderId = metaOpt.flatMap(_.folderId)
+                      prOpt <- sessionStore.resolveProjectRoot(folderId)
+                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+                basePath <-
+                  if pr.nonEmpty && os.Path(pr, os.pwd).segments.nonEmpty then
+                    IO.blocking { PathUtil.resolvePath(filePath, os.Path(pr, os.pwd)) }
+                  else IO.blocking { PathUtil.resolvePath(filePath, PathUtil.dataRoot / "projects") }
+                canonicalBase = basePath.toIO.getCanonicalPath
+                canonicalRoot = os.Path(pr, os.pwd).toIO.getCanonicalPath
+                _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
+                  new RuntimeException("path outside project root")
+                )
+                content <- IO.blocking {
+                  val size = os.size(basePath)
+                  if size > 2 * 1024 * 1024 then
+                    os.read(basePath, offset = 0, count = 2 * 1024 * 1024) + "\n\n[... file truncated at 2MB]"
+                  else os.read(basePath)
+                }
+                fileSize = os.size(basePath)
+              yield (content, basePath.toString, fileSize))
+                .flatMap { case (content, absPath, fileSize) =>
+                  val ext = filePath.split('.').lastOption.getOrElse("").toLowerCase
+                  val itemType = ext match
+                    case "md" | "markdown" => "markdown"
+                    case "html" | "htm" => "html"
+                    case "json" => "json"
+                    case "yaml" | "yml" => "yaml"
+                    case "csv" | "tsv" => "csv"
+                    case "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "tiff" | "tif" =>
+                      "image"
+                    case "pdf" => "pdf"
+                    case "doc" | "docx" => "docx"
+                    case "xls" | "xlsx" | "xlsm" => "xlsx"
+                    case "ppt" | "pptx" => "pptx"
+                    case "epub" => "epub"
+                    case _ => "code"
+                  val isBinary = itemType match
+                    case "image" | "pdf" | "docx" | "xlsx" | "pptx" | "epub" => true
+                    case _ => false
+                  if isBinary then
+                    // Binary files: don't send content via WS — frontend fetches via /api/nf-file
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "fileContent".asJson,
+                        "path" -> filePath.asJson,
+                        "absPath" -> absPath.asJson,
+                        "itemType" -> itemType.asJson,
+                        "fileName" -> filePath.split('/').last.asJson,
+                        "size" -> fileSize.asJson
+                      )
+                    )
+                  else
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "fileContent".asJson,
+                        "path" -> filePath.asJson,
+                        "absPath" -> absPath.asJson,
+                        "content" -> content.asJson,
+                        "itemType" -> itemType.asJson,
+                        "fileName" -> filePath.split('/').last.asJson,
+                        "size" -> fileSize.asJson
+                      )
+                    )
+                  end if
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"readFile failed: ${e.getMessage}")
+                    *> wsSend(
+                      io.circe.Json
+                        .obj("type" -> "fileContent".asJson, "error" -> e.getMessage.asJson, "path" -> filePath.asJson)
+                    )
+                }
+            else IO.unit
+            end if
+
+          case "pop.readFile" =>
+            // Pop re-open: reads any absolute path without project root restriction.
+            // Agent-created files (e.g. /tmp/output.svg) should always be readable.
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val popFilePath = hc.downField("path").as[String].getOrElse("")
+            if popFilePath.nonEmpty then
+              (for
+                _ <- IO.raiseUnless(popFilePath.startsWith("/"))(
+                  new RuntimeException("path must be absolute")
+                )
+                basePath = os.Path(popFilePath)
+                _ <- IO.raiseUnless(os.exists(basePath))(
+                  new RuntimeException(s"file not found: $popFilePath")
+                )
+                _ <- IO.raiseUnless(os.isFile(basePath))(
+                  new RuntimeException("path is not a regular file")
+                )
+                fileSize = os.size(basePath)
+                _ <- IO.raiseWhen(fileSize > 10L * 1024 * 1024)(
+                  new RuntimeException("file exceeds 10MB limit")
+                )
+                content <- IO.blocking { os.read(basePath) }
+              yield (content, basePath.toString, fileSize, popFilePath))
+                .flatMap { case (content, absPath, fileSize, origPath) =>
+                  val ext = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
+                  val itemType = ext match
+                    case "md" | "markdown" => "markdown"
+                    case "html" | "htm" => "html"
+                    case "json" => "json"
+                    case "yaml" | "yml" => "yaml"
+                    case "csv" | "tsv" => "csv"
+                    case "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "tiff" | "tif" =>
+                      "image"
+                    case "pdf" => "pdf"
+                    case "doc" | "docx" => "docx"
+                    case "xls" | "xlsx" | "xlsm" => "xlsx"
+                    case "ppt" | "pptx" => "pptx"
+                    case "epub" => "epub"
+                    case _ => "code"
+                  val isBinary = itemType match
+                    case "image" | "pdf" | "docx" | "xlsx" | "pptx" | "epub" => true
+                    case _ => false
+                  if isBinary then
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "fileContent".asJson,
+                        "path" -> origPath.asJson,
+                        "absPath" -> absPath.asJson,
+                        "itemType" -> itemType.asJson,
+                        "fileName" -> origPath.split('/').last.asJson,
+                        "size" -> fileSize.asJson
+                      )
+                    )
+                  else
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "fileContent".asJson,
+                        "path" -> origPath.asJson,
+                        "absPath" -> absPath.asJson,
+                        "content" -> content.asJson,
+                        "itemType" -> itemType.asJson,
+                        "fileName" -> origPath.split('/').last.asJson,
+                        "size" -> fileSize.asJson
+                      )
+                    )
+                  end if
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"pop.readFile failed: ${e.getMessage}")
+                    *> wsSend(
+                      io.circe.Json
+                        .obj(
+                          "type" -> "fileContent".asJson,
+                          "error" -> e.getMessage.asJson,
+                          "path" -> popFilePath.asJson
+                        )
+                    )
+                }
+            else IO.unit
+            end if
+
+          case "transcribe" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val audioB64 = hc.downField("audio").as[String].getOrElse("")
+            val language = hc.downField("language").as[String].toOption.filter(_.nonEmpty)
+            if audioB64.nonEmpty then
+              sttService match
+                case None =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "transcription".asJson,
+                      "error" -> "STT not configured. Create ~/.nebflow/stt-config.json".asJson
+                    )
+                  )
+                case Some(svc) =>
+                  IO.blocking {
+                    java.util.Base64.getDecoder.decode(audioB64)
+                  }.flatMap { wavBytes =>
+                    svc.transcribe(wavBytes, language).flatMap {
+                      case Right(text) =>
+                        wsSend(
+                          io.circe.Json.obj(
+                            "type" -> "transcription".asJson,
+                            "text" -> text.asJson
+                          )
+                        )
+                      case Left(err) =>
+                        wsSend(
+                          io.circe.Json.obj(
+                            "type" -> "transcription".asJson,
+                            "error" -> err.asJson
+                          )
+                        )
+                    }
+                  }.handleErrorWith { e =>
+                    logger.warn(s"Transcribe failed: ${e.getMessage}")
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "transcription".asJson,
+                        "error" -> e.getMessage.asJson
+                      )
+                    )
+                  }
+            else IO.unit
+            end if
+
+          case "ping" => wsSend(io.circe.Json.obj("type" -> "pong".asJson))
+
+          case "createFile" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val cfSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            val cfPath = hc.downField("path").as[String].getOrElse("")
+            if cfSessionId.nonEmpty && cfPath.nonEmpty then
+              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+              (for
+                pr <- overrideRoot match
+                  case Some(root) => IO.pure(root)
+                  case None =>
+                    for
+                      metaOpt <- sessionStore.getSessionMeta(cfSessionId)
+                      folderId = metaOpt.flatMap(_.folderId)
+                      prOpt <- sessionStore.resolveProjectRoot(folderId)
+                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+                basePath = PathUtil.resolvePath(cfPath, os.Path(pr))
+                canonicalBase = basePath.toIO.getCanonicalPath
+                canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+                _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
+                  new RuntimeException("path outside project root")
+                )
+                _ <- IO.blocking {
+                  val parent = basePath / os.up
+                  if !os.exists(parent) then os.makeDir.all(parent)
+                  if !os.exists(basePath) then os.write.over(basePath, "")
+                }
+              yield cfPath)
+                .flatMap { p =>
+                  wsSend(io.circe.Json.obj("type" -> "fileCreated".asJson, "path" -> p.asJson))
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"createFile failed: ${e.getMessage}")
+                  wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
+                }
+            else IO.unit
+            end if
+
+          case "createDir" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val cdSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            val cdPath = hc.downField("path").as[String].getOrElse("")
+            if cdSessionId.nonEmpty && cdPath.nonEmpty then
+              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+              (for
+                pr <- overrideRoot match
+                  case Some(root) => IO.pure(root)
+                  case None =>
+                    for
+                      metaOpt <- sessionStore.getSessionMeta(cdSessionId)
+                      folderId = metaOpt.flatMap(_.folderId)
+                      prOpt <- sessionStore.resolveProjectRoot(folderId)
+                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+                basePath = PathUtil.resolvePath(cdPath, os.Path(pr))
+                canonicalBase = basePath.toIO.getCanonicalPath
+                canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+                _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
+                  new RuntimeException("path outside project root")
+                )
+                _ <- IO.blocking { os.makeDir.all(basePath) }
+              yield cdPath)
+                .flatMap { p =>
+                  wsSend(io.circe.Json.obj("type" -> "dirCreated".asJson, "path" -> p.asJson))
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"createDir failed: ${e.getMessage}")
+                  wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
+                }
+            else IO.unit
+            end if
+
+          case "deletePath" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val dpSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            val dpPath = hc.downField("path").as[String].getOrElse("")
+            if dpSessionId.nonEmpty && dpPath.nonEmpty then
+              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+              (for
+                pr <- overrideRoot match
+                  case Some(root) => IO.pure(root)
+                  case None =>
+                    for
+                      metaOpt <- sessionStore.getSessionMeta(dpSessionId)
+                      folderId = metaOpt.flatMap(_.folderId)
+                      prOpt <- sessionStore.resolveProjectRoot(folderId)
+                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+                basePath = PathUtil.resolvePath(dpPath, os.Path(pr))
+                canonicalBase = basePath.toIO.getCanonicalPath
+                canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+                _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
+                  new RuntimeException("path outside project root")
+                )
+                // Prevent deleting the project root itself
+                _ <- IO.raiseWhen(canonicalBase == canonicalRoot)(new RuntimeException("cannot delete project root"))
+                _ <- IO.blocking { if os.exists(basePath) then os.remove(basePath) }
+              yield dpPath)
+                .flatMap { p =>
+                  wsSend(io.circe.Json.obj("type" -> "pathDeleted".asJson, "path" -> p.asJson))
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"deletePath failed: ${e.getMessage}")
+                  wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
+                }
+            else IO.unit
+            end if
+
+          case "writeFile" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val wrSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            val wrFilePath = hc.downField("path").as[String].getOrElse("")
+            val wrContent = hc.downField("content").as[String].getOrElse("")
+            if wrSessionId.nonEmpty && wrFilePath.nonEmpty then
+              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+              (for
+                pr <- overrideRoot match
+                  case Some(root) => IO.pure(root)
+                  case None =>
+                    for
+                      metaOpt <- sessionStore.getSessionMeta(wrSessionId)
+                      folderId = metaOpt.flatMap(_.folderId)
+                      prOpt <- sessionStore.resolveProjectRoot(folderId)
+                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+                basePath = PathUtil.resolvePath(wrFilePath, os.Path(pr))
+                canonicalBase = basePath.toIO.getCanonicalPath
+                canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+                _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
+                  new RuntimeException("path outside project root")
+                )
+                _ <- IO.blocking {
+                  os.write.over(basePath, wrContent)
+                }
+              yield basePath.toString)
+                .flatMap { absPath =>
+                  logger.info(s"File saved: $absPath (${wrContent.length} chars)")
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "fileSaved".asJson,
+                      "path" -> wrFilePath.asJson
+                    )
+                  )
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"writeFile failed: ${e.getMessage}")
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "fileSaveError".asJson,
+                      "path" -> wrFilePath.asJson,
+                      "error" -> e.getMessage.asJson
+                    )
+                  )
+                }
+            else IO.unit
+            end if
+
+          case "getActiveBgTasks" =>
+            nebflow.core.tools.BgTaskRegistry.activeTasksJson.flatMap { tasksJson =>
               wsSend(
+                io.circe.Json.obj(
+                  "type" -> "activeBgTasks".asJson,
+                  "tasks" -> tasksJson
+                )
+              )
+            }
+
+          case "cancelBackgroundJob" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val cancelSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val jobId = json.hcursor.downField("jobId").as[String].getOrElse("")
+            if cancelSessionId.nonEmpty && jobId.nonEmpty then
+              nebflow.core.tools.ShellSession
+                .forSession(cancelSessionId)
+                .flatMap { shell =>
+                  shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
+                    val logMsg =
+                      if cancelled then s"Cancelled background job $jobId"
+                      else s"Background job $jobId not found or already completed"
+                    logger.info(logMsg, "sessionId" -> cancelSessionId, "jobId" -> jobId) *>
+                      // Notify agent so it can process cancellation
+                      routeToAgent(cancelSessionId) { ref =>
+                        ref ! AgentCommand.ExternalEvent(
+                          source = "background-task",
+                          eventType = "cancelled",
+                          payload = s"[Background task cancelled] Job ID: $jobId",
+                          metadata = io.circe.JsonObject(
+                            "jobId" -> jobId.asJson
+                          ),
+                          correlationId = Some(jobId)
+                        )
+                      } *>
+                      // Send completion update to frontend so the task is removed from the dropdown
+                      wsSend(
+                        io.circe.Json.obj(
+                          "type" -> "backgroundTaskUpdate".asJson,
+                          "sessionId" -> cancelSessionId.asJson,
+                          "taskId" -> jobId.asJson,
+                          "description" -> "".asJson,
+                          "status" -> "completed".asJson
+                        )
+                      )
+                  }
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"cancelBackgroundJob failed for session=$cancelSessionId job=$jobId: ${e.getMessage}")
+                  // Send a completion update even on error, so the frontend removes the task
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "backgroundTaskUpdate".asJson,
+                      "sessionId" -> cancelSessionId.asJson,
+                      "taskId" -> jobId.asJson,
+                      "description" -> "".asJson,
+                      "status" -> "failed".asJson
+                    )
+                  ).handleErrorWith(_ => IO.unit)
+                }
+            else IO.unit
+            end if
+
+          case "cancelFlow" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val flowName = json.hcursor.downField("name").as[String].getOrElse("")
+            val cfSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            if flowName.nonEmpty && cfSessionId.nonEmpty then
+              nebflow.core.flow.FlowTreeRegistry.get(cfSessionId).flatMap {
+                case Some(treeRef) =>
+                  treeRef ! nebflow.core.flow.TreeCommand.CancelPipeline(flowName)
+                  logger.info(s"Cancel flow '$flowName' requested by user via WS")
+                case None =>
+                  logger.warn(s"Cannot cancel flow '$flowName': no FlowTreeActor for session")
+              }
+            else IO.unit
+
+          case "getHistory" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val limit = json.hcursor.downField("limit").as[Int].getOrElse(50)
+            val beforeIndex = json.hcursor.downField("beforeIndex").as[Option[Int]].getOrElse(None)
+            if sessionId.nonEmpty then
+              (sharedResources.sessionStore
+                .getHistoryPage(sessionId, limit, beforeIndex)
+                .attempt
+                .flatMap {
+                  case Right((msgs, total, offset, hasMore)) =>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "historyPage".asJson,
+                        "sessionId" -> sessionId.asJson,
+                        "messages" -> msgs.asJson,
+                        "total" -> total.asJson,
+                        "offset" -> offset.asJson,
+                        "hasMore" -> hasMore.asJson
+                      )
+                    )
+                  case Left(_) =>
+                    // Send empty historyPage so the frontend doesn't get stuck
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "historyPage".asJson,
+                        "sessionId" -> sessionId.asJson,
+                        "messages" -> List.empty[io.circe.Json].asJson,
+                        "total" -> 0.asJson,
+                        "offset" -> 0.asJson,
+                        "hasMore" -> false.asJson
+                      )
+                    )
+                })
+                .handleErrorWith { e =>
+                  wsSend(
+                    io.circe.Json
+                      .obj("type" -> "error".asJson, "message" -> s"getHistory failed: ${e.getMessage}".asJson)
+                  )
+                }
+            else IO.unit
+            end if
+
+          case "listAgents" =>
+            agentService.listAgents.flatMap { agents =>
+              val agentsJson = agents.map { a =>
+                io.circe.Json.obj(
+                  "name" -> a.name.asJson,
+                  "description" -> a.description.asJson,
+                  "displayName" -> a.displayName.getOrElse(a.name).asJson,
+                  "avatar" -> a.avatar.asJson,
+                  "tools" -> a.tools.asJson
+                )
+              }
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "agentList".asJson,
+                  "agents" -> agentsJson.asJson
+                )
+              )
+            }
+
+          case "listAgentSessions" =>
+            val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
+            if agentName.nonEmpty then sendAgentSessionListByName(wsSend, agentName)
+            else IO.unit
+            end if
+
+          // ===== Folder Management =====
+
+          case "createFolder" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val name = json.hcursor.downField("name").as[String].getOrElse("New Folder")
+            val parentId = json.hcursor.downField("parentId").as[Option[String]].getOrElse(None)
+            val agentNameFromMsg = json.hcursor.downField("agentName").as[String].getOrElse("")
+            if name.nonEmpty then
+              val agentNameIO =
+                if agentNameFromMsg.nonEmpty then IO.pure(agentNameFromMsg)
+                else sessionStore.getActiveMeta.map(_.flatMap(_.agentName).getOrElse("Nebula"))
+              agentNameIO
+                .flatMap { agentName =>
+                  sessionService.createFolder(name, parentId, agentName).flatMap { _ =>
+                    sendAgentSessionListByName(wsSend, agentName)
+                  }
+                }
+                .handleErrorWith { e =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+                }
+            else IO.unit
+
+          case "renameFolder" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+            val newName = json.hcursor.downField("name").as[String].getOrElse("")
+            if folderId.nonEmpty && newName.nonEmpty then
+              sessionService
+                .renameFolder(folderId, newName)
+                .flatMap { _ =>
+                  sessionStore.getActiveMeta.flatMap { metaOpt =>
+                    val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                    sendAgentSessionListByName(wsSend, agentName)
+                  }
+                }
+                .handleErrorWith { e =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+                }
+            else IO.unit
+
+          case "deleteFolder" =>
+            val folderId = parse(text).flatMap(_.hcursor.downField("folderId").as[String]).getOrElse("")
+            if folderId.nonEmpty then
+              sessionService
+                .deleteFolder(folderId)
+                .flatMap { _ =>
+                  sessionStore.getActiveMeta.flatMap { metaOpt =>
+                    val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                    sendAgentSessionListByName(wsSend, agentName)
+                  }
+                }
+                .handleErrorWith { e =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+                }
+            else IO.unit
+
+          case "moveSessionToFolder" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val folderId = json.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
+            if sessionId.nonEmpty then
+              sessionService
+                .moveSessionToFolder(sessionId, folderId)
+                .flatMap { _ =>
+                  sendAgentSessionList(wsSend, sessionId)
+                }
+                .handleErrorWith { e =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+                }
+            else IO.unit
+
+          case "moveFolder" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+            val parentId = json.hcursor.downField("parentId").as[Option[String]].getOrElse(None)
+            if folderId.nonEmpty then
+              sessionService
+                .moveFolder(folderId, parentId)
+                .flatMap { _ =>
+                  sessionStore.getActiveMeta.flatMap { metaOpt =>
+                    val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                    sendAgentSessionListByName(wsSend, agentName)
+                  }
+                }
+                .handleErrorWith { e =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+                }
+            else IO.unit
+
+          case "setFolderProjectRoot" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+            val projectRoot = json.hcursor.downField("projectRoot").as[Option[String]].getOrElse(None)
+            if folderId.nonEmpty then
+              sessionService
+                .setFolderProjectRoot(folderId, projectRoot)
+                .flatMap {
+                  case Right(_) =>
+                    // Use the folder's own agent name, not the active session's,
+                    // to ensure the frontend receives the update regardless of which agent tab is active.
+                    sessionStore.getFolderAgentName(folderId).flatMap { agentOpt =>
+                      val agentName = agentOpt.getOrElse("Nebula")
+                      sendAgentSessionListByName(wsSend, agentName)
+                    }
+                  case Left(err) =>
+                    wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+                }
+                .handleErrorWith { e =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+                }
+            else IO.unit
+            end if
+
+          // Directory browser for project root selection
+          case "browsePath" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val path = json.hcursor.downField("path").as[String].getOrElse("~")
+            val expanded = if path.startsWith("~") then System.getProperty("user.home") + path.drop(1) else path
+            IO.blocking {
+              val dir = os.Path(expanded, os.pwd)
+              if os.isDir(dir) then
+                val entries = os.list(dir).filter(os.isDir).sortBy(_.last)
+                val result = entries.take(200).map { p =>
+                  io.circe.Json.obj("name" -> p.last.asJson, "path" -> p.toString.asJson)
+                }
+                io.circe.Json.obj(
+                  "type" -> "browseResult".asJson,
+                  "path" -> dir.toString.asJson,
+                  "entries" -> result.asJson
+                )
+              else
                 io.circe.Json.obj(
                   "type" -> "browseResult".asJson,
                   "path" -> path.asJson,
-                  "entries" -> io.circe.Json.arr(),
-                  "error" -> e.getMessage.asJson
+                  "entries" -> io.circe.Json.arr()
                 )
-              )
-            }
-
-        // ===== Folder Rules Management =====
-
-        case "getRules" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-          if folderId.nonEmpty then
-            val content = RulesStore.loadFolderRules(folderId).getOrElse("")
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "rulesData".asJson,
-                "folderId" -> folderId.asJson,
-                "content" -> content.asJson
-              )
-            )
-          else IO.unit
-
-        case "saveRules" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-          val content = json.hcursor.downField("content").as[String].getOrElse("")
-          if folderId.nonEmpty then
-            RulesStore.saveFolderRules(folderId, content) *>
-              wsSend(io.circe.Json.obj("type" -> "rulesSaved".asJson, "folderId" -> folderId.asJson))
-          else IO.unit
-
-        case "deleteRules" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-          if folderId.nonEmpty then
-            RulesStore.deleteFolderRules(folderId) *>
-              wsSend(io.circe.Json.obj("type" -> "rulesDeleted".asJson, "folderId" -> folderId.asJson))
-          else IO.unit
-
-        case "rulesStatus" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-          if folderId.nonEmpty then
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "rulesStatus".asJson,
-                "folderId" -> folderId.asJson,
-                "exists" -> RulesStore.exists(folderId).asJson,
-                "preview" -> RulesStore.preview(folderId).asJson
-              )
-            )
-          else IO.unit
-
-        case "getAgentSystemPrompt" =>
-          val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
-          if agentName.nonEmpty then
-            agentService.getSystemPrompt(agentName).flatMap { mdOpt =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "agentSystemPrompt".asJson,
-                  "name" -> agentName.asJson,
-                  "systemMd" -> mdOpt.getOrElse("").asJson
-                )
-              )
-            }
-          else IO.unit
-
-        case "updateAgentSystemPrompt" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val agentName = json.hcursor.downField("name").as[String].getOrElse("")
-          val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
-          if agentName.nonEmpty then
-            agentService.updateSystemPrompt(agentName, systemMd) *>
-              wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
-          else IO.unit
-
-        case "createAgentSession" =>
-          val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
-          if agentName.nonEmpty then
-            (for
-              defnOpt <- sharedResources.agentLibrary.get(agentName)
-              defn <- IO.fromOption(defnOpt)(new RuntimeException(s"Agent not found: $agentName"))
-              meta <- sessionService.createSession(
-                s"Agent: ${defn.displayName.getOrElse(defn.name)}",
-                agentName = Some(agentName)
-              )
-              _ <- sessionService.switchSession(meta.id)
-              _ <- sessionService.sendSessionList(wsSend, agentName)
-            yield ()).handleErrorWith { e =>
-              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-            }
-          else IO.unit
-
-        case "getMemory" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
-          val sessionIdParam = json.hcursor.downField("sessionId").as[String].toOption.filter(_.nonEmpty)
-          val metaIO = sessionIdParam match
-            case Some(sid) => sessionStore.getSessionMeta(sid)
-            case None => sessionStore.getActiveMeta
-          (metaIO
-            .flatMap { metaOpt =>
-              val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-              val sessionId = metaOpt.map(_.id).getOrElse("")
-              val folderId = metaOpt.flatMap(_.folderId).getOrElse("")
-              val content = scope match
-                case "user" => MemoryStore.loadUserMemory.getOrElse("")
-                case "agent" => MemoryStore.loadAgentMemory(agentName).getOrElse("")
-                case "folder" =>
-                  if folderId.nonEmpty then MemoryStore.loadFolderMemory(folderId).getOrElse("") else ""
-                case _ => ""
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "memoryData".asJson,
-                  "scope" -> scope.asJson,
-                  "content" -> content.asJson
-                )
-              )
-            })
-            .handleErrorWith { e =>
-              logger.warn(s"getMemory error: ${e.getMessage}")
-              wsSend(
-                io.circe.Json.obj("type" -> "error".asJson, "message" -> s"getMemory failed: ${e.getMessage}".asJson)
-              )
-            }
-
-        case "saveMemory" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
-          val content = json.hcursor.downField("content").as[String].getOrElse("")
-          val sessionIdParam = json.hcursor.downField("sessionId").as[String].toOption.filter(_.nonEmpty)
-          val metaIO = sessionIdParam match
-            case Some(sid) => sessionStore.getSessionMeta(sid)
-            case None => sessionStore.getActiveMeta
-          (metaIO
-            .flatMap { metaOpt =>
-              val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-              val sessionId = metaOpt.map(_.id).getOrElse("")
-              val folderId = metaOpt.flatMap(_.folderId).getOrElse("")
-              val save = scope match
-                case "user" => MemoryStore.saveUserMemory(content)
-                case "agent" => MemoryStore.saveAgentMemory(agentName, content)
-                case "folder" =>
-                  if folderId.nonEmpty then MemoryStore.saveFolderMemory(folderId, content) else IO.unit
-                case _ => IO.unit
-              save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
-            })
-            .handleErrorWith { e =>
-              logger.warn(s"saveMemory error: ${e.getMessage}")
-              wsSend(
-                io.circe.Json.obj("type" -> "error".asJson, "message" -> s"saveMemory failed: ${e.getMessage}".asJson)
-              )
-            }
-
-        case "memoryStatus" =>
-          sessionStore.getActiveMeta.flatMap { metaOpt =>
-            val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-            val sessionId = metaOpt.map(_.id).getOrElse("")
-            val folderId = metaOpt.flatMap(_.folderId).getOrElse("")
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "memoryStatus".asJson,
-                "user" -> io.circe.Json.obj(
-                  "exists" -> MemoryStore.userExists.asJson,
-                  "preview" -> MemoryStore.userPreview.asJson
-                ),
-                "agent" -> io.circe.Json.obj(
-                  "exists" -> MemoryStore.agentExists(agentName).asJson,
-                  "preview" -> MemoryStore.agentPreview(agentName).asJson
-                ),
-                "folder" -> io.circe.Json.obj(
-                  "exists" -> (folderId.nonEmpty && MemoryStore.folderExists(folderId)).asJson,
-                  "preview" -> (if folderId.nonEmpty then MemoryStore.folderPreview(folderId) else None).asJson
-                )
-              )
-            )
-          }
-
-        case "getCardDesign" =>
-          val path = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "card-design-prompt.md")
-          IO.blocking {
-            if java.nio.file.Files.exists(path) then
-              new String(java.nio.file.Files.readAllBytes(path), java.nio.charset.StandardCharsets.UTF_8)
-            else ""
-          }.flatMap { content =>
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "cardDesignData".asJson,
-                "content" -> content.asJson
-              )
-            )
-          }
-
-        case "saveCardDesign" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val content = json.hcursor.downField("content").as[String].getOrElse("")
-          val path = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "card-design-prompt.md")
-          IO.blocking {
-            java.nio.file.Files.write(path, content.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-          }.flatMap { _ =>
-            wsSend(io.circe.Json.obj("type" -> "cardDesignSaved".asJson, "ok" -> true.asJson))
-          }.handleErrorWith { e =>
-            wsSend(
-              io.circe.Json
-                .obj("type" -> "error".asJson, "message" -> s"Failed to save card design: ${e.getMessage}".asJson)
-            )
-          }
-
-        case "checkUpdate" =>
-          val currentVer = nebflow.Version.string
-          val result = IO
-            .blocking {
-              try
-                val url = "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest"
-                val extract = (j: io.circe.Json) =>
-                  for
-                    tag <- j.hcursor.downField("tag_name").as[String].toOption
-                    name <- j.hcursor.downField("name").as[String].toOption
-                  yield (tag, name)
-                val conn = java.net.URI.create(url).toURL.openConnection()
-                conn.setConnectTimeout(5000)
-                conn.setReadTimeout(5000)
-                val raw = new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
-                io.circe.parser.parse(raw).toOption.flatMap(extract)
-              catch case _: Exception => None
-            }
-            .flatMap {
-              case Some((tag, releaseName)) =>
-                val latestVer = tag.stripPrefix("v")
-                val hasUpdate = latestVer != currentVer
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "updateCheckResult".asJson,
-                    "currentVersion" -> currentVer.asJson,
-                    "latestVersion" -> latestVer.asJson,
-                    "hasUpdate" -> hasUpdate.asJson,
-                    "releaseName" -> releaseName.asJson
-                  )
-                )
-              case None =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "updateCheckResult".asJson,
-                    "currentVersion" -> currentVer.asJson,
-                    "error" -> "Failed to check for updates".asJson
-                  )
-                )
-            }
-          result
-
-        case "doUpdate" =>
-          val beta = parse(text).toOption.flatMap(_.hcursor.downField("beta").as[Boolean].toOption).getOrElse(false)
-          wsSend(io.circe.Json.obj("type" -> "updateStarted".asJson)) *>
-            IO.blocking {
-              import sys.process.*
-              val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
-              val script =
-                if beta then
-                  if isWindows then
-                    """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
-                  else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
-                else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
-                else "curl -fsSL https://nebflow.space/install.sh | sh"
-              val exitCode = script.!
-              if exitCode == 0 then
-                wsSend(io.circe.Json.obj("type" -> "updateCompleted".asJson, "success" -> true.asJson))
-              else
-                wsSend(
-                  io.circe.Json
-                    .obj(
-                      "type" -> "updateCompleted".asJson,
-                      "success" -> false.asJson,
-                      "error" -> s"Exit code: $exitCode".asJson
-                    )
-                )
-            }.flatten
+              end if
+            }.flatMap(wsSend)
               .handleErrorWith { e =>
                 wsSend(
-                  io.circe.Json
-                    .obj("type" -> "updateCompleted".asJson, "success" -> false.asJson, "error" -> e.getMessage.asJson)
+                  io.circe.Json.obj(
+                    "type" -> "browseResult".asJson,
+                    "path" -> path.asJson,
+                    "entries" -> io.circe.Json.arr(),
+                    "error" -> e.getMessage.asJson
+                  )
                 )
               }
 
-        case "remoteUpdate" =>
-          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-          val targetDevice = hc.downField("device").as[String].getOrElse("")
-          val beta = hc.downField("beta").as[Boolean].getOrElse(false)
-          if targetDevice.isEmpty then
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "remoteUpdateResult".asJson,
-                "success" -> false.asJson,
-                "error" -> "Missing device name".asJson
+          // ===== Folder Rules Management =====
+
+          case "getRules" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+            if folderId.nonEmpty then
+              val content = RulesStore.loadFolderRules(folderId).getOrElse("")
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "rulesData".asJson,
+                  "folderId" -> folderId.asJson,
+                  "content" -> content.asJson
+                )
               )
-            )
-          else
-            sharedResources.neblinkService match
-              case None =>
+            else IO.unit
+
+          case "saveRules" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+            val content = json.hcursor.downField("content").as[String].getOrElse("")
+            if folderId.nonEmpty then
+              RulesStore.saveFolderRules(folderId, content) *>
+                wsSend(io.circe.Json.obj("type" -> "rulesSaved".asJson, "folderId" -> folderId.asJson))
+            else IO.unit
+
+          case "deleteRules" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+            if folderId.nonEmpty then
+              RulesStore.deleteFolderRules(folderId) *>
+                wsSend(io.circe.Json.obj("type" -> "rulesDeleted".asJson, "folderId" -> folderId.asJson))
+            else IO.unit
+
+          case "rulesStatus" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+            if folderId.nonEmpty then
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "rulesStatus".asJson,
+                  "folderId" -> folderId.asJson,
+                  "exists" -> RulesStore.exists(folderId).asJson,
+                  "preview" -> RulesStore.preview(folderId).asJson
+                )
+              )
+            else IO.unit
+
+          case "getAgentSystemPrompt" =>
+            val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
+            if agentName.nonEmpty then
+              agentService.getSystemPrompt(agentName).flatMap { mdOpt =>
                 wsSend(
                   io.circe.Json.obj(
-                    "type" -> "remoteUpdateResult".asJson,
-                    "success" -> false.asJson,
-                    "error" -> "NebLink not enabled".asJson
+                    "type" -> "agentSystemPrompt".asJson,
+                    "name" -> agentName.asJson,
+                    "systemMd" -> mdOpt.getOrElse("").asJson
                   )
                 )
-              case Some(neblinkService) =>
-                neblinkService.peers.flatMap { peers =>
-                  peers.find(p =>
-                    p.deviceName.equalsIgnoreCase(targetDevice) ||
-                      p.deviceName.toLowerCase.contains(targetDevice.toLowerCase)
-                  ) match
-                    case None =>
-                      wsSend(
-                        io.circe.Json.obj(
-                          "type" -> "remoteUpdateResult".asJson,
-                          "success" -> false.asJson,
-                          "error" -> s"Device '$targetDevice' not found".asJson
-                        )
+              }
+            else IO.unit
+
+          case "updateAgentSystemPrompt" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val agentName = json.hcursor.downField("name").as[String].getOrElse("")
+            val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
+            if agentName.nonEmpty then
+              agentService.updateSystemPrompt(agentName, systemMd) *>
+                wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
+            else IO.unit
+
+          case "updateAgentTools" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val agentName = json.hcursor.downField("name").as[String].getOrElse("")
+            val tools = json.hcursor.downField("tools").as[List[String]].getOrElse(List("*"))
+            if agentName.nonEmpty then
+              agentService.updateTools(agentName, tools) *>
+                wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
+            else IO.unit
+
+          case "createAgentSession" =>
+            val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
+            if agentName.nonEmpty then
+              (for
+                defnOpt <- sharedResources.agentLibrary.get(agentName)
+                defn <- IO.fromOption(defnOpt)(new RuntimeException(s"Agent not found: $agentName"))
+                meta <- sessionService.createSession(
+                  s"Agent: ${defn.displayName.getOrElse(defn.name)}",
+                  agentName = Some(agentName)
+                )
+                _ <- sessionService.switchSession(meta.id)
+                _ <- sessionService.sendSessionList(wsSend, agentName)
+              yield ()).handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+            else IO.unit
+
+          case "getMemory" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
+            val sessionIdParam = json.hcursor.downField("sessionId").as[String].toOption.filter(_.nonEmpty)
+            val metaIO = sessionIdParam match
+              case Some(sid) => sessionStore.getSessionMeta(sid)
+              case None => sessionStore.getActiveMeta
+            (metaIO
+              .flatMap { metaOpt =>
+                val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                val content = scope match
+                  case "user" => MemoryStore.loadUserMemory.getOrElse("")
+                  case "agent" => MemoryStore.loadAgentMemory(agentName).getOrElse("")
+                  case _ => ""
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "memoryData".asJson,
+                    "scope" -> scope.asJson,
+                    "content" -> content.asJson
+                  )
+                )
+              })
+              .handleErrorWith { e =>
+                logger.warn(s"getMemory error: ${e.getMessage}")
+                wsSend(
+                  io.circe.Json.obj("type" -> "error".asJson, "message" -> s"getMemory failed: ${e.getMessage}".asJson)
+                )
+              }
+
+          case "saveMemory" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
+            val content = json.hcursor.downField("content").as[String].getOrElse("")
+            val sessionIdParam = json.hcursor.downField("sessionId").as[String].toOption.filter(_.nonEmpty)
+            val metaIO = sessionIdParam match
+              case Some(sid) => sessionStore.getSessionMeta(sid)
+              case None => sessionStore.getActiveMeta
+            (metaIO
+              .flatMap { metaOpt =>
+                val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                val save = scope match
+                  case "user" => MemoryStore.saveUserMemory(content)
+                  case "agent" => MemoryStore.saveAgentMemory(agentName, content)
+                  case _ => IO.unit
+                save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
+              })
+              .handleErrorWith { e =>
+                logger.warn(s"saveMemory error: ${e.getMessage}")
+                wsSend(
+                  io.circe.Json.obj("type" -> "error".asJson, "message" -> s"saveMemory failed: ${e.getMessage}".asJson)
+                )
+              }
+
+          case "memoryStatus" =>
+            sessionStore.getActiveMeta.flatMap { metaOpt =>
+              val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "memoryStatus".asJson,
+                  "user" -> io.circe.Json.obj(
+                    "exists" -> MemoryStore.userExists.asJson,
+                    "preview" -> MemoryStore.userPreview.asJson
+                  ),
+                  "agent" -> io.circe.Json.obj(
+                    "exists" -> MemoryStore.agentExists(agentName).asJson,
+                    "preview" -> MemoryStore.agentPreview(agentName).asJson
+                  )
+                )
+              )
+            }
+
+          case "getCardDesign" =>
+            val path = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "card-design-prompt.md")
+            IO.blocking {
+              if java.nio.file.Files.exists(path) then
+                new String(java.nio.file.Files.readAllBytes(path), java.nio.charset.StandardCharsets.UTF_8)
+              else ""
+            }.flatMap { content =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "cardDesignData".asJson,
+                  "content" -> content.asJson
+                )
+              )
+            }
+
+          case "saveCardDesign" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val content = json.hcursor.downField("content").as[String].getOrElse("")
+            val path = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "card-design-prompt.md")
+            IO.blocking {
+              java.nio.file.Files.write(path, content.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            }.flatMap { _ =>
+              wsSend(io.circe.Json.obj("type" -> "cardDesignSaved".asJson, "ok" -> true.asJson))
+            }.handleErrorWith { e =>
+              wsSend(
+                io.circe.Json
+                  .obj("type" -> "error".asJson, "message" -> s"Failed to save card design: ${e.getMessage}".asJson)
+              )
+            }
+
+          case "checkUpdate" =>
+            val currentVer = nebflow.Version.string
+            val result = IO
+              .blocking {
+                try
+                  val url = "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest"
+                  val extract = (j: io.circe.Json) =>
+                    for
+                      tag <- j.hcursor.downField("tag_name").as[String].toOption
+                      name <- j.hcursor.downField("name").as[String].toOption
+                    yield (tag, name)
+                  val conn = java.net.URI.create(url).toURL.openConnection()
+                  conn.setConnectTimeout(5000)
+                  conn.setReadTimeout(5000)
+                  val raw = new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                  io.circe.parser.parse(raw).toOption.flatMap(extract)
+                catch case _: Exception => None
+              }
+              .flatMap {
+                case Some((tag, releaseName)) =>
+                  val latestVer = tag.stripPrefix("v")
+                  val hasUpdate = latestVer != currentVer
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "updateCheckResult".asJson,
+                      "currentVersion" -> currentVer.asJson,
+                      "latestVersion" -> latestVer.asJson,
+                      "hasUpdate" -> hasUpdate.asJson,
+                      "releaseName" -> releaseName.asJson
+                    )
+                  )
+                case None =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "updateCheckResult".asJson,
+                      "currentVersion" -> currentVer.asJson,
+                      "error" -> "Failed to check for updates".asJson
+                    )
+                  )
+              }
+            result
+
+          case "doUpdate" =>
+            val beta = parse(text).toOption.flatMap(_.hcursor.downField("beta").as[Boolean].toOption).getOrElse(false)
+            wsSend(io.circe.Json.obj("type" -> "updateStarted".asJson)) *>
+              IO.blocking {
+                import sys.process.*
+                val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
+                val script =
+                  if beta then
+                    if isWindows then
+                      """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
+                    else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
+                  else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
+                  else "curl -fsSL https://nebflow.space/install.sh | sh"
+                val exitCode = script.!
+                if exitCode == 0 then
+                  wsSend(io.circe.Json.obj("type" -> "updateCompleted".asJson, "success" -> true.asJson))
+                else
+                  wsSend(
+                    io.circe.Json
+                      .obj(
+                        "type" -> "updateCompleted".asJson,
+                        "success" -> false.asJson,
+                        "error" -> s"Exit code: $exitCode".asJson
                       )
-                    case Some(peer) =>
-                      if peer.address.isEmpty then
+                  )
+              }.flatten
+                .handleErrorWith { e =>
+                  wsSend(
+                    io.circe.Json
+                      .obj(
+                        "type" -> "updateCompleted".asJson,
+                        "success" -> false.asJson,
+                        "error" -> e.getMessage.asJson
+                      )
+                  )
+                }
+
+          case "remoteUpdate" =>
+            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+            val targetDevice = hc.downField("device").as[String].getOrElse("")
+            val beta = hc.downField("beta").as[Boolean].getOrElse(false)
+            if targetDevice.isEmpty then
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "remoteUpdateResult".asJson,
+                  "success" -> false.asJson,
+                  "error" -> "Missing device name".asJson
+                )
+              )
+            else
+              sharedResources.neblinkService match
+                case None =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "remoteUpdateResult".asJson,
+                      "success" -> false.asJson,
+                      "error" -> "NebLink not enabled".asJson
+                    )
+                  )
+                case Some(neblinkService) =>
+                  neblinkService.peers.flatMap { peers =>
+                    peers.find(p =>
+                      p.deviceName.equalsIgnoreCase(targetDevice) ||
+                        p.deviceName.toLowerCase.contains(targetDevice.toLowerCase)
+                    ) match
+                      case None =>
                         wsSend(
                           io.circe.Json.obj(
                             "type" -> "remoteUpdateResult".asJson,
                             "success" -> false.asJson,
-                            "error" -> s"Device '$targetDevice' has no address".asJson
+                            "error" -> s"Device '$targetDevice' not found".asJson
                           )
                         )
-                      else
-                        logger.info(
-                          s"Remote update: sending update request to ${peer.deviceName} at ${peer.address} (beta=$beta)"
-                        ) *>
-                          IO.blocking {
-                            import sttp.client4.*
-                            val body = io.circe.Json.obj("beta" -> beta.asJson).noSpaces
-                            val resp = basicRequest
-                              .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/update"))
-                              .contentType("application/json")
-                              .body(body)
-                              .readTimeout(180.seconds)
-                              .response(asStringAlways)
-                              .send(neblinkService.httpBackend)
-                            resp
-                          }.flatMap { resp =>
-                            if resp.code.isSuccess then
-                              wsSend(
-                                io.circe.Json.obj(
-                                  "type" -> "remoteUpdateResult".asJson,
-                                  "success" -> true.asJson,
-                                  "device" -> peer.deviceName.asJson,
-                                  "message" -> "Update installed, device is restarting...".asJson
+                      case Some(peer) =>
+                        if peer.address.isEmpty then
+                          wsSend(
+                            io.circe.Json.obj(
+                              "type" -> "remoteUpdateResult".asJson,
+                              "success" -> false.asJson,
+                              "error" -> s"Device '$targetDevice' has no address".asJson
+                            )
+                          )
+                        else
+                          logger.info(
+                            s"Remote update: sending update request to ${peer.deviceName} at ${peer.address} (beta=$beta)"
+                          ) *>
+                            IO.blocking {
+                              import sttp.client4.*
+                              val body = io.circe.Json.obj("beta" -> beta.asJson).noSpaces
+                              val resp = basicRequest
+                                .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/update"))
+                                .contentType("application/json")
+                                .body(body)
+                                .readTimeout(180.seconds)
+                                .response(asStringAlways)
+                                .send(neblinkService.httpBackend)
+                              resp
+                            }.flatMap { resp =>
+                              if resp.code.isSuccess then
+                                wsSend(
+                                  io.circe.Json.obj(
+                                    "type" -> "remoteUpdateResult".asJson,
+                                    "success" -> true.asJson,
+                                    "device" -> peer.deviceName.asJson,
+                                    "message" -> "Update installed, device is restarting...".asJson
+                                  )
                                 )
-                              )
-                            else
+                              else
+                                wsSend(
+                                  io.circe.Json.obj(
+                                    "type" -> "remoteUpdateResult".asJson,
+                                    "success" -> false.asJson,
+                                    "error" -> s"Remote returned HTTP ${resp.code}".asJson
+                                  )
+                                )
+                            }.handleErrorWith { e =>
                               wsSend(
                                 io.circe.Json.obj(
                                   "type" -> "remoteUpdateResult".asJson,
                                   "success" -> false.asJson,
-                                  "error" -> s"Remote returned HTTP ${resp.code}".asJson
+                                  "error" -> s"Cannot reach ${peer.deviceName}: ${e.getMessage}".asJson
                                 )
                               )
-                          }.handleErrorWith { e =>
-                            wsSend(
-                              io.circe.Json.obj(
-                                "type" -> "remoteUpdateResult".asJson,
-                                "success" -> false.asJson,
-                                "error" -> s"Cannot reach ${peer.deviceName}: ${e.getMessage}".asJson
-                              )
-                            )
-                          }
-                  end match
-                }
-          end if
-
-        case "getConfig" =>
-          configService.isConfigured.flatMap { configured =>
-            configService.getConfig.flatMap { cfg =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "configData".asJson,
-                  "config" -> cfg.asJson,
-                  "configured" -> configured.asJson
-                )
-              )
-            }
-          }
-
-        case "updateConfig" =>
-          val cfg = parse(text).flatMap(_.hcursor.downField("config").as[String]).getOrElse("")
-          if cfg.nonEmpty then
-            configService.updateConfig(cfg).flatMap {
-              case Left(err) =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
-              case Right(_) =>
-                // Hot-reload: update in-memory config and clear adapter cache
-                sharedResources.providerRegistry.reloadConfig().attempt.flatMap {
-                  case Right(_) =>
-                    logger.info("Config hot-reloaded successfully")
-                  case Left(e) =>
-                    logger.warn(s"Config hot-reload failed: ${e.getMessage}")
-                } *> wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
-            }
-          else IO.unit
-
-        case "toggleMcpServer" =>
-          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-          val serverId = hc.downField("serverId").as[String].getOrElse("")
-          val enabled = hc.downField("enabled").as[Boolean].getOrElse(false)
-          if serverId.nonEmpty then
-            configRef.get.flatMap { cfg =>
-              cfg.mcpServers.getOrElse(Map.empty).get(serverId) match
-                case Some(mcpCfg) =>
-                  val action =
-                    if enabled then mcpManager.enableServer(serverId, mcpCfg) else mcpManager.disableServer(serverId)
-                  action *> persistMcpServerEnabled(serverId, enabled) *>
-                    broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
-                case None =>
-                  logger.warn(s"toggleMcpServer: server '$serverId' not found in config") *> IO.unit
-            }
-          else IO.unit
-
-        // ===== Dropbox: cross-device messaging & file transfer =====
-
-        case "dropbox-send-text" =>
-          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-          val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-          val msgText = hc.downField("text").as[String].getOrElse("")
-          if deviceId.nonEmpty && msgText.nonEmpty then
-            sharedResources.dropboxService match
-              case None =>
-                wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
-              case Some(svc) =>
-                svc
-                  .sendText(deviceId, msgText)
-                  .handleErrorWith(e =>
-                    wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson))
-                  )
-          else IO.unit
-
-        case "dropbox-file-offer" =>
-          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-          val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-          val fileName = hc.downField("fileName").as[String].getOrElse("")
-          val fileSize = hc.downField("fileSize").as[Long].getOrElse(0L)
-          val mimeType = hc.downField("mimeType").as[String].getOrElse("")
-          if deviceId.nonEmpty && fileName.nonEmpty then
-            sharedResources.dropboxService match
-              case None =>
-                wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
-              case Some(svc) =>
-                svc
-                  .offerFile(deviceId, fileName, fileSize, mimeType)
-                  .handleErrorWith(e =>
-                    wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson))
-                  )
-          else IO.unit
-
-        case "dropbox-file-respond" =>
-          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-          val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-          val transferId = hc.downField("transferId").as[String].getOrElse("")
-          val accepted = hc.downField("accepted").as[Boolean].getOrElse(false)
-          if deviceId.nonEmpty && transferId.nonEmpty then
-            sharedResources.dropboxService match
-              case None => IO.unit
-              case Some(svc) => svc.respondToOffer(deviceId, transferId, accepted).handleErrorWith(_ => IO.unit)
-          else IO.unit
-
-        case "dropbox-get-history" =>
-          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-          val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-          if deviceId.nonEmpty then
-            sharedResources.dropboxService match
-              case None => IO.unit
-              case Some(svc) =>
-                svc.getHistory(deviceId).flatMap { msgs =>
-                  wsSend(
-                    io.circe.Json
-                      .obj("type" -> "dropbox-history".asJson, "deviceId" -> deviceId.asJson, "messages" -> msgs.asJson)
-                  )
-                }
-          else IO.unit
-
-        case _ =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val content = json.hcursor.downField("content").as[String].getOrElse("")
-          val attachments = json.hcursor.downField("attachments").as[List[io.circe.Json]].getOrElse(Nil)
-          val clientMessageId = json.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
-          val msgSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-          val chatWidth = json.hcursor.downField("chatWidth").as[Int].getOrElse(0)
-
-          if content.nonEmpty || attachments.nonEmpty then
-            rateLimiter.check("ws").flatMap { allowed =>
-              if !allowed then
-                logger.warn("Rate limit exceeded") *>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "error".asJson,
-                      "message" -> NebflowError.toUserMessage(NebflowError.RateLimited("websocket")).asJson
-                    )
-                  )
-              else
-                // Resolve projectRoot for local file search before processing attachments
-                (for
-                  metaOpt <- sessionStore.getSessionMeta(msgSessionId)
-                  folderId = metaOpt.flatMap(_.folderId)
-                  projectRoot <- sessionStore.resolveProjectRoot(folderId)
-                yield (metaOpt, projectRoot)).flatMap { (metaOpt, projectRoot) =>
-                  val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
-                  if content.nonEmpty then blocks += ContentBlock.Text(content)
-
-                  // Map attachment index → saved/local path (only non-image files get entries)
-                  val savedPaths = scala.collection.mutable.Map.empty[Int, String]
-                  attachments.zipWithIndex.foreach { case (att, attIdx) =>
-                    val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                    val data = att.hcursor.downField("data").as[String].getOrElse("")
-                    val name = att.hcursor.downField("name").as[String].getOrElse("")
-                    val hash = att.hcursor.downField("hash").as[String].getOrElse("")
-                    val fileSize = att.hcursor.downField("size").as[Long].getOrElse(0L)
-                    if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
-                    else if mimeType.startsWith("image/") then
-                      // Image without data — cannot process
-                      blocks += ContentBlock.Text(s"[image: $name (无数据)]")
-                    else
-                      // Non-image: try to find the file locally by name + size + hash
-                      // Search priority: project root → common user dirs → full home
-                      val home = os.home.toString
-                      val commonDirs = List("Downloads", "Desktop", "Documents")
-                        .map(d => s"$home/$d")
-                        .filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
-                      val searchPaths = projectRoot.toList ::: commonDirs ::: List(home)
-                      val localPath =
-                        if hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths) else None
-                      localPath match
-                        case Some(path) =>
-                          savedPaths(attIdx) = path
-                          blocks += ContentBlock.Text(s"[用户附加文件: $path]")
-                          logger.info(s"Attachment '$name' resolved to local file: $path")
-                        case None if data.nonEmpty =>
-                          // Fallback: save uploaded content to disk, send path reference to LLM
-                          val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
-                          try
-                            os.makeDir.all(uploadDir)
-                            val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
-                            val fileName = s"${System.nanoTime()}_$safeName"
-                            val filePath = uploadDir / fileName
-                            val decoded = java.util.Base64.getDecoder.decode(data)
-                            os.write.over(filePath, decoded)
-                            val absPath = filePath.toString
-                            if absPath.startsWith(uploadDir.toString) then
-                              savedPaths(attIdx) = absPath
-                              blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
-                              logger.info(s"Saved attachment '$name' to $absPath (${decoded.length} bytes)")
-                            else
-                              logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
-                              blocks += ContentBlock.Text(s"[file: $name (path unsafe)]")
-                          catch
-                            case e: Exception =>
-                              logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
-                              blocks += ContentBlock.Text(s"[file: $name (保存失败)]")
-                          end try
-                        case None =>
-                          // No data and not found locally — tell the LLM the file name so it can
-                          // use Read/Grep tools to locate it.
-                          logger.warn(s"Attachment '$name' not found locally (hash=$hash, size=$fileSize)")
-                          blocks += ContentBlock.Text(s"[用户附加文件: $name (未找到本地路径，请用工具搜索)]")
-                      end match
-                    end if
+                            }
+                    end match
                   }
+            end if
 
-                  val sessionName = metaOpt.map(_.name).getOrElse("-")
-                  logger.info(s"${logger.hl(sessionName)} User message: ${content
-                      .take(60)}${if content.length > 60 then "..." else ""}") *>
-                    logInputHistory(content, attachments) *>
-                    // Record user message as UiMessage for history
-                    (if msgSessionId.nonEmpty then
-                       val attJson = attachments.zipWithIndex.map { case (att, idx) =>
-                         val name = att.hcursor.downField("name").as[String].getOrElse("")
-                         val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                         val savedPath = savedPaths.getOrElse(idx, "")
-                         io.circe.Json.obj(
-                           "name" -> name.asJson,
-                           "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson,
-                           "path" -> (if savedPath.nonEmpty then savedPath.asJson else Json.Null)
-                         )
-                       }
-                       val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
-                       sharedResources.sessionStore
-                         .appendUiMessages(
-                           msgSessionId,
-                           List(UiMessage.User(content, attJson, injected, timestamp = System.currentTimeMillis()))
-                         )
-                         .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
-                     else IO.unit) *> {
-                      // Track turn count + session start time for telemetry
-                      sessionTurnCounts
-                        .update(m => m.updated(msgSessionId, m.getOrElse(msgSessionId, 0) + 1))
-                        .handleErrorWith(_ => IO.unit) *>
-                        sessionStartTimes
-                          .update { m =>
-                            if m.contains(msgSessionId) then m else m.updated(msgSessionId, System.currentTimeMillis())
-                          }
-                          .handleErrorWith(_ => IO.unit) *> {
-                          // Telemetry: message_sent (structural features only, no content)
-                          sharedResources.telemetry.fold(IO.unit)(
-                            _.record(
-                              "message_sent",
-                              JsonObject.fromIterable(
-                                List(
-                                  "session_id" -> msgSessionId.asJson,
-                                  "prompt_length" -> content.length.asJson,
-                                  "language_hint" -> (if content.exists(_ > 0x4e00) then "chinese"
-                                                      else "english").asJson,
-                                  "has_code_block" -> content.contains("```").asJson
-                                )
-                              )
-                            ).handleErrorWith(_ => IO.unit)
-                          ) *> {
-                            val blocksList = blocks.toList
-                            routeToAgent(msgSessionId)(ref =>
-                              ref ! AgentCommand
-                                .UserInput(
-                                  content,
-                                  None,
-                                  clientMessageId,
-                                  Some(blocksList).filter(_.nonEmpty),
-                                  chatWidth
-                                )
-                            )
-                          }
-                        }
-                    }
-                }
+          case "getConfig" =>
+            configService.isConfigured.flatMap { configured =>
+              configService.getConfig.flatMap { cfg =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "configData".asJson,
+                    "config" -> cfg.asJson,
+                    "configured" -> configured.asJson
+                  )
+                )
+              }
             }
-          else IO.unit
-          end if
+
+          case "updateConfig" =>
+            val cfg = parse(text).flatMap(_.hcursor.downField("config").as[String]).getOrElse("")
+            if cfg.nonEmpty then
+              configService.updateConfig(cfg).flatMap {
+                case Left(err) =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+                case Right(_) =>
+                  // Hot-reload: update in-memory config and clear adapter cache
+                  sharedResources.providerRegistry.reloadConfig().attempt.flatMap {
+                    case Right(_) =>
+                      logger.info("Config hot-reloaded successfully")
+                    case Left(e) =>
+                      logger.warn(s"Config hot-reload failed: ${e.getMessage}")
+                  } *> wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+              }
+            else IO.unit
+
+          case "toggleMcpServer" =>
+            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+            val serverId = hc.downField("serverId").as[String].getOrElse("")
+            val enabled = hc.downField("enabled").as[Boolean].getOrElse(false)
+            if serverId.nonEmpty then
+              configRef.get.flatMap { cfg =>
+                cfg.mcpServers.getOrElse(Map.empty).get(serverId) match
+                  case Some(mcpCfg) =>
+                    val action =
+                      if enabled then mcpManager.enableServer(serverId, mcpCfg) else mcpManager.disableServer(serverId)
+                    action *> persistMcpServerEnabled(serverId, enabled) *>
+                      broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
+                  case None =>
+                    logger.warn(s"toggleMcpServer: server '$serverId' not found in config") *> IO.unit
+              }
+            else IO.unit
+
+          // ===== Dropbox: cross-device messaging & file transfer =====
+
+          case "dropbox-send-text" =>
+            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+            val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+            val msgText = hc.downField("text").as[String].getOrElse("")
+            if deviceId.nonEmpty && msgText.nonEmpty then
+              sharedResources.dropboxService match
+                case None =>
+                  wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
+                case Some(svc) =>
+                  svc
+                    .sendText(deviceId, msgText)
+                    .handleErrorWith(e =>
+                      wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson))
+                    )
+            else IO.unit
+
+          case "dropbox-file-offer" =>
+            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+            val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+            val fileName = hc.downField("fileName").as[String].getOrElse("")
+            val fileSize = hc.downField("fileSize").as[Long].getOrElse(0L)
+            val mimeType = hc.downField("mimeType").as[String].getOrElse("")
+            if deviceId.nonEmpty && fileName.nonEmpty then
+              sharedResources.dropboxService match
+                case None =>
+                  wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
+                case Some(svc) =>
+                  svc
+                    .offerFile(deviceId, fileName, fileSize, mimeType)
+                    .handleErrorWith(e =>
+                      wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson))
+                    )
+            else IO.unit
+
+          case "dropbox-file-respond" =>
+            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+            val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+            val transferId = hc.downField("transferId").as[String].getOrElse("")
+            val accepted = hc.downField("accepted").as[Boolean].getOrElse(false)
+            if deviceId.nonEmpty && transferId.nonEmpty then
+              sharedResources.dropboxService match
+                case None => IO.unit
+                case Some(svc) => svc.respondToOffer(deviceId, transferId, accepted).handleErrorWith(_ => IO.unit)
+            else IO.unit
+
+          case "dropbox-get-history" =>
+            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+            val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+            if deviceId.nonEmpty then
+              sharedResources.dropboxService match
+                case None => IO.unit
+                case Some(svc) =>
+                  svc.getHistory(deviceId).flatMap { msgs =>
+                    wsSend(
+                      io.circe.Json
+                        .obj(
+                          "type" -> "dropbox-history".asJson,
+                          "deviceId" -> deviceId.asJson,
+                          "messages" -> msgs.asJson
+                        )
+                    )
+                  }
+            else IO.unit
+            end if
+
+          case _ =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val content = json.hcursor.downField("content").as[String].getOrElse("")
+            val attachments = json.hcursor.downField("attachments").as[List[io.circe.Json]].getOrElse(Nil)
+            val clientMessageId = json.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
+            val msgSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+            val chatWidth = json.hcursor.downField("chatWidth").as[Int].getOrElse(0)
+
+            if content.nonEmpty || attachments.nonEmpty then
+              rateLimiter.check("ws").flatMap { allowed =>
+                if !allowed then
+                  logger.warn("Rate limit exceeded") *>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "error".asJson,
+                        "message" -> NebflowError.toUserMessage(NebflowError.RateLimited("websocket")).asJson
+                      )
+                    )
+                else
+                  // Resolve projectRoot for local file search before processing attachments
+                  (for
+                    metaOpt <- sessionStore.getSessionMeta(msgSessionId)
+                    folderId = metaOpt.flatMap(_.folderId)
+                    projectRoot <- sessionStore.resolveProjectRoot(folderId)
+                  yield (metaOpt, projectRoot)).flatMap { (metaOpt, projectRoot) =>
+                    val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
+                    if content.nonEmpty then blocks += ContentBlock.Text(content)
+
+                    // Map attachment index → saved/local path (only non-image files get entries)
+                    val savedPaths = scala.collection.mutable.Map.empty[Int, String]
+                    attachments.zipWithIndex.foreach { case (att, attIdx) =>
+                      val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                      val data = att.hcursor.downField("data").as[String].getOrElse("")
+                      val name = att.hcursor.downField("name").as[String].getOrElse("")
+                      val hash = att.hcursor.downField("hash").as[String].getOrElse("")
+                      val fileSize = att.hcursor.downField("size").as[Long].getOrElse(0L)
+                      if mimeType.startsWith("image/") && data.nonEmpty then
+                        // Save image to uploads dir so it has a local path (like non-image files)
+                        val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
+                        try
+                          os.makeDir.all(uploadDir)
+                          val ext =
+                            if mimeType.contains("png") then "png"
+                            else if mimeType.contains("webp") then "webp"
+                            else "jpg"
+                          val fileName = s"${System.nanoTime()}_$name"
+                          val safeName = fileName.replaceAll("[/\\\\]", "_").replace("..", "_")
+                          val filePath = uploadDir / safeName
+                          val decoded = java.util.Base64.getDecoder.decode(data)
+                          os.write.over(filePath, decoded)
+                          val absPath = filePath.toString
+                          if absPath.startsWith(uploadDir.toString) then
+                            savedPaths(attIdx) = absPath
+                            // Give LLM both the image (visual) and the path (forwardable via Mail)
+                            blocks += ContentBlock.Image(data, mimeType)
+                            blocks += ContentBlock.Text(s"[用户附加图片: $absPath]")
+                            logger.info(s"Saved image '$name' to $absPath (${decoded.length} bytes)")
+                          else
+                            blocks += ContentBlock.Image(data, mimeType)
+                            logger.warn(s"Image '$name' path resolved outside upload dir, only sending visual")
+                        catch
+                          case e: Exception =>
+                            logger.warn(s"Failed to save image '$name': ${e.getMessage}")
+                            // Fallback: still send the image visually even if save failed
+                            blocks += ContentBlock.Image(data, mimeType)
+                        end try
+                      else if mimeType.startsWith("image/") then
+                        // Image without data — cannot process
+                        blocks += ContentBlock.Text(s"[image: $name (无数据)]")
+                      else
+                        // Non-image: try to find the file locally by name + size + hash
+                        // Search priority: project root → common user dirs → full home → Spotlight
+                        val home = os.home.toString
+                        val commonDirs = List("Downloads", "Desktop", "Documents")
+                          .map(d => s"$home/$d")
+                          .filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
+                        val searchPaths = projectRoot.toList ::: commonDirs ::: List(home)
+                        val localPath =
+                          if hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths)
+                          else None
+                        // Fallback: macOS Spotlight (finds files in Library, Containers, etc.)
+                        val spotlightPath = localPath match
+                          case Some(_) => localPath
+                          case None if hash.nonEmpty && fileSize > 0 => spotlightSearch(name, hash, fileSize)
+                          case None => None
+                        spotlightPath match
+                          case Some(path) =>
+                            savedPaths(attIdx) = path
+                            blocks += ContentBlock.Text(s"[用户附加文件: $path]")
+                            logger.info(s"Attachment '$name' resolved to local file: $path")
+                          case None if data.nonEmpty =>
+                            // Fallback: save uploaded content to disk, send path reference to LLM
+                            val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
+                            try
+                              os.makeDir.all(uploadDir)
+                              val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
+                              val fileName = s"${System.nanoTime()}_$safeName"
+                              val filePath = uploadDir / fileName
+                              val decoded = java.util.Base64.getDecoder.decode(data)
+                              os.write.over(filePath, decoded)
+                              val absPath = filePath.toString
+                              if absPath.startsWith(uploadDir.toString) then
+                                savedPaths(attIdx) = absPath
+                                blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
+                                logger.info(s"Saved attachment '$name' to $absPath (${decoded.length} bytes)")
+                              else
+                                logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
+                                blocks += ContentBlock.Text(s"[file: $name (path unsafe)]")
+                            catch
+                              case e: Exception =>
+                                logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
+                                blocks += ContentBlock.Text(s"[file: $name (保存失败)]")
+                            end try
+                          case None =>
+                            // No data and not found locally — tell the LLM the file name so it can
+                            // use Read/Grep tools to locate it.
+                            logger.warn(s"Attachment '$name' not found locally (hash=$hash, size=$fileSize)")
+                            blocks += ContentBlock.Text(s"[用户附加文件: $name (未找到本地路径，请用工具搜索)]")
+                        end match
+                      end if
+                    }
+
+                    val sessionName = metaOpt.map(_.name).getOrElse("-")
+                    logger.info(s"${logger.hl(sessionName)} User message: ${content
+                        .take(60)}${if content.length > 60 then "..." else ""}") *>
+                      logInputHistory(content, attachments) *>
+                      // Record user message as UiMessage for history
+                      (if msgSessionId.nonEmpty then
+                         val attJson = attachments.zipWithIndex.map { case (att, idx) =>
+                           val name = att.hcursor.downField("name").as[String].getOrElse("")
+                           val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                           val savedPath = savedPaths.getOrElse(idx, "")
+                           io.circe.Json.obj(
+                             "name" -> name.asJson,
+                             "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson,
+                             "path" -> (if savedPath.nonEmpty then savedPath.asJson else Json.Null)
+                           )
+                         }
+                         val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
+                         sharedResources.sessionStore
+                           .appendUiMessages(
+                             msgSessionId,
+                             List(UiMessage.User(content, attJson, injected, timestamp = System.currentTimeMillis()))
+                           )
+                           .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
+                       else IO.unit) *> {
+                        // Track turn count + session start time for telemetry
+                        sessionTurnCounts
+                          .update(m => m.updated(msgSessionId, m.getOrElse(msgSessionId, 0) + 1))
+                          .handleErrorWith(_ => IO.unit) *>
+                          sessionStartTimes
+                            .update { m =>
+                              if m.contains(msgSessionId) then m
+                              else m.updated(msgSessionId, System.currentTimeMillis())
+                            }
+                            .handleErrorWith(_ => IO.unit) *> {
+                            // Telemetry: message_sent (structural features only, no content)
+                            sharedResources.telemetry.fold(IO.unit)(
+                              _.record(
+                                "message_sent",
+                                JsonObject.fromIterable(
+                                  List(
+                                    "session_id" -> msgSessionId.asJson,
+                                    "prompt_length" -> content.length.asJson,
+                                    "language_hint" -> (if content.exists(_ > 0x4e00) then "chinese"
+                                                        else "english").asJson,
+                                    "has_code_block" -> content.contains("```").asJson
+                                  )
+                                )
+                              ).handleErrorWith(_ => IO.unit)
+                            ) *> {
+                              val blocksList = blocks.toList
+                              routeToAgent(msgSessionId)(ref =>
+                                ref ! AgentCommand
+                                  .UserInput(
+                                    content,
+                                    None,
+                                    clientMessageId,
+                                    Some(blocksList).filter(_.nonEmpty),
+                                    chatWidth
+                                  )
+                              )
+                            }
+                          }
+                      }
+                  }
+              }
+            else IO.unit
+            end if
+      yield ()
+      end for
     end if
   end handleMessage
 
@@ -2169,6 +2913,42 @@ class WebSocketRoutes(
       end if
     end if
   end findLocalFile
+
+  /**
+   * macOS Spotlight fallback — finds files that the filesystem walk misses
+   *  (e.g. files inside ~/Library/Containers for WeChat, Telegram, etc.).
+   */
+  private def spotlightSearch(
+    name: String,
+    expectedHash: String,
+    expectedSize: Long
+  ): Option[String] =
+    import java.security.MessageDigest
+    val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
+    try
+      val cmd = Seq("mdfind", "-name", safeName)
+      val output = scala.sys.process.Process(cmd).!!
+      val lines = output.trim.split("\n").iterator.filter(_.nonEmpty)
+      // Filter by size (cheap), then verify hash (expensive)
+      lines.find { line =>
+        val file = java.nio.file.Path.of(line)
+        java.nio.file.Files.exists(file) &&
+        java.nio.file.Files.isRegularFile(file) &&
+        java.nio.file.Files.size(file) == expectedSize && {
+          try
+            val bytes = java.nio.file.Files.readAllBytes(file)
+            val hex = MessageDigest
+              .getInstance("SHA-256")
+              .digest(bytes)
+              .map(b => String.format("%02x", b))
+              .mkString
+            hex == expectedHash
+          catch case _: Exception => false
+        }
+      }
+    catch case _: Exception => None
+    end try
+  end spotlightSearch
 
   // ============================================================
   // UI Message recording — wraps wsSend to persist frontend-renderable history
@@ -2439,6 +3219,95 @@ class WebSocketRoutes(
         // We'll record a minimal agent entry for history if needed.
         IO.unit
 
+      // ── Flow agent session persistence ───────────────────────────────
+      // Flow agent events carry an injected nodeSessionId.
+      // Accumulate/flush them into that session's .ui.json
+      // so the agent popup shows full history on reopen.
+      case "agentTextDelta" =>
+        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
+        val delta = hc.downField("delta").as[String].getOrElse("")
+        nodeSessionId match
+          case Some(nsid) if delta.nonEmpty =>
+            // Record turn start for this flow agent so agentDone can compute a
+            // duration for the ✻ duration badge on its final AI message.
+            sessionTurnStarts
+              .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis())) *>
+              sessionTextBuffers.update(m => m.updatedWith(nsid)(_.map(_ + delta).orElse(Some(delta))))
+          case _ => IO.unit
+
+      case "agentThinking" =>
+        // Mark turn start on the first thinking token too (some turns emit
+        // thinking before any text).
+        hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty) match
+          case Some(nsid) =>
+            sessionTurnStarts
+              .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis()))
+          case None => IO.unit
+
+      case "agentToolEnd" =>
+        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
+        val label = hc.downField("label").as[String].getOrElse("")
+        nodeSessionId match
+          case Some(nsid) if label.nonEmpty =>
+            val summary = hc.downField("summary").as[String].getOrElse("")
+            val content = hc.downField("content").as[String].getOrElse("")
+            val isError = hc.downField("isError").as[Boolean].getOrElse(false)
+            val input = hc.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces
+            // Flush any accumulated text before recording the tool, so the AI
+            // message bubble appears above the tool card in history.
+            sessionTextBuffers
+              .modify(m => (m - nsid, m.getOrElse(nsid, "")))
+              .flatMap { text =>
+                val flushText =
+                  if text.nonEmpty then
+                    sharedResources.sessionStore.appendUiMessages(
+                      nsid,
+                      List(UiMessage.Ai(text, None, None, None, System.currentTimeMillis()))
+                    )
+                  else IO.unit
+                flushText *> sharedResources.sessionStore.appendUiMessages(
+                  nsid,
+                  List(UiMessage.Tool(label, summary, content, isError, input))
+                )
+              }
+          case _ => IO.unit
+        end match
+
+      case "agentDone" =>
+        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
+        nodeSessionId match
+          case Some(nsid) =>
+            // Flush any remaining accumulated text as a final AI bubble, with
+            // duration (from the turn start) and model so the popup renders the
+            // ✻ duration badge on the agent's last reply.
+            val model = hc.downField("model").as[Option[String]].getOrElse(None)
+            sessionTurnStarts
+              .modify(m => (m - nsid, m.getOrElse(nsid, 0L)))
+              .flatMap { startTime =>
+                val durationMs = if startTime > 0 then Some(System.currentTimeMillis() - startTime) else None
+                sessionTextBuffers
+                  .modify(m => (m - nsid, m.getOrElse(nsid, "")))
+                  .flatMap { text =>
+                    if text.nonEmpty then
+                      sharedResources.sessionStore.appendUiMessages(
+                        nsid,
+                        List(UiMessage.Ai(text, durationMs, model, None, System.currentTimeMillis()))
+                      )
+                    else if durationMs.isDefined then
+                      // No text (flushed earlier) — backfill duration/model onto
+                      // the last saved AI message for this flow agent.
+                      sharedResources.sessionStore.updateLastAiMeta(
+                        nsid,
+                        durationMs,
+                        model,
+                        System.currentTimeMillis()
+                      )
+                    else IO.unit
+                  }
+              }
+          case _ => IO.unit
+        end match
+
       case "askUser" =>
         val items = hc.downField("items").as[List[io.circe.Json]].getOrElse(Nil)
         sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.AskUser(items)))
@@ -2523,38 +3392,55 @@ class WebSocketRoutes(
     sessionId: String,
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
-    // Scan skills to find the matching skill file, then load its content
-    SkillService.listSkills().flatMap { skills =>
-      skills.find(_.name == skillName) match
-        case Some(skillInfo) =>
-          SkillService.loadSkill(skillInfo.filePath).flatMap {
-            case Some(content) =>
-              routeToAgent(sessionId) { ref =>
-                ref ! AgentCommand.SkillActivate(
-                  skillName,
-                  input,
-                  sessionId,
-                  content.content,
-                  content.baseDir
-                )
+    // Check if it's a flow first — if so, instruct agent to Mail the flow
+    EntityLoader.loadFlow(skillName).flatMap {
+      case Some(_) =>
+        val safeInput = input.replace("\"", "\\\"").replace("\n", " ")
+        routeToAgent(sessionId) { ref =>
+          ref ! AgentCommand.SkillActivate(
+            skillName,
+            input,
+            sessionId,
+            s"""Trigger the "$skillName" flow:
+               |Mail("$skillName", "$safeInput")
+               |Wait for the flow's reply and report the results.""".stripMargin,
+            ""
+          )
+        }
+      case None =>
+        // Not a flow — try skill file
+        SkillService.listSkills().flatMap { skills =>
+          skills.find(_.name == skillName) match
+            case Some(skillInfo) =>
+              SkillService.loadSkill(skillInfo.filePath).flatMap {
+                case Some(content) =>
+                  routeToAgent(sessionId) { ref =>
+                    ref ! AgentCommand.SkillActivate(
+                      skillName,
+                      input,
+                      sessionId,
+                      content.content,
+                      content.baseDir
+                    )
+                  }
+                case None =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "skillError".asJson,
+                      "sessionId" -> sessionId.asJson,
+                      "message" -> s"Skill '$skillName' content not found".asJson
+                    )
+                  )
               }
             case None =>
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "skillError".asJson,
                   "sessionId" -> sessionId.asJson,
-                  "message" -> s"Skill '$skillName' content not found".asJson
+                  "message" -> s"Skill '$skillName' not found".asJson
                 )
               )
-          }
-        case None =>
-          wsSend(
-            io.circe.Json.obj(
-              "type" -> "skillError".asJson,
-              "sessionId" -> sessionId.asJson,
-              "message" -> s"Skill '$skillName' not found".asJson
-            )
-          )
+        }
     }
 
   // ============================================================

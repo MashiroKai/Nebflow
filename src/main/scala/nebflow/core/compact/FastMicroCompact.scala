@@ -25,8 +25,7 @@ object FastMicroCompact:
     "WebFetch",
     "Curl",
     "Edit",
-    "Write",
-    "Card"
+    "Write"
   )
 
   /**

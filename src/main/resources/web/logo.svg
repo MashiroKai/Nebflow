@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <!-- Nebflow logo: spiral nebula with bright core -->
+  <defs>
+    <radialGradient id="core" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#e0d4ff" stop-opacity="1"/>
+      <stop offset="30%" stop-color="#8b7fff" stop-opacity="0.9"/>
+      <stop offset="70%" stop-color="#5b4ee0" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#3a2fa0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="arm" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#a89eff" stop-opacity="0.8"/>
+      <stop offset="60%" stop-color="#6b5fff" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#4a3fd0" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  
+  <!-- Outer nebula glow -->
+  <circle cx="24" cy="24" r="22" fill="url(#arm)" opacity="0.5"/>
+  
+  <!-- Spiral arms (rotated ellipses suggesting motion) -->
+  <ellipse cx="24" cy="24" rx="20" ry="7" fill="url(#arm)" opacity="0.6" transform="rotate(30 24 24)"/>
+  <ellipse cx="24" cy="24" rx="20" ry="7" fill="url(#arm)" opacity="0.6" transform="rotate(-30 24 24)"/>
+  <ellipse cx="24" cy="24" rx="18" ry="5" fill="url(#arm)" opacity="0.5" transform="rotate(90 24 24)"/>
+  
+  <!-- Inner core -->
+  <circle cx="24" cy="24" r="14" fill="url(#core)"/>
+  
+  <!-- Bright center dot -->
+  <circle cx="24" cy="24" r="3.5" fill="#ffffff" opacity="0.95"/>
+  <circle cx="24" cy="24" r="2" fill="#e0d4ff"/>
+  
+  <!-- Small accent stars -->
+  <circle cx="10" cy="14" r="1" fill="#c4b8ff" opacity="0.7"/>
+  <circle cx="38" cy="34" r="1.2" fill="#c4b8ff" opacity="0.6"/>
+  <circle cx="35" cy="10" r="0.8" fill="#c4b8ff" opacity="0.5"/>
+</svg>

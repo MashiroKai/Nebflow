@@ -177,3 +177,200 @@
 .nav-item:hover { color: var(--color-frame-text); background: var(--color-frame-hover); }
 .nav-item.active { color: var(--color-frame-text-bright); background: var(--color-frame-active); }
 .nav-item svg { width: 20px; height: 20px; }
+
+/* ============================================================
+   Activity Bar — vertical icon strip (independent glass card)
+   Lives to the left of #sidebar. WeChat-style: avatar at top,
+   device list expands below it after login, settings at bottom.
+   order:-1 keeps it leftmost regardless of panelDragger reorder.
+   ============================================================ */
+#activity-bar {
+  order: -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 48px;
+  flex-shrink: 0;
+  margin: 16px 4px 10px;
+  max-height: calc(100vh - 26px);
+  border-radius: 20px;
+  overflow: hidden;
+  padding: 10px 0;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0,0,0, 0.04),
+    0px 8px 24px rgba(0,0,0, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  #activity-bar {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+/* Keep the activity bar visible even when the sidebar is collapsed. */
+body.sidebar-collapsed #activity-bar {
+  width: 48px;
+  opacity: 1;
+  margin: 16px 4px 10px;
+}
+
+/* ── Avatar (top) — login affordance ─────────────────────── */
+.activity-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-frame-input-bg);
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+}
+.activity-avatar:hover { background: var(--color-frame-hover); transform: scale(1.04); }
+.activity-avatar:active { transform: scale(0.97); }
+.activity-avatar-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  /* Disable the pixel-art crispEdges from favicon.svg so it scales smoothly. */
+  shape-rendering: geometricPrecision;
+  image-rendering: auto;
+  pointer-events: none;
+}
+/* Account avatar photo (shown after login, when an avatarUrl is available). */
+.activity-avatar-photo {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.activity-avatar-letter {
+  font: 600 14px -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1;
+  user-select: none;
+}
+/* State is conveyed by the avatar content (logo vs photo) + visual treatment. */
+.activity-avatar:not(.paired):not(.pairing) .activity-avatar-logo {
+  opacity: 0.45;
+  filter: grayscale(0.7);
+}
+.activity-avatar.paired .activity-avatar-logo {
+  filter: drop-shadow(0 0 4px rgba(139,127,255,0.5));
+}
+.activity-avatar.paired {
+  color: var(--color-frame-text-bright);
+}
+.activity-avatar.pairing {
+  animation: avatar-pulse 1.5s ease-in-out infinite;
+}
+@keyframes avatar-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Generic icon button (settings, etc.) ────────────────── */
+.activity-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+  padding: 0;
+}
+.activity-btn:hover {
+  color: var(--color-frame-text-bright);
+  background: var(--color-frame-hover);
+}
+.activity-btn.active {
+  color: var(--color-frame-text-bright);
+  background: var(--color-frame-active);
+}
+/* Active indicator: 3px primary-color bar on the left edge,
+   mirroring .nav-agent.active::before. */
+.activity-btn.active::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-primary);
+}
+.activity-btn svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.8;
+}
+
+/* Spacer pushes settings to the bottom of the bar. */
+.activity-spacer { flex: 1; }
+
+/* ── Profile panel (shown when clicking avatar while logged in) ── */
+.nebflow-profile-panel {
+  position: fixed; top: 50px; left: 10px;
+  width: 280px; max-height: 400px;
+  background: var(--color-surface, rgba(26,34,54,0.92));
+  border: 1px solid var(--glass-border, rgba(255,255,255,0.1));
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  z-index: 1000; overflow: hidden;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  animation: fc-fade-in 0.2s ease;
+}
+.profile-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.05));
+}
+.profile-header h3 { font-size: 14px; margin: 0; color: var(--color-text); font-weight: 600; }
+.profile-close {
+  background: none; border: none; color: var(--color-text-muted);
+  font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;
+  opacity: 0.5; transition: opacity 0.15s;
+}
+.profile-close:hover { opacity: 1; }
+.profile-body { padding: 12px 16px; }
+.profile-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 0; font-size: 13px;
+}
+.profile-item .label { color: var(--color-text-muted); }
+.profile-item .value { color: var(--color-text); font-weight: 500; }
+.profile-peers {
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid var(--glass-border, rgba(255,255,255,0.05));
+}
+.profile-peers .label { font-size: 12px; color: var(--color-text-muted); margin-bottom: 6px; }
+.peer-item { font-size: 12px; padding: 3px 0; color: var(--color-text); }
+.peer-empty { font-size: 12px; color: var(--color-text-muted); opacity: 0.6; }
+.profile-logout {
+  width: 100%; margin-top: 12px; padding: 8px;
+  border: 1px solid rgba(244,67,54,0.3);
+  background: rgba(244,67,54,0.1);
+  color: #ef9a9a; border-radius: 8px; cursor: pointer;
+  font-size: 13px; transition: background 0.15s;
+}
+.profile-logout:hover { background: rgba(244,67,54,0.2); }

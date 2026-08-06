@@ -1,0 +1,27 @@
+# Caddy reverse proxy for neblink-server.
+#
+# Caddy automatically obtains and renews a TLS certificate from Let's Encrypt
+# for the configured hostname — no manual cert management required.
+#
+# Prerequisites:
+#   1. The domain below must have an A/AAAA record pointing at this server.
+#   2. Ports 80 and 443 must be reachable from the internet (for the ACME
+#      HTTP-01/TLS-ALPN challenge and for real traffic).
+
+neblink.nebflow.space {
+	# Proxy all traffic to the neblink-server container.
+	reverse_proxy neblink-server:9090
+
+	# Pass the real client IP / scheme so the app can set Secure cookies and
+	# read X-Forwarded-* correctly.
+	header_up X-Real-IP {remote_host}
+
+	# Sensible response headers.
+	encode gzip zstd
+
+	# A touch of response hardening.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+}

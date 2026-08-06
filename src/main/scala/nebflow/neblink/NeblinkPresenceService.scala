@@ -17,9 +17,9 @@ import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
 /**
- * Manages outgoing WebSocket presence connections to Tailscale peers.
+ * Manages outgoing WebSocket presence connections to NebLink peers.
  *
- * When device A discovers device B via `tailscale status`, A opens a persistent
+ * When device A discovers device B via the NebLink Server, A opens a persistent
  * WebSocket to `ws://B:8080/api/neblink/presence`. As long as the WS is open, both
  * devices consider each other online.
  *
@@ -30,7 +30,7 @@ import scala.jdk.CollectionConverters.*
  * to reconnect: 1s -> 2s -> 4s -> 8s -> 16s -> 30s (capped). This ensures
  * sub-second recovery when the network recovers, instead of waiting up to
  * 5 minutes for the next periodic scan. The loop stops after ~20 attempts
- * (~5 min total) or when the peer is explicitly disconnected (left tailnet /
+ * (~5 min total) or when the peer is explicitly disconnected (left network /
  * logout).
  */
 final class NeblinkPresenceService(
@@ -52,7 +52,7 @@ final class NeblinkPresenceService(
   /** Peers currently in the reconnection loop (deviceId -> PeerInfo). */
   private val reconnecting = new ConcurrentHashMap[String, PeerInfo]()
 
-  /** Device IDs whose reconnection should stop (explicit disconnect / peer left tailnet). */
+  /** Device IDs whose reconnection should stop (explicit disconnect / peer left network). */
   private val cancelReconnect = new ConcurrentHashMap[String, java.lang.Boolean]()
 
   // ===== Public API =====
@@ -64,7 +64,7 @@ final class NeblinkPresenceService(
    * - Connects to peers that are in the list but have no active WS (and aren't
    *   already being auto-reconnected).
    * - Disconnects from peers that have a WS but are no longer in the list.
-   * - Cancels auto-reconnect for peers that left the tailnet.
+   * - Cancels auto-reconnect for peers that left the network.
    */
   def syncPeers(peers: List[PeerInfo]): IO[Unit] =
     val peerIds = peers.iterator.map(_.deviceId).toSet
@@ -74,10 +74,10 @@ final class NeblinkPresenceService(
       reconnecting.keySet().asScala.filterNot(peerIds.contains).toList
     for
       _ <- peers.traverse_(peer => neblinkService.upsertPeer(peer))
-      // Disconnect peers that left the tailnet
+      // Disconnect peers that left the network
       _ <- IO.blocking(staleIds.foreach(id => disconnectPeer(id)))
       _ <- staleIds.traverse_(id => neblinkService.removePeer(id))
-      // Cancel reconnection for peers no longer in the tailnet
+      // Cancel reconnection for peers no longer in the network
       _ <- IO.blocking(staleReconnectIds.foreach(id => cancelReconnect.put(id, true)))
       // Connect to peers without active connection, skip those already reconnecting
       _ <- peers
@@ -110,7 +110,7 @@ final class NeblinkPresenceService(
                   val listener = new PresenceWsListener(this, peer)
                   val client = HttpClient
                     .newBuilder()
-                    .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for Tailscale
+                    .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for P2P
                     .build()
                   val ws = client
                     .newWebSocketBuilder()

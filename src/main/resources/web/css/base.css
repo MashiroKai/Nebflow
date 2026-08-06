@@ -80,17 +80,29 @@ body {
   }
 }
 
+/* ---------- Sidebar Collapse / Canvas open-close (unified animation) ----------
+   Both panels animate with the same ease + duration so expand/collapse feels
+   consistent across the layout. The curve is a gentle material-style ease that
+   starts quickly and settles softly (avoiding the abrupt stop of a linear ease).
+   Disable transitions during column resize (split.css) so dragging stays crisp. */
+:root {
+  --panel-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --panel-duration: 0.32s;
+}
+
 /* ---------- Sidebar Collapse ---------- */
 #sidebar {
-  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.2s ease,
-              margin 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              padding 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              border-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: width var(--panel-duration) var(--panel-ease),
+              flex-basis var(--panel-duration) var(--panel-ease),
+              opacity var(--panel-duration) var(--panel-ease),
+              margin var(--panel-duration) var(--panel-ease),
+              padding var(--panel-duration) var(--panel-ease),
+              border-width var(--panel-duration) var(--panel-ease);
   overflow: hidden;
 }
 body.sidebar-collapsed #sidebar {
   width: 0;
+  flex: 0 0 0;   /* override flex-basis from --col-sidebar so it collapses */
   opacity: 0;
   margin: 0;
   padding: 0;
@@ -122,6 +134,11 @@ body.sidebar-collapsed #sidebar {
 /* ── Scrollbar: fixed slim width ── */
 /* Fixed 6px width everywhere. Previous auto-slim toggled between 6px/10px,
    which changed content area width and caused bubbles to re-flow (jump). */
+
+/* Unified green caret for all inputs */
+* {
+  caret-color: #07c160;
+}
 
 ::-webkit-scrollbar {
   width: 6px;
@@ -159,30 +176,39 @@ body.sidebar-collapsed #sidebar {
 #session-list,
 #nav-agent-list,
 #settings-content,
-#config-editor,
-#chat {
+#config-editor {
   scrollbar-color: var(--color-frame-border) transparent;
 }
 
-/* ===== Safety Mode Toggle ===== */
+/* Hide scrollbar on main chat area */
+#chat {
+  scrollbar-width: none;
+}
+#chat::-webkit-scrollbar {
+  display: none;
+}
+
+/* ===== Safety Mode Dropdown ===== */
+.header-dropdown {
+  position: relative;
+  flex-shrink: 0;
+}
 .bypass-toggle {
   display: inline-flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
+  width: 28px;
   height: 28px;
-  padding: 0 6px;
+  padding: 0;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--color-frame-text-muted);
   cursor: pointer;
   transition: background 0.15s ease, color 0.2s ease;
-  position: relative;
 }
 .bypass-toggle:hover {
-  background: var(--color-surface);
+  background: var(--color-frame-hover);
 }
 /* Shield icon color changes with safety mode */
 .bypass-toggle[data-mode="confirm-edits"] {
@@ -194,15 +220,83 @@ body.sidebar-collapsed #sidebar {
 .bypass-toggle[data-mode="auto-all"] {
   color: var(--color-error);
 }
-/* Text label below icon — always muted, does not change with mode */
-.bypass-label {
-  font-size: 9px;
-  font-weight: 500;
-  line-height: 1;
-  letter-spacing: 0.02em;
-  color: var(--color-frame-text-muted);
+/* Dropdown menu — positioned relative to #main (not #header) so
+   backdrop-filter can blur chat content instead of being trapped
+   inside #header's backdrop-filter stacking context. */
+.header-dropdown-menu {
+  position: absolute;
+  top: 50px;
+  right: 24px;
+  min-width: 120px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 4px;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 300;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
 }
-.flow-toggle-btn {
+@media (prefers-color-scheme: dark) {
+  .header-dropdown-menu {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+/* Sapphire refraction line at top */
+.header-dropdown-menu::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%);
+  pointer-events: none;
+}
+.header-dropdown-menu.show {
+  display: flex;
+}
+.header-dropdown-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-frame-text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+.header-dropdown-menu button:hover {
+  background: var(--color-surface);
+}
+.header-dropdown-menu button.active {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+.header-dropdown-menu button::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.header-dropdown-menu button[data-mode="confirm-edits"]::before { background: var(--color-frame-text-muted); }
+.header-dropdown-menu button[data-mode="auto-edits"]::before { background: #e8923c; }
+.header-dropdown-menu button[data-mode="auto-all"]::before { background: var(--color-error); }
+.team-toggle-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -216,10 +310,10 @@ body.sidebar-collapsed #sidebar {
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.flow-toggle-btn:hover {
-  background: var(--color-surface);
-  color: var(--color-text);
+.team-toggle-btn:hover {
+  background: var(--color-frame-hover);
+  color: var(--color-frame-text);
 }
-.flow-toggle-btn.active {
+.team-toggle-btn.active {
   color: var(--color-text);
 }

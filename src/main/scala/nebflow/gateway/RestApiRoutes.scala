@@ -7,9 +7,12 @@ import fs2.{Pipe, Stream}
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.SharedResources
-import nebflow.core.flow.FlowTreeRegistry
+import nebflow.core.PathUtil
+import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
+import nebflow.core.entity.EntityLoader
+import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.llm.NebflowServiceConfig
-import nebflow.neblink.NeblinkService
+import nebflow.neblink.*
 import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -32,7 +35,9 @@ class RestApiRoutes(
   sessionStore: SessionStore,
   wsRoutes: WebSocketRoutes,
   neblinkService: Option[NeblinkService] = None,
-  ttsService: Option[TtsService] = None
+  ttsService: Option[TtsService] = None,
+  neblinkDiscovery: Option[nebflow.neblink.NeblinkDiscovery] = None,
+  gatewayPort: Int = 8080
 ):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.rest-api")
 
@@ -149,19 +154,108 @@ class RestApiRoutes(
         }
       }
 
-    // Agents
+    // GET /models/capability-tags — list predefined capability tags
+    case req @ GET -> Root / "models" / "capability-tags" =>
+      withAuth(req) {
+        Ok(
+          Json.obj(
+            "tags" -> List(
+              Json.obj("key" -> "vision".asJson, "label" -> "图片理解".asJson, "description" -> "支持 image_url 图片输入".asJson)
+            ).asJson
+          )
+        )
+      }
+
+    // GET /models/capabilities — list all models with their capability tags
+    case req @ GET -> Root / "models" / "capabilities" =>
+      withAuth(req) {
+        Ok(nebflow.llm.ModelRegistry.loadForApi.asJson)
+      }
+
+    // PUT /models/capabilities — update a single model's capability tags
+    case req @ PUT -> Root / "models" / "capabilities" =>
+      withAuth(req) {
+        req.as[Json].flatMap { body =>
+          val providerId = body.hcursor.downField("providerId").as[String].getOrElse("")
+          val modelId = body.hcursor.downField("modelId").as[String].getOrElse("")
+          val vision = body.hcursor.downField("vision").as[Boolean].getOrElse(false)
+          val capabilities = body.hcursor.downField("capabilities").as[List[String]].getOrElse(Nil)
+          if providerId.nonEmpty && modelId.nonEmpty then
+            val key = s"$providerId/$modelId"
+            val current = nebflow.llm.ModelRegistry.loadForApi
+            val updatedEntry = current.models.get(key) match
+              case Some(existing) => existing.copy(vision = vision, capabilities = capabilities)
+              case None => nebflow.llm.ModelRegistry.ModelEntry(vision = vision, capabilities = capabilities)
+            val updatedModels = current.models + (key -> updatedEntry)
+            nebflow.llm.ModelRegistry.save(updatedModels)
+            Ok(Json.obj("status" -> "ok".asJson))
+          else BadRequest(Json.obj("error" -> "providerId and modelId required".asJson))
+        }
+      }
+
+    // Agents — three-layer aggregation (global + team + flow)
     case req @ GET -> Root / "agents" =>
       withAuth(req) {
-        sharedResources.agentLibrary.loadAll().flatMap { agents =>
-          val list = agents.values.toList.map { a =>
+        for
+          globalAgents <- EntityLoader.listAgents()
+          teams <- EntityLoader.listTeams()
+          teamAgentEntries <- teams.toList.traverse { (teamName, _) =>
+            IO.blocking {
+              val dir = PathUtil.dataRoot / "teams" / teamName / "agents"
+              if os.exists(dir) then
+                os.list(dir)
+                  .filter(os.isDir)
+                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
+                  .map(a => (teamName, a))
+                  .toList
+              else Nil
+            }
+          }
+          flows <- EntityLoader.listFlows()
+          flowAgentEntries <- flows.toList.traverse { (flowName, _) =>
+            IO.blocking {
+              val dir = PathUtil.dataRoot / "flows" / flowName / "agents"
+              if os.exists(dir) then
+                os.list(dir)
+                  .filter(os.isDir)
+                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
+                  .map(a => (flowName, a))
+                  .toList
+              else Nil
+            }
+          }
+          globalList = globalAgents.values.filter(_.name != "Nebula").toList.map { a =>
             Json.obj(
               "name" -> a.name.asJson,
               "description" -> a.description.asJson,
-              "displayName" -> a.displayName.getOrElse(a.name).asJson
+              "displayName" -> a.name.asJson,
+              "category" -> a.category.asJson,
+              "layer" -> "global".asJson
             )
           }
-          Ok(Json.obj("agents" -> list.asJson))
-        }
+          teamList = teamAgentEntries.flatten.map { (scope, a) =>
+            Json.obj(
+              "name" -> a.name.asJson,
+              "description" -> a.description.asJson,
+              "displayName" -> a.name.asJson,
+              "category" -> "team".asJson,
+              "layer" -> "team".asJson,
+              "scope" -> scope.asJson
+            )
+          }
+          flowList = flowAgentEntries.flatten.map { (scope, a) =>
+            Json.obj(
+              "name" -> a.name.asJson,
+              "description" -> a.description.asJson,
+              "displayName" -> a.name.asJson,
+              "category" -> "flow".asJson,
+              "layer" -> "flow".asJson,
+              "scope" -> scope.asJson
+            )
+          }
+          all = globalList ++ teamList ++ flowList
+          result <- Ok(Json.obj("agents" -> all.asJson))
+        yield result
       }
 
     // Folders
@@ -200,8 +294,6 @@ class RestApiRoutes(
           val content = scope match
             case "user" => nebflow.service.MemoryStore.loadUserMemory.getOrElse("")
             case "agent" => nebflow.service.MemoryStore.loadAgentMemory(agentName).getOrElse("")
-            case "folder" =>
-              if folderId.nonEmpty then nebflow.service.MemoryStore.loadFolderMemory(folderId).getOrElse("") else ""
             case _ => ""
           Ok(Json.obj("scope" -> scope.asJson, "content" -> content.asJson))
         }
@@ -209,7 +301,7 @@ class RestApiRoutes(
 
     // ===== NebLink P2P Discovery (no gateway auth — used by other Nebflow instances) =====
 
-    // Return local device info for Tailscale discovery probes
+    // Return local device info for NebLink discovery probes
     case GET -> Root / "neblink" / "discover" =>
       neblinkService match
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
@@ -231,7 +323,7 @@ class RestApiRoutes(
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-          if !ms.isTailscalePeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
+          if !ms.isTrustedPeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
           else
             req.as[Json].flatMap { body =>
               io.circe.parser.decode[nebflow.neblink.DeviceDiscoveryInfo](body.noSpaces) match
@@ -245,7 +337,7 @@ class RestApiRoutes(
 
     // ===== NebLink API (gateway auth required — for frontend) =====
 
-    // NebLink scan — trigger Tailscale discovery immediately, return updated peers
+    // NebLink scan — trigger NebLink discovery immediately, return updated peers
     case req @ POST -> Root / "neblink" / "scan" =>
       withNeblink(req) { ms =>
         ms.scanNow.flatMap { peersList =>
@@ -280,7 +372,8 @@ class RestApiRoutes(
                   "name" -> id.deviceName.asJson,
                   "platform" -> id.platform.asJson,
                   "capabilities" -> id.capabilities.asJson,
-                  "userDescription" -> id.userDescription.asJson
+                  "userDescription" -> id.userDescription.asJson,
+                  "avatarUrl" -> id.avatarUrl.asJson
                 ),
                 "peers" -> peersList
                   .map(p =>
@@ -302,13 +395,13 @@ class RestApiRoutes(
       }
 
     // Handshake — called by a discovered peer to establish trust and exchange device secrets.
-    // Guarded by Tailscale IP check (same as /neblink/announce) — only tailnet members can reach this.
+    // Guarded by peer IP check (same as /neblink/announce) — only network members can reach this.
     case req @ POST -> Root / "neblink" / "handshake" =>
       neblinkService match
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val callerIp = req.remoteAddr.fold("")(a => a.toString)
-          if !ms.isTailscalePeer(callerIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
+          if !ms.isTrustedPeer(callerIp) then Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
           else
             // Bearer format: deviceId:callerDeviceSecret
             val bearer = req.headers
@@ -363,6 +456,202 @@ class RestApiRoutes(
           } *> Ok(Json.obj("ok" -> true.asJson))
         }
       }
+
+    // Pair device — save NebLink Server config received from nebflow.space/connect redirect
+    case req @ POST -> Root / "neblink" / "pair" =>
+      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      else
+        req.as[Json].flatMap { body =>
+          val serverOpt = body.hcursor.downField("server").as[Option[String]].toOption.flatten
+          val networkIdOpt = body.hcursor.downField("networkId").as[Option[String]].toOption.flatten
+          val secretOpt = body.hcursor.downField("secret").as[Option[String]].toOption.flatten
+          // Optional account avatar URL returned by nebflow.space on pairing.
+          val avatarOpt = body.hcursor.downField("avatar").as[Option[String]].toOption.flatten
+          (serverOpt, networkIdOpt, secretOpt) match
+            case (Some(server), Some(networkId), Some(secret)) =>
+              val newConfig = NeblinkServerConfig(url = server, networkId = networkId, secret = secret)
+              for
+                current <- NeblinkConfig.load
+                updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
+                _ <- NeblinkConfig.save(updated)
+                // Persist the account avatar (if nebflow.space provided one) onto
+                // the device identity so the UI can show it after login.
+                _ <- neblinkService.fold(IO.unit)(_.updateDeviceInfo(avatarUrl = avatarOpt))
+                resp <- Ok(
+                  Json.obj(
+                    "ok" -> true.asJson,
+                    "message" -> "Configuration saved. Please restart Nebflow to apply.".asJson
+                  )
+                )
+              yield resp
+            case _ =>
+              BadRequest(Json.obj("error" -> "Missing server, networkId, or secret".asJson))
+          end match
+        }
+
+    // Enroll device via pairing code — calls the NebLink Server's
+    // /api/device/enroll, receives a long-lived device credential, persists it,
+    // and writes the neblink config so the device joins on next start.
+    case req @ POST -> Root / "neblink" / "enroll" =>
+      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      else
+        req.as[Json].flatMap { body =>
+          val serverOpt = body.hcursor
+            .downField("server")
+            .as[Option[String]]
+            .toOption
+            .flatten
+            .map(_.stripSuffix("/"))
+          val pairCodeOpt = body.hcursor.downField("pairCode").as[Option[String]].toOption.flatten
+          (serverOpt, pairCodeOpt) match
+            case (Some(server), Some(pairCode)) =>
+              neblinkService match
+                case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
+                case Some(ms) =>
+                  for
+                    identity <- ms.identity
+                    enrollBody = Json
+                      .obj(
+                        "pairCode" -> pairCode.asJson,
+                        "deviceId" -> identity.deviceId.asJson,
+                        "deviceName" -> identity.deviceName.asJson,
+                        "platform" -> identity.platform.asJson
+                      )
+                      .noSpaces
+                    result <- enrollWithServer(server, enrollBody)
+                    resp <- result match
+                      case Right(credJson) =>
+                        val deviceToken = credJson.hcursor.downField("deviceToken").as[String].toOption
+                        val networkId = credJson.hcursor.downField("networkId").as[String].toOption.getOrElse("")
+                        val deviceId =
+                          credJson.hcursor.downField("deviceId").as[String].toOption.getOrElse(identity.deviceId)
+                        deviceToken match
+                          case Some(token) =>
+                            val credential = DeviceCredential(server, networkId, deviceId, token)
+                            val newConfig = NeblinkServerConfig(
+                              url = server,
+                              networkId = networkId,
+                              secret = "",
+                              deviceToken = Some(token)
+                            )
+                            for
+                              _ <- DeviceCredential.save(credential)
+                              current <- NeblinkConfig.load
+                              updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
+                              _ <- NeblinkConfig.save(updated)
+                              r <- Ok(
+                                Json.obj(
+                                  "ok" -> true.asJson,
+                                  "message" -> "Enrolled. Please restart Nebflow to connect.".asJson,
+                                  "networkId" -> networkId.asJson
+                                )
+                              )
+                            yield r
+                          case None =>
+                            BadRequest(Json.obj("error" -> "Server did not return a device token".asJson))
+                        end match
+                      case Left(err) =>
+                        BadRequest(Json.obj("error" -> s"Enrollment failed: $err".asJson))
+                  yield resp
+              end match
+            case _ =>
+              BadRequest(Json.obj("error" -> "Missing server or pairCode".asJson))
+          end match
+        }
+
+    // ===== Device authorization flow (Tailscale-style) =====
+
+    // Start device flow: proxy to neblink-server's /api/device/code.
+    // Returns {deviceCode, userCode, verificationUri} for the frontend.
+    case req @ POST -> Root / "neblink" / "device-flow" / "start" =>
+      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      else
+        neblinkService match
+          case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
+          case Some(ms) =>
+            for
+              identity <- ms.identity
+              // The neblink-server URL: read from existing config, or use the
+              // public default. For device flow the server must be reachable
+              // from both the browser (for OAuth) and the device (for polling).
+              serverUrl <- neblinkServerUrl(None)
+              body = Json
+                .obj(
+                  "deviceId" -> identity.deviceId.asJson,
+                  "deviceName" -> identity.deviceName.asJson,
+                  "platform" -> identity.platform.asJson
+                )
+                .noSpaces
+              result <- proxyPost(serverUrl, "/api/device/code", body)
+              resp <- result match
+                case Right(json) => Ok(json)
+                case Left(err) => BadRequest(Json.obj("error" -> s"Failed to start device flow: $err".asJson))
+            yield resp
+
+    // Poll device flow: proxy to neblink-server's /api/device/token.
+    // On success, persist the device credential + update config + hot-swap client.
+    case req @ POST -> Root / "neblink" / "device-flow" / "poll" =>
+      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      else
+        req.as[Json].flatMap { body =>
+          val deviceCode = body.hcursor.downField("deviceCode").as[String].getOrElse("")
+          val serverUrl = body.hcursor
+            .downField("serverUrl")
+            .as[Option[String]]
+            .toOption
+            .flatten
+            .map(_.stripSuffix("/"))
+          if deviceCode.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceCode".asJson))
+          else
+            neblinkService match
+              case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
+              case Some(ms) =>
+                for
+                  resolvedUrl <- neblinkServerUrl(serverUrl)
+                  pollBody = Json.obj("deviceCode" -> deviceCode.asJson).noSpaces
+                  result <- proxyPost(resolvedUrl, "/api/device/token", pollBody)
+                  resp <- result match
+                    case Right(json) =>
+                      // Success — persist credential + update config + hot-swap.
+                      val deviceToken = json.hcursor.downField("deviceToken").as[String].toOption
+                      val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
+                      deviceToken match
+                        case Some(tok) =>
+                          for
+                            identity <- ms.identity
+                            cred = DeviceCredential(resolvedUrl, networkId, identity.deviceId, tok)
+                            _ <- DeviceCredential.save(cred)
+                            newConfig = NeblinkServerConfig(
+                              url = resolvedUrl,
+                              networkId = networkId,
+                              secret = "",
+                              deviceToken = Some(tok)
+                            )
+                            current <- NeblinkConfig.load
+                            updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
+                            _ <- NeblinkConfig.save(updated)
+                            // Hot-swap the client in the discovery service.
+                            _ <- neblinkDiscovery
+                              .fold(IO.unit)(d => d.setClient(Some(new NeblinkClient(newConfig, gatewayPort))))
+                            // Trigger immediate re-discovery.
+                            _ <- ms.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
+                            r <- Ok(
+                              Json.obj(
+                                "ok" -> true.asJson,
+                                "networkId" -> networkId.asJson
+                              )
+                            )
+                          yield r
+                        case None =>
+                          BadRequest(Json.obj("error" -> "Server did not return a device token".asJson))
+                      end match
+                    case Left(err) =>
+                      // authorization_pending is expected during polling — pass through.
+                      BadRequest(Json.obj("error" -> err.asJson))
+                yield resp
+            end match
+          end if
+        }
 
     // Cloud session sync toggle — removed (session sync deleted)
 
@@ -429,7 +718,7 @@ class RestApiRoutes(
 
     // ===== Remote Update (P2P — triggered by another Nebflow instance) =====
     // Downloads and installs the latest JAR, then restarts Nebflow.
-    // The caller must be a Tailscale peer (verified by IP).
+    // The caller must be a trusted peer (verified by IP).
     case req @ POST -> Root / "neblink" / "update" =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
@@ -477,7 +766,7 @@ class RestApiRoutes(
           }
       }
 
-    // ===== NebLink File Transfer (P2P — Tailscale IP auth) =====
+    // ===== NebLink File Transfer (P2P — peer IP auth) =====
 
     // Push a file to this device
     case req @ POST -> Root / "neblink" / "transfer" =>
@@ -534,7 +823,7 @@ class RestApiRoutes(
             }
       }
 
-    // Peer pushes a file via HTTP (Tailscale IP auth)
+    // Peer pushes a file via HTTP (peer IP auth)
     case req @ POST -> Root / "neblink" / "dropbox" / "transfer" / transferId =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
@@ -557,7 +846,7 @@ class RestApiRoutes(
   // ===== WebSocket Presence Server Endpoint =====
 
   /**
-   * Accepts incoming WS presence connections from Tailscale peers.
+   * Accepts incoming WS presence connections from NebLink peers.
    *
    * The peer's device info arrives as query params on the WS upgrade request.
    * Once the WS is established:
@@ -574,7 +863,7 @@ class RestApiRoutes(
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-          if !ms.isTailscalePeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
+          if !ms.isTrustedPeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
           else
             val peerDeviceId = req.params.getOrElse("deviceId", "")
             if peerDeviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
@@ -648,20 +937,490 @@ class RestApiRoutes(
           }
       }
 
-    // GET /flow/status/:sessionId — return all pipeline states for frontend
-    // NOTE: Router mounts this under /api prefix, so full path is /api/flow/status/:sessionId
-    case GET -> Root / "flow" / "status" / sessionId =>
-      if sessionId.isEmpty then BadRequest(Json.obj("error" -> "Missing sessionId".asJson))
+    // GET /teams/mounted — return all mounted teams with agent status
+    // NOTE: Router mounts this under /api prefix, so full path is /api/teams/mounted
+    case GET -> Root / "teams" / "mounted" =>
+      for
+        _ <- nebflow.core.flow.FlowTreeRegistry.awaitRestore(3000L)
+        teamsJson <- buildMountedTeamsJson()
+        result <- Ok(Json.obj("teams" -> teamsJson))
+      yield result
+
+    // GET /running-flows — list currently running DAG flow instances
+    case GET -> Root / "running-flows" =>
+      nebflow.core.flow.RunningFlowRegistry.listJson.flatMap(json => Ok(json))
+
+    // GET /flow/dag/:name — return flow DAG structure (nodes, edges, routing)
+    case GET -> Root / "flow" / "dag" / flowName =>
+      if !isValidFlowName(flowName) then BadRequest(Json.obj("error" -> "Invalid flow name".asJson))
+      else
+        nebflow.core.entity.EntityLoader.loadFlow(flowName).flatMap {
+          case Some(dag) =>
+            val nodesJson = dag.nodes.map { (nodeId, node) =>
+              val route: Json = node.onComplete match
+                case nebflow.core.entity.NodeRoute.Goto(t) => Json.fromString(t)
+                case nebflow.core.entity.NodeRoute.Return => Json.fromString("$return")
+                case nebflow.core.entity.NodeRoute.Switch(expr, cases) =>
+                  val casesObj = io.circe.JsonObject.fromIterable(cases.map { (k, v) =>
+                    val target: String = v match
+                      case nebflow.core.entity.NodeRoute.Goto(t) => t
+                      case nebflow.core.entity.NodeRoute.Return => "$return"
+                      case _ => "?"
+                    k -> Json.fromString(target)
+                  })
+                  Json.obj("switch" -> Json.fromString(expr), "cases" -> casesObj.asJson)
+              nodeId -> Json.obj(
+                "agent" -> node.agent.asJson,
+                "input" -> node.input.asJson,
+                "onComplete" -> route,
+                "onError" -> node.onError.map(_.toString.toLowerCase).asJson,
+                "maxRetries" -> node.maxRetries.asJson
+              )
+            }
+            Ok(
+              Json.obj(
+                "name" -> dag.name.asJson,
+                "description" -> dag.description.asJson,
+                "entry" -> dag.entry.asJson,
+                "maxLoop" -> dag.maxLoop.asJson,
+                "nodes" -> nodesJson.asJson
+              )
+            )
+          case None =>
+            NotFound(Json.obj("error" -> s"Flow '$flowName' not found".asJson))
+        }
+
+    // GET /teams — list all defined teams (from team.json files)
+    case GET -> Root / "teams" =>
+      for
+        teams <- nebflow.core.entity.EntityLoader.listTeams()
+        teamsJson = teams.values.toList.sortBy(_.name).map { t =>
+          io.circe.Json.obj(
+            "name" -> t.name.asJson,
+            "description" -> t.description.asJson,
+            "lead" -> t.lead.asJson,
+            "members" -> t.members.asJson,
+            "flows" -> t.flows.asJson
+          )
+        }
+        result <- Ok(io.circe.Json.obj("teams" -> teamsJson.asJson))
+      yield result
+
+    // GET /teams/status/:sessionId — return mounted teams and agent status for frontend
+    // NOTE: Router mounts this under /api prefix, so full path is /api/teams/status/:sessionId
+    case GET -> Root / "teams" / "status" / sessionId =>
+      // Validate sessionId: only UUID format (hex + dashes), no path traversal
+      if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
+        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
       else
         for
-          states <- nebflow.core.flow.PipelineStateStore.loadAll(sessionId)
-          response = Json.obj(
-            "sessionId" -> sessionId.asJson,
-            "pipelines" -> states.asJson
-          )
-          result <- Ok(response)
+          teamsJson <- buildMountedTeamsJson()
+          result <- Ok(Json.obj("sessionId" -> sessionId.asJson, "teams" -> teamsJson))
         yield result
+
+    // GET /teams/mailbox/:sessionId/:teamName — mail history for a team
+    case GET -> Root / "teams" / "mailbox" / sessionId / flowName =>
+      if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
+        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
+      else
+        for
+          records <- nebflow.core.flow.FlowMailStore.load(sessionId, flowName)
+          result <- Ok(Json.obj("records" -> records.asJson))
+        yield result
+
+    // DELETE /teams/mailbox/:sessionId/:teamName — clear mail history
+    case DELETE -> Root / "teams" / "mailbox" / sessionId / flowName =>
+      if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
+        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
+      else
+        for
+          _ <- nebflow.core.flow.FlowMailStore.clear(sessionId, flowName)
+          result <- Ok(Json.obj("cleared" -> true.asJson))
+        yield result
+
+    // ===== Flow Editor APIs =====
+
+    // GET /teams/def/:name — return team definition for the editor
+    case GET -> Root / "teams" / "def" / flowName =>
+      if !isValidFlowName(flowName) then BadRequest(Json.obj("error" -> "Invalid name".asJson))
+      else
+        for
+          teamOpt <- EntityLoader.loadTeam(flowName)
+          agents <- EntityLoader.listAgents()
+          result <- teamOpt match
+            case None => NotFound(Json.obj("error" -> s"Team '$flowName' not found".asJson))
+            case Some(team) =>
+              val leadEntry = agents.get(team.lead)
+              val memberEntries = team.members.flatMap(agents.get)
+              val allEntries = (leadEntry.toList ++ memberEntries)
+              val agentsJson = allEntries.map { entry =>
+                Json.obj(
+                  "name" -> entry.name.asJson,
+                  "description" -> entry.description.asJson,
+                  "tools" -> entry.tools.asJson,
+                  "systemPrompt" -> entry.systemPrompt.asJson
+                )
+              }
+              Ok(
+                Json.obj(
+                  "name" -> team.name.asJson,
+                  "manager" -> team.lead.asJson,
+                  "description" -> team.description.asJson,
+                  "agents" -> agentsJson.asJson,
+                  "type" -> "team".asJson
+                )
+              )
+        yield result
+
+    // GET /agents/list — list all global agents (for extends dropdown)
+    // GET /agents/list — list all agents (all three layers)
+    case GET -> Root / "agents" / "list" =>
+      for
+        globalAgents <- EntityLoader.listAgents()
+        teams <- EntityLoader.listTeams()
+        teamAgentEntries <- teams.toList.traverse { (teamName, _) =>
+          IO.blocking {
+            val dir = PathUtil.dataRoot / "teams" / teamName / "agents"
+            if os.exists(dir) then
+              os.list(dir)
+                .filter(os.isDir)
+                .flatMap(d => EntityLoader.loadAgentFromDir(d))
+                .toList
+            else Nil
+          }
+        }
+        flows <- EntityLoader.listFlows()
+        flowAgentEntries <- flows.toList.traverse { (flowName, _) =>
+          IO.blocking {
+            val dir = PathUtil.dataRoot / "flows" / flowName / "agents"
+            if os.exists(dir) then
+              os.list(dir)
+                .filter(os.isDir)
+                .flatMap(d => EntityLoader.loadAgentFromDir(d))
+                .toList
+            else Nil
+          }
+        }
+        globalList = globalAgents.values.filter(_.name != "Nebula").map { a =>
+          Json.obj(
+            "name" -> a.name.asJson,
+            "description" -> a.description.asJson,
+            "tools" -> a.tools.asJson,
+            "displayName" -> a.name.asJson,
+            "systemPrompt" -> a.systemPrompt.asJson,
+            "category" -> a.category.asJson
+          )
+        }
+        teamList = teamAgentEntries.flatten.map { a =>
+          Json.obj(
+            "name" -> a.name.asJson,
+            "description" -> a.description.asJson,
+            "tools" -> a.tools.asJson,
+            "displayName" -> a.name.asJson,
+            "systemPrompt" -> a.systemPrompt.asJson,
+            "category" -> "team".asJson
+          )
+        }
+        flowList = flowAgentEntries.flatten.map { a =>
+          Json.obj(
+            "name" -> a.name.asJson,
+            "description" -> a.description.asJson,
+            "tools" -> a.tools.asJson,
+            "displayName" -> a.name.asJson,
+            "systemPrompt" -> a.systemPrompt.asJson,
+            "category" -> "flow".asJson
+          )
+        }
+        all = globalList ++ teamList ++ flowList
+        result <- Ok(Json.obj("agents" -> all.asJson))
+      yield result
+
+    // GET /agents/:name — get agent detail (system.md + tools) — searches all three layers
+    case GET -> Root / "agents" / agentName =>
+      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      else
+        for
+          agentOpt <- EntityLoader.findAgentByName(agentName)
+          result <- agentOpt match
+            case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+            case Some(defn) =>
+              Ok(
+                Json.obj(
+                  "name" -> defn.name.asJson,
+                  "description" -> defn.description.asJson,
+                  "tools" -> defn.tools.asJson,
+                  "systemPrompt" -> defn.systemPrompt.asJson,
+                  "displayName" -> defn.displayName.getOrElse(defn.name).asJson
+                )
+              )
+        yield result
+
+    // GET /agents/:name/model — get agent's model configuration — searches all three layers
+    case GET -> Root / "agents" / agentName / "model" =>
+      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      else
+        for
+          agentOpt <- EntityLoader.findAgentByName(agentName)
+          result <- agentOpt match
+            case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+            case Some(defn) =>
+              val modelConfig = defn.model.getOrElse(nebflow.shared.AgentModelConfig.empty)
+              sharedResources.runtimeModels.get.flatMap { runtimeModels =>
+                val current = runtimeModels.values.headOption
+                Ok(
+                  Json.obj(
+                    "model" -> modelConfig.asJson,
+                    "current" -> current.asJson,
+                    "preferred" -> modelConfig.preferred.asJson,
+                    "fallbacks" -> modelConfig.fallbacks.asJson,
+                    "default" -> modelConfig.preferred.asJson
+                  )
+                )
+              }
+        yield result
+
+    // PUT /agents/:name/model — update agent's model configuration
+    case req @ PUT -> Root / "agents" / agentName / "model" =>
+      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      else
+        req.as[Json].flatMap { body =>
+          // Parse the model config from request body
+          io.circe.parser.decode[nebflow.shared.AgentModelConfig](body.noSpaces) match
+            case Right(modelConfig) =>
+              sharedResources.agentLibrary
+                .updateModel(agentName, modelConfig)
+                .flatMap {
+                  case true =>
+                    Ok(Json.obj("updated" -> true.asJson, "model" -> modelConfig.asJson))
+                  case false =>
+                    NotFound(Json.obj("error" -> s"Agent '$agentName' config not found".asJson))
+                }
+                .handleErrorWith { err =>
+                  // Corrupt JSON or IO failure
+                  InternalServerError(Json.obj("error" -> err.getMessage.asJson))
+                }
+            case Left(err) =>
+              BadRequest(Json.obj("error" -> s"Invalid model config: ${err.getMessage}".asJson))
+        }
+
+    // ===== Entity API (Team/Flow/Agent management) =====
+
+    // GET /teams/:name — team detail
+    case GET -> Root / "teams" / teamName =>
+      if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
+      else
+        for
+          teamOpt <- EntityLoader.loadTeam(teamName)
+          result <- teamOpt match
+            case None => NotFound(Json.obj("error" -> s"Team '$teamName' not found".asJson))
+            case Some(team) =>
+              Ok(
+                Json.obj(
+                  "name" -> team.name.asJson,
+                  "description" -> team.description.asJson,
+                  "lead" -> team.lead.asJson,
+                  "members" -> team.members.asJson,
+                  "flows" -> team.flows.asJson
+                )
+              )
+        yield result
+
+    // GET /team/rules/:name — read team rules.md
+    case GET -> Root / "team" / "rules" / teamName =>
+      if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
+      else
+        for
+          rules <- EntityLoader.loadTeamRules(teamName)
+          result <- Ok(Json.obj("content" -> rules.asJson))
+        yield result
+
+    // POST /team/rules/:name — save team rules.md + trigger reload
+    case req @ POST -> Root / "team" / "rules" / teamName =>
+      if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
+      else
+        for
+          body <- req.as[Json]
+          content = body.hcursor.downField("content").as[String].getOrElse("")
+          rulesDir = PathUtil.dataRoot / "teams" / teamName
+          _ <- IO.blocking {
+            os.makeDir.all(rulesDir)
+            val tmp = rulesDir / ".rules.md.tmp"
+            os.write(tmp, content)
+            os.move.over(tmp, rulesDir / "rules.md")
+          }
+          // Trigger reload so changes take effect on next activation
+          _ <- FlowTreeRegistry.treesRef.get.flatMap { treeMap =>
+            treeMap.values.toList.traverse_ { treeRef =>
+              treeRef ! TreeCommand.ReloadDefinition(teamName)
+            }
+          }
+          result <- Ok(Json.obj("saved" -> true.asJson))
+        yield result
+
+    // GET /entity-agents — list all agents (entity format, with useWhen)
+    case GET -> Root / "entity-agents" =>
+      for
+        agents <- EntityLoader.listAgents()
+        entries = agents.values.toList.sortBy(_.name).map { a =>
+          Json.obj(
+            "name" -> a.name.asJson,
+            "description" -> a.description.asJson,
+            "useWhen" -> a.useWhen.asJson,
+            "tools" -> a.tools.asJson,
+            "voice" -> a.voice.asJson,
+            "category" -> a.category.asJson
+          )
+        }
+        result <- Ok(Json.obj("agents" -> entries.asJson))
+      yield result
+
+    // ===== Daemon Management =====
+
+    // GET /daemons — list all daemons with runtime state
+    case req @ GET -> Root / "daemons" =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => Ok(Json.obj("daemons" -> List.empty[String].asJson))
+          case Some(svc) =>
+            val store = new DaemonStore()
+            store.load().flatMap { configs =>
+              svc.getStates(configs).flatMap { states =>
+                Ok(Json.obj("daemons" -> states.asJson))
+              }
+            }
+      }
+
+    // POST /daemons — create a new daemon
+    case req @ POST -> Root / "daemons" =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
+          case Some(svc) =>
+            req.as[Json].flatMap { body =>
+              val id = body.hcursor.downField("id").as[String].getOrElse("")
+              val name = body.hcursor.downField("name").as[String].getOrElse("")
+              val command = body.hcursor.downField("command").as[List[String]].getOrElse(List.empty)
+              val cwd = body.hcursor.downField("cwd").as[Option[String]].toOption.flatten
+              val env = body.hcursor.downField("env").as[Map[String, String]].getOrElse(Map.empty)
+              val autoStart = body.hcursor.downField("autoStart").as[Boolean].getOrElse(false)
+              val restartOnExit = body.hcursor.downField("restartOnExit").as[Boolean].getOrElse(false)
+
+              if id.isEmpty || name.isEmpty || command.isEmpty then
+                BadRequest(Json.obj("error" -> "Missing required fields: id, name, command".asJson))
+              else
+                val config = DaemonConfig(
+                  id = id,
+                  name = name,
+                  command = command,
+                  cwd = cwd,
+                  env = env,
+                  autoStart = autoStart,
+                  restartOnExit = restartOnExit
+                )
+                val store = new DaemonStore()
+                store.add(config).flatMap { _ =>
+                  // Auto-start if requested
+                  val startIO = if autoStart then svc.start(config).void.handleErrorWith(_ => IO.unit) else IO.unit
+                  startIO *> svc.getState(id).flatMap {
+                    case Some(state) => Ok(state.asJson)
+                    case None => Ok(config.asJson)
+                  }
+                }
+              end if
+            }
+      }
+
+    // DELETE /daemons/:id — remove a daemon (stops if running)
+    case req @ DELETE -> Root / "daemons" / daemonId =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
+          case Some(svc) =>
+            svc.stop(daemonId).flatMap { _ =>
+              val store = new DaemonStore()
+              store.remove(daemonId) *> Ok(Json.obj("deleted" -> true.asJson))
+            }
+      }
+
+    // POST /daemons/:id/start — start a daemon
+    case req @ POST -> Root / "daemons" / daemonId / "start" =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
+          case Some(svc) =>
+            val store = new DaemonStore()
+            svc.startById(store, daemonId).flatMap {
+              case Some(state) => Ok(state.asJson)
+              case None => NotFound(Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))
+            }
+      }
+
+    // POST /daemons/:id/stop — stop a daemon
+    case req @ POST -> Root / "daemons" / daemonId / "stop" =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
+          case Some(svc) =>
+            svc.stop(daemonId).flatMap {
+              case Some(state) => Ok(state.asJson)
+              case None => NotFound(Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))
+            }
+      }
+
+    // POST /daemons/:id/restart — restart a daemon
+    case req @ POST -> Root / "daemons" / daemonId / "restart" =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
+          case Some(svc) =>
+            val store = new DaemonStore()
+            svc.restart(store, daemonId).flatMap {
+              case Some(state) => Ok(state.asJson)
+              case None => NotFound(Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))
+            }
+      }
   }
+
+  /**
+   * Build mounted teams JSON for the frontend (GET /api/teams/mounted).
+   *  Reads from live FlowMembership runtime state. Each team is a card with
+   *  agent tiles showing status.
+   */
+  private def buildMountedTeamsJson(): IO[Json] =
+    for
+      flowsMap <- nebflow.core.flow.FlowMembership.listMountedFlows
+      teams <- EntityLoader.listTeams()
+      flows <- flowsMap.toList.sortBy(_._1).traverse { (instanceName, agents) =>
+        val teamDefOpt = teams.get(instanceName)
+        agents
+          .traverse { (agentName, sid) =>
+            nebflow.core.flow.FlowMembership.isBusy(sid).map { busy =>
+              Json.obj(
+                "name" -> agentName.asJson,
+                "sessionId" -> sid.asJson,
+                "status" -> (if busy then "running" else "idle").asJson,
+                "manager" -> teamDefOpt.exists(_.lead == agentName).asJson
+              )
+            }
+          }
+          .map { agentsJson =>
+            Json.obj(
+              "name" -> instanceName.asJson,
+              "type" -> "team".asJson,
+              "agents" -> agentsJson.asJson,
+              "flows" -> teamDefOpt.map(_.flows).getOrElse(List.empty[String]).asJson
+            )
+          }
+      }
+    yield flows.asJson
+
+  // ── Flow editor helpers ──────────────────────────────────
+
+  private def isValidFlowName(name: String): Boolean =
+    name.nonEmpty && name.matches("^[a-zA-Z0-9][a-zA-Z0-9._-]*$") && !name.contains("..")
+
+  private def isValidAgentName(name: String): Boolean =
+    name.nonEmpty && name.matches("^[a-zA-Z0-9][a-zA-Z0-9._-]*$") && !name.contains("..")
 
   private def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
     if checkAuth(req) then f
@@ -676,9 +1435,9 @@ class RestApiRoutes(
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
 
   /**
-   * Verify peer-to-peer access via Tailscale IP check.
-   * Only requests from the Tailscale CGNAT range (100.64.0.0/10) are accepted.
-   * Tailscale itself is the trust boundary — devices must be on the same tailnet.
+   * Verify peer-to-peer access via peer IP check.
+   * Only requests from trusted peer IPs (discovered via NebLink Server) are accepted.
+   * NebLink Server is the trust boundary — devices must be on the same network.
    */
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], NeblinkService]] =
     neblinkService match
@@ -686,12 +1445,12 @@ class RestApiRoutes(
         IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "NebLink not enabled".asJson))))
       case Some(ms) =>
         val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-        if ms.isTailscalePeer(remoteIp) then IO.pure(Right(ms))
+        if ms.isTrustedPeer(remoteIp) then IO.pure(Right(ms))
         else
           IO.pure(
             Left(
               Response[IO](Status.Forbidden)
-                .withEntity(Json.obj("error" -> s"Not a Tailscale peer (from $remoteIp)".asJson))
+                .withEntity(Json.obj("error" -> s"Not a trusted peer (from $remoteIp)".asJson))
             )
           )
 
@@ -702,4 +1461,68 @@ class RestApiRoutes(
       case Some(t) => Auth.validateToken(t, token)
       case None =>
         req.params.get("token").exists(t => Auth.validateToken(t, token))
+
+  /**
+   * POST the enrollment body to the NebLink Server and parse the JSON reply.
+   * Uses java.net.http directly (mirrors NeblinkClient) to avoid pulling an
+   * http4s client dependency into this routes class. Bypasses the system proxy
+   * so direct LAN access works.
+   */
+  private def enrollWithServer(serverUrl: String, body: String): IO[Either[String, Json]] =
+    proxyPost(serverUrl, "/api/device/enroll", body)
+
+  /**
+   * Generic POST proxy to the NebLink Server. Returns the parsed JSON on
+   * success (2xx) or an error message on failure. Bypasses the system proxy.
+   */
+  private def proxyPost(serverUrl: String, path: String, body: String): IO[Either[String, Json]] =
+    IO.blocking {
+      val client = java.net.http.HttpClient
+        .newBuilder()
+        .proxy(java.net.ProxySelector.of(null))
+        .build()
+      val request = java.net.http.HttpRequest
+        .newBuilder()
+        .uri(java.net.URI.create(s"${serverUrl.stripSuffix("/")}$path"))
+        .timeout(java.time.Duration.ofSeconds(15))
+        .header("Content-Type", "application/json")
+        .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
+        .build()
+      try
+        val response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString())
+        val status = response.statusCode()
+        val respBody = response.body()
+        if status >= 200 && status < 300 then
+          parser.parse(respBody) match
+            case Right(json) => Right(json)
+            case Left(err) => Left(s"invalid JSON from server: ${err.message}")
+        else
+          // Surface the server's error message if it's JSON (e.g. authorization_pending).
+          parser.parse(respBody) match
+            case Right(json) =>
+              json.hcursor.downField("error").as[String].toOption match
+                case Some(errMsg) => Left(errMsg)
+                case None => Left(s"HTTP $status")
+            case Left(_) => Left(s"HTTP $status")
+      catch case e: Exception => Left(e.getMessage)
+      end try
+    }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
+
+  /**
+   * Resolve the NebLink Server URL for device-flow requests. Priority:
+   * 1. Explicitly provided URL (from the request body).
+   * 2. URL from the current neblink config.
+   * 3. The public default URL.
+   */
+  private def neblinkServerUrl(explicit: Option[String] = None): IO[String] =
+    explicit match
+      case Some(url) => IO.pure(url)
+      case None =>
+        neblinkService match
+          case Some(ms) =>
+            ms.neblinkConfig.map(_.neblinkServer.map(_.url)).flatMap {
+              case Some(url) => IO.pure(url)
+              case None => IO.pure("https://neblink.nebflow.space")
+            }
+          case None => IO.pure("https://neblink.nebflow.space")
 end RestApiRoutes

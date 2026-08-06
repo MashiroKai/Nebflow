@@ -1,5 +1,7 @@
 package nebflow.agent
 
+import nebflow.shared.AgentModelConfig
+
 /**
  * Runtime agent definition.
  *
@@ -13,5 +15,9 @@ case class AgentDef(
   tools: List[String] = Nil,
   systemPrompt: String = "",
   avatar: Option[String] = None,
-  displayName: Option[String] = None
+  displayName: Option[String] = None,
+  voiceEnabled: Boolean = true,
+  model: Option[AgentModelConfig] = None,
+  category: String = "standalone",
+  mcpServers: List[String] = Nil
 )

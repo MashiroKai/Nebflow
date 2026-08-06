@@ -4,7 +4,7 @@ import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
 
 enum TaskStatus:
-  case Pending, InProgress, Completed, Failed
+  case Pending, InProgress, Completed, Failed, Dismissed
 
 object TaskStatus:
 
@@ -14,6 +14,7 @@ object TaskStatus:
       case "in_progress" => Right(TaskStatus.InProgress)
       case "completed" => Right(TaskStatus.Completed)
       case "failed" => Right(TaskStatus.Failed)
+      case "dismissed" => Right(TaskStatus.Dismissed)
       case other => Left(s"Unknown task status: $other")
     },
     io.circe.Encoder.encodeString.contramap {
@@ -21,6 +22,7 @@ object TaskStatus:
       case TaskStatus.InProgress => "in_progress"
       case TaskStatus.Completed => "completed"
       case TaskStatus.Failed => "failed"
+      case TaskStatus.Dismissed => "dismissed"
     }
   )
 
@@ -32,6 +34,7 @@ case class Task(
   description: String,
   activeForm: Option[String] = None,
   status: TaskStatus = TaskStatus.Pending,
+  parentId: Option[String] = None,
   blocks: List[String] = Nil,
   blockedBy: List[String] = Nil,
   createdAt: Option[String] = None,
@@ -44,7 +47,8 @@ object Task:
 case class TaskCreateInput(
   subject: String,
   description: String,
-  activeForm: Option[String] = None
+  activeForm: Option[String] = None,
+  parentTaskId: Option[String] = None
 )
 
 object TaskCreateInput:
