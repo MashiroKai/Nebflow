@@ -47,6 +47,7 @@
   display: none;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
 }
 .panel.active { display: flex; }
 
@@ -1353,6 +1354,14 @@
 .agent-mgr-model-pill.fallback {
   color: rgb(91,127,191);
   background: rgba(91,127,191,0.10);
+}
+
+/* ── Agent management panel ───────────────────────────────────────── */
+#agents-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: var(--color-frame-border) transparent;
 }
 
 /* ── Agent detail (Canvas tab) ─────────────────────────────────────── */
