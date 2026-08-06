@@ -43,20 +43,22 @@ object FlowReportTool extends Tool:
 - The verdict value determines which node runs next in the pipeline.
 - Put your full findings/analysis in the output parameter — this is what downstream nodes receive."""
 
-  val inputSchema = JsonObject.fromIterable(List(
-    "type" -> "object".asJson,
-    "properties" -> Json.obj(
-      "verdict" -> Json.obj(
-        "type" -> "string".asJson,
-        "description" -> "Assessment verdict. Must match a case key in the flow's switch routing.".asJson
+  val inputSchema = JsonObject.fromIterable(
+    List(
+      "type" -> "object".asJson,
+      "properties" -> Json.obj(
+        "verdict" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Assessment verdict. Must match a case key in the flow's switch routing.".asJson
+        ),
+        "output" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Your full work output — findings, analysis, code changes, etc.".asJson
+        )
       ),
-      "output" -> Json.obj(
-        "type" -> "string".asJson,
-        "description" -> "Your full work output — findings, analysis, code changes, etc.".asJson
-      )
-    ),
-    "required" -> Json.arr("verdict".asJson, "output".asJson)
-  ))
+      "required" -> Json.arr("verdict".asJson, "output".asJson)
+    )
+  )
 
   def summarize(input: JsonObject): String =
     val verdict = input("verdict").flatMap(_.asString).getOrElse("?")
