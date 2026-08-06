@@ -28,12 +28,11 @@ private[agent] trait AgentCore:
 
   /**
    * Nebula-exclusive tools: only available when agentName == "Nebula".
-   * - Pop: display files in Canvas — user-facing, routes through Nebula
    * - AskUserQuestion: direct user interaction
    * - Schedule: session-scoped scheduled tasks
    */
   private val NebulaExclusiveTools = Set(
-    "Pop", "AskUserQuestion", "Schedule"
+    "AskUserQuestion", "Schedule"
   )
 
   /** Tools available to Nebula and Team Leads, but NOT workers. */
