@@ -7,7 +7,7 @@ import io.circe.syntax.given
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
-import nebflow.core.tools.{FileHistory, ReadTracker}
+import nebflow.core.tools.{FileHistory, FlowReportStore, ReadTracker}
 import nebflow.shared.{Message, MessageRole}
 
 /**
@@ -158,7 +158,9 @@ object FlowDagExecutor:
                 )
                 runNode(target, newCtx)
             case NodeRoute.Switch(switchExpr, cases) =>
-              val fieldValue = extractSwitchValue(switchExpr, result.output, ctx, cases)
+              val fieldValue = result.verdict.getOrElse {
+                extractSwitchValue(switchExpr, result.output, ctx, cases)
+              }
               cases.get(fieldValue) match
                 case Some(NodeRoute.Return) =>
                   IO.pure(Right(result.output))
@@ -334,16 +336,32 @@ object FlowDagExecutor:
       eventResult <- resultDeferred.get
       _ <- actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
       _ <- actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
+      // Read FlowReport if the agent called FlowReport, then clean up
+      reportOpt <- FlowReportStore.get(sessionId)
+      _ <- FlowReportStore.remove(sessionId)
       _ <- resources.sessionStore.deleteSession(sessionId).handleErrorWith(_ => IO.unit)
       nodeResult <- eventResult match
         case Right(messages) =>
-          IO.pure(
-            NodeResult(
-              nodeId = nodeId,
-              output = extractLastAssistantOutput(messages),
-              success = true
-            )
-          )
+          val textOutput = extractLastAssistantOutput(messages)
+          reportOpt match
+            case Some((verdict, reportOutput)) =>
+              IO.pure(
+                NodeResult(
+                  nodeId = nodeId,
+                  output = if reportOutput.nonEmpty then reportOutput else textOutput,
+                  success = true,
+                  verdict = Some(verdict)
+                )
+              )
+            case None =>
+              // Backward compat: agent didn't call FlowReport, use text output
+              IO.pure(
+                NodeResult(
+                  nodeId = nodeId,
+                  output = textOutput,
+                  success = true
+                )
+              )
         case Left(errMsg) =>
           IO.pure(
             NodeResult(
