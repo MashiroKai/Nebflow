@@ -131,7 +131,9 @@ object EntityLoader:
       parseAgentJson(os.read(jsonPath)).toOption.flatMap { entry =>
         val sysMd = dir / "system.md"
         val prompt = if os.exists(sysMd) then os.read(sysMd) else ""
-        Some(entry.copy(systemPrompt = prompt))
+        // Fall back to directory name if agent.json has no "name" field
+        val resolvedName = if entry.name.nonEmpty then entry.name else dir.last
+        Some(entry.copy(name = resolvedName, systemPrompt = prompt))
       }
 
   /** Load agent entry from `agents/<name>/agent.json` + `system.md`. */
@@ -194,37 +196,46 @@ object EntityLoader:
 
   /** Find an agent by name across all three layers (global → team → flow).
    *  Returns the first match as AgentDef, or None.
+   *
+   *  Global agents use name == dir name (fast path). Team and flow agents may
+   *  have a `name` field in agent.json that differs from the directory name,
+   *  so we scan all agent subdirectories and match by the resolved name.
    */
   def findAgentByName(name: String): IO[Option[AgentDef]] =
     for
-      // 1. Global agents
+      // 1. Global agents — name == dir name, fast path
       globalOpt <- IO.blocking {
         val dir = agentsDir / name
-        if os.exists(dir) then loadAgentFromDir(dir)
-        else None
+        if os.exists(dir) then loadAgentFromDir(dir) else None
       }
-      // 2. Team agents
+      // 2. Team agents — scan all team agent dirs, match by agent.json name field
       teamOpt <- globalOpt match
         case Some(_) => IO.pure(None)
         case None => IO.blocking {
-          val teamsDir = PathUtil.dataRoot / "teams"
           if !os.exists(teamsDir) then None
           else
             os.list(teamsDir).filter(os.isDir).flatMap { teamDir =>
-              val agentDir = teamDir / "agents" / name
-              if os.exists(agentDir) then loadAgentFromDir(agentDir) else None
+              val agentsSubDir = teamDir / "agents"
+              if os.exists(agentsSubDir) then
+                os.list(agentsSubDir).filter(os.isDir).flatMap { agentDir =>
+                  loadAgentFromDir(agentDir).filter(_.name == name)
+                }
+              else None
             }.headOption
         }
-      // 3. Flow agents
+      // 3. Flow agents — same approach
       flowOpt <- (globalOpt, teamOpt) match
         case (Some(_), _) | (_, Some(_)) => IO.pure(None)
         case (None, None) => IO.blocking {
-          val flowsDir = PathUtil.dataRoot / "flows"
           if !os.exists(flowsDir) then None
           else
             os.list(flowsDir).filter(os.isDir).flatMap { flowDir =>
-              val agentDir = flowDir / "agents" / name
-              if os.exists(agentDir) then loadAgentFromDir(agentDir) else None
+              val agentsSubDir = flowDir / "agents"
+              if os.exists(agentsSubDir) then
+                os.list(agentsSubDir).filter(os.isDir).flatMap { agentDir =>
+                  loadAgentFromDir(agentDir).filter(_.name == name)
+                }
+              else None
             }.headOption
         }
     yield globalOpt.orElse(teamOpt).orElse(flowOpt).map { entry =>
