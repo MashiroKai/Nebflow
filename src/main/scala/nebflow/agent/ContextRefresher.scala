@@ -26,23 +26,49 @@ object ContextRefresher:
 
   /** Registered InjectionSources — for documentation and future management. */
   val promptSources: List[InjectionSource] = List(
-    systemPrefixSource
+    systemPrefixForAll, systemPrefixForTeams, systemPrefixForFlows
   )
 
   private val detailRefPattern = "→([a-zA-Z0-9]{4,12})".r
 
-  /** System prefix: ~/.nebflow/system-prefix.md with JAR fallback. */
-  val systemPrefixSource: FileInjectionSource =
+  /** System prefix for ALL agents: ~/.nebflow/prompts/system-prefix-for-all.md
+   *  with JAR fallback (/system-prefix-for-all.md). */
+  val systemPrefixForAll: FileInjectionSource =
     val jarFallback =
-      val is = getClass.getResourceAsStream("/system-prefix.md")
+      val is = getClass.getResourceAsStream("/system-prefix-for-all.md")
       if is != null then
         try scala.io.Source.fromInputStream(is)(scala.io.Codec.UTF8).mkString.trim
         finally is.close()
       else ""
+    // Backward compat: if new file missing, try old system-prefix.md
+    val legacyFallback =
+      if jarFallback.nonEmpty then jarFallback + "\n\n"
+      else
+        val is2 = getClass.getResourceAsStream("/system-prefix.md")
+        if is2 != null then
+          try scala.io.Source.fromInputStream(is2)(scala.io.Codec.UTF8).mkString.trim + "\n\n"
+          finally is2.close()
+        else ""
     new FileInjectionSource(
-      "system-prefix",
-      PathUtil.dataRoot / "system-prefix.md",
-      fallback = if jarFallback.nonEmpty then jarFallback + "\n\n" else ""
+      "system-prefix-for-all",
+      PathUtil.dataRoot / "prompts" / "system-prefix-for-all.md",
+      fallback = legacyFallback
+    )
+
+  /** System prefix for TEAM agents only: ~/.nebflow/prompts/system-prefix-for-teams.md
+   *  No JAR fallback — empty if file doesn't exist. */
+  val systemPrefixForTeams: FileInjectionSource =
+    new FileInjectionSource(
+      "system-prefix-for-teams",
+      PathUtil.dataRoot / "prompts" / "system-prefix-for-teams.md"
+    )
+
+  /** System prefix for FLOW agents only: ~/.nebflow/prompts/system-prefix-for-flows.md
+   *  No JAR fallback — empty if file doesn't exist. */
+  val systemPrefixForFlows: FileInjectionSource =
+    new FileInjectionSource(
+      "system-prefix-for-flows",
+      PathUtil.dataRoot / "prompts" / "system-prefix-for-flows.md"
     )
 
   // ============================================================
@@ -272,7 +298,13 @@ object ContextRefresher:
     for
       freshDefOpt <- resources.agentLibrary.get(agentDef.name)
       globalDef = freshDefOpt.getOrElse(agentDef)
-      systemPrefixRaw <- systemPrefixSource.get
+      // Load all-agent prefix + category-specific prefix
+      allPrefixRaw <- systemPrefixForAll.get
+      categoryPrefix <- globalDef.category match
+        case "team" => systemPrefixForTeams.get
+        case "flow" => systemPrefixForFlows.get
+        case _ => IO.pure("")
+      systemPrefixRaw = allPrefixRaw + categoryPrefix
       // Trim Memory writing guide for worker agents (depth >= 2) — they don't write memory
       systemPrefix = if state.depth >= 2 then
         val memStart = systemPrefixRaw.indexOf("## Memory")
@@ -315,11 +347,6 @@ object ContextRefresher:
         state.execution.delegateCount,
         projectMem
       )
-      // Universal prompt: ~/.nebflow/prompts/universal.md
-      universalPrompt <- IO.blocking {
-        val p = PathUtil.dataRoot / "prompts" / "universal.md"
-        if os.exists(p) then os.read(p).trim else ""
-      }.handleErrorWith(_ => IO.pure(""))
     yield TurnContext(
       globalDef,
       systemPrefix,
@@ -330,8 +357,7 @@ object ContextRefresher:
       currentBranch,
       skillCatalog,
       teamCatalog,
-      memoryBlock,
-      universalPrompt
+      memoryBlock
     )
 
   /** Resolve projectRoot for ToolContext (called from buildToolContext). */
