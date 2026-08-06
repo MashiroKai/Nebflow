@@ -12,7 +12,7 @@ import nebflow.core.tools.ToolRegistry
  *   - a concrete tools list → exactly those tools + Mail
  *   - "*" → all registered tools
  *   - Mail is always present
- *   - non-Nebula agents never get Nebula-exclusive tools (Pop, AskUserQuestion, Schedule)
+ *   - non-Nebula agents never get Nebula-exclusive tools (AskUserQuestion, Schedule)
  */
 class AllowedToolSetSpec extends FunSuite:
 
@@ -38,7 +38,6 @@ class AllowedToolSetSpec extends FunSuite:
     assert(allowed.contains("Read"))
     assert(allowed.contains("Bash"))
     // Nebula-exclusive tools are stripped
-    assert(!allowed.contains("Pop"))
     assert(!allowed.contains("AskUserQuestion"))
     assert(!allowed.contains("Schedule"))
     assert(!allowed.contains("Dispatch"))
@@ -54,17 +53,19 @@ class AllowedToolSetSpec extends FunSuite:
     assert(allowed.contains("Issue"))
 
   test("non-Nebula agents are stripped of Nebula-exclusive tools even if listed"):
-    // If a flow agent erroneously requests Pop, it must be dropped.
-    val defn = mkDef("leaky", List("Read", "Pop"))
+    // Pop is no longer Nebula-exclusive — it is available to any agent that requests it.
+    val defn = mkDef("leaky", List("Read", "Pop", "AskUserQuestion"))
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Read"), "Read allowed")
-    assert(!allowed.contains("Pop"), "Pop is Nebula-exclusive — must be dropped")
+    assert(allowed.contains("Pop"), "Pop is no longer Nebula-exclusive — must be kept")
+    assert(!allowed.contains("AskUserQuestion"), "AskUserQuestion is still Nebula-exclusive")
     assert(allowed.contains("Mail"))
 
   test("Nebula keeps Nebula-exclusive tools"):
-    val defn = mkDef("Nebula", List("Read", "Pop"))
+    val defn = mkDef("Nebula", List("Read", "Pop", "AskUserQuestion"))
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Pop"), "Nebula keeps Pop")
+    assert(allowed.contains("AskUserQuestion"), "Nebula keeps AskUserQuestion")
 
   test("agents without mcpServers grant are stripped of all MCP tools"):
     val defn = mkDef("no-mcp", List("Read", "mcp__git__status", "mcp__zai__chat"))
