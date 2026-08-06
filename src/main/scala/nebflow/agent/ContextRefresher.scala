@@ -305,16 +305,7 @@ object ContextRefresher:
         case "flow" => systemPrefixForFlows.get
         case _ => IO.pure("")
       systemPrefixRaw = allPrefixRaw + categoryPrefix
-      // Trim Memory writing guide for worker agents (depth >= 2) — they don't write memory
-      systemPrefix = if state.depth >= 2 then
-        val memStart = systemPrefixRaw.indexOf("## Memory")
-        val memEnd = systemPrefixRaw.indexOf("## Session Management")
-        if memStart >= 0 && memEnd > memStart then
-          val before = systemPrefixRaw.substring(0, memStart)
-          val after = systemPrefixRaw.substring(memEnd)
-          before + "## Memory\n\nYour memory is injected into your system prompt every turn. It is persistent knowledge from past sessions.\n\n" + after
-        else systemPrefixRaw
-      else systemPrefixRaw
+      systemPrefix = systemPrefixRaw
       projectRoot <- resolveProjectRoot(state.folderId, resources, globalDef.name)
       // Projects directory: ~/.nebflow/projects/<folderName>/
       projectsDir <- resolveProjectsDir(state.folderId, resources, globalDef.name)
