@@ -10,6 +10,13 @@ import { findViewBySessionId, setActiveView, activeView, chatViews } from './cha
 let flowStepInterceptor = null;
 export function setFlowStepInterceptor(fn) { flowStepInterceptor = fn; }
 
+// ── Delegate-step interceptor (registered by delegatePopup.js) ──────────
+// Same pattern as flowStepInterceptor. Checked FIRST so delegate events
+// (nodeSessionId starts with "delegate-") don't get swallowed by the
+// flowStepInterceptor which claims all nodeSessionId events.
+let delegateStepInterceptor = null;
+export function setDelegateStepInterceptor(fn) { delegateStepInterceptor = fn; }
+
 /**
  * Convert agent* events (agentTextDelta, agentToolStart, etc.) to standard
  * chat events (textDelta, toolStart, etc.) so the same rendering pipeline
@@ -240,6 +247,29 @@ export function connect() {
         view = chatViews.primary || null;
       }
       setActiveView(view || null);
+
+      // ── Delegate popup: intercept events with nodeSessionId ─────
+      // Delegate sub-agent events carry nodeSessionId (injected by DelegateTool's
+      // routeWsSend). Route them to the delegate popup's ChatView.
+      // Checked BEFORE flowStepInterceptor because both use nodeSessionId —
+      // delegate IDs start with "delegate-" so we can distinguish.
+      if (msg.nodeSessionId && msg.nodeSessionId.startsWith('delegate-') && delegateStepInterceptor && delegateStepInterceptor(msg)) {
+        const converted = convertAgentEvent(msg);
+        if (converted) {
+          const convList = handlers[converted.type];
+          if (convList) for (const h of convList) {
+            try { h(converted, activeView); }
+            catch (e) { console.error('[ws] delegate handler error for', converted.type, ':', e.message); }
+          }
+        }
+        // Also dispatch the original event (for delegate indicator status, etc.)
+        const list = handlers[msg.type];
+        if (list) for (const h of list) {
+          try { h(msg, activeView); }
+          catch (e) { console.error('[ws] delegate handler error for', msg.type, ':', e.message); }
+        }
+        return;
+      }
 
       // ── Flow agent popup: intercept events with nodeSessionId ────
       // Flow agent events carry nodeSessionId (injected by FlowAgentActivator).

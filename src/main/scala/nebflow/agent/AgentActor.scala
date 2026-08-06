@@ -268,7 +268,11 @@ object AgentActor extends AgentCore with AgentSession:
           "external-event",
           s"source=$source type=$eventType"
         )
+        val sessionBusyIO =
+          if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+          else IO.unit
         for
+          _ <- sessionBusyIO
           _ <- emitStream(
             state.wsSend,
             AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
@@ -1616,6 +1620,7 @@ object AgentActor extends AgentCore with AgentSession:
       )
       for
         _ <- roundCompleteIO
+        _ <- if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true)) else IO.unit
         _ <- state.sessionId.fold(IO.unit)(sid =>
           ctx.forkTurn(
             (resources.sessionStore.saveMessagesForSession(sid, messagesWithPending) *>
@@ -1666,6 +1671,7 @@ object AgentActor extends AgentCore with AgentSession:
         .withMailTurnStart(Some(turnStartIdx))
       for
         _ <- roundCompleteIO
+        _ <- if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true)) else IO.unit
         _ <- state.sessionId.fold(IO.unit)(sid =>
           ctx.forkTurn(
             (resources.sessionStore.saveMessagesForSession(sid, messagesWithImmediate) *>
