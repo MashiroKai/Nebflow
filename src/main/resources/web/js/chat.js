@@ -1267,7 +1267,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 }
 
 // ---------- AskUser ----------
-export function renderAskUser(items, askSessionId) {
+export function renderAskUser(items, askSessionId, agentName) {
   if (!Array.isArray(items) || items.length === 0) {
     renderError(t('chat.waitingQuestion'));
     return { type: 'askUser', items: [] };
@@ -1280,6 +1280,14 @@ export function renderAskUser(items, askSessionId) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble ai';
   row.appendChild(bubble);
+  // Show source agent badge if not Nebula
+  if (agentName && agentName !== 'Nebula') {
+    const badge = document.createElement('div');
+    badge.className = 'ask-user-source';
+    badge.textContent = agentName;
+    badge.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: 8px; padding: 2px 8px; background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: 6px; display: inline-block;';
+    bubble.appendChild(badge);
+  }
   chat.appendChild(row);
   // Use the sessionId from the askUser message, not the currently active session
   const targetSid = askSessionId || activeView.sessionId;

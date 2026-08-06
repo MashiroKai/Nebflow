@@ -1105,6 +1105,7 @@ object AgentActor extends AgentCore with AgentSession:
         val askJson = Json.obj(
           "type" -> "askUser".asJson,
           "sessionId" -> state.sessionId.asJson,
+          "agentName" -> agentDef.name.asJson,
           "items" -> Json.fromValues(items.map { item =>
             val base = scala.collection.mutable.ListBuffer(
               "question" -> item.question.asJson,

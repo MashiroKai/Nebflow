@@ -28,11 +28,9 @@ private[agent] trait AgentCore:
 
   /**
    * Nebula-exclusive tools: only available when agentName == "Nebula".
-   * - AskUserQuestion: direct user interaction
    * - Schedule: session-scoped scheduled tasks
    */
   private val NebulaExclusiveTools = Set(
-    "AskUserQuestion",
     "Schedule"
   )
 
