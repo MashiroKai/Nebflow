@@ -60,9 +60,7 @@ object PromptSections:
     /** Pre-rendered task list block (from TaskStore.renderForPrompt). */
     taskListText: String = "",
     /** Inherited project rules text (from folder chain). */
-    rulesMd: Option[String] = None,
-    /** Universal prompt from ~/.nebflow/prompts/universal.md — injected into ALL agents. */
-    universalPrompt: String = ""
+    rulesMd: Option[String] = None
   )
 
   object PromptContext:
@@ -247,13 +245,6 @@ object PromptSections:
       100,
       condition = _.envInfo.nonEmpty,
       renderer = _.envInfo
-    ),
-
-    // --- Universal prompt (all agents) ---
-    PromptSection.dynamic(
-      150,
-      condition = _.universalPrompt.nonEmpty,
-      renderer = _.universalPrompt
     ),
 
     // --- Tool-dependent sections ---
