@@ -183,44 +183,55 @@ object FlowDagExecutor:
     /** Run a node: execute -> handleResult -> route. */
     def runNode(nodeId: String, ctx: FlowExecContext): IO[Either[String, String]] =
       for
-        _ <- logger.info(s"Flow '${flow.name}': executing node '$nodeId'")
-        _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, "running")
-        _ <- emitProgress(nodeId, "running")
-        (result, ctx2) <- executeNode(nodeId, ctx)
-        _ <-
-          if result.success then
-            nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, "completed", result.output) *>
-              emitProgress(
-                nodeId,
-                "completed",
-                "output" -> (if result.output.length > 200 then result.output.take(197) + "..."
-                             else result.output).asJson
-              )
-          else
-            nebflow.core.flow.RunningFlowRegistry.setNodeStatus(
-              instanceId,
-              nodeId,
-              "failed",
-              "",
-              result.error.getOrElse("unknown")
-            ) *>
-              emitProgress(nodeId, "failed", "error" -> result.error.getOrElse("unknown").asJson)
-        handled <- handleResult(nodeId, result, ctx2)
-        finalResult <- handled match
-          case Left(err) => IO.pure(Left(err))
-          case Right((nr, ctx3)) => route(nr, ctx3)
-      yield finalResult
+        // Check cancellation before executing each node
+        cancelled <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)
+        result <- if cancelled then
+          IO.pure(Left[String, String]("Flow cancelled by user"))
+        else
+          for
+            _ <- logger.info(s"Flow '${flow.name}': executing node '$nodeId'")
+            _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, "running")
+            _ <- emitProgress(nodeId, "running")
+            (result, ctx2) <- executeNode(nodeId, ctx)
+            _ <-
+              if result.success then
+                nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, "completed", result.output) *>
+                  emitProgress(
+                    nodeId,
+                    "completed",
+                    "output" -> (if result.output.length > 200 then result.output.take(197) + "..."
+                                 else result.output).asJson
+                  )
+              else
+                nebflow.core.flow.RunningFlowRegistry.setNodeStatus(
+                  instanceId,
+                  nodeId,
+                  "failed",
+                  "",
+                  result.error.getOrElse("unknown")
+                ) *>
+                  emitProgress(nodeId, "failed", "error" -> result.error.getOrElse("unknown").asJson)
+            handled <- handleResult(nodeId, result, ctx2)
+            finalResult <- handled match
+              case Left(err) => IO.pure(Left(err))
+              case Right((nr, ctx3)) => route(nr, ctx3)
+          yield finalResult
+      yield result
 
     // Register the running flow, execute, then clean up
     for
       _ <- registerFlow(instanceId, flow)
       result <- runNode(flow.entry, FlowExecContext(flow.name, taskInput))
-      _ <- nebflow.core.flow.RunningFlowRegistry.update(instanceId)(rf =>
-        rf.copy(
-          status = if result.isRight then "completed" else "failed",
-          completedAt = Some(System.currentTimeMillis())
-        )
-      )
+      // Update final status (preserve "cancelled" if it was cancelled)
+      cancelled <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)
+      _ <- if cancelled then IO.unit
+           else nebflow.core.flow.RunningFlowRegistry.update(instanceId)(rf =>
+             rf.copy(
+               status = if result.isRight then "completed" else "failed",
+               completedAt = Some(System.currentTimeMillis())
+             )
+           )
+      _ <- nebflow.core.flow.RunningFlowRegistry.clearCancelled(instanceId)
       _ <- emitWs(
         Json.obj(
           "type" -> "flowCompleted".asJson,

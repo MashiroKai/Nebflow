@@ -36,6 +36,20 @@ object RunningFlowRegistry:
   )
 
   private val flows: Ref[IO, Map[String, RunningFlow]] = Ref.unsafe(Map.empty)
+  private val cancelledFlows: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
+
+  /** Mark a flow as cancelled. The DAG executor checks this between nodes. */
+  def cancel(instanceId: String): IO[Unit] =
+    cancelledFlows.update(_ + instanceId) *>
+    update(instanceId)(_.copy(status = "cancelled"))
+
+  /** Check if a flow has been cancelled. */
+  def isCancelled(instanceId: String): IO[Boolean] =
+    cancelledFlows.get.map(_.contains(instanceId))
+
+  /** Clear the cancel flag (called after flow execution ends). */
+  def clearCancelled(instanceId: String): IO[Unit] =
+    cancelledFlows.update(_ - instanceId)
 
   def register(flow: RunningFlow): IO[Unit] =
     flows.update(_ + (flow.instanceId -> flow))

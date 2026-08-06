@@ -1887,7 +1887,13 @@ class WebSocketRoutes(
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val flowName = json.hcursor.downField("name").as[String].getOrElse("")
             val cfSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            if flowName.nonEmpty && cfSessionId.nonEmpty then
+            val instanceId = json.hcursor.downField("instanceId").as[String].getOrElse("")
+            if instanceId.nonEmpty then
+              // Cancel a DAG flow instance directly
+              nebflow.core.flow.RunningFlowRegistry.cancel(instanceId) *>
+              logger.info(s"Cancel DAG flow '$instanceId' requested by user via WS")
+            else if flowName.nonEmpty && cfSessionId.nonEmpty then
+              // Cancel a team pipeline flow via FlowTreeActor
               nebflow.core.flow.FlowTreeRegistry.get(cfSessionId).flatMap {
                 case Some(treeRef) =>
                   treeRef ! nebflow.core.flow.TreeCommand.CancelPipeline(flowName)
