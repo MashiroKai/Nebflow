@@ -1,16 +1,17 @@
 package nebflow.core.entity
 
-import cats.effect.{IO, Deferred}
+import cats.effect.{Deferred, IO}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.given
-import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
+import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.tools.{FileHistory, ReadTracker}
 import nebflow.shared.{Message, MessageRole}
 
-/** Executes a Flow DAG deterministically.
+/**
+ * Executes a Flow DAG deterministically.
  *
  *  Unlike the Mail-driven flow model where agents coordinate emergently,
  *  the DAG executor follows explicit routing rules defined in flow.json.
@@ -25,7 +26,8 @@ import nebflow.shared.{Message, MessageRole}
 object FlowDagExecutor:
   private val logger = NebflowLogger.forName("nebflow.entity.executor")
 
-  /** Execute a flow DAG.
+  /**
+   * Execute a flow DAG.
    *
    *  @param flow The DAG definition
    *  @param taskInput The initial task string (replaces "$task" in entry node input)
@@ -56,16 +58,20 @@ object FlowDagExecutor:
       ) ++ extra
       emitWs(Json.obj(fields*))
 
-    /** Resolve template variables: $task -> task input, $<nodeId>.output -> node output.
+    /**
+     * Resolve template variables: $task -> task input, $<nodeId>.output -> node output.
      *  Uses quoteReplacement to prevent $ and \ in agent output from being
-     *  interpreted as regex group references (Illegal group reference error). */
+     *  interpreted as regex group references (Illegal group reference error).
+     */
     def resolveInput(template: String, ctx: FlowExecContext): String =
       val withTask = template.replace("$task", ctx.taskInput)
       val pattern = "\\$([a-zA-Z0-9_-]+)\\.output".r
-      pattern.replaceAllIn(withTask, m =>
-        java.util.regex.Matcher.quoteReplacement(
-          ctx.nodeOutputs.getOrElse(m.group(1), s"[output of ${m.group(1)} not found]")
-        )
+      pattern.replaceAllIn(
+        withTask,
+        m =>
+          java.util.regex.Matcher.quoteReplacement(
+            ctx.nodeOutputs.getOrElse(m.group(1), s"[output of ${m.group(1)} not found]")
+          )
       )
 
     /** Execute a single DAG node: spawn agent, send input, collect output. */
@@ -82,8 +88,9 @@ object FlowDagExecutor:
             agentEntryOpt <- nebflow.core.entity.EntityLoader.loadFlowAgent(flow.name, node.agent)
             result <- agentEntryOpt match
               case None =>
-                IO.pure(NodeResult(nodeId, "", false,
-                  Some(s"Agent '${node.agent}' not found in flow or global library")))
+                IO.pure(
+                  NodeResult(nodeId, "", false, Some(s"Agent '${node.agent}' not found in flow or global library"))
+                )
               case Some(entry) =>
                 val agentDef = AgentDef(
                   name = entry.name,
@@ -94,10 +101,10 @@ object FlowDagExecutor:
                   category = entry.category,
                   mcpServers = entry.mcpServers
                 )
-                executeAgent(nodeId, node.agent, agentDef, inputText,
-                  resources, actorSystem, wsSend, flow.name)
+                executeAgent(nodeId, node.agent, agentDef, inputText, resources, actorSystem, wsSend, flow.name)
             updatedCtx = ctx.copy(nodeOutputs = ctx.nodeOutputs + (nodeId -> result.output))
           yield (result, updatedCtx)
+          end for
 
     /** Error handling + retry logic. */
     def handleResult(
@@ -105,8 +112,7 @@ object FlowDagExecutor:
       result: NodeResult,
       ctx: FlowExecContext
     ): IO[Either[String, (NodeResult, FlowExecContext)]] =
-      if result.success then
-        IO.pure(Right((result, ctx)))
+      if result.success then IO.pure(Right((result, ctx)))
       else
         flow.nodes.get(nodeId) match
           case None => IO.pure(Left(s"Unknown node '$nodeId' in error handler"))
@@ -121,11 +127,12 @@ object FlowDagExecutor:
                   for
                     _ <- logger.info(s"Node '$nodeId' retry ${retryCount}/${node.maxRetries}")
                     (newResult, newCtx) <- executeNode(nodeId, ctx)
-                    handled <- handleResult(nodeId,
-                      newResult.copy(attemptCount = retryCount + 1), newCtx)
+                    handled <- handleResult(nodeId, newResult.copy(attemptCount = retryCount + 1), newCtx)
                   yield handled
                 else
-                  IO.pure(Left(s"Node '$nodeId' failed after $retryCount retries: ${result.error.getOrElse("unknown")}"))
+                  IO.pure(
+                    Left(s"Node '$nodeId' failed after $retryCount retries: ${result.error.getOrElse("unknown")}")
+                  )
               case OnError.Stop =>
                 IO.pure(Left(s"Node '$nodeId' failed: ${result.error.getOrElse("unknown")}"))
 
@@ -143,8 +150,7 @@ object FlowDagExecutor:
             case NodeRoute.Goto(target) =>
               val loopKey = s"${result.nodeId}->$target"
               val newCount = ctx.loopCounts.getOrElse(loopKey, 0) + 1
-              if newCount > flow.maxLoop then
-                IO.pure(Left(s"Max loop (${flow.maxLoop}) exceeded at edge $loopKey"))
+              if newCount > flow.maxLoop then IO.pure(Left(s"Max loop (${flow.maxLoop}) exceeded at edge $loopKey"))
               else
                 val newCtx = ctx.copy(
                   loopCounts = ctx.loopCounts + (loopKey -> newCount),
@@ -159,8 +165,7 @@ object FlowDagExecutor:
                 case Some(NodeRoute.Goto(target)) =>
                   val loopKey = s"${result.nodeId}->$target"
                   val newCount = ctx.loopCounts.getOrElse(loopKey, 0) + 1
-                  if newCount > flow.maxLoop then
-                    IO.pure(Left(s"Max loop (${flow.maxLoop}) exceeded at edge $loopKey"))
+                  if newCount > flow.maxLoop then IO.pure(Left(s"Max loop (${flow.maxLoop}) exceeded at edge $loopKey"))
                   else
                     val newCtx = ctx.copy(
                       loopCounts = ctx.loopCounts + (loopKey -> newCount),
@@ -171,6 +176,7 @@ object FlowDagExecutor:
                   IO.pure(Left(s"Nested switch not supported in routing"))
                 case None =>
                   IO.pure(Left(s"Switch '$switchExpr' value '$fieldValue' matched no case"))
+              end match
 
     /** Run a node: execute -> handleResult -> route. */
     def runNode(nodeId: String, ctx: FlowExecContext): IO[Either[String, String]] =
@@ -179,12 +185,24 @@ object FlowDagExecutor:
         _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, "running")
         _ <- emitProgress(nodeId, "running")
         (result, ctx2) <- executeNode(nodeId, ctx)
-        _ <- if result.success then
-          nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, "completed", result.output) *>
-          emitProgress(nodeId, "completed", "output" -> (if result.output.length > 200 then result.output.take(197) + "..." else result.output).asJson)
-        else
-          nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, "failed", "", result.error.getOrElse("unknown")) *>
-          emitProgress(nodeId, "failed", "error" -> result.error.getOrElse("unknown").asJson)
+        _ <-
+          if result.success then
+            nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, "completed", result.output) *>
+              emitProgress(
+                nodeId,
+                "completed",
+                "output" -> (if result.output.length > 200 then result.output.take(197) + "..."
+                             else result.output).asJson
+              )
+          else
+            nebflow.core.flow.RunningFlowRegistry.setNodeStatus(
+              instanceId,
+              nodeId,
+              "failed",
+              "",
+              result.error.getOrElse("unknown")
+            ) *>
+              emitProgress(nodeId, "failed", "error" -> result.error.getOrElse("unknown").asJson)
         handled <- handleResult(nodeId, result, ctx2)
         finalResult <- handled match
           case Left(err) => IO.pure(Left(err))
@@ -196,14 +214,21 @@ object FlowDagExecutor:
       _ <- registerFlow(instanceId, flow)
       result <- runNode(flow.entry, FlowExecContext(flow.name, taskInput))
       _ <- nebflow.core.flow.RunningFlowRegistry.update(instanceId)(rf =>
-        rf.copy(status = if result.isRight then "completed" else "failed", completedAt = Some(System.currentTimeMillis())))
-      _ <- emitWs(Json.obj(
-        "type" -> "flowCompleted".asJson,
-        "instanceId" -> instanceId.asJson,
-        "flowName" -> flow.name.asJson,
-        "success" -> result.isRight.asJson
-      ))
+        rf.copy(
+          status = if result.isRight then "completed" else "failed",
+          completedAt = Some(System.currentTimeMillis())
+        )
+      )
+      _ <- emitWs(
+        Json.obj(
+          "type" -> "flowCompleted".asJson,
+          "instanceId" -> instanceId.asJson,
+          "flowName" -> flow.name.asJson,
+          "success" -> result.isRight.asJson
+        )
+      )
     yield result
+    end for
 
   end execute
 
@@ -245,7 +270,10 @@ object FlowDagExecutor:
       )
     )
 
-  /** Spawn an AgentActor, send input, wait for completion via event-driven callback (no timeout).
+  end registerFlow
+
+  /**
+   * Spawn an AgentActor, send input, wait for completion via event-driven callback (no timeout).
    *
    *  Uses a Deferred + bridge actor pattern instead of ask-with-timeout:
    *  - A temporary actor receives the AgentEvent (Completed/Failed) from the agent
@@ -309,19 +337,27 @@ object FlowDagExecutor:
       _ <- resources.sessionStore.deleteSession(sessionId).handleErrorWith(_ => IO.unit)
       nodeResult <- eventResult match
         case Right(messages) =>
-          IO.pure(NodeResult(
-            nodeId = nodeId,
-            output = extractLastAssistantOutput(messages),
-            success = true
-          ))
+          IO.pure(
+            NodeResult(
+              nodeId = nodeId,
+              output = extractLastAssistantOutput(messages),
+              success = true
+            )
+          )
         case Left(errMsg) =>
-          IO.pure(NodeResult(
-            nodeId = nodeId,
-            output = "",
-            success = false,
-            error = Some(s"Agent '$agentName' failed: $errMsg")
-          ))
+          IO.pure(
+            NodeResult(
+              nodeId = nodeId,
+              output = "",
+              success = false,
+              error = Some(s"Agent '$agentName' failed: $errMsg")
+            )
+          )
     yield nodeResult
+
+    end for
+
+  end executeAgent
 
   /** Extract the text content of the last assistant message. */
   private def extractLastAssistantOutput(messages: List[Message]): String =
@@ -330,15 +366,19 @@ object FlowDagExecutor:
         msg.content match
           case Left(text) => text
           case Right(blocks) =>
-            blocks.collect {
-              case nebflow.shared.ContentBlock.Text(t) => t
-            }.mkString("\n")
+            blocks
+              .collect { case nebflow.shared.ContentBlock.Text(t) =>
+                t
+              }
+              .mkString("\n")
       case None => ""
 
-  /** Extract a field value from node output for switch routing.
+  /**
+   * Extract a field value from node output for switch routing.
    *  switchExpr format: "$reviewer.verdict"
    *  -> look up reviewer's output, try to parse as JSON and extract "verdict" field
-   *  -> fallback: scan output for keyword matching case keys */
+   *  -> fallback: scan output for keyword matching case keys
+   */
   private def extractSwitchValue(
     switchExpr: String,
     currentNodeOutput: String,
@@ -350,13 +390,18 @@ object FlowDagExecutor:
       case pattern(nodeId, field) =>
         val output = ctx.nodeOutputs.getOrElse(nodeId, currentNodeOutput)
         // Try JSON parsing
-        io.circe.parser.parse(output).toOption
+        io.circe.parser
+          .parse(output)
+          .toOption
           .flatMap(_.hcursor.downField(field).as[String].toOption)
           .getOrElse {
             // Fallback: match against case keys (case-insensitive contains)
-            cases.keys.find(k => output.toLowerCase.contains(k.toLowerCase))
+            cases.keys
+              .find(k => output.toLowerCase.contains(k.toLowerCase))
               .getOrElse("unknown")
           }
       case _ => "unknown"
+    end match
+  end extractSwitchValue
 
 end FlowDagExecutor

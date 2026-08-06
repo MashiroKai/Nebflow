@@ -22,6 +22,7 @@ case class AgentModelConfig(
 )
 
 object AgentModelConfig:
+
   given Decoder[AgentModelConfig] = Decoder.instance { c =>
     for
       preferred <- c.downField("preferred").as[Option[String]]
@@ -37,3 +38,4 @@ object AgentModelConfig:
   }
 
   val empty: AgentModelConfig = AgentModelConfig()
+end AgentModelConfig

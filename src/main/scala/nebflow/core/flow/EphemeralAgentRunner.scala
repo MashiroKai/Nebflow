@@ -1,6 +1,6 @@
 package nebflow.core.flow
 
-import cats.effect.{IO, Deferred}
+import cats.effect.{Deferred, IO}
 import io.circe.Json
 import nebflow.actor.*
 import nebflow.agent.*
@@ -85,6 +85,8 @@ object EphemeralAgentRunner:
           s"[Agent '${agentDef.name}' completed]\n$output"
         )).void
       yield Behaviors.stopped
+
+      end for
 
   /** Extract text from the last assistant message. */
   private def extractLastAssistant(messages: List[Message]): String =

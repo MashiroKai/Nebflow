@@ -64,7 +64,20 @@ object SessionMeta:
       flowName <- c.downField("flowName").as[Option[String]]
     yield
       val mode = safetyMode.getOrElse(if legacyBypass.getOrElse(false) then "auto-all" else "confirm-edits")
-      SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef, bridges, folderId, mode, gitBranch, flowName)
+      SessionMeta(
+        id,
+        name,
+        createdAt,
+        updatedAt,
+        hasUnread,
+        agentName,
+        modelRef,
+        bridges,
+        folderId,
+        mode,
+        gitBranch,
+        flowName
+      )
   }
 
 end SessionMeta

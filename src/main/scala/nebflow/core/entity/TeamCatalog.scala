@@ -3,24 +3,30 @@ package nebflow.core.entity
 /** Builds Team catalog strings for system prompt injection. */
 object TeamCatalog:
 
-  /** Build the Team catalog section for system prompt injection.
-   *  Shows team lead, members (with description + useWhen), and available flows. */
+  /**
+   * Build the Team catalog section for system prompt injection.
+   *  Shows team lead, members (with description + useWhen), and available flows.
+   */
   def buildCatalog(team: TeamDef, agents: Map[String, AgentEntry], flows: Map[String, FlowDagDef]): String =
     val leadLine = agents.get(team.lead) match
       case Some(a) => s"- ${team.lead}: ${a.description}\n  Use when: ${a.useWhen}"
       case None => s"- ${team.lead}: (agent not found)"
 
-    val memberLines = team.members.flatMap { name =>
-      agents.get(name).map { a =>
-        s"- $name: ${a.description}\n  Use when: ${a.useWhen}"
+    val memberLines = team.members
+      .flatMap { name =>
+        agents.get(name).map { a =>
+          s"- $name: ${a.description}\n  Use when: ${a.useWhen}"
+        }
       }
-    }.mkString("\n")
+      .mkString("\n")
 
-    val flowLines = team.flows.flatMap { name =>
-      flows.get(name).map { f =>
-        s"- ${f.name}: ${f.description}"
+    val flowLines = team.flows
+      .flatMap { name =>
+        flows.get(name).map { f =>
+          s"- ${f.name}: ${f.description}"
+        }
       }
-    }.mkString("\n")
+      .mkString("\n")
 
     s"""=== Team: ${team.name} ===
        |
@@ -37,24 +43,40 @@ object TeamCatalog:
        |
        |=== End Team ===""".stripMargin
 
-  /** Build a global catalog for Nebula (not part of any team).
-   *  Lists all teams and flows with routing guidance. */
-  def buildGlobalCatalog(teams: Map[String, TeamDef], flows: Map[String, FlowDagDef], agents: Map[String, AgentEntry] = Map.empty): String =
-    val teamLines = teams.values.toList.sortBy(_.name).map { t =>
-      val members = (t.lead :: t.members).distinct.mkString(", ")
-      s"- ${t.name}: ${t.description}\n  Members: $members"
-    }.mkString("\n")
+  end buildCatalog
 
-    val flowLines = flows.values.toList.sortBy(_.name).map { f =>
-      s"- ${f.name}: ${f.description}"
-    }.mkString("\n")
+  /**
+   * Build a global catalog for Nebula (not part of any team).
+   *  Lists all teams and flows with routing guidance.
+   */
+  def buildGlobalCatalog(
+    teams: Map[String, TeamDef],
+    flows: Map[String, FlowDagDef],
+    agents: Map[String, AgentEntry] = Map.empty
+  ): String =
+    val teamLines = teams.values.toList
+      .sortBy(_.name)
+      .map { t =>
+        val members = (t.lead :: t.members).distinct.mkString(", ")
+        s"- ${t.name}: ${t.description}\n  Members: $members"
+      }
+      .mkString("\n")
+
+    val flowLines = flows.values.toList
+      .sortBy(_.name)
+      .map { f =>
+        s"- ${f.name}: ${f.description}"
+      }
+      .mkString("\n")
 
     val standaloneAgents = agents.values.toList
       .filter(a => a.category == "standalone" && a.name != "Nebula")
       .sortBy(_.name)
-    val agentLines = standaloneAgents.map { a =>
-      s"- ${a.name}: ${a.description}"
-    }.mkString("\n")
+    val agentLines = standaloneAgents
+      .map { a =>
+        s"- ${a.name}: ${a.description}"
+      }
+      .mkString("\n")
 
     s"""=== Teams & Flows ===
 
@@ -84,5 +106,6 @@ ${if teamLines.nonEmpty then teamLines else "(none — create one with entity-cr
 ${if flowLines.nonEmpty then flowLines else "(none)"}
 
 === End ===""".stripMargin
+  end buildGlobalCatalog
 
 end TeamCatalog

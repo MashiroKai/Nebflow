@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import nebflow.actor.{ActorRef, ActorSystem}
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
-import nebflow.core.entity.{AgentEntry, FlowDagDef, TeamCatalog, TeamDef}
+import nebflow.core.entity.*
 import nebflow.core.tools.{FileHistory, ReadTracker}
 
 /**
@@ -21,8 +21,10 @@ import nebflow.core.tools.{FileHistory, ReadTracker}
 object FlowAgentActivator:
   private val logger = NebflowLogger.forName("nebflow.flow.activator")
 
-  /** Resolve a flow agent's definition from disk by team name + agent name.
-   *  Used by WebSocketRoutes for session restoration after server restart. */
+  /**
+   * Resolve a flow agent's definition from disk by team name + agent name.
+   *  Used by WebSocketRoutes for session restoration after server restart.
+   */
   def resolveAgentFromDisk(
     flowName: String,
     agentName: String,
@@ -49,9 +51,11 @@ object FlowAgentActivator:
           logger.info(s"resolveAgentFromDisk: team '$flowName' not found on disk").as(None: Option[AgentDef])
     yield result
 
-  /** Ensure a flow agent session has a running actor.
+  /**
+   * Ensure a flow agent session has a running actor.
    *  If already running, return the existing ActorRef.
-   *  If not, activate by creating a new AgentActor. */
+   *  If not, activate by creating a new AgentActor.
+   */
   def ensureSession(
     sessionId: String,
     senderRef: Option[ActorRef[AgentCommand]],
@@ -84,7 +88,16 @@ object FlowAgentActivator:
             case None =>
               logger.warn(s"activate: session '$sessionId' has no flowName — not a flow agent").as(None)
             case Some(flowName) =>
-              activateFlowAgent(sessionId, flowName, meta.agentName.getOrElse("agent"), senderRef, resources, actorSystem, wsSend, meta.safetyMode)
+              activateFlowAgent(
+                sessionId,
+                flowName,
+                meta.agentName.getOrElse("agent"),
+                senderRef,
+                resources,
+                actorSystem,
+                wsSend,
+                meta.safetyMode
+              )
     yield result
 
   /** Full activation sequence for a single flow agent. */
@@ -102,7 +115,17 @@ object FlowAgentActivator:
       teamOpt <- nebflow.core.entity.EntityLoader.loadTeam(flowName)
       result <- teamOpt match
         case Some(teamDef) =>
-          activateTeamAgent(sessionId, flowName, agentName, teamDef, senderRef, resources, actorSystem, wsSend, safetyMode)
+          activateTeamAgent(
+            sessionId,
+            flowName,
+            agentName,
+            teamDef,
+            senderRef,
+            resources,
+            actorSystem,
+            wsSend,
+            safetyMode
+          )
         case None =>
           logger.warn(s"activate: no team.json for '$flowName'").as(None)
     yield result
@@ -138,9 +161,7 @@ object FlowAgentActivator:
           for
             // Load all team member agent entries + flow DAG defs for context
             allAgents <- nebflow.core.entity.EntityLoader.listAgents()
-            teamAgents = allAgents.filter((name, _) =>
-              name == teamDef.lead || teamDef.members.contains(name)
-            )
+            teamAgents = allAgents.filter((name, _) => name == teamDef.lead || teamDef.members.contains(name))
             allFlows <- nebflow.core.entity.EntityLoader.listFlows()
             teamFlows = allFlows.filter((name, _) => teamDef.flows.contains(name))
             // Build team context
@@ -158,7 +179,8 @@ object FlowAgentActivator:
             // Wrap wsSend with nodeSessionId + busy tracking (same as flow agents)
             wrappedWsSend = (json: io.circe.Json) =>
               val hasNodeSid = json.hcursor.downField("nodeSessionId").as[io.circe.Json].isRight
-              val toSend = if hasNodeSid then json
+              val toSend =
+                if hasNodeSid then json
                 else json.deepMerge(io.circe.Json.obj("nodeSessionId" -> io.circe.Json.fromString(sessionId)))
               val eventType = json.hcursor.downField("type").as[String].toOption.getOrElse("")
               val busyUpdate = eventType match
@@ -190,14 +212,19 @@ object FlowAgentActivator:
             _ <- FlowMembership.registerActor(sessionId, ref)
             _ <- notifyTreeToWatch(sessionId, ref)
           yield Some(ref)
+          end for
     yield result
+    end for
+  end activateTeamAgent
 
   // ============================================================
   // Helpers
   // ============================================================
 
-  /** Notify the FlowTreeActor for this session's parent to watch the agent ref.
-   *  Silently skips if the tree actor can't be found (e.g. during tests). */
+  /**
+   * Notify the FlowTreeActor for this session's parent to watch the agent ref.
+   *  Silently skips if the tree actor can't be found (e.g. during tests).
+   */
   private def notifyTreeToWatch(sessionId: String, ref: ActorRef[AgentCommand]): IO[Unit] =
     for
       flowIdOpt <- FlowMembership.flowOfSession(sessionId)
@@ -217,8 +244,10 @@ object FlowAgentActivator:
     if tools.contains("*") || tools.contains("Mail") then tools
     else tools :+ "Mail"
 
-  /** Build the Team context string injected into a team agent's system prompt.
-   *  Uses TeamCatalog for the roster, adds Mail usage rules. */
+  /**
+   * Build the Team context string injected into a team agent's system prompt.
+   *  Uses TeamCatalog for the roster, adds Mail usage rules.
+   */
   def buildTeamContext(
     teamName: String,
     agentName: String,
@@ -228,9 +257,9 @@ object FlowAgentActivator:
     flows: Map[String, FlowDagDef]
   ): String =
     val catalog = TeamCatalog.buildCatalog(team, agents, flows)
-    val leadNote = if isLead then
-      "\n\nWhen the team's work is complete, Mail your final summary to the caller."
-    else ""
+    val leadNote =
+      if isLead then "\n\nWhen the team's work is complete, Mail your final summary to the caller."
+      else ""
 
     s"""$catalog$leadNote
        |
@@ -245,5 +274,6 @@ object FlowAgentActivator:
        |- Report results via Mail only. Do not stream output to the user.
        |- Workers report to the Team Lead via Mail. Do not contact agents outside this team directly.
        |""".stripMargin
+  end buildTeamContext
 
 end FlowAgentActivator

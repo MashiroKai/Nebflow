@@ -142,6 +142,8 @@ object GatewayMain extends IOApp.Simple:
       _ <- loadExternalTools()
     yield ()
 
+  end startMcpServers
+
   /**
    * Start agent-scoped MCP servers (agent directory `tools/mcp/`, one `*.json`
    * per server) at startup. Each server is started independently; a failing
@@ -156,14 +158,11 @@ object GatewayMain extends IOApp.Simple:
           mcpManager
             .startServer(serverId, cfg)
             .timeout(5.seconds)
-            .handleErrorWith(e =>
-              logger.warn(s"Agent MCP server '$serverId' failed: ${e.getMessage}")
-            )
+            .handleErrorWith(e => logger.warn(s"Agent MCP server '$serverId' failed: ${e.getMessage}"))
         else logger.info(s"Agent MCP server '$serverId' is disabled, skipping")
       }
       _ <-
-        if servers.nonEmpty then
-          logger.info(s"Started ${servers.size} agent MCP server(s)")
+        if servers.nonEmpty then logger.info(s"Started ${servers.size} agent MCP server(s)")
         else IO.unit
     yield ()
 
@@ -181,7 +180,7 @@ object GatewayMain extends IOApp.Simple:
    */
   private def startHeartbeatLoop(
     discovery: nebflow.neblink.NeblinkDiscovery
-  ): IO[cats.effect.Fiber[IO, Throwable, Unit]] = {
+  ): IO[cats.effect.Fiber[IO, Throwable, Unit]] =
     def loop: IO[Unit] =
       for
         delay <- discovery.currentDelay
@@ -190,7 +189,6 @@ object GatewayMain extends IOApp.Simple:
         _ <- IO.defer(loop)
       yield ()
     loop.start
-  }
 
   private lazy val defaultConfig: NebflowServiceConfig = NebflowServiceConfig(
     llm = ServiceLlmConfig(

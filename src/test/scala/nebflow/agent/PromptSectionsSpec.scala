@@ -45,7 +45,10 @@ class PromptSectionsSpec extends munit.FunSuite:
   test("Visual reporting section excluded when Pop tool is missing"):
     val ctx = PromptContext(availableTools = Set("Read", "Write", "Bash"))
     val blocks = buildConditionalBlocks(ctx)
-    assert(!blocks.contains("## Visual Reporting"), "Visual reporting section should NOT be included when Pop is missing")
+    assert(
+      !blocks.contains("## Visual Reporting"),
+      "Visual reporting section should NOT be included when Pop is missing"
+    )
 
   // ============================================================
   // Feature-flag sections

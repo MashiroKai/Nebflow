@@ -1,9 +1,9 @@
 package nebflow.core.compact
 
 import cats.effect.IO
-import io.circe.syntax.*
 import io.circe.Json
-import nebflow.core.{NebflowLogger, PathUtil, UsagePattern, UsageTracker}
+import io.circe.syntax.*
+import nebflow.core.*
 import nebflow.shared.*
 
 /** Dream mode — extract durable facts from idle conversation and update memory. */
@@ -33,13 +33,15 @@ object DreamMode:
 
   /** Parse <facts> block from LLM response → list of fact strings. */
   def parseResponse(text: String): List[String] =
-    val factsBlock = "(?s)<facts>(.*?)</facts>".r.findFirstMatchIn(text) match
-      case Some(m) => m.group(1).trim
-      case None => return Nil
-    factsBlock.linesIterator
-      .map(_.trim)
-      .filter(_.startsWith("FACT"))
-      .toList
+    "(?s)<facts>(.*?)</facts>".r.findFirstMatchIn(text) match
+      case Some(m) =>
+        m.group(1)
+          .trim
+          .linesIterator
+          .map(_.trim)
+          .filter(_.startsWith("FACT"))
+          .toList
+      case None => Nil
 
   /** Append extracted facts to ~/.nebflow/NEBFLOW.md and update usage pattern section. */
   def updateMemory(facts: List[String], pattern: UsagePattern): IO[Unit] = IO.blocking {
@@ -60,17 +62,24 @@ object DreamMode:
 
   private def buildUsagePatternSection(pattern: UsagePattern): String =
     val zdt = java.time.ZonedDateTime.now()
-    val dateStr = s"${zdt.getYear}-${"%02d".format(zdt.getMonthValue)}-${"%02d".format(zdt.getDayOfMonth)} ${zdt.getHour}:${"%02d".format(zdt.getMinute)}"
+    val dateStr =
+      s"${zdt.getYear}-${"%02d".format(zdt.getMonthValue)}-${"%02d".format(zdt.getDayOfMonth)} ${zdt.getHour}:${"%02d".format(zdt.getMinute)}"
     val activeHours = pattern.hourlyActivity.zipWithIndex
-      .filter(_._1 > 0.3).map(_._2).toList
+      .filter(_._1 > 0.3)
+      .map(_._2)
+      .toList
     val idleHours = pattern.hourlyActivity.zipWithIndex
-      .filter(_._1 < 0.2).map(_._2).toList
+      .filter(_._1 < 0.2)
+      .map(_._2)
+      .toList
     def fmtHour(h: Int): String = s"${"%02d".format(h)}:00"
     s"""## 使用模式
        |- 活跃时段：${if activeHours.nonEmpty then activeHours.map(fmtHour).mkString(", ") else "数据不足"}
        |- 通常空闲：${if idleHours.nonEmpty then idleHours.map(fmtHour).mkString(", ") else "数据不足"}
        |- 上次分析：$dateStr（基于 ${pattern.totalRecords} 条记录）
        |""".stripMargin
+
+  end buildUsagePatternSection
 
   /** Replace existing section (starting with header) or append new one. */
   private def updateOrAppendSection(content: String, header: String, newSection: String): String =
@@ -80,8 +89,7 @@ object DreamMode:
       val afterHeader = content.indexOf("\n## ", headerIdx + header.length)
       val sectionEnd = if afterHeader >= 0 then afterHeader else content.length
       content.substring(0, headerIdx) + newSection + content.substring(sectionEnd)
-    else
-      content + "\n\n" + newSection
+    else content + "\n\n" + newSection
 
   /** Check if dream should trigger based on 5 conditions. */
   def shouldTriggerDream(
@@ -99,5 +107,6 @@ object DreamMode:
       if pattern.isReliable then pattern.isInIdleWindow(now)
       else (now - lastActivity) > 30 * 60_000L
     hasEnoughMaterial && notTooRecent && inWindow
+  end shouldTriggerDream
 
 end DreamMode

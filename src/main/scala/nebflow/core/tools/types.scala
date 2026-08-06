@@ -55,6 +55,7 @@ trait Tool:
   def summarize(input: JsonObject): String
   def summarizeResult(input: JsonObject, result: String): String
   def maxResultSizeChars: Int = Defaults.DefaultMaxResultSizeChars
+
   /**
    * Extract image content blocks from a successful tool result.
    * Override in tools that produce image data (e.g. Read on image files).
@@ -63,3 +64,4 @@ trait Tool:
    * APIs can process the image.
    */
   def extractImages(input: JsonObject, result: String): Option[List[ContentBlock.Image]] = None
+end Tool

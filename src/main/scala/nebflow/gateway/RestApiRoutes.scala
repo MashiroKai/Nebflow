@@ -12,7 +12,7 @@ import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.llm.NebflowServiceConfig
-import nebflow.neblink.{DeviceCredential, NeblinkClient, NeblinkConfig, NeblinkServerConfig, NeblinkService}
+import nebflow.neblink.*
 import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -157,9 +157,13 @@ class RestApiRoutes(
     // GET /models/capability-tags — list predefined capability tags
     case req @ GET -> Root / "models" / "capability-tags" =>
       withAuth(req) {
-        Ok(Json.obj("tags" -> List(
-          Json.obj("key" -> "vision".asJson, "label" -> "图片理解".asJson, "description" -> "支持 image_url 图片输入".asJson)
-        ).asJson))
+        Ok(
+          Json.obj(
+            "tags" -> List(
+              Json.obj("key" -> "vision".asJson, "label" -> "图片理解".asJson, "description" -> "支持 image_url 图片输入".asJson)
+            ).asJson
+          )
+        )
       }
 
     // GET /models/capabilities — list all models with their capability tags
@@ -185,8 +189,7 @@ class RestApiRoutes(
             val updatedModels = current.models + (key -> updatedEntry)
             nebflow.llm.ModelRegistry.save(updatedModels)
             Ok(Json.obj("status" -> "ok".asJson))
-          else
-            BadRequest(Json.obj("error" -> "providerId and modelId required".asJson))
+          else BadRequest(Json.obj("error" -> "providerId and modelId required".asJson))
         }
       }
 
@@ -200,9 +203,11 @@ class RestApiRoutes(
             IO.blocking {
               val dir = PathUtil.dataRoot / "teams" / teamName / "agents"
               if os.exists(dir) then
-                os.list(dir).filter(os.isDir)
+                os.list(dir)
+                  .filter(os.isDir)
                   .flatMap(d => EntityLoader.loadAgentFromDir(d))
-                  .map(a => (teamName, a)).toList
+                  .map(a => (teamName, a))
+                  .toList
               else Nil
             }
           }
@@ -211,9 +216,11 @@ class RestApiRoutes(
             IO.blocking {
               val dir = PathUtil.dataRoot / "flows" / flowName / "agents"
               if os.exists(dir) then
-                os.list(dir).filter(os.isDir)
+                os.list(dir)
+                  .filter(os.isDir)
                   .flatMap(d => EntityLoader.loadAgentFromDir(d))
-                  .map(a => (flowName, a)).toList
+                  .map(a => (flowName, a))
+                  .toList
               else Nil
             }
           }
@@ -489,7 +496,11 @@ class RestApiRoutes(
       if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
       else
         req.as[Json].flatMap { body =>
-          val serverOpt = body.hcursor.downField("server").as[Option[String]].toOption.flatten
+          val serverOpt = body.hcursor
+            .downField("server")
+            .as[Option[String]]
+            .toOption
+            .flatten
             .map(_.stripSuffix("/"))
           val pairCodeOpt = body.hcursor.downField("pairCode").as[Option[String]].toOption.flatten
           (serverOpt, pairCodeOpt) match
@@ -499,18 +510,21 @@ class RestApiRoutes(
                 case Some(ms) =>
                   for
                     identity <- ms.identity
-                    enrollBody = Json.obj(
-                      "pairCode" -> pairCode.asJson,
-                      "deviceId" -> identity.deviceId.asJson,
-                      "deviceName" -> identity.deviceName.asJson,
-                      "platform" -> identity.platform.asJson
-                    ).noSpaces
+                    enrollBody = Json
+                      .obj(
+                        "pairCode" -> pairCode.asJson,
+                        "deviceId" -> identity.deviceId.asJson,
+                        "deviceName" -> identity.deviceName.asJson,
+                        "platform" -> identity.platform.asJson
+                      )
+                      .noSpaces
                     result <- enrollWithServer(server, enrollBody)
                     resp <- result match
                       case Right(credJson) =>
                         val deviceToken = credJson.hcursor.downField("deviceToken").as[String].toOption
                         val networkId = credJson.hcursor.downField("networkId").as[String].toOption.getOrElse("")
-                        val deviceId = credJson.hcursor.downField("deviceId").as[String].toOption.getOrElse(identity.deviceId)
+                        val deviceId =
+                          credJson.hcursor.downField("deviceId").as[String].toOption.getOrElse(identity.deviceId)
                         deviceToken match
                           case Some(token) =>
                             val credential = DeviceCredential(server, networkId, deviceId, token)
@@ -525,14 +539,17 @@ class RestApiRoutes(
                               current <- NeblinkConfig.load
                               updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
                               _ <- NeblinkConfig.save(updated)
-                              r <- Ok(Json.obj(
-                                "ok" -> true.asJson,
-                                "message" -> "Enrolled. Please restart Nebflow to connect.".asJson,
-                                "networkId" -> networkId.asJson
-                              ))
+                              r <- Ok(
+                                Json.obj(
+                                  "ok" -> true.asJson,
+                                  "message" -> "Enrolled. Please restart Nebflow to connect.".asJson,
+                                  "networkId" -> networkId.asJson
+                                )
+                              )
                             yield r
                           case None =>
                             BadRequest(Json.obj("error" -> "Server did not return a device token".asJson))
+                        end match
                       case Left(err) =>
                         BadRequest(Json.obj("error" -> s"Enrollment failed: $err".asJson))
                   yield resp
@@ -558,11 +575,13 @@ class RestApiRoutes(
               // public default. For device flow the server must be reachable
               // from both the browser (for OAuth) and the device (for polling).
               serverUrl <- neblinkServerUrl(None)
-              body = Json.obj(
-                "deviceId" -> identity.deviceId.asJson,
-                "deviceName" -> identity.deviceName.asJson,
-                "platform" -> identity.platform.asJson
-              ).noSpaces
+              body = Json
+                .obj(
+                  "deviceId" -> identity.deviceId.asJson,
+                  "deviceName" -> identity.deviceName.asJson,
+                  "platform" -> identity.platform.asJson
+                )
+                .noSpaces
               result <- proxyPost(serverUrl, "/api/device/code", body)
               resp <- result match
                 case Right(json) => Ok(json)
@@ -576,10 +595,13 @@ class RestApiRoutes(
       else
         req.as[Json].flatMap { body =>
           val deviceCode = body.hcursor.downField("deviceCode").as[String].getOrElse("")
-          val serverUrl = body.hcursor.downField("serverUrl").as[Option[String]].toOption.flatten
+          val serverUrl = body.hcursor
+            .downField("serverUrl")
+            .as[Option[String]]
+            .toOption
+            .flatten
             .map(_.stripSuffix("/"))
-          if deviceCode.isEmpty then
-            BadRequest(Json.obj("error" -> "Missing deviceCode".asJson))
+          if deviceCode.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceCode".asJson))
           else
             neblinkService match
               case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
@@ -609,23 +631,26 @@ class RestApiRoutes(
                             updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
                             _ <- NeblinkConfig.save(updated)
                             // Hot-swap the client in the discovery service.
-                            _ <- neblinkDiscovery.fold(IO.unit)(d =>
-                              d.setClient(Some(new NeblinkClient(newConfig, gatewayPort)))
-                            )
+                            _ <- neblinkDiscovery
+                              .fold(IO.unit)(d => d.setClient(Some(new NeblinkClient(newConfig, gatewayPort))))
                             // Trigger immediate re-discovery.
                             _ <- ms.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
-                            r <- Ok(Json.obj(
-                              "ok" -> true.asJson,
-                              "networkId" -> networkId.asJson
-                            ))
+                            r <- Ok(
+                              Json.obj(
+                                "ok" -> true.asJson,
+                                "networkId" -> networkId.asJson
+                              )
+                            )
                           yield r
                         case None =>
                           BadRequest(Json.obj("error" -> "Server did not return a device token".asJson))
+                      end match
                     case Left(err) =>
                       // authorization_pending is expected during polling — pass through.
                       BadRequest(Json.obj("error" -> err.asJson))
                 yield resp
-              end match
+            end match
+          end if
         }
 
     // Cloud session sync toggle — removed (session sync deleted)
@@ -927,8 +952,7 @@ class RestApiRoutes(
 
     // GET /flow/dag/:name — return flow DAG structure (nodes, edges, routing)
     case GET -> Root / "flow" / "dag" / flowName =>
-      if !isValidFlowName(flowName) then
-        BadRequest(Json.obj("error" -> "Invalid flow name".asJson))
+      if !isValidFlowName(flowName) then BadRequest(Json.obj("error" -> "Invalid flow name".asJson))
       else
         nebflow.core.entity.EntityLoader.loadFlow(flowName).flatMap {
           case Some(dag) =>
@@ -953,13 +977,15 @@ class RestApiRoutes(
                 "maxRetries" -> node.maxRetries.asJson
               )
             }
-            Ok(Json.obj(
-              "name" -> dag.name.asJson,
-              "description" -> dag.description.asJson,
-              "entry" -> dag.entry.asJson,
-              "maxLoop" -> dag.maxLoop.asJson,
-              "nodes" -> nodesJson.asJson
-            ))
+            Ok(
+              Json.obj(
+                "name" -> dag.name.asJson,
+                "description" -> dag.description.asJson,
+                "entry" -> dag.entry.asJson,
+                "maxLoop" -> dag.maxLoop.asJson,
+                "nodes" -> nodesJson.asJson
+              )
+            )
           case None =>
             NotFound(Json.obj("error" -> s"Flow '$flowName' not found".asJson))
         }
@@ -1016,8 +1042,7 @@ class RestApiRoutes(
 
     // GET /teams/def/:name — return team definition for the editor
     case GET -> Root / "teams" / "def" / flowName =>
-      if !isValidFlowName(flowName) then
-        BadRequest(Json.obj("error" -> "Invalid name".asJson))
+      if !isValidFlowName(flowName) then BadRequest(Json.obj("error" -> "Invalid name".asJson))
       else
         for
           teamOpt <- EntityLoader.loadTeam(flowName)
@@ -1036,13 +1061,15 @@ class RestApiRoutes(
                   "systemPrompt" -> entry.systemPrompt.asJson
                 )
               }
-              Ok(Json.obj(
-                "name" -> team.name.asJson,
-                "manager" -> team.lead.asJson,
-                "description" -> team.description.asJson,
-                "agents" -> agentsJson.asJson,
-                "type" -> "team".asJson
-              ))
+              Ok(
+                Json.obj(
+                  "name" -> team.name.asJson,
+                  "manager" -> team.lead.asJson,
+                  "description" -> team.description.asJson,
+                  "agents" -> agentsJson.asJson,
+                  "type" -> "team".asJson
+                )
+              )
         yield result
 
     // GET /agents/list — list all global agents (for extends dropdown)
@@ -1055,8 +1082,10 @@ class RestApiRoutes(
           IO.blocking {
             val dir = PathUtil.dataRoot / "teams" / teamName / "agents"
             if os.exists(dir) then
-              os.list(dir).filter(os.isDir)
-                .flatMap(d => EntityLoader.loadAgentFromDir(d)).toList
+              os.list(dir)
+                .filter(os.isDir)
+                .flatMap(d => EntityLoader.loadAgentFromDir(d))
+                .toList
             else Nil
           }
         }
@@ -1065,8 +1094,10 @@ class RestApiRoutes(
           IO.blocking {
             val dir = PathUtil.dataRoot / "flows" / flowName / "agents"
             if os.exists(dir) then
-              os.list(dir).filter(os.isDir)
-                .flatMap(d => EntityLoader.loadAgentFromDir(d)).toList
+              os.list(dir)
+                .filter(os.isDir)
+                .flatMap(d => EntityLoader.loadAgentFromDir(d))
+                .toList
             else Nil
           }
         }
@@ -1106,26 +1137,27 @@ class RestApiRoutes(
 
     // GET /agents/:name — get agent detail (system.md + tools) — searches all three layers
     case GET -> Root / "agents" / agentName =>
-      if !isValidAgentName(agentName) then
-        BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
       else
         for
           agentOpt <- EntityLoader.findAgentByName(agentName)
           result <- agentOpt match
             case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
-            case Some(defn) => Ok(Json.obj(
-              "name" -> defn.name.asJson,
-              "description" -> defn.description.asJson,
-              "tools" -> defn.tools.asJson,
-              "systemPrompt" -> defn.systemPrompt.asJson,
-              "displayName" -> defn.displayName.getOrElse(defn.name).asJson
-            ))
+            case Some(defn) =>
+              Ok(
+                Json.obj(
+                  "name" -> defn.name.asJson,
+                  "description" -> defn.description.asJson,
+                  "tools" -> defn.tools.asJson,
+                  "systemPrompt" -> defn.systemPrompt.asJson,
+                  "displayName" -> defn.displayName.getOrElse(defn.name).asJson
+                )
+              )
         yield result
 
     // GET /agents/:name/model — get agent's model configuration — searches all three layers
     case GET -> Root / "agents" / agentName / "model" =>
-      if !isValidAgentName(agentName) then
-        BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
       else
         for
           agentOpt <- EntityLoader.findAgentByName(agentName)
@@ -1135,20 +1167,21 @@ class RestApiRoutes(
               val modelConfig = defn.model.getOrElse(nebflow.shared.AgentModelConfig.empty)
               sharedResources.runtimeModels.get.flatMap { runtimeModels =>
                 val current = runtimeModels.values.headOption
-                Ok(Json.obj(
-                  "model" -> modelConfig.asJson,
-                  "current" -> current.asJson,
-                  "preferred" -> modelConfig.preferred.asJson,
-                  "fallbacks" -> modelConfig.fallbacks.asJson,
-                  "default" -> modelConfig.preferred.asJson
-                ))
+                Ok(
+                  Json.obj(
+                    "model" -> modelConfig.asJson,
+                    "current" -> current.asJson,
+                    "preferred" -> modelConfig.preferred.asJson,
+                    "fallbacks" -> modelConfig.fallbacks.asJson,
+                    "default" -> modelConfig.preferred.asJson
+                  )
+                )
               }
         yield result
 
     // PUT /agents/:name/model — update agent's model configuration
     case req @ PUT -> Root / "agents" / agentName / "model" =>
-      if !isValidAgentName(agentName) then
-        BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
       else
         req.as[Json].flatMap { body =>
           // Parse the model config from request body
@@ -1174,26 +1207,27 @@ class RestApiRoutes(
 
     // GET /teams/:name — team detail
     case GET -> Root / "teams" / teamName =>
-      if !isValidAgentName(teamName) then
-        BadRequest(Json.obj("error" -> "Invalid team name".asJson))
+      if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
       else
         for
           teamOpt <- EntityLoader.loadTeam(teamName)
           result <- teamOpt match
             case None => NotFound(Json.obj("error" -> s"Team '$teamName' not found".asJson))
-            case Some(team) => Ok(Json.obj(
-              "name" -> team.name.asJson,
-              "description" -> team.description.asJson,
-              "lead" -> team.lead.asJson,
-              "members" -> team.members.asJson,
-              "flows" -> team.flows.asJson
-            ))
+            case Some(team) =>
+              Ok(
+                Json.obj(
+                  "name" -> team.name.asJson,
+                  "description" -> team.description.asJson,
+                  "lead" -> team.lead.asJson,
+                  "members" -> team.members.asJson,
+                  "flows" -> team.flows.asJson
+                )
+              )
         yield result
 
     // GET /team/rules/:name — read team rules.md
     case GET -> Root / "team" / "rules" / teamName =>
-      if !isValidAgentName(teamName) then
-        BadRequest(Json.obj("error" -> "Invalid team name".asJson))
+      if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
       else
         for
           rules <- EntityLoader.loadTeamRules(teamName)
@@ -1202,8 +1236,7 @@ class RestApiRoutes(
 
     // POST /team/rules/:name — save team rules.md + trigger reload
     case req @ POST -> Root / "team" / "rules" / teamName =>
-      if !isValidAgentName(teamName) then
-        BadRequest(Json.obj("error" -> "Invalid team name".asJson))
+      if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
       else
         for
           body <- req.as[Json]
@@ -1293,6 +1326,7 @@ class RestApiRoutes(
                     case None => Ok(config.asJson)
                   }
                 }
+              end if
             }
       }
 
@@ -1347,32 +1381,36 @@ class RestApiRoutes(
       }
   }
 
-  /** Build mounted teams JSON for the frontend (GET /api/teams/mounted).
+  /**
+   * Build mounted teams JSON for the frontend (GET /api/teams/mounted).
    *  Reads from live FlowMembership runtime state. Each team is a card with
-   *  agent tiles showing status. */
+   *  agent tiles showing status.
+   */
   private def buildMountedTeamsJson(): IO[Json] =
     for
       flowsMap <- nebflow.core.flow.FlowMembership.listMountedFlows
       teams <- EntityLoader.listTeams()
       flows <- flowsMap.toList.sortBy(_._1).traverse { (instanceName, agents) =>
         val teamDefOpt = teams.get(instanceName)
-        agents.traverse { (agentName, sid) =>
-          nebflow.core.flow.FlowMembership.isBusy(sid).map { busy =>
+        agents
+          .traverse { (agentName, sid) =>
+            nebflow.core.flow.FlowMembership.isBusy(sid).map { busy =>
+              Json.obj(
+                "name" -> agentName.asJson,
+                "sessionId" -> sid.asJson,
+                "status" -> (if busy then "running" else "idle").asJson,
+                "manager" -> teamDefOpt.exists(_.lead == agentName).asJson
+              )
+            }
+          }
+          .map { agentsJson =>
             Json.obj(
-              "name" -> agentName.asJson,
-              "sessionId" -> sid.asJson,
-              "status" -> (if busy then "running" else "idle").asJson,
-              "manager" -> teamDefOpt.exists(_.lead == agentName).asJson
+              "name" -> instanceName.asJson,
+              "type" -> "team".asJson,
+              "agents" -> agentsJson.asJson,
+              "flows" -> teamDefOpt.map(_.flows).getOrElse(List.empty[String]).asJson
             )
           }
-        }.map { agentsJson =>
-          Json.obj(
-            "name" -> instanceName.asJson,
-            "type" -> "team".asJson,
-            "agents" -> agentsJson.asJson,
-            "flows" -> teamDefOpt.map(_.flows).getOrElse(List.empty[String]).asJson
-          )
-        }
       }
     yield flows.asJson
 
@@ -1424,15 +1462,19 @@ class RestApiRoutes(
       case None =>
         req.params.get("token").exists(t => Auth.validateToken(t, token))
 
-  /** POST the enrollment body to the NebLink Server and parse the JSON reply.
-    * Uses java.net.http directly (mirrors NeblinkClient) to avoid pulling an
-    * http4s client dependency into this routes class. Bypasses the system proxy
-    * so direct LAN access works. */
+  /**
+   * POST the enrollment body to the NebLink Server and parse the JSON reply.
+   * Uses java.net.http directly (mirrors NeblinkClient) to avoid pulling an
+   * http4s client dependency into this routes class. Bypasses the system proxy
+   * so direct LAN access works.
+   */
   private def enrollWithServer(serverUrl: String, body: String): IO[Either[String, Json]] =
     proxyPost(serverUrl, "/api/device/enroll", body)
 
-  /** Generic POST proxy to the NebLink Server. Returns the parsed JSON on
-    * success (2xx) or an error message on failure. Bypasses the system proxy. */
+  /**
+   * Generic POST proxy to the NebLink Server. Returns the parsed JSON on
+   * success (2xx) or an error message on failure. Bypasses the system proxy.
+   */
   private def proxyPost(serverUrl: String, path: String, body: String): IO[Either[String, Json]] =
     IO.blocking {
       val client = java.net.http.HttpClient
@@ -1462,14 +1504,16 @@ class RestApiRoutes(
                 case Some(errMsg) => Left(errMsg)
                 case None => Left(s"HTTP $status")
             case Left(_) => Left(s"HTTP $status")
-      catch
-        case e: Exception => Left(e.getMessage)
+      catch case e: Exception => Left(e.getMessage)
+      end try
     }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
 
-  /** Resolve the NebLink Server URL for device-flow requests. Priority:
-    * 1. Explicitly provided URL (from the request body).
-    * 2. URL from the current neblink config.
-    * 3. The public default URL. */
+  /**
+   * Resolve the NebLink Server URL for device-flow requests. Priority:
+   * 1. Explicitly provided URL (from the request body).
+   * 2. URL from the current neblink config.
+   * 3. The public default URL.
+   */
   private def neblinkServerUrl(explicit: Option[String] = None): IO[String] =
     explicit match
       case Some(url) => IO.pure(url)

@@ -2,8 +2,8 @@ package nebflow.core.flow
 
 import cats.effect.IO
 import io.circe.*
-import io.circe.syntax.*
 import io.circe.parser.decode
+import io.circe.syntax.*
 import nebflow.core.{NebflowLogger, PathUtil}
 
 /**
@@ -71,7 +71,8 @@ object FlowMailStore:
         val tmp = dir / s".${file.last}.tmp"
         os.write.over(tmp, updated.asJson.noSpaces)
         os.move.over(tmp, file, replaceExisting = true)
-      }.void.handleErrorWith(e => logger.warn(s"FlowMailStore.append failed: ${e.getMessage}").void)
+      }.void
+        .handleErrorWith(e => logger.warn(s"FlowMailStore.append failed: ${e.getMessage}").void)
 
   /** Load all mail records for a flow instance. */
   def load(sessionId: String, flowName: String): IO[List[MailRecord]] =

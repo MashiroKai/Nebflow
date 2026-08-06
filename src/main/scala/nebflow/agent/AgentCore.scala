@@ -32,7 +32,8 @@ private[agent] trait AgentCore:
    * - Schedule: session-scoped scheduled tasks
    */
   private val NebulaExclusiveTools = Set(
-    "AskUserQuestion", "Schedule"
+    "AskUserQuestion",
+    "Schedule"
   )
 
   /** Tools available to Nebula and Team Leads, but NOT workers. */
@@ -132,25 +133,30 @@ private[agent] trait AgentCore:
               ).handleErrorWith(_ => IO.unit)
             )
             _ <- state.sessionId.fold(IO.unit)(sid =>
-              ctx.forkTurn(resources.historyArchiver.archiveCompaction(
-                sessionId = sid,
-                sessionName = state.sessionName,
-                agentName = agentDef.name,
-                before = state.messages,
-                after = cleaned,
-                mode = "emergency",
-                extra = Map("description" -> desc)
-              ).void.handleErrorWith(_ => IO.unit)))
+              ctx.forkTurn(
+                resources.historyArchiver
+                  .archiveCompaction(
+                    sessionId = sid,
+                    sessionName = state.sessionName,
+                    agentName = agentDef.name,
+                    before = state.messages,
+                    after = cleaned,
+                    mode = "emergency",
+                    extra = Map("description" -> desc)
+                  )
+                  .void
+                  .handleErrorWith(_ => IO.unit)
+              )
+            )
             result <- pipeLlmCall(agentDef, resources, depth, parentRef, emergencyState, replyTo, processing)
           yield result)
       else
         val inputTokensOpt = state.latestUsage.map(_.inputTokens)
         // Team agents (depth >= 1): aggressive 20% threshold to prevent context overflow.
         // Nebula (depth 0): standard threshold (contextWindow - max(13k, 10%))
-        val threshold = if depth >= 1 then
-          (state.contextWindow * 0.20).toInt
-        else
-          state.contextWindow - config.bufferForWindow(state.contextWindow)
+        val threshold =
+          if depth >= 1 then (state.contextWindow * 0.20).toInt
+          else state.contextWindow - config.bufferForWindow(state.contextWindow)
         val shouldCompact = inputTokensOpt match
           case Some(inputTokens) if inputTokens > 0 && inputTokens > threshold =>
             Some(s"inputTokens=$inputTokens threshold=$threshold")
@@ -347,27 +353,29 @@ private[agent] trait AgentCore:
                 // Broadcast modelChanged if fallback occurred
                 val notifyModelChanged = firstFailedModel.get.flatMap {
                   case Some(oldModel) if cr.model.isDefined && cr.model.get != oldModel =>
-                    state.wsSend(io.circe.Json.obj(
-                      "type" -> "modelChanged".asJson,
-                      "sessionId" -> sessionIdOpt.asJson,
-                      "oldModel" -> oldModel.asJson,
-                      "newModel" -> cr.model.get.asJson
-                    ))
+                    state.wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "modelChanged".asJson,
+                        "sessionId" -> sessionIdOpt.asJson,
+                        "oldModel" -> oldModel.asJson,
+                        "newModel" -> cr.model.get.asJson
+                      )
+                    )
                   case _ => IO.unit
                 }
                 trackModel *> notifyModelChanged *>
-                LlmLogWriter.log(
-                  request,
-                  chunks,
-                  cr.text,
-                  cr.toolCalls,
-                  cr.thinking,
-                  cr.stopReason,
-                  cr.usage,
-                  cr.model,
-                  isSubagent,
-                  isCompactTurn
-                ) *> IO.pure(cr)
+                  LlmLogWriter.log(
+                    request,
+                    chunks,
+                    cr.text,
+                    cr.toolCalls,
+                    cr.thinking,
+                    cr.stopReason,
+                    cr.usage,
+                    cr.model,
+                    isSubagent,
+                    isCompactTurn
+                  ) *> IO.pure(cr)
               }
               .attempt
               .flatMap {
@@ -445,7 +453,7 @@ private[agent] trait AgentCore:
         mailboxAddress = state.session.sessionId,
         sharedResources = Some(resources),
         actorSystem = Some(ctx.system),
-        messages = state.messages,
+        messages = state.messages
       )
       freshResults <- filteredCalls.parTraverse { call =>
         val skipStreaming = call.name == "AskUserQuestion"

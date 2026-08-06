@@ -145,14 +145,18 @@ class ProviderRegistry(
     modelConfig: Option[ModelConfig]
   ): (Boolean, Set[String]) =
     val registryEntry = ModelRegistry.lookup(providerId, modelId)
-    val vision = modelConfig.flatMap(_.vision)
+    val vision = modelConfig
+      .flatMap(_.vision)
       .orElse(registryEntry.map(_.vision))
       .getOrElse(false)
-    val caps = modelConfig.flatMap(_.capabilities)
+    val caps = modelConfig
+      .flatMap(_.capabilities)
       .orElse(registryEntry.map(_.capabilities))
       .getOrElse(Nil)
       .toSet
     (vision, caps)
+
+  end resolveCapabilities
 
   /** Reload: re-read config from disk and clear adapter cache. */
   def reloadConfig(): IO[Unit] =

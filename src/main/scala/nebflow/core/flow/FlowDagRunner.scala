@@ -8,7 +8,8 @@ import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.entity.{FlowDagDef, FlowDagExecutor}
 
-/** One-shot actor that runs a Flow DAG and delivers the result to the caller.
+/**
+ * One-shot actor that runs a Flow DAG and delivers the result to the caller.
  *
  *  Spawned by MailTool when a Mail targets a flow name that has a flow.json DAG.
  *  Executes the DAG (synchronous, node-by-node) and Mails the result back to
@@ -29,10 +30,9 @@ object FlowDagRunner:
         val instanceId = s"flow-${flowDef.name.take(15)}-${java.util.UUID.randomUUID().toString.take(8)}"
         for
           _ <- logger.info(s"Starting DAG execution for flow '${flowDef.name}' (instance: $instanceId)")
-          result <- FlowDagExecutor.execute(flowDef, taskInput, resources, resources.actorSystem, wsSend, instanceId)
-            .handleErrorWith(e =>
-              IO(logger.warn(s"FlowDagExecutor failed: ${e.getMessage}")).as(Left(e.getMessage))
-            )
+          result <- FlowDagExecutor
+            .execute(flowDef, taskInput, resources, resources.actorSystem, wsSend, instanceId)
+            .handleErrorWith(e => IO(logger.warn(s"FlowDagExecutor failed: ${e.getMessage}")).as(Left(e.getMessage)))
           _ <- result match
             case Right(output) =>
               (replyTo ! AgentCommand.ImmediateInput(
@@ -43,5 +43,6 @@ object FlowDagRunner:
                 s"[Flow '${flowDef.name}' failed]\n$err"
               )).void
         yield Behaviors.stopped
+        end for
 
 end FlowDagRunner

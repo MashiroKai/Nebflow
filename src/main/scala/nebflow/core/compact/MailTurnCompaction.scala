@@ -2,8 +2,7 @@ package nebflow.core.compact
 
 import cats.effect.IO
 import nebflow.agent.SharedResources
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
+import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.shared.*
 
 /**
@@ -59,10 +58,14 @@ object MailTurnCompaction:
             extra = Map("summary" -> summary.take(500))
           )
           .void
-          .handleErrorWith(e =>
-            IO(logger.warn(s"MailTurn archive failed for $agentName: ${e.getMessage}")).void
-          )
+          .handleErrorWith(e => IO(logger.warn(s"MailTurn archive failed for $agentName: ${e.getMessage}")).void)
       yield ()
+
+      end for
+
+    end if
+
+  end extractAndStore
 
   /**
    * Build a text progress summary from the turn's messages.
@@ -89,22 +92,26 @@ object MailTurnCompaction:
       .map { (name, count) => s"  $name ×$count" }
       .mkString("\n")
 
-    val lastAssistantText = messages
-      .reverse
+    val lastAssistantText = messages.reverse
       .find(_.role == MessageRole.Assistant)
       .map(extractText)
       .getOrElse("(no response)")
 
     val timestamp = java.time.Instant.now().toString
-    val dateStr = java.time.LocalDateTime.now()
+    val dateStr = java.time.LocalDateTime
+      .now()
       .format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"))
 
     // Project-level summary format — focuses on progress, decisions, and outcomes
     // rather than mechanical Request/Actions/Result logs
     s"""### [$dateStr] ${firstUserText.linesIterator.nextOption().getOrElse("(task)").take(80)}
        |**Progress**: ${lastAssistantText.take(400)}
-       |**Tools**: ${if toolCallSummary.nonEmpty then toolCallSummary.replace("\n  ", ", ").replace("  ", "") else "none"}
+       |**Tools**: ${
+        if toolCallSummary.nonEmpty then toolCallSummary.replace("\n  ", ", ").replace("  ", "") else "none"
+      }
        |""".stripMargin
+
+  end buildProgressSummary
 
   /**
    * Compress message history by replacing old mail-turn messages with a summary.
@@ -137,10 +144,12 @@ object MailTurnCompaction:
     msg.content match
       case Left(text) => text
       case Right(blocks) =>
-        blocks.collect {
-          case ContentBlock.Text(t) => t
-          case ContentBlock.ToolResult(_, content, _) => content.take(100)
-        }.mkString(" ")
+        blocks
+          .collect {
+            case ContentBlock.Text(t) => t
+            case ContentBlock.ToolResult(_, content, _) => content.take(100)
+          }
+          .mkString(" ")
 
   /** Append a progress note to the agent's memory file. */
   private def appendToAgentMemory(agentName: String, note: String): IO[Unit] = IO.blocking {
@@ -154,8 +163,7 @@ object MailTurnCompaction:
         val idx = existing.indexOf(sectionMarker)
         val (before, after) = existing.splitAt(idx + sectionMarker.length)
         before + "\n" + note + after
-      else
-        existing + "\n\n" + sectionMarker + "\n" + note
+      else existing + "\n\n" + sectionMarker + "\n" + note
     os.write.over(memPath, updated, createFolders = true)
     logger.info(s"Appended mail turn summary to $memPath")
   }.void

@@ -26,8 +26,26 @@ object PopTool extends Tool:
 
   /** Extensions that the frontend fetches via /api/nf-file (binary viewers). */
   private val BinaryExtensions = Set(
-    "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico", "avif", "tiff", "tif",
-    "pdf", "doc", "docx", "xls", "xlsx", "xlsm", "ppt", "pptx", "epub"
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "svg",
+    "webp",
+    "bmp",
+    "ico",
+    "avif",
+    "tiff",
+    "tif",
+    "pdf",
+    "doc",
+    "docx",
+    "xls",
+    "xlsx",
+    "xlsm",
+    "ppt",
+    "pptx",
+    "epub"
   )
 
   private def fileExtension(path: String): String =
@@ -37,20 +55,18 @@ object PopTool extends Tool:
 
   /** Map file extension to frontend viewer itemType. Mirrors WebSocketRoutes.readFile logic. */
   private def detectItemType(ext: String): String = ext match
-    case "md" | "markdown"                           => "markdown"
-    case "html" | "htm"                              => "html"
-    case "json"                                      => "json"
-    case "yaml" | "yml"                              => "yaml"
-    case "csv" | "tsv"                               => "csv"
-    case "png" | "jpg" | "jpeg" | "gif" | "svg"
-         | "webp" | "bmp" | "ico" | "avif"
-         | "tiff" | "tif"                            => "image"
-    case "pdf"                                       => "pdf"
-    case "doc" | "docx"                              => "docx"
-    case "xls" | "xlsx" | "xlsm"                     => "xlsx"
-    case "ppt" | "pptx"                              => "pptx"
-    case "epub"                                      => "epub"
-    case _                                           => "code"
+    case "md" | "markdown" => "markdown"
+    case "html" | "htm" => "html"
+    case "json" => "json"
+    case "yaml" | "yml" => "yaml"
+    case "csv" | "tsv" => "csv"
+    case "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "tiff" | "tif" => "image"
+    case "pdf" => "pdf"
+    case "doc" | "docx" => "docx"
+    case "xls" | "xlsx" | "xlsm" => "xlsx"
+    case "ppt" | "pptx" => "pptx"
+    case "epub" => "epub"
+    case _ => "code"
 
   /** Resolve a path string (supports ~ expansion) to a normalized Path. */
   private def resolvePath(s: String): Option[Path] =
@@ -102,8 +118,7 @@ Example: {"filePath": "~/projects/README.md", "title": "README"}"""
     val filePathStr = input("filePath").flatMap(_.asString).getOrElse("")
     val customTitle = input("title").flatMap(_.asString).getOrElse("")
 
-    if filePathStr.isBlank then
-      IO.pure(Left(ToolError("Pop tool requires a `filePath` parameter.")))
+    if filePathStr.isBlank then IO.pure(Left(ToolError("Pop tool requires a `filePath` parameter.")))
     else
       resolvePath(filePathStr) match
         case None =>
@@ -111,10 +126,8 @@ Example: {"filePath": "~/projects/README.md", "title": "README"}"""
 
         case Some(path) =>
           IO.blocking {
-            if !Files.exists(path) then
-              Left(ToolError(s"File not found: $path"))
-            else if !Files.isRegularFile(path) then
-              Left(ToolError(s"Not a regular file: $path"))
+            if !Files.exists(path) then Left(ToolError(s"File not found: $path"))
+            else if !Files.isRegularFile(path) then Left(ToolError(s"Not a regular file: $path"))
             else
               val ext = fileExtension(path.toString)
               val itemType = detectItemType(ext)
@@ -147,9 +160,13 @@ Example: {"filePath": "~/projects/README.md", "title": "README"}"""
           }.flatMap {
             case Left(err) => IO.pure(Left(err))
             case Right((msg, tabTitle)) =>
-              val sendIO = ctx.wsSend.getOrElse((_ : Json) => IO.unit)
+              val sendIO = ctx.wsSend.getOrElse((_: Json) => IO.unit)
               sendIO(msg) >> IO.pure(Right(s"Opened $tabTitle in Canvas."))
           }
+
+    end if
+
+  end call
 
   def summarize(input: JsonObject): String =
     val filePath = input("filePath").flatMap(_.asString).getOrElse("?")

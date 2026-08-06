@@ -69,6 +69,8 @@ object MountedFlowStore:
       else Nil
     }
 
+  end load
+
   /** Delete the store file (used when session is deleted). */
   def delete(sessionId: String): IO[Unit] =
     val file = storeFile(sessionId)

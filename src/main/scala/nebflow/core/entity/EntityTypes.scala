@@ -1,8 +1,8 @@
 package nebflow.core.entity
 
-import io.circe.{Decoder, DecodingFailure, Encoder, Json, JsonObject}
-import io.circe.syntax.*
 import cats.syntax.all.*
+import io.circe.*
+import io.circe.syntax.*
 
 // ============================================================
 // Agent (global Agent library entry — corresponds to agent.json)
@@ -15,12 +15,13 @@ case class AgentEntry(
   useWhen: String,
   tools: List[String] = List("*"),
   voice: Boolean = false,
-  systemPrompt: String = "",   // loaded from system.md, not in agent.json
+  systemPrompt: String = "", // loaded from system.md, not in agent.json
   category: String = "standalone",
   mcpServers: List[String] = Nil
 )
 
 object AgentEntry:
+
   given Decoder[AgentEntry] = Decoder.instance { c =>
     for
       name <- c.downField("name").as[Option[String]]
@@ -30,7 +31,16 @@ object AgentEntry:
       voice <- c.downField("voice").as[Option[Boolean]]
       category <- c.downField("category").as[Option[String]].map(_.getOrElse("standalone"))
       mcpServers <- c.downField("mcpServers").as[Option[List[String]]]
-    yield AgentEntry(name.getOrElse(""), description, useWhen, tools.getOrElse(List("*")), voice.getOrElse(false), "", category, mcpServers.getOrElse(Nil))
+    yield AgentEntry(
+      name.getOrElse(""),
+      description,
+      useWhen,
+      tools.getOrElse(List("*")),
+      voice.getOrElse(false),
+      "",
+      category,
+      mcpServers.getOrElse(Nil)
+    )
   }
 
   given Encoder[AgentEntry] = Encoder.instance { a =>
@@ -44,6 +54,7 @@ object AgentEntry:
       "mcpServers" -> a.mcpServers.asJson
     )
   }
+end AgentEntry
 
 // ============================================================
 // Team (corresponds to team.json)
@@ -53,12 +64,13 @@ object AgentEntry:
 case class TeamDef(
   name: String,
   description: String,
-  lead: String,                    // Agent name (in global Agent library)
-  members: List[String] = Nil,     // Agent names
-  flows: List[String] = Nil        // Flow names
+  lead: String, // Agent name (in global Agent library)
+  members: List[String] = Nil, // Agent names
+  flows: List[String] = Nil // Flow names
 )
 
 object TeamDef:
+
   given Decoder[TeamDef] = Decoder.instance { c =>
     for
       name <- c.downField("name").as[String]
@@ -78,6 +90,7 @@ object TeamDef:
       "flows" -> t.flows.asJson
     )
   }
+end TeamDef
 
 // ============================================================
 // Flow DAG (corresponds to flow.json)
@@ -85,17 +98,22 @@ object TeamDef:
 
 /** Routing target after a node completes. */
 sealed trait NodeRoute
+
 object NodeRoute:
   /** Route to a specific node. */
   case class Goto(nodeId: String) extends NodeRoute
+
   /** Conditional branch: match switch expression against cases. */
   case class Switch(switchExpr: String, cases: Map[String, NodeRoute]) extends NodeRoute
+
   /** Terminate the flow, return result. */
   case object Return extends NodeRoute
 
-  /** Parse NodeRoute from JSON. Supports two formats:
+  /**
+   * Parse NodeRoute from JSON. Supports two formats:
    *  - string: "reviewer" -> Goto("reviewer"), "$return" -> Return
-   *  - object: { "switch": "...", "cases": { ... } } -> Switch */
+   *  - object: { "switch": "...", "cases": { ... } } -> Switch
+   */
   given Decoder[NodeRoute] = Decoder.instance { c =>
     c.as[String] match
       case Right(s) =>
@@ -112,19 +130,21 @@ object NodeRoute:
   given Encoder[NodeRoute] = Encoder.instance {
     case Goto(id) => Json.fromString(id)
     case Return => Json.fromString("$return")
-    case Switch(expr, cases) => Json.obj(
-      "switch" -> Json.fromString(expr),
-      "cases" -> cases.asJson
-    )
+    case Switch(expr, cases) =>
+      Json.obj(
+        "switch" -> Json.fromString(expr),
+        "cases" -> cases.asJson
+      )
   }
 end NodeRoute
 
 /** Error handling strategy. */
 sealed trait OnError
+
 object OnError:
-  case object Resume extends OnError   // log warning, continue routing
-  case object Restart extends OnError  // re-execute node
-  case object Stop extends OnError     // abort flow
+  case object Resume extends OnError // log warning, continue routing
+  case object Restart extends OnError // re-execute node
+  case object Stop extends OnError // abort flow
 
   given Decoder[OnError] = Decoder.instance { c =>
     c.as[String].flatMap {
@@ -134,6 +154,7 @@ object OnError:
       case other => Left(DecodingFailure(s"Unknown onError: $other", c.history))
     }
   }
+
   given Encoder[OnError] = Encoder.instance {
     case Resume => Json.fromString("resume")
     case Restart => Json.fromString("restart")
@@ -143,14 +164,15 @@ end OnError
 
 /** A single node in the flow DAG. */
 case class FlowNode(
-  agent: String,                    // referenced global Agent name
-  input: String,                    // input template: "$task", "$scanner.output"
-  onComplete: NodeRoute,            // completion route
-  onError: Option[OnError] = None,  // failure strategy (default stop)
-  maxRetries: Int = 0               // max retry count
+  agent: String, // referenced global Agent name
+  input: String, // input template: "$task", "$scanner.output"
+  onComplete: NodeRoute, // completion route
+  onError: Option[OnError] = None, // failure strategy (default stop)
+  maxRetries: Int = 0 // max retry count
 )
 
 object FlowNode:
+
   given Decoder[FlowNode] = Decoder.instance { c =>
     for
       agent <- c.downField("agent").as[String]
@@ -160,6 +182,7 @@ object FlowNode:
       maxRetries <- c.downField("maxRetries").as[Option[Int]]
     yield FlowNode(agent, input, onComplete, onError, maxRetries.getOrElse(0))
   }
+
   given Encoder[FlowNode] = Encoder.instance { n =>
     Json.obj(
       "agent" -> n.agent.asJson,
@@ -170,16 +193,19 @@ object FlowNode:
     )
   }
 
+end FlowNode
+
 /** Flow DAG definition. Corresponds to ~/.nebflow/flows/<name>.json */
 case class FlowDagDef(
   name: String,
   description: String,
   nodes: Map[String, FlowNode],
-  entry: String,              // entry node ID
-  maxLoop: Int = 10           // loop protection (no timeout)
+  entry: String, // entry node ID
+  maxLoop: Int = 10 // loop protection (no timeout)
 )
 
 object FlowDagDef:
+
   given Decoder[FlowDagDef] = Decoder.instance { c =>
     for
       name <- c.downField("name").as[String]
@@ -189,6 +215,7 @@ object FlowDagDef:
       maxLoop <- c.downField("maxLoop").as[Option[Int]]
     yield FlowDagDef(name, description, nodes, entry, maxLoop.getOrElse(10))
   }
+
   given Encoder[FlowDagDef] = Encoder.instance { f =>
     Json.obj(
       "name" -> f.name.asJson,
@@ -198,6 +225,7 @@ object FlowDagDef:
       "maxLoop" -> f.maxLoop.asJson
     )
   }
+end FlowDagDef
 
 // ============================================================
 // Runtime state (internal to DAG executor)
@@ -216,7 +244,7 @@ case class NodeResult(
 case class FlowExecContext(
   flowName: String,
   taskInput: String,
-  nodeOutputs: Map[String, String] = Map.empty,  // nodeId -> output
-  loopCounts: Map[String, Int] = Map.empty,       // edge -> traversal count
+  nodeOutputs: Map[String, String] = Map.empty, // nodeId -> output
+  loopCounts: Map[String, Int] = Map.empty, // edge -> traversal count
   totalLoops: Int = 0
 )

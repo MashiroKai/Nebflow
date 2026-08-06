@@ -46,9 +46,7 @@ class TaskStoreDismissedSpec extends CatsEffectSuite:
       _ <- reset()
       sid = "s3"
       tid <- mkDismissedTask(sid, "original")
-      result <- store.update(sid, tid,
-        TaskUpdateInput(subject = Some("changed"), addBlocks = Some(List("x")))
-      )
+      result <- store.update(sid, tid, TaskUpdateInput(subject = Some("changed"), addBlocks = Some(List("x"))))
       reloaded <- store.get(sid, tid)
     yield
       assertEquals(result.get.subject, "original", "subject unchanged in return value")

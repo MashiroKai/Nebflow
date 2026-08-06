@@ -38,7 +38,8 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     else if budget <= 32768 then "high"
     else "xhigh"
 
-  /** Build thinking-related request body based on the model.
+  /**
+   * Build thinking-related request body based on the model.
    *  - GLM models: send `thinking: { type: "enabled" }` (GLM's native format)
    *  - OpenAI o-series: send `reasoning_effort` (OpenAI's format)
    *  - Others: send nothing (API will ignore unknown params)

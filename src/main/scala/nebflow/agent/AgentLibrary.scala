@@ -226,8 +226,13 @@ private object AgentJson:
       mcpServers <- c.downField("mcpServers").as[Option[List[String]]]
       avatar <- c.downField("avatar").as[Option[String]]
     yield AgentJson(
-      name, displayName, description, useWhen,
-      tools.getOrElse(List("*")), mcpServers, avatar,
+      name,
+      displayName,
+      description,
+      useWhen,
+      tools.getOrElse(List("*")),
+      mcpServers,
+      avatar,
       voice = c.downField("voice").as[Option[Boolean]].toOption.flatten,
       model = c.downField("model").as[Option[AgentModelConfig]].toOption.flatten,
       category = c.downField("category").as[Option[String]].toOption.flatten

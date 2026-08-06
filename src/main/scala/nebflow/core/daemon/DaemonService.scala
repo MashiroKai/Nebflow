@@ -1,14 +1,13 @@
 package nebflow.core.daemon
 
-import cats.effect.{IO, Ref}
 import cats.effect.std.Dispatcher
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
+import nebflow.core.{NebflowLogger, PathUtil}
 
 import java.io.{BufferedReader, InputStreamReader}
-import scala.collection.mutable
 
+import scala.collection.mutable
 import scala.concurrent.duration.*
 
 /**
@@ -45,9 +44,12 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
     store.load().flatMap { configs =>
       val autoStartConfigs = configs.filter(_.autoStart)
       if autoStartConfigs.nonEmpty then
-        logger.info(s"[daemon] Auto-starting ${autoStartConfigs.length} daemon(s): ${autoStartConfigs.map(_.name).mkString(", ")}")
-          *> autoStartConfigs.traverse_(cfg => start(cfg).handleErrorWith(e =>
-            logger.error(s"[daemon] Failed to auto-start '${cfg.name}': ${e.getMessage}"))
+        logger.info(
+          s"[daemon] Auto-starting ${autoStartConfigs.length} daemon(s): ${autoStartConfigs.map(_.name).mkString(", ")}"
+        )
+          *> autoStartConfigs.traverse_(cfg =>
+            start(cfg)
+              .handleErrorWith(e => logger.error(s"[daemon] Failed to auto-start '${cfg.name}': ${e.getMessage}"))
           )
       else IO.unit
     }
@@ -120,8 +122,7 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
         case Some(dir) => java.io.File(dir)
         case None => java.io.File(System.getProperty("user.dir", "."))
 
-      if config.command.isEmpty then
-        throw new IllegalArgumentException(s"Daemon '${config.id}' has empty command")
+      if config.command.isEmpty then throw new IllegalArgumentException(s"Daemon '${config.id}' has empty command")
 
       val pb = new ProcessBuilder(config.command*)
       pb.directory(workDir)
@@ -148,9 +149,10 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
       // We need to store the entry first, then start the fiber, then update with fiber ref
       entries.update(_ + (config.id -> entry)) *>
         readIO.start.flatMap { fiber =>
-          entries.update(_ + (config.id ->
-            entry.copy(readFiber = Some(fiber))
-          )) *>
+          entries.update(
+            _ + (config.id ->
+              entry.copy(readFiber = Some(fiber)))
+          ) *>
             logger.info(s"[daemon] Started '${config.name}' (pid=$pid)") *>
             // Monitor fiber: detect process exit
             monitorExit(config.id, process, fiber).start.void *>
@@ -163,17 +165,19 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
       entry.process.foreach { p =>
         try
           p.destroy() // SIGTERM
-          if !p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) then
-            p.destroyForcibly() // SIGKILL
+          if !p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) then p.destroyForcibly() // SIGKILL
         catch case _: Exception => ()
       }
     } *> entry.readFiber.traverse_(_.cancel) *>
       entries.update { map =>
-        map.updated(id, entry.copy(
-          process = None,
-          status = DaemonStatus.Stopped,
-          readFiber = None
-        ))
+        map.updated(
+          id,
+          entry.copy(
+            process = None,
+            status = DaemonStatus.Stopped,
+            readFiber = None
+          )
+        )
       } *>
       logger.info(s"[daemon] Stopped '${entry.config.name}'") *>
       entries.get.map(_.get(id).map(e => toState(id, e)))
@@ -195,7 +199,10 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
               case None => map
           }
       catch case _: Exception => ()
-      finally try reader.close() catch case _: Exception => ()
+      finally
+        try reader.close()
+        catch case _: Exception => ()
+      end try
     }
 
   /** Background fiber: wait for process exit, update status. */
@@ -204,8 +211,7 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
       try
         val code = process.waitFor()
         Some(code)
-      catch
-        case _: InterruptedException => None
+      catch case _: InterruptedException => None
     }.flatMap {
       case None => IO.unit // cancelled
       case Some(code) =>
@@ -217,12 +223,15 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
                 val newStatus =
                   if entry.status == DaemonStatus.Stopped then DaemonStatus.Stopped
                   else DaemonStatus.Crashed
-                map.updated(id, entry.copy(
-                  process = None,
-                  status = newStatus,
-                  exitCode = Some(code),
-                  readFiber = None
-                ))
+                map.updated(
+                  id,
+                  entry.copy(
+                    process = None,
+                    status = newStatus,
+                    exitCode = Some(code),
+                    readFiber = None
+                  )
+                )
               case None => map
           } *>
           entries.get.flatMap { map =>
@@ -237,7 +246,8 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
               case Some(entry) if entry.config.restartOnExit && entry.status == DaemonStatus.Crashed =>
                 logger.info(s"[daemon] Auto-restarting '${entry.config.name}'...") *>
                   IO.sleep(2.seconds) *> doStart(entry.config).void.handleErrorWith(e =>
-                    logger.error(s"[daemon] Auto-restart failed for '${entry.config.name}': ${e.getMessage}"))
+                    logger.error(s"[daemon] Auto-restart failed for '${entry.config.name}': ${e.getMessage}")
+                  )
               case _ => IO.unit
           }
     }

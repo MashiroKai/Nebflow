@@ -18,6 +18,7 @@ class AllowedToolSetSpec extends FunSuite:
 
   // AgentCore.buildAllowedToolSet is protected; expose it via a minimal stub.
   private object CoreProbe extends AgentCore:
+
     def allowed(defn: AgentDef, depth: Int = 0): Set[String] =
       buildAllowedToolSet(defn, depth)
 
@@ -108,3 +109,4 @@ class AllowedToolSetSpec extends FunSuite:
     assert(CoreProbe.allowed(defn, depth = 1).contains("Delegate"), "depth 1")
     assert(CoreProbe.allowed(defn, depth = 2).contains("Delegate"), "depth 2")
     assert(CoreProbe.allowed(defn, depth = 4).contains("Delegate"), "depth 4")
+end AllowedToolSetSpec

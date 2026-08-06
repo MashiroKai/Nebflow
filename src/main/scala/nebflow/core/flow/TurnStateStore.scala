@@ -2,8 +2,8 @@ package nebflow.core.flow
 
 import cats.effect.IO
 import io.circe.*
-import io.circe.syntax.*
 import io.circe.parser.decode
+import io.circe.syntax.*
 import nebflow.core.{NebflowLogger, PathUtil}
 
 /**
@@ -66,9 +66,8 @@ object TurnStateStore:
         val tmp = dir / s"turn-state.json.tmp.${java.util.UUID.randomUUID()}"
         os.write.over(tmp, state.asJson.noSpaces)
         os.move.over(tmp, file, replaceExisting = true)
-      }.void.handleErrorWith(e =>
-        logger.warn(s"TurnStateStore.save failed for $sessionId: ${e.getMessage}").void
-      )
+      }.void
+        .handleErrorWith(e => logger.warn(s"TurnStateStore.save failed for $sessionId: ${e.getMessage}").void)
 
   /** Load turn state. Returns None if not found or corrupt. */
   def load(sessionId: String): IO[Option[TurnState]] =
@@ -92,8 +91,7 @@ object TurnStateStore:
       val file = turnStateFile(sessionId)
       IO.blocking {
         if os.exists(file) then os.remove(file)
-      }.void.handleErrorWith(e =>
-        logger.warn(s"TurnStateStore.clear failed for $sessionId: ${e.getMessage}").void
-      )
+      }.void
+        .handleErrorWith(e => logger.warn(s"TurnStateStore.clear failed for $sessionId: ${e.getMessage}").void)
 
 end TurnStateStore

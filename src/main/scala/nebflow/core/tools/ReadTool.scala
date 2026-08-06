@@ -4,10 +4,10 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.shared.ContentBlock
 
 import java.nio.file.{Files, Path, Paths}
 import java.util.Base64
-import nebflow.shared.ContentBlock
 
 object ReadTool extends Tool:
   val MAX_LINE_COUNT = 2000
@@ -84,8 +84,7 @@ Guidelines:
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.startsWith("File does not exist") || result.startsWith("Error") then result
-    else if result.startsWith("[image:") then
-      result.linesIterator.nextOption().getOrElse(result)
+    else if result.startsWith("[image:") then result.linesIterator.nextOption().getOrElse(result)
     else if result.contains("showing") then
       val m = "showing (\\d+) of (\\d+) lines".r.findFirstMatchIn(result)
       m.map(m => s"${m.group(1)} of ${m.group(2)} lines").getOrElse(s"${result.split("\\n").length} lines")
@@ -112,7 +111,9 @@ Guidelines:
           IO.blocking {
             if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
             else if Files.isDirectory(filePath) then
-              Left(ToolError(s"Path is a directory, not a file: $filePath. Use Bash with ls to list directory contents."))
+              Left(
+                ToolError(s"Path is a directory, not a file: $filePath. Use Bash with ls to list directory contents.")
+              )
             else if Files.size(filePath) > MAX_IMAGE_BYTES then
               val sizeMb = Files.size(filePath).toDouble / 1024 / 1024
               Left(
@@ -125,8 +126,7 @@ Guidelines:
               Right(s"[image: $fileName | $mediaType | ${f"$sizeKb%.0f"}KB]")
           }.flatMap {
             case Right(desc) =>
-              for
-                _ <- ctx.readTracker.traverse_(_.recordRead(filePath, false))
+              for _ <- ctx.readTracker.traverse_(_.recordRead(filePath, false))
               yield Right(desc)
             case Left(err) => IO.pure(Left(err))
           }
@@ -217,8 +217,7 @@ Guidelines:
           val bytes = Files.readAllBytes(filePath)
           val base64Data = Base64.getEncoder.encodeToString(bytes)
           Some(List(ContentBlock.Image(base64Data, mediaType)))
-        catch
-          case _: Exception => None
+        catch case _: Exception => None
       }
 
 end ReadTool

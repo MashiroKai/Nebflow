@@ -18,8 +18,7 @@ object LlmInterface:
   private[llm] def hasImage(messages: List[Message]): Boolean =
     messages.exists(_.content match
       case Right(blocks) => blocks.exists(_.isInstanceOf[ContentBlock.Image])
-      case Left(_) => false
-    )
+      case Left(_) => false)
 
   /** Replace all Image blocks with a text placeholder (for non-vision models). */
   private[llm] def stripImages(messages: List[Message]): List[Message] =
@@ -58,9 +57,7 @@ object LlmInterface:
     in =>
       fs2.Stream.eval(IO.ref(System.currentTimeMillis())).flatMap { lastActivity =>
         fs2.Stream.eval(IO.ref(false)).flatMap { gotFirst =>
-          val main = in.evalTap(_ =>
-            lastActivity.set(System.currentTimeMillis()) *> gotFirst.set(true)
-          )
+          val main = in.evalTap(_ => lastActivity.set(System.currentTimeMillis()) *> gotFirst.set(true))
           // Check interval: use the shorter timeout / 5 (min 2s, max 30s)
           val shorterMs = math.min(firstToken.toMillis, subsequent.toMillis)
           val checkInterval = math.max(math.min(shorterMs / 5, 30000L), 500L).millis
@@ -150,6 +147,7 @@ object LlmInterface:
                     // On success, clear the empty-completion counter for this model.
                     _ <- emptyTracker.resetOnSuccess(candidate.providerId, candidate.model)
                   yield resp
+                  end for
                 ,
                 onAttempt = None,
                 onProviderExhausted = Some(c => healthMonitor.markDown(c.providerId, c.model, "provider exhausted"))
@@ -209,281 +207,309 @@ object LlmInterface:
                       fs2.Stream.eval(IO.ref(req.messages)).flatMap { messagesRef =>
                         fs2.Stream.eval(IO.ref(false)).flatMap { imageStrippedRef =>
 
-                      // Health-check wrapper: filters candidates by health state.
-                      // If all are Down, notifies the frontend and blocks until
-                      // at least one provider recovers, then re-filters.
-                      def attemptWithHealthCheck: fs2.Stream[IO, StreamChunk] =
-                        fs2.Stream.eval(healthMonitor.filterCandidates(candidates)).flatMap {
-                          case (Nil, down) =>
-                            val notifyDown = onAttempt.traverse_(
-                              _.apply(
-                                FallbackAttempt(
-                                  providerId = "",
-                                  model = "",
-                                  reason = None,
-                                  permanence = None,
-                                  durationMs = 0,
-                                  retriesUsed = 0,
-                                  timestamp = java.time.Instant.now().toString,
-                                  message = Some("所有模型不可用，等待恢复中...")
-                                )
-                              )
-                            )
-                            // Probe Down candidates immediately instead of waiting for the
-                            // next background cycle — cuts worst-case recovery from ~2min to ~15s.
-                            fs2.Stream.eval(notifyDown *> healthMonitor.probeNow(down) *> healthMonitor.waitForAnyUp()).flatMap { _ =>
-                              val notifyUp = onAttempt.traverse_(
-                                _.apply(
-                                  FallbackAttempt(
-                                    providerId = "",
-                                    model = "",
-                                    reason = Some(FailoverReason.Unknown),
-                                    permanence = None,
-                                    durationMs = 0,
-                                    retriesUsed = 0,
-                                    timestamp = java.time.Instant.now().toString,
-                                    message = Some("模型已恢复，继续处理...")
-                                  )
-                                )
-                              )
-                              fs2.Stream.eval(notifyUp).drain ++ attemptWithHealthCheck
-                            }
-                          case (up, _) =>
-                            tryCandidate(up)
-                        }
-
-                      def tryCandidate(
-                        remaining: List[ModelCandidate],
-                        retriesLeft: Int = maxRetries,
-                        backoffMs: Long = Fallback.InitialBackoffMs
-                      ): fs2.Stream[IO, StreamChunk] =
-                        remaining match
-                          case Nil =>
-                            // All up candidates exhausted during this attempt —
-                            // cycle back through health check (will block if all Down)
-                            attemptWithHealthCheck
-                          case candidate :: rest =>
-                            // Cap thinking budget to fit within candidate's maxTokens.
-                            // Some providers (e.g. zhipu/glm-5.1 with maxTokens=32000) crash
-                            // when budget_tokens exceeds their limit.
-                            val cappedThinking = req.thinking.map { t =>
-                              t.hcursor.downField("budget_tokens").as[Int] match
-                                case Right(budget) if budget > candidate.maxTokens / 2 =>
-                                  // Cap thinking budget to half of maxTokens (leaving room for output)
-                                  t.deepMerge(
-                                    io.circe.Json.obj(
-                                      "budget_tokens" -> io.circe.Json.fromInt(candidate.maxTokens / 2)
+                          // Health-check wrapper: filters candidates by health state.
+                          // If all are Down, notifies the frontend and blocks until
+                          // at least one provider recovers, then re-filters.
+                          def attemptWithHealthCheck: fs2.Stream[IO, StreamChunk] =
+                            fs2.Stream.eval(healthMonitor.filterCandidates(candidates)).flatMap {
+                              case (Nil, down) =>
+                                val notifyDown = onAttempt.traverse_(
+                                  _.apply(
+                                    FallbackAttempt(
+                                      providerId = "",
+                                      model = "",
+                                      reason = None,
+                                      permanence = None,
+                                      durationMs = 0,
+                                      retriesUsed = 0,
+                                      timestamp = java.time.Instant.now().toString,
+                                      message = Some("所有模型不可用，等待恢复中...")
                                     )
                                   )
-                                case _ => t
+                                )
+                                // Probe Down candidates immediately instead of waiting for the
+                                // next background cycle — cuts worst-case recovery from ~2min to ~15s.
+                                fs2.Stream
+                                  .eval(notifyDown *> healthMonitor.probeNow(down) *> healthMonitor.waitForAnyUp())
+                                  .flatMap { _ =>
+                                    val notifyUp = onAttempt.traverse_(
+                                      _.apply(
+                                        FallbackAttempt(
+                                          providerId = "",
+                                          model = "",
+                                          reason = Some(FailoverReason.Unknown),
+                                          permanence = None,
+                                          durationMs = 0,
+                                          retriesUsed = 0,
+                                          timestamp = java.time.Instant.now().toString,
+                                          message = Some("模型已恢复，继续处理...")
+                                        )
+                                      )
+                                    )
+                                    fs2.Stream.eval(notifyUp).drain ++ attemptWithHealthCheck
+                                  }
+                              case (up, _) =>
+                                tryCandidate(up)
                             }
-                            val stream = fs2.Stream.force(
-                              (for
-                                // PreSendChecker: strip images for non-vision models
-                                // Also check runtime vision override from EmptyCompletionTracker
-                                msgs <- messagesRef.get
-                                runtimeVision <- emptyTracker.getRuntimeVision(candidate.providerId, candidate.model)
-                                effectiveVision = candidate.vision && runtimeVision.getOrElse(true)
-                                effectiveMessages = if !effectiveVision && hasImage(msgs) then stripImages(msgs) else msgs
-                                adapter <- registry.getAdapter(candidate.providerId)
-                              yield adapter.sendMessageStream(
-                                SendMessageParams(
-                                  effectiveMessages,
-                                  candidate.model,
-                                  req.tools,
-                                  Some(candidate.maxTokens),
-                                  cappedThinking,
-                                  req.systemStable,
-                                  req.systemDynamic,
-                                  Some(req.sessionId),
-                                  Some(req.agentId)
-                                )
-                              ))
-                            )
-                            (stream
-                              // Per-provider two-phase watchdog: detects both
-                              // dead connections (no first token) and mid-stream stalls.
-                              // Applied per-provider so a timeout on one allows fallback.
-                              .through(inactivityTimeout(
-                                Defaults.LlmFirstTokenTimeoutSec.seconds,
-                                Defaults.LlmStreamInactivitySec.seconds
-                              ))
-                              .evalTap { chunk =>
-                                chunk match
-                                  case StreamChunk.TextDelta(_) | StreamChunk.ToolCallChunk(_) |
-                                      StreamChunk.ThinkingDelta(_) =>
-                                    lockedRef.set(true) *> winnerRef.set(Some(candidate))
-                                  case _ => IO.unit
-                              }
-                              .evalMap {
-                                case done: StreamChunk.Done =>
-                                  lockedRef.get.flatMap { locked =>
-                                    if locked then
-                                      // Fix the meta's providerId — adapters hardcode it (e.g., "openai"
-                                      // for any OpenAI-compatible provider). Use the actual providerId
-                                      // from the candidate so the frontend shows correct provider name.
-                                      val fixedMeta = done.meta.map(_.copy(providerId = candidate.providerId))
-                                      emptyTracker.resetOnSuccess(candidate.providerId, candidate.model) *>
-                                        IO.pure(
-                                          done.copy(meta = fixedMeta, contextWindow = Some(candidate.contextWindow))
-                                        )
-                                    else
-                                      IO.raiseError(
-                                        new RuntimeException(
-                                          s"Stream completed with no content (${candidate.providerId}/${candidate.model})"
+
+                          def tryCandidate(
+                            remaining: List[ModelCandidate],
+                            retriesLeft: Int = maxRetries,
+                            backoffMs: Long = Fallback.InitialBackoffMs
+                          ): fs2.Stream[IO, StreamChunk] =
+                            remaining match
+                              case Nil =>
+                                // All up candidates exhausted during this attempt —
+                                // cycle back through health check (will block if all Down)
+                                attemptWithHealthCheck
+                              case candidate :: rest =>
+                                // Cap thinking budget to fit within candidate's maxTokens.
+                                // Some providers (e.g. zhipu/glm-5.1 with maxTokens=32000) crash
+                                // when budget_tokens exceeds their limit.
+                                val cappedThinking = req.thinking.map { t =>
+                                  t.hcursor.downField("budget_tokens").as[Int] match
+                                    case Right(budget) if budget > candidate.maxTokens / 2 =>
+                                      // Cap thinking budget to half of maxTokens (leaving room for output)
+                                      t.deepMerge(
+                                        io.circe.Json.obj(
+                                          "budget_tokens" -> io.circe.Json.fromInt(candidate.maxTokens / 2)
                                         )
                                       )
-                                  }
-                                case other => IO.pure(other)
-                              }
-                            // Guard: if the stream completes but never emitted any content
-                            // (no Done chunk, no text/thinking/tool chunks), some providers
-                            // close the SSE connection without a terminal event. Without this
-                            // check, the empty response slips past sendStream's fallback and
-                            // only reaches AgentActor's retry — which lacks provider fallback.
-                              ++ fs2.Stream
-                                .eval(
-                                  lockedRef.get.flatMap { locked =>
-                                    if !locked then
-                                      IO.raiseError(
-                                        new RuntimeException(
-                                          s"Stream completed with no content (${candidate.providerId}/${candidate.model})"
-                                        )
-                                      )
-                                    else IO.unit
-                                  }
-                                )
-                                .drain)
-                              // PostEmptyRecovery: if empty completion with images on non-vision model,
-                              // strip images and retry same candidate before falling through to normal error handling.
-                              .handleErrorWith { err =>
-                                val isEmptyCompletion = err.getMessage != null &&
-                                  err.getMessage.contains("Stream completed with no content")
-                                if isEmptyCompletion then
-                                  fs2.Stream.eval(for
-                                    alreadyStripped <- imageStrippedRef.get
+                                    case _ => t
+                                }
+                                val stream = fs2.Stream.force(
+                                  (for
+                                    // PreSendChecker: strip images for non-vision models
+                                    // Also check runtime vision override from EmptyCompletionTracker
                                     msgs <- messagesRef.get
-                                  yield (alreadyStripped, msgs)).flatMap {
-                                    case (false, msgs) if hasImage(msgs) =>
-                                      // Check both config vision and runtime override
-                                      fs2.Stream.eval(emptyTracker.getRuntimeVision(candidate.providerId, candidate.model)).flatMap { runtimeVision =>
-                                        val effectiveVision = candidate.vision && runtimeVision.getOrElse(true)
-                                        if !effectiveVision then
-                                          // Strip images and retry same candidate
-                                          fs2.Stream.eval(for
-                                            _ <- imageStrippedRef.set(true)
-                                            _ <- messagesRef.set(stripImages(msgs))
-                                            _ <- lockedRef.set(false)
-                                            _ <- logger.warn(
-                                              s"PostEmptyRecovery: empty completion with image on non-vision model " +
-                                                s"${candidate.providerId}/${candidate.model}, stripping and retrying"
-                                            )
-                                          yield ()).drain ++ tryCandidate(candidate :: rest, maxRetries, Fallback.InitialBackoffMs)
-                                        else fs2.Stream.raiseError[IO](err)
-                                      }
-                                    case _ =>
-                                      fs2.Stream.raiseError[IO](err)
-                                  }
-                                else fs2.Stream.raiseError[IO](err)
-                              }
-                              .handleErrorWith { err =>
-                              // Phase 2: EmptyCompletionTracker + CapabilityMismatch classification
-                              val rawClassification = Fallback.classifyError(err)
-                              val isEmptyCompletion = err.getMessage != null &&
-                                err.getMessage.contains("Stream completed with no content")
-                              // For empty completions, record in tracker and check for capability mismatch
-                              val trackerIO = if isEmptyCompletion then
-                                for
-                                  msgs <- messagesRef.get
-                                  img = hasImage(msgs)
-                                  _ <- emptyTracker.onEmptyCompletion(candidate.providerId, candidate.model, img)
-                                yield img
-                              else IO.pure(false)
-
-                              fs2.Stream.eval(trackerIO).flatMap { hadImage =>
-                              // Override classification: empty completion with image on non-vision model
-                              // → CapabilityMismatch (Permanent, skip this provider)
-                              val classification =
-                                if isEmptyCompletion && hadImage && !candidate.vision then
-                                  rawClassification.copy(reason = FailoverReason.CapabilityMismatch)
-                                else rawClassification
-                              // Timeout needs special handling: even if partial content was
-                              // streamed (locked), we allow fallback to try the next provider.
-                              // Other errors with locked=true are propagated to avoid duplication.
-                              val isTimeout = classification.reason == FailoverReason.Timeout
-                              fs2.Stream.eval(lockedRef.get).flatMap { locked =>
-                                if locked && !isTimeout then fs2.Stream.eval(IO.raiseError(err))
-                                else
-                                  val resetLock = if isTimeout && locked then lockedRef.set(false) else IO.unit
-                                  val attempt = FallbackAttempt(
-                                    candidate.providerId,
-                                    candidate.model,
-                                    Some(classification.reason),
-                                    Some(classification.permanence),
-                                    0,
-                                    maxRetries - retriesLeft,
-                                    java.time.Instant.now().toString,
-                                    classification.message.orElse(Option(err.getMessage))
+                                    runtimeVision <- emptyTracker
+                                      .getRuntimeVision(candidate.providerId, candidate.model)
+                                    effectiveVision = candidate.vision && runtimeVision.getOrElse(true)
+                                    effectiveMessages =
+                                      if !effectiveVision && hasImage(msgs) then stripImages(msgs) else msgs
+                                    adapter <- registry.getAdapter(candidate.providerId)
+                                  yield adapter.sendMessageStream(
+                                    SendMessageParams(
+                                      effectiveMessages,
+                                      candidate.model,
+                                      req.tools,
+                                      Some(candidate.maxTokens),
+                                      cappedThinking,
+                                      req.systemStable,
+                                      req.systemDynamic,
+                                      Some(req.sessionId),
+                                      Some(req.agentId)
+                                    )
+                                  ))
+                                )
+                                (stream
+                                  // Per-provider two-phase watchdog: detects both
+                                  // dead connections (no first token) and mid-stream stalls.
+                                  // Applied per-provider so a timeout on one allows fallback.
+                                  .through(
+                                    inactivityTimeout(
+                                      Defaults.LlmFirstTokenTimeoutSec.seconds,
+                                      Defaults.LlmStreamInactivitySec.seconds
+                                    )
                                   )
-                                  val notify = onAttempt.traverse_(_.apply(attempt))
-                                  val downReason = classification.message
-                                    .orElse(Option(err.getMessage))
-                                    .getOrElse(classification.reason.toString)
-
-                                  classification.permanence match
-                                    case ErrorPermanence.Fatal =>
-                                      // Error affects all providers — abort entire stream
-                                      fs2.Stream.eval(
-                                        resetLock *> logger.warn(
-                                          s"Stream fatal: ${candidate.providerId}/${candidate.model} ${classification.reason} — aborting"
-                                        )
-                                          *> failureRef.update(_ :+ attempt)
-                                          *> notify
-                                      ) *> fs2.Stream.raiseError[IO](new FallbackExhaustedError(List(attempt)))
-                                    case ErrorPermanence.Permanent =>
-                                      fs2.Stream.eval(
-                                        resetLock *>
-                                          logger.warn(
-                                            s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
+                                  .evalTap { chunk =>
+                                    chunk match
+                                      case StreamChunk.TextDelta(_) | StreamChunk.ToolCallChunk(_) |
+                                          StreamChunk.ThinkingDelta(_) =>
+                                        lockedRef.set(true) *> winnerRef.set(Some(candidate))
+                                      case _ => IO.unit
+                                  }
+                                  .evalMap {
+                                    case done: StreamChunk.Done =>
+                                      lockedRef.get.flatMap { locked =>
+                                        if locked then
+                                          // Fix the meta's providerId — adapters hardcode it (e.g., "openai"
+                                          // for any OpenAI-compatible provider). Use the actual providerId
+                                          // from the candidate so the frontend shows correct provider name.
+                                          val fixedMeta = done.meta.map(_.copy(providerId = candidate.providerId))
+                                          emptyTracker.resetOnSuccess(candidate.providerId, candidate.model) *>
+                                            IO.pure(
+                                              done.copy(meta = fixedMeta, contextWindow = Some(candidate.contextWindow))
+                                            )
+                                        else
+                                          IO.raiseError(
+                                            new RuntimeException(
+                                              s"Stream completed with no content (${candidate.providerId}/${candidate.model})"
+                                            )
                                           )
-                                          *> failureRef.update(_ :+ attempt)
-                                          *> notify
-                                          *> healthMonitor.markDown(candidate.providerId, candidate.model, downReason)
-                                      ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
-                                    case ErrorPermanence.Transient =>
-                                      if retriesLeft > 0 && !isTimeout then
-                                        // Only retry same provider for non-timeout errors.
-                                        // Timeout means the provider is unresponsive — skip to next.
-                                        val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
-                                        val delay = math.min(backoffMs + jitter, Fallback.MaxBackoffMs)
-                                        fs2.Stream.eval(
-                                          resetLock *> notify *> logger.warn(
-                                            s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
-                                          ) *> IO.sleep(delay.millis)
-                                        ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
-                                      else
-                                        // Timeout or retries exhausted — try next provider
-                                        val skipMsg =
-                                          if isTimeout then "inactivity timeout, skipping to next provider"
-                                          else "retries exhausted"
-                                        fs2.Stream.eval(
-                                          resetLock *> logger.warn(
-                                            s"Stream fallback: ${candidate.providerId}/${candidate.model} $skipMsg"
+                                      }
+                                    case other => IO.pure(other)
+                                  }
+                                // Guard: if the stream completes but never emitted any content
+                                // (no Done chunk, no text/thinking/tool chunks), some providers
+                                // close the SSE connection without a terminal event. Without this
+                                // check, the empty response slips past sendStream's fallback and
+                                // only reaches AgentActor's retry — which lacks provider fallback.
+                                  ++ fs2.Stream
+                                    .eval(
+                                      lockedRef.get.flatMap { locked =>
+                                        if !locked then
+                                          IO.raiseError(
+                                            new RuntimeException(
+                                              s"Stream completed with no content (${candidate.providerId}/${candidate.model})"
+                                            )
                                           )
-                                            *> failureRef.update(_ :+ attempt)
-                                            *> notify
-                                            *> healthMonitor.markDown(candidate.providerId, candidate.model, downReason)
-                                        ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
-                                      end if
-                                  end match
-                                end if
-                              }
-                              }
-                            }
+                                        else IO.unit
+                                      }
+                                    )
+                                    .drain)
+                                  // PostEmptyRecovery: if empty completion with images on non-vision model,
+                                  // strip images and retry same candidate before falling through to normal error handling.
+                                  .handleErrorWith { err =>
+                                    val isEmptyCompletion = err.getMessage != null &&
+                                      err.getMessage.contains("Stream completed with no content")
+                                    if isEmptyCompletion then
+                                      fs2.Stream
+                                        .eval(for
+                                          alreadyStripped <- imageStrippedRef.get
+                                          msgs <- messagesRef.get
+                                        yield (alreadyStripped, msgs))
+                                        .flatMap {
+                                          case (false, msgs) if hasImage(msgs) =>
+                                            // Check both config vision and runtime override
+                                            fs2.Stream
+                                              .eval(
+                                                emptyTracker.getRuntimeVision(candidate.providerId, candidate.model)
+                                              )
+                                              .flatMap { runtimeVision =>
+                                                val effectiveVision = candidate.vision && runtimeVision.getOrElse(true)
+                                                if !effectiveVision then
+                                                  // Strip images and retry same candidate
+                                                  fs2.Stream
+                                                    .eval(for
+                                                      _ <- imageStrippedRef.set(true)
+                                                      _ <- messagesRef.set(stripImages(msgs))
+                                                      _ <- lockedRef.set(false)
+                                                      _ <- logger.warn(
+                                                        s"PostEmptyRecovery: empty completion with image on non-vision model " +
+                                                          s"${candidate.providerId}/${candidate.model}, stripping and retrying"
+                                                      )
+                                                    yield ())
+                                                    .drain ++ tryCandidate(
+                                                    candidate :: rest,
+                                                    maxRetries,
+                                                    Fallback.InitialBackoffMs
+                                                  )
+                                                else fs2.Stream.raiseError[IO](err)
+                                                end if
+                                              }
+                                          case _ =>
+                                            fs2.Stream.raiseError[IO](err)
+                                        }
+                                    else fs2.Stream.raiseError[IO](err)
+                                    end if
+                                  }
+                                  .handleErrorWith { err =>
+                                    // Phase 2: EmptyCompletionTracker + CapabilityMismatch classification
+                                    val rawClassification = Fallback.classifyError(err)
+                                    val isEmptyCompletion = err.getMessage != null &&
+                                      err.getMessage.contains("Stream completed with no content")
+                                    // For empty completions, record in tracker and check for capability mismatch
+                                    val trackerIO =
+                                      if isEmptyCompletion then
+                                        for
+                                          msgs <- messagesRef.get
+                                          img = hasImage(msgs)
+                                          _ <- emptyTracker.onEmptyCompletion(
+                                            candidate.providerId,
+                                            candidate.model,
+                                            img
+                                          )
+                                        yield img
+                                      else IO.pure(false)
 
-                      attemptWithHealthCheck
+                                    fs2.Stream.eval(trackerIO).flatMap { hadImage =>
+                                      // Override classification: empty completion with image on non-vision model
+                                      // → CapabilityMismatch (Permanent, skip this provider)
+                                      val classification =
+                                        if isEmptyCompletion && hadImage && !candidate.vision then
+                                          rawClassification.copy(reason = FailoverReason.CapabilityMismatch)
+                                        else rawClassification
+                                      // Timeout needs special handling: even if partial content was
+                                      // streamed (locked), we allow fallback to try the next provider.
+                                      // Other errors with locked=true are propagated to avoid duplication.
+                                      val isTimeout = classification.reason == FailoverReason.Timeout
+                                      fs2.Stream.eval(lockedRef.get).flatMap { locked =>
+                                        if locked && !isTimeout then fs2.Stream.eval(IO.raiseError(err))
+                                        else
+                                          val resetLock = if isTimeout && locked then lockedRef.set(false) else IO.unit
+                                          val attempt = FallbackAttempt(
+                                            candidate.providerId,
+                                            candidate.model,
+                                            Some(classification.reason),
+                                            Some(classification.permanence),
+                                            0,
+                                            maxRetries - retriesLeft,
+                                            java.time.Instant.now().toString,
+                                            classification.message.orElse(Option(err.getMessage))
+                                          )
+                                          val notify = onAttempt.traverse_(_.apply(attempt))
+                                          val downReason = classification.message
+                                            .orElse(Option(err.getMessage))
+                                            .getOrElse(classification.reason.toString)
+
+                                          classification.permanence match
+                                            case ErrorPermanence.Fatal =>
+                                              // Error affects all providers — abort entire stream
+                                              fs2.Stream.eval(
+                                                resetLock *> logger.warn(
+                                                  s"Stream fatal: ${candidate.providerId}/${candidate.model} ${classification.reason} — aborting"
+                                                )
+                                                  *> failureRef.update(_ :+ attempt)
+                                                  *> notify
+                                              ) *> fs2.Stream.raiseError[IO](new FallbackExhaustedError(List(attempt)))
+                                            case ErrorPermanence.Permanent =>
+                                              fs2.Stream.eval(
+                                                resetLock *>
+                                                  logger.warn(
+                                                    s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
+                                                  )
+                                                  *> failureRef.update(_ :+ attempt)
+                                                  *> notify
+                                                  *> healthMonitor
+                                                    .markDown(candidate.providerId, candidate.model, downReason)
+                                              ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
+                                            case ErrorPermanence.Transient =>
+                                              if retriesLeft > 0 && !isTimeout then
+                                                // Only retry same provider for non-timeout errors.
+                                                // Timeout means the provider is unresponsive — skip to next.
+                                                val jitter =
+                                                  java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
+                                                val delay = math.min(backoffMs + jitter, Fallback.MaxBackoffMs)
+                                                fs2.Stream.eval(
+                                                  resetLock *> notify *> logger.warn(
+                                                    s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
+                                                  ) *> IO.sleep(delay.millis)
+                                                ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
+                                              else
+                                                // Timeout or retries exhausted — try next provider
+                                                val skipMsg =
+                                                  if isTimeout then "inactivity timeout, skipping to next provider"
+                                                  else "retries exhausted"
+                                                fs2.Stream.eval(
+                                                  resetLock *> logger.warn(
+                                                    s"Stream fallback: ${candidate.providerId}/${candidate.model} $skipMsg"
+                                                  )
+                                                    *> failureRef.update(_ :+ attempt)
+                                                    *> notify
+                                                    *> healthMonitor
+                                                      .markDown(candidate.providerId, candidate.model, downReason)
+                                                ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
+                                              end if
+                                          end match
+                                        end if
+                                      }
+                                    }
+                                  }
+
+                          attemptWithHealthCheck
                         }
-                        }
+                      }
                     }
                   }
                 }

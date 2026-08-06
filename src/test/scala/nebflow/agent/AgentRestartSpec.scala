@@ -24,16 +24,31 @@ class AgentRestartSpec extends FunSuite:
   test("finds last tool call in message list") {
     val messages = List(
       Message(MessageRole.User, Left("do something")),
-      Message(MessageRole.Assistant, Right(List(
-        ContentBlock.Text("I'll read the file"),
-        ContentBlock.ToolUse("call-1", "Read", JsonObject("file_path" -> io.circe.Json.fromString("test.txt")))
-      ))),
-      Message(MessageRole.User, Right(List(
-        ContentBlock.ToolResult("call-1", "file content", Some(false))
-      ))),
-      Message(MessageRole.Assistant, Right(List(
-        ContentBlock.Text("done")
-      )))
+      Message(
+        MessageRole.Assistant,
+        Right(
+          List(
+            ContentBlock.Text("I'll read the file"),
+            ContentBlock.ToolUse("call-1", "Read", JsonObject("file_path" -> io.circe.Json.fromString("test.txt")))
+          )
+        )
+      ),
+      Message(
+        MessageRole.User,
+        Right(
+          List(
+            ContentBlock.ToolResult("call-1", "file content", Some(false))
+          )
+        )
+      ),
+      Message(
+        MessageRole.Assistant,
+        Right(
+          List(
+            ContentBlock.Text("done")
+          )
+        )
+      )
     )
     val lastToolUseIdx = messages.lastIndexWhere(hasToolUse)
     assertEquals(lastToolUseIdx, 1)
@@ -51,18 +66,38 @@ class AgentRestartSpec extends FunSuite:
   test("finds the correct tool when multiple tool calls exist") {
     val messages = List(
       Message(MessageRole.User, Left("task")),
-      Message(MessageRole.Assistant, Right(List(
-        ContentBlock.ToolUse("call-1", "Read", JsonObject.empty)
-      ))),
-      Message(MessageRole.User, Right(List(
-        ContentBlock.ToolResult("call-1", "content", Some(false))
-      ))),
-      Message(MessageRole.Assistant, Right(List(
-        ContentBlock.ToolUse("call-2", "Bash", JsonObject.empty)
-      ))),
-      Message(MessageRole.User, Right(List(
-        ContentBlock.ToolResult("call-2", "output", Some(true))
-      )))
+      Message(
+        MessageRole.Assistant,
+        Right(
+          List(
+            ContentBlock.ToolUse("call-1", "Read", JsonObject.empty)
+          )
+        )
+      ),
+      Message(
+        MessageRole.User,
+        Right(
+          List(
+            ContentBlock.ToolResult("call-1", "content", Some(false))
+          )
+        )
+      ),
+      Message(
+        MessageRole.Assistant,
+        Right(
+          List(
+            ContentBlock.ToolUse("call-2", "Bash", JsonObject.empty)
+          )
+        )
+      ),
+      Message(
+        MessageRole.User,
+        Right(
+          List(
+            ContentBlock.ToolResult("call-2", "output", Some(true))
+          )
+        )
+      )
     )
     val idx = messages.lastIndexWhere(hasToolUse)
     assertEquals(idx, 3)
@@ -71,12 +106,22 @@ class AgentRestartSpec extends FunSuite:
   test("truncation removes tool call and result") {
     val messages = List(
       Message(MessageRole.User, Left("task")),
-      Message(MessageRole.Assistant, Right(List(
-        ContentBlock.ToolUse("call-1", "Read", JsonObject.empty)
-      ))),
-      Message(MessageRole.User, Right(List(
-        ContentBlock.ToolResult("call-1", "content", Some(false))
-      )))
+      Message(
+        MessageRole.Assistant,
+        Right(
+          List(
+            ContentBlock.ToolUse("call-1", "Read", JsonObject.empty)
+          )
+        )
+      ),
+      Message(
+        MessageRole.User,
+        Right(
+          List(
+            ContentBlock.ToolResult("call-1", "content", Some(false))
+          )
+        )
+      )
     )
     val truncateIdx = 1
     val truncated = messages.take(truncateIdx)
@@ -85,10 +130,15 @@ class AgentRestartSpec extends FunSuite:
   }
 
   test("extracts tool name from ToolUse block") {
-    val msg = Message(MessageRole.Assistant, Right(List(
-      ContentBlock.Text("running tests"),
-      ContentBlock.ToolUse("call-1", "Bash", JsonObject("command" -> io.circe.Json.fromString("sbt test")))
-    )))
+    val msg = Message(
+      MessageRole.Assistant,
+      Right(
+        List(
+          ContentBlock.Text("running tests"),
+          ContentBlock.ToolUse("call-1", "Bash", JsonObject("command" -> io.circe.Json.fromString("sbt test")))
+        )
+      )
+    )
     assertEquals(toolNameOf(msg), "Bash")
   }
 
@@ -120,18 +170,31 @@ class AgentRestartSpec extends FunSuite:
   test("rollback + inject produces correct message structure") {
     val messages = List(
       Message(MessageRole.User, Left("task")),
-      Message(MessageRole.Assistant, Right(List(
-        ContentBlock.ToolUse("call-1", "Bash", JsonObject.empty)
-      ))),
-      Message(MessageRole.User, Right(List(
-        ContentBlock.ToolResult("call-1", "error output", Some(true))
-      )))
+      Message(
+        MessageRole.Assistant,
+        Right(
+          List(
+            ContentBlock.ToolUse("call-1", "Bash", JsonObject.empty)
+          )
+        )
+      ),
+      Message(
+        MessageRole.User,
+        Right(
+          List(
+            ContentBlock.ToolResult("call-1", "error output", Some(true))
+          )
+        )
+      )
     )
     val truncateIdx = messages.lastIndexWhere(hasToolUse) // = 1
     val truncated = messages.take(truncateIdx)
-    val supervisorMsg = Message(MessageRole.User, Left(
-      "[SUPERVISOR] Your last action (Bash) was rolled back. Do not repeat."
-    ))
+    val supervisorMsg = Message(
+      MessageRole.User,
+      Left(
+        "[SUPERVISOR] Your last action (Bash) was rolled back. Do not repeat."
+      )
+    )
     val result = truncated :+ supervisorMsg
     assertEquals(result.length, 2)
     assertEquals(result(0).role, MessageRole.User)

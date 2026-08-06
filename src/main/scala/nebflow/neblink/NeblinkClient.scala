@@ -17,9 +17,11 @@ case class NeblinkServerConfig(
   url: String, // e.g. "http://192.168.1.200:9090"
   networkId: String,
   secret: String,
-  /** Long-lived per-device credential (pairing-code enrollment). When present,
-    * the client authenticates via `/api/device/session` instead of the legacy
-    * shared-secret `/api/device/login`. */
+  /**
+   * Long-lived per-device credential (pairing-code enrollment). When present,
+   * the client authenticates via `/api/device/session` instead of the legacy
+   * shared-secret `/api/device/login`.
+   */
   deviceToken: Option[String] = None
 )
 
@@ -120,11 +122,13 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
     catch case _: Exception => Nil
   }
 
-  /** Login to NebLink Server. Stores session token. Returns initial peer list.
-    *
-    * If a per-device credential (`deviceToken`) is configured (pairing-code
-    * enrollment), authenticates via `/api/device/session`. Otherwise falls
-    * back to the legacy shared-secret `/api/device/login`. */
+  /**
+   * Login to NebLink Server. Stores session token. Returns initial peer list.
+   *
+   * If a per-device credential (`deviceToken`) is configured (pairing-code
+   * enrollment), authenticates via `/api/device/session`. Otherwise falls
+   * back to the legacy shared-secret `/api/device/login`.
+   */
   def login(
     deviceId: String,
     deviceName: String,
@@ -143,23 +147,31 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
       // Choose path + body based on whether we have a device credential.
       (path, body) = config.deviceToken match
         case Some(token) =>
-          ("/api/device/session",
-            Json.obj(
-              "networkId" -> config.networkId.asJson,
-              "deviceId" -> deviceId.asJson,
-              "deviceToken" -> token.asJson,
-              "endpoints" -> endpointJson.asJson
-            ).noSpaces)
+          (
+            "/api/device/session",
+            Json
+              .obj(
+                "networkId" -> config.networkId.asJson,
+                "deviceId" -> deviceId.asJson,
+                "deviceToken" -> token.asJson,
+                "endpoints" -> endpointJson.asJson
+              )
+              .noSpaces
+          )
         case None =>
-          ("/api/device/login",
-            Json.obj(
-              "networkId" -> config.networkId.asJson,
-              "secret" -> config.secret.asJson,
-              "deviceId" -> deviceId.asJson,
-              "deviceName" -> deviceName.asJson,
-              "platform" -> platform.asJson,
-              "endpoints" -> endpointJson.asJson
-            ).noSpaces)
+          (
+            "/api/device/login",
+            Json
+              .obj(
+                "networkId" -> config.networkId.asJson,
+                "secret" -> config.secret.asJson,
+                "deviceId" -> deviceId.asJson,
+                "deviceName" -> deviceName.asJson,
+                "platform" -> platform.asJson,
+                "endpoints" -> endpointJson.asJson
+              )
+              .noSpaces
+          )
       result <- sendRequest("POST", s"${config.url}$path", body, None).flatMap {
         case Right(respBody) =>
           decode[LoginResponse](respBody) match

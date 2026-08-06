@@ -35,7 +35,9 @@ class EntityLoaderSpec extends CatsEffectSuite:
     for
       _ <- reset()
       // Directory is "consolidator" but agent.json says "memory-consolidator"
-      _ <- IO(writeAgent(tempRoot / "flows" / "memory-consolidation" / "agents" / "consolidator", Some("memory-consolidator")))
+      _ <- IO(
+        writeAgent(tempRoot / "flows" / "memory-consolidation" / "agents" / "consolidator", Some("memory-consolidator"))
+      )
       result <- EntityLoader.findAgentByName("memory-consolidator")
     yield
       assert(result.isDefined, "flow agent should be found by agent.json name, not dir name")

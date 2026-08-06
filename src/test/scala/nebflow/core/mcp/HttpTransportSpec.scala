@@ -25,19 +25,21 @@ class HttpTransportSpec extends FunSuite:
   private def withServer(handler: Handler)(test: HttpTransport => Unit): Unit =
     requestLog.clear()
     val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
-    server.createContext("/", exchange =>
-      val body = new String(exchange.getRequestBody.readAllBytes(), "UTF-8")
-      val headers = scala.collection.mutable.Map[String, String]()
-      exchange.getRequestHeaders.forEach { (k, vs) => vs.forEach(v => headers(k.toLowerCase) = v) }
-      requestLog.add((exchange.getRequestMethod, body, headers.toMap))
-      val (status, contentType, respBody, extraHeaders) =
-        handler(exchange.getRequestMethod, body, headers.toMap)
-      extraHeaders.foreach { case (k, v) => exchange.getResponseHeaders.add(k, v) }
-      exchange.getResponseHeaders.add("Content-Type", contentType)
-      val bytes = respBody.getBytes("UTF-8")
-      exchange.sendResponseHeaders(status, bytes.length)
-      exchange.getResponseBody.write(bytes)
-      exchange.close()
+    server.createContext(
+      "/",
+      exchange =>
+        val body = new String(exchange.getRequestBody.readAllBytes(), "UTF-8")
+        val headers = scala.collection.mutable.Map[String, String]()
+        exchange.getRequestHeaders.forEach { (k, vs) => vs.forEach(v => headers(k.toLowerCase) = v) }
+        requestLog.add((exchange.getRequestMethod, body, headers.toMap))
+        val (status, contentType, respBody, extraHeaders) =
+          handler(exchange.getRequestMethod, body, headers.toMap)
+        extraHeaders.foreach { case (k, v) => exchange.getResponseHeaders.add(k, v) }
+        exchange.getResponseHeaders.add("Content-Type", contentType)
+        val bytes = respBody.getBytes("UTF-8")
+        exchange.sendResponseHeaders(status, bytes.length)
+        exchange.getResponseBody.write(bytes)
+        exchange.close()
     )
     server.start()
     val port = server.getAddress.getPort
@@ -46,6 +48,8 @@ class HttpTransportSpec extends FunSuite:
     finally
       transport.close().unsafeRunSync()
       server.stop(0)
+
+  end withServer
 
   private def req(id: Int, method: String) =
     JsonRpcRequest(id = Json.fromInt(id), method = method, params = None)
@@ -69,7 +73,12 @@ class HttpTransportSpec extends FunSuite:
 
   test("JSON-RPC error response is surfaced"):
     withServer { (_, _, _) =>
-      (200, "application/json", """{"jsonrpc":"2.0","id":5,"error":{"code":-32601,"message":"Method not found"}}""", Map.empty)
+      (
+        200,
+        "application/json",
+        """{"jsonrpc":"2.0","id":5,"error":{"code":-32601,"message":"Method not found"}}""",
+        Map.empty
+      )
     } { transport =>
       val response = transport.send(req(5, "nope")).unsafeRunSync()
       assertEquals(response.error.map(_.code), Some(-32601))

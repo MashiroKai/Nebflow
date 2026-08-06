@@ -66,8 +66,7 @@ object ToolLoader:
       val watchService = java.nio.file.FileSystems.getDefault.newWatchService()
       val dirs = globalToolsDir() ++ existingLayerToolsDirs()
       dirs.foreach { dir =>
-        if !java.nio.file.Files.exists(dir.toIO.toPath) then
-          java.nio.file.Files.createDirectories(dir.toIO.toPath)
+        if !java.nio.file.Files.exists(dir.toIO.toPath) then java.nio.file.Files.createDirectories(dir.toIO.toPath)
         dir.toIO.toPath.register(
           watchService,
           java.nio.file.StandardWatchEventKinds.ENTRY_CREATE,
@@ -75,7 +74,9 @@ object ToolLoader:
           java.nio.file.StandardWatchEventKinds.ENTRY_DELETE
         )
       }
-      logger.info(s"Watching ${dirs.size} tool config director${if dirs.size == 1 then "y" else "ies"}: ${dirs.map(_.toString).mkString(", ")}")
+      logger.info(
+        s"Watching ${dirs.size} tool config director${if dirs.size == 1 then "y" else "ies"}: ${dirs.map(_.toString).mkString(", ")}"
+      )
       while true do
         val key = watchService.take()
         var hasJsonChange = false
@@ -143,7 +144,11 @@ object ToolLoader:
    * are the team/flow scope tools dirs already loaded separately by loadAll().
    * Configs are tagged layer "agent"; scope is the path relative to the data root.
    */
-  private def loadNestedTools(baseDir: os.Path, layer: String, excludeDirect: Boolean = false): IO[List[(ExternalToolConfig, os.Path)]] =
+  private def loadNestedTools(
+    baseDir: os.Path,
+    layer: String,
+    excludeDirect: Boolean = false
+  ): IO[List[(ExternalToolConfig, os.Path)]] =
     IO.blocking {
       if !os.exists(baseDir) then Nil
       else
@@ -190,7 +195,8 @@ object ToolLoader:
           if os.exists(jsonFile) then List((jsonFile, subDir)) else Nil
         }
         // Flat layout (legacy): dir/*.json
-        val flatConfigs = os.list(dir)
+        val flatConfigs = os
+          .list(dir)
           .filter(f => f.last.endsWith(".json") && os.isFile(f))
           .map(f => (f, dir))
         subDirConfigs.toList ++ flatConfigs.toList
@@ -202,7 +208,8 @@ object ToolLoader:
               // Resolve $TOOL_DIR at load time to the directory holding this
               // config file, so commands can reference sibling resources, e.g.
               //   "command": "node $TOOL_DIR/deploy.cjs"
-              val resolved = config.withLayer(layer, scope)
+              val resolved = config
+                .withLayer(layer, scope)
                 .copy(command = config.command.replace("$TOOL_DIR", sourceDir.toString))
               IO.pure(Some((resolved, sourceDir)))
             case Left(err) =>
@@ -233,4 +240,5 @@ object ToolLoader:
           merged.update(cfg.name, entry)
     }
     merged.values.toList
+  end mergeByPriority
 end ToolLoader

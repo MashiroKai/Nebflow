@@ -197,7 +197,8 @@ object StdioTransport:
     }
 end StdioTransport
 
-/** HTTP transport — Streamable HTTP (MCP 2025-06-18).
+/**
+ * HTTP transport — Streamable HTTP (MCP 2025-06-18).
  *
  * One POST per JSON-RPC message, `Accept: application/json, text/event-stream`.
  * The response is either a single JSON document (application/json) or an SSE
@@ -284,9 +285,7 @@ class HttpTransport(url: String, headers: Map[String, String]) extends McpTransp
       .split("\n\n")
       .toList
       .flatMap { block =>
-        block.linesIterator
-          .collect { case l if l.startsWith("data:") => l.drop("data:".length).trim }
-          .toList
+        block.linesIterator.collect { case l if l.startsWith("data:") => l.drop("data:".length).trim }.toList
       }
       .flatMap(line => parser.parse(line).toOption)
 
@@ -299,6 +298,8 @@ class HttpTransport(url: String, headers: Map[String, String]) extends McpTransp
         throw new RuntimeException(
           s"No JSON-RPC response in SSE stream (request id $requestId, ${events.size} event(s))"
         )
+
+  end parseSseResponse
 
   private def jsonToResponse(json: Json): JsonRpcResponse =
     val id = json.hcursor.downField("id").as[Json].getOrElse(Json.Null)
