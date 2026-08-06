@@ -245,7 +245,7 @@ object ContextRefresher:
   ): String =
     val agentMemory = teamName match
       case Some(tn) => MemoryStore.loadTeamAgentMemory(tn, agentName)
-      case None     => MemoryStore.loadAgentMemory(agentName)
+      case None => MemoryStore.loadAgentMemory(agentName)
 
     val sections = List(
       MemoryStore.loadUserMemory
@@ -309,9 +309,10 @@ object ContextRefresher:
       // Memory: only Nebula (standalone, name="Nebula") and team agents get memory.
       // Flow agents and other standalone agents (Coder/Explorer/etc) get no memory.
       teamNameForMemory <- globalDef.category match
-        case "team" => state.sessionId match
-          case Some(sid) => nebflow.core.flow.FlowMembership.flowOfSession(sid)
-          case None => IO.pure(None)
+        case "team" =>
+          state.sessionId match
+            case Some(sid) => nebflow.core.flow.FlowMembership.flowOfSession(sid)
+            case None => IO.pure(None)
         case _ => IO.pure(None)
       memoryBlock =
         if globalDef.category == "team" || globalDef.name == "Nebula" then
