@@ -232,25 +232,26 @@ object ContextRefresher:
   /**
    * Build a memory block string for system prompt injection.
    *
-   * Reads all memory levels and formats them into a single Markdown block:
-   *   - User memory    (~/.nebflow/User.md)                  — global, all agents
-   *   - Agent memory   (~/.nebflow/agents/<name>/memory.md)  — per agent
-   *   - Project memory (~/.nebflow/projects/<proj>/memory/<name>.md) — per project+agent
+   * Reads memory levels and formats them into a single Markdown block:
+   *   - User memory    (~/.nebflow/User.md)                              — global
+   *   - Agent memory   (~/.nebflow/agents/<name>/memory.md)               — Nebula
+   *     or (~/.nebflow/teams/<team>/agents/<name>/memory.md)              — Team agents
    *
    * Only levels that exist on disk are included.
    */
   def buildMemoryBlock(
     agentName: String,
-    projectMemory: Option[String] = None
+    teamName: Option[String] = None
   ): String =
+    val agentMemory = teamName match
+      case Some(tn) => MemoryStore.loadTeamAgentMemory(tn, agentName)
+      case None     => MemoryStore.loadAgentMemory(agentName)
+
     val sections = List(
       MemoryStore.loadUserMemory
         .map(content => s"## User Memory\n\n$content"),
-      MemoryStore
-        .loadAgentMemory(agentName)
-        .map(content => s"## Agent Memory\n\n$content"),
-      projectMemory
-        .map(content => s"## Project Memory\n\n$content")
+      agentMemory
+        .map(content => s"## Agent Memory\n\n$content")
     ).flatten
 
     if sections.isEmpty then ""
@@ -291,14 +292,6 @@ object ContextRefresher:
       projectRoot <- resolveProjectRoot(state.folderId, resources, globalDef.name)
       // Projects directory: ~/.nebflow/projects/<folderName>/
       projectsDir <- resolveProjectsDir(state.folderId, resources, globalDef.name)
-      // Load project-level agent memory (supplements global agent memory)
-      projectMem <- projectsDir match
-        case Some(dir) =>
-          IO.blocking {
-            val p = dir / "memory" / s"${globalDef.name}.md"
-            if os.exists(p) then Some(os.read(p).trim).filter(_.nonEmpty) else None
-          }
-        case None => IO.pure(None)
       // Load project rules from projects dir + folder rules (personal)
       projectRules <- projectsDir match
         case Some(dir) =>
@@ -313,10 +306,17 @@ object ContextRefresher:
       (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
       skillCatalog <- SkillService.buildSkillCatalog(state.execution.delegateCount)
       teamCatalog <- buildTeamCatalogForSession(state.sessionId)
-      memoryBlock = buildMemoryBlock(
-        globalDef.name,
-        projectMem
-      )
+      // Memory: only Nebula (standalone, name="Nebula") and team agents get memory.
+      // Flow agents and other standalone agents (Coder/Explorer/etc) get no memory.
+      teamNameForMemory <- globalDef.category match
+        case "team" => state.sessionId match
+          case Some(sid) => nebflow.core.flow.FlowMembership.flowOfSession(sid)
+          case None => IO.pure(None)
+        case _ => IO.pure(None)
+      memoryBlock =
+        if globalDef.category == "team" || globalDef.name == "Nebula" then
+          buildMemoryBlock(globalDef.name, teamNameForMemory)
+        else ""
     yield TurnContext(
       globalDef,
       systemPrefix,

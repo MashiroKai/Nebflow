@@ -14,8 +14,9 @@ import scala.jdk.CollectionConverters.*
  * Two-level memory store backed by Markdown files.
  *
  * Levels:
- *   - User:  ~/.nebflow/User.md                    (global, all eligible agents)
- *   - Agent: ~/.nebflow/agents/{name}/memory.md    (Nebula + team agents)
+ *   - User:  ~/.nebflow/User.md                              (global, all eligible agents)
+ *   - Agent: ~/.nebflow/agents/{name}/memory.md               (Nebula)
+ *   - Agent: ~/.nebflow/teams/{team}/agents/{name}/memory.md   (Team agents)
  *
  * Memory files are injected into the system prompt every turn by
  * ContextRefresher.buildMemoryBlock. Agents update them directly using Edit/Write.
@@ -31,6 +32,9 @@ object MemoryStore:
   def agentMemoryPath(agentName: String): os.Path =
     PathUtil.dataRoot / "agents" / agentName / "memory.md"
 
+  def teamAgentMemoryPath(teamName: String, agentName: String): os.Path =
+    PathUtil.dataRoot / "teams" / teamName / "agents" / agentName / "memory.md"
+
   // --- Mtime-cached file reads ---
 
   private def parseMemory(content: String): Option[String] =
@@ -44,6 +48,14 @@ object MemoryStore:
   private def getAgentCache(agentName: String): MtimeFileCache[Option[String]] =
     agentCaches.asScala.getOrElseUpdate(agentName, MtimeCache.file(agentMemoryPath(agentName), parseMemory))
 
+  private val teamAgentCaches = new ConcurrentHashMap[String, MtimeFileCache[Option[String]]]()
+
+  private def teamCacheKey(teamName: String, agentName: String): String = s"$teamName/$agentName"
+
+  private def getTeamAgentCache(teamName: String, agentName: String): MtimeFileCache[Option[String]] =
+    val key = teamCacheKey(teamName, agentName)
+    teamAgentCaches.asScala.getOrElseUpdate(key, MtimeCache.file(teamAgentMemoryPath(teamName, agentName), parseMemory))
+
   // --- Load (mtime-cached) — injected into system prompts ---
 
   def loadUserMemory: Option[String] =
@@ -51,6 +63,9 @@ object MemoryStore:
 
   def loadAgentMemory(agentName: String): Option[String] =
     getAgentCache(agentName).get.unsafeRunSync().flatten
+
+  def loadTeamAgentMemory(teamName: String, agentName: String): Option[String] =
+    getTeamAgentCache(teamName, agentName).get.unsafeRunSync().flatten
 
   // --- Save (called from WS routes / Edit-Write tools, invalidates cache) ---
 
@@ -63,6 +78,9 @@ object MemoryStore:
   def saveAgentMemory(agentName: String, content: String): IO[Unit] =
     saveFile(agentMemoryPath(agentName), content, () => getAgentCache(agentName).invalidate)
 
+  def saveTeamAgentMemory(teamName: String, agentName: String, content: String): IO[Unit] =
+    saveFile(teamAgentMemoryPath(teamName, agentName), content, () => getTeamAgentCache(teamName, agentName).invalidate)
+
   // --- Cache invalidation ---
 
   def invalidateUserCache(): Unit =
@@ -70,6 +88,9 @@ object MemoryStore:
 
   def invalidateAgentCache(agentName: String): Unit =
     getAgentCache(agentName).invalidate.unsafeRunSync()
+
+  def invalidateTeamAgentCache(teamName: String, agentName: String): Unit =
+    getTeamAgentCache(teamName, agentName).invalidate.unsafeRunSync()
 
   // --- Preview (first non-heading, non-empty line, max 80 chars) ---
 
@@ -89,6 +110,7 @@ object MemoryStore:
 
   def userPreview: Option[String] = preview(userMemoryPath)
   def agentPreview(agentName: String): Option[String] = preview(agentMemoryPath(agentName))
+  def teamAgentPreview(teamName: String, agentName: String): Option[String] = preview(teamAgentMemoryPath(teamName, agentName))
 
   // --- Exists check ---
 
@@ -97,5 +119,6 @@ object MemoryStore:
 
   def userExists: Boolean = fileExists(userMemoryPath)
   def agentExists(agentName: String): Boolean = fileExists(agentMemoryPath(agentName))
+  def teamAgentExists(teamName: String, agentName: String): Boolean = fileExists(teamAgentMemoryPath(teamName, agentName))
 
 end MemoryStore
