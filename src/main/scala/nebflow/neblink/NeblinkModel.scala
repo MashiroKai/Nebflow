@@ -18,7 +18,8 @@ case class DeviceIdentity(
   platform: String,
   deviceSecret: String = "",
   capabilities: Map[String, String] = Map.empty,
-  userDescription: String = ""
+  userDescription: String = "",
+  avatarUrl: Option[String] = None
 )
 
 object DeviceIdentity:
@@ -87,7 +88,7 @@ end DeviceIdentity
 // ===== Device Discovery Info =====
 
 /**
- * Device info exchanged during Tailscale discovery (returned by GET /api/neblink/discover).
+ * Device info exchanged during NebLink discovery (returned by GET /api/neblink/discover).
  *
  *  Note: userDescription is intentionally NOT included — descriptions are purely local,
  *  never exchanged between devices. See NeblinkService.handleAnnounce.
@@ -138,7 +139,7 @@ end PeerInfo
 case class NeblinkConfig(
   enabled: Boolean = false,
   syncIntervalSec: Int = 300,
-  coordinator: Option[NebLinkServerConfig] = None
+  neblinkServer: Option[NeblinkServerConfig] = None
 )
 
 object NeblinkConfig:
@@ -148,8 +149,12 @@ object NeblinkConfig:
     for
       enabled <- c.downField("enabled").as[Option[Boolean]].map(_.getOrElse(false))
       syncIntervalSec <- c.downField("syncIntervalSec").as[Option[Int]].map(_.getOrElse(300))
-      coordinator <- c.downField("coordinator").as[Option[NebLinkServerConfig]]
-    yield NeblinkConfig(enabled, syncIntervalSec, coordinator)
+      // Backward compat: try "neblinkServer" first, fall back to "coordinator"
+      neblinkServer <- c.downField("neblinkServer").as[Option[NeblinkServerConfig]].flatMap {
+        case Some(config) => Right(Some(config))
+        case None => c.downField("coordinator").as[Option[NeblinkServerConfig]]
+      }
+    yield NeblinkConfig(enabled, syncIntervalSec, neblinkServer)
   }
 
   private val configPath = PathUtil.dataRoot / "neblink" / "config.json"

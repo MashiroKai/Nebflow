@@ -277,6 +277,16 @@ Git safety:
       else if lines.length == 1 then lines.head
       else s"${lines.length} lines of output"
 
+  // ── Git branch change detection ──────────────────────────────────────
+  // Commands that may change the current branch. After such commands,
+  // we reset the agent's tracked branch so the next refreshTurn re-detects
+  // silently (first detection = no notification) instead of falsely
+  // alarming about an "external" branch change.
+  private val GitBranchChangeRe = """\bgit\s+(checkout|switch|rebase|merge|cherry-pick|worktree\s+add)\b""".r
+
+  private def isGitBranchChange(command: String): Boolean =
+    GitBranchChangeRe.findFirstIn(command).isDefined
+
   // ── Pipe truncation handling ──────────────────────────────────────────
   // `cmd | tail -N` causes tail to buffer ALL output until EOF, so the stuck
   // detector sees zero output lines even though the real command is printing.
@@ -367,37 +377,47 @@ Git safety:
               )
             )
           else
-            ShellSession.forSession(sessionId).flatMap { shell =>
-              if background then
-                val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
-                val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
-                val bgDescription = desc.getOrElse(firstLine)
-                for
-                  jobId <- IO.randomUUID.map(_.toString.take(8))
-                  onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN)
-                  _ <- shell.executeBackground(actualCommand, desc, onComplete, onHeartbeat, Some(jobId))
-                  _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
-                yield Right(
-                  s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
-                )
-              else if ctx.isRemoteExec then
-                // Remote-exec: run synchronously without auto-background.
-                // The caller (another Nebflow instance via HTTP) manages the
-                // lifecycle — auto-background here would return a useless
-                // "[moved to background]" message instead of the real output.
-                val remoteTimeout = explicitTimeoutMs.getOrElse(DEFAULT_TIMEOUT).millis
-                shell
-                  .execute(actualCommand, remoteTimeout)
-                  .attempt
-                  .map {
-                    case Right(pr) => formatResult(pr, desc, tailN)
-                    case Left(_: TimeoutException) =>
-                      Left(ToolError(s"[Command timed out after ${remoteTimeout.toMillis}ms]"))
-                    case Left(e) =>
-                      Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
-                  }
-              else executeForegroundWithAutoBackground(shell, actualCommand, explicitTimeoutMs, desc, ctx, tailN)
-            }
+            ShellSession
+              .forSession(sessionId)
+              .flatMap { shell =>
+                if background then
+                  val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
+                  val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
+                  val bgDescription = desc.getOrElse(firstLine)
+                  for
+                    jobId <- IO.randomUUID.map(_.toString.take(8))
+                    onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN)
+                    _ <- shell.executeBackground(actualCommand, desc, onComplete, onHeartbeat, Some(jobId))
+                    _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
+                  yield Right(
+                    s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
+                  )
+                else if ctx.isRemoteExec then
+                  // Remote-exec: run synchronously without auto-background.
+                  // The caller (another Nebflow instance via HTTP) manages the
+                  // lifecycle — auto-background here would return a useless
+                  // "[moved to background]" message instead of the real output.
+                  val remoteTimeout = explicitTimeoutMs.getOrElse(DEFAULT_TIMEOUT).millis
+                  shell
+                    .execute(actualCommand, remoteTimeout)
+                    .attempt
+                    .map {
+                      case Right(pr) => formatResult(pr, desc, tailN)
+                      case Left(_: TimeoutException) =>
+                        Left(ToolError(s"[Command timed out after ${remoteTimeout.toMillis}ms]"))
+                      case Left(e) =>
+                        Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
+                    }
+                else executeForegroundWithAutoBackground(shell, actualCommand, explicitTimeoutMs, desc, ctx, tailN)
+              }
+              .flatTap { result =>
+                // After git branch-changing commands, reset branch tracking so the
+                // next refreshTurn re-detects silently (no false notification).
+                // Harmless if the command failed — branch didn't change, re-detect = same.
+                if isGitBranchChange(actualCommand) && result.isRight then
+                  ctx.agentActorRef.fold(IO.unit)(ref => ref ! AgentCommand.UpdateGitBranch(None))
+                else IO.unit
+              }
           end if
     end match
   end call
@@ -662,6 +682,8 @@ Git safety:
       val idleMs = now - health.lastActivityMs.get()
       val runningMs = now - health.startedAtMs.get()
       val lines = health.outputLineCount.get()
+      val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
+      val description = desc.getOrElse(firstLine)
 
       // Log if idle for a while (possible stuck indicator)
       val logStuck =
@@ -678,6 +700,7 @@ Git safety:
             "type" -> "backgroundTaskUpdate".asJson,
             "sessionId" -> ctx.sessionId.asJson,
             "taskId" -> jobId.asJson,
+            "description" -> description.asJson,
             "status" -> "running".asJson,
             "heartbeat" -> io.circe.Json.obj(
               "alive" -> alive.asJson,

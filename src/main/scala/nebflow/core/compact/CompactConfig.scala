@@ -14,6 +14,8 @@ case class CompactConfig(
   compactionRetryDelayMs: Int = 30000,
   // Emergency truncation: max messages to keep when compaction fails repeatedly
   emergencyKeepMessages: Int = 20,
+  // Emergency: wire up emergencyClean as circuit breaker fallback
+  emergencyAutoFallback: Boolean = true,
   // FastMicroCompact: cache TTL in minutes — only fire when cache is cold
   microCacheTtlMinutes: Int = 120,
   // FastMicroCompact: how many recent tool results to keep untouched

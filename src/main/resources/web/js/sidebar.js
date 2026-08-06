@@ -2,16 +2,16 @@
 
 import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
 import { sendWs, onMessage } from './ws.js';
-import { showAgentModal, startInlineNewSession, showBatchDeleteModal } from './modal.js';
+import { showAgentModal, showBatchDeleteModal } from './modal.js';
 import { renderMarkdownWithMath, smartScroll, stopSpinner } from './utils.js';
 import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
-import { refreshScheduledTasks } from './scheduled-task.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
+import { preloadModelCapabilities, renderVisionBadge, getVision, updateVision } from './modelCapabilities.js';
 
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
@@ -109,10 +109,27 @@ export function clearActiveFolder() {
 }
 
 // ---------- Panel Switching ----------
-function showPanel(tab) {
+export function showPanel(tab) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const panel = document.getElementById('panel-' + tab);
   if (panel) panel.classList.add('active');
+}
+
+/**
+ * Open the Settings panel: switch view, fetch fresh config, and render.
+ * Shared by the sidebar's back navigation and the Activity Bar settings button
+ * so both trigger identical behavior.
+ */
+export function openSettingsPanel() {
+  showPanel('settings');
+  sendWs({type: 'getConfig'});
+  renderSettings();
+}
+
+/** Return whether the settings panel is currently shown. */
+export function isSettingsPanelActive() {
+  const panel = document.getElementById('panel-settings');
+  return !!panel && panel.classList.contains('active');
 }
 
 // ---------- Session Switching ----------
@@ -145,6 +162,14 @@ function switchToSession(sessionId) {
   restoreInputDraft(sessionId);
   clearMemoryCache();
 
+  // Restore folder context: highlight the session's parent folder
+  const session = (state.sessions || []).find(s => s.id === sessionId);
+  if (session?.folderId) {
+    setActiveFolder(session.folderId);
+  } else {
+    clearActiveFolder();
+  }
+
   // Clear unread for the newly active session
   state.unreadSessions.delete(sessionId);
   state.markedUnreadSessions.delete(sessionId);
@@ -163,19 +188,19 @@ function switchToSession(sessionId) {
 }
 
 export function initNavTabs() {
-  // New layout: settings button in sessions panel header
-  const settingsBtn = document.getElementById('settings-btn');
-  if (settingsBtn) {
-    settingsBtn.addEventListener('click', () => {
-      showPanel('settings');
-      sendWs({type: 'getConfig'});
-      renderSettings();
-    });
-  }
-
+  // Settings button now lives in the Activity Bar; its handler is wired in
+  // activityBar.js (which calls openSettingsPanel). Here we keep the back
+  // navigation from the Settings panel to the Sessions panel.
   const settingsBackBtn = document.getElementById('settings-back-btn');
   if (settingsBackBtn) {
     settingsBackBtn.addEventListener('click', () => {
+      showPanel('sessions');
+    });
+  }
+
+  const agentsBackBtn = document.getElementById('agents-back-btn');
+  if (agentsBackBtn) {
+    agentsBackBtn.addEventListener('click', () => {
       showPanel('sessions');
     });
   }
@@ -420,28 +445,6 @@ export function renderSettings() {
       <button class="cfg-btn cfg-btn-add" id="btn-add-provider">${t('settings.addProvider')}</button>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">${t('settings.modelChain')}</div>
-      <div class="cfg-form-group">
-        <label class="cfg-label">${t('settings.defaultModel')}</label>
-        <select class="cfg-select" id="cfg-default-model">
-          <option value="">${t('settings.selectPlaceholder')}</option>
-          ${allModels.map(m => `<option value="${m.ref}" ${m.ref === defaultModel ? 'selected' : ''}>${m.label}</option>`).join('')}
-        </select>
-      </div>
-      <div class="cfg-form-group">
-        <label class="cfg-label">${t('settings.fallbackModels')}</label>
-        <div id="cfg-fallback-list" class="cfg-tag-list">
-          ${fallbacks.map((f, i) => `
-            <span class="cfg-tag" data-idx="${i}" data-fallback="${escapeHtml(f)}">${escapeHtml(f)} <span class="cfg-tag-remove" data-idx="${i}">×</span></span>
-          `).join('')}
-        </div>
-        <select class="cfg-select cfg-select-sm" id="cfg-add-fallback">
-          <option value="">${t('settings.addFallback')}</option>
-          ${allModels.filter(m => m.ref !== defaultModel && !fallbacks.includes(m.ref)).map(m => `<option value="${m.ref}">${m.label}</option>`).join('')}
-        </select>
-      </div>
-    </div>
-    <div class="settings-section">
       <div class="settings-section-title">${t('settings.mcpServers')}</div>
       <div id="mcp-server-list">
         ${mcpServers.map(s => renderMcpServerCard(s.id, s.enabled)).join('')}
@@ -470,7 +473,7 @@ export function renderSettings() {
       <div class="settings-section-title">${t('settings.about')}</div>
       <div class="about-info">
         <div>Nebflow v${state.serverVersion || '...'}</div>
-        <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.dom.connEl.classList.contains('off') ? '#f44336' : '#4caf50'}">${state.dom.connEl.classList.contains('off') ? t('settings.disconnected') : t('settings.connected')}</span></div>
+        <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.connected ? '#4caf50' : '#f44336'}">${state.connected ? t('settings.connected') : t('settings.disconnected')}</span></div>
         <div style="margin-top:10px">
           <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>
           <span id="update-status" style="margin-left:8px;font-size:12px;color:var(--color-text-secondary)"></span>
@@ -484,6 +487,17 @@ export function renderSettings() {
 
   bindSettingsEvents(content, cfg, allModels);
   bindNeblinkEvents(() => renderSettings());
+
+  // Pre-fetch model capabilities, then refresh badges on provider cards
+  preloadModelCapabilities(() => {
+    const providerList = document.getElementById('provider-list');
+    if (providerList) {
+      providerList.querySelectorAll('.cfg-model-vision').forEach(el => {
+        const ref = el.closest('.cfg-model-row')?.dataset.modelRef;
+        if (ref) el.innerHTML = renderVisionBadge(ref);
+      });
+    }
+  });
 
   // Refresh neblink peers periodically while settings panel is open
   const refreshNeblink = () => {
@@ -504,6 +518,14 @@ export function renderSettings() {
 
 function renderProviderCard(name, p) {
   const modelCount = (p.models || []).length;
+  const modelsHtml = (p.models || []).map(m => {
+    const ref = `${name}/${m.id}`;
+    return `<div class="cfg-model-row" data-model-ref="${escapeHtml(ref)}">
+      <span class="cfg-model-name">${escapeHtml(m.id)}</span>
+      <div class="cfg-model-vision">${renderVisionBadge(ref)}</div>
+    </div>`;
+  }).join('');
+
   return `
     <div class="cfg-card" data-provider="${escapeHtml(name)}">
       <div class="cfg-card-header">
@@ -514,6 +536,7 @@ function renderProviderCard(name, p) {
         <span class="cfg-card-badge">${escapeHtml((p.protocol || '').toUpperCase())}</span>
         <span class="cfg-card-sub">${modelCount} model${modelCount !== 1 ? 's' : ''}</span>
       </div>
+      ${modelsHtml ? `<div class="cfg-model-list">${modelsHtml}</div>` : ''}
     </div>`;
 }
 
@@ -606,14 +629,14 @@ function bindSettingsEvents(content, cfg, allModels) {
     const name = card.dataset.provider;
     card.querySelector('.cfg-card-remove')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (!confirm(t('provider.removeConfirm', { name }))) return;
-      // Use null instead of delete — backend mergeConfig treats null as explicit deletion
-      state.parsedConfig.llm.providers[name] = null;
-      // Clean up model chain references to the removed provider
-      cleanModelChainForProvider(name);
-      state.configDirty = true;
-      flushConfigToServer();
-      renderSettings();
+      window.__showConfirm?.('Remove Provider', t('provider.removeConfirm', { name }), () => {
+        state.parsedConfig.llm.providers[name] = null;
+        // Clean up model chain references to the removed provider
+        cleanModelChainForProvider(name);
+        state.configDirty = true;
+        flushConfigToServer();
+        renderSettings();
+      });
     });
     card.addEventListener('click', () => {
       const p = state.parsedConfig.llm.providers[name];
@@ -631,67 +654,7 @@ function bindSettingsEvents(content, cfg, allModels) {
     });
   });
 
-  // --- Model chain ---
-  document.getElementById('cfg-default-model')?.addEventListener('change', function() {
-    if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}, model: {default: ''}};
-    if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {default: '', fallbacks: []};
-    const oldDefault = state.parsedConfig.llm.model.default || '';
-    const newDefault = this.value;
-    if (newDefault === oldDefault) return;
-
-    const fallbacks = state.parsedConfig.llm.model.fallbacks || [];
-
-    // Auto-adjust fallbacks:
-    // 1. Remove the new default from fallbacks (it's now the primary)
-    // 2. Add the old default to fallbacks (becomes a fallback option)
-    let newFallbacks = fallbacks.filter(f => f !== newDefault);
-    if (oldDefault && oldDefault !== newDefault && !newFallbacks.includes(oldDefault)) {
-      newFallbacks.push(oldDefault);
-    }
-
-    state.parsedConfig.llm.model.default = newDefault;
-    state.parsedConfig.llm.model.fallbacks = newFallbacks;
-    state.configDirty = true;
-    flushConfigToServer();
-    renderSettings();
-  });
-
-  content.querySelectorAll('.cfg-tag-remove').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const idx = parseInt(btn.dataset.idx);
-      state.parsedConfig.llm.model.fallbacks.splice(idx, 1);
-      state.configDirty = true;
-      flushConfigToServer();
-      renderSettings();
-    });
-  });
-
-  document.getElementById('cfg-add-fallback')?.addEventListener('change', function() {
-    if (!this.value) return;
-    if (!state.parsedConfig.llm.model.fallbacks) state.parsedConfig.llm.model.fallbacks = [];
-    if (!state.parsedConfig.llm.model.fallbacks.includes(this.value)) {
-      state.parsedConfig.llm.model.fallbacks.push(this.value);
-      state.configDirty = true;
-      flushConfigToServer();
-    }
-  });
-
-  // --- Fallback drag-and-drop reorder (mouse events, no HTML5 DnD) ---
-  const fallbackList = document.getElementById('cfg-fallback-list');
-  if (fallbackList) {
-    fallbackList.querySelectorAll('.cfg-tag').forEach(tag => {
-      tag.addEventListener('mousedown', (e) => {
-        if (e.button !== 0 || e.target.closest('.cfg-tag-remove')) return;
-        e.preventDefault();
-        _fallbackDrag = {
-          tag, idx: parseInt(tag.dataset.idx),
-          startX: e.clientX, startY: e.clientY,
-          active: false, clone: null, targetTag: null
-        };
-      });
-    });
-  }
+  // Model chain is now edited via the input-bar model picker (modelPicker.js).
 
   // --- MCP Servers toggle ---
   content.querySelectorAll('.cfg-toggle[data-mcp]').forEach(btn => {
@@ -719,7 +682,7 @@ function bindSettingsEvents(content, cfg, allModels) {
       JSON.parse(cfg);
       sendWs({type: 'updateConfig', config: cfg});
     } catch(e) {
-      alert('Invalid JSON: ' + e.message);
+      window.__showToast?.('Invalid JSON: ' + e.message, 'error');
     }
   });
 
@@ -825,7 +788,10 @@ onMessage('error', (data) => {
 function showProviderModal(existingName, existingData, onSave) {
   const isEdit = !!existingName;
   const p = existingData || {baseUrl: '', apiKey: '', protocol: 'anthropic', models: []};
-  const initialModels = p.models.length > 0 ? p.models : [{id: '', maxTokens: 131072, contextWindow: 200000}];
+  const initialModels = p.models.length > 0 ? p.models.map(m => ({
+    ...m,
+    vision: getVision(`${existingName || ''}/${m.id}`)
+  })) : [{id: '', maxTokens: 131072, contextWindow: 200000, vision: false}];
 
   showModal({
     title: isEdit ? t('provider.edit', { name: existingName }) : t('provider.add'),
@@ -838,16 +804,20 @@ function showProviderModal(existingName, existingData, onSave) {
     ],
     onConfirm(values) {
       const name = values.name.trim();
-      if (!name) return alert(t('provider.idRequired'));
-      if (/\s/.test(name)) return alert(t('provider.noSpaces'));
+      if (!name) { window.__showToast?.(t('provider.idRequired'), 'error'); return; }
+      if (/\s/.test(name)) { window.__showToast?.(t('provider.noSpaces'), 'error'); return; }
       let baseUrl = values.baseUrl.trim();
-      if (!baseUrl) return alert(t('provider.baseUrlRequired'));
+      if (!baseUrl) { window.__showToast?.(t('provider.baseUrlRequired'), 'error'); return; }
       // Auto-add trailing slash
       if (!baseUrl.endsWith('/')) baseUrl += '/';
       const apiKey = values.apiKey.trim() || '***';
-      if (!isEdit && apiKey === '***') return alert(t('provider.keyRequired'));
+      if (!isEdit && apiKey === '***') { window.__showToast?.(t('provider.keyRequired'), 'error'); return; }
       const validModels = values.models.filter(m => m.id && m.id.trim());
-      if (validModels.length === 0) return alert(t('provider.modelRequired'));
+      if (validModels.length === 0) { window.__showToast?.(t('provider.modelRequired'), 'error'); return; }
+      // Persist vision flags to models.json via capability API
+      validModels.forEach(m => {
+        updateVision({id: `${name}/${m.id}`, capabilities: []}, m.vision);
+      });
       onSave(name, {
         baseUrl,
         apiKey,
@@ -938,6 +908,7 @@ function showModal({title, fields, onConfirm}) {
           id,
           maxTokens: parseInt(row.querySelector('.cfg-model-max').value) || 131072,
           contextWindow: parseInt(row.querySelector('.cfg-model-ctx').value) || 200000,
+          vision: row.querySelector('.cfg-model-vision-cb').checked,
         });
       });
     }
@@ -950,7 +921,9 @@ function renderModelRowContent(m) {
   const id = m ? escapeHtml(m.id) : '';
   const max = m ? m.maxTokens : '';
   const ctx = m ? m.contextWindow : '';
+  const visionChecked = m && m.vision ? 'checked' : '';
   return `<input class="cfg-input cfg-model-id" type="text" value="${id}" placeholder="${t('model.idPlaceholder')}">
+<label class="cfg-model-vision-check"><input type="checkbox" class="cfg-model-vision-cb" ${visionChecked}> Vision</label>
 <input class="cfg-input cfg-model-max" type="number" value="${max}" placeholder="${t('model.maxTokensPlaceholder')}">
 <input class="cfg-input cfg-model-ctx" type="number" value="${ctx}" placeholder="${t('model.contextPlaceholder')}">
 <button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;
@@ -1087,8 +1060,8 @@ function renderOneSessionItem(s, container, opts = {}) {
         switchToSession(s.id);
       }
     } else {
-      clearActiveFolder();
-      // Unified session switching — all agents display in the main panel
+      // Unified session switching — all agents display in the main panel.
+      // switchToSession handles folder context restoration.
       switchToSession(s.id);
     }
   };
@@ -1178,6 +1151,12 @@ export function renderSessionSidebar(sessionData, activeId) {
     }
     if (changed) { try { localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(all)); } catch(e) {} }
   } catch(e) {}
+  // Session list DOM removed in single-session architecture — sidebar shows only scheduled tasks.
+  // Sub-agent sessions are accessed via the flow canvas node popup.
+  if (!sessionList) {
+    updateHeaderSessionName();
+    return;
+  }
   sessionList.innerHTML = '';
 
   // Setup unified drop handler on sessionList (once)
@@ -1217,6 +1196,11 @@ export function renderSessionSidebar(sessionData, activeId) {
     });
   }
 
+  // ── Single-session architecture: only render the active session ──
+  // Sub-agent sessions are accessed via the flow canvas node popup.
+  const activeSession = (sessionData || []).find(s => s.id === state.activeSessionId);
+  const visibleSessions = activeSession ? [activeSession] : (sessionData || []).slice(0, 1);
+
   // Sort sessions helper
   const sortSessions = (list) => [...list].sort((a, b) => {
     const pa = state.pinnedSessions.has(a.id) ? 1 : 0;
@@ -1228,7 +1212,7 @@ export function renderSessionSidebar(sessionData, activeId) {
   // Group sessions and folders by agent
   const allFolders = state.folders || [];
   const agentGroups = {};
-  (state.sessions || []).forEach(s => {
+  visibleSessions.forEach(s => {
     const agent = s.agentName || 'Nebula';
     if (!agentGroups[agent]) agentGroups[agent] = { sessions: [], folders: [] };
     agentGroups[agent].sessions.push(s);
@@ -1519,7 +1503,7 @@ export function resetChatForActiveSession() {
 
   if (!isBusy) pv.dom.input.focus();
 
-  renderTaskList(state.sessionTasks[sid] || []);
+  renderTaskList(state.sessionTasks[sid] || [], undefined, sid);
   if (state.updateBgTasksUI) state.updateBgTasksUI();
   if (state.updateDelegateIndicator) state.updateDelegateIndicator();
   if (state.updateBypassToggle) state.updateBypassToggle(pv);
@@ -1906,7 +1890,7 @@ function updateFolderStatus(folderId) {
 }
 
 export function updateSessionStatus(sessionId) {
-  if (!sessionId) return;
+  if (!sessionId || !state.dom.sessionList) return;
   const item = state.dom.sessionList.querySelector(`.session-item[data-id="${sessionId}"]`);
   if (item) {
     const el = item.querySelector('.session-status');
@@ -1962,6 +1946,7 @@ function updateAgentNotificationDotExternal(agentName) {
 function markSessionActivity(sessionId) {
   // Don't update if session is busy (in progress)
   if (state.busySessionIds.has(sessionId)) return;
+  if (!state.dom.sessionList) return;
 
   // Update updatedAt in state.sessions so future renders stay sorted
   const session = state.sessions.find(s => s.id === sessionId);
@@ -2495,9 +2480,11 @@ export function initRulesModal() {
 // ===== Path Picker Modal =====
 let pathPickerFolderId = null;
 let pathPickerCurrentPath = '';
+let pathPickerCallback = null;
 
-function openPathPicker(folderId, currentRoot) {
+export function openPathPicker(folderId, currentRoot) {
   pathPickerFolderId = folderId;
+  pathPickerCallback = null;
   const startPath = currentRoot || '~';
   document.getElementById('path-picker-title').textContent = t('pathPicker.title');
   document.getElementById('path-picker-cancel').textContent = t('modal.cancel');
@@ -2510,8 +2497,22 @@ function openPathPicker(folderId, currentRoot) {
   browseTo(startPath);
 }
 
+export function openPathPickerCallback(currentRoot, callback) {
+  pathPickerFolderId = null;
+  pathPickerCallback = callback;
+  const startPath = currentRoot || '~';
+  document.getElementById('path-picker-title').textContent = t('pathPicker.title');
+  document.getElementById('path-picker-cancel').textContent = t('modal.cancel');
+  document.getElementById('path-picker-select').textContent = t('pathPicker.select');
+  document.getElementById('path-picker-clear').style.display = 'none';
+  document.getElementById('path-picker-overlay').classList.add('on');
+  document.getElementById('path-picker-modal').classList.add('show');
+  browseTo(startPath);
+}
+
 function closePathPicker() {
   pathPickerFolderId = null;
+  pathPickerCallback = null;
   pathPickerCurrentPath = '';
   document.getElementById('path-picker-overlay').classList.remove('on');
   document.getElementById('path-picker-modal').classList.remove('show');
@@ -2595,14 +2596,28 @@ export function initPathPicker() {
     if (e.target.id === 'path-picker-overlay') closePathPicker();
   });
   document.getElementById('path-picker-select').addEventListener('click', () => {
+    // Callback mode (Explorer folder picker)
+    if (pathPickerCallback) {
+      pathPickerCallback(pathPickerCurrentPath);
+      closePathPicker();
+      return;
+    }
+    // Folder mode
     if (!pathPickerFolderId) return;
     sendWs({ type: 'setFolderProjectRoot', folderId: pathPickerFolderId, projectRoot: pathPickerCurrentPath });
     closePathPicker();
+    window.dispatchEvent(new CustomEvent('project-root-changed'));
   });
   document.getElementById('path-picker-clear').addEventListener('click', () => {
+    if (pathPickerCallback) {
+      pathPickerCallback(null);
+      closePathPicker();
+      return;
+    }
     if (!pathPickerFolderId) return;
     sendWs({ type: 'setFolderProjectRoot', folderId: pathPickerFolderId, projectRoot: null });
     closePathPicker();
+    window.dispatchEvent(new CustomEvent('project-root-changed'));
   });
 }
 

@@ -449,3 +449,78 @@ window.copyCode = function(btn) {
     }
   });
 };
+
+// === Message copy button factory ===
+// Creates a hover-revealed copy button for chat messages (user & AI).
+// `text` is the raw text to copy (plain text for user, markdown for AI).
+// Only one copy button shows the "copied" checkmark at a time — clicking a
+// new one immediately clears the previous, so the checkmark always reflects
+// the most recently copied content.
+const COPY_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const CHECK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+let _activeCopyBtn = null;
+let _activeCopyTimeout = null;
+
+export function createMsgCopyButton(text) {
+  const btn = document.createElement('button');
+  btn.className = 'msg-copy';
+  btn.title = t('chat.copy');
+  btn.innerHTML = COPY_SVG;
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    // Clear any previously active copy button so only one shows checkmark
+    if (_activeCopyBtn && _activeCopyBtn !== btn) {
+      _activeCopyBtn.innerHTML = COPY_SVG;
+      _activeCopyBtn.classList.remove('copied');
+    }
+    clearTimeout(_activeCopyTimeout);
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.innerHTML = CHECK_SVG;
+      btn.classList.add('copied');
+      _activeCopyBtn = btn;
+      _activeCopyTimeout = setTimeout(() => {
+        btn.innerHTML = COPY_SVG;
+        btn.classList.remove('copied');
+        _activeCopyBtn = null;
+        _activeCopyTimeout = null;
+      }, 1500);
+    } catch (err) {
+      console.error('[chat] Copy failed:', err);
+    }
+  };
+  return btn;
+}
+
+const RECALL_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>';
+
+export function createMsgRecallButton(text) {
+  const btn = document.createElement('button');
+  btn.className = 'msg-copy msg-recall';
+  btn.title = t('chat.recall') || 'Recall';
+  btn.innerHTML = RECALL_SVG;
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    recallUserMessage(text, btn);
+  };
+  return btn;
+}
+
+async function recallUserMessage(text, btn) {
+  const { activeView } = await import('./chatView.js');
+  const { sendWs } = await import('./ws.js');
+  const v = activeView;
+  if (!v || !v.sessionId) return;
+  // Put the text back into the input box
+  if (v.dom.input) {
+    v.dom.input.value = text;
+    v.dom.input.style.height = 'auto';
+    v.dom.input.focus();
+  }
+  // Send the recall request to the backend
+  sendWs({ type: 'recallMessage', sessionId: v.sessionId });
+  // Optimistically remove the message row from the DOM
+  const row = btn.closest('.row.user');
+  if (row) row.remove();
+}

@@ -1,35 +1,30 @@
 #task-list {
-  padding: 0 12px;
-  margin: 0 8px 4px 8px;
+  padding: 0 8px;
+  margin: 0;
   max-height: 0;
   overflow: hidden;
-  transition: max-height 0.3s ease, padding 0.3s ease, margin 0.3s ease;
+  transition: max-height 0.3s ease, padding 0.3s ease;
 }
 
 #task-list.has-tasks {
   max-height: 50vh;
   overflow-y: auto;
-  padding: 10px 12px;
+  padding: 2px 8px 4px;
 }
 
+/* Subtle glass card — lighter than full glass panels but not bare */
 .task-card {
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: 14px;
-  padding: 10px 14px;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
-    0px 1px 3px rgba(0, 0, 0, 0.03),
-    0px 4px 12px rgba(0, 0, 0, 0.04);
+  padding: 8px 12px 6px;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
 }
 @media (prefers-color-scheme: dark) {
   .task-card {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.03),
-      0px 1px 3px rgba(0, 0, 0, 0.15),
-      0px 4px 12px rgba(0, 0, 0, 0.25);
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
   }
 }
 
@@ -37,7 +32,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   font-size: 12px;
   cursor: default;
 }
@@ -66,11 +61,6 @@
 .task-toggle svg {
   width: 14px;
   height: 14px;
-}
-
-.task-count {
-  font-weight: 600;
-  color: var(--color-text, #000);
 }
 
 .task-stats {
@@ -104,7 +94,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
+  padding: 3px 0;
   font-size: 13px;
   line-height: 1.4;
 }
@@ -135,6 +125,63 @@
 
 .task-pending .task-icon {
   color: var(--color-text-muted, #888);
+}
+
+.task-completed {
+  opacity: 0.5;
+}
+
+.task-completed .task-label {
+  font-weight: 400;
+  text-decoration: line-through;
+  text-decoration-color: var(--color-text-muted, #888);
+  text-decoration-thickness: 1px;
+}
+
+/* Apple Reminders-style circle checkbox for completed tasks */
+.task-circle {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--color-text-muted, #888);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
+  opacity: 0.6;
+}
+
+.task-circle:hover {
+  border-color: var(--color-primary, #07c160);
+  opacity: 1;
+}
+
+/* Filled state — click triggers dismiss, circle fills with checkmark */
+.task-circle.filled {
+  background: var(--color-primary, #07c160);
+  border-color: var(--color-primary, #07c160);
+  opacity: 1;
+  transform: scale(0.9);
+}
+
+.task-circle.filled::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+  animation: circleCheck 0.2s ease;
+}
+
+@keyframes circleCheck {
+  from { opacity: 0; transform: rotate(45deg) scale(0.5); }
+  to   { opacity: 1; transform: rotate(45deg) scale(1); }
 }
 
 .task-label {

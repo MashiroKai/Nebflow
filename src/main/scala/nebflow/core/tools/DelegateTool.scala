@@ -51,39 +51,34 @@ object DelegateTool extends Tool:
   val name = "Delegate"
 
   val description =
-    """Delegate a subtask to a sub-agent. The sub-agent runs autonomously with its own context and tools, then returns its final result.
+    """Spawn a background sub-agent to work on a subtask while you continue your own work. The sub-agent shares your tools and system prompt, runs autonomously with its own context, and reports back when done.
 
-By default the sub-agent runs in the background — the tool returns immediately and you will be notified when it completes via a system message.
+Multiple Delegate calls in one response run concurrently — use this to parallelize independent work.
 
-Available sub-agents (pass as agentName):
-- "Explorer" — Code exploration and research. Use for: searching codebases, understanding architecture, finding relevant files, running git/test commands for investigation. Cannot modify files.
-- "Coder" — Deep coding specialist. Use for: implementation, debugging, refactoring, testing. Full edit tools.
-- "Nebula" — Full tool access (default). Use for: general tasks that require orchestration.
+**When to use:**
+- A task splits into independent parts (e.g. "implement the API and write its tests" → Delegate one, do the other)
+- A new Mail arrives while you're mid-task → Delegate it instead of interrupting
+- A subtask needs deep focus without cluttering your main context
 
-Use Delegate when:
-- A task can be broken into independent parts that benefit from focused context
-- You need parallel research on different aspects of a problem
-- A subtask requires deep focus without polluting your main conversation
+**When NOT to use:**
+- Steps depend on each other (Step B needs Step A's result) — do serially
+- Trivial — faster to just do it yourself
+- Subtasks touch the same files — conflict risk
 
-Key rules:
-- Every prompt must be self-contained (the sub-agent starts with a clean context by default).
-- Set fork=true to pass your current conversation context to the sub-agent.
+**Agent targeting:**
+- Default: spawns a copy of the calling agent (self-clone)
+- With `agent` parameter: spawns the specified standalone agent (e.g. Coder, Explorer)
+- Cannot target team/flow agents — those require Mail
+
+**Rules:**
+- Prompt must be self-contained (the sub-agent starts with a clean context). Set fork=true to pass your conversation history.
 - State what "done" looks like (e.g. "Report findings — do not modify files").
-- Do NOT duplicate the sub-agent's work. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response.
-
-Do NOT use Delegate for:
-- Trivial tasks you can handle directly with Read/Bash/etc.
-- Sequential tasks where each step depends on the previous step's result."""
+- Do NOT duplicate the sub-agent's work — work on non-overlapping files or topics."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
       "properties" -> io.circe.Json.obj(
-        "agentName" -> io.circe.Json.obj(
-          "type" -> "string".asJson,
-          "description" -> "Name of the agent definition to use (e.g. \"Explorer\", \"Planner\", \"Nebula\"). Defaults to \"Nebula\".".asJson,
-          "default" -> "Nebula".asJson
-        ),
         "prompt" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Self-contained task description for the sub-agent. Must include all context needed unless fork=true.".asJson
@@ -106,6 +101,10 @@ Do NOT use Delegate for:
         "taskDescription" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "For persistent mode: describes the ongoing task for the session list. Required when lifecycle=persistent.".asJson
+        ),
+        "agent" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Target standalone agent name (e.g. 'Coder', 'Explorer'). If omitted, clones the calling agent. Only standalone agents can be targeted.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)
@@ -114,10 +113,11 @@ Do NOT use Delegate for:
 
   def summarize(input: JsonObject): String =
     val desc = input("description").flatMap(_.asString).getOrElse("")
-    val agent = input("agentName").flatMap(_.asString).getOrElse("Nebula")
     val forked = input("fork").flatMap(_.asBoolean).getOrElse(false)
-    if forked then s"Delegate($agent: $desc [fork])"
-    else s"Delegate($agent: $desc)"
+    val agent = input("agent").flatMap(_.asString).getOrElse("")
+    val target = if agent.nonEmpty then s"→ $agent" else ""
+    if forked then s"Delegate($desc [fork] $target)".trim
+    else s"Delegate($desc $target)".trim
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.length > 200 then result.take(197) + "..." else result
@@ -125,32 +125,57 @@ Do NOT use Delegate for:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val prompt = input("prompt").flatMap(_.asString).getOrElse("")
     val description = input("description").flatMap(_.asString).getOrElse("subtask")
-    val agentName = input("agentName").flatMap(_.asString).getOrElse("Nebula")
     val fork = input("fork").flatMap(_.asBoolean).getOrElse(false)
     val lifecycle = input("lifecycle").flatMap(_.asString).getOrElse("ephemeral")
     val taskDescription = input("taskDescription").flatMap(_.asString).getOrElse(description)
+    val targetAgentName = input("agent").flatMap(_.asString).filter(_.nonEmpty)
 
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-agent depth ($MaxDepth) reached. Cannot delegate further.")))
     else
-      (ctx.actorSystem, ctx.sharedResources, ctx.agentLibrary) match
-        case (Some(system), Some(resources), Some(agentLibrary)) =>
-          val adjustedPrompt =
-            if fork then
-              s"""<system-reminder>
+      // Resolve the effective agent def: either a target standalone agent
+      // or a clone of the calling agent. Done before the ActorSystem check so
+      // that invalid agent names are reported even without a live actor system.
+      val resolveAgent: IO[Either[ToolError, (AgentDef, List[Message])]] =
+        targetAgentName match
+          case Some(agentName) =>
+            ctx.agentLibrary match
+              case Some(lib) =>
+                lib.get(agentName).map {
+                  case Some(targetDef) if targetDef.category == "standalone" =>
+                    Right((targetDef, Nil)) // no fork for cross-agent
+                  case Some(_) =>
+                    Left(ToolError(s"'$agentName' is not a standalone agent"))
+                  case None =>
+                    Left(ToolError(s"Agent '$agentName' not found"))
+                }
+              case None =>
+                IO.pure(Left(ToolError("No agent library available")))
+          case None =>
+            ctx.agentDef match
+              case Some(parentAgentDef) =>
+                IO.pure(Right((parentAgentDef, if fork then ctx.messages else Nil)))
+              case None =>
+                IO.pure(Left(ToolError("No agent definition available")))
+
+      resolveAgent.flatMap {
+        case Left(err) => IO.pure(Left(err))
+        case Right((agentDef, initialMessages)) =>
+          (ctx.actorSystem, ctx.sharedResources) match
+            case (Some(system), Some(resources)) =>
+              val agentName = agentDef.name
+              val adjustedPrompt =
+                if fork && targetAgentName.isEmpty then
+                  s"""<system-reminder>
 You are a sub-agent working on a delegated task. Your parent agent has forked this conversation to give you background context.
 
 Focus ONLY on the specific task described below. Do not work on other topics from the conversation history — those are your parent's responsibilities.
 </system-reminder>
 
 $prompt"""
-            else prompt
+                else prompt
 
-          agentLibrary.get(agentName).flatMap {
-            case None =>
-              IO.pure(Left(ToolError(s"Agent '$agentName' not found in agent library")))
-            case Some(agentDef) =>
               // Query parent session's safety mode so sub-agent inherits it
               val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
                 case (Some(store), Some(sid)) => store.getSafetyMode(sid)
@@ -163,7 +188,7 @@ $prompt"""
                     description = description,
                     taskDescription = taskDescription,
                     agentName = agentName,
-                    initialMessages = if fork then ctx.messages else Nil,
+                    initialMessages = initialMessages,
                     system = system,
                     resources = resources,
                     parentDepth = ctx.depth,
@@ -179,7 +204,7 @@ $prompt"""
                     prompt = adjustedPrompt,
                     description = description,
                     agentName = agentName,
-                    initialMessages = if fork then ctx.messages else Nil,
+                    initialMessages = initialMessages,
                     system = system,
                     resources = resources,
                     parentDepth = ctx.depth,
@@ -190,9 +215,9 @@ $prompt"""
                     safetyMode = safetyMode
                   )
               }
-          }
-        case _ =>
-          IO.pure(Left(ToolError("Delegate requires ActorSystem, SharedResources, and agent library")))
+            case _ =>
+              IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
+      }
     end if
   end call
 

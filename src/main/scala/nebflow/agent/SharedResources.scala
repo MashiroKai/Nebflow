@@ -5,11 +5,13 @@ import cats.effect.{IO, Ref}
 import nebflow.actor.{ActorRef, ActorSystem}
 import nebflow.bridge.BridgeManager
 import nebflow.core.compact.HistoryArchiver
+import nebflow.core.daemon.DaemonService
 import nebflow.core.hooks.{HookEngine, HooksConfig}
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.task.TaskStore
 import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.FileLockManager
+import nebflow.core.workspace.KnowledgeStore
 import nebflow.core.{FileChangeTracker, PathUtil}
 import nebflow.dropbox.DropboxService
 import nebflow.gateway.{RateLimiter, SessionStore}
@@ -48,5 +50,9 @@ case class SharedResources(
   neblinkService: Option[NeblinkService] = None,
   dropboxService: Option[DropboxService] = None,
   scheduledTaskService: Option[ScheduledTaskService] = None,
-  voiceMutedRef: Ref[IO, Boolean]
+  daemonService: Option[DaemonService] = None,
+  knowledgeStore: KnowledgeStore = new KnowledgeStore(PathUtil.dataRoot / "workspace-items"),
+  voiceMutedRef: Ref[IO, Boolean],
+  lastWsActivity: Ref[IO, Long] = Ref.unsafe[IO, Long](System.currentTimeMillis()),
+  runtimeModels: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty)
 )

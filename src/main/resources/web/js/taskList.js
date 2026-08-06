@@ -1,14 +1,20 @@
 import { t } from './i18n.js';
+import { sendWs } from './ws.js';
 
-const MAX_VISIBLE = 10;
+const MAX_VISIBLE = 20;
 const COLLAPSED_KEY = 'nebflow-task-collapsed';
 
 const iconMap = {
   pending: 'square',
-  in_progress: 'loader-2'
+  in_progress: 'loader-2',
+  completed: 'check',
+  failed: 'x'
 };
 
 const activeStatuses = new Set(['pending', 'in_progress']);
+const visibleStatuses = new Set(['pending', 'in_progress', 'completed']);
+
+let currentSessionId = null;
 
 function isCollapsed() {
   try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
@@ -18,7 +24,8 @@ function setCollapsed(v) {
   try { localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0'); } catch {}
 }
 
-export function renderTaskList(tasks, container) {
+export function renderTaskList(tasks, container, sessionId) {
+  if (sessionId) currentSessionId = sessionId;
   container = container || document.getElementById('task-list');
   if (!container) return;
 
@@ -28,12 +35,10 @@ export function renderTaskList(tasks, container) {
     return;
   }
 
-  // Only show active tasks; completed/filtered are reflected in stats only
-  const active = tasks.filter(t => activeStatuses.has(t.status));
-  const terminalCount = tasks.length - active.length;
+  // Show active + completed tasks; failed/dismissed are hidden
+  const visible = tasks.filter(t => visibleStatuses.has(t.status));
 
-  if (active.length === 0) {
-    // All done — show brief summary then collapse
+  if (visible.length === 0) {
     container.classList.remove('has-tasks');
     container.innerHTML = '';
     return;
@@ -43,25 +48,38 @@ export function renderTaskList(tasks, container) {
 
   const collapsed = isCollapsed();
 
-  // Sort: in_progress first, then pending by ID
-  const sorted = [...active].sort((a, b) => {
-    if (a.status !== b.status) {
-      const order = { in_progress: 0, pending: 1 };
-      return (order[a.status] ?? 1) - (order[b.status] ?? 1);
-    }
-    return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
+  // Build parent → children map
+  const byParent = new Map();
+  visible.forEach(t => {
+    const pid = t.parentId || null;
+    if (!byParent.has(pid)) byParent.set(pid, []);
+    byParent.get(pid).push(t);
   });
 
-  // Stats
+  // Sort within each parent by ID
+  byParent.forEach(arr => arr.sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0)));
+
+  // Roots are tasks with no parent or whose parent is not visible
+  const visibleIds = new Set(visible.map(t => t.id));
+  const roots = visible
+    .filter(t => !t.parentId || !visibleIds.has(t.parentId))
+    .sort((a, b) => {
+      // in_progress first, then pending, then completed
+      if (a.status !== b.status) {
+        const order = { in_progress: 0, pending: 1, completed: 2 };
+        return (order[a.status] ?? 3) - (order[b.status] ?? 3);
+      }
+      return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
+    });
+
+  // Stats — only show active counts, no completed
   const counts = { pending: 0, in_progress: 0 };
-  active.forEach(t => { if (counts[t.status] !== undefined) counts[t.status]++; });
+  visible.forEach(t => { if (activeStatuses.has(t.status)) counts[t.status]++; });
 
   let html = `<div class="task-card${collapsed ? ' collapsed' : ''}">`;
   html += '<div class="task-header">';
   html += `<button class="task-toggle" title="${collapsed ? t('task.expand') : t('task.collapse')}"><i data-lucide="${collapsed ? 'chevron-down' : 'chevron-up'}"></i></button>`;
-  html += `<span class="task-count">${t('task.count', { count: active.length })}</span>`;
   const parts = [];
-  if (terminalCount > 0) parts.push(t('task.done', { count: terminalCount }));
   if (counts.in_progress > 0) parts.push(t('task.inProgress', { count: counts.in_progress }));
   if (counts.pending > 0) parts.push(t('task.open', { count: counts.pending }));
   if (parts.length > 0) html += `<span class="task-stats">${parts.join(', ')}</span>`;
@@ -69,29 +87,40 @@ export function renderTaskList(tasks, container) {
 
   html += `<div class="task-body"><div class="task-body-inner">`;
 
-  const visible = sorted.slice(0, MAX_VISIBLE);
-  visible.forEach(task => {
+  let visibleCount = 0;
+  function renderTaskItem(task, depth) {
+    if (visibleCount >= MAX_VISIBLE) return;
+    visibleCount++;
+
     const isActive = task.status === 'in_progress';
-
+    const isCompleted = task.status === 'completed';
     let cls = 'task-item';
-    cls += isActive ? ' task-active' : ' task-pending';
+    cls += isActive ? ' task-active' : isCompleted ? ' task-completed' : ' task-pending';
+    if (depth > 0) cls += ' task-child';
 
-    const iconName = iconMap[task.status] || 'square';
+    const indent = depth * 16;
     const label = (isActive && task.activeForm) ? task.activeForm : task.subject;
-    const blocked = task.blockedBy && task.blockedBy.length > 0
-      ? ` <span class="task-blocked">${t('task.blockedBy', { ids: task.blockedBy.join(', #') })}</span>`
-      : '';
 
-    html += `<div class="${cls}" data-task-id="${task.id}">`;
-    html += `<span class="task-icon"><i data-lucide="${iconName}"></i></span>`;
+    html += `<div class="${cls}" data-task-id="${task.id}" style="margin-left:${indent}px">`;
+    if (isCompleted) {
+      html += `<button class="task-circle" data-task-id="${task.id}" title="${t('task.dismiss')}"></button>`;
+    } else {
+      const iconName = iconMap[task.status] || 'square';
+      html += `<span class="task-icon"><i data-lucide="${iconName}"></i></span>`;
+    }
     html += `<span class="task-label">${escapeHtml(label)}</span>`;
-    html += `<span class="task-id">#${task.id}</span>`;
-    html += blocked;
     html += '</div>';
-  });
 
-  if (sorted.length > MAX_VISIBLE) {
-    html += `<div class="task-more">${t('task.more', { count: sorted.length - MAX_VISIBLE })}</div>`;
+    // Render children
+    const children = byParent.get(task.id) || [];
+    children.forEach(c => renderTaskItem(c, depth + 1));
+  }
+
+  roots.forEach(task => renderTaskItem(task, 0));
+
+  const totalShown = visible.length;
+  if (totalShown > MAX_VISIBLE) {
+    html += `<div class="task-more">${t('task.more', { count: totalShown - MAX_VISIBLE })}</div>`;
   }
 
   html += '</div></div>'; // .task-body-inner / .task-body
@@ -99,6 +128,17 @@ export function renderTaskList(tasks, container) {
   container.innerHTML = html;
 
   if (typeof lucide !== 'undefined') lucide.createIcons();
+
+  // Circle dismiss handlers — click circle → fill animation → dismiss
+  container.querySelectorAll('.task-circle').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (btn.classList.contains('filled')) return; // already dismissing
+      btn.classList.add('filled');
+      const taskId = btn.dataset.taskId;
+      if (taskId) sendWs({ type: 'dismissTask', sessionId: currentSessionId || '', taskId });
+    });
+  });
 
   // Toggle handler
   const toggleBtn = container.querySelector('.task-toggle');

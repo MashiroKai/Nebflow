@@ -9,8 +9,14 @@ import nebflow.shared.Message
 
 class SessionService(store: SessionStore):
 
-  def createSession(name: String, agentName: Option[String] = None, folderId: Option[String] = None): IO[SessionMeta] =
-    store.createSession(name, agentName = agentName, folderId = folderId)
+  def createSession(
+    name: String,
+    agentName: Option[String] = None,
+    folderId: Option[String] = None,
+    flowName: Option[String] = None,
+    safetyMode: String = "confirm-edits"
+  ): IO[SessionMeta] =
+    store.createSession(name, agentName = agentName, folderId = folderId, flowName = flowName, safetyMode = safetyMode)
 
   def deleteSession(id: String): IO[Unit] =
     store.deleteSession(id)

@@ -15,6 +15,9 @@ trait TaskStore:
   def get(sessionId: String, taskId: String): IO[Option[Task]]
   def list(sessionId: String): IO[List[Task]]
   def listActive(sessionId: String): IO[List[Task]]
+  def listVisible(sessionId: String): IO[List[Task]]
+  def dismiss(sessionId: String, taskId: String): IO[Option[Task]]
+  def renderForPrompt(sessionId: String): IO[String]
   def update(sessionId: String, taskId: String, updates: TaskUpdateInput): IO[Option[Task]]
   def delete(sessionId: String, taskId: String): IO[Boolean]
   def deleteAll(sessionId: String): IO[Unit]
@@ -98,6 +101,7 @@ object FileTaskStore extends TaskStore:
         description = input.description,
         activeForm = input.activeForm,
         status = TaskStatus.Pending,
+        parentId = input.parentTaskId,
         createdAt = Some(now),
         updatedAt = Some(now)
       )
@@ -149,7 +153,10 @@ object FileTaskStore extends TaskStore:
       case (TaskStatus.InProgress, TaskStatus.Failed) => true
       case (TaskStatus.InProgress, TaskStatus.InProgress) => true // no-op
       case (TaskStatus.Completed, TaskStatus.Completed) => true // no-op
+      case (TaskStatus.Completed, TaskStatus.Dismissed) => true
       case (TaskStatus.Failed, TaskStatus.Failed) => true // no-op
+      case (TaskStatus.Failed, TaskStatus.Dismissed) => true
+      case (TaskStatus.Dismissed, TaskStatus.Dismissed) => true // no-op
       case _ => false
 
   // Issue #3: DFS cycle detection in dependency graph
@@ -179,48 +186,92 @@ object FileTaskStore extends TaskStore:
     get(sessionId, taskId).flatMap {
       case None => IO.pure(None)
       case Some(existing) =>
-        // Issue #2: Validate status transition
-        val newStatus = updates.status.getOrElse(existing.status)
-        val statusValid = updates.status.isEmpty || isValidTransition(existing.status, newStatus)
-
-        if !statusValid then
-          IO.raiseError(
-            new IllegalStateException(
-              s"Invalid status transition: ${existing.status} -> $newStatus for task #$taskId"
-            )
-          )
+        // Dismissed tasks are "cleared" by the user — agent updates (status or
+        // otherwise) are silently accepted as no-ops so agents don't error.
+        if existing.status == TaskStatus.Dismissed then IO.pure(Some(existing))
         else
-          val newBlocks = (existing.blocks ++ updates.addBlocks.getOrElse(Nil)).distinct
-            .filterNot(updates.removeBlocks.getOrElse(Nil).contains)
-          val newBlockedBy = (existing.blockedBy ++ updates.addBlockedBy.getOrElse(Nil)).distinct
-            .filterNot(updates.removeBlockedBy.getOrElse(Nil).contains)
+          // Issue #2: Validate status transition
+          val newStatus = updates.status.getOrElse(existing.status)
+          val statusValid = updates.status.isEmpty || isValidTransition(existing.status, newStatus)
 
-          val updated = existing.copy(
-            subject = updates.subject.getOrElse(existing.subject),
-            description = updates.description.getOrElse(existing.description),
-            activeForm = updates.activeForm.orElse(existing.activeForm),
-            status = newStatus,
-            blocks = newBlocks,
-            blockedBy = newBlockedBy,
-            updatedAt = Some(Instant.now().toString)
-          )
-
-          // Issue #3: Check for cycles after dependency changes
-          list(sessionId).flatMap { allTasks =>
-            val tasksForCheck = allTasks.filterNot(_.id == taskId) :+ updated
-            if hasCycle(tasksForCheck) then
-              IO.raiseError(
-                new IllegalStateException(
-                  s"Dependency update for task #$taskId would create a cycle"
-                )
+          if !statusValid then
+            IO.raiseError(
+              new IllegalStateException(
+                s"Invalid status transition: ${existing.status} -> $newStatus for task #$taskId"
               )
-            else writeTask(sessionId, updated).as(Some(updated))
-          }
-        end if
+            )
+          else
+            val newBlocks = (existing.blocks ++ updates.addBlocks.getOrElse(Nil)).distinct
+              .filterNot(updates.removeBlocks.getOrElse(Nil).contains)
+            val newBlockedBy = (existing.blockedBy ++ updates.addBlockedBy.getOrElse(Nil)).distinct
+              .filterNot(updates.removeBlockedBy.getOrElse(Nil).contains)
+
+            val updated = existing.copy(
+              subject = updates.subject.getOrElse(existing.subject),
+              description = updates.description.getOrElse(existing.description),
+              activeForm = updates.activeForm.orElse(existing.activeForm),
+              status = newStatus,
+              blocks = newBlocks,
+              blockedBy = newBlockedBy,
+              updatedAt = Some(Instant.now().toString)
+            )
+
+            // Issue #3: Check for cycles after dependency changes
+            list(sessionId).flatMap { allTasks =>
+              val tasksForCheck = allTasks.filterNot(_.id == taskId) :+ updated
+              if hasCycle(tasksForCheck) then
+                IO.raiseError(
+                  new IllegalStateException(
+                    s"Dependency update for task #$taskId would create a cycle"
+                  )
+                )
+              else writeTask(sessionId, updated).as(Some(updated))
+            }
+          end if
     }
 
   def listActive(sessionId: String): IO[List[Task]] =
     list(sessionId).map(_.filter(t => t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress))
+
+  def listVisible(sessionId: String): IO[List[Task]] =
+    list(sessionId).map(_.filter(_.status != TaskStatus.Dismissed))
+
+  def dismiss(sessionId: String, taskId: String): IO[Option[Task]] =
+    update(sessionId, taskId, TaskUpdateInput(status = Some(TaskStatus.Dismissed)))
+
+  /**
+   * Render tasks as a hierarchical text block for system prompt injection.
+   *  Only active (pending + in_progress) tasks are shown, with tree-style indentation.
+   */
+  def renderForPrompt(sessionId: String): IO[String] =
+    list(sessionId).map { allTasks =>
+      val active = allTasks.filter(t => t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress)
+      if active.isEmpty then ""
+      else
+        val byParent = active.groupBy(_.parentId)
+        val roots = byParent.getOrElse(None, Nil).sortBy(_.id.toIntOption.getOrElse(0))
+
+        val sb = new StringBuilder
+        sb.append("## Current Tasks\n\n")
+        sb.append("Your task list is below. Work through tasks in order. Mark each as completed when fully done.\n\n")
+
+        def renderTask(t: Task, depth: Int): Unit =
+          val indent = "  " * depth
+          val statusIcon = t.status match
+            case TaskStatus.InProgress => "[in_progress]"
+            case TaskStatus.Pending => "[pending]"
+            case _ => ""
+          val activeStr = t.activeForm match
+            case Some(a) if t.status == TaskStatus.InProgress => s" — $a"
+            case _ => ""
+          sb.append(s"$indent#${t.id} $statusIcon ${t.subject}$activeStr\n")
+          val children = byParent.getOrElse(Some(t.id), Nil).sortBy(_.id.toIntOption.getOrElse(0))
+          children.foreach(c => renderTask(c, depth + 1))
+
+        roots.foreach(r => renderTask(r, 0))
+        sb.toString
+      end if
+    }
 
   // Issue #10: Delete transaction ordering — cleanup references before deleting file
   def delete(sessionId: String, taskId: String): IO[Boolean] =

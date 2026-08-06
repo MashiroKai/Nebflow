@@ -86,7 +86,12 @@ case class LlmRequest(
   /** Stable system prompt (e.g. system.md) — can be cached by the provider. */
   systemStable: Option[String] = None,
   /** Dynamic system content (env info, reminders) — changes frequently, placed after cache breakpoint. */
-  systemDynamic: Option[String] = None
+  systemDynamic: Option[String] = None,
+  /**
+   * Per-agent model configuration (preferred + fallbacks). When set, the
+   *  candidate chain is built from this instead of the global model chain.
+   */
+  agentModel: Option[AgentModelConfig] = None
 )
 
 case class TokenUsage(

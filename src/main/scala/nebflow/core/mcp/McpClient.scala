@@ -22,7 +22,7 @@ class McpClient(serverId: String, transport: McpTransport):
       params = Some(
         JsonObject.fromIterable(
           List(
-            "protocolVersion" -> "2025-11-05".asJson,
+            "protocolVersion" -> McpProtocol.Version.asJson,
             "capabilities" -> Json.obj(),
             "clientInfo" -> Json.obj("name" -> "nebflow".asJson, "version" -> "1.0.0".asJson)
           )

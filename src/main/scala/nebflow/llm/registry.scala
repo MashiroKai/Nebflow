@@ -2,6 +2,7 @@ package nebflow.llm
 
 import cats.effect.IO
 import cats.effect.kernel.Ref
+import cats.syntax.traverse.*
 import nebflow.llm.providers.{AnthropicAdapter, OpenAiAdapter}
 import nebflow.shared.Defaults
 import sttp.capabilities.fs2.Fs2Streams
@@ -12,7 +13,9 @@ case class ModelCandidate(
   provider: ProviderConfig,
   model: String,
   maxTokens: Int = Defaults.MaxTokens,
-  contextWindow: Int = Defaults.ContextWindow
+  contextWindow: Int = Defaults.ContextWindow,
+  vision: Boolean = false,
+  capabilities: Set[String] = Set.empty
 )
 
 class ProviderRegistry(
@@ -52,7 +55,8 @@ class ProviderRegistry(
               val modelConfig = provider.models.find(_.id == modelId)
               val maxTokens = modelConfig.map(_.maxTokens).getOrElse(Defaults.MaxTokens)
               val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
-              Some(ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow))
+              val (vision, caps) = resolveCapabilities(providerId, modelId, modelConfig)
+              Some(ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow, vision, caps))
             case None => None // Skip unknown provider
         catch case _: Exception => None // Skip malformed ref
       }
@@ -64,7 +68,8 @@ class ProviderRegistry(
         config.llm.providers.headOption
           .map { case (providerId, provider) =>
             provider.models.headOption.map { mc =>
-              ModelCandidate(providerId, provider, mc.id, mc.maxTokens, mc.contextWindow)
+              val (vision, caps) = resolveCapabilities(providerId, mc.id, Some(mc))
+              ModelCandidate(providerId, provider, mc.id, mc.maxTokens, mc.contextWindow, vision, caps)
             }
           }
           .flatten
@@ -101,10 +106,57 @@ class ProviderRegistry(
           val modelConfig = provider.models.find(_.id == modelId)
           val maxTokens = modelConfig.map(_.maxTokens).getOrElse(Defaults.MaxTokens)
           val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
-          ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow)
+          val (vision, caps) = resolveCapabilities(providerId, modelId, modelConfig)
+          ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow, vision, caps)
         }
       catch case _: Exception => None
     }
+
+  /**
+   * Get candidate list customized for an agent's model configuration.
+   *
+   * The agent declares a `preferred` primary and an ordered `fallbacks` list.
+   * We build the candidate chain as `[preferred, ...fallbacks]`, resolving each
+   * ref gracefully (invalid/unknown refs are skipped). If every ref fails to
+   * resolve, we fall back to the global candidate list so the agent still has
+   * something to use. No capability filtering is performed — the user picks the
+   * models, and fallback stays within that user-chosen set.
+   */
+  def getCandidatesForAgent(agentModel: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
+    agentModel match
+      case None | Some(nebflow.shared.AgentModelConfig(None, Nil)) =>
+        getCandidates() // no config → global list
+      case Some(cfg) =>
+        // Build agent chain: [preferred, ...fallbacks]
+        val agentChain = cfg.preferred.toList ++ cfg.fallbacks
+        for
+          resolved <- agentChain.traverse(ref => getCandidateForRef(ref))
+          agentCandidates = resolved.flatten
+          base <- if agentCandidates.nonEmpty then IO.pure(agentCandidates) else getCandidates()
+        yield base
+
+  /**
+   * Resolve vision + capabilities for a model.
+   * Priority: ModelConfig inline fields > ModelRegistry (models.json) > defaults (false, empty).
+   */
+  private def resolveCapabilities(
+    providerId: String,
+    modelId: String,
+    modelConfig: Option[ModelConfig]
+  ): (Boolean, Set[String]) =
+    val registryEntry = ModelRegistry.lookup(providerId, modelId)
+    val vision = modelConfig
+      .flatMap(_.vision)
+      .orElse(registryEntry.map(_.vision))
+      .getOrElse(false)
+    val caps = modelConfig
+      .flatMap(_.capabilities)
+      .orElse(registryEntry.map(_.capabilities))
+      .getOrElse(Nil)
+      .toSet
+    (vision, caps)
+
+  end resolveCapabilities
 
   /** Reload: re-read config from disk and clear adapter cache. */
   def reloadConfig(): IO[Unit] =

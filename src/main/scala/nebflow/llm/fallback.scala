@@ -27,9 +27,9 @@ object Fallback:
   private val JitterMinMs = 1000
   private val JitterMaxMs = 3000
   private val DefaultTimeoutMs = Defaults.LlmTimeoutMs
-  val MaxRetries: Int = 3
-  val InitialBackoffMs: Long = 3000L
-  val MaxBackoffMs: Long = 30000L
+  val MaxRetries: Int = 1
+  val InitialBackoffMs: Long = 1000L
+  val MaxBackoffMs: Long = 10000L
 
   def classifyError(error: Throwable): ErrorClassification =
     // Check for structured sttp4 HttpError first
@@ -44,12 +44,19 @@ object Fallback:
           case 529 => FailoverReason.Overloaded
           case 400 => FailoverReason.Format
           case _ => FailoverReason.ProviderError
+        // Context overflow affects all providers — abort immediately.
+        // Other 400 errors are permanent for this provider but may not affect others.
+        val msgLower = Option(e.getMessage).map(_.toLowerCase).getOrElse("")
+        val isContextOverflow = msgLower.contains("context_length_exceeded")
+          || msgLower.contains("maximum context length")
+          || msgLower.contains("reduce the length of the messages")
         val permanence = c match
+          case 400 if isContextOverflow => ErrorPermanence.Fatal
           case 401 | 403 | 404 | 400 => ErrorPermanence.Permanent
           case _ => ErrorPermanence.Transient
         ErrorClassification(reason, permanence, Some(c), Some(error.getMessage))
       case _: java.util.concurrent.TimeoutException =>
-        ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some("timeout"))
+        ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Permanent, message = Some("timeout"))
       case _ =>
         val msg = Option(error.getMessage).map(_.toLowerCase).getOrElse("")
         if msg.contains("connection reset") || msg.contains("econnreset") || msg.contains("econnrefused") || msg
@@ -63,7 +70,7 @@ object Fallback:
             message = Some(error.getMessage)
           )
         else if msg.contains("timeout") || msg.contains("timed out") then
-          ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(error.getMessage))
+          ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Permanent, message = Some(error.getMessage))
         else if msg.contains("auth") || msg.contains("unauthorized") || msg.contains("403") || msg.contains("401") then
           ErrorClassification(FailoverReason.Auth, ErrorPermanence.Permanent, message = Some(error.getMessage))
         else if msg.contains("rate limit") || msg.contains("429") then
@@ -77,7 +84,7 @@ object Fallback:
         else if msg.contains("invalid request") || msg.contains("bad request") || msg.contains("400") then
           ErrorClassification(FailoverReason.Format, ErrorPermanence.Permanent, message = Some(error.getMessage))
         else if msg.contains("empty response") || msg.contains("no content") then
-          ErrorClassification(FailoverReason.EmptyStream, ErrorPermanence.Transient, message = Some(error.getMessage))
+          ErrorClassification(FailoverReason.EmptyStream, ErrorPermanence.Permanent, message = Some(error.getMessage))
         else ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Transient, message = Some(error.getMessage))
         end if
 
@@ -146,13 +153,19 @@ object Fallback:
 
           val notifyExhausted = onProviderExhausted.traverse_(_.apply(candidate))
 
-          if classification.permanence == ErrorPermanence.Permanent then notifyExhausted *> fallback(allFailures)
-          else if retriesLeft > 0 then
-            val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
-            val delay = math.min(backoffMs + jitter, MaxBackoffMs)
-            IO.sleep(delay.millis) *>
-              tryWithRetry(candidate, retriesLeft - 1, backoffMs * 2, allFailures)(fallback)
-          else notifyExhausted *> fallback(allFailures)
+          classification.permanence match
+            case ErrorPermanence.Fatal =>
+              // Error affects all providers (e.g. context overflow) — abort immediately
+              notifyExhausted *> IO.raiseError(new FallbackExhaustedError(allFailures))
+            case ErrorPermanence.Permanent =>
+              notifyExhausted *> fallback(allFailures)
+            case ErrorPermanence.Transient =>
+              if retriesLeft > 0 then
+                val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
+                val delay = math.min(backoffMs + jitter, MaxBackoffMs)
+                IO.sleep(delay.millis) *>
+                  tryWithRetry(candidate, retriesLeft - 1, backoffMs * 2, allFailures)(fallback)
+              else notifyExhausted *> fallback(allFailures)
       }
     end tryWithRetry
 

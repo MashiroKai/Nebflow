@@ -31,11 +31,11 @@ object SyncCommand:
 end SyncCommand
 
 /**
- * Core neblink service — Tailscale P2P device discovery and cross-device tool execution.
+ * Core neblink service — NebLink P2P device discovery and cross-device tool execution.
  *
  * Event-driven design:
  *   - IO-based sync loop replaces the old Pekko actor.
- *   - Tailscale is the trust boundary — no account or cloud relay needed.
+ *   - NebLink Server is the trust boundary — no account or cloud relay needed.
  *   - Sync runs continuously; discovery hook is set by GatewayMain at startup.
  */
 class NeblinkService private (
@@ -50,10 +50,10 @@ class NeblinkService private (
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink")
 
-  /** IPs of peers discovered via NebLink server (non-Tailscale). Trusted for incoming connections. */
+  /** IPs of peers discovered via NebLink Server. Trusted for incoming connections. */
   @volatile private var trustedPeerIps: Set[String] = Set.empty
 
-  /** Update trusted peer IPs (from NebLink server discovery). */
+  /** Update trusted peer IPs (from NebLink Server discovery). */
   def updateTrustedIps(ips: Set[String]): IO[Unit] = IO { trustedPeerIps = ips }
 
   /** Devices scheduled for removal after grace period. Prevents UI flicker from brief WS disconnects. */
@@ -71,7 +71,7 @@ class NeblinkService private (
   private def notifyPeersChanged: IO[Unit] =
     peerChangeCallbacks.get.flatMap(_.traverse_(_.handleErrorWith(_ => IO.unit)))
 
-  /** Discovery hook — set to TailscaleDiscovery.discoverCycle at startup. */
+  /** Discovery hook — set to NeblinkDiscovery.discoverCycle at startup. */
   private val discoveryHookRef: Ref[IO, IO[Unit]] = Ref.unsafe[IO, IO[Unit]](IO.unit)
 
   /** Set the discovery hook (called periodically by the sync loop). */
@@ -87,16 +87,22 @@ class NeblinkService private (
 
   def identity: IO[DeviceIdentity] = identityRef.get
 
-  /** Update device capabilities and/or user description. Persists to disk. */
+  /** Update device capabilities, user description, and/or avatar URL. Persists to disk. */
   def updateDeviceInfo(
     capabilities: Option[Map[String, String]] = None,
-    userDescription: Option[String] = None
+    userDescription: Option[String] = None,
+    avatarUrl: Option[String] = None
   ): IO[Unit] =
     for
       updated <- identityRef.modify { id =>
         val newId = id.copy(
           capabilities = capabilities.getOrElse(id.capabilities),
-          userDescription = userDescription.getOrElse(id.userDescription)
+          userDescription = userDescription.getOrElse(id.userDescription),
+          // Only overwrite avatarUrl when a non-empty value is supplied; an empty
+          // string clears it, None leaves it untouched.
+          avatarUrl = avatarUrl match
+            case Some(url) => Some(url).filter(_.nonEmpty)
+            case None => id.avatarUrl
         )
         (newId, newId)
       }
@@ -212,18 +218,9 @@ class NeblinkService private (
         yield ()
     }
 
-  /** Check if an IP is trusted — Tailscale CGNAT range or NebLink server-discovered peers. */
-  def isTailscalePeer(remoteAddr: String): Boolean =
-    val isCgnat =
-      try
-        val parts = remoteAddr.split("\\.")
-        if parts.length == 4 then
-          val first = parts(0).toInt
-          val second = parts(1).toInt
-          first == 100 && second >= 64 && second <= 127
-        else false
-      catch case _: Exception => false
-    isCgnat || trustedPeerIps.contains(remoteAddr)
+  /** Check if an IP is trusted — peer IPs discovered via NebLink Server. */
+  def isTrustedPeer(remoteAddr: String): Boolean =
+    trustedPeerIps.contains(remoteAddr)
 
   /** Handle an incoming handshake from a peer. Called by the REST endpoint. */
   def handleHandshake(
@@ -246,7 +243,7 @@ class NeblinkService private (
 
   // ===== Sync =====
 
-  /** Run one sync cycle: Tailscale discovery. */
+  /** Run one sync cycle: NebLink discovery. */
   def runSyncCycle: IO[Unit] = discoveryHookRef.get.flatten
 
   /** Trigger discovery immediately and return current peers. */
@@ -289,7 +286,7 @@ class NeblinkService private (
   def sendData(deviceId: String, channel: String, payload: Json): IO[Unit] =
     sendDataFnRef.get.flatMap(_(deviceId, channel, payload))
 
-  // ===== File Transfer (P2P, Tailscale IP auth) =====
+  // ===== File Transfer (P2P, peer IP auth) =====
 
   /**
    * Validate that a relative path is safe — no traversal, no absolute paths.
@@ -387,7 +384,7 @@ object NeblinkService:
       descRef <- Ref.of[IO, Map[String, String]](peerDescs)
       syncQueue <- Queue.unbounded[IO, SyncCommand]
       service = new NeblinkService(idRef, cfgRef, peersRef, descRef, serverPort, syncQueue, dispatcher, gracePeriod)
-      // Start sync loop — Tailscale is the trust boundary, no login needed.
+      // Start sync loop — NebLink Server is the trust boundary, no login needed.
       _ = dispatcher.unsafeRunAndForget(service.startSyncLoop)
     yield service
 

@@ -3,8 +3,10 @@
   display: flex;
   flex-direction: row;
   flex-shrink: 0;
-  margin: 8px;
-  max-height: calc(100vh - 16px);
+  /* Bottom margin matches #input-area's padding-bottom (12px) so the sidebar
+     card's bottom edge aligns with the chat's input bar. */
+  margin: 16px 4px 10px;
+  max-height: calc(100vh - 26px);
   border-radius: 20px;
   overflow: hidden;
   background: var(--glass-bg);
@@ -13,8 +15,8 @@
   border: 1px solid var(--glass-border);
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
+    0px 2px 8px rgba(0,0,0, 0.04),
+    0px 8px 24px rgba(0,0,0, 0.06);
 }
 @media (prefers-color-scheme: dark) {
   #sidebar {
@@ -45,16 +47,17 @@
   display: none;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
 }
 .panel.active { display: flex; }
 
-/* ---------- Sidebar Top Bar — settings gear + connection indicator ---------- */
+/* ---------- Sidebar Top Bar ---------- */
+/* The bump-zone (pill at top) is the drag handle for panel reordering.
+   The topbar itself is not a drag area — cursor: grab lives on .bump-zone. */
 .sidebar-topbar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 8px 14px;
+  padding: 4px 14px;
   flex-shrink: 0;
 }
 .panel-header {
@@ -853,6 +856,50 @@
   transition: border-color 0.15s;
 }
 .cfg-card:hover { border-color: rgba(91, 127, 191, 0.35); }
+/* Model rows inside provider cards */
+.cfg-model-list { padding: 4px 0; }
+.cfg-model-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 10px;
+  border-top: 1px solid var(--color-frame-border-light);
+}
+.cfg-model-name {
+  font: 500 11px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text);
+  flex-shrink: 0;
+  min-width: 80px;
+  padding-top: 1px;
+}
+.cfg-model-vision {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+/* Read-only vision badge (provider card list) */
+.vision-badge {
+  font: 500 9.5px -apple-system, sans-serif;
+  padding: 1px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(91, 127, 191, 0.35);
+  background: rgba(91, 127, 191, 0.08);
+  color: #5b7fbf;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+/* Vision checkbox in edit modal */
+.cfg-model-vision-check {
+  font: 500 11px -apple-system, sans-serif;
+  color: var(--color-frame-text);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cfg-model-vision-check input { margin: 0; cursor: pointer; }
+
 .cfg-card-header {
   display: flex;
   align-items: center;
@@ -1230,6 +1277,318 @@
 }
 @keyframes cfg-toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
+/* ── Agent Manager ────────────────────────────────────────────────────── */
+.agent-mgr-loading,
+.agent-mgr-empty {
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  padding: 20px 12px;
+  text-align: center;
+}
+
+/* Category groups */
+.agent-mgr-group { margin-bottom: 12px; }
+.agent-mgr-group-header {
+  font: 600 11px -apple-system, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-frame-text-muted, #888);
+  padding: 8px 12px 4px;
+  user-select: none;
+}
+.agent-mgr-standalone-badge {
+  font: 500 9px -apple-system, sans-serif;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(100,200,100,0.15);
+  color: #6a6;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+/* Compact sidebar cards (VSCode Extensions style) */
+.agent-mgr-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-frame-border-light);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.agent-mgr-card:hover { background: rgba(0,0,0,0.03); }
+.agent-mgr-avatar {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: rgba(91,127,191,0.10);
+  color: rgb(91,127,191);
+  font: 600 14px -apple-system, sans-serif;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.agent-mgr-info {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.agent-mgr-card .agent-mgr-name {
+  font: 600 12px -apple-system, sans-serif;
+  color: var(--color-frame-text);
+  letter-spacing: -0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.agent-mgr-card .agent-mgr-desc {
+  font: 400 10px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.agent-mgr-model-tag {
+  flex-shrink: 0;
+}
+.agent-mgr-model-pill {
+  font: 500 9px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+  background: var(--color-frame-border);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.agent-mgr-model-pill.fallback {
+  color: rgb(91,127,191);
+  background: rgba(91,127,191,0.10);
+}
+
+/* ── Agent management panel ───────────────────────────────────────── */
+#agents-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: var(--color-frame-border) transparent;
+}
+
+/* ── Agent detail (Canvas tab) ─────────────────────────────────────── */
+.agent-detail {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+  padding: 24px 28px; max-width: 720px;
+}
+.agent-detail-loading {
+  font: 400 13px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  padding: 40px; text-align: center;
+}
+.agent-detail-header {
+  display: flex; align-items: flex-start; gap: 14px;
+  margin-bottom: 24px;
+}
+.agent-detail-avatar {
+  width: 48px; height: 48px;
+  border-radius: 12px;
+  background: rgba(91,127,191,0.10);
+  color: rgb(91,127,191);
+  font: 600 22px -apple-system, sans-serif;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.agent-detail-header-info { flex: 1; min-width: 0; }
+.agent-detail-name {
+  font: 600 20px -apple-system, sans-serif;
+  color: var(--color-text);
+  letter-spacing: -0.02em;
+  margin-bottom: 2px;
+}
+.agent-detail-desc {
+  font: 400 13px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+.agent-detail-extends {
+  font: 400 11px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+  opacity: 0.7;
+  margin-top: 4px;
+}
+.agent-detail-section {
+  margin-bottom: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+/* System prompt section grows to fill remaining height */
+.agent-detail-section:has(.agent-detail-prompt-edit) {
+  flex: 1;
+  display: flex; flex-direction: column;
+  min-height: 300px;
+}
+.agent-detail-label {
+  font: 600 11px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+.agent-detail-model-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: rgba(0,0,0,0.02);
+}
+.agent-detail-model-row.playing {
+  border-color: var(--color-primary, #07c160);
+  background: rgba(7,193,96,0.04);
+}
+.agent-detail-playing-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--color-primary, #07c160);
+  animation: agent-pulse 1.5s ease-in-out infinite;
+}
+@keyframes agent-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.agent-detail-model-name {
+  font: 500 12px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text);
+  flex: 1;
+}
+.agent-detail-grip {
+  opacity: 0.4; font-size: 12px; flex-shrink: 0;
+}
+.agent-detail-model-pos {
+  font: 600 10px -apple-system, sans-serif;
+  color: var(--color-primary, #07c160);
+  flex-shrink: 0;
+}
+.agent-detail-model-row.dragging { opacity: 0.4; }
+.agent-detail-model-row.drag-over {
+  border-color: var(--color-primary, #07c160);
+  box-shadow: 0 0 0 2px rgba(7,193,96,0.15);
+}
+.agent-detail-model-add { margin-top: 8px; }
+.agent-detail-model-add select {
+  width: 100%; height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: rgba(0,0,0,0.02);
+  color: var(--color-text);
+  font: 500 11px -apple-system, sans-serif;
+  padding: 0 8px;
+  cursor: pointer; outline: none;
+}
+.agent-detail-empty-spacer { height: 4px; }
+
+/* Model remove button */
+.agent-detail-model-remove {
+  cursor: pointer; opacity: 0.35;
+  font-size: 14px; padding: 0 2px;
+  flex-shrink: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.agent-detail-model-remove:hover { opacity: 1; color: var(--color-error, #e5484d); }
+
+/* System prompt edit */
+.agent-detail-prompt-edit {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  font: 400 12px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text);
+  background: rgba(0,0,0,0.02);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px;
+  resize: none;
+  outline: none;
+  transition: border-color 0.2s;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.agent-detail-prompt-edit:focus { border-color: rgba(91,127,191,0.35); }
+.agent-detail-save-btn {
+  margin-top: 8px;
+  flex-shrink: 0;
+  font: 500 12px -apple-system, sans-serif;
+  padding: 5px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.agent-detail-save-btn:hover { background: rgba(91,127,191,0.06); border-color: rgba(91,127,191,0.3); }
+
+/* Default model badge */
+.agent-mgr-default-badge, .agent-detail-default-badge {
+  display: inline-block;
+  font: 500 10px -apple-system, sans-serif;
+  color: var(--color-text-muted, #888);
+  background: rgba(128,128,128,0.12);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* Model inherited (read-only global default) */
+.agent-detail-model-inherited { opacity: 0.6; }
+.agent-detail-model-inherited-label {
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+  font-style: italic;
+}
+.agent-detail-model-row.inherited { cursor: default; }
+
+/* Tool toggle chip grid */
+.agent-detail-tools-grid {
+  display: flex; flex-wrap: wrap; gap: 5px;
+}
+.agent-detail-tool-check {
+  font: 500 10px ui-monospace, SFMono-Regular, monospace;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+.agent-detail-tool-check:hover {
+  border-color: rgba(91,127,191,0.3);
+  color: var(--color-text);
+}
+.agent-detail-tool-check.checked {
+  border-color: rgba(91,127,191,0.35);
+  background: rgba(91,127,191,0.08);
+  color: rgb(91,127,191);
+}
+.agent-detail-empty {
+  font: 400 12px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+}
+.agent-detail-tools {
+  display: flex; flex-wrap: wrap; gap: 5px;
+}
+.agent-detail-tool {
+  font: 400 10px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.agent-detail-prompt {
+  font: 400 12px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+  line-height: 1.6;
+  max-height: 400px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  cursor: pointer;
+  padding: 12px;
+  background: rgba(0,0,0,0.02);
+  border-radius: 8px;
+}
+.agent-detail-prompt-more { color: rgb(91,127,191); cursor: pointer; }
+
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   /* cfg-model-add: ensure dashed border visible on dark modal bg */
@@ -1237,4 +1596,10 @@
     border-color: var(--color-frame-text-dim);
     color: var(--color-frame-text-muted);
   }
+  .agent-mgr-card:hover { background: rgba(255,255,255,0.04); }
+  .agent-mgr-standalone-badge { background: rgba(100,200,100,0.2); color: #8c8; }
+  .agent-detail-model-row { background: rgba(255,255,255,0.03); }
+  .agent-detail-prompt-edit { background: rgba(255,255,255,0.03); }
+  .agent-detail-save-btn { background: rgba(255,255,255,0.03); }
+  .agent-detail-tool-add input { background: rgba(255,255,255,0.03); }
 }

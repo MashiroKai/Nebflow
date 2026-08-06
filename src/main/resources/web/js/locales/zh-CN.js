@@ -100,6 +100,9 @@ export default {
   'settings.cardDesignResetConfirm': '确定恢复默认设计指导？当前内容将被覆盖。',
   'settings.cardDesignEdit': '编辑设计指导',
   'settings.cardDesignPlaceholder': '# 卡片视觉设计规范\n\n用 Markdown 描述 Card 工具的样式指南...',
+  'settings.modelCaps': '模型能力',
+  'settings.modelCapsHint': '为模型标记能力标签，用于智能路由。只能从预置列表中选择。',
+  'settings.noModels': '未配置模型',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',
@@ -285,7 +288,13 @@ export default {
 
   // === Voice ===
   'voice.listening': '正在聆听...',
+  'voice.speaking': '检测到语音',
+  'voice.processing': '识别中...',
+  'voice.loading': '正在加载语音模型',
   'voice.error': '错误：{error}',
+  'voice.hintListening': '说话结束自动断句',
+  'voice.hintSpeaking': '倾听中，说完自动识别',
+  'voice.wakeTriggered': '你好，请说…',
 
   // === Background tasks ===
   'bg.header': '后台任务',
@@ -302,12 +311,11 @@ export default {
   // === Task list ===
   'task.expand': '展开',
   'task.collapse': '收起',
-  'task.count': '{count} 个任务',
-  'task.done': '{count} 已完成',
   'task.inProgress': '{count} 进行中',
   'task.open': '{count} 待处理',
   'task.blockedBy': '等待 #{ids}',
   'task.more': '+{count} 个',
+  'task.dismiss': '关闭',
   'task.unit': '个任务',
 
   // === Tool names (label first line) ===
@@ -319,7 +327,6 @@ export default {
   'tool.Glob': '查找文件',
   'tool.TaskCreate': '创建任务',
   'tool.TaskUpdate': '更新任务',
-  'tool.TaskList': '列出任务',
   'tool.Card': '卡片',
   'tool.AskUser': '询问用户',
   'tool.WebSearch': '网络搜索',
@@ -373,11 +380,17 @@ export default {
   'task.today': '今天',
   'task.tomorrow': '明天',
   'task.yesterday': '昨天',
+  'task.lastTriggered': '上次触发',
+  'task.enabled': '点击停用',
+  'task.disabled': '点击启用',
 
   // NebLink
+  'neblink.title': '设备互联',
   'neblink.devices': '设备',
   'neblink.thisDevice': '本机',
   'neblink.connected': '已连接',
+  'neblink.unknownDevice': '未命名设备',
+  'neblink.noPeersHint': '还没有其他设备。请在两台设备上都配置 NebLink Server。',
   'neblink.detectedTools': '已检测工具',
   'neblink.deviceDescription': '设备描述',
   'neblink.deviceDescHint': '如：校园网环境、有 Vivado 2023.2',
@@ -400,4 +413,32 @@ export default {
   'dropbox.saved': '已保存',
   'dropbox.completed': '已完成',
   'dropbox.failed': '传输失败',
+
+  // 模型选择器（输入框右侧）
+  'modelPicker.select': '选择',
+  'modelPicker.changeModel': '切换模型 / Fallback 链',
+  'modelPicker.preferred': '首选模型',
+  'modelPicker.fallbacks': '回退链',
+  'modelPicker.fallbackEmpty': '无回退模型',
+  'modelPicker.chain': '模型与 Fallback 链',
+  'modelPicker.active': '当前',
+  'modelPicker.empty': '暂无模型',
+  'modelPicker.add': '+ 添加回退…',
+  'modelPicker.remove': '移除',
+  'modelPicker.hint': '首选 = 优先使用的模型。不可用时按回退链顺序尝试。',
+  'modelPicker.usingFallback': '使用回退',
+
+  // === Daemons (Dev Servers) ===
+  'daemons.title': '开发服务器',
+  'daemons.empty': '暂无服务',
+  'daemons.emptyHint': '点击 + 添加守护进程',
+  'daemons.start': '启动',
+  'daemons.stop': '停止',
+  'daemons.add': '添加',
+  'daemons.cancel': '取消',
+  'daemons.fieldId': 'ID',
+  'daemons.fieldName': '名称',
+  'daemons.fieldCommand': '命令',
+  'daemons.fieldCwd': '工作目录',
+  'daemons.fieldPort': '端口（可选）',
 };

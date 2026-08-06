@@ -27,10 +27,17 @@ private[agent] trait AgentCore:
   private val PermissionTimeout = 5.minutes
 
   /**
-   * Tools removed from sub-agents (depth > 0): user-interaction tools that
-   * don't make sense in an autonomous sub-agent context.
+   * Nebula-exclusive tools: only available when agentName == "Nebula".
+   * - AskUserQuestion: direct user interaction
+   * - Schedule: session-scoped scheduled tasks
    */
-  private val SubagentBlockedTools = Set("TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion")
+  private val NebulaExclusiveTools = Set(
+    "AskUserQuestion",
+    "Schedule"
+  )
+
+  /** Tools available to Nebula and Team Leads, but NOT workers. */
+  private val LeadLevelTools = Set("TaskCreate", "TaskUpdate")
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 
@@ -90,18 +97,66 @@ private[agent] trait AgentCore:
           ok
       if !backoffOk then None
       else if state.compactionFailures >= config.circuitBreakerMax then
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "auto-compact-skipped",
-          s"circuitBreakerOpen failures=${state.compactionFailures} max=${config.circuitBreakerMax}"
-        )
-        None
+        if !config.emergencyAutoFallback then
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "auto-compact-skipped",
+            s"circuitBreakerOpen failures=${state.compactionFailures} max=${config.circuitBreakerMax}"
+          )
+          None
+        else
+          // Emergency fallback: non-LLM rule-based compaction.
+          // Strips tool results, removes old tool-result pairs, truncates to last N.
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "emergency-compact-trigger",
+            s"circuitBreakerOpen failures=${state.compactionFailures} messages=${state.messages.size}"
+          )
+          val (cleaned, desc) = CompactUtils.emergencyClean(state.messages, config.emergencyKeepMessages)
+          val emergencyState = state
+            .withMessages(cleaned)
+            .withCompactionFailures(0)
+            .withLatestUsage(None)
+          Some(for
+            _ <- ctx.forkTurn(
+              emitStreamIO(
+                state.wsSend,
+                AgentStreamEvent.CompactComplete(state.messages.size, cleaned.size, None),
+                isSubagent = depth > 0,
+                state.sessionId
+              ).handleErrorWith(_ => IO.unit)
+            )
+            _ <- state.sessionId.fold(IO.unit)(sid =>
+              ctx.forkTurn(
+                resources.historyArchiver
+                  .archiveCompaction(
+                    sessionId = sid,
+                    sessionName = state.sessionName,
+                    agentName = agentDef.name,
+                    before = state.messages,
+                    after = cleaned,
+                    mode = "emergency",
+                    extra = Map("description" -> desc)
+                  )
+                  .void
+                  .handleErrorWith(_ => IO.unit)
+              )
+            )
+            result <- pipeLlmCall(agentDef, resources, depth, parentRef, emergencyState, replyTo, processing)
+          yield result)
       else
         val inputTokensOpt = state.latestUsage.map(_.inputTokens)
-        val threshold = state.contextWindow - config.bufferForWindow(state.contextWindow)
+        // Team agents (depth >= 1): aggressive 20% threshold to prevent context overflow.
+        // Nebula (depth 0): standard threshold (contextWindow - max(13k, 10%))
+        val threshold =
+          if depth >= 1 then (state.contextWindow * 0.20).toInt
+          else state.contextWindow - config.bufferForWindow(state.contextWindow)
         val shouldCompact = inputTokensOpt match
           case Some(inputTokens) if inputTokens > 0 && inputTokens > threshold =>
             Some(s"inputTokens=$inputTokens threshold=$threshold")
@@ -134,7 +189,7 @@ private[agent] trait AgentCore:
     val pending = CompactionJob(jobId, mode, None, replyTo, resumeAfterCompact, postCompactInstruction)
     val compactState = state
       .withPendingCompaction(Some(pending))
-      .withMessages(state.messages :+ CompactService.buildCompactReminder())
+      .withMessages(state.messages :+ CompactService.buildCompactReminder(depth))
     for
       _ <- ctx.forkTurn(
         emitStreamIO(
@@ -172,9 +227,17 @@ private[agent] trait AgentCore:
         val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth)
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
+        // Track the first model that failed (for modelChanged notification)
+        val firstFailedModel: cats.effect.Ref[IO, Option[String]] = cats.effect.Ref.unsafe(None)
         val onAttemptCb: FallbackAttempt => IO[Unit] = attempt =>
-          val msg = attempt.message.getOrElse(s"${attempt.providerId}/${attempt.model} failed, retrying...")
-          state.wsSend(AgentStreamEvent.RetryStatus(msg).toJson(ctx.self.path.name, isSubagent, sessionIdOpt))
+          // Record the first failed model for modelChanged comparison
+          firstFailedModel.get.flatMap {
+            case None => firstFailedModel.set(Some(s"${attempt.providerId}/${attempt.model}"))
+            case _ => IO.unit
+          } *> {
+            val msg = attempt.message.getOrElse(s"${attempt.providerId}/${attempt.model} failed, retrying...")
+            state.wsSend(AgentStreamEvent.RetryStatus(msg).toJson(ctx.self.path.name, isSubagent, sessionIdOpt))
+          }
         val turnId = state.currentTurnId + 1
         val microResult = if isCompactTurn || isAskTurn then None else FastMicroCompact(state.messages)
         val stateForLlm = microResult match
@@ -190,13 +253,19 @@ private[agent] trait AgentCore:
             state.copy(execution = state.execution.copy(messages = compacted)).withCurrentTurnId(turnId)
           case None => state.withCurrentTurnId(turnId)
 
-        val llmIo = for
+        // Synchronous context preparation (fast: file reads with mtime cache)
+        val contextIo = for
           turnCtx <- ContextRefresher.refreshTurn(stateForLlm, resources, agentDef)
           freshDef = turnCtx.agentDef
-          voiceEnabled <- resources.voiceMutedRef.get.map(!_)
+          voiceMuted <- resources.voiceMutedRef.get
+          voiceEnabled = freshDef.voiceEnabled && !voiceMuted
           allowedTools = buildAllowedToolSet(freshDef, depth)
           devInfo = deviceInfoBlock
           sessionsText = formatAgentSessions(stateForLlm.agentSessions)
+          // Load active tasks for system prompt injection (real-time per turn)
+          taskListText <- stateForLlm.sessionId match
+            case Some(sid) => resources.taskStore.renderForPrompt(sid)
+            case None => IO.pure("")
           promptCtx = PromptContext(
             availableTools = allowedTools,
             depth = depth,
@@ -209,17 +278,17 @@ private[agent] trait AgentCore:
             chatWidth = state.session.chatWidth,
             envInfo = Repl.buildEnvInfo(state.session.chatWidth),
             skillCatalog = turnCtx.skillCatalog,
-            flowCatalog = turnCtx.flowCatalog,
+            teamCatalog = turnCtx.teamCatalog,
             memoryBlock = turnCtx.memoryBlock,
+            taskListText = taskListText,
             rulesMd = turnCtx.rulesMd
           )
           systemStable = buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
           isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
           reminders = SystemReminders.collectAll(isUserTurn)
+          // Branch change: persist synchronously (no async message needed)
           _ <- turnCtx.branchChange match
             case Some(_) =>
-              ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch)
-              // Persist git branch change so it survives restarts
               stateForLlm.sessionId.traverse_(sid =>
                 resources.sessionStore
                   .updateGitBranch(sid, turnCtx.currentBranch)
@@ -227,10 +296,7 @@ private[agent] trait AgentCore:
                     IO(NebflowLogger.forName("nebflow.agent").warn(s"Failed to persist gitBranch: ${e.getMessage}"))
                   )
               )
-            case None =>
-              IO.whenA(turnCtx.currentBranch != stateForLlm.gitBranch)(
-                ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch)
-              )
+            case None => IO.unit
           loggedReminders <- SystemReminders.logAndReturn(reminders)
           allReminders = loggedReminders ++ turnCtx.branchChange.toList
           remindersText = SystemReminder.renderAll(allReminders)
@@ -243,46 +309,19 @@ private[agent] trait AgentCore:
             if MaintenanceService.shouldTrigger(stateForLlm, depth, isCompactTurn, isAskTurn) then
               List(MaintenanceService.buildReminder(stateForLlm.delegateCount))
             else Nil
-          modelDescs <- if isCompactTurn then IO.pure(Nil) else resources.providerRegistry.getAllModelsDetailed()
           freshTools =
-            if isCompactTurn then Some(Nil) else enrichDelegateTools(buildToolList(freshDef, depth), modelDescs)
-          // Memory is injected via system prompt (memoryBlock), not synthetic Read messages
-          patchedMessages <- stateForLlm.liveFileTracker
-            .fold(IO.pure(stateForLlm.messages))(_.patchMessages(stateForLlm.messages))
+            if isCompactTurn then Some(Nil) else buildToolList(freshDef, depth)
           request = LlmRequest(
-            messages = patchedMessages ++ dynamicMsg ++ maintenanceMsg,
+            messages = stateForLlm.messages ++ dynamicMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = freshDef.name,
             tools = freshTools,
             maxTokens = Some(resources.agentLibrary.globalMaxTokens),
             thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
-            systemStable = Some(systemStable)
+            systemStable = Some(systemStable),
+            agentModel = freshDef.model
           )
-          result <- resources.llm
-            .sendStream(request, onAttempt = Some(onAttemptCb))
-            .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
-            .compile
-            .toList
-            .flatMap { chunks =>
-              val cr = aggregateChunks(chunks)
-              LlmLogWriter.log(
-                request,
-                chunks,
-                cr.text,
-                cr.toolCalls,
-                cr.thinking,
-                cr.stopReason,
-                cr.usage,
-                cr.model,
-                isSubagent,
-                isCompactTurn
-              ) *> IO.pure(cr)
-            }
-            .attempt
-          _ <- result match
-            case Right(r) => ctx.self ! LlmComplete(r, replyTo, turnId)
-            case Left(e) => ctx.self ! LlmFailed(e, replyTo, turnId)
-        yield ()
+        yield (turnCtx, request)
 
         val agentStartIO =
           if depth > 0 && !isCompactTurn && !isAskTurn then
@@ -295,10 +334,61 @@ private[agent] trait AgentCore:
           else IO.unit
         for
           _ <- agentStartIO
-          _ <- ctx.forkTurn(llmIo.handleErrorWith { e =>
-            IO.delay(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}"))
-              .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
-          })
+          (turnCtx, request) <- contextIo
+          // Synchronously update gitBranch in state — no async message
+          stateWithBranch = stateForLlm.withGitBranch(turnCtx.currentBranch)
+          _ <- ctx.forkTurn(
+            resources.llm
+              .sendStream(request, onAttempt = Some(onAttemptCb))
+              .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
+              .compile
+              .toList
+              .flatMap { chunks =>
+                val cr = aggregateChunks(chunks)
+                // Track runtime model for this session
+                val trackModel = sessionIdOpt match
+                  case Some(sid) if cr.model.isDefined =>
+                    resources.runtimeModels.update(_ + (sid -> cr.model.get))
+                  case _ => IO.unit
+                // Broadcast modelChanged if fallback occurred
+                val notifyModelChanged = firstFailedModel.get.flatMap {
+                  case Some(oldModel) if cr.model.isDefined && cr.model.get != oldModel =>
+                    state.wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "modelChanged".asJson,
+                        "sessionId" -> sessionIdOpt.asJson,
+                        "oldModel" -> oldModel.asJson,
+                        "newModel" -> cr.model.get.asJson
+                      )
+                    )
+                  case _ => IO.unit
+                }
+                trackModel *> notifyModelChanged *>
+                  LlmLogWriter.log(
+                    request,
+                    chunks,
+                    cr.text,
+                    cr.toolCalls,
+                    cr.thinking,
+                    cr.stopReason,
+                    cr.usage,
+                    cr.model,
+                    isSubagent,
+                    isCompactTurn
+                  ) *> IO.pure(cr)
+              }
+              .attempt
+              .flatMap {
+                case Right(r) => ctx.self ! LlmComplete(r, replyTo, turnId)
+                case Left(e) => ctx.self ! LlmFailed(e, replyTo, turnId)
+              }
+              .handleErrorWith { e =>
+                NebflowLogger
+                  .forName("nebflow.agent")
+                  .warn(s"pipeLlmCall failed: ${e.getMessage}")
+                  .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
+              }
+          )
         yield processing(
           agentDef,
           resources,
@@ -306,8 +396,8 @@ private[agent] trait AgentCore:
           parentRef,
           // Update lastMaintenanceDelegateCount if maintenance was triggered this turn
           (if MaintenanceService.shouldTrigger(stateForLlm, depth, isCompactTurn, isAskTurn) then
-             stateForLlm.withLastMaintenanceDelegateCount(stateForLlm.delegateCount)
-           else stateForLlm)
+             stateWithBranch.withLastMaintenanceDelegateCount(stateForLlm.delegateCount)
+           else stateWithBranch)
             .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
         )
 
@@ -363,8 +453,7 @@ private[agent] trait AgentCore:
         mailboxAddress = state.session.sessionId,
         sharedResources = Some(resources),
         actorSystem = Some(ctx.system),
-        messages = state.messages,
-        liveFileTracker = state.liveFileTracker
+        messages = state.messages
       )
       freshResults <- filteredCalls.parTraverse { call =>
         val skipStreaming = call.name == "AskUserQuestion"
@@ -565,18 +654,19 @@ private[agent] trait AgentCore:
                           ToolExecResult(appended, isError = true)
                         }
                       case Right(result) =>
-                        val isCard = call.name == "Card"
                         val isFileEdit = call.name == "Edit" || call.name == "Write"
+                        val imageBlocks = tool.extractImages(finalInput, result)
                         hookEngine.afterTool(call.name, finalInput, result, true, hookCtx).map { postResult =>
                           val hookSuffix = postResult.additionalContext.getOrElse("")
-                          val llmContent = if isCard then
+                          val llmContent = if false then
                             val title = call.input("title").flatMap(_.asString).getOrElse("")
                             s"Card${if title.nonEmpty then s" ($title)" else ""} rendered"
                           else if isFileEdit then nebflow.core.summarizeToolResult(call, result)
                           else result
                           ToolExecResult(
                             llmContent + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                            frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
+                            frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else "")),
+                            imageBlocks = imageBlocks
                           )
                         }
                     }
@@ -599,34 +689,39 @@ private[agent] trait AgentCore:
       case Nil => Set.empty[String]
       case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
       case names => names.toSet
-    val depthFiltered =
-      if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" - "MountFlow" else base
-    if depth > 0 then depthFiltered -- SubagentBlockedTools else depthFiltered
+    // Mail is always available — it's a communication primitive, not a domain tool
+    // Issue is always available — agents should be able to report system problems
+    val withBuiltin = base + "Mail" + "Issue"
+    val isNebula = agentDef.name == "Nebula"
+    val nebulaFiltered = if isNebula then withBuiltin else withBuiltin -- NebulaExclusiveTools
+    // Task tools: available to Nebula and Team Lead, NOT workers
+    val taskFiltered = agentDef.tools match
+      case List("*") =>
+        if depth >= 2 then nebulaFiltered -- LeadLevelTools
+        else nebulaFiltered
+      case _ =>
+        nebulaFiltered
+    // MCP tools: agents may use MCP tools from explicitly granted servers
+    // (mcpServers) plus their own dedicated agent-scoped servers, which are
+    // always auto-allowed. Tool names are mcp__<serverId>__<tool>; dedicated
+    // servers use serverId "agent-<agentName>-<serverName>".
+    val agentOwnPrefix = s"mcp__agent-${agentDef.name}-"
+    val mcpFiltered =
+      if agentDef.mcpServers.isEmpty then
+        taskFiltered.filter(t => !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix))
+      else
+        val prefixes = agentDef.mcpServers.map(sid => s"mcp__${sid}__")
+        taskFiltered.filter(t =>
+          !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith)
+        )
+    // Delegate available to all agents (MaxDepth recursion guard still applies)
+    mcpFiltered
 
   end buildAllowedToolSet
 
   protected def buildToolList(agentDef: AgentDef, depth: Int = 0): Option[List[ToolDefinition]] =
     val allowedSet = buildAllowedToolSet(agentDef, depth)
     Some(ToolRegistry.ALL_TOOLS.filter(t => allowedSet.contains(t.name)))
-
-  private def enrichDelegateTools(
-    tools: Option[List[ToolDefinition]],
-    models: List[(String, String, Option[String])]
-  ): Option[List[ToolDefinition]] =
-    if models.isEmpty then tools
-    else
-      tools.map(_.map { td =>
-        if td.name == "Delegate" then
-          val modelList = models
-            .map { case (ref, _, desc) =>
-              s"  - $ref" + desc.map(d => s": $d").getOrElse("")
-            }
-            .mkString("\n")
-          td.copy(description =
-            td.description + s"\n\nAvailable models (pass as the `model` parameter in \"provider/model\" format):\n$modelList"
-          )
-        else td
-      })
 
   protected def emitStream(
     wsSend: io.circe.Json => IO[Unit],

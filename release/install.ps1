@@ -394,8 +394,53 @@ if (Get-Command "rg" -ErrorAction SilentlyContinue) {
     }
 }
 
+# --- Download Whisper voice model ---
+Write-Host "[5/6] Voice model (Whisper, ~75MB one-time)..." -ForegroundColor Yellow
+$modelDir = Join-Path $env:USERPROFILE ".nebflow\voice-models\onnx-community\whisper-base"
+$onnxEncPath = Join-Path $modelDir "onnx\encoder_model_quantized.onnx"
+
+if (Test-Path $onnxEncPath) {
+    Write-Host "       Already installed." -ForegroundColor Green
+} else {
+    # Determine mirror
+    if (-not $Region) { $Region = "global" }
+    $hfBase = if ($Region -eq "cn") {
+        "https://hf-mirror.com/onnx-community/whisper-base/resolve/main"
+    } else {
+        "https://huggingface.co/onnx-community/whisper-base/resolve/main"
+    }
+
+    New-Item -ItemType Directory -Force -Path (Join-Path $modelDir "onnx") | Out-Null
+
+    # Download config files (small)
+    $configFiles = @("config.json", "tokenizer.json", "generation_config.json", "preprocessor_config.json")
+    foreach ($cf in $configFiles) {
+        $target = Join-Path $modelDir $cf
+        if (-not (Test-Path $target)) {
+            try { Invoke-WebRequest -Uri "$hfBase/$cf" -OutFile $target -UseBasicParsing -TimeoutSec 15 } catch {}
+        }
+    }
+
+    # Download quantized ONNX models (encoder ~22MB + decoder ~51MB)
+    Write-Host "       Downloading model..." -ForegroundColor DarkGray
+    $dlOk = $true
+    try {
+        Invoke-WebRequest -Uri "$hfBase/onnx/encoder_model_quantized.onnx" -OutFile $onnxEncPath -UseBasicParsing -TimeoutSec 120
+    } catch { $dlOk = $false }
+    try {
+        $decPath = Join-Path $modelDir "onnx\decoder_model_merged_quantized.onnx"
+        Invoke-WebRequest -Uri "$hfBase/onnx/decoder_model_merged_quantized.onnx" -OutFile $decPath -UseBasicParsing -TimeoutSec 120
+    } catch { $dlOk = $false }
+    if ($dlOk) {
+        $encSz = [math]::Round((Get-Item $onnxEncPath).Length / 1MB, 1)
+        Write-Host "       Voice model installed ($encSz MB encoder)." -ForegroundColor Green
+    } else {
+        Write-Host "       Download failed (voice will use CDN on first use)." -ForegroundColor DarkGray
+    }
+}
+
 # --- Create wrapper scripts ---
-Write-Host "[5/5] Creating launcher..." -ForegroundColor Yellow
+Write-Host "[6/6] Creating launcher..." -ForegroundColor Yellow
 
 # PowerShell wrapper
 $wrapperPath = Join-Path $InstallDir "nebflow.ps1"

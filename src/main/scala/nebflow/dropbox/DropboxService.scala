@@ -424,7 +424,7 @@ final class DropboxService private (
     IO.blocking {
       val client = HttpClient
         .newBuilder()
-        .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for Tailscale
+        .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for P2P
         .build()
       val request = HttpRequest
         .newBuilder()

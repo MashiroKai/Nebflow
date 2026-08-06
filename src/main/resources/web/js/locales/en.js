@@ -100,6 +100,9 @@ export default {
   'settings.cardDesignResetConfirm': 'Reset to default design guidelines? Current content will be overwritten.',
   'settings.cardDesignEdit': 'Edit Design Guidelines',
   'settings.cardDesignPlaceholder': '# Card Visual Design Guidelines\n\nDescribe the style guide for the Card tool in Markdown...',
+  'settings.modelCaps': 'Model Capabilities',
+  'settings.modelCapsHint': 'Tag models with capability labels for smart routing. Tags are selected from a preset list.',
+  'settings.noModels': 'No models configured',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',
@@ -285,7 +288,13 @@ export default {
 
   // === Voice ===
   'voice.listening': 'Listening...',
+  'voice.speaking': 'Speech detected',
+  'voice.processing': 'Processing...',
+  'voice.loading': 'Loading speech model',
   'voice.error': 'Error: {error}',
+  'voice.hintListening': 'Pauses auto-segment sentences',
+  'voice.hintSpeaking': 'Listening, auto-transcribes on pause',
+  'voice.wakeTriggered': 'Hi, go ahead…',
 
   // === Background tasks ===
   'bg.header': 'Background tasks',
@@ -302,12 +311,11 @@ export default {
   // === Task list ===
   'task.expand': 'Expand',
   'task.collapse': 'Collapse',
-  'task.count': '{count} tasks',
-  'task.done': '{count} done',
   'task.inProgress': '{count} in progress',
   'task.open': '{count} open',
   'task.blockedBy': 'blocked by #{ids}',
   'task.more': '+{count} more',
+  'task.dismiss': 'Dismiss',
   'task.unit': 'tasks',
 
   // === Tool names (label first line) ===
@@ -319,7 +327,6 @@ export default {
   'tool.Glob': 'Glob',
   'tool.TaskCreate': 'TaskCreate',
   'tool.TaskUpdate': 'TaskUpdate',
-  'tool.TaskList': 'TaskList',
   'tool.Card': 'Card',
   'tool.AskUser': 'AskUser',
   'tool.WebSearch': 'WebSearch',
@@ -372,11 +379,17 @@ export default {
   'task.today': 'Today',
   'task.tomorrow': 'Tomorrow',
   'task.yesterday': 'Yesterday',
+  'task.lastTriggered': 'Last triggered',
+  'task.enabled': 'Click to disable',
+  'task.disabled': 'Click to enable',
 
   // NebLink
+  'neblink.title': 'Device Link',
   'neblink.devices': 'Devices',
   'neblink.thisDevice': 'This device',
   'neblink.connected': 'Connected',
+  'neblink.unknownDevice': 'Unnamed device',
+  'neblink.noPeersHint': 'No other devices found. Configure NebLink Server on both devices.',
   'neblink.detectedTools': 'Detected tools',
   'neblink.deviceDescription': 'Device description',
   'neblink.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',
@@ -399,4 +412,32 @@ export default {
   'dropbox.saved': 'Saved',
   'dropbox.completed': 'Completed',
   'dropbox.failed': 'Transfer failed',
+
+  // Model picker (input bar right side)
+  'modelPicker.select': 'select',
+  'modelPicker.changeModel': 'Change model / fallback chain',
+  'modelPicker.preferred': 'Preferred Model',
+  'modelPicker.fallbacks': 'Fallback Chain',
+  'modelPicker.fallbackEmpty': 'No fallback models',
+  'modelPicker.chain': 'Model & fallback chain',
+  'modelPicker.active': 'active',
+  'modelPicker.empty': 'No models',
+  'modelPicker.add': '+ add fallback…',
+  'modelPicker.remove': 'remove',
+  'modelPicker.hint': 'Preferred = primary model. Fallbacks are tried in order when the preferred is unavailable.',
+  'modelPicker.usingFallback': 'using fallback',
+
+  // === Daemons (Dev Servers) ===
+  'daemons.title': 'Dev Servers',
+  'daemons.empty': 'No dev servers',
+  'daemons.emptyHint': 'Click + to add a daemon',
+  'daemons.start': 'Start',
+  'daemons.stop': 'Stop',
+  'daemons.add': 'Add',
+  'daemons.cancel': 'Cancel',
+  'daemons.fieldId': 'ID',
+  'daemons.fieldName': 'Name',
+  'daemons.fieldCommand': 'Command',
+  'daemons.fieldCwd': 'Working Directory',
+  'daemons.fieldPort': 'Port (optional)',
 };

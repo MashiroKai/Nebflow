@@ -14,7 +14,8 @@ case class SessionMeta(
   bridges: Map[String, Json] = Map.empty,
   folderId: Option[String] = None,
   safetyMode: String = "confirm-edits",
-  gitBranch: Option[String] = None
+  gitBranch: Option[String] = None,
+  flowName: Option[String] = None
 )
 
 object SessionMeta:
@@ -34,7 +35,8 @@ object SessionMeta:
       if m.safetyMode != "confirm-edits" then withFolder.deepMerge(Json.obj("safetyMode" -> m.safetyMode.asJson))
       else withFolder
     val withGit = m.gitBranch.fold(withSafety)(b => withSafety.deepMerge(Json.obj("gitBranch" -> b.asJson)))
-    if m.bridges.nonEmpty then withGit.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withGit
+    val withFlow = m.flowName.fold(withGit)(f => withGit.deepMerge(Json.obj("flowName" -> f.asJson)))
+    if m.bridges.nonEmpty then withFlow.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withFlow
   }
 
   given Decoder[SessionMeta] = Decoder.instance { c =>
@@ -59,9 +61,23 @@ object SessionMeta:
       legacyBypass <- c.downField("bypass").as[Option[Boolean]]
       safetyMode <- c.downField("safetyMode").as[Option[String]]
       gitBranch <- c.downField("gitBranch").as[Option[String]]
+      flowName <- c.downField("flowName").as[Option[String]]
     yield
       val mode = safetyMode.getOrElse(if legacyBypass.getOrElse(false) then "auto-all" else "confirm-edits")
-      SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef, bridges, folderId, mode, gitBranch)
+      SessionMeta(
+        id,
+        name,
+        createdAt,
+        updatedAt,
+        hasUnread,
+        agentName,
+        modelRef,
+        bridges,
+        folderId,
+        mode,
+        gitBranch,
+        flowName
+      )
   }
 
 end SessionMeta

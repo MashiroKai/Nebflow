@@ -1,229 +1,143 @@
 package nebflow.neblink
 
 import cats.effect.IO
+import cats.effect.kernel.Ref
 import cats.syntax.all.*
 import io.circe.Json
-import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
 
 import scala.concurrent.duration.*
 
 /**
- * Discovers Nebflow peers on the Tailscale network.
+ * Discovers Nebflow peers via the NebLink Server.
  *
- * Each cycle runs a full `tailscale status` scan to discover peers, then:
- *   1. syncPeers — establishes/maintains WebSocket presence connections via NeblinkPresenceService.
- *   2. announce — pushes our device info to every discovered peer.
+ * Each cycle logs in (or heartbeats) to the NebLink Server to get the peer list,
+ * then syncs presence connections via NeblinkPresenceService.
  *
  * Known-peer liveness is maintained entirely by WS connections (heartbeat + TCP RST).
- * The periodic scan only discovers NEW devices — it does not poll known peers.
+ * The periodic discovery cycle only discovers NEW devices — it does not poll known peers.
  *
- * Tailscale is the trust boundary: only devices on the same tailnet can reach each other.
+ * NebLink Server is the trust boundary: only devices on the same network can reach each other.
  */
 final class NeblinkDiscovery(
   neblinkService: NeblinkService,
   serverPort: Int,
   presenceService: NeblinkPresenceService,
-  coordClient: Option[CoordClient] = None
+  initialClient: Option[NeblinkClient] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink.discovery")
 
-  /** Discovery cycle — use NebLink server if configured, otherwise fall back to Tailscale. */
-  def discoverCycle: IO[Unit] =
-    coordClient match
-      case Some(client) => discoverViaCoordinator(client)
-      case None => discoverViaTailscale
+  /** Consecutive heartbeat/discovery failures — drives exponential backoff. */
+  private val failCount: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
 
-  /** Discovery via coordination server: login/heartbeat → upsert peers → sync presence. */
-  private def discoverViaCoordinator(client: CoordClient): IO[Unit] =
+  /** Current backoff delay based on consecutive failures. */
+  def currentDelay: IO[FiniteDuration] =
+    failCount.get.map(delayForFailures)
+
+  /** Pure backoff function — testable without IO. */
+  def delayForFailures(n: Int): FiniteDuration =
+    if n <= 2 then 30.seconds // first few retries at normal interval
+    else if n <= 5 then 60.seconds // repeated failures → slow down
+    else 120.seconds // cap at 2 minutes
+
+  /** Reset failure counter (called on success). */
+  private def resetFailCount: IO[Unit] = failCount.set(0)
+
+  /** Increment failure counter (called on failure). */
+  private def incFailCount: IO[Unit] = failCount.update(_ + 1)
+
+  // The client is held in a Ref so it can be hot-swapped at runtime (e.g. after
+  // device-flow enrollment completes, without restarting the gateway).
+  private val clientRef: Ref[IO, Option[NeblinkClient]] =
+    Ref.unsafe[IO, Option[NeblinkClient]](initialClient)
+
+  /** Hot-swap the NebLink client (used after device-flow enrollment). */
+  def setClient(client: Option[NeblinkClient]): IO[Unit] =
+    clientRef.set(client) *> logger.info("NebLink client hot-swapped")
+
+  /** Discovery cycle — use NebLink Server if configured. */
+  def discoverCycle: IO[Unit] =
+    clientRef.get.flatMap {
+      case Some(client) => discoverViaServer(client)
+      case None => logger.warn("NebLink Server is not configured — discovery skipped")
+    }
+
+  /**
+   * Heartbeat cycle — send a heartbeat to the current client (if any).
+   * Used by the periodic heartbeat loop. Returns immediately if no client.
+   */
+  def heartbeatCycle: IO[Unit] =
+    clientRef.get.flatMap {
+      case Some(client) => doHeartbeat(client)
+      case None => IO.unit
+    }
+
+  private def doHeartbeat(client: NeblinkClient): IO[Unit] =
+    client.heartbeat.flatMap {
+      case Right(serverPeers) =>
+        val neblinkPeers = client.toNeblinkPeers(serverPeers)
+        val peerIps = client.peerAddresses(serverPeers)
+        neblinkPeers.traverse_(p => neblinkService.upsertPeer(p)) *>
+          neblinkService.updateTrustedIps(peerIps) *>
+          neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
+          resetFailCount
+      case Left(err) =>
+        // Heartbeat failed — fall back to full discovery (auto re-login if needed).
+        logger.debug(s"Heartbeat failed ($err), falling back to discovery...") *>
+          discoverViaServer(client).handleErrorWith(e =>
+            logger.debug(s"Discovery fallback error: ${e.getMessage}") *> incFailCount
+          )
+    }
+
+  /** Discovery via NebLink Server: login/heartbeat → upsert peers → sync presence. */
+  private def discoverViaServer(client: NeblinkClient): IO[Unit] =
     for
       identity <- neblinkService.identity
       result <- client.discover(identity.deviceId, identity.deviceName, identity.platform, Nil)
       _ <- result match
-        case Right(coordPeers) =>
-          val neblinkPeers = client.toNeblinkPeers(coordPeers)
-          val peerIps = client.peerAddresses(coordPeers)
+        case Right(serverPeers) =>
+          val neblinkPeers = client.toNeblinkPeers(serverPeers)
+          val peerIps = client.peerAddresses(serverPeers)
           for
             _ <- neblinkPeers.traverse_(p => neblinkService.upsertPeer(p))
             _ <- neblinkService.updateTrustedIps(peerIps)
             _ <- presenceService.syncPeers(neblinkPeers)
-            _ <- logger.debug(s"NebLink server discovery: ${neblinkPeers.size} peer(s)")
+            _ <- logger.debug(s"NebLink Server discovery: ${neblinkPeers.size} peer(s)")
+            _ <- resetFailCount
           yield ()
         case Left(err) =>
-          logger.warn(s"NebLink server discovery failed: $err")
+          logger.warn(s"NebLink Server discovery failed: $err") *> incFailCount
     yield ()
 
-  /** Original Tailscale-based discovery. */
-  private def discoverViaTailscale: IO[Unit] =
-    for
-      peers <- scanTailnet
-      _ <- presenceService.syncPeers(peers)
-      _ <- peers.traverse_(announceTo)
-      _ <- logger.debug(s"Full scan: ${peers.size} peer(s)")
-    yield ()
-
-  /** Diagnostic scan — returns every intermediate step for debugging. */
+  /** Diagnostic scan — returns NebLink Server discovery status for debugging. */
   def diagnosticScan: IO[Json] =
     for
-      binary <- IO.blocking(findTailscaleBinary)
-      tailnetPeers <- getTailscalePeers
-      probeResults <- tailnetPeers.traverse { entry =>
-        probeNebflow(entry.ip).map {
-          case Some(info) =>
-            Json.obj("ip" -> entry.ip.asJson, "status" -> "found".asJson, "device" -> info.deviceName.asJson)
-          case None => Json.obj("ip" -> entry.ip.asJson, "status" -> "no-response".asJson)
-        }
-      }
       currentPeers <- neblinkService.peers
+      currentClient <- clientRef.get
+      clientStatus <- currentClient match
+        case Some(client) =>
+          for
+            identity <- neblinkService.identity
+            result <- client.discover(identity.deviceId, identity.deviceName, identity.platform, Nil)
+          yield result match
+            case Right(serverPeers) =>
+              Json.obj(
+                "configured" -> true.asJson,
+                "loggedIn" -> true.asJson,
+                "serverPeerCount" -> serverPeers.size.asJson
+              )
+            case Left(err) =>
+              Json.obj(
+                "configured" -> true.asJson,
+                "loggedIn" -> false.asJson,
+                "error" -> err.asJson
+              )
+        case None =>
+          IO.pure(Json.obj("configured" -> false.asJson))
     yield Json.obj(
-      "tailscaleBinary" -> binary.asJson,
-      "tailnetPeerCount" -> tailnetPeers.length.asJson,
-      "tailnetPeers" -> tailnetPeers.map(_.ip).asJson,
-      "probeResults" -> probeResults.asJson,
-      "currentPeers" -> currentPeers.map(p => p.deviceName).asJson
+      "neblinkServer" -> clientStatus,
+      "currentPeers" -> currentPeers.map(_.deviceName).asJson
     )
 
-  // ===== Scan =====
-
-  /**
-   * Run `tailscale status`, parse active peers, probe each for a Nebflow gateway.
-   * Returns peers whose gateway responded with valid device info.
-   */
-  private def scanTailnet: IO[List[PeerInfo]] =
-    getTailscalePeers.flatMap { entries =>
-      entries
-        .traverse { entry =>
-          probeNebflow(entry.ip).map(_.map { info =>
-            PeerInfo(
-              deviceId = info.deviceId,
-              deviceName = info.deviceName,
-              platform = info.platform,
-              address = s"http://${entry.ip}:$serverPort",
-              capabilities = info.capabilities
-            )
-          })
-        }
-        .map(_.flatten)
-    }
-
-  /**
-   * Execute `tailscale status` and parse the text output.
-   * Returns active peers (excluding self). Gracefully returns Nil if Tailscale
-   * is not installed or not running.
-   */
-  private def getTailscalePeers: IO[List[TailscaleEntry]] =
-    IO.blocking {
-      val binary = findTailscaleBinary
-      if binary.isEmpty then
-        logger.warn("tailscale binary not found — discovery skipped")
-        Nil
-      else
-        var proc: Process = null
-        try
-          proc = new ProcessBuilder(binary.get, "status").redirectErrorStream(true).start()
-          val is = proc.getInputStream
-          try
-            val output = scala.io.Source.fromInputStream(is).mkString
-            if !proc.waitFor(10, java.util.concurrent.TimeUnit.SECONDS) then
-              proc.destroyForcibly()
-              Nil
-            else parseStatusOutput(output)
-          finally is.close()
-        catch
-          case e: Exception =>
-            logger.warn(s"tailscale status failed: ${e.getMessage}")
-            Nil
-      end if
-    }
-
-  /** Find the tailscale binary — try PATH first, then common absolute paths. */
-  private def findTailscaleBinary: Option[String] =
-    val candidates =
-      if System.getProperty("os.name").toLowerCase.contains("win") then
-        List(
-          "tailscale.exe",
-          "C:\\Program Files\\Tailscale\\tailscale.exe",
-          "C:\\Program Files (x86)\\Tailscale\\tailscale.exe"
-        )
-      else List("tailscale", "/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale", "/usr/bin/tailscale")
-    candidates.find { cmd =>
-      try
-        val p = new ProcessBuilder(cmd, "version").redirectErrorStream(true).start()
-        val exited = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
-        if !exited then p.destroyForcibly()
-        val ok = exited && p.exitValue() == 0
-        p.getInputStream.close()
-        ok
-      catch case _: Exception => false
-    }
-
-  end findTailscaleBinary
-
-  /** Parse `tailscale status` text output into peer entries. */
-  private def parseStatusOutput(output: String): List[TailscaleEntry] =
-    output.linesIterator
-      .filter(_.nonEmpty)
-      .drop(1) // first line is always self
-      .flatMap { line =>
-        val parts = line.split("\\s+")
-        if parts.length >= 4 then
-          val ip = parts(0)
-          if ip.startsWith("100.") then Some(TailscaleEntry(ip))
-          else None
-        else None
-      }
-      .toList
-
-  /** Probe a peer's gateway to check if it's a Nebflow instance. Uses Proxy.NO_PROXY to bypass HTTP proxies. */
-  private def probeNebflow(ip: String): IO[Option[DeviceDiscoveryInfo]] =
-    IO.blocking {
-      try
-        val url = java.net.URI(s"http://$ip:$serverPort/api/neblink/discover").toURL
-        val conn = url.openConnection(java.net.Proxy.NO_PROXY).asInstanceOf[java.net.HttpURLConnection]
-        conn.setConnectTimeout(3000)
-        conn.setReadTimeout(3000)
-        conn.setRequestMethod("GET")
-        conn.connect()
-        if conn.getResponseCode == 200 then
-          val body = scala.io.Source.fromInputStream(conn.getInputStream).mkString
-          conn.disconnect()
-          decode[DeviceDiscoveryInfo](body).toOption
-        else
-          conn.disconnect()
-          None
-      catch case _: Exception => None
-    }.handleErrorWith(_ => IO.pure(None))
-
-  // ===== Announce =====
-
-  /** Send our device info to a peer so they add us to their peer list immediately. Uses Proxy.NO_PROXY. */
-  private def announceTo(peer: PeerInfo): IO[Unit] =
-    neblinkService.identity.flatMap { id =>
-      IO.blocking {
-        try
-          val body = Json.obj(
-            "deviceId" -> id.deviceId.asJson,
-            "deviceName" -> id.deviceName.asJson,
-            "platform" -> id.platform.asJson,
-            "capabilities" -> id.capabilities.asJson,
-            "port" -> serverPort.asJson
-          )
-          val url = java.net.URI(s"${peer.address}/api/neblink/announce").toURL
-          val conn = url.openConnection(java.net.Proxy.NO_PROXY).asInstanceOf[java.net.HttpURLConnection]
-          conn.setConnectTimeout(5000)
-          conn.setReadTimeout(5000)
-          conn.setRequestMethod("POST")
-          conn.setRequestProperty("Content-Type", "application/json")
-          conn.setDoOutput(true)
-          conn.getOutputStream.write(body.noSpaces.getBytes("UTF-8"))
-          conn.getOutputStream.close()
-          conn.getResponseCode // trigger request
-          conn.disconnect()
-          ()
-        catch case _: Exception => ()
-      }.handleErrorWith(_ => IO.unit)
-    }
-
-  private case class TailscaleEntry(ip: String)
 end NeblinkDiscovery

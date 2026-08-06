@@ -19,13 +19,23 @@ object Defaults:
   val StreamTimeoutSec: Int = 600
 
   /**
+   * First-token timeout — if no chunk arrives from the LLM provider within this
+   * time after the request is sent, the stream is considered hung (connection
+   * dead, provider down). Shorter than inactivity timeout because a responsive
+   * provider should always send the first token within seconds. 90s leaves room
+   * for thinking models (GLM-5.2 etc.) whose reasoning phase delays the first
+   * content token well past 30s.
+   */
+  val LlmFirstTokenTimeoutSec: Int = 90
+
+  /**
    * Backend LLM stream inactivity timeout — if no chunk is received from the LLM provider
    * within this time, the stream is considered hung and cancelled. This is the primary
    * recovery mechanism for hung connections (e.g. after Mac sleep/wake).
-   * Shorter than StreamTimeoutSec because LLM providers should always produce chunks
-   * within a few seconds, even during extended thinking.
+   * Applies AFTER the first token. Shorter than StreamTimeoutSec because LLM providers
+   * should always produce chunks within a few seconds, even during extended thinking.
    */
-  val LlmStreamInactivitySec: Int = 180
+  val LlmStreamInactivitySec: Int = 60
 
   /** Per-provider LLM request timeout (covers streaming generation). */
   val LlmTimeoutMs: Long = 600_000L

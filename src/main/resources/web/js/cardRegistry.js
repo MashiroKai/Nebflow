@@ -39,39 +39,20 @@ function extractThemeVars(themeCSS) {
   return themeCSS.replace(':root{', '').replace('}', '').trim();
 }
 
-/** Build the height + width reporting script to inject into srcdoc.
- *  #nf-wrap uses width:fit-content so narrow cards stay compact.
- *  No transform:scale() — it causes SVG flowchart lines to misalign due to
- *  sub-pixel rounding. Wide content is constrained by max-width:100% on
- *  img/svg/video and overflow:hidden on body.
- *  Reports content width (so parent can size the wrap) and height.
- *  Width is only reported after all images finish loading — otherwise the
- *  first measurement arrives before images load, reports a tiny width,
- *  the parent shrinks the wrap, and the feedback loop deadlocks the card
- *  at that tiny size. */
+/** Build the height reporting script to inject into srcdoc.
+ *  #nf-wrap uses width:100% so all content (including SVGs with width:100%)
+ *  fills the available card width and responds to window resize.
+ *  Height is reported via ResizeObserver so the iframe auto-sizes vertically.
+ *  Width reporting is no longer needed — the chain width:100% from chat panel
+ *  → row → container → wrap → iframe → nf-wrap handles responsive sizing. */
 function buildHeightScript(id) {
   return `<script>
 (function(){
   var id=${id};
-  function allImagesLoaded(){
-    var imgs=document.getElementById('nf-wrap');
-    if(!imgs)return true;
-    imgs=imgs.querySelectorAll('img');
-    for(var i=0;i<imgs.length;i++){
-      if(!imgs[i].complete)return false;
-    }
-    return true;
-  }
   function send(){
     try{
-      var w=document.getElementById('nf-wrap');
-      if(!w)return;
       var h=document.documentElement.scrollHeight||document.body.scrollHeight;
-      var cw=null;
-      if(allImagesLoaded()){
-        cw=w.offsetWidth;
-      }
-      parent.postMessage({_nfCardW:cw,_nfCardH:h,id:id},"*");
+      parent.postMessage({_nfCardH:h,id:id},"*");
     }catch(e){}
   }
   new ResizeObserver(send).observe(document.body);
@@ -112,17 +93,6 @@ window.addEventListener('message', (e) => {
     // Track whether height actually changed (first measurement always counts as "changed")
     const heightChanged = !oldHeight || oldHeight !== newHeight;
     iframe.style.height = newHeight;
-    // Sync wrap width: grow-only to avoid fit-content feedback loop.
-    // This handles late-loading images that expand after first measurement.
-    if (e.data._nfCardW) {
-      const wrap = iframe.closest('.html-card-wrap');
-      if (wrap) {
-        const currentWrapW = parseInt(wrap.style.width) || 0;
-        if (e.data._nfCardW > currentWrapW) {
-          wrap.style.width = e.data._nfCardW + 'px';
-        }
-      }
-    }
     // On first measurement: reveal
     if (isFirst) {
       iframe.style.opacity = '1';
@@ -215,25 +185,16 @@ function renderHtmlCard(container, html, title) {
   // Inject auth tokens into /api/nf-file URLs (sandboxed iframe can't use cookies)
   let processedHtml = injectFileTokens(html);
 
-  // Fix width:100% on img/svg — fit-content + width:100% deadlocks (collapses to zero).
-  // For img: strip width:100%, let natural size + max-width:100% handle overflow.
-  // For svg: replace width:100% with viewBox width (3rd number in "minX minY width height").
-  processedHtml = processedHtml.replace(/(<img\b[^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?/gi, '$1');
-  processedHtml = processedHtml.replace(/<svg\b[^>]*viewBox=["']([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)["'][^>]*\bstyle=["']([^"']*)width:\s*100%\s*;?([^"']*["'])/gi, (match, minX, minY, vbW, vbH, styleBefore, styleAfter) => {
-    return match.replace(/width:\s*100%\s*;?/i, `width:${vbW}px;`);
-  });
-  // SVGs without viewBox: strip width:100%
-  processedHtml = processedHtml.replace(/(<svg\b(?![^>]*viewBox=)[^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?([^"']*["'])/gi, '$1$2');
-
   // Add preload="none" to <audio>/<video> elements that don't already have it.
   // Without this, a session with 200+ audio elements causes the browser to
   // simultaneously fetch and decode all files on load, freezing the page.
   processedHtml = processedHtml.replace(/(<audio\b(?![^>]*\bpreload=)[^>]*)(\s*\/?>)/gi, '$1 preload="none"$2');
   processedHtml = processedHtml.replace(/(<video\b(?![^>]*\bpreload=)[^>]*)(\s*\/?>)/gi, '$1 preload="none"$2');
 
-  // #nf-wrap: fit-content shrinks the bubble to match content size.
-  // max-width:100% prevents overflow.
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="width:fit-content;max-width:100%">${processedHtml}</div>${heightScript}</body></html>`;
+  // #nf-wrap: width:100% fills the available card width.
+  // SVGs with width:100% scale proportionally via viewBox + height:auto.
+  // No fit-content deadlock — the width chain is: chat panel → row → container → wrap → iframe → nf-wrap, all 100%.
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="width:100%">${processedHtml}</div>${heightScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.className = 'html-card-iframe';

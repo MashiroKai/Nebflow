@@ -198,6 +198,8 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       val folders = json.hcursor.downField("folders").as[List[Folder]].getOrElse(Nil)
       (activeId, sessions, folders)
     }.flatMap { case (activeId, sessions, folders) =>
+      // Recover folders from disk if index lost them
+      val recoveredFolders = recoverFoldersFromDisk(folders)
       recoverOrphans(sessions).flatMap { recovered =>
         val allSessions = sessions ++ recovered
         if recovered.nonEmpty then
@@ -206,18 +208,73 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           )
         if activeId.nonEmpty && allSessions.exists(_.id == activeId) then
           loadSessionMessages(activeId).flatMap { msgs =>
-            indexRef.set((activeId, allSessions, folders)) *> activeMessagesRef.set(msgs)
+            indexRef.set((activeId, allSessions, recoveredFolders)) *> activeMessagesRef.set(msgs)
           }
         else if allSessions.nonEmpty then
           allSessions.maxByOption(_.updatedAt) match
             case Some(first) =>
               loadSessionMessages(first.id).flatMap { msgs =>
-                indexRef.set((first.id, allSessions, folders)) *> activeMessagesRef.set(msgs)
+                indexRef.set((first.id, allSessions, recoveredFolders)) *> activeMessagesRef.set(msgs)
               }
             case None => createDefaultSession
         else createDefaultSession
       }
     }
+
+  /**
+   * If index has 0 folders but ~/.nebflow/folders/ has memory/rules files,
+   * reconstruct folder entries from disk. Prevents permanent folder loss
+   * when the index is accidentally cleared.
+   */
+  private def recoverFoldersFromDisk(indexedFolders: List[Folder]): List[Folder] =
+    if indexedFolders.nonEmpty then indexedFolders
+    else
+      val foldersDir = os.Path(sessionsDir.wrapped.getParent.toString) / "folders"
+      if !os.exists(foldersDir) then indexedFolders
+      else
+        val diskIds = os
+          .list(foldersDir)
+          .filter(p => p.last.endsWith(".memory.md") || p.last.endsWith(".rules.md"))
+          .map(_.last.split("\\.").head)
+          .distinct
+          .toList
+        if diskIds.isEmpty then indexedFolders
+        else
+          val now = System.currentTimeMillis()
+          val recovered = diskIds.map { id =>
+            val name = recoverFolderName(foldersDir, id)
+            Folder(id, name, createdAt = now, updatedAt = now)
+          }
+          logger.info(s"Recovered ${recovered.size} folder(s) from disk (index had 0)")
+          recovered
+
+      end if
+
+  /**
+   * Extract a human-readable folder name from the memory file.
+   *  Priority: "文件夹名称：xxx" → first `## Heading` → "Folder XXXXXXXX".
+   */
+  private def recoverFolderName(foldersDir: os.Path, id: String): String =
+    val memFile = foldersDir / s"$id.memory.md"
+    if !os.exists(memFile) then s"Folder ${id.take(8)}"
+    else
+      val content = os.read(memFile)
+      // 1. Explicit folder name marker
+      content.linesIterator
+        .find(_.contains("文件夹名称"))
+        .flatMap(_.split("：").lastOption.map(_.trim).filter(_.nonEmpty))
+        .orElse {
+          // 2. First ## heading (skip the "# Memory" title)
+          content.linesIterator
+            .map(_.trim)
+            .filter(l => l.startsWith("## ") && l != "## Memory")
+            .map(_.stripPrefix("## ").trim)
+            .find(_.nonEmpty)
+        }
+        .getOrElse(s"Folder ${id.take(8)}")
+    end if
+
+  end recoverFolderName
 
   /** Scan disk for session files not in the index and recover them. */
   private def recoverOrphans(indexed: List[SessionMeta]): IO[List[SessionMeta]] =
@@ -239,10 +296,14 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
                 try
                   val msgs = decode[List[Message]](os.read(f)).getOrElse(Nil)
                   msgs.find(_.role == MessageRole.User).map(_.textContent.take(50)).getOrElse("Recovered Session")
-                catch case _: Exception => "Recovered Session"
-              List(SessionMeta(id, name, mtime, mtime, hasUnread = false))
+                catch
+                  case _: Exception => "Recovered Session"
+              // Restore folderId from sidecar (if it exists)
+              val folderId = readMetaSidecar(id)
+              List(SessionMeta(id, name, mtime, mtime, hasUnread = false, folderId = folderId))
             }
           else IO.pure(Nil)
+          end if
         }
         .map { candidates =>
           val indexedIds = indexed.map(_.id).toSet
@@ -271,19 +332,61 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   end migrateFromLegacy
 
   private def createDefaultSession: IO[Unit] =
+    // The single-session architecture reserves the default/active session for the
+    // primary agent Nebula. Tagging it here ensures the Main window always shows a
+    // Nebula-owned session on first run (and as a fallback during recovery).
     val id = UUID.randomUUID().toString
     val now = System.currentTimeMillis()
-    val meta = SessionMeta(id, "Default Session", now, now, hasUnread = false)
+    val meta = SessionMeta(id, "Nebula", now, now, hasUnread = false, agentName = Some("Nebula"))
     indexRef.set((id, List(meta), Nil)) *> activeMessagesRef.set(Nil) *>
       IO.blocking(os.write.over(sessionFile(id), "[]", createFolders = true)) *> saveIndex
 
   private def sessionFile(id: String): os.Path = sessionsDir / s"$id.json"
 
+  /**
+   * Sidecar file that stores folderId independently from _index.json,
+   *  so orphan recovery can restore the session→folder mapping.
+   */
+  private def metaSidecarFile(id: String): os.Path = sessionsDir / s"$id.meta.json"
+
+  /** Persist folderId to a sidecar file. Called whenever folderId changes. */
+  private def writeMetaSidecar(id: String, folderId: Option[String]): IO[Unit] =
+    IO.blocking {
+      val f = metaSidecarFile(id)
+      folderId match
+        case Some(fid) =>
+          val json = Json.obj("folderId" -> fid.asJson)
+          os.write.over(f, json.noSpaces, createFolders = true)
+        case None =>
+          // Clean up sidecar when session is moved to root
+          if os.exists(f) then os.remove(f)
+    }
+
+  /** Read folderId from sidecar file (if it exists). Used by orphan recovery. */
+  private def readMetaSidecar(id: String): Option[String] =
+    val f = metaSidecarFile(id)
+    if os.exists(f) then
+      try
+        val json = decode[Json](os.read(f)).getOrElse(Json.obj())
+        json.hcursor.downField("folderId").as[String].toOption
+      catch case _: Exception => None
+    else None
+
   private def loadSessionMessages(id: String): IO[List[Message]] =
     IO.blocking {
       val f = sessionFile(id)
-      if os.exists(f) then decode[List[Message]](os.read(f)).getOrElse(Nil)
-      else Nil
+      if !os.exists(f) then Nil
+      else
+        decode[List[Message]](os.read(f)) match
+          case Right(msgs) => msgs
+          case Left(err) =>
+            // Corruption detected (e.g. power loss mid-write). Back up the
+            // corrupt file rather than silently returning Nil, so history is
+            // recoverable and the problem is visible.
+            val backup = sessionsDir / s"$id.json.corrupted.${System.currentTimeMillis()}"
+            os.move.over(f, backup, replaceExisting = true)
+            logger.warn(s"Session messages corrupted for $id, backed up to ${backup.last}: ${err.getMessage}")
+            Nil
     }
 
   /**
@@ -300,7 +403,12 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     }
 
   private def saveSessionMessages(id: String, msgs: List[Message]): IO[Unit] =
-    IO.blocking(os.write.over(sessionFile(id), msgs.asJson.spaces2, createFolders = true))
+    IO.blocking {
+      val f = sessionFile(id)
+      val tmp = sessionsDir / s"$id.json.tmp.${java.util.UUID.randomUUID()}"
+      os.write.over(tmp, msgs.asJson.spaces2, createFolders = true)
+      os.move.over(tmp, f, replaceExisting = true)
+    }
 
   private def saveIndex: IO[Unit] =
     indexRef.get.flatMap { case (activeId, sessions, folders) =>
@@ -310,10 +418,18 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           "sessions" -> sessions.asJson,
           "folders" -> folders.asJson
         )
-        // Atomic write: write to temp file then rename
-        os.write.over(indexTempFile, json.spaces2, createFolders = true)
-        os.move.over(indexTempFile, indexFile)
-      }
+        // Atomic write: use UNIQUE temp file per call to avoid concurrent move race.
+        // The old shared temp file (_index.json.tmp) caused a race when multiple
+        // flow agents called createSession → saveIndex simultaneously: one thread
+        // moved the temp file, the other's os.move failed → pipeline crash.
+        val tmpFile = sessionsDir / s"_index.json.tmp.${java.util.UUID.randomUUID()}"
+        os.write.over(tmpFile, json.spaces2, createFolders = true)
+        os.move.over(tmpFile, indexFile)
+      }.handleErrorWith(e =>
+        // If even the unique-temp approach fails (extremely unlikely), log and
+        // continue — the in-memory Ref is the source of truth.
+        IO.delay(logger.warn(s"saveIndex failed (non-fatal): ${e.getMessage}")).void
+      )
     }
 
   def getActiveMessages: IO[List[Message]] = activeMessagesRef.get
@@ -393,6 +509,40 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   def getSessionMeta(id: String): IO[Option[SessionMeta]] =
     indexRef.get.map { case (_, sessions, _) => sessions.find(_.id == id) }
 
+  /**
+   * Find an existing session by name and flowName. Used to reuse flow agent
+   *  sessions across server restarts instead of creating new (empty) ones.
+   *  Prefers sessions with actual message content (non-empty .json file).
+   */
+  def findSessionByName(name: String, flowName: String): IO[Option[SessionMeta]] =
+    indexRef.get.flatMap { case (_, sessions, _) =>
+      val matching = sessions.filter(s => s.name == name && s.flowName.contains(flowName))
+      matching match
+        case Nil => IO.pure(None)
+        case one :: Nil => IO.pure(Some(one))
+        case multiple =>
+          // Sort by updatedAt descending, prefer sessions with messages on disk
+          val sorted = multiple.sortBy(_.updatedAt)(Ordering[Long].reverse)
+          sorted
+            .foldLeft(IO.pure(None: Option[SessionMeta])) { (acc, meta) =>
+              for
+                prev <- acc
+                result <-
+                  if prev.isDefined then IO.pure(prev)
+                  else hasMessagesOnDisk(meta.id).map(if _ then Some(meta) else None)
+              yield result
+            }
+            .map(_.orElse(sorted.headOption))
+      end match
+    }
+
+  /** Check if a session has non-empty messages on disk. */
+  private def hasMessagesOnDisk(id: String): IO[Boolean] =
+    IO.blocking {
+      val f = sessionFile(id).toIO.toPath
+      java.nio.file.Files.exists(f) && java.nio.file.Files.size(f) > 5
+    }.handleErrorWith(_ => IO.pure(false))
+
   def switchSession(id: String): IO[List[Message]] =
     // Use modify for atomic read-modify-write to prevent concurrent corruption.
     // Returns: Right(oldId) for switch, Left(None) for same-session, Left(Some(err)) for not-found
@@ -427,15 +577,30 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     name: String,
     initialMsgs: List[Message] = Nil,
     agentName: Option[String] = None,
-    folderId: Option[String] = None
+    folderId: Option[String] = None,
+    flowName: Option[String] = None,
+    safetyMode: String = "confirm-edits"
   ): IO[SessionMeta] =
     val id = UUID.randomUUID().toString
     val now = System.currentTimeMillis()
-    val meta = SessionMeta(id, name, now, now, hasUnread = false, agentName = agentName, folderId = folderId)
+    val meta = SessionMeta(
+      id,
+      name,
+      now,
+      now,
+      hasUnread = false,
+      agentName = agentName,
+      folderId = folderId,
+      safetyMode = safetyMode,
+      flowName = flowName
+    )
     indexRef.get.flatMap { case (activeId, sessions, folders) =>
       saveSessionMessages(id, initialMsgs) *>
+        writeMetaSidecar(id, folderId) *>
         indexRef.set((activeId, meta :: sessions, folders)) *> saveIndex *> meta.pure[IO]
     }
+
+  end createSession
 
   /**
    * Get an existing session by ID, or create one with that exact ID.
@@ -510,10 +675,19 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         val matching = sessions.filter(_.agentName.contains(agentName))
         matching match
           case Nil =>
-            val id = UUID.randomUUID().toString
-            val now = System.currentTimeMillis()
-            val meta = SessionMeta(id, agentName, now, now, hasUnread = false, agentName = Some(agentName))
-            ((activeId, meta :: sessions, folders), (meta, "created"))
+            // No session for this agent yet. Before creating a brand-new one, try
+            // to adopt a legacy session that has no agentName (e.g. an old "Default
+            // Session" from the multi-session era) so the user keeps their history.
+            sessions.find(_.agentName.isEmpty) match
+              case Some(legacy) =>
+                val claimed = legacy.copy(agentName = Some(agentName), name = agentName)
+                val claimedSessions = sessions.map(s => if s.id == legacy.id then claimed else s)
+                ((activeId, claimedSessions, folders), (claimed, "claimed"))
+              case None =>
+                val id = UUID.randomUUID().toString
+                val now = System.currentTimeMillis()
+                val meta = SessionMeta(id, agentName, now, now, hasUnread = false, agentName = Some(agentName))
+                ((activeId, meta :: sessions, folders), (meta, "created"))
           case one :: Nil =>
             ((activeId, sessions, folders), (one, "exists"))
           case multiple =>
@@ -521,12 +695,16 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
             val keeper = multiple.maxBy(_.updatedAt)
             val pruned = sessions.filterNot(s => s.agentName.contains(agentName) && s.id != keeper.id)
             ((activeId, pruned, folders), (keeper, "deduped"))
+        end match
       }
       .flatMap { case (meta, action) =>
-        // Persist: always save the index when we created or pruned sessions.
+        // Persist: always save the index when we created/claimed/pruned sessions.
         val persist =
           if action == "exists" then IO.unit
           else
+            // Only initialize an empty message file for truly new sessions. The
+            // "claimed" action adopts a legacy session — its .json already exists
+            // and must NOT be overwritten (that would erase the user's history).
             val init = if action == "created" then saveSessionMessages(meta.id, Nil) else IO.unit
             init *>
               saveIndex *>
@@ -534,6 +712,28 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
               notifySessionChanged(meta.id)
         persist.as((meta, action != "exists"))
       }
+
+  /**
+   * Ensure a session exists for `agentName` AND that it is the active session.
+   *
+   * Used by the single-session architecture to guarantee the primary agent
+   * (Nebula) always owns the Main window: at startup there must be exactly one
+   * session, it belongs to Nebula, and it is active. Sub-agent sessions are
+   * created separately by the flow runtime and never made active here.
+   *
+   * Reuses `ensureAgentSession` (existence + dedup + legacy adoption) and
+   * `switchSession` (flush outgoing writes, load incoming messages, persist
+   * index) rather than reimplementing those steps.
+   */
+  def ensureActiveAgentSession(agentName: String): IO[SessionMeta] =
+    for
+      (meta, _) <- ensureAgentSession(agentName)
+      activeId <- getActiveId
+      // Only switch when the active session isn't already this agent's.
+      // switchSession no-ops on the same id, but we short-circuit to avoid the
+      // disk flush round-trip in the common case (already active at startup).
+      _ <- if activeId != meta.id then switchSession(meta.id).void else IO.unit
+    yield meta
 
   def deleteSession(id: String): IO[Unit] =
     indexRef
@@ -561,6 +761,9 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           // Remove session data files
           val f = sessionFile(id)
           if os.exists(f) then os.remove(f)
+          // Remove meta sidecar
+          val mf = metaSidecarFile(id)
+          if os.exists(mf) then os.remove(mf)
           // Remove task directory
           val td = tasksDir / id
           if os.exists(td) then os.remove.all(td)
@@ -714,7 +917,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     indexRef.update { case (activeId, sessions, folders) =>
       val updated = sessions.map(s => if s.id == sessionId then s.copy(folderId = folderId) else s)
       (activeId, updated, folders)
-    } *> saveIndex
+    } *> saveIndex *> writeMetaSidecar(sessionId, folderId)
 
   def moveFolder(folderId: String, parentId: Option[String]): IO[Unit] =
     indexRef.update { case (activeId, sessions, folders) =>
@@ -1098,7 +1301,8 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     loadUiMessages(sessionId).map { all =>
       val total = all.size
       val start = Math.min(offset, total)
-      val end = Math.min(start + limit, total)
+      // limit <= 0 means "no limit" — return everything from the offset.
+      val end = if limit <= 0 then total else Math.min(start + limit, total)
       (all.slice(start, end), total)
     }
 
@@ -1131,5 +1335,45 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       val f = uiFile(sessionId)
       if os.exists(f) then os.remove(f)
     } *> uiCacheRef.update(_ - sessionId) *> dirtyUiSessions.update(_ - sessionId)
+
+  /**
+   * Remove the last user message from UI history.
+   *
+   * Called when the user recalls a message: the message is removed from .ui.json
+   * so it doesn't reappear on refresh. If the last message is NOT a user message
+   * (e.g. AI already replied), does nothing and returns false.
+   *
+   * Returns true if a message was deleted, false otherwise.
+   */
+  def deleteLastUserMessage(sessionId: String): IO[Boolean] =
+    getAppendSemaphore(sessionId).flatMap { sem =>
+      sem.permit.use { _ =>
+        loadUiMessages(sessionId).flatMap { msgs =>
+          if msgs.isEmpty then IO.pure(false)
+          else
+            // Find the last User message (skip trailing system/tool messages)
+            val lastUserIdx = msgs.lastIndexWhere {
+              case _: UiMessage.User => true
+              case _ => false
+            }
+            if lastUserIdx < 0 then IO.pure(false)
+            else
+              // Only allow recall if there's no AI message AFTER the user message
+              // (i.e. the AI hasn't responded yet)
+              val hasAiAfter = msgs.indexWhere(
+                {
+                  case _: UiMessage.Ai => true
+                  case _ => false
+                },
+                lastUserIdx + 1
+              ) >= 0
+              if hasAiAfter then IO.pure(false)
+              else
+                val trimmed = msgs.take(lastUserIdx) ++ msgs.drop(lastUserIdx + 1)
+                updateUiCache(sessionId, trimmed) *> markDirty(sessionId).as(true)
+            end if
+        }
+      }
+    }
 
 end SessionStore

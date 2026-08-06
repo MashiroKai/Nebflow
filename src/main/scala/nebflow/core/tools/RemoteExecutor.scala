@@ -13,12 +13,12 @@ import sttp.client4.*
 import scala.concurrent.duration.*
 
 /**
- * Executes tool calls on remote devices via direct P2P over Tailscale.
+ * Executes tool calls on remote devices via direct P2P over NebLink.
  *
  * When a tool call specifies device="desktop-v7eucht", this executor routes
  * the call to that device's gateway via HTTP (POST /api/neblink/remote-exec).
  *
- * Tailscale provides the connectivity layer — no relay server needed.
+ * NebLink provides the connectivity layer — no relay server needed.
  */
 class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO]):
 
@@ -234,6 +234,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
                 "type" -> "backgroundTaskUpdate".asJson,
                 "sessionId" -> ctx.sessionId.asJson,
                 "taskId" -> jobId.asJson,
+                "description" -> description.asJson,
                 "status" -> "running".asJson,
                 "heartbeat" -> io.circe.Json.obj(
                   "alive" -> true.asJson,
@@ -411,7 +412,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
         Left(
           ToolError(
             if peers.isEmpty then
-              s"No peer devices discovered after scan. Check: (1) Tailscale is running on both machines, (2) Nebflow is running on '$deviceName', (3) both devices are on the same tailnet."
+              s"No peer devices discovered after scan. Check: (1) NebLink Server is configured on both machines, (2) Nebflow is running on '$deviceName', (3) both devices are on the same NebLink network."
             else s"Device '$deviceName' not found among ${peers.size} peer(s). Available: ${available.mkString(", ")}"
           )
         )

@@ -38,14 +38,23 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     else if budget <= 32768 then "high"
     else "xhigh"
 
-  /** Extract reasoning_effort from the thinking JSON config. */
-  private def effortFromThinking(thinking: Option[io.circe.Json]): Option[String] =
-    thinking.flatMap { t =>
-      t.hcursor.get[String]("type").toOption match
-        case Some("enabled") =>
-          Some(budgetToEffort(t.hcursor.get[Int]("budget_tokens").getOrElse(32000)))
-        case _ => None
-    }
+  /**
+   * Build thinking-related request body based on the model.
+   *  - GLM models: send `thinking: { type: "enabled" }` (GLM's native format)
+   *  - OpenAI o-series: send `reasoning_effort` (OpenAI's format)
+   *  - Others: send nothing (API will ignore unknown params)
+   */
+  private def thinkingBody(model: String, thinking: Option[io.circe.Json]): Json =
+    thinking match
+      case Some(t) if t.hcursor.get[String]("type").toOption.contains("enabled") =>
+        val m = model.toLowerCase
+        if m.contains("glm") then
+          // GLM uses its own `thinking` parameter, not OpenAI's `reasoning_effort`
+          Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson))
+        else
+          val budget = t.hcursor.get[Int]("budget_tokens").getOrElse(32000)
+          Json.obj("reasoning_effort" -> budgetToEffort(budget).asJson)
+      case _ => Json.obj()
 
   /** Build system message from stable + dynamic parts for OpenAI's messages format. */
   private[providers] def buildSystemMessage(params: SendMessageParams): Option[Json] =
@@ -146,6 +155,20 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         ToolCall(id, name, input)
       }
 
+  /**
+   * True if the response carries reasoning output (reasoning_content / thinking)
+   * even when `content` is empty. Thinking models (GLM-5.2, DeepSeek reasoning)
+   * can spend the whole token budget on reasoning — such a response is NOT empty.
+   */
+  private[providers] def hasReasoningContent(response: Json): Boolean =
+    val message = response.hcursor.downField("choices").downN(0).downField("message")
+    message
+      .downField("reasoning_content")
+      .as[String]
+      .toOption
+      .orElse(message.downField("thinking").as[String].toOption)
+      .exists(_.trim.nonEmpty)
+
   def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
     val systemMsg = buildSystemMessage(params)
     val baseMessages = toOpenAiMessages(params.messages)
@@ -158,11 +181,8 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
       case None => body
-    // OpenAI o-series models support reasoning_effort; silently ignore for others
-    val effort = effortFromThinking(params.thinking)
-    val bodyWithThinking = effort match
-      case Some(e) => bodyWithTools.deepMerge(Json.obj("reasoning_effort" -> e.asJson))
-      case None => bodyWithTools
+    // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
+    val bodyWithThinking = bodyWithTools.deepMerge(thinkingBody(params.model, params.thinking))
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
         bodyWithThinking.deepMerge(
@@ -209,8 +229,15 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                       outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
                     )
                   }
+                  // Thinking models (GLM-5.2, DeepSeek reasoning) may return a
+                  // response whose `content` is empty because all tokens went to
+                  // reasoning (reasoning_content / thinking fields). That is NOT
+                  // an empty response — treat it as a successful reply so probes
+                  // and real calls don't falsely fail or fall back.
+                  val reasoning = hasReasoningContent(json)
+
                   // Empty response with no tool calls — treat as error to trigger fallback
-                  if reply.isEmpty && toolCalls.isEmpty then
+                  if reply.isEmpty && toolCalls.isEmpty && !reasoning then
                     val finishReason = json.hcursor
                       .downField("choices")
                       .downN(0)
@@ -246,11 +273,8 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
       case None => body
-    // OpenAI o-series models support reasoning_effort; silently ignore for others
-    val effort = effortFromThinking(params.thinking)
-    val bodyWithThinking = effort match
-      case Some(e) => bodyWithTools.deepMerge(Json.obj("reasoning_effort" -> e.asJson))
-      case None => bodyWithTools
+    // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
+    val bodyWithThinking = bodyWithTools.deepMerge(thinkingBody(params.model, params.thinking))
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
         bodyWithThinking.deepMerge(
