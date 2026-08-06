@@ -43,9 +43,9 @@ object DreamMode:
           .toList
       case None => Nil
 
-  /** Append extracted facts to ~/.nebflow/NEBFLOW.md and update usage pattern section. */
+  /** Append extracted facts to ~/.nebflow/User.md and update usage pattern section. */
   def updateMemory(facts: List[String], pattern: UsagePattern): IO[Unit] = IO.blocking {
-    val memPath = PathUtil.dataRoot / "NEBFLOW.md"
+    val memPath = PathUtil.dataRoot / "User.md"
     val existing = if os.exists(memPath) then os.read(memPath) else ""
 
     val factsSection = if facts.nonEmpty then

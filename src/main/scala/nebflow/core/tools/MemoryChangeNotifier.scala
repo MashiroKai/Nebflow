@@ -9,7 +9,7 @@ import io.circe.syntax.*
  * `memoryChanged` WebSocket event so the frontend can refresh its memory panel.
  *
  * Memory files are:
- *   - ~/.nebflow/NEBFLOW.md                        (User)
+ *   - ~/.nebflow/User.md                         (User)
  *   - ~/.nebflow/agents/<name>/memory.md           (Agent)
  */
 object MemoryChangeNotifier:
@@ -18,7 +18,7 @@ object MemoryChangeNotifier:
   def isMemoryFile(filePath: String): Boolean =
     val home = sys.props("user.home")
     val normalized = filePath.replace("\\", "/")
-    normalized.startsWith(s"$home/.nebflow/NEBFLOW.md") ||
+    normalized.startsWith(s"$home/.nebflow/User.md") ||
     normalized.contains(s"$home/.nebflow/agents/") && normalized.endsWith("memory.md")
 
   /**

@@ -1,4 +1,4 @@
-// memory.js — Memory modal with Folder / Agent / User tabs
+// memory.js — Memory modal with Agent / User tabs
 
 import state from './state.js';
 import { sendWs } from './ws.js';
@@ -7,7 +7,7 @@ import { sendWs } from './ws.js';
 let activeScope = 'agent';
 
 /** Cache per-scope content so tab switches don't re-fetch within same modal open. */
-const cache = { user: null, agent: null, folder: null };
+const cache = { user: null, agent: null };
 
 /** The session whose memory is being viewed. Set when the modal opens. */
 let memorySessionId = null;
@@ -27,7 +27,6 @@ export function showMemoryButton() {
 export function clearMemoryCache() {
   cache.user = null;
   cache.agent = null;
-  cache.folder = null;
 }
 
 /** Open the memory modal, fetch active tab content. */
@@ -87,9 +86,8 @@ export function handleMemoryData(data) {
 export function handleMemoryChanged(data) {
   const path = data.path || '';
   let changedScope = null;
-  if (path.endsWith('NEBFLOW.md')) changedScope = 'user';
+  if (path.endsWith('User.md')) changedScope = 'user';
   else if (path.endsWith('memory.md')) changedScope = 'agent';
-  else if (path.endsWith('.memory.md')) changedScope = 'folder';
 
   if (changedScope) {
     cache[changedScope] = null;
