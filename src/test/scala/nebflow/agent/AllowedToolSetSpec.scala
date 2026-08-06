@@ -12,7 +12,7 @@ import nebflow.core.tools.ToolRegistry
  *   - a concrete tools list → exactly those tools + Mail
  *   - "*" → all registered tools
  *   - Mail is always present
- *   - non-Nebula agents never get Nebula-exclusive tools (AskUserQuestion, Schedule)
+ *   - non-Nebula agents never get Nebula-exclusive tools (Schedule)
  */
 class AllowedToolSetSpec extends FunSuite:
 
@@ -39,13 +39,14 @@ class AllowedToolSetSpec extends FunSuite:
     assert(allowed.contains("Read"))
     assert(allowed.contains("Bash"))
     // Nebula-exclusive tools are stripped
-    assert(!allowed.contains("AskUserQuestion"))
     assert(!allowed.contains("Schedule"))
     assert(!allowed.contains("Dispatch"))
+    // AskUserQuestion is no longer Nebula-exclusive — any agent that requests it gets it
+    assert(allowed.contains("AskUserQuestion"))
     // Delegate is available to all agents (no depth restriction)
     assert(allowed.contains("Delegate"))
-    // Fewer than total registered tools
-    assert(allowed.size < ToolRegistry.ALL_TOOLS.map(_.name).toSet.size)
+    // Schedule is stripped for non-Nebula agents
+    assert(!allowed.contains("Schedule"))
 
   test("Mail, Issue, and FlowReport are always available even when not listed"):
     val defn = mkDef("minimal", List("Read"))
@@ -54,13 +55,13 @@ class AllowedToolSetSpec extends FunSuite:
     assert(allowed.contains("Issue"))
     assert(allowed.contains("FlowReport"))
 
-  test("non-Nebula agents are stripped of Nebula-exclusive tools even if listed"):
-    // Pop is no longer Nebula-exclusive — it is available to any agent that requests it.
+  test("non-Nebula agents can use AskUserQuestion if listed"):
+    // AskUserQuestion is no longer Nebula-exclusive — any agent that requests it gets it.
     val defn = mkDef("leaky", List("Read", "Pop", "AskUserQuestion"))
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Read"), "Read allowed")
     assert(allowed.contains("Pop"), "Pop is no longer Nebula-exclusive — must be kept")
-    assert(!allowed.contains("AskUserQuestion"), "AskUserQuestion is still Nebula-exclusive")
+    assert(allowed.contains("AskUserQuestion"), "AskUserQuestion is no longer Nebula-exclusive")
     assert(allowed.contains("Mail"))
 
   test("Nebula keeps Nebula-exclusive tools"):
@@ -68,6 +69,12 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Pop"), "Nebula keeps Pop")
     assert(allowed.contains("AskUserQuestion"), "Nebula keeps AskUserQuestion")
+
+  test("non-Nebula agents are stripped of Schedule even with wildcard"):
+    val defn = mkDef("someone", List("*"))
+    val allowed = CoreProbe.allowed(defn)
+    assert(!allowed.contains("Schedule"), "Schedule is Nebula-exclusive — stripped for non-Nebula")
+    assert(allowed.contains("AskUserQuestion"), "AskUserQuestion is NOT Nebula-exclusive — kept for non-Nebula")
 
   test("agents without mcpServers grant are stripped of all MCP tools"):
     val defn = mkDef("no-mcp", List("Read", "mcp__git__status", "mcp__zai__chat"))

@@ -992,11 +992,11 @@ onMessage('askUser', (msg, view) => {
       const prevData = finishAi();
       if (prevData) saveMsg(prevData, sid);
     }
-    const data = renderAskUser(msg.items, msg.sessionId);
+    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName);
     if (data) saveMsg(data, msg.sessionId);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askUser', items: msg.items }, sid);
+    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName }, sid);
   }
 });
 
@@ -1281,7 +1281,7 @@ onMessage('historyPage', (msg, view) => {
       activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.option-box')) row.remove();
       });
-      renderAskUser(lastHistMsg.items, sid);
+      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName);
     }
 
     // Re-create interactive AskPermission if the last history message is an unanswered askPermission.
