@@ -3,6 +3,7 @@ package nebflow.core.entity
 import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
+import nebflow.shared.AgentModelConfig
 
 // ============================================================
 // Agent (global Agent library entry — corresponds to agent.json)
@@ -17,7 +18,8 @@ case class AgentEntry(
   voice: Boolean = false,
   systemPrompt: String = "", // loaded from system.md, not in agent.json
   category: String = "standalone",
-  mcpServers: List[String] = Nil
+  mcpServers: List[String] = Nil,
+  model: Option[AgentModelConfig] = None
 )
 
 object AgentEntry:
@@ -31,6 +33,7 @@ object AgentEntry:
       voice <- c.downField("voice").as[Option[Boolean]]
       category <- c.downField("category").as[Option[String]].map(_.getOrElse("standalone"))
       mcpServers <- c.downField("mcpServers").as[Option[List[String]]]
+      model <- c.downField("model").as[Option[AgentModelConfig]]
     yield AgentEntry(
       name.getOrElse(""),
       description,
@@ -39,7 +42,8 @@ object AgentEntry:
       voice.getOrElse(false),
       "",
       category,
-      mcpServers.getOrElse(Nil)
+      mcpServers.getOrElse(Nil),
+      model
     )
   }
 
@@ -51,7 +55,8 @@ object AgentEntry:
       "tools" -> a.tools.asJson,
       "voice" -> a.voice.asJson,
       "category" -> a.category.asJson,
-      "mcpServers" -> a.mcpServers.asJson
+      "mcpServers" -> a.mcpServers.asJson,
+      "model" -> a.model.asJson
     )
   }
 end AgentEntry
