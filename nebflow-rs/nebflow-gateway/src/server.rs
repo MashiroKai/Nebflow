@@ -90,13 +90,6 @@ pub async fn run_server(config: GatewayConfig) -> Result<(), std::io::Error> {
     // For now, the probe method exists and can be called manually.
     info!("Health monitor ready (background loop deferred)");
 
-    // Ensure skills directory exists
-    let skills_dir = root.join("skills");
-    if !skills_dir.exists() {
-        let _ = std::fs::create_dir_all(&skills_dir);
-        info!("Skills directory created");
-    }
-
     // Initialize STT/TTS services (None when config files are absent).
     let stt_service = crate::stt_service::SttService::create().map(Arc::new);
     let tts_service = crate::tts_service::TtsService::create().map(Arc::new);
