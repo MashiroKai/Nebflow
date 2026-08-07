@@ -154,7 +154,10 @@ async fn start_gateway(cli: Cli) -> i32 {
 
     // Open browser (unless --no-browser)
     if !cli.no_browser {
-        let url = format!("http://localhost:{}", gw_config.port);
+        let token = nebflow_gateway::Auth::new()
+            .map(|auth| auth.token().to_string())
+            .unwrap_or_default();
+        let url = format!("http://localhost:{}?token={}", gw_config.port, token);
         #[cfg(target_os = "macos")]
         let _ = std::process::Command::new("open").arg(&url).spawn();
         #[cfg(target_os = "linux")]

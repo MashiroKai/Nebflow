@@ -18,6 +18,7 @@ pub mod static_files;
 use std::sync::Arc;
 
 use axum::routing::{get, post};
+use axum::Json;
 use axum::Router;
 
 use crate::auth::Auth;
@@ -106,6 +107,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/skills", get(skills::list_skills))
         // Models REST
         .route("/api/models", get(models::list_models))
+        // Teams + flows REST
+        .route(
+            "/api/teams/mounted",
+            get(|| async { Json(serde_json::json!({ "teams": [] })) }),
+        )
+        .route(
+            "/api/running-flows",
+            get(|| async { Json(serde_json::json!({ "flows": [] })) }),
+        )
         // Speech REST (no auth — internal calls, mirrors Scala)
         .route("/api/tts", post(speech::tts_handler))
         .route("/api/stt", post(speech::stt_handler))
