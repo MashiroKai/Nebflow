@@ -112,7 +112,7 @@ fn agent_list_fields(agent: &LoadedAgent, layer: &str, scope: Option<&str>) -> V
 
 /// Scan all three layers and return `(entries, total_agent_defs)` where
 /// entries are the JSON list payloads.
-fn scan_all_layers(data_root: &Path) -> Vec<Value> {
+pub fn scan_all_layers(data_root: &Path) -> Vec<Value> {
     let mut all = Vec::new();
 
     // Global layer (~/.nebflow/agents/) — Scala excludes "Nebula" from the list.
