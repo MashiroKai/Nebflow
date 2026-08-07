@@ -7,12 +7,15 @@ Self-hosted AI coding assistant with multi-agent orchestration and cross-device 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/MashiroKai/Nebflow?label=stable)](https://github.com/MashiroKai/Nebflow/releases/latest)
 [![Scala](https://img.shields.io/badge/Scala-3.5.2-red.svg)](https://www.scala-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
 
 </div>
 
 ---
 
 Nebflow is a self-hosted AI coding assistant that runs entirely on your machine. It features a browser-based chat interface with streaming responses, native HTML card rendering, multi-agent orchestration, and cross-device collaboration — all in a single JAR with no external dependencies beyond Java.
+
+> **Migration Notice:** Nebflow is migrating from Scala to Rust. The Rust implementation lives in [`nebflow-rs/`](nebflow-rs/) and is functionally complete (749 tests passing). The Scala version remains the running production build; the Rust version will eventually replace it. See [Migration Status](#migration-status-scala--rust) below.
 
 ## Features
 
@@ -114,7 +117,9 @@ API keys can be set via environment variables (`${VAR_NAME}` syntax) or directly
 
 ## Building from Source
 
-### Prerequisites
+### Scala (Current)
+
+#### Prerequisites
 
 - Java 17+
 - sbt 1.x
@@ -129,7 +134,24 @@ make check           # All quality checks (compile + scalafmt + scalafix)
 
 The assembled JAR is output to `target/scala-3.5.2/`.
 
+### Rust (In Progress)
+
+#### Prerequisites
+
+- Rust (stable toolchain)
+- Cargo (included with Rust)
+
+```bash
+cd nebflow-rs
+cargo build --workspace              # Compile all crates
+cargo test --workspace               # Run tests (749 tests)
+cargo clippy --workspace --all-targets  # Lint
+cargo fmt --all -- --check           # Check formatting
+```
+
 ## Architecture
+
+### Scala (Current)
 
 ```
 src/main/scala/nebflow/
@@ -157,6 +179,36 @@ src/main/scala/nebflow/
 ```
 
 Built with **Scala 3**, **Cats Effect 3**, and **Pekko Actors**. The web UI is served from embedded resources — no separate frontend build step required.
+
+### Rust (In Progress)
+
+```
+nebflow-rs/
+├── nebflow-core/     # Core types, tools, LLM client, Flow engine
+├── nebflow-agent/    # Agent runtime, AgentBuilder, AgentRunner
+├── nebflow-gateway/  # HTTP/WS gateway, routing, session store
+└── nebflow-cli/      # CLI client
+```
+
+Built with **Rust**, **tokio** (async runtime), **axum** (HTTP/WebSocket server), and **serde** (serialization). Organized as a Cargo workspace with four member crates.
+
+## Migration Status: Scala → Rust
+
+Nebflow is actively migrating from Scala to Rust.
+
+| | Scala (Current) | Rust (In Progress) |
+|---|---|---|
+| **Location** | `src/main/scala/` | `nebflow-rs/` |
+| **Runtime** | JVM (Java 17+) | Native (tokio async runtime) |
+| **HTTP/WS** | http4s | axum |
+| **Serialization** | circe | serde |
+| **Concurrency** | Pekko Actors + Cats Effect | tokio |
+| **Status** | Production, actively running | Functionally complete (749 tests) |
+
+- The Scala version remains the running production build.
+- The Rust version in `nebflow-rs/` is functionally complete and covered by 749 passing tests.
+- Rust CI runs on every push/PR via [`.github/workflows/rust-ci.yml`](.github/workflows/rust-ci.yml) — format, clippy, and test checks.
+- Once the Rust version reaches feature parity and is validated end-to-end, the Scala code will be removed.
 
 ## Links
 
