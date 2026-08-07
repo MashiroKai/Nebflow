@@ -323,33 +323,49 @@ pub async fn handle_message(
             let _ = tx.send(
                 json!({
                     "type": "teamList",
-                    "teams": teams
+                    "teams": teams,
+                    "flows": []
                 })
                 .to_string(),
             );
         }
 
         "getConfig" => {
-            let config = nebflow_core::config::load_service_config();
+            let config_path = nebflow_core::config::default_config_path();
+            let config_str =
+                std::fs::read_to_string(&config_path).unwrap_or_else(|_| "{}".to_string());
+            let configured = !config_str.trim().is_empty() && config_str.trim() != "{}";
             let _ = tx.send(
                 json!({
                     "type": "configData",
-                    "config": config
+                    "config": config_str,
+                    "configured": configured
                 })
                 .to_string(),
             );
         }
 
         "getModelOptions" => {
+            let session_id = parsed
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let config = nebflow_core::config::load_service_config();
-            let models = &config.llm.model;
+            let mut models = Vec::new();
+            for (provider_id, provider) in &config.llm.providers {
+                for model in &provider.models {
+                    models.push(json!({
+                        "ref": format!("{}/{}", provider_id, model.id),
+                        "label": model.id.clone(),
+                        "description": model.description.clone().unwrap_or_else(|| model.id.clone()),
+                    }));
+                }
+            }
             let _ = tx.send(
                 json!({
                     "type": "modelOptions",
-                    "models": {
-                        "default": models.default,
-                        "fallbacks": models.fallbacks
-                    }
+                    "sessionId": session_id,
+                    "models": models
                 })
                 .to_string(),
             );
@@ -383,7 +399,109 @@ pub async fn handle_message(
             // Silently accept
         }
 
+        "listDir" => {
+            let path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let session_id = parsed
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let mut entries: Vec<Value> = vec![];
+            if !path.is_empty() {
+                let abs_path = if path.starts_with('/') {
+                    std::path::PathBuf::from(path)
+                } else {
+                    std::env::current_dir().unwrap_or_default().join(path)
+                };
+                if let Ok(dir_entries) = std::fs::read_dir(&abs_path) {
+                    for entry in dir_entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                        entries.push(json!({
+                            "name": name,
+                            "isDirectory": is_dir,
+                            "path": entry.path().to_string_lossy()
+                        }));
+                    }
+                }
+            }
+            let _ = tx.send(
+                json!({
+                    "type": "dirListing",
+                    "sessionId": session_id,
+                    "path": path,
+                    "entries": entries
+                })
+                .to_string(),
+            );
+        }
+
+        "listAgents" => {
+            let data_root = nebflow_core::config::data_root();
+            let agents = crate::routes::agents::scan_all_layers(&data_root);
+            let _ = tx.send(
+                json!({
+                    "type": "agentList",
+                    "agents": agents
+                })
+                .to_string(),
+            );
+        }
+
+        "listScheduledTasks" => {
+            // No scheduled-task engine yet — return empty list (F6)
+            let _ = tx.send(
+                json!({
+                    "type": "scheduledTaskList",
+                    "tasks": []
+                })
+                .to_string(),
+            );
+        }
+
+        "getTaskList" => {
+            // No task tracking yet — return empty list (F7)
+            let session_id = parsed
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let _ = tx.send(
+                json!({
+                    "type": "taskListUpdate",
+                    "tasks": [],
+                    "sessionId": session_id
+                })
+                .to_string(),
+            );
+        }
+
+        "getActiveBgTasks" => {
+            // No background task tracking yet — return empty list (F8)
+            let _ = tx.send(
+                json!({
+                    "type": "activeBgTasks",
+                    "tasks": []
+                })
+                .to_string(),
+            );
+        }
+
+        "getCardDesign" => {
+            // No card-design store yet — return default empty content (F9)
+            let _ = tx.send(
+                json!({
+                    "type": "cardDesignData",
+                    "content": ""
+                })
+                .to_string(),
+            );
+        }
+
         _ => {
+            // Check for content-based user input (frontend sends without
+            // "type" field — only content + sessionId).
+            if parsed.get("content").and_then(|v| v.as_str()).is_some() {
+                handle_user_input(&parsed, tx, state).await;
+            }
             // Unknown message type — silently ignore for forward compatibility
         }
     }
@@ -1354,6 +1472,48 @@ mod tests {
         let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
         assert_eq!(msg["type"], "teamList");
         assert!(msg["teams"].is_array());
+        assert!(msg["flows"].is_array());
+    }
+
+    #[tokio::test]
+    async fn list_scheduled_tasks_returns_empty_stub() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"listScheduledTasks"}"#, &tx, &state).await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "scheduledTaskList");
+        assert_eq!(msg["tasks"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn get_task_list_returns_empty_stub_with_session_id() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"getTaskList","sessionId":"s1"}"#, &tx, &state).await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "taskListUpdate");
+        assert_eq!(msg["tasks"], json!([]));
+        assert_eq!(msg["sessionId"], "s1");
+    }
+
+    #[tokio::test]
+    async fn get_active_bg_tasks_returns_empty_stub() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"getActiveBgTasks"}"#, &tx, &state).await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "activeBgTasks");
+        assert_eq!(msg["tasks"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn get_card_design_returns_default_content() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"getCardDesign"}"#, &tx, &state).await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "cardDesignData");
+        assert_eq!(msg["content"], "");
     }
 
     #[tokio::test]
@@ -1363,7 +1523,8 @@ mod tests {
         handle_message(r#"{"type":"getConfig"}"#, &tx, &state).await;
         let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
         assert_eq!(msg["type"], "configData");
-        assert!(msg["config"].is_object());
+        assert!(msg["config"].is_string());
+        assert!(msg["configured"].is_boolean());
     }
 
     #[tokio::test]
@@ -1373,7 +1534,7 @@ mod tests {
         handle_message(r#"{"type":"getModelOptions"}"#, &tx, &state).await;
         let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
         assert_eq!(msg["type"], "modelOptions");
-        assert!(msg["models"]["default"].is_string());
+        assert!(msg["models"].is_array());
     }
 
     #[tokio::test]
@@ -1396,6 +1557,93 @@ mod tests {
             rx.try_recv().is_err(),
             "setVoiceMuted should not send a response"
         );
+    }
+
+    // ============================================================
+    // F1: content-based messages without "type" field
+    // ============================================================
+
+    #[tokio::test]
+    async fn content_without_type_triggers_user_input() {
+        let (state, _dir) = make_state();
+        state.session_store.load().await.unwrap();
+        let meta = state
+            .session_store
+            .create_session("Test", None, None)
+            .await
+            .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        // Frontend sends { content, sessionId } without "type" field
+        let req = format!(r#"{{"content":"hello","sessionId":"{}"}}"#, meta.id);
+        handle_message(&req, &tx, &state).await;
+        // agent_manager is None → should get error message
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "error");
+        assert_eq!(msg["message"], "Agent runtime unavailable");
+        // User message should still be persisted
+        let ui = state.session_store.load_ui_messages(&meta.id).await;
+        assert!(ui.iter().any(|m| matches!(m, UiMessage::User { .. })));
+    }
+
+    #[tokio::test]
+    async fn content_without_type_empty_content_ignored() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"content":"","sessionId":"s1"}"#, &tx, &state).await;
+        assert!(rx.try_recv().is_err());
+    }
+
+    // ============================================================
+    // F4: listDir
+    // ============================================================
+
+    #[tokio::test]
+    async fn list_dir_returns_entries() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let dir = std::env::temp_dir();
+        let req = format!(
+            r#"{{"type":"listDir","path":"{}","sessionId":"s1"}}"#,
+            dir.display()
+                .to_string()
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+        );
+        handle_message(&req, &tx, &state).await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "dirListing");
+        assert_eq!(msg["sessionId"], "s1");
+        assert!(msg["entries"].is_array());
+    }
+
+    #[tokio::test]
+    async fn list_dir_empty_path_returns_empty() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(
+            r#"{"type":"listDir","path":"","sessionId":"s1"}"#,
+            &tx,
+            &state,
+        )
+        .await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "dirListing");
+        assert!(msg["entries"].is_array());
+        assert_eq!(msg["entries"].as_array().unwrap().len(), 0);
+    }
+
+    // ============================================================
+    // F5: listAgents
+    // ============================================================
+
+    #[tokio::test]
+    async fn list_agents_returns_agent_list() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"listAgents"}"#, &tx, &state).await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "agentList");
+        assert!(msg["agents"].is_array());
     }
 
     #[test]

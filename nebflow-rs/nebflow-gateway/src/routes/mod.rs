@@ -107,10 +107,34 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/skills", get(skills::list_skills))
         // Models REST
         .route("/api/models", get(models::list_models))
+        .route(
+            "/api/models/capabilities",
+            get(|| async { Json(serde_json::json!({})) }),
+        )
+        // NebLink status (no P2P transport yet — always disconnected)
+        .route(
+            "/api/neblink/status",
+            get(|| async { Json(serde_json::json!({ "connected": false, "peers": [] })) }),
+        )
         // Teams + flows REST
         .route(
             "/api/teams/mounted",
-            get(|| async { Json(serde_json::json!({ "teams": [] })) }),
+            get(|| async {
+                let data_root = nebflow_core::config::data_root();
+                let teams_dir = data_root.join("teams");
+                let mut teams: Vec<serde_json::Value> = vec![];
+                if let Ok(entries) = std::fs::read_dir(&teams_dir) {
+                    for entry in entries.flatten() {
+                        let team_json = entry.path().join("team.json");
+                        if let Ok(content) = std::fs::read_to_string(&team_json) {
+                            if let Ok(t) = serde_json::from_str::<serde_json::Value>(&content) {
+                                teams.push(t);
+                            }
+                        }
+                    }
+                }
+                Json(serde_json::json!({ "teams": teams }))
+            }),
         )
         .route(
             "/api/running-flows",
