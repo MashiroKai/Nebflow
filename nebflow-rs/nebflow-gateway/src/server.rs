@@ -42,6 +42,13 @@ pub async fn run_server(config: GatewayConfig) -> Result<(), std::io::Error> {
         .map_err(|e| std::io::Error::other(format!("SessionStore load failed: {e}")))?;
     info!("Session store loaded");
 
+    // Ensure a default Nebula session exists
+    let default_session = session_store
+        .ensure_active_agent_session("Nebula")
+        .await
+        .map_err(|e| std::io::Error::other(format!("Failed to ensure default session: {e}")))?;
+    info!("Default session ensured: {}", default_session.id);
+
     // Initialize rate limiter
     let rate_limiter = Arc::new(RateLimiter::new());
 
@@ -61,12 +68,34 @@ pub async fn run_server(config: GatewayConfig) -> Result<(), std::io::Error> {
         });
     let resources = Arc::new(SharedResources::new(service_config, root.clone(), thinking));
     let library = Arc::new(AgentLibrary::new(root.join("agents")));
+
+    // Start MCP servers from config
+    if let Some(ref mcp_servers) = resources.config.mcp_servers {
+        if !mcp_servers.is_empty() {
+            let mcp_manager = resources.mcp_manager.clone();
+            mcp_manager.start_all(mcp_servers).await;
+            info!("MCP servers started: {} configured", mcp_servers.len());
+        }
+    }
+
     let agent_manager = Some(Arc::new(AgentManager::new(
         resources,
         library,
         session_store.clone(),
     )));
     info!("Agent runtime initialized");
+
+    // Start HealthMonitor background loop (probes down providers periodically)
+    // TODO: implement full start_monitoring when HealthMonitor gains a background loop.
+    // For now, the probe method exists and can be called manually.
+    info!("Health monitor ready (background loop deferred)");
+
+    // Ensure skills directory exists
+    let skills_dir = root.join("skills");
+    if !skills_dir.exists() {
+        let _ = std::fs::create_dir_all(&skills_dir);
+        info!("Skills directory created");
+    }
 
     // Initialize STT/TTS services (None when config files are absent).
     let stt_service = crate::stt_service::SttService::create().map(Arc::new);
@@ -77,6 +106,15 @@ pub async fn run_server(config: GatewayConfig) -> Result<(), std::io::Error> {
     if tts_service.is_some() {
         info!("TTS service loaded");
     }
+
+    // Ensure built-in skills directory exists
+    let skills_dir = root.join("skills");
+    if !skills_dir.exists() {
+        if let Err(e) = std::fs::create_dir_all(&skills_dir) {
+            tracing::warn!("Failed to create skills directory: {e}");
+        }
+    }
+    info!("Skills directory ensured");
 
     // Build app state
     let state = AppState::new(

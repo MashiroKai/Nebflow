@@ -22,33 +22,31 @@ pub async fn dispatch(cli: Cli) -> i32 {
             0
         }
 
-        Some(Commands::Status) => match crate::process::read_pid() {
-            Some(pid) if crate::process::is_running(pid) => {
-                if json_mode {
-                    println!(r#"{{"running":true,"pid":{}}}"#, pid);
-                } else {
-                    println!("nebflow is running (pid: {pid})");
+        Some(Commands::Status) => {
+            // Check if the gateway port is listening (not PID-based)
+            let gw_config = nebflow_gateway::GatewayConfig::from_env();
+            let port = cli.port.unwrap_or(gw_config.port);
+            let addr = format!("127.0.0.1:{}", port);
+            match std::net::TcpStream::connect(&addr) {
+                Ok(_) => {
+                    if json_mode {
+                        println!(r#"{{"running":true,"port":{}}}"#, port);
+                    } else {
+                        println!("nebflow is running on port {port}");
+                    }
+                    0
                 }
-                0
-            }
-            Some(_) => {
-                if json_mode {
-                    println!(r#"{{"running":false}}"#);
-                } else {
-                    println!("nebflow is not running (stale pid file)");
+                Err(_) => {
+                    if json_mode {
+                        println!(r#"{{"running":false}}"#);
+                    } else {
+                        println!("nebflow is not running");
+                    }
+                    crate::process::remove_pid();
+                    0
                 }
-                crate::process::remove_pid();
-                1
             }
-            None => {
-                if json_mode {
-                    println!(r#"{{"running":false}}"#);
-                } else {
-                    println!("nebflow is not running");
-                }
-                0
-            }
-        },
+        }
 
         Some(Commands::Config { ref action }) => match action {
             ConfigAction::Show => commands::config::show().await,
@@ -118,18 +116,30 @@ pub async fn dispatch(cli: Cli) -> i32 {
 
 /// Start the gateway server.
 async fn start_gateway(cli: Cli) -> i32 {
-    // Check if already running
-    if let Some(pid) = crate::process::read_pid() {
-        if crate::process::is_running(pid) {
-            eprintln!("nebflow is already running (pid: {pid})");
-            eprintln!("Run 'nebflow stop' to stop it.");
+    // Load config
+    let mut gw_config = nebflow_gateway::GatewayConfig::from_env();
+    if let Some(port) = cli.port {
+        gw_config = gw_config.with_port(port);
+    }
+    let addr = gw_config.socket_addr();
+
+    // Port detection: try to bind the port. If it fails, another instance
+    // is already running (or the port is occupied).
+    match tokio::net::TcpListener::bind(&addr).await {
+        Ok(listener) => {
+            // Port is available — drop the listener and continue.
+            drop(listener);
+        }
+        Err(e) => {
+            eprintln!(
+                "nebflow is already running or port {} is in use: {e}",
+                gw_config.port
+            );
             return 1;
         }
-        // Stale PID file
-        crate::process::remove_pid();
     }
 
-    // Write current PID
+    // Write PID file for informational purposes (not used for single-instance lock)
     let pid = std::process::id();
     crate::process::write_pid(pid);
 
@@ -142,8 +152,18 @@ async fn start_gateway(cli: Cli) -> i32 {
         let _ = std::fs::write(&config_path, "{}");
     }
 
-    // Load config and start server
-    let gw_config = nebflow_gateway::GatewayConfig::from_env();
+    // Open browser (unless --no-browser)
+    if !cli.no_browser {
+        let url = format!("http://localhost:{}", gw_config.port);
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+        #[cfg(target_os = "linux")]
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+        #[cfg(target_os = "windows")]
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", &url])
+            .spawn();
+    }
 
     let result = nebflow_gateway::run_server(gw_config).await;
 
