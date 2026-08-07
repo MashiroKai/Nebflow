@@ -294,6 +294,95 @@ pub async fn handle_message(
             }
         }
 
+        "getSkills" => {
+            let data_root = nebflow_core::config::data_root();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let skills = crate::routes::skills::scan_all_skills(&data_root, &cwd);
+            let _ = tx.send(
+                json!({
+                    "type": "skillList",
+                    "skills": skills
+                })
+                .to_string(),
+            );
+        }
+
+        "getTeams" => {
+            let teams_dir = nebflow_core::config::data_root().join("teams");
+            let mut teams: Vec<Value> = vec![];
+            if let Ok(entries) = std::fs::read_dir(&teams_dir) {
+                for entry in entries.flatten() {
+                    let team_json = entry.path().join("team.json");
+                    if let Ok(content) = std::fs::read_to_string(&team_json) {
+                        if let Ok(t) = serde_json::from_str::<Value>(&content) {
+                            teams.push(t);
+                        }
+                    }
+                }
+            }
+            let _ = tx.send(
+                json!({
+                    "type": "teamList",
+                    "teams": teams
+                })
+                .to_string(),
+            );
+        }
+
+        "getConfig" => {
+            let config = nebflow_core::config::load_service_config();
+            let _ = tx.send(
+                json!({
+                    "type": "configData",
+                    "config": config
+                })
+                .to_string(),
+            );
+        }
+
+        "getModelOptions" => {
+            let config = nebflow_core::config::load_service_config();
+            let models = &config.llm.model;
+            let _ = tx.send(
+                json!({
+                    "type": "modelOptions",
+                    "models": {
+                        "default": models.default,
+                        "fallbacks": models.fallbacks
+                    }
+                })
+                .to_string(),
+            );
+        }
+
+        "memoryStatus" => {
+            let _ = tx.send(
+                json!({
+                    "type": "memoryStatus",
+                    "enabled": false
+                })
+                .to_string(),
+            );
+        }
+
+        "getLlmLog" => {
+            let _ = tx.send(
+                json!({
+                    "type": "llmLogState",
+                    "enabled": false
+                })
+                .to_string(),
+            );
+        }
+
+        "setThinking" => {
+            // Silently accept — store state in SharedResources.thinking_config (P2)
+        }
+
+        "setVoiceMuted" => {
+            // Silently accept
+        }
+
         _ => {
             // Unknown message type — silently ignore for forward compatibility
         }
@@ -623,14 +712,28 @@ pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQuery>,
     Extension(state): Extension<WsState>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    // Check token from query param
-    let provided = query.token.unwrap_or_default();
+    // Check token from query param, fall back to cookie
+    let token = query.token.or_else(|| extract_token_from_cookie(&headers));
+    let provided = token.unwrap_or_default();
     if !state.auth.validate(&provided) {
         return axum::http::StatusCode::FORBIDDEN.into_response();
     }
 
     ws.on_upgrade(move |socket| handle_ws_connection(socket, state))
+}
+
+/// Extract the nebflow token from the Cookie header.
+fn extract_token_from_cookie(headers: &axum::http::HeaderMap) -> Option<String> {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok())?;
+    for pair in cookie.split(';') {
+        let pair = pair.trim();
+        if let Some(token) = pair.strip_prefix("nebflow_token=") {
+            return Some(token.to_string());
+        }
+    }
+    None
 }
 
 /// Handle a single WebSocket connection lifecycle.
@@ -1211,5 +1314,111 @@ mod tests {
         )
         .await;
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn memory_status_returns_disabled() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"memoryStatus"}"#, &tx, &state).await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "memoryStatus");
+        assert_eq!(msg["enabled"], false);
+    }
+
+    #[tokio::test]
+    async fn get_llm_log_returns_disabled() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"getLlmLog"}"#, &tx, &state).await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "llmLogState");
+        assert_eq!(msg["enabled"], false);
+    }
+
+    #[tokio::test]
+    async fn get_skills_returns_list() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"getSkills"}"#, &tx, &state).await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "skillList");
+        assert!(msg["skills"].is_array());
+    }
+
+    #[tokio::test]
+    async fn get_teams_returns_list() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"getTeams"}"#, &tx, &state).await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "teamList");
+        assert!(msg["teams"].is_array());
+    }
+
+    #[tokio::test]
+    async fn get_config_returns_config_data() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"getConfig"}"#, &tx, &state).await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "configData");
+        assert!(msg["config"].is_object());
+    }
+
+    #[tokio::test]
+    async fn get_model_options_returns_models() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"getModelOptions"}"#, &tx, &state).await;
+        let msg: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(msg["type"], "modelOptions");
+        assert!(msg["models"]["default"].is_string());
+    }
+
+    #[tokio::test]
+    async fn set_thinking_silently_accepted() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"setThinking","enabled":true}"#, &tx, &state).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "setThinking should not send a response"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_voice_muted_silently_accepted() {
+        let (state, _dir) = make_state();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_message(r#"{"type":"setVoiceMuted","muted":true}"#, &tx, &state).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "setVoiceMuted should not send a response"
+        );
+    }
+
+    #[test]
+    fn extract_token_from_cookie_valid() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "cookie",
+            "other=val; nebflow_token=abc123; foo=bar".parse().unwrap(),
+        );
+        let token = extract_token_from_cookie(&headers);
+        assert_eq!(token.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn extract_token_from_cookie_missing() {
+        let headers = axum::http::HeaderMap::new();
+        assert!(extract_token_from_cookie(&headers).is_none());
+    }
+
+    #[test]
+    fn extract_token_from_cookie_no_nebflow_token() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("cookie", "other=val".parse().unwrap());
+        assert!(extract_token_from_cookie(&headers).is_none());
     }
 }
