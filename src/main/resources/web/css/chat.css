@@ -1160,8 +1160,6 @@
   .duration-badge-model { opacity: 0.28; }
   .duration-badge-time { opacity: 0.28; }
 
-  #status-wrap { background: rgba(23,26,33,0.9); }
-
   .retry-status { background: rgba(217,165,65,0.12); color: #d4a030; }
 }
 
@@ -1463,27 +1461,6 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
-
-#status-wrap {
-  position: absolute;
-  bottom: 84px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(0,0,0,0.75);
-  color: #fff;
-  padding: 6px 14px;
-  border-radius: 16px;
-  font-size: 12px;
-  opacity: 0;
-  transition: opacity 0.2s;
-  pointer-events: none;
-  z-index: 100;
-}
-#status-wrap.on { opacity: 1; }
-#lottie-spinner { width: 20px; height: 20px; }
 
 /* ---------- Retry status ---------- */
 .retry-status {

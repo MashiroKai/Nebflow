@@ -55,7 +55,6 @@ function ensureStepView(sessionId) {
   const fakeDom = {
     chat: container,
     input: null, sendBtn: null, stopBtn: null, attachBtn: null,
-    statusWrap: null, statusText: null, lottieSpinnerEl: null,
     attPreview: null, slashDropdown: null, queueBar: null,
     voiceBtn: null, voiceOverlay: null, voiceText: null,
     headerModelInfoEl: null, bgIndicatorEl: null, bgCountEl: null,

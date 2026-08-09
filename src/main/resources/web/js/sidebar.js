@@ -1498,7 +1498,6 @@ export function resetChatForActiveSession() {
   pv.dom.sendBtn.style.display = isBusy ? 'none' : 'flex';
   pv.dom.stopBtn.style.display = isBusy ? 'flex' : 'none';
 
-  pv.dom.statusWrap.classList.remove('on');
   stopSpinner();
 
   if (!isBusy) pv.dom.input.focus();
