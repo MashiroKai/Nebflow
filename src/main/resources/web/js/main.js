@@ -2181,6 +2181,29 @@ initModals();
 initRulesModal();
 initPathPicker();
 initInput(chatViews.primary);
+
+// Keep the last chat message visible above the floating #input-area.
+// #input-area (position:absolute; bottom:0) overlays #chat and has variable
+// height (multi-line input, message queue, voice panel). All scroll code uses
+// scrollTop = scrollHeight, so we grow #chat's padding-bottom to match the
+// input area's height — then scrolling to the bottom lands the last message
+// above the input bar instead of behind it.
+(() => {
+  const inputArea = document.getElementById('input-area');
+  const chat = document.getElementById('chat');
+  if (!inputArea || !chat || !window.ResizeObserver) return;
+  const updateChatPadding = () => {
+    const inputHeight = inputArea.offsetHeight;
+    chat.style.setProperty('padding-bottom', `${inputHeight + 12}px`, 'important');
+    // Only re-scroll if the user is already near the bottom — don't yank
+    // them away from history they're reading.
+    const nearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 100;
+    if (nearBottom) chat.scrollTop = chat.scrollHeight;
+  };
+  const ro = new ResizeObserver(updateChatPadding);
+  ro.observe(inputArea);
+  updateChatPadding();
+})();
 initMemory();
 initExplorer();
 initCanvas();
