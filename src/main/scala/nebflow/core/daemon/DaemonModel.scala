@@ -12,7 +12,8 @@ case class DaemonConfig(
   cwd: Option[String] = None,
   env: Map[String, String] = Map.empty,
   autoStart: Boolean = false,
-  restartOnExit: Boolean = false
+  restartOnExit: Boolean = false,
+  port: Option[Int] = None
 )
 
 object DaemonConfig:
@@ -30,6 +31,7 @@ object DaemonConfig:
       env <- c.downField("env").as[Option[Map[String, String]]]
       autoStart <- c.downField("autoStart").as[Option[Boolean]]
       restartOnExit <- c.downField("restartOnExit").as[Option[Boolean]]
+      port <- c.downField("port").as[Option[Int]]
     yield DaemonConfig(
       id,
       name,
@@ -37,7 +39,8 @@ object DaemonConfig:
       cwd,
       env.getOrElse(Map.empty),
       autoStart.getOrElse(false),
-      restartOnExit.getOrElse(false)
+      restartOnExit.getOrElse(false),
+      port
     )
   }
 
@@ -55,7 +58,9 @@ case class DaemonState(
   pid: Option[Long] = None,
   startedAt: Option[Long] = None,
   exitCode: Option[Int] = None,
-  recentOutput: String = ""
+  recentOutput: String = "",
+  command: List[String] = Nil,
+  port: Option[Int] = None
 )
 
 object DaemonState:

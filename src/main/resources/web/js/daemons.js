@@ -1,6 +1,12 @@
 // daemons.js — Dev server daemon management panel.
 // Self-contained module: CSS injection, DOM rendering, REST API calls.
 // Follows the reminder panel pattern (sapphire glass popover from header button).
+//
+// Rendering strategy (no-jump):
+//   - Rows animate in only on first panel open (class .anim), never on updates.
+//   - Button actions update only the affected row (optimistic + silent refresh),
+//     never the whole list.
+//   - Polling re-renders only when displayed fields actually changed.
 
 import { onMessage } from './ws.js';
 import { t } from './i18n.js';
@@ -23,8 +29,8 @@ const DAEMON_CSS = `
 
 /* ── Panel Container (sapphire glass) ── */
 #daemon-panel {
-  position: absolute; top: 56px; right: 16px; width: 380px;
-  max-height: min(520px, 70vh);
+  position: absolute; top: 56px; right: 16px; width: 400px;
+  max-height: min(540px, 70vh);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -120,16 +126,16 @@ const DAEMON_CSS = `
 .daemon-row {
   display: flex; align-items: center; gap: 10px; padding: 9px 10px;
   border-radius: 10px; margin: 1px 0; transition: background 0.15s;
-  animation: daemonRowIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
+.daemon-row.anim { animation: daemonRowIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+.daemon-row.anim:nth-child(1) { animation-delay: 0ms; }
+.daemon-row.anim:nth-child(2) { animation-delay: 30ms; }
+.daemon-row.anim:nth-child(3) { animation-delay: 60ms; }
+.daemon-row.anim:nth-child(4) { animation-delay: 90ms; }
+.daemon-row.anim:nth-child(5) { animation-delay: 120ms; }
+.daemon-row.anim:nth-child(6) { animation-delay: 150ms; }
 .daemon-row:hover { background: rgba(91, 127, 191, 0.04); }
 @keyframes daemonRowIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
-.daemon-row:nth-child(1) { animation-delay: 0ms; }
-.daemon-row:nth-child(2) { animation-delay: 30ms; }
-.daemon-row:nth-child(3) { animation-delay: 60ms; }
-.daemon-row:nth-child(4) { animation-delay: 90ms; }
-.daemon-row:nth-child(5) { animation-delay: 120ms; }
-.daemon-row:nth-child(6) { animation-delay: 150ms; }
 @media (prefers-color-scheme: dark) { .daemon-row:hover { background: rgba(91, 127, 191, 0.05); } }
 
 /* ── Status Dot ── */
@@ -139,6 +145,8 @@ const DAEMON_CSS = `
 .daemon-status.running { background: var(--color-primary, #07c160); animation: daemon-pulse 1.6s ease-out infinite; }
 .daemon-status.stopped { background: var(--color-text-muted); opacity: 0.3; }
 .daemon-status.error { background: #f44336; }
+.daemon-status.crashed { background: #f44336; }
+.daemon-status.starting { background: #ff9800; }
 @keyframes daemon-pulse {
   0% { box-shadow: 0 0 0 0 rgba(7, 193, 96, 0.4); }
   100% { box-shadow: 0 0 0 7px rgba(7, 193, 96, 0); }
@@ -163,6 +171,34 @@ const DAEMON_CSS = `
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* ── Auto-start Toggle (small switch) ── */
+.daemon-autostart {
+  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+  cursor: pointer; user-select: none; opacity: 0.75;
+  transition: opacity 0.15s;
+}
+.daemon-autostart:hover { opacity: 1; }
+.daemon-autostart-track {
+  position: relative; width: 26px; height: 15px; border-radius: 8px;
+  background: rgba(128, 128, 128, 0.28);
+  transition: background 0.2s; flex-shrink: 0;
+}
+.daemon-autostart-thumb {
+  position: absolute; top: 2px; left: 2px; width: 11px; height: 11px;
+  border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.daemon-autostart-input {
+  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+}
+.daemon-autostart-input:checked + .daemon-autostart-track {
+  background: rgb(91, 127, 191);
+}
+.daemon-autostart-input:checked + .daemon-autostart-track .daemon-autostart-thumb {
+  transform: translateX(11px);
+}
+
 /* ── Action Buttons ── */
 .daemon-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .daemon-btn {
@@ -181,6 +217,7 @@ const DAEMON_CSS = `
   color: var(--color-text-muted); transition: all 0.15s;
 }
 .daemon-btn-icon:hover { background: var(--color-frame-hover, rgba(0,0,0,0.06)); color: var(--color-text); }
+.daemon-btn-icon.restart:hover { color: #ff9800; background: rgba(255, 152, 0, 0.08); }
 .daemon-btn-icon.delete:hover { color: #f44336; background: rgba(244, 67, 54, 0.06); }
 .daemon-btn-icon svg { width: 13px; height: 13px; stroke-width: 2; }
 .daemon-btn:disabled, .daemon-btn-icon:disabled { opacity: 0.4; cursor: default; }
@@ -252,28 +289,45 @@ function esc(s) {
   ));
 }
 
-// ── API ────────────────────────────────────────────────────
-async function fetchDaemons() {
-  try {
-    const resp = await fetch('/api/daemons', { headers: authHeaders() });
-    if (!resp.ok) { daemons = []; if (panelOpen) renderList(); return; }
-    const data = await resp.json();
-    daemons = Array.isArray(data) ? data : (data.daemons || []);
-    if (panelOpen) renderList();
-  } catch (e) { if (panelOpen) renderList(); }
+/** Signature of the fields we display — used to skip pointless re-renders. */
+function rowSignature(d) {
+  return `${d.id}|${d.status || ''}|${d.port ?? ''}|${d.autoStart ? 1 : 0}|${d.name || ''}`;
 }
 
+// ── API ────────────────────────────────────────────────────
+/** Generic JSON API call. Returns parsed body (or null). Never throws. */
 async function apiCall(method, path, body) {
   try {
     const opts = { method, headers: { ...authHeaders(), 'Content-Type': 'application/json' } };
-    if (body) opts.body = JSON.stringify(body);
-    await fetch(path, opts);
-    await fetchDaemons(); // refresh after action
-  } catch (e) { /* non-critical */ }
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const resp = await fetch(path, opts);
+    if (!resp.ok) return null;
+    try { return await resp.json(); } catch { return null; }
+  } catch (e) { return null; }
+}
+
+/**
+ * Refresh the daemons list. When `rerender` is true, only re-renders if the
+ * displayed fields actually changed (prevents the panel from jumping on every
+ * 5s poll / after every button action).
+ */
+async function fetchDaemons({ rerender = true } = {}) {
+  try {
+    const resp = await fetch('/api/daemons', { headers: authHeaders() });
+    if (!resp.ok) { if (panelOpen && rerender) renderList(false); return; }
+    const data = await resp.json();
+    const next = Array.isArray(data) ? data : (data.daemons || []);
+    if (!panelOpen) { daemons = next; return; }
+    const changed =
+      daemons.length !== next.length ||
+      daemons.some((d, i) => rowSignature(d) !== rowSignature(next[i]));
+    daemons = next;
+    if (rerender && changed) renderList(false);
+  } catch (e) { if (panelOpen && rerender) renderList(false); }
 }
 
 // ── Render ─────────────────────────────────────────────────
-function renderList() {
+function renderList(animate = false) {
   const body = document.querySelector('#daemon-panel .daemon-panel-body');
   if (!body) return;
   body.innerHTML = '';
@@ -281,10 +335,29 @@ function renderList() {
   if (daemons.length === 0) {
     body.appendChild(buildEmptyState());
   } else {
-    for (const d of daemons) body.appendChild(buildRow(d));
+    for (const d of daemons) body.appendChild(buildRow(d, animate));
   }
 
   if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+/** Update only the status-dependent parts of an existing row (no rebuild). */
+function updateRowState(row, d) {
+  const status = d.status || 'stopped';
+  const dot = row.querySelector('.daemon-status');
+  if (dot) dot.className = `daemon-status ${status}`;
+  const startStop = row.querySelector('[data-act="start"], [data-act="stop"]');
+  if (startStop) {
+    if (status === 'running' || status === 'starting') {
+      startStop.dataset.act = 'stop';
+      startStop.className = 'daemon-btn stop';
+      startStop.textContent = t('daemons.stop');
+    } else {
+      startStop.dataset.act = 'start';
+      startStop.className = 'daemon-btn start';
+      startStop.textContent = t('daemons.start');
+    }
+  }
 }
 
 function buildEmptyState() {
@@ -296,9 +369,10 @@ function buildEmptyState() {
   return el;
 }
 
-function buildRow(d) {
+function buildRow(d, animate = false) {
   const row = document.createElement('div');
-  row.className = 'daemon-row';
+  row.className = 'daemon-row' + (animate ? ' anim' : '');
+  row.dataset.id = d.id;
   const status = d.status || 'stopped';
   const hasPort = !!d.port;
 
@@ -311,13 +385,20 @@ function buildRow(d) {
       </div>
       <div class="daemon-command">${esc(d.command || '')}</div>
     </div>
+    <label class="daemon-autostart" title="Auto-start with Nebflow">
+      <input type="checkbox" class="daemon-autostart-input" data-id="${esc(d.id)}" ${d.autoStart ? 'checked' : ''}>
+      <span class="daemon-autostart-track"><span class="daemon-autostart-thumb"></span></span>
+    </label>
     <div class="daemon-actions">
-      ${status === 'running'
+      ${status === 'running' || status === 'starting'
         ? `<button class="daemon-btn stop" data-act="stop" data-id="${esc(d.id)}">${t('daemons.stop')}</button>`
         : `<button class="daemon-btn start" data-act="start" data-id="${esc(d.id)}">${t('daemons.start')}</button>`
       }
-      <button class="daemon-btn-icon" data-act="restart" data-id="${esc(d.id)}" title="Restart">
+      <button class="daemon-btn-icon restart" data-act="restart" data-id="${esc(d.id)}" title="Restart">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+      </button>
+      <button class="daemon-btn-icon delete" data-act="delete" data-id="${esc(d.id)}" title="Delete">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
       </button>
     </div>`;
 
@@ -331,16 +412,69 @@ function buildRow(d) {
     });
   }
 
-  // Bind action buttons
+  // Auto-start toggle — optimistic flip + PUT, revert on failure.
+  const autoInput = row.querySelector('.daemon-autostart-input');
+  if (autoInput) {
+    autoInput.addEventListener('change', async (e) => {
+      e.stopPropagation();
+      const id = autoInput.getAttribute('data-id');
+      const next = autoInput.checked;
+      const target = daemons.find(x => x.id === id);
+      if (target) target.autoStart = next;
+      const resp = await apiCall('PUT', `/api/daemons/${encodeURIComponent(id)}`, { autoStart: next });
+      if (!resp) {
+        // Revert on failure
+        if (target) target.autoStart = !next;
+        autoInput.checked = !next;
+      }
+    });
+  }
+
+  // Action buttons (start/stop/restart/delete) — targeted row updates only.
   row.querySelectorAll('[data-act]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const act = btn.getAttribute('data-act');
       const id = btn.getAttribute('data-id');
-      btn.disabled = true;
-      if (act === 'start') await apiCall('POST', `/api/daemons/${encodeURIComponent(id)}/start`);
-      else if (act === 'stop') await apiCall('POST', `/api/daemons/${encodeURIComponent(id)}/stop`);
-      else if (act === 'restart') await apiCall('POST', `/api/daemons/${encodeURIComponent(id)}/restart`);
+
+      if (act === 'delete') {
+        const name = daemons.find(x => x.id === id)?.name || id;
+        if (!window.confirm(`Delete daemon "${name}"?`)) return;
+        btn.disabled = true;
+        const resp = await apiCall('DELETE', `/api/daemons/${encodeURIComponent(id)}`);
+        if (resp) {
+          // Optimistic removal — no full re-render
+          daemons = daemons.filter(x => x.id !== id);
+          const body = document.querySelector('#daemon-panel .daemon-panel-body');
+          row.remove();
+          if (body && daemons.length === 0) body.appendChild(buildEmptyState());
+        } else {
+          btn.disabled = false;
+          fetchDaemons();
+        }
+        return;
+      }
+
+      if (act === 'restart') {
+        btn.disabled = true;
+        // Optimistic: show starting state on this row
+        const target = daemons.find(x => x.id === id);
+        if (target) { target.status = 'starting'; updateRowState(row, target); }
+        await apiCall('POST', `/api/daemons/${encodeURIComponent(id)}/restart`);
+        btn.disabled = false;
+        await fetchDaemons(); // silent refresh — re-renders only if state differs
+        return;
+      }
+
+      // start / stop
+      const target = daemons.find(x => x.id === id);
+      if (target) {
+        target.status = act === 'start' ? 'starting' : 'stopped';
+        updateRowState(row, target);
+      }
+      await apiCall('POST', `/api/daemons/${encodeURIComponent(id)}/${act}`);
+      // Refresh; if the optimistic status matches the server, nothing jumps.
+      await fetchDaemons();
     });
   });
 
@@ -355,9 +489,8 @@ function openPanel() {
   panel.classList.add('open');
   document.getElementById('daemon-btn')?.classList.add('active');
   if (typeof lucide !== 'undefined') lucide.createIcons();
-  renderList();
-  fetchDaemons();
-  // Poll every 5 seconds while open
+  fetchDaemons({ rerender: false }).then(() => renderList(true));
+  // Poll every 5 seconds while open — only re-renders when something changed
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(() => { if (panelOpen) fetchDaemons(); }, 5000);
 }
@@ -408,7 +541,7 @@ export function initDaemons() {
   onMessage('daemonStatus', (msg) => {
     if (Array.isArray(msg.daemons)) {
       daemons = msg.daemons;
-      if (panelOpen) renderList();
+      if (panelOpen) renderList(false);
     }
   });
 }

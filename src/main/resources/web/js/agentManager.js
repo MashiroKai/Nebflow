@@ -60,6 +60,35 @@ async function fetchAgentModel(name) {
   } catch (e) { return null; }
 }
 
+async function fetchSkills() {
+  try {
+    const resp = await fetch('/api/skills', { headers: authHeaders() });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return data.skills || [];
+  } catch (e) { return []; }
+}
+
+async function fetchFlows() {
+  try {
+    const resp = await fetch('/api/flows/list', { headers: authHeaders() });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return data.flows || [];
+  } catch (e) { return []; }
+}
+
+/** PUT agent skills/flows config (persisted to agent.json). */
+async function setAgentSkillsFlows(name, field, value) {
+  try {
+    await fetch(`/api/agents/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: value }),
+    });
+  } catch (e) { /* non-critical */ }
+}
+
 // ── Sidebar list ───────────────────────────────────────────
 
 /** Render a single agent card HTML string. */
@@ -324,6 +353,18 @@ function renderAgentDetail(pane, name, detail, model) {
       </div>
 
       <div class="agent-detail-section">
+        <div class="agent-detail-label">Skills</div>
+        <div class="agent-detail-sub-hint">已选 skill 的 name+description 注入此 agent 的 system prompt</div>
+        <div class="agent-detail-skills-grid" id="agent-detail-skills-grid"><span class="agent-detail-chips-loading">Loading…</span></div>
+      </div>
+
+      <div class="agent-detail-section">
+        <div class="agent-detail-label">Flows</div>
+        <div class="agent-detail-sub-hint">此 agent 可通过 Delegate(flow=…) 触发的 flow</div>
+        <div class="agent-detail-flows-grid" id="agent-detail-flows-grid"><span class="agent-detail-chips-loading">Loading…</span></div>
+      </div>
+
+      <div class="agent-detail-section">
         <div class="agent-detail-label">System Prompt</div>
         <textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}">${esc(prompt)}</textarea>
         <button class="agent-detail-save-btn" id="agent-detail-save-prompt">Save</button>
@@ -369,6 +410,69 @@ function renderAgentDetail(pane, name, detail, model) {
         sendWs({ type: 'updateAgentTools', name, tools: [...currentTools] });
       });
     });
+  }
+
+  // Load skills/flows catalogs and render toggle chips (async, non-blocking)
+  loadSkillsFlowsSection(pane, name, detail);
+}
+
+/**
+ * Render the Skills and Flows chip grids. Each chip toggles membership;
+ * changes are persisted via PUT /api/agents/:name (agent.json skills/flows).
+ */
+async function loadSkillsFlowsSection(pane, name, detail) {
+  const [skills, flows] = await Promise.all([fetchSkills(), fetchFlows()]);
+  if (!pane.isConnected) return; // tab closed while fetching
+
+  const currentSkills = new Set(detail?.skills || []);
+  const currentFlows = new Set(detail?.flows || []);
+
+  const skillsGrid = pane.querySelector('#agent-detail-skills-grid');
+  if (skillsGrid) {
+    if (skills.length === 0) {
+      skillsGrid.innerHTML = '<span class="agent-detail-chips-empty">No skills installed</span>';
+    } else {
+      skillsGrid.innerHTML = '';
+      skills.forEach(s => {
+        const checked = currentSkills.has(s.name);
+        const chip = document.createElement('span');
+        chip.className = `agent-detail-skill-check${checked ? ' checked' : ''}`;
+        chip.dataset.name = s.name;
+        chip.title = s.description || s.name;
+        chip.textContent = s.name;
+        chip.addEventListener('click', () => {
+          chip.classList.toggle('checked');
+          if (chip.classList.contains('checked')) currentSkills.add(s.name);
+          else currentSkills.delete(s.name);
+          setAgentSkillsFlows(name, 'skills', [...currentSkills]);
+        });
+        skillsGrid.appendChild(chip);
+      });
+    }
+  }
+
+  const flowsGrid = pane.querySelector('#agent-detail-flows-grid');
+  if (flowsGrid) {
+    if (flows.length === 0) {
+      flowsGrid.innerHTML = '<span class="agent-detail-chips-empty">No flows defined</span>';
+    } else {
+      flowsGrid.innerHTML = '';
+      flows.forEach(f => {
+        const checked = currentFlows.has(f.name);
+        const chip = document.createElement('span');
+        chip.className = `agent-detail-flow-check${checked ? ' checked' : ''}`;
+        chip.dataset.name = f.name;
+        chip.title = f.description || f.name;
+        chip.textContent = f.name;
+        chip.addEventListener('click', () => {
+          chip.classList.toggle('checked');
+          if (chip.classList.contains('checked')) currentFlows.add(f.name);
+          else currentFlows.delete(f.name);
+          setAgentSkillsFlows(name, 'flows', [...currentFlows]);
+        });
+        flowsGrid.appendChild(chip);
+      });
+    }
   }
 }
 

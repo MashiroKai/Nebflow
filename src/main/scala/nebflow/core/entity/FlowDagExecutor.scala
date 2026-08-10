@@ -222,6 +222,36 @@ object FlowDagExecutor:
     // Register the running flow, execute, then clean up
     for
       _ <- registerFlow(instanceId, flow)
+      // Emit flowStarted so the frontend can render the full DAG immediately
+      _ <- emitWs(
+        Json.obj(
+          "type" -> "flowStarted".asJson,
+          "instanceId" -> instanceId.asJson,
+          "flowName" -> flow.name.asJson,
+          "description" -> flow.description.asJson,
+          "entry" -> flow.entry.asJson,
+          "nodes" -> flow.nodes.toList.sortBy(_._1).map { (nodeId, node) =>
+            Json.obj(
+              "nodeId" -> nodeId.asJson,
+              "agent" -> node.agent.asJson,
+              "status" -> "pending".asJson
+            )
+          }.asJson,
+          "edges" -> flow.nodes.toList.flatMap { (nodeId, node) =>
+            node.onComplete match
+              case NodeRoute.Goto(target) => List(Json.obj("from" -> nodeId.asJson, "to" -> target.asJson, "condition" -> Json.Null))
+              case NodeRoute.Return => List(Json.obj("from" -> nodeId.asJson, "to" -> "$return".asJson, "condition" -> Json.Null))
+              case NodeRoute.Switch(_, cases) =>
+                cases.toList.map { (cond, route) =>
+                  val target = route match
+                    case NodeRoute.Goto(t) => t
+                    case NodeRoute.Return => "$return"
+                    case _ => "?"
+                  Json.obj("from" -> nodeId.asJson, "to" -> target.asJson, "condition" -> cond.asJson)
+                }
+          }.asJson
+        )
+      )
       result <- runNode(flow.entry, FlowExecContext(flow.name, taskInput))
       // Update final status (preserve "cancelled" if it was cancelled)
       cancelled <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)

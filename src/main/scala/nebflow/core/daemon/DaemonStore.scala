@@ -18,11 +18,16 @@ class DaemonStore(configPath: os.Path = PathUtil.dataRoot / "daemons.json"):
     .blocking {
       if !os.exists(configPath) then Nil
       else
-        decode[DaemonConfigFile](os.read(configPath)) match
-          case Right(file) => file.daemons
-          case Left(err) =>
-            logger.warnSync(s"Failed to parse daemons.json: ${err.getMessage}")
-            Nil
+        val raw = os.read(configPath)
+        // Support both bare array [...] and wrapper {"daemons": [...]} formats
+        decode[List[DaemonConfig]](raw) match
+          case Right(list) => list
+          case _ =>
+            decode[DaemonConfigFile](raw) match
+              case Right(file) => file.daemons
+              case Left(err) =>
+                logger.warnSync(s"Failed to parse daemons.json: ${err.getMessage}")
+                Nil
     }
     .handleErrorWith { e =>
       logger.warn(s"Failed to load daemons.json: ${e.getMessage}").as(Nil)
