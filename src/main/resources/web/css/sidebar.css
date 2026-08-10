@@ -52,8 +52,6 @@
 .panel.active { display: flex; }
 
 /* ---------- Sidebar Top Bar ---------- */
-/* The bump-zone (pill at top) is the drag handle for panel reordering.
-   The topbar itself is not a drag area — cursor: grab lives on .bump-zone. */
 .sidebar-topbar {
   display: flex;
   align-items: center;

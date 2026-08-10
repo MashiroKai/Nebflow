@@ -1,6 +1,7 @@
 // colResizer.js — Draggable column resizers for the 3-column layout.
 //
-// Layout: Sidebar | resizer | Main | resizer | Canvas
+// Layout: Sidebar | resizer | Main | resizer | Canvas (fixed order — panels
+// are not reorderable; only widths can be adjusted by dragging a resizer).
 //
 // Each .col-resizer has data-left / data-right attributes naming the columns
 // it separates ("sidebar", "main", "canvas"). Dragging pins FIXED pixel
@@ -8,12 +9,21 @@
 // width matches exactly what was dragged — no flex-grow sharing surprises.
 // Widths are persisted to localStorage and restored on load / canvas open.
 //
+// Resizer visibility is also managed here: a resizer shows only when BOTH
+// adjacent panels are visible (sidebar expanded / canvas open), updated via
+// a body-class MutationObserver.
+//
 // Behaviour:
 //  • Sidebar resizer — always active when the sidebar is expanded.
 //  • Main/canvas resizer — only relevant when the canvas is open. When the
 //    canvas closes, Main's pinned width is cleared so it fills the space.
 
 const LS_KEY = 'nebflow_col_widths';
+
+// Fixed layout order — panels are NOT reorderable; the order below matches
+// the DOM (Sidebar | resizer | Main | resizer | Canvas). Resizer i separates
+// ORDER[i] and ORDER[i+1].
+const ORDER = ['sidebar', 'main', 'canvas'];
 
 // Minimum widths — prevent columns from collapsing too far.
 const MIN_WIDTHS = {
@@ -42,8 +52,21 @@ export function initColResizers() {
   restoreWidths();
   bindAll();
 
+  // Assign each resizer its neighbors (data-left / data-right) from the fixed
+  // panel order and set initial visibility. A resizer is visible only when
+  // BOTH adjacent panels are visible.
+  document.querySelectorAll('.col-resizer').forEach((r, i) => {
+    const leftId = ORDER[i];
+    const rightId = ORDER[i + 1];
+    if (!leftId || !rightId) return;
+    r.dataset.left = leftId;
+    r.dataset.right = rightId;
+    updateResizerVisibility(r, leftId, rightId);
+  });
+
   // Single body-class MutationObserver handles both sidebar and canvas pin
-  // management — mirrors how the sidebar works (body class drives everything).
+  // management AND resizer visibility — mirrors how the sidebar works (body
+  // class drives everything: sidebar-collapsed / canvas-open).
   const bodyEl = document.body;
   const moBody = new MutationObserver(() => {
     // Sidebar: clear pin on collapse, restore on expand.
@@ -56,8 +79,30 @@ export function initColResizers() {
     if (!bodyEl.classList.contains('canvas-open')) {
       clearPin('main');
     }
+    updateAllResizerVisibility();
   });
   moBody.observe(bodyEl, { attributes: true, attributeFilter: ['class'] });
+}
+
+function isPanelVisible(id) {
+  if (id === 'sidebar') return !document.body.classList.contains('sidebar-collapsed');
+  if (id === 'canvas') return document.body.classList.contains('canvas-open');
+  return true; // main is always visible
+}
+
+/** Show/hide a resizer based on whether both adjacent panels are visible. */
+function updateResizerVisibility(resizer, leftId, rightId) {
+  const show = isPanelVisible(leftId) && isPanelVisible(rightId);
+  resizer.style.display = show ? 'block' : 'none';
+}
+
+/** Re-evaluate visibility for all resizers (fixed order). */
+function updateAllResizerVisibility() {
+  document.querySelectorAll('.col-resizer').forEach((r, i) => {
+    const leftId = ORDER[i];
+    const rightId = ORDER[i + 1];
+    if (leftId && rightId) updateResizerVisibility(r, leftId, rightId);
+  });
 }
 
 function bindAll() {
@@ -90,9 +135,9 @@ function clearPin(name) {
 }
 
 /** Bind drag-to-resize on a single .col-resizer handle.
- *  Reads data-left / data-right (set by panelDragger.applyOrder) to know
- *  which columns this handle separates, then pins fixed pixel widths during
- *  drag so mouse movement maps 1:1 to width changes.
+ *  Reads data-left / data-right (set by initColResizers from the fixed panel
+ *  order) to know which columns this handle separates, then pins fixed pixel
+ *  widths during drag so mouse movement maps 1:1 to width changes.
  *
  *  Pinning strategy (works regardless of panel order):
  *    sidebar — always pinned (flex:0 0 px); drag maps 1:1.

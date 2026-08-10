@@ -12,7 +12,7 @@
 // entry only.
 //
 // The bar is an independent glass card (see nav.css #activity-bar). It is NOT
-// part of the panelDragger 3-column layout — order:-1 keeps it leftmost, and it
+// part of the 3-column layout — order:-1 keeps it leftmost, and it
 // stays visible when the sidebar is collapsed.
 
 import { openSettingsPanel, isSettingsPanelActive, showPanel } from './sidebar.js';

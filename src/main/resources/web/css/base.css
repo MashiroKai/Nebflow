@@ -109,8 +109,10 @@ body.sidebar-collapsed #sidebar {
   border-width: 0;
 }
 
-/* Toggle button */
-.sidebar-toggle {
+/* Panel toggle buttons — shared style for #sidebar-toggle (file explorer,
+   left) and #canvas-toggle-btn (Canvas, right). Identical look; only the SVG
+   icon direction differs (panel opens to the left vs. to the right). */
+.panel-toggle-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -126,7 +128,7 @@ body.sidebar-collapsed #sidebar {
   padding: 0;
   transition: color 0.15s, background 0.15s;
 }
-.sidebar-toggle:hover {
+.panel-toggle-btn:hover {
   color: var(--color-frame-text-bright);
   background: var(--color-frame-hover);
 }
@@ -296,24 +298,3 @@ body.sidebar-collapsed #sidebar {
 .header-dropdown-menu button[data-mode="confirm-edits"]::before { background: var(--color-frame-text-muted); }
 .header-dropdown-menu button[data-mode="auto-edits"]::before { background: #e8923c; }
 .header-dropdown-menu button[data-mode="auto-all"]::before { background: var(--color-error); }
-.team-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-frame-text-muted);
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.team-toggle-btn:hover {
-  background: var(--color-frame-hover);
-  color: var(--color-frame-text);
-}
-.team-toggle-btn.active {
-  color: var(--color-text);
-}
