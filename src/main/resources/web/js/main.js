@@ -2193,8 +2193,14 @@ initInput(chatViews.primary);
   const chat = document.getElementById('chat');
   if (!inputArea || !chat || !window.ResizeObserver) return;
   const updateChatPadding = () => {
+    // offsetHeight covers all in-flow children (queue-bar + input-bar + the
+    // area's own 10px bottom padding). Absolutely-positioned children
+    // (voice-overlay, slash-dropdown) are excluded — they overlay the chat
+    // transiently above the bar, so they must not inflate the padding.
     const inputHeight = inputArea.offsetHeight;
-    chat.style.setProperty('padding-bottom', `${inputHeight + 12}px`, 'important');
+    // +2px: minimal breathing room so the last message sits flush above the
+    // input bar without touching the glass edge.
+    chat.style.setProperty('padding-bottom', `${inputHeight + 2}px`, 'important');
     // Only re-scroll if the user is already near the bottom — don't yank
     // them away from history they're reading.
     const nearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 100;

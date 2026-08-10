@@ -582,9 +582,12 @@ function persistTabs() {
       });
     }
     localStorage.setItem(LS_TABS_KEY, JSON.stringify({
+      v: 2,  // schema version — v1 (pre-unified-persistence) lacked closable
+             // and skipped no-absPath tabs; restoreTabs discards non-v2 data
       tabs: serializable,
       activeTabId: activeTabId,
     }));
+    console.log('[persistTabs] saved', serializable.length, 'tabs', serializable.map(t => t.id));
   } catch (e) { /* storage full — non-critical */ }
 }
 
@@ -599,12 +602,28 @@ function persistTabs() {
 export function restoreTabs() {
   try {
     const raw = localStorage.getItem(LS_TABS_KEY);
-    if (!raw) return false;
+    console.log('[restoreTabs] localStorage:', raw);
+    if (!raw) {
+      console.log('[restoreTabs] no saved tabs — nothing to restore');
+      return false;
+    }
     const data = JSON.parse(raw);
-    if (!data.tabs || data.tabs.length === 0) return false;
+    // Schema guard: discard pre-v2 leftovers (saved by the old version that
+    // skipped no-absPath tabs, often an empty/incomplete list). The next
+    // persistTabs call re-saves in the current format.
+    if (data.v !== 2) {
+      console.log('[restoreTabs] legacy/incomplete schema (v=' + data.v + ') — discarding');
+      localStorage.removeItem(LS_TABS_KEY);
+      return false;
+    }
+    if (!data.tabs || data.tabs.length === 0) {
+      console.log('[restoreTabs] saved tab list is empty — nothing to restore');
+      return false;
+    }
 
     const panelTabs = data.tabs.filter(t => !t.absPath);
     const fileTabs = data.tabs.filter(t => t.absPath);
+    console.log('[restoreTabs] restoring', panelTabs.length, 'panel tabs,', fileTabs.length, 'file tabs');
 
     // Phase 1 — panel tabs, synchronous.
     // openTab replaces the current preview tab when opening a new unpinned
@@ -634,22 +653,38 @@ export function restoreTabs() {
     // Phase 2 — file tabs, async via readFile WS.
     // Defer WS import to avoid circular dependency.
     if (fileTabs.length > 0) {
-      import('./ws.js').then(({ sendWs }) => {
-        fileTabs.forEach((tab) => {
-          // Send readFile to get content — the response triggers the
-          // explorer's fileContent handler which opens the tab.
-          // For binary files (images, PDFs) the viewer fetches via /api/nf-file.
-          if (sendWs) {
+      Promise.all([import('./ws.js'), import('./state.js')]).then(([{ sendWs, onReconnect }, stateMod]) => {
+        const state = stateMod.default;
+        const sendFileRequests = () => {
+          fileTabs.forEach((tab) => {
+            // Send readFile to get content — the response triggers the
+            // explorer's fileContent handler which opens the tab.
+            // For binary files (images, PDFs) the viewer fetches via /api/nf-file.
             // Mark this path as pinned so explorer's fileContent handler picks it up
             window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
               detail: { path: tab.absPath, pinned: tab.pinned !== false }
             }));
             sendWs({ type: 'pop.readFile', path: tab.absPath, sessionId: undefined });
-          }
-        });
-        // Re-activate the last active tab if it already exists (panel tab).
-        // File tabs activate themselves as their readFile responses arrive.
-        if (data.activeTabId) setActiveTab(data.activeTabId);
+          });
+          console.log('[restoreTabs] sent readFile for', fileTabs.length, 'file tabs');
+          // Re-activate the last active tab if it already exists (panel tab).
+          // File tabs activate themselves as their readFile responses arrive.
+          if (data.activeTabId) setActiveTab(data.activeTabId);
+        };
+        // Page-load race: restoreTabs runs before the first WS connect, and
+        // sendWs silently drops messages when the socket isn't OPEN. If not
+        // connected yet, defer to the first onopen via onReconnect.
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+          sendFileRequests();
+        } else {
+          console.log('[restoreTabs] WS not open — deferring file tab restore to onopen');
+          let sent = false;
+          onReconnect(() => {
+            if (sent) return;
+            sent = true;
+            sendFileRequests();
+          });
+        }
       });
     } else if (data.activeTabId) {
       setActiveTab(data.activeTabId);
