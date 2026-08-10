@@ -427,6 +427,7 @@ case class TurnContext(
   currentBranch: Option[String] = None,
   skillCatalog: String = "",
   teamCatalog: String = "",
+  flowCatalog: String = "",
   memoryBlock: String = ""
 )
 
