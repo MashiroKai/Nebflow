@@ -7,7 +7,7 @@ import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab } from './canva
 import { FLOW_CSS } from './flowCss.js';
 import { esc, authHeaders, overlayRoot } from './flowHelpers.js';
 import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf, populateTileModels } from './flowTeams.js';
-import { renderFlowsPanel, bindDagNodeClicks } from './flowDag.js';
+import { renderFlowsPanel, bindDagNodeClicks, dagCardHtml, renderStellarSystem, bindStellarNodeClicks } from './flowDag.js';
 import { closeViewer, openMailbox, openRules, openDefinition } from './flowViewers.js';
 import { onReconnect } from './ws.js';
 
