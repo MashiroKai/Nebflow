@@ -112,14 +112,6 @@ function moveTab(dragId, targetId, after) {
   newOrder.forEach(([k, v]) => tabs.set(k, v));
 }
 
-/** Read a previously persisted canvas width (px) from storage. */
-function getPersistedCanvasWidth() {
-  try {
-    const data = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-    return typeof data.canvas === 'number' ? data.canvas : null;
-  } catch (_) { return null; }
-}
-
 /** Compute the target open width so Canvas matches Chat panel width.
  *  Both panels share the remaining space 50/50 after fixed elements
  *  (sidebar, activity bar) and margins are accounted for. */
@@ -454,12 +446,6 @@ export function getTabPane(id) {
   return tabs.get(id)?.paneEl || null;
 }
 
-/** Get the currently active tab's id.
- *  @returns {string|null} */
-export function getActiveTabId() {
-  return activeTabId;
-}
-
 /** Check if a tab with the given id exists.
  *  @param {string} id — Tab identifier.
  *  @returns {boolean} */
@@ -467,26 +453,7 @@ export function hasTab(id) {
   return tabs.has(id);
 }
 
-// ── Content injection ──────────────────────────────────────
-
-/** Set content for a specific tab (or the active tab if no id given).
- *  Replaces the pane's innerHTML entirely.
- *  @param {string} html   — HTML string.
- *  @param {string} tabId  — Target tab id (defaults to active tab). */
-export function setCanvasContent(html, tabId = null) {
-  const targetId = tabId || activeTabId;
-  const pane = targetId ? getTabPane(targetId) : document.getElementById('canvas-content');
-  if (pane) pane.innerHTML = html;
-}
-
 // ── File viewers ───────────────────────────────────────────
-
-/** Escape HTML special characters for safe text display. */
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str ?? '';
-  return div.innerHTML;
-}
 
 /** Open a file or workspace item in a Canvas tab.
  *  Uses the file viewer registry for rendering all file types.
@@ -615,15 +582,6 @@ export function initCanvas() {
     const target = computeOpenWidth();
     document.documentElement.style.setProperty('--canvas-width', target + 'px');
   });
-}
-
-/** Show or hide the canvas header bar.
- *  In the tab model, the header (containing the tab bar) is always visible.
- *  This function is kept for backward compatibility but is effectively a no-op.
- *  @param {boolean} visible */
-export function showCanvasHeader(visible) {
-  // No-op: tab bar must remain visible for tab switching.
-  // Individual tabs manage their own content area.
 }
 
 // ── Tab persistence ─────────────────────────────────────────

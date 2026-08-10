@@ -47,17 +47,23 @@
 }
 #header .header-left { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 #header .header-brand { color: var(--color-frame-text-bright); font-weight: 600; font-size: 15px; }
+/* #header is position:absolute (already a containing block), so .header-center
+   pins the session name to the true horizontal center instead of flex remaining
+   space — it stays centered regardless of left/right button widths. */
 #header .header-center {
-  flex: 1;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  overflow: hidden;
-  min-width: 0;
   z-index: 10;
-  padding: 0 8px;
+  pointer-events: none; /* don't block clicks on left/right buttons */
+  max-width: 70%;
+  overflow: hidden;
 }
+#header .header-center > * { pointer-events: auto; } /* #session-name / #memory-btn stay clickable */
 #header .header-right { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
 #header #session-name {
   color: var(--color-frame-text-bright);
@@ -91,70 +97,8 @@
   width: 16px;
   height: 16px;
 }
-#header #header-model-info {
-  display: none;
-  color: var(--color-frame-text-muted);
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  letter-spacing: 0.2px;
-  white-space: nowrap;
-}
-/* Context window indicator — always compact ring */
 
-/* Full horizontal bar — hidden (kept in DOM for threshold display compatibility).
-   Threshold marker is read-only — no drag affordances (no ew-resize cursors). */
-.ctx-bar-wrap {
-  display: none;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 0;
-  user-select: none;
-}
-.ctx-bar-track {
-  position: relative;
-  width: 72px;
-  height: 4px;
-  background: rgba(128,128,128,0.15);
-  border-radius: 2px;
-  overflow: visible;
-  user-select: none;
-}
-.ctx-bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.4s ease, background 0.4s ease;
-}
-.ctx-bar-threshold {
-  position: absolute;
-  top: -4px;
-  width: 2px;
-  height: 12px;
-  background: rgba(128,128,128,0.5);
-  border-radius: 1px;
-  transition: background 0.15s ease, height 0.15s ease, top 0.15s ease;
-  z-index: 2;
-}
-.ctx-bar-threshold-label {
-  position: absolute;
-  top: -18px;
-  font-size: 9px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  color: rgba(200,80,80,0.9);
-  transform: translateX(-50%);
-  white-space: nowrap;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-  pointer-events: none;
-}
-.ctx-bar-threshold-label.visible {
-  opacity: 1;
-}
-.ctx-bar-label {
-  font-size: 10px;
-  color: var(--color-frame-text-muted);
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  letter-spacing: 0.2px;
-}
+/* Context window indicator — always compact ring */
 
 /* Compact ring — always shown (read-only threshold marker) */
 .ctx-ring-wrap {
@@ -1047,16 +991,6 @@
   max-width: 85%;
 }
 
-.notice-warn {
-  background: rgba(217,165,65,0.15);
-  color: #b8941e;
-}
-
-.notice-danger {
-  background: rgba(244,67,54,0.1);
-  color: #e53935;
-}
-
 .notice-info {
   background: rgba(91,141,217,0.1);
   color: #5b8dd9;
@@ -1071,8 +1005,6 @@
       0px 8px 24px rgba(0, 0, 0, 0.35);
   }
 
-  .notice-warn { background: rgba(217,165,65,0.12); }
-  .notice-danger { background: rgba(244,67,54,0.12); color: #ef5350; }
   .notice-info { background: rgba(91,141,217,0.12); }
 
   .bubble.ai { box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
@@ -1271,10 +1203,6 @@
   font-size: 13px;
   color: var(--color-primary);
   font-weight: 500;
-}
-.thinking-text {
-  color: var(--color-text-muted);
-  font-size: 13px;
 }
 
 /* ===== Top Overlays (task list + notifications) ===== */
@@ -1621,14 +1549,6 @@
 .row.card-content > div {
   max-width: 100%;
   width: 100%;
-}
-.tool-card.tool-card--html {
-  max-width: 100%;
-  width: 100%;
-  padding: 0;
-  background: none;
-  cursor: default;
-  display: block;  /* override display:flex so .html-card-wrap stretches full width */
 }
 .html-card-wrap {
   border-radius: 10px;

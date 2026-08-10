@@ -1169,9 +1169,16 @@ class RestApiRoutes(
             case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
             case Some(defn) =>
               val modelConfig = defn.model.getOrElse(nebflow.shared.AgentModelConfig.empty)
-              sharedResources.runtimeModels.get.flatMap { runtimeModels =>
-                val current = runtimeModels.values.headOption
-                Ok(
+              // Resolve the model this agent would actually use: candidates =
+              // [preferred, ...fallbacks] (or the global chain), filtered by
+              // provider health. Previously this read runtimeModels.values.headOption —
+              // an arbitrary session from a GLOBAL session→model map — which
+              // showed the wrong model for every agent except the first LLM caller.
+              for
+                candidates <- sharedResources.providerRegistry.getCandidatesForAgent(Some(modelConfig))
+                (healthy, _) <- sharedResources.healthMonitor.filterCandidates(candidates)
+                current = healthy.headOption.map(c => s"${c.providerId}/${c.model}")
+                result <- Ok(
                   Json.obj(
                     "model" -> modelConfig.asJson,
                     "current" -> current.asJson,
@@ -1180,7 +1187,7 @@ class RestApiRoutes(
                     "default" -> modelConfig.preferred.asJson
                   )
                 )
-              }
+              yield result
         yield result
 
     // PUT /agents/:name/model — update agent's model configuration

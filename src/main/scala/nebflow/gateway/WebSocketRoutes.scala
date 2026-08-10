@@ -3087,6 +3087,12 @@ class WebSocketRoutes(
   ): io.circe.Json => IO[Unit] = json =>
     val hc = json.hcursor
     val eventType = hc.downField("type").as[String].getOrElse("")
+    // "team-" is a frontend routing marker injected by MailTool.activateAgent,
+    // not a real session id. Strip it so Mail-activated team agent streams
+    // persist to the team session's own ui.json instead of a phantom
+    // "team-<id>" session.
+    def normalizeNodeSessionId(nsid: String): String =
+      if nsid.startsWith("team-") then nsid.drop(5) else nsid
     val record = eventType match
       case "thinkingDelta" =>
         val delta = hc.downField("delta").as[String].getOrElse("")
@@ -3260,7 +3266,7 @@ class WebSocketRoutes(
       // Accumulate/flush them into that session's .ui.json
       // so the agent popup shows full history on reopen.
       case "agentTextDelta" =>
-        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
+        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
         val delta = hc.downField("delta").as[String].getOrElse("")
         nodeSessionId match
           case Some(nsid) if delta.nonEmpty =>
@@ -3274,14 +3280,14 @@ class WebSocketRoutes(
       case "agentThinking" =>
         // Mark turn start on the first thinking token too (some turns emit
         // thinking before any text).
-        hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty) match
+        hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId) match
           case Some(nsid) =>
             sessionTurnStarts
               .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis()))
           case None => IO.unit
 
       case "agentToolEnd" =>
-        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
+        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
         val label = hc.downField("label").as[String].getOrElse("")
         nodeSessionId match
           case Some(nsid) if label.nonEmpty =>
@@ -3310,7 +3316,7 @@ class WebSocketRoutes(
         end match
 
       case "agentDone" =>
-        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
+        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
         nodeSessionId match
           case Some(nsid) =>
             // Flush any remaining accumulated text as a final AI bubble, with

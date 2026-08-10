@@ -1,5 +1,4 @@
 import { t } from './i18n.js';
-import { sendWs } from './ws.js';
 
 const MAX_VISIBLE = 20;
 const COLLAPSED_KEY = 'nebflow-task-collapsed';
@@ -12,9 +11,6 @@ const iconMap = {
 };
 
 const activeStatuses = new Set(['pending', 'in_progress']);
-const visibleStatuses = new Set(['pending', 'in_progress', 'completed']);
-
-let currentSessionId = null;
 
 function isCollapsed() {
   try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
@@ -25,7 +21,6 @@ function setCollapsed(v) {
 }
 
 export function renderTaskList(tasks, container, sessionId) {
-  if (sessionId) currentSessionId = sessionId;
   container = container || document.getElementById('task-list');
   if (!container) return;
 
@@ -35,10 +30,10 @@ export function renderTaskList(tasks, container, sessionId) {
     return;
   }
 
-  // Show active + completed tasks; failed/dismissed are hidden
-  const visible = tasks.filter(t => visibleStatuses.has(t.status));
+  // Show only active tasks (pending/in_progress); completed/failed are hidden
+  const active = tasks.filter(t => activeStatuses.has(t.status));
 
-  if (visible.length === 0) {
+  if (active.length === 0) {
     container.classList.remove('has-tasks');
     container.innerHTML = '';
     return;
@@ -50,7 +45,7 @@ export function renderTaskList(tasks, container, sessionId) {
 
   // Build parent → children map
   const byParent = new Map();
-  visible.forEach(t => {
+  active.forEach(t => {
     const pid = t.parentId || null;
     if (!byParent.has(pid)) byParent.set(pid, []);
     byParent.get(pid).push(t);
@@ -60,9 +55,9 @@ export function renderTaskList(tasks, container, sessionId) {
   byParent.forEach(arr => arr.sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0)));
 
   // Roots are tasks with no parent or whose parent is not visible
-  const visibleIds = new Set(visible.map(t => t.id));
-  const roots = visible
-    .filter(t => !t.parentId || !visibleIds.has(t.parentId))
+  const activeIds = new Set(active.map(t => t.id));
+  const roots = active
+    .filter(t => !t.parentId || !activeIds.has(t.parentId))
     .sort((a, b) => {
       // in_progress first, then pending, then completed
       if (a.status !== b.status) {
@@ -74,7 +69,7 @@ export function renderTaskList(tasks, container, sessionId) {
 
   // Stats — only show active counts, no completed
   const counts = { pending: 0, in_progress: 0 };
-  visible.forEach(t => { if (activeStatuses.has(t.status)) counts[t.status]++; });
+  active.forEach(t => { counts[t.status]++; });
 
   let html = `<div class="task-card${collapsed ? ' collapsed' : ''}">`;
   html += '<div class="task-header">';
@@ -93,21 +88,16 @@ export function renderTaskList(tasks, container, sessionId) {
     visibleCount++;
 
     const isActive = task.status === 'in_progress';
-    const isCompleted = task.status === 'completed';
     let cls = 'task-item';
-    cls += isActive ? ' task-active' : isCompleted ? ' task-completed' : ' task-pending';
+    cls += isActive ? ' task-active' : ' task-pending';
     if (depth > 0) cls += ' task-child';
 
     const indent = depth * 16;
     const label = (isActive && task.activeForm) ? task.activeForm : task.subject;
 
     html += `<div class="${cls}" data-task-id="${task.id}" style="margin-left:${indent}px">`;
-    if (isCompleted) {
-      html += `<button class="task-circle" data-task-id="${task.id}" title="${t('task.dismiss')}"></button>`;
-    } else {
-      const iconName = iconMap[task.status] || 'square';
-      html += `<span class="task-icon"><i data-lucide="${iconName}"></i></span>`;
-    }
+    const iconName = iconMap[task.status] || 'square';
+    html += `<span class="task-icon"><i data-lucide="${iconName}"></i></span>`;
     html += `<span class="task-label">${escapeHtml(label)}</span>`;
     html += '</div>';
 
@@ -118,7 +108,7 @@ export function renderTaskList(tasks, container, sessionId) {
 
   roots.forEach(task => renderTaskItem(task, 0));
 
-  const totalShown = visible.length;
+  const totalShown = active.length;
   if (totalShown > MAX_VISIBLE) {
     html += `<div class="task-more">${t('task.more', { count: totalShown - MAX_VISIBLE })}</div>`;
   }
@@ -128,17 +118,6 @@ export function renderTaskList(tasks, container, sessionId) {
   container.innerHTML = html;
 
   if (typeof lucide !== 'undefined') lucide.createIcons();
-
-  // Circle dismiss handlers — click circle → fill animation → dismiss
-  container.querySelectorAll('.task-circle').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (btn.classList.contains('filled')) return; // already dismissing
-      btn.classList.add('filled');
-      const taskId = btn.dataset.taskId;
-      if (taskId) sendWs({ type: 'dismissTask', sessionId: currentSessionId || '', taskId });
-    });
-  });
 
   // Toggle handler
   const toggleBtn = container.querySelector('.task-toggle');

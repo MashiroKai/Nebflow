@@ -343,12 +343,6 @@ export function renderWithRegistry(container, text, toolName) {
   return false;
 }
 
-/** No-op for backward compatibility. */
-export function registerCardRenderer() {}
-
-/** No-op for backward compatibility. */
-export function clearRenderers() {}
-
 /**
  * Watch for system theme changes (light/dark) and propagate the new CSS
  * custom properties to all rendered card iframes so they update live.

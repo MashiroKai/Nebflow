@@ -20,10 +20,6 @@ let currentStepId = null;
 let popupOverlay = null;
 let popupResizeObs = null;
 
-export function getStepView(sessionId) {
-  return stepViews.get(sessionId) || null;
-}
-
 // ── CSS ───────────────────────────────────────────────────
 const POPUP_CSS = `<style id="flow-agent-popup-css">
 /* Overlay fills the flow card (position:absolute inside .team-card).
@@ -349,10 +345,6 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   }
 }
 
-export function isPopupOpen() {
-  return popupOverlay !== null;
-}
-
 // ── Context usage ring ───────────────────────────────────
 
 function fmtTokens(n) {
@@ -371,7 +363,9 @@ async function fetchAgentModelBadge(agentName) {
     const cfg = await resp.json();
     const el = popupOverlay?.querySelector('#flow-agent-model');
     if (!el) return;
-    const current = cfg.current || cfg.preferred || cfg.default || '';
+    // preferred is the configured model — trust it over `current`
+    // (current is only a reference from the backend resolution).
+    const current = cfg.preferred || cfg.current || cfg.default || '';
     if (!current) { el.innerHTML = ''; return; }
     const isFallback = cfg.preferred && current !== cfg.preferred;
     el.innerHTML = isFallback
@@ -440,14 +434,6 @@ export function closeStepPopup() {
   popupOverlay.remove();
   popupOverlay = null;
   currentStepId = null;
-}
-
-export function removeStepView(sessionId) {
-  const entry = stepViews.get(sessionId);
-  if (entry) {
-    entry.container.remove();
-    stepViews.delete(sessionId);
-  }
 }
 
 // ── WS event interception ────────────────────────────────

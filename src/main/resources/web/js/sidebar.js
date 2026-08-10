@@ -16,84 +16,6 @@ import { preloadModelCapabilities, renderVisionBadge, getVision, updateVision } 
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
 
-// ---------- Fallback drag state (module level, survives re-renders) ----------
-let _fallbackDrag = null;
-
-document.addEventListener('mousemove', (e) => {
-  const d = _fallbackDrag;
-  if (!d) return;
-
-  if (!d.active) {
-    const dx = e.clientX - d.startX;
-    const dy = e.clientY - d.startY;
-    if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
-    d.active = true;
-    d.tag.classList.add('dragging');
-    // Create floating clone of the dragged tag
-    const rect = d.tag.getBoundingClientRect();
-    const clone = d.tag.cloneNode(true);
-    clone.style.position = 'fixed';
-    clone.style.left = rect.left + 'px';
-    clone.style.top = rect.top + 'px';
-    clone.style.width = rect.width + 'px';
-    clone.style.pointerEvents = 'none';
-    clone.style.opacity = '0.85';
-    clone.style.zIndex = '10000';
-    clone.style.transform = 'rotate(1.5deg) scale(1.05)';
-    clone.style.boxShadow = '0 4px 16px rgba(0,0,0,0.18)';
-    clone.style.transition = 'none';
-    document.body.appendChild(clone);
-    d.clone = clone;
-  } else {
-    // Move floating clone with cursor
-    const clone = d.clone;
-    clone.style.left = (e.clientX - 20) + 'px';
-    clone.style.top = (e.clientY - 12) + 'px';
-
-    // Detect element under cursor (hide clone temporarily)
-    clone.style.display = 'none';
-    const elemBelow = document.elementFromPoint(e.clientX, e.clientY);
-    clone.style.display = '';
-
-    const target = elemBelow?.closest('.cfg-tag');
-    if (target && target !== d.tag && target.closest('#cfg-fallback-list')) {
-      if (d.targetTag && d.targetTag !== target) d.targetTag.classList.remove('drag-over');
-      target.classList.add('drag-over');
-      d.targetTag = target;
-    } else if (d.targetTag) {
-      d.targetTag.classList.remove('drag-over');
-      d.targetTag = null;
-    }
-  }
-});
-
-document.addEventListener('mouseup', () => {
-  const d = _fallbackDrag;
-  if (!d) return;
-
-  // Clean up floating clone
-  if (d.clone) d.clone.remove();
-  d.tag?.classList.remove('dragging');
-
-  if (d.active && d.targetTag) {
-    const dstIdx = parseInt(d.targetTag.dataset.idx);
-    d.targetTag.classList.remove('drag-over');
-    if (dstIdx !== d.idx) {
-      const fallbacks = state.parsedConfig.llm.model.fallbacks;
-      const [moved] = fallbacks.splice(d.idx, 1);
-      const insertIdx = dstIdx <= d.idx ? dstIdx : dstIdx - 1;
-      fallbacks.splice(insertIdx, 0, moved);
-      state.configDirty = true;
-      flushConfigToServer();
-      renderSettings();
-    }
-  } else if (d.targetTag) {
-    d.targetTag.classList.remove('drag-over');
-  }
-
-  _fallbackDrag = null;
-});
-
 // ---------- Active Folder (VSCode-style) ----------
 export function setActiveFolder(folderId) {
   state.activeFolderId = folderId;
@@ -179,7 +101,6 @@ function switchToSession(sessionId) {
 
   renderSessionSidebar(state.sessions, sessionId);
   // Sync header indicators
-  if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
   if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
   if (typeof state.updateDelegateIndicator === 'function') state.updateDelegateIndicator();
   if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(chatViews.primary);
@@ -354,39 +275,14 @@ export function selectAgent(agentName) {
   sendWs({type: 'listAgentSessions', name: agentName});
 }
 
-/** Update header brand to show agent display name. */
-export function updateHeaderBrand(agentName) {
-  const brandEl = document.querySelector('.header-brand');
-  if (!brandEl) return;
-  const agent = state.agentsData.find(a => a.name === agentName);
-  if (agent) {
-    brandEl.textContent = agent.displayName || agent.name;
-  } else {
-    brandEl.textContent = 'nebflow';
-  }
-}
-
 // ---------- Settings Panel ----------
 export function renderSettings() {
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
   const llm = cfg.llm || {};
   const providers = llm.providers || {};
-  const model = llm.model || {};
   const mcpServers = state.mcpServers || [];
   const providerNames = Object.keys(providers);
-
-  // Build model options from all providers
-  const allModels = [];
-  providerNames.forEach(pName => {
-    const p = providers[pName];
-    (p.models || []).forEach(m => {
-      allModels.push({ ref: `${pName}/${m.id}`, label: `${pName}/${m.id}` });
-    });
-  });
-
-  const defaultModel = model.default || '';
-  const fallbacks = model.fallbacks || [];
 
   // Load card design prompt
   sendWs({type: 'getCardDesign'});
@@ -471,7 +367,7 @@ export function renderSettings() {
       </div>
     </div>`;
 
-  bindSettingsEvents(content, cfg, allModels);
+  bindSettingsEvents(content, cfg);
   bindNeblinkEvents(() => renderSettings());
 
   // Pre-fetch model capabilities, then refresh badges on provider cards
@@ -537,7 +433,7 @@ function renderMcpServerCard(name, enabled) {
     </div>`;
 }
 
-function bindSettingsEvents(content, cfg, allModels) {
+function bindSettingsEvents(content, cfg) {
   // Thinking toggle
   document.getElementById('toggle-thinking')?.addEventListener('click', function() {
     this.classList.toggle('on');
@@ -622,8 +518,6 @@ function bindSettingsEvents(content, cfg, allModels) {
       });
     });
   });
-
-  // Model chain is now edited via the input-bar model picker (modelPicker.js).
 
   // --- MCP Servers toggle ---
   content.querySelectorAll('.cfg-toggle[data-mcp]').forEach(btn => {
@@ -1963,12 +1857,6 @@ window.addEventListener('session-compacting', (e) => {
   computeAgentStates();
 });
 
-/** Refresh header model-info bar for the active session. */
-export function initHeaderModelInfo() {
-  if (typeof state.updateHeaderModelInfo === 'function') {
-    state.updateHeaderModelInfo();
-  }
-}
 
 /** Determine which agent a new session/folder should belong to, based on context.
  *  Mirrors the folder-id resolution logic: active folder → active session → fallback. */

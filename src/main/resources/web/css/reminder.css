@@ -344,37 +344,6 @@
   white-space: nowrap;
 }
 
-/* Toggle Switch */
-.reminder-toggle {
-  flex-shrink: 0;
-  width: 30px;
-  height: 18px;
-  border-radius: 9px;
-  border: none;
-  background: rgba(91, 127, 191, 0.15);
-  position: relative;
-  cursor: pointer;
-  padding: 0;
-  transition: background 0.2s ease;
-  outline: none;
-}
-.reminder-toggle::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.reminder-toggle.on { background: rgb(91, 127, 191); }
-.reminder-toggle.on::after { transform: translateX(12px); }
-.reminder-toggle:hover { opacity: 0.85; }
-.reminder-toggle:focus-visible { box-shadow: 0 0 0 2px rgba(91, 127, 191, 0.2); }
-
 /* disabled task row */
 .reminder-row.disabled .reminder-row-text { opacity: 0.4; }
 .reminder-row.disabled .reminder-row-time { opacity: 0.3; }

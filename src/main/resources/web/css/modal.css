@@ -159,17 +159,8 @@
 }
 
 /* ── Shared Button Styles ──────────────────────────────────────────────── */
-.modal-btn {
-  font-size: 12px;
-  padding: 6px 16px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.25s ease;
-}
 
 /* Neutral / Cancel button */
-.modal-btn-neutral,
 #modal-cancel,
 #delete-cancel,
 #agent-modal-actions button,
@@ -187,7 +178,6 @@
   color: var(--color-frame-text-dim);
   transition: all 0.25s ease;
 }
-.modal-btn-neutral:hover,
 #modal-cancel:hover,
 #delete-cancel:hover,
 #agent-modal-actions button:hover,
@@ -204,7 +194,6 @@
 }
 
 /* Primary / Save button — sapphire style */
-.modal-btn-primary,
 #agent-modal-save,
 #memory-modal-save,
 #card-design-modal-save,
@@ -213,7 +202,6 @@
   color: rgb(91, 127, 191) !important;
   background: rgba(91, 127, 191, 0.06) !important;
 }
-.modal-btn-primary:hover,
 #agent-modal-save:hover,
 #memory-modal-save:hover,
 #card-design-modal-save:hover,
@@ -227,7 +215,6 @@
 }
 
 /* Destructive button */
-.modal-btn-danger,
 #delete-confirm,
 #rules-modal-delete,
 #path-picker-clear {
@@ -236,7 +223,6 @@
   background: rgba(220, 60, 60, 0.04) !important;
   transition: all 0.25s ease;
 }
-.modal-btn-danger:hover,
 #delete-confirm:hover,
 #rules-modal-delete:hover,
 #path-picker-clear:hover {
@@ -383,21 +369,6 @@
   border-color: rgba(91, 127, 191, 0.5);
   color: rgb(91, 127, 191);
   background: rgba(91, 127, 191, 0.06);
-}
-.agent-tool-check.builtin {
-  opacity: 0.45;
-  cursor: default;
-  border-style: dashed;
-  background: transparent;
-}
-.agent-built-in-label {
-  width: 100%;
-  font-size: 10px;
-  color: var(--color-frame-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-top: 4px;
-  margin-bottom: 2px;
 }
 .agent-tool-check input { display: none; }
 .agent-field-label {
@@ -628,14 +599,6 @@
       0 0 0 2px rgba(91, 127, 191, 0.12),
       0 0 0 4px rgba(91, 127, 191, 0.06);
   }
-}
-.cfg-secret-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.cfg-secret-row .cfg-input {
-  flex: 1;
 }
 .cfg-eye-btn {
   background: none;

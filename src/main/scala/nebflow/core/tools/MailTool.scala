@@ -433,12 +433,29 @@ Message type (optional, default "INFO"):
               systemPrompt = entry.systemPrompt, category = entry.category,
               mcpServers = entry.mcpServers, model = entry.model
             )
+            // Route team agent events with a "team-" prefixed nodeSessionId so
+            // the frontend can distinguish Mail-activated team agents from flow
+            // agents (whose nodeSessionId is "dag-..."). Without this prefix,
+            // the flow interceptor in ws.js would claim these events and render
+            // team agent activity into a flow popup.
+            //
+            // Preserve an existing nodeSessionId: events from sub-agents the
+            // team agent spawned via Delegate already carry a "delegate-..." id
+            // (stamped by DelegateTool.routeWsSend) — overwriting it here would
+            // route sub-agent events into the team popup and break their own.
+            val teamWsSend: Json => IO[Unit] = (json: Json) =>
+              ctx.wsSend.getOrElse((_: Json) => IO.unit) {
+                val withNode =
+                  if json.hcursor.downField("nodeSessionId").as[String].isRight then json
+                  else json.deepMerge(Json.obj("nodeSessionId" -> s"team-${session.id}".asJson))
+                withNode
+              }
             for
               ref <- actorSystem.spawn(
                 AgentActor(
                   agentDef = agentDef,
                   resources = resources,
-                  wsSend = ctx.wsSend.getOrElse(_ => IO.unit),
+                  wsSend = teamWsSend,
                   depth = 1,
                   parentRef = ctx.agentActorRef,
                   sessionId = Some(session.id),

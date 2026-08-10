@@ -291,7 +291,38 @@ object ContextRefresher:
     agentDef: AgentDef
   ): IO[TurnContext] =
     for
-      freshDefOpt <- resources.agentLibrary.get(agentDef.name)
+      // Detect team membership once — used for both the def refresh source
+      // and the memory block below.
+      teamNameOpt <- state.sessionId match
+        case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
+        case None => IO.pure(None)
+      // Team agents reload their def from the team dir every turn so panel
+      // edits (e.g. PUT /api/agents/:name/model) take effect on the running
+      // actor. agentLibrary.get only scans the GLOBAL agents dir — for team
+      // agents it returns None and the code would silently keep using the
+      // actor-startup snapshot (MailTool/FlowTreeActor loadTeamAgent result).
+      // loadTeamAgent checks teams/<team>/agents/<name>/ first, then global.
+      freshDefOpt <- teamNameOpt match
+        case Some(teamName) =>
+          EntityLoader.loadTeamAgent(teamName, agentDef.name).map { entryOpt =>
+            entryOpt.map { entry =>
+              AgentDef(
+                name = entry.name,
+                description = entry.description,
+                tools = entry.tools,
+                systemPrompt = entry.systemPrompt,
+                category = entry.category,
+                mcpServers = entry.mcpServers,
+                model = entry.model,
+                skills = entry.skills,
+                flows = entry.flows,
+                avatar = agentDef.avatar,
+                displayName = agentDef.displayName,
+                voiceEnabled = agentDef.voiceEnabled
+              )
+            }
+          }
+        case None => resources.agentLibrary.get(agentDef.name)
       globalDef = freshDefOpt.getOrElse(agentDef)
       // Load all-agent prefix + category-specific prefix
       allPrefixRaw <- systemPrefixForAll.get
@@ -324,13 +355,10 @@ object ContextRefresher:
       teamCatalog <- buildTeamCatalogForSession(state.sessionId)
       // Memory: only Nebula (standalone, name="Nebula") and team agents get memory.
       // Team agents get memory; standalone agents (Coder/Explorer/etc) don't.
-      teamNameForMemory <- state.sessionId match
-        case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
-        case None => IO.pure(None)
-      isTeamAgent = teamNameForMemory.isDefined
+      isTeamAgent = teamNameOpt.isDefined
       memoryBlock =
         if isTeamAgent || globalDef.name == "Nebula" then
-          buildMemoryBlock(globalDef.name, teamNameForMemory)
+          buildMemoryBlock(globalDef.name, teamNameOpt)
         else ""
     yield TurnContext(
       globalDef,

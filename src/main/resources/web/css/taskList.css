@@ -127,63 +127,6 @@
   color: var(--color-text-muted, #888);
 }
 
-.task-completed {
-  opacity: 0.5;
-}
-
-.task-completed .task-label {
-  font-weight: 400;
-  text-decoration: line-through;
-  text-decoration-color: var(--color-text-muted, #888);
-  text-decoration-thickness: 1px;
-}
-
-/* Apple Reminders-style circle checkbox for completed tasks */
-.task-circle {
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  border: 1.5px solid var(--color-text-muted, #888);
-  border-radius: 50%;
-  background: transparent;
-  cursor: pointer;
-  padding: 0;
-  position: relative;
-  transition: border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
-  opacity: 0.6;
-}
-
-.task-circle:hover {
-  border-color: var(--color-primary, #07c160);
-  opacity: 1;
-}
-
-/* Filled state — click triggers dismiss, circle fills with checkmark */
-.task-circle.filled {
-  background: var(--color-primary, #07c160);
-  border-color: var(--color-primary, #07c160);
-  opacity: 1;
-  transform: scale(0.9);
-}
-
-.task-circle.filled::after {
-  content: '';
-  position: absolute;
-  left: 5px;
-  top: 2px;
-  width: 5px;
-  height: 9px;
-  border: solid #fff;
-  border-width: 0 1.5px 1.5px 0;
-  transform: rotate(45deg);
-  animation: circleCheck 0.2s ease;
-}
-
-@keyframes circleCheck {
-  from { opacity: 0; transform: rotate(45deg) scale(0.5); }
-  to   { opacity: 1; transform: rotate(45deg) scale(1); }
-}
-
 .task-label {
   flex: 1;
   overflow: hidden;
@@ -201,12 +144,6 @@
   color: var(--color-text-muted, #888);
   font-size: 11px;
   font-family: monospace;
-  flex-shrink: 0;
-}
-
-.task-blocked {
-  color: var(--color-warning, #d4a574);
-  font-size: 11px;
   flex-shrink: 0;
 }
 

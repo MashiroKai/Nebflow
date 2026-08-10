@@ -19,10 +19,6 @@ let currentStepId = null;
 let popupOverlay = null;
 let popupResizeObs = null;
 
-export function getStepView(sessionId) {
-  return stepViews.get(sessionId) || null;
-}
-
 // ── CSS (shared with flowAgentPopup — same modal style) ───
 // Only inject if flowAgentPopup hasn't already done it.
 if (!document.getElementById('flow-agent-popup-css')) {
@@ -158,10 +154,6 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
     entry.view.pagination.pendingInitialLoad = true;
     sendWs({ type: 'getHistory', sessionId: nodeSessionId, limit: 100 });
   }
-}
-
-export function isPopupOpen() {
-  return popupOverlay !== null;
 }
 
 export function closeStepPopup() {
