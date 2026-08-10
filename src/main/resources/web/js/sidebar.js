@@ -374,7 +374,6 @@ export function renderSettings() {
   const providers = llm.providers || {};
   const model = llm.model || {};
   const mcpServers = state.mcpServers || [];
-  const compact = cfg.compact || {};
   const providerNames = Object.keys(providers);
 
   // Build model options from all providers
@@ -422,19 +421,6 @@ export function renderSettings() {
       <div class="settings-row">
         <span class="settings-label">${t('settings.language')}</span>
         <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
-      </div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.compaction')}</div>
-      <div class="cfg-form-group">
-        <label class="cfg-label">${t('settings.compactTtl')} <span class="cfg-hint">(${t('settings.compactTtlUnit')})</span></label>
-        <input class="cfg-input" id="cfg-compact-ttl" type="number" min="1" max="1440" value="${compact.microCacheTtlMinutes ?? 120}" autocomplete="off">
-        <div class="cfg-hint">${t('settings.compactTtlHint')}</div>
-      </div>
-      <div class="cfg-form-group">
-        <label class="cfg-label">${t('settings.keepRecent')}</label>
-        <input class="cfg-input" id="cfg-compact-keep" type="number" min="0" max="50" value="${compact.microKeepRecent ?? 5}" autocomplete="off">
-        <div class="cfg-hint">${t('settings.keepRecentHint')}</div>
       </div>
     </div>
     <div class="settings-section">
@@ -584,23 +570,6 @@ function bindSettingsEvents(content, cfg, allModels) {
   document.getElementById('cfg-language')?.addEventListener('change', function() {
     setLocale(this.value);
     renderSettings();
-  });
-
-  // --- Compact config ---
-  const compactInputs = ['cfg-compact-ttl', 'cfg-compact-keep'];
-  compactInputs.forEach(id => {
-    document.getElementById(id)?.addEventListener('change', () => {
-      if (!state.parsedConfig) state.parsedConfig = {};
-      const ttl = parseInt(document.getElementById('cfg-compact-ttl')?.value) ?? 120;
-      const keep = parseInt(document.getElementById('cfg-compact-keep')?.value) ?? 5;
-      state.parsedConfig.compact = {
-        ...(state.parsedConfig.compact || {}),
-        microCacheTtlMinutes: ttl,
-        microKeepRecent: keep
-      };
-      state.configDirty = true;
-      flushConfigToServer();
-    });
   });
 
   // --- Provider add/edit/remove ---
