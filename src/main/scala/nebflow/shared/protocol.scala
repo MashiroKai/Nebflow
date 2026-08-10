@@ -263,7 +263,8 @@ object UiMessage:
       extends UiMessage:
     val typeName = "ask"
 
-  case class AskPermission(toolName: String, summary: String, input: String) extends UiMessage:
+  case class AskPermission(toolName: String, summary: String, input: String,
+                           sourceAgent: Option[String] = None, sourceSession: Option[String] = None) extends UiMessage:
     val typeName = "askPermission"
 
   case class System(content: String, i18nKey: Option[String] = None, params: Option[Json] = None) extends UiMessage:
@@ -296,12 +297,14 @@ object UiMessage:
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
       m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
     case m: AskPermission =>
-      Json.obj(
+      val base = Json.obj(
         "type" -> "askPermission".asJson,
         "toolName" -> m.toolName.asJson,
         "summary" -> m.summary.asJson,
         "input" -> m.input.asJson
       )
+      val withSource = m.sourceAgent.fold(base)(sa => base.deepMerge(Json.obj("sourceAgent" -> sa.asJson)))
+      m.sourceSession.fold(withSource)(ss => withSource.deepMerge(Json.obj("sourceSession" -> ss.asJson)))
     case m: System =>
       val base = Json.obj("type" -> "system".asJson, "content" -> m.content.asJson)
       val withKey = m.i18nKey.fold(base)(k => base.deepMerge(Json.obj("i18nKey" -> k.asJson)))
@@ -358,7 +361,9 @@ object UiMessage:
           toolName <- cursor.downField("toolName").as[String]
           summary <- cursor.downField("summary").as[String]
           input <- cursor.downField("input").as[String]
-        yield AskPermission(toolName, summary, input)
+          sourceAgent <- cursor.downField("sourceAgent").as[Option[String]]
+          sourceSession <- cursor.downField("sourceSession").as[Option[String]]
+        yield AskPermission(toolName, summary, input, sourceAgent, sourceSession)
       case "system" =>
         for
           content <- cursor.downField("content").as[String]

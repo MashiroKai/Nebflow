@@ -903,13 +903,13 @@ onMessage('askPermission', (msg, view) => {
     if (view) {
       // Active session: renderPermissionPrompt detects bypass, sends approval,
       // and shows the "auto-approved" badge. Let it handle everything.
-      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel);
+      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession);
     } else {
       // Non-active session: auto-approve directly (renderPermissionPrompt is never called).
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved: true }));
       }
-      saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, autoApproved: true }, sid);
+      saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, autoApproved: true, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession }, sid);
     }
     return;
   }
@@ -925,10 +925,10 @@ onMessage('askPermission', (msg, view) => {
   // disabled because answeredPermissions still holds this sid.
   if (sid) state.answeredPermissions.delete(sid);
   if (view) {
-    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel);
+    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel }, sid);
+    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession }, sid);
   }
 });
 
@@ -1188,7 +1188,7 @@ onMessage('historyPage', (msg, view) => {
       activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.permission-pending-box')) row.remove();
       });
-      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel);
+      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel, lastHistMsg.sourceAgent, lastHistMsg.sourceSession);
     }
 
     // Final scroll-to-bottom: after all rendering (history + streaming bubbles + pending tools)

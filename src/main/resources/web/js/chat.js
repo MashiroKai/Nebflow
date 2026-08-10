@@ -1343,7 +1343,7 @@ export function renderAskUser(items, askSessionId, agentName) {
 }
 
 // ---------- Permission prompt ----------
-export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel) {
+export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession) {
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
@@ -1383,6 +1383,16 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     const bannerText = t(dangerConf.i18nKey, { detail: detail || '' });
     banner.innerHTML = dangerConf.icon + '<span>' + escapeHtml(bannerText) + '</span>';
     bubble.appendChild(banner);
+  }
+
+  // Source badge: show which sub-agent this permission request came from
+  if (sourceAgent) {
+    const sourceBadge = document.createElement('div');
+    sourceBadge.className = 'perm-source-badge';
+    const shortSession = sourceSession ? sourceSession.substring(0, 12) : '';
+    sourceBadge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17l9.2-9.2M17 17V7H7"/></svg>' +
+      '<span>' + escapeHtml(t('chat.permSource', { agent: sourceAgent, session: shortSession })) + '</span>';
+    bubble.appendChild(sourceBadge);
   }
 
   row.appendChild(bubble);

@@ -313,13 +313,20 @@ object AgentActor extends AgentCore with AgentSession:
               IO.pure(idle(agentDef, resources, depth, parentRef, state))
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
-      case AgentCommand.ForwardPermission(deferred, permJson) =>
-        // Sub-agent forwarded a permission request — store deferred and ask frontend
+      case AgentCommand.ForwardPermission(deferred, permJson, sourceAgent, sourceSession) =>
+        // Sub-agent forwarded a permission request — override sessionId to ours,
+        // preserve source info, then send to frontend.
         if state.pendingPermission.isDefined then
           deferred.complete(false).void.handleErrorWith(_ => IO.unit) *>
             IO.pure(idle(agentDef, resources, depth, parentRef, state))
         else
-          state.wsSend(permJson).handleErrorWith(_ => IO.unit) *>
+          val modifiedJson = permJson
+            .deepMerge(Json.obj(
+              "sessionId" -> state.sessionId.asJson,
+              "sourceAgent" -> sourceAgent.asJson,
+              "sourceSession" -> sourceSession.asJson
+            ))
+          state.wsSend(modifiedJson).handleErrorWith(_ => IO.unit) *>
             IO.pure(idle(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred))))
 
       case AgentCommand.SetSafetyMode(mode) =>
@@ -1138,12 +1145,18 @@ object AgentActor extends AgentCore with AgentSession:
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending))
 
       // --- Sub-agent forwarded a permission request while processing ---
-      case AgentCommand.ForwardPermission(deferred, permJson) =>
+      case AgentCommand.ForwardPermission(deferred, permJson, sourceAgent, sourceSession) =>
         if state.pendingPermission.isDefined then
           deferred.complete(false).void.handleErrorWith(_ => IO.unit) *>
             IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
         else
-          state.wsSend(permJson).handleErrorWith(_ => IO.unit) *>
+          val modifiedJson = permJson
+            .deepMerge(Json.obj(
+              "sessionId" -> state.sessionId.asJson,
+              "sourceAgent" -> sourceAgent.asJson,
+              "sourceSession" -> sourceSession.asJson
+            ))
+          state.wsSend(modifiedJson).handleErrorWith(_ => IO.unit) *>
             IO.pure(
               processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending)
             )

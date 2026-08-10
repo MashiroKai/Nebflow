@@ -1688,6 +1688,23 @@
   color: var(--color-error);
 }
 
+/* Source badge: shows which sub-agent a permission request came from */
+.perm-source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(139, 92, 246, 0.12);
+  color: #8b5cf6;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.perm-source-badge svg {
+  flex-shrink: 0;
+}
+
 /* Inline code for showing command/file detail in permission prompt */
 .perm-detail-code {
   display: block;

@@ -42,7 +42,8 @@ object FlowDagExecutor:
     resources: SharedResources,
     actorSystem: ActorSystem,
     wsSend: Option[Json => IO[Unit]],
-    instanceId: String
+    instanceId: String,
+    parentAgentRef: Option[ActorRef[AgentCommand]] = None
   ): IO[Either[String, String]] =
 
     val emitWs = wsSend.getOrElse((_: Json) => IO.unit)
@@ -102,7 +103,7 @@ object FlowDagExecutor:
                   mcpServers = entry.mcpServers,
                   model = entry.model
                 )
-                executeAgent(nodeId, node.agent, agentDef, inputText, resources, actorSystem, wsSend, flow.name)
+                executeAgent(nodeId, node.agent, agentDef, inputText, resources, actorSystem, wsSend, flow.name, parentAgentRef)
             updatedCtx = ctx.copy(nodeOutputs = ctx.nodeOutputs + (nodeId -> result.output))
           yield (result, updatedCtx)
           end for
@@ -333,7 +334,8 @@ object FlowDagExecutor:
     resources: SharedResources,
     actorSystem: ActorSystem,
     wsSend: Option[Json => IO[Unit]],
-    flowName: String
+    flowName: String,
+    parentAgentRef: Option[ActorRef[AgentCommand]] = None
   ): IO[NodeResult] =
     val rawWsSend = wsSend.getOrElse((_: Json) => IO.unit)
     val sessionId = s"dag-${flowName.take(10)}-$nodeId-${System.currentTimeMillis().toString.takeRight(6)}"
@@ -358,7 +360,7 @@ object FlowDagExecutor:
           resources = resources,
           wsSend = rawWsSend,
           depth = 1,
-          parentRef = None,
+          parentRef = parentAgentRef,
           sessionId = Some(sessionId),
           sessionName = Some(s"$flowName/$nodeId"),
           initialMessages = Nil,

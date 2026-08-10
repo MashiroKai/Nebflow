@@ -562,20 +562,28 @@ private[agent] trait AgentCore:
                   case Some(m) if !Set("GET", "HEAD", "OPTIONS").contains(m) => 2
                   case _ => 0
               else 1
+            val sourceAgent = toolCtx.agentDef.map(_.name).getOrElse("unknown")
+            val sourceSession = state.sessionId.getOrElse("")
             Json.obj(
               "type" -> "askPermission".asJson,
               "sessionId" -> state.sessionId.asJson,
               "toolName" -> call.name.asJson,
               "summary" -> summary.asJson,
               "input" -> call.input.asJson,
-              "dangerLevel" -> dangerLevel.asJson
+              "dangerLevel" -> dangerLevel.asJson,
+              "sourceAgent" -> sourceAgent.asJson,
+              "sourceSession" -> sourceSession.asJson
             )
           }.flatMap { permJson =>
             // Sub-agents forward permission to parent agent so the answer
             // (routed by sessionId to the root agent) reaches the right Deferred.
+            val sourceAgent = toolCtx.agentDef.map(_.name).getOrElse("unknown")
+            val sourceSession = state.sessionId.getOrElse("")
             val sendPermission =
               if state.depth > 0 && toolCtx.parentRef.isDefined then
-                toolCtx.parentRef.get ! AgentCommand.ForwardPermission(deferred, permJson)
+                toolCtx.parentRef.get ! AgentCommand.ForwardPermission(
+                  deferred, permJson, sourceAgent, sourceSession
+                )
               else (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *> state.wsSend(permJson)
             for
               _ <- sendPermission
