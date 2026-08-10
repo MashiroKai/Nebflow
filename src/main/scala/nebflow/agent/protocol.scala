@@ -93,7 +93,12 @@ object AgentCommand:
    * Sub-agent → parent: forward a permission request so the parent can track
    * the Deferred and route the frontend answer back to the sub-agent.
    */
-  case class ForwardPermission(deferred: cats.effect.Deferred[IO, Boolean], permJson: Json) extends AgentCommand
+  case class ForwardPermission(
+    deferred: cats.effect.Deferred[IO, Boolean],
+    permJson: Json,
+    sourceAgent: String,
+    sourceSession: String
+  ) extends AgentCommand
 
   /** Frontend → agent: update safety mode for this session. */
   case class SetSafetyMode(mode: nebflow.core.SafetyMode) extends AgentCommand

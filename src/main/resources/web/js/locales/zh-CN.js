@@ -212,6 +212,7 @@ export default {
   'chat.skillLabel': 'skill: {skill}',
   'chat.allowTool': '允许 {tool}？',
   'chat.autoApproved': '自动通过（自动放行模式）',
+  'chat.permSource': '来自: {agent} ({session})',
   'chat.permLevel.warning': '注意：此操作可能导致数据丢失',
   'chat.permLevel.dangerous': '危险操作：{detail}',
   'chat.permLevel.critical': '严重操作：{detail}',

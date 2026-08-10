@@ -201,7 +201,7 @@ Message type (optional, default "INFO"):
           resources = resources,
           wsSend = forkWs,
           depth = (ctx.depth + 1),
-          parentRef = None,
+          parentRef = ctx.agentActorRef,
           sessionId = Some(tempSession.id),
           sessionName = Some(s"fork/${agentDef.name}"),
           initialMessages = history,

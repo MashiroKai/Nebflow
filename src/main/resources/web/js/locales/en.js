@@ -212,6 +212,7 @@ export default {
   'chat.skillLabel': 'skill: {skill}',
   'chat.allowTool': 'Allow {tool}?',
   'chat.autoApproved': 'Auto-approved (bypass all)',
+  'chat.permSource': 'From: {agent} ({session})',
   'chat.permLevel.warning': 'Caution: may cause data loss',
   'chat.permLevel.dangerous': 'Dangerous: {detail}',
   'chat.permLevel.critical': 'Critical: {detail}',
