@@ -7,7 +7,8 @@ import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab } from './canva
 import { FLOW_CSS } from './flowCss.js';
 import { esc, authHeaders, overlayRoot } from './flowHelpers.js';
 import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf, populateTileModels } from './flowTeams.js';
-import { renderFlowsPanel, bindDagNodeClicks } from './flowDag.js';
+import { renderFlowRunInto, bindDagNodeClicks } from './flowDag.js';
+import { renderFlowList } from './flowList.js';
 import { closeViewer, openMailbox, openRules, openDefinition } from './flowViewers.js';
 import { onReconnect } from './ws.js';
 
@@ -44,7 +45,7 @@ function renderTeamsTab() {
   populateTileModels(teams);
 }
 
-// ── Flows tab ──────────────────────────────────────────────
+// ── Flows tab (static flow list, P6) ───────────────────────
 
 function renderFlowsTab() {
   const pane = getTabPane('flows');
@@ -58,11 +59,10 @@ function renderFlowsTab() {
     scroll.className = 'team-scroll';
     scroll.id = 'flow-scroll-flows';
     pane.appendChild(scroll);
+    // Load the static flow list once per tab lifecycle.
+    renderFlowList(scroll);
   }
-  renderFlowsPanel(scroll, runningFlows);
   overlayRoot();
-  bindDagNodeClicks();
-  if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 // Render whichever tab(s) are open.
@@ -76,12 +76,10 @@ function renderOpenTabs() {
 
 // ── Flow run tab (per-instance runtime view) ───────────────
 
-/** Open a dedicated tab for one running flow instance.
- *  Placeholder visualization (filtered DAG) — the full runtime view
- *  (恒星系 animation) lands in P5. */
+/** Open a dedicated tab for one running flow instance — solar-system view (P5). */
 export function openFlowRunTab(instanceId, flowName) {
   if (!instanceId) return;
-  openTab(`flow-run-${instanceId}`, flowName || 'Flow run', { type: 'flow-run', closable: true });
+  openTab(`flow-run-${instanceId}`, flowName || 'Flow run', { type: 'flow-run', closable: true, pinned: true });
   renderFlowRunTab(instanceId);
 }
 
@@ -95,26 +93,47 @@ function renderFlowRunTab(instanceId) {
   if (!scroll) {
     scroll = document.createElement('div');
     scroll.className = 'team-scroll';
+    scroll.style.display = 'block';
     pane.appendChild(scroll);
   }
   const flow = runningFlows.find(f => f.instanceId === instanceId);
-  renderFlowsPanel(scroll, flow ? [flow] : []);
+  renderFlowRunInto(scroll, flow);
   overlayRoot();
   bindDagNodeClicks();
   if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
-// ── Auto-open Flows tab when running flows appear ──────────
+// ── Auto-open flow-run tabs when flows start (P5) ──────────
 
 function maybeAutoOpenFlowsTab() {
   if (runningFlows.length === 0) return;
-  if (hasTab('flows')) return;
-  // Open the Flows tab and switch to it.
-  openTab('flows', 'Flows', { type: 'flow', closable: true });
-  renderFlowsTab();
+  for (const f of runningFlows) {
+    if (f.status === 'running' && !hasTab(`flow-run-${f.instanceId}`)) {
+      openFlowRunTab(f.instanceId, f.flowName);
+    }
+  }
 }
 
 // ── WS event handlers ──────────────────────────────────────
+
+export function onFlowStarted(msg) {
+  // Full DAG structure arrives with flowStarted — render immediately.
+  const existing = runningFlows.find(f => f.instanceId === (msg.instanceId || ''));
+  if (!existing) {
+    runningFlows.push({
+      instanceId: msg.instanceId,
+      flowName: msg.flowName,
+      description: msg.description || '',
+      entry: msg.entry,
+      status: 'running',
+      startedAt: Date.now(),
+      nodes: (msg.nodes || []).map(n => ({ ...n, status: n.status || 'pending' })),
+      edges: msg.edges || [],
+    });
+  }
+  maybeAutoOpenFlowsTab();
+  if (isCanvasOpen()) renderOpenTabs();
+}
 
 export function onFlowMail(msg) {
   const flow = teams.find(f => f.name === (msg.flowName || ''));

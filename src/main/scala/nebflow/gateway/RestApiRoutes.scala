@@ -9,8 +9,9 @@ import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.SharedResources
 import nebflow.core.PathUtil
 import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
-import nebflow.core.entity.EntityLoader
+import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
+import nebflow.core.skill.SkillService
 import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.*
 import nebflow.service.ConfigService
@@ -1151,7 +1152,9 @@ class RestApiRoutes(
                   "tools" -> defn.tools.asJson,
                   "systemPrompt" -> defn.systemPrompt.asJson,
                   "displayName" -> defn.displayName.getOrElse(defn.name).asJson,
-                  "model" -> defn.model.asJson
+                  "model" -> defn.model.asJson,
+                  "skills" -> defn.skills.asJson,
+                  "flows" -> defn.flows.asJson
                 )
               )
         yield result
@@ -1250,6 +1253,57 @@ class RestApiRoutes(
           yield result
         }
 
+    // GET /skills — list all available skills (name + description) for the Agent panel
+    case GET -> Root / "skills" =>
+      for
+        skills <- SkillService.listSkills()
+        entries = skills.sortBy(_.name).map { s =>
+          Json.obj(
+            "name" -> s.name.asJson,
+            "description" -> s.description.asJson
+          )
+        }
+        result <- Ok(Json.obj("skills" -> entries.asJson))
+      yield result
+
+    // GET /flows/list — list all flow definitions (name, description, node count, maxLoop)
+    case GET -> Root / "flows" / "list" =>
+      for
+        flows <- EntityLoader.listFlows()
+        entries = flows.values.toList.sortBy(_.name).map { f =>
+          val edges = f.nodes.toList.flatMap { (nodeId, node) =>
+            node.onComplete match
+              case NodeRoute.Goto(target) => List((nodeId, target, None))
+              case NodeRoute.Return => List((nodeId, "$return", None))
+              case NodeRoute.Switch(_, cases) =>
+                cases.toList.map { (cond, route) =>
+                  val target = route match
+                    case NodeRoute.Goto(t) => t
+                    case NodeRoute.Return => "$return"
+                    case _ => "?"
+                  (nodeId, target, Some(cond))
+                }
+          }
+          Json.obj(
+            "name" -> f.name.asJson,
+            "description" -> f.description.asJson,
+            "entry" -> f.entry.asJson,
+            "maxLoop" -> f.maxLoop.asJson,
+            "nodeCount" -> f.nodes.size.asJson,
+            "nodes" -> f.nodes.toList.sortBy(_._1).map { (nodeId, node) =>
+              Json.obj(
+                "nodeId" -> nodeId.asJson,
+                "agent" -> node.agent.asJson
+              )
+            }.asJson,
+            "edges" -> edges.map { (from, to, cond) =>
+              Json.obj("from" -> from.asJson, "to" -> to.asJson, "condition" -> cond.asJson)
+            }.asJson
+          )
+        }
+        result <- Ok(Json.obj("flows" -> entries.asJson))
+      yield result
+
     // GET /teams/:name — team detail
     case GET -> Root / "teams" / teamName =>
       if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
@@ -1329,8 +1383,44 @@ class RestApiRoutes(
             val store = new DaemonStore()
             store.load().flatMap { configs =>
               svc.getStates(configs).flatMap { states =>
-                Ok(Json.obj("daemons" -> states.asJson))
+                val cfgById = configs.map(c => c.id -> c).toMap
+                val statesJson = states.map { st =>
+                  st.asJson.deepMerge(
+                    Json.obj(
+                      "autoStart" -> cfgById.get(st.id).exists(_.autoStart).asJson,
+                      "restartOnExit" -> cfgById.get(st.id).exists(_.restartOnExit).asJson
+                    )
+                  )
+                }
+                Ok(Json.obj("daemons" -> statesJson.asJson))
               }
+            }
+      }
+
+    // PUT /daemons/:id — update daemon config (autoStart / restartOnExit)
+    case req @ PUT -> Root / "daemons" / daemonId =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
+          case Some(_) =>
+            req.as[Json].flatMap { body =>
+              val autoStartOpt = body.hcursor.downField("autoStart").as[Option[Boolean]].toOption.flatten
+              val restartOnExitOpt = body.hcursor.downField("restartOnExit").as[Option[Boolean]].toOption.flatten
+              if autoStartOpt.isEmpty && restartOnExitOpt.isEmpty then
+                BadRequest(Json.obj("error" -> "No updatable fields provided (expected autoStart or restartOnExit)".asJson))
+              else
+                val store = new DaemonStore()
+                store.update(
+                  daemonId,
+                  cfg =>
+                    cfg.copy(
+                      autoStart = autoStartOpt.getOrElse(cfg.autoStart),
+                      restartOnExit = restartOnExitOpt.getOrElse(cfg.restartOnExit)
+                    )
+                ).flatMap {
+                  case None => NotFound(Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))
+                  case Some(updated) => Ok(updated.asJson)
+                }
             }
       }
 

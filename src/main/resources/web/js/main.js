@@ -1440,6 +1440,10 @@ onMessage('agentDone', (msg) => {
   if (msg.nodeSessionId) flowCanvas.onAgentDone(msg.nodeSessionId);
 });
 
+onMessage('flowStarted', (msg) => {
+  flowCanvas.onFlowStarted(msg);
+});
+
 onMessage('flowProgress', (msg) => {
   flowCanvas.onFlowProgress(msg);
 });

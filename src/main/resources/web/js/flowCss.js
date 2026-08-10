@@ -7,7 +7,8 @@ export const FLOW_CSS = `
    Covers all flow-panel types: Teams list, Flows list, per-instance run. */
 .canvas-tab-pane[data-type="flow"],
 .canvas-tab-pane[data-type="teams"],
-.canvas-tab-pane[data-type="flow-run"] {
+.canvas-tab-pane[data-type="flow-run"],
+.canvas-tab-pane[data-type="flow-def"] {
   position: relative;
   overflow: hidden;
 }
@@ -313,5 +314,173 @@ export const FLOW_CSS = `
 
 /* ── Agent popup header model badge ── */
 .flow-agent-model-badge { font: 500 10px -apple-system, sans-serif; color: rgb(91, 127, 191); background: rgba(91,127,191,0.08); padding: 2px 8px; border-radius: 6px; margin-left: 4px; }
+
+/* ══ Solar-system flow visualization (P5) ══ */
+.solar-card {
+  flex: 1 1 100%; min-width: 300px;
+  border-radius: 16px; background: var(--color-surface);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.03);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.solar-card-header {
+  display: flex; align-items: center; gap: 8px; padding: 12px 14px;
+  border-bottom: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  flex-shrink: 0;
+}
+.solar-card-title { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
+.solar-card-status { font: 500 11px -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; display: flex; align-items: center; gap: 5px; }
+.solar-card-status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; }
+.solar-card-status.running .dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
+.solar-card-status.completed .dot { background: #4caf50; opacity: 1; }
+.solar-card-status.failed .dot { background: #f44336; opacity: 1; }
+.solar-card-status.cancelled .dot { background: #ff9800; opacity: 1; }
+.solar-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: 10px 14px 0; flex-shrink: 0; }
+.solar-card-footer { display: flex; align-items: center; padding: 0 14px 14px; flex-shrink: 0; }
+.solar-card-footer:empty { display: none; }
+
+/* Scrollable canvas wrapper */
+.solar-scroll {
+  overflow: auto; padding: 6px 14px 4px; flex: 1;
+  scrollbar-color: var(--color-frame-border) transparent;
+}
+.solar-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.solar-scroll::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+
+/* Canvas: absolute-positioned nodes + SVG edges */
+.solar-canvas { position: relative; margin: 0 auto; }
+
+/* SVG edges */
+.solar-edges { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
+.flow-edge { stroke: var(--color-border); stroke-width: 1.5; fill: none; opacity: 0.5; }
+.flow-edge.active { stroke: var(--color-accent, rgb(91,127,191)); stroke-dasharray: 6 4; opacity: 1; animation: dash-flow 1s linear infinite; }
+.flow-edge-arrow { fill: var(--color-border); opacity: 0.5; }
+.solar-edge-label { font: 500 9px -apple-system, sans-serif; fill: var(--color-text-muted); opacity: 0.7; }
+@keyframes dash-flow { to { stroke-dashoffset: -10; } }
+
+/* Node card */
+.solar-node {
+  position: absolute; width: 130px; height: 150px;
+  display: flex; flex-direction: column; align-items: center;
+  cursor: pointer; user-select: none;
+  border-radius: 14px; border: 1px solid transparent;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.solar-node:hover { border-color: var(--glass-border); background: var(--glass-bg); box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+.solar-node.running { border-color: rgba(91,127,191,0.25); }
+
+/* Orbit area */
+.solar-rings { position: relative; width: 100px; height: 100px; margin-top: 2px; flex-shrink: 0; }
+
+/* Three concentric rings */
+.flow-ring {
+  position: absolute; top: 50%; left: 50%;
+  margin: -50px 0 0 -50px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-border);
+  box-sizing: border-box;
+}
+.flow-ring.outer  { width: 100px; height: 100px; }
+.flow-ring.middle { width: 74px;  height: 74px;  margin: -37px 0 0 -37px; }
+.flow-ring.inner  { width: 48px;  height: 48px;  margin: -24px 0 0 -24px; }
+
+/* Orbit dots — centered on ring edge, scattered at static angles by default */
+.flow-dot {
+  position: absolute; top: 50%; left: 50%;
+  width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px;
+  border-radius: 50%; background: var(--color-accent, rgb(91,127,191));
+  opacity: 0.85;
+}
+
+/* Running: rings spin at different speeds */
+.solar-node.running .flow-ring.outer.spin-outer  { animation: spin-cw  6s  linear infinite; }
+.solar-node.running .flow-ring.middle.spin-middle{ animation: spin-ccw 4.5s linear infinite; }
+.solar-node.running .flow-ring.inner.spin-inner  { animation: spin-cw  3s  linear infinite; }
+@keyframes spin-cw  { from { transform: rotate(0deg); }   to { transform: rotate(360deg); } }
+@keyframes spin-ccw { from { transform: rotate(0deg); }   to { transform: rotate(-360deg); } }
+
+/* Pending: dashed, dim */
+.solar-node.pending .flow-ring { border-style: dashed; opacity: 0.4; }
+.solar-node.pending .flow-dot { opacity: 0.3; }
+
+/* Completed: green solid rings */
+.solar-node.completed .flow-ring { border-color: rgba(76,175,80,0.55); }
+.solar-node.completed .flow-dot { background: #4caf50; }
+
+/* Failed: red */
+.solar-node.failed .flow-ring { border-color: rgba(244,67,54,0.6); }
+.solar-node.failed .flow-dot { background: #f44336; }
+
+/* Status icon (✓ / ✗) centered over rings */
+.solar-node-status {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  font: 700 20px -apple-system, sans-serif; pointer-events: none;
+}
+.solar-node-status.ok { color: #4caf50; }
+.solar-node-status.err { color: #f44336; }
+
+/* Node label */
+.solar-node-label {
+  font: 600 12px -apple-system, sans-serif; color: var(--color-text);
+  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-top: 3px;
+}
+.solar-node-sub {
+  font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted);
+  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  opacity: 0.7;
+}
+
+/* ══ Flow list page (P6) ══ */
+.flow-list-header {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 4px 2px;
+}
+.flow-list-title { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
+.flow-list-count { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; }
+.flow-def-card {
+  flex: 1 1 300px; min-width: 280px; max-width: 480px;
+  border-radius: 14px; background: var(--color-surface);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.03);
+  overflow: hidden; display: flex; flex-direction: column;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.flow-def-card:hover { border-color: rgba(91,127,191,0.3); box-shadow: 0 3px 12px rgba(0,0,0,0.07); }
+.flow-def-card-header {
+  display: flex; align-items: center; gap: 8px; padding: 12px 14px;
+  border-bottom: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+}
+.flow-def-card-icon {
+  width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(91,127,191,0.10); color: rgb(91,127,191);
+  font: 600 11px -apple-system, sans-serif;
+}
+.flow-def-card-name { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
+.flow-def-card-meta { font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; display: flex; gap: 8px; flex-shrink: 0; }
+.flow-def-card-desc {
+  font: 400 11.5px -apple-system, sans-serif; color: var(--color-text-muted);
+  line-height: 1.5; padding: 10px 14px 4px; flex: 1;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.flow-def-card-footer { display: flex; align-items: center; gap: 8px; padding: 10px 14px 12px; }
+.flow-def-view-btn {
+  font: 600 11px -apple-system, sans-serif; color: rgb(91,127,191);
+  border: 1px solid rgba(91,127,191,0.35); border-radius: 7px;
+  background: transparent; padding: 5px 12px; cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.flow-def-view-btn:hover { background: rgba(91,127,191,0.08); }
+.flow-def-entry-tag {
+  font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted);
+  border: 1px solid var(--color-border); border-radius: 5px; padding: 2px 7px; opacity: 0.75;
+}
 </style>
 `;

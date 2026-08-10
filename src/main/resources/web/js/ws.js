@@ -97,7 +97,7 @@ const STREAM_MSG_TYPES = new Set([
   'agentToolStart', 'agentToolEnd', 'agentEnd',
   'agentThinking', 'agentRetryStatus', 'agentDone',
   'treeBranchMounted', 'treeBranchUnmounted', 'treeBranchUpdated',
-  'flowMail', 'flowProgress', 'flowCompleted', 'teamList'
+  'flowMail', 'flowStarted', 'flowProgress', 'flowCompleted', 'teamList'
 ]);
 
 export function onMessage(type, handler) {

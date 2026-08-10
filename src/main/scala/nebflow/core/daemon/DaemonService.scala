@@ -260,7 +260,9 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
       pid = entry.process.flatMap(getPid),
       startedAt = entry.startedAt,
       exitCode = entry.exitCode,
-      recentOutput = entry.outputBuffer.mkString("\n").take(MaxOutputChars)
+      recentOutput = entry.outputBuffer.mkString("\n").take(MaxOutputChars),
+      command = entry.config.command,
+      port = entry.config.port
     )
 
   private def getPid(process: Process): Option[Long] =
