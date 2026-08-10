@@ -555,7 +555,9 @@ object FlowTreeActor:
       _ <- sessionOpt.traverse_ { session =>
         val agentName = session.agentName.getOrElse("")
         for
-          entryOpt <- EntityLoader.loadAgent(agentName)
+          entryOpt <- session.flowName match
+            case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
+            case None => EntityLoader.loadAgent(agentName)
           _ <- entryOpt.traverse_ { entry =>
             val agentDef = AgentDef(
               name = entry.name, description = entry.description, tools = entry.tools,

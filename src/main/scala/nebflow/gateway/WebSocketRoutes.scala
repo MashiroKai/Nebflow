@@ -63,7 +63,7 @@ class WebSocketRoutes(
           case None =>
             metaOpt.flatMap(_.flowName) match
               case Some(fn) =>
-                nebflow.core.entity.EntityLoader.loadAgent(agentName).flatMap {
+                nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
                   case Some(entry) => IO.pure(AgentDef(
                     name = entry.name, description = entry.description, tools = entry.tools,
                     systemPrompt = entry.systemPrompt, category = entry.category,

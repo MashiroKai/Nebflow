@@ -157,7 +157,9 @@ export async function createEditor(container, opts) {
   const monaco = await loadMonaco();
 
   const language = getLanguage(opts.fileName);
-  const uri = monaco.Uri.parse(`file:///${(opts.path || opts.fileName || 'untitled').replace(/\\/g, '/')}`);
+  // Strip leading slashes from path to avoid file://// (double-slash in URI path component)
+  const cleanPath = (opts.path || opts.fileName || 'untitled').replace(/\\/g, '/').replace(/^\/+/, '');
+  const uri = monaco.Uri.parse(`file:///${cleanPath}`);
   let model = monaco.editor.getModel(uri);
 
   if (!model) {

@@ -45,7 +45,7 @@ import { initNeblink, checkPairingRedirect } from './neblink.js';
 import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
 import * as planMode from './planMode.js';
-import { initCanvas, restoreTabs } from './canvas.js';
+import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import * as flowCanvas from './flowCanvas.js';
 import { initColResizers } from './colResizer.js';
 import { initPanelDragger } from './panelDragger.js';
@@ -2227,13 +2227,22 @@ requestAnimationFrame(() => {
 
 initActivityBar();
 initModelPicker();
-document.getElementById('team-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
+document.getElementById('canvas-toggle-btn')?.addEventListener('click', () => {
+  // Toggle Canvas open/close — closing does NOT clear tabs.
+  if (document.body.classList.contains('canvas-open')) {
+    closeCanvas();
+  } else {
+    openCanvas();
+  }
+});
+document.getElementById('teams-btn')?.addEventListener('click', () => flowCanvas.openTeams());
+document.getElementById('flows-btn')?.addEventListener('click', () => flowCanvas.openFlows());
 // Restore queued messages from localStorage (survives browser refresh)
 restoreQueue();
 // Restore Canvas tabs from localStorage (survives browser refresh).
 // If no saved tabs (e.g. cache cleared), auto-open Teams panel.
 if (!restoreTabs()) {
-  flowCanvas.toggleCanvas();
+  flowCanvas.openTeams();
 }
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
