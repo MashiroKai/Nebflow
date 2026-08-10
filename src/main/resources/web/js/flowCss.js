@@ -313,5 +313,101 @@ export const FLOW_CSS = `
 
 /* ── Agent popup header model badge ── */
 .flow-agent-model-badge { font: 500 10px -apple-system, sans-serif; color: rgb(91, 127, 191); background: rgba(91,127,191,0.08); padding: 2px 8px; border-radius: 6px; margin-left: 4px; }
+
+/* ===== Stellar System Visualization (P5) ===== */
+.stellar-container {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  overflow-y: auto; padding: 14px;
+}
+.stellar-container::-webkit-scrollbar { width: 8px; }
+.stellar-container::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+
+.stellar-card {
+  max-width: 700px; margin: 0 auto 20px;
+  border-radius: 16px; background: var(--color-surface);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.03);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.stellar-header {
+  padding: 14px 18px; display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--color-border);
+}
+.stellar-title { font: 600 15px -apple-system; color: var(--color-text); }
+.stellar-status { font: 500 11px ui-monospace; padding: 2px 8px; border-radius: 6px; text-transform: uppercase; }
+.stellar-status.running { color: var(--color-primary); background: rgba(91,127,191,0.1); }
+.stellar-status.completed { color: #34c759; background: rgba(52,199,89,0.1); }
+.stellar-status.failed { color: #ff3b30; background: rgba(255,59,48,0.1); }
+.stellar-desc { padding: 8px 18px; font: 400 12px -apple-system; color: var(--color-text-muted); }
+.stellar-stage {
+  position: relative; width: 100%; min-height: 300px;
+  padding: 20px 0;
+}
+
+/* Orbit node — centered horizontally in stage */
+.flow-orbit-node {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  width: 120px; height: 110px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; z-index: 2;
+}
+.flow-orbit-content { position: relative; z-index: 3; text-align: center; pointer-events: none; }
+.flow-orbit-agent { font: 600 11px -apple-system; color: var(--color-text); }
+.flow-orbit-nodeid { font: 400 9px ui-monospace; color: var(--color-text-muted); margin-top: 2px; }
+.flow-orbit-status { font: 600 16px -apple-system; margin-top: 2px; }
+
+/* Three orbit rings — centered via translate */
+.flow-ring {
+  position: absolute; border-radius: 50%; top: 50%; left: 50%;
+}
+.flow-ring.outer  { width: 100px; height: 100px; transform: translate(-50%, -50%); }
+.flow-ring.middle { width: 75px; height: 75px; transform: translate(-50%, -50%); }
+.flow-ring.inner  { width: 50px; height: 50px; transform: translate(-50%, -50%); }
+.flow-ring { border: 1.5px solid var(--color-border); }
+
+/* Running: animated rotation (preserve translate in keyframes) */
+.flow-orbit-node.running .flow-ring.outer  { border-color: rgba(91,127,191,0.4); animation: spin-cw 6s linear infinite; }
+.flow-orbit-node.running .flow-ring.middle { border-color: rgba(91,127,191,0.3); animation: spin-ccw 4.5s linear infinite; }
+.flow-orbit-node.running .flow-ring.inner  { border-color: rgba(91,127,191,0.2); animation: spin-cw 3s linear infinite; }
+
+.flow-orbit-node.pending .flow-ring { border-style: dashed; opacity: 0.35; }
+.flow-orbit-node.completed .flow-ring { border-color: #34c759; opacity: 0.6; }
+.flow-orbit-node.completed .flow-orbit-status { color: #34c759; }
+.flow-orbit-node.failed .flow-ring { border-color: #ff3b30; opacity: 0.6; }
+.flow-orbit-node.failed .flow-orbit-status { color: #ff3b30; }
+
+.flow-dot {
+  position: absolute; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--color-primary, #5b7fbf); top: -2px; left: 50%; transform: translateX(-50%);
+}
+.flow-orbit-node.running .flow-dot { box-shadow: 0 0 6px rgba(91,127,191,0.6); }
+
+@keyframes spin-cw  { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
+@keyframes spin-ccw { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(-360deg); } }
+
+.flow-edge { stroke: var(--color-border); stroke-width: 1.5; fill: none; opacity: 0.4; }
+.flow-edge-label { font: 400 9px ui-monospace; fill: var(--color-text-muted); }
+
+/* Flow definition cards (P6) */
+.flow-defs-section, .flow-running-section { width: 100%; margin-bottom: 16px; }
+.flow-defs-header { font: 600 11px -apple-system; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 0 10px; }
+.flow-defs-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+.flow-def-card {
+  flex: 1 1 240px; min-width: 220px; max-width: 360px;
+  border-radius: 12px; background: var(--color-surface);
+  border: 1px solid var(--glass-border);
+  padding: 14px; display: flex; flex-direction: column; gap: 6px;
+}
+.flow-def-name { font: 600 13px -apple-system; color: var(--color-text); }
+.flow-def-desc { font: 400 11px -apple-system; color: var(--color-text-muted); line-height: 1.4; }
+.flow-def-meta { font: 400 10px ui-monospace; color: var(--color-text-muted); opacity: 0.7; }
+.flow-def-view-btn {
+  align-self: flex-start; font: 500 11px -apple-system;
+  color: var(--color-primary, #5b7fbf); background: none;
+  border: 1px solid rgba(91,127,191,0.3); border-radius: 6px;
+  padding: 4px 10px; cursor: pointer; transition: all 0.15s;
+}
+.flow-def-view-btn:hover { background: rgba(91,127,191,0.08); }
+
 </style>
 `;
