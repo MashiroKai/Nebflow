@@ -182,7 +182,7 @@
    Activity Bar — vertical icon strip (independent glass card)
    Lives to the left of #sidebar. WeChat-style: avatar at top,
    device list expands below it after login, settings at bottom.
-   order:-1 keeps it leftmost regardless of panelDragger reorder.
+   order:-1 keeps it leftmost of the fixed 3-column layout.
    ============================================================ */
 #activity-bar {
   order: -1;

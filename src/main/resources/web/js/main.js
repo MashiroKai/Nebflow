@@ -48,7 +48,6 @@ import * as planMode from './planMode.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import * as flowCanvas from './flowCanvas.js';
 import { initColResizers } from './colResizer.js';
-import { initPanelDragger } from './panelDragger.js';
 import { initActivityBar } from './activityBar.js';
 import { initModelPicker, refreshModelPicker } from './modelPicker.js';
 
@@ -2218,7 +2217,6 @@ initMemory();
 initExplorer();
 initCanvas();
 initColResizers();
-initPanelDragger();
 
 // Remove UI initialization lock — all layout setup is done.
 // Double-rAF ensures the browser has painted at least one frame with

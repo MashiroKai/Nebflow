@@ -230,28 +230,7 @@ function buildRow(r, isTriggered) {
   row.appendChild(circle);
   row.appendChild(content);
 
-  // Toggle switch (enabled/disabled) — only for non-triggered tasks
-  if (!isTriggered) {
-    const toggle = document.createElement('button');
-    toggle.className = 'reminder-toggle' + (r.enabled !== false ? ' on' : '');
-    toggle.title = r.enabled !== false ? t('task.enabled') : t('task.disabled');
-    toggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleTask(r.id, r.enabled === false);
-    });
-    row.appendChild(toggle);
-  }
-
   return row;
-}
-
-function toggleTask(id, enable) {
-  if (!state.activeSessionId) return;
-  // Optimistic UI update
-  tasks = tasks.map(t => t.id === id ? { ...t, enabled: enable } : t);
-  renderList();
-  // Backend toggles automatically based on id — no need to send enabled state
-  sendWs({ type: 'toggleScheduledTask', sessionId: state.activeSessionId, id });
 }
 
 
