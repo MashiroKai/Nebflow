@@ -553,6 +553,33 @@ body.canvas-open #canvas-panel {
   font-weight: bold;
 }
 
+/* Floating rendered↔source toggle (markdown & HTML viewers) */
+.canvas-source-toggle {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  color: var(--color-text);
+  transition: all 0.2s ease;
+  opacity: 0.6;
+}
+.canvas-source-toggle:hover {
+  background: rgba(255, 255, 255, 0.2);
+  opacity: 1;
+  transform: scale(1.05);
+}
+
 .canvas-md-viewer {
   padding: 20px 24px;
   font-size: 14px;

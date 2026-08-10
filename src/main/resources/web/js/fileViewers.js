@@ -157,8 +157,97 @@ async function viewMonaco(pane, ctx) {
   }
 }
 
+// ── Render/source toggle (markdown & HTML viewers) ─────────────────────
+
+const CODE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+const EYE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+
+/** Add a floating rendered↔source toggle button to a viewer pane.
+ *  Rendered → source: clear the render, mount a Monaco editor with the source.
+ *  Source → rendered: pull the latest content from the Monaco model (survives
+ *  edits), dispose the editor, re-run the viewer — which re-attaches this
+ *  toggle with the updated ctx.
+ *  @param {HTMLElement} pane — canvas tab pane
+ *  @param {Function} renderFn — viewer function (viewMarkdown / viewHtml)
+ *  @param {Object} ctx — { content, absPath, fileName } */
+function addSourceToggle(pane, renderFn, ctx) {
+  pane.querySelector('.canvas-source-toggle')?.remove();
+  // The button is absolutely positioned — the pane must be a positioning
+  // context. (.canvas-tab-pane already is; defensive fallback only.)
+  if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
+
+  const btn = document.createElement('button');
+  btn.className = 'canvas-source-toggle';
+  btn.innerHTML = CODE_ICON_SVG;
+  btn.title = 'View source';
+
+  let busy = false;  // guard against clicks during async Monaco load
+  btn.addEventListener('click', async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const inSource = pane.dataset.sourceMode === '1';
+      if (!inSource) {
+        // → Source mode
+        pane.dataset.sourceMode = '1';
+        btn.innerHTML = EYE_ICON_SVG;
+        btn.title = 'View rendered';
+        if (pane._editorHandle) { pane._editorHandle.dispose(); pane._editorHandle = null; }
+        pane.innerHTML = '';
+        pane.classList.remove('scrollable');
+
+        const container = document.createElement('div');
+        container.className = 'canvas-monaco-container';
+        container.style.width = '100%';
+        container.style.height = '100%';
+        container.innerHTML = '<div class="canvas-loading"><div class="canvas-loading-spinner"></div></div>';
+        pane.appendChild(container);
+        pane.appendChild(btn);  // innerHTML='' above detached it
+
+        const { createEditor, setActiveEditor } = await import('./monacoEditor.js');
+        const handle = await createEditor(container, {
+          path: ctx.absPath || ctx.fileName,
+          content: ctx.content || '',
+          fileName: ctx.fileName,
+        });
+        container.querySelector('.canvas-loading')?.remove();
+        pane._editorHandle = handle;
+
+        // Same wiring as viewMonaco: dirty indicator + global Ctrl+S routing
+        handle.onDirty((dirty) => {
+          pane._dirty = dirty;
+          pane.dispatchEvent(new CustomEvent('editor-dirty-change', { detail: { dirty } }));
+        });
+        pane.addEventListener('canvas-tab-activated', () => {
+          if (pane._editorHandle !== handle) return;  // stale editor from an old toggle cycle
+          setActiveEditor(handle);
+          handle.focus();
+        });
+        if (pane.classList.contains('active')) setActiveEditor(handle);
+      } else {
+        // → Rendered mode. Take the latest content from the Monaco model so
+        // unsaved edits survive the round-trip (createEditor reuses the cached
+        // model — passing stale ctx.content would wipe them).
+        let latest = ctx.content;
+        if (pane._editorHandle) {
+          latest = pane._editorHandle.model.getValue();
+          pane._editorHandle.dispose();
+          pane._editorHandle = null;
+        }
+        delete pane.dataset.sourceMode;
+        // renderFn clears the pane and re-attaches the toggle via its own
+        // addSourceToggle call, carrying the updated content forward.
+        await renderFn(pane, { ...ctx, content: latest });
+      }
+    } finally {
+      busy = false;
+    }
+  });
+  pane.appendChild(btn);
+}
+
 /** Markdown viewer — render formatted markdown (read-only preview) */
-async function viewMarkdown(pane, { content, absPath }) {
+async function viewMarkdown(pane, { content, absPath, fileName }) {
   const { renderMarkdownWithMath } = await import('./utils.js');
   let html = renderMarkdownWithMath(content || '', false);
 
@@ -218,6 +307,8 @@ async function viewMarkdown(pane, { content, absPath }) {
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }
+
+  addSourceToggle(pane, viewMarkdown, { content, absPath, fileName });
 }
 
 /** YAML viewer — structured view with syntax highlighting */
@@ -260,7 +351,7 @@ function viewYaml(pane, { content, fileName }) {
  *
  *  Unlike Card (auto-height in chat), Canvas fills the panel height and
  *  scrolls internally — like a browser viewport. */
-function viewHtml(pane, { content, absPath }) {
+function viewHtml(pane, { content, absPath, fileName }) {
   initCanvasThemeWatcher();
   pane.innerHTML = '';
 
@@ -327,6 +418,8 @@ function viewHtml(pane, { content, absPath }) {
   iframe.dataset.nfCanvasHtml = '1';
   iframe.srcdoc = srcdoc;
   pane.appendChild(iframe);
+
+  addSourceToggle(pane, viewHtml, { content, absPath, fileName });
 }
 
 /** Image viewer — <img> served via /api/nf-file */
