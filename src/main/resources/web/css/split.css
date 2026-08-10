@@ -580,6 +580,12 @@ body.canvas-open #canvas-panel {
   transform: scale(1.05);
 }
 
+.canvas-md-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+}
+
 .canvas-md-viewer {
   padding: 20px 24px;
   font-size: 14px;

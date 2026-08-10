@@ -200,7 +200,9 @@ function addSourceToggle(pane, renderFn, ctx) {
         container.className = 'canvas-monaco-container';
         container.style.width = '100%';
         container.style.height = '100%';
-        container.innerHTML = '<div class="canvas-loading"><div class="canvas-loading-spinner"></div></div>';
+        if (!window.monaco) {
+          container.innerHTML = '<div class="canvas-loading"><div class="canvas-loading-spinner"></div></div>';
+        }
         pane.appendChild(container);
         pane.appendChild(btn);  // innerHTML='' above detached it
 
@@ -272,8 +274,8 @@ async function viewMarkdown(pane, { content, absPath, fileName }) {
     html = html.replace(/<img\b/g, '<img onerror="this.style.opacity=0.3;this.title=\'Failed: \'+this.src"');
   }
 
-  pane.innerHTML = `<div class="canvas-md-viewer">${html}</div>`;
-  pane.classList.add('scrollable');
+  pane.classList.remove('scrollable');
+  pane.innerHTML = `<div class="canvas-md-scroll"><div class="canvas-md-viewer">${html}</div></div>`;
 
   // marked v5+ dropped the `headerIds` option, so add slug ids manually
   // for TOC anchor navigation. Keeps word chars, spaces, CJK, hyphens;
