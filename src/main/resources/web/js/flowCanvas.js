@@ -3,7 +3,7 @@
 // TEAMS tab: Glass cards with agent tiles. Always accessible via toggle button.
 // FLOWS tab: DAG node graph with real-time progress. Auto-opens when flows run.
 
-import { openTab, closeCanvas, getTabPane, hasTab, isCanvasOpen } from './canvas.js';
+import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab } from './canvas.js';
 import { FLOW_CSS } from './flowCss.js';
 import { esc, authHeaders, overlayRoot } from './flowHelpers.js';
 import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf, populateTileModels } from './flowTeams.js';
@@ -175,14 +175,14 @@ export function onSessionChange() { autoRestore(); }
 
 export async function toggleCanvas() {
   const btn = document.getElementById('team-toggle-btn');
-  if (hasTab('teams') && !hasTab('flows')) {
-    // Teams tab is open and no flows tab — close everything.
-    btn?.classList.remove('active');
-    closeCanvas();
-    return;
-  }
   btn?.classList.add('active');
-  openTab('teams', 'Teams', { type: 'flow', closable: false });
+  if (hasTab('teams')) {
+    // Teams tab already exists — just switch to it (never close Canvas here).
+    // Closing is done via the pane's ✕ button, not the Teams button.
+    setActiveTab('teams');
+  } else {
+    openTab('teams', 'Teams', { type: 'flow', closable: false });
+  }
   renderTeamsTab();
   // Always fetch fresh data — don't rely on potentially stale cache.
   // If the initial load returned empty (e.g. teams not mounted yet),
