@@ -1445,9 +1445,7 @@ onMessage('flowProgress', (msg) => {
 });
 
 onMessage('flowStarted', (msg) => {
-  import('./flowCanvas.js').then(({ onFlowStarted }) => {
-    onFlowStarted(msg);
-  });
+  flowCanvas.onFlowStarted(msg);
 });
 
 onMessage('flowCompleted', (msg) => {
