@@ -1009,8 +1009,9 @@ class RestApiRoutes(
     // GET /teams/status/:sessionId — return mounted teams and agent status for frontend
     // NOTE: Router mounts this under /api prefix, so full path is /api/teams/status/:sessionId
     case GET -> Root / "teams" / "status" / sessionId =>
-      // Validate sessionId: only UUID format (hex + dashes), no path traversal
-      if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
+      // Validate sessionId: alphanumerics, dot, underscore, hyphen (covers UUID
+      // and flow-node ids like dag-git-merge-scanner-405090), no path traversal
+      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
         BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
       else
         for
@@ -1020,7 +1021,7 @@ class RestApiRoutes(
 
     // GET /teams/mailbox/:sessionId/:teamName — mail history for a team
     case GET -> Root / "teams" / "mailbox" / sessionId / flowName =>
-      if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
+      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
         BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
       else
         for
@@ -1030,7 +1031,7 @@ class RestApiRoutes(
 
     // DELETE /teams/mailbox/:sessionId/:teamName — clear mail history
     case DELETE -> Root / "teams" / "mailbox" / sessionId / flowName =>
-      if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
+      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
         BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
       else
         for
