@@ -185,6 +185,39 @@ async function viewMarkdown(pane, { content, absPath }) {
 
   pane.innerHTML = `<div class="canvas-md-viewer">${html}</div>`;
   pane.classList.add('scrollable');
+
+  // marked v5+ dropped the `headerIds` option, so add slug ids manually
+  // for TOC anchor navigation. Keeps word chars, spaces, CJK, hyphens;
+  // strips other punctuation, lowercases, spaces→hyphens.
+  const mdViewer = pane.querySelector('.canvas-md-viewer');
+  if (mdViewer) {
+    const slugCounts = {};
+    const slugify = (text) => (text || '')
+      .toLowerCase()
+      .replace(/[^\w\s\u4e00-\u9fff-]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-');
+    mdViewer.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(h => {
+      if (h.id) return;
+      let slug = slugify(h.textContent);
+      if (!slug) slug = 'heading';
+      if (slug in slugCounts) { slugCounts[slug]++; slug = `${slug}-${slugCounts[slug]}`; }
+      else slugCounts[slug] = 0;
+      h.id = slug;
+    });
+    // Handle TOC anchor clicks — scroll within the pane, not the window
+    mdViewer.addEventListener('click', (e) => {
+      const link = e.target.closest('a[href^="#"]');
+      if (!link) return;
+      const href = link.getAttribute('href');
+      if (!href || href === '#') return;
+      e.preventDefault();
+      // [id="..."] selector avoids breakage on special chars (CJK, spaces)
+      const target = mdViewer.querySelector(`[id="${href.slice(1)}"]`);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
 }
 
 /** YAML viewer — structured view with syntax highlighting */
