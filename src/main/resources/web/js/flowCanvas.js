@@ -209,6 +209,18 @@ document.addEventListener('canvas-tab-closed', (e) => {
   }
 });
 
+// Re-render panel tabs restored from localStorage on page load.
+// canvas.js re-creates the tab panes synchronously, then dispatches this
+// event so we can fill them with live state.
+window.addEventListener('canvas-tab-restore', (e) => {
+  const { id } = e.detail || {};
+  if (id === 'teams') {
+    document.getElementById('team-toggle-btn')?.classList.add('active');
+    renderTeamsTab();
+  }
+  else if (id === 'flows') renderFlowsTab();
+});
+
 // Re-fetch teams on WS reconnect — covers the race condition where
 // treeBranchMounted fires before the initial WS connection is established.
 onReconnect(() => { autoRestore(); });
