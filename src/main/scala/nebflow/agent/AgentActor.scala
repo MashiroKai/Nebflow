@@ -49,16 +49,6 @@ object AgentActor extends AgentCore with AgentSession:
         "spawn",
         s"parent=${parentRef.map(_.path.name).getOrElse("-")} msgs=${initialMessages.size}"
       )(using ctx)
-      // Start dream check timer for root agent
-      if depth == 0 then
-        resources.dispatcher.unsafeRunAndForget(
-          fs2.Stream
-            .fixedDelay[IO](5.minutes)
-            .evalMap(_ => ctx.self ! AgentCommand.CheckDream)
-            .compile
-            .drain
-            .handleErrorWith(_ => IO.unit)
-        )
       IO.pure(
         idle(
           agentDef,
@@ -232,8 +222,7 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.UpdateContextWindow(window) =>
         val newState = state.withContextWindow(window)
         val estimatedTokens = TokenEstimator.estimate(newState.messages)
-        val config = CompactConfig()
-        val threshold = window - config.bufferForWindow(window)
+        val threshold = CompactThreshold.threshold(window)
         if newState.messages.nonEmpty && estimatedTokens > threshold then
           logAgentEvent(
             agentDef,
@@ -336,38 +325,6 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.SetSafetyMode(mode) =>
         IO.pure(
           idle(agentDef, resources, depth, parentRef, state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)))
-        )
-
-      // Dream mode: periodic check if root agent should enter dream
-      case AgentCommand.CheckDream =>
-        if depth != 0 then IO.pure(idle(agentDef, resources, depth, parentRef, state))
-        else
-          for
-            pattern <- nebflow.core.UsageTracker.analyzePattern()
-            lastActivity <- resources.lastWsActivity.get
-            now = System.currentTimeMillis()
-            shouldDream = nebflow.core.compact.DreamMode.shouldTriggerDream(
-              now,
-              pattern,
-              lastActivity,
-              state.messages.size,
-              state.lastDreamAt,
-              state.lastDreamMessageCount
-            )
-            result <-
-              if shouldDream then startDreamMode(agentDef, resources, depth, parentRef, state)
-              else IO.pure(idle(agentDef, resources, depth, parentRef, state))
-          yield result
-
-      case AgentCommand.DreamComplete(facts, msgCount) =>
-        IO.pure(
-          idle(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withLastDreamAt(System.currentTimeMillis()).withLastDreamMessageCount(msgCount)
-          )
         )
 
       case AgentCommand.StartPlan(task) =>
@@ -673,7 +630,7 @@ object AgentActor extends AgentCore with AgentSession:
               AgentStreamEvent.UsageUpdate(
                 effectiveTokens,
                 updatedState.contextWindow,
-                CompactConfig().compactionTriggerRatio(updatedState.contextWindow)
+                CompactThreshold.thresholdRatio(updatedState.contextWindow)
               ),
               isSubagent = isSubagent,
               state.sessionId
@@ -1371,101 +1328,6 @@ object AgentActor extends AgentCore with AgentSession:
   end rollbackLastToolCall
 
   // ============================================================
-  // Dream mode
-  // ============================================================
-
-  private def startDreamMode(
-    agentDef: AgentDef,
-    resources: SharedResources,
-    depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]],
-    state: AgentState
-  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "dream-start", s"msgs=${state.messages.size}")
-    val jobId = s"dream-${java.util.UUID.randomUUID().toString.take(8)}"
-    val pending = CompactionJob(jobId, "dream", None, None, resumeAfterCompact = false)
-    val dreamState = state
-      .withPendingCompaction(Some(pending))
-      .withMessages(state.messages :+ Message(MessageRole.User, Left(nebflow.core.compact.DreamMode.DreamPrompt)))
-      .withStatus(AgentStatus.Processing)
-    for
-      _ <- emitStreamIO(state.wsSend, AgentStreamEvent.AgentStart("dream", "Dream mode"), false, state.sessionId)
-        .handleErrorWith(_ => IO.unit)
-      result <- pipeLlmCall(agentDef, resources, depth, parentRef, dreamState, None)
-    yield result
-
-  end startDreamMode
-
-  private def handleDreamResponse(
-    agentDef: AgentDef,
-    resources: SharedResources,
-    depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]],
-    state: AgentState,
-    responseText: String
-  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val facts = nebflow.core.compact.DreamMode.parseResponse(responseText)
-    val msgCountAtDream = state.messages.size
-    logAgentEvent(
-      agentDef,
-      depth,
-      state.sessionId,
-      state.sessionName,
-      "dream-complete",
-      s"facts=${facts.size} msgs=$msgCountAtDream"
-    )
-    val compactedMessages = nebflow.core.compact.FullCompact.parseResponse(
-      responseText,
-      state.messages,
-      state.projectRoot.getOrElse(""),
-      Nil
-    ) match
-      case Right(msgs) => msgs
-      case Left(_) =>
-        val summary = Message(MessageRole.User, Left(s"[Dream: extracted ${facts.size} facts.]"))
-        state.messages.takeRight(10) ++ List(summary)
-    val archiveIO = state.sessionId match
-      case Some(sid) =>
-        resources.historyArchiver
-          .archiveCompaction(
-            sessionId = sid,
-            sessionName = state.sessionName,
-            agentName = agentDef.name,
-            before = state.messages,
-            after = compactedMessages,
-            mode = "dream",
-            extra = Map("facts" -> facts.mkString("; "))
-          )
-          .void
-          .handleErrorWith(_ => IO.unit)
-      case None => IO.unit
-    for
-      _ <- ctx.forkTurn(archiveIO)
-      dreamPattern <- nebflow.core.UsageTracker.analyzePattern()
-      _ <- nebflow.core.compact.DreamMode
-        .updateMemory(facts, dreamPattern)
-        .handleErrorWith(e =>
-          IO(NebflowLogger.forName("nebflow.agent").warn(s"Dream memory update failed: ${e.getMessage}")).void
-        )
-      _ <- emitStreamIO(state.wsSend, AgentStreamEvent.Done(None, None, None, None), false, state.sessionId)
-        .handleErrorWith(_ => IO.unit)
-    yield idle(
-      agentDef,
-      resources,
-      depth,
-      parentRef,
-      state
-        .withMessages(compactedMessages)
-        .withPendingCompaction(None)
-        .withCompactionFailures(0)
-        .withLatestUsage(None)
-        .withLastDreamAt(System.currentTimeMillis())
-        .withLastDreamMessageCount(msgCountAtDream)
-    )
-    end for
-  end handleDreamResponse
-
-  // ============================================================
   // LlmComplete branch selector
   // ============================================================
 
@@ -1480,10 +1342,7 @@ object AgentActor extends AgentCore with AgentSession:
     pending: List[AgentCommand]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     if state.pendingCompaction.isDefined && result.toolCalls.isEmpty && result.text.nonEmpty then
-      // Dream mode response
-      if state.pendingCompaction.exists(_.mode == "dream") then
-        handleDreamResponse(agentDef, resources, depth, parentRef, state, result.text)
-      else handleCompactResponse(agentDef, resources, depth, parentRef, state, result.text)
+      handleCompactResponse(agentDef, resources, depth, parentRef, state, result.text)
     else if state.pendingCompaction.isDefined && result.toolCalls.nonEmpty then
       handleCompactFailure(agentDef, resources, depth, parentRef, state, "Compact model unexpectedly called tools")
     else if state.askMode.isDefined && result.toolCalls.isEmpty then
@@ -1661,14 +1520,12 @@ object AgentActor extends AgentCore with AgentSession:
         case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
         case _ => Message(MessageRole.User, Left(immInput.text))
       val messagesWithImmediate = newMessages ++ List(immMessage)
-      val turnStartIdx = newMessages.size
       val updatedState = state
         .copy(execution =
           ExecutionContext
             .idle(messagesWithImmediate, state.execution.turnIdx)
             .copy(pendingImmediateInputs = remainingInputs)
         )
-        .withMailTurnStart(Some(turnStartIdx))
       for
         _ <- roundCompleteIO
         _ <- if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true)) else IO.unit
@@ -1693,7 +1550,7 @@ object AgentActor extends AgentCore with AgentSession:
         model.orElse(state.lastModel),
         contextWindow = Some(state.contextWindow),
         inputTokens = Some(effectiveInputTokens),
-        compactThreshold = Some(CompactConfig().compactionTriggerRatio(state.contextWindow))
+        compactThreshold = Some(CompactThreshold.thresholdRatio(state.contextWindow))
       )
       val emitDoneIO =
         if isSubagent then
@@ -1742,50 +1599,9 @@ object AgentActor extends AgentCore with AgentSession:
           )
         )
         _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), newMessages))
-        // Background extraction dispatched by CompactionProfile
-        _ <- CompactionProfile.fromDepth(depth) match
-          case CompactionProfile.Manager if state.mailTurnStart.isDefined =>
-            ctx.forkTurn(
-              MailTurnCompaction
-                .extractAndStore(
-                  state.messages,
-                  state.mailTurnStart.get,
-                  newMessages.size,
-                  state.sessionId.getOrElse(""),
-                  agentDef.name,
-                  state.sessionName,
-                  resources
-                )
-                .handleErrorWith(e =>
-                  IO(NebflowLogger.forName("nebflow.agent").warn(s"MailTurnCompaction failed: ${e.getMessage}")).void
-                )
-            )
-          case CompactionProfile.Worker =>
-            ctx.forkTurn(
-              ExperienceExtractor
-                .extractAndStore(
-                  state.messages,
-                  agentDef.name,
-                  state.sessionId,
-                  resources
-                )
-                .handleErrorWith(e =>
-                  IO(NebflowLogger.forName("nebflow.agent").warn(s"ExperienceExtractor failed: ${e.getMessage}")).void
-                )
-            )
-          case _ => IO.unit
       yield
-        // Message compression by profile
-        val compressedMsgs = CompactionProfile.fromDepth(depth) match
-          case CompactionProfile.Manager if state.mailTurnStart.isDefined =>
-            MailTurnCompaction.compressTurnMessages(newMessages, state.mailTurnStart.get)
-          case CompactionProfile.Worker =>
-            // Keep recent messages for context continuity, drop old ones
-            if newMessages.size > 20 then newMessages.takeRight(10) else newMessages
-          case _ => newMessages
         val updatedState = state
-          .copy(execution = ExecutionContext.idle(compressedMsgs, state.execution.turnIdx))
-          .withMailTurnStart(None)
+          .copy(execution = ExecutionContext.idle(newMessages, state.execution.turnIdx))
           .withMailTurnCount(state.mailTurnCount + 1)
         idle(agentDef, resources, depth, parentRef, updatedState)
       end for

@@ -1,14 +1,6 @@
 package nebflow.core.compact
 
-import io.circe.*
-import io.circe.parser.parse
-import nebflow.core.PathUtil
-
 case class CompactConfig(
-  // Absolute buffer used as fallback for small-context models
-  bufferTokens: Int = 13000,
-  // Proportional buffer: max of absolute or 10% of context window
-  bufferRatio: Double = 0.10,
   circuitBreakerMax: Int = 3,
   // Minimum delay between compaction retries (exponential backoff base)
   compactionRetryDelayMs: Int = 30000,
@@ -16,27 +8,13 @@ case class CompactConfig(
   emergencyKeepMessages: Int = 20,
   // Emergency: wire up emergencyClean as circuit breaker fallback
   emergencyAutoFallback: Boolean = true,
-  // FastMicroCompact: cache TTL in minutes — only fire when cache is cold
-  microCacheTtlMinutes: Int = 120,
-  // FastMicroCompact: how many recent tool results to keep untouched
-  microKeepRecent: Int = 5,
   // Post-compact file restoration
   postCompactMaxFiles: Int = 5,
   postCompactMaxCharsPerFile: Int = 5000,
   postCompactTokenBudget: Int = 50000
 ):
 
-  /** Buffer that scales with context window (10% min, or fixed 13k for small models). */
-  def bufferForWindow(contextWindow: Int): Int =
-    math.max(bufferTokens, (contextWindow * bufferRatio).toInt)
-
-  /** Compaction trigger ratio: tokens above this fraction of contextWindow trigger compaction. */
-  def compactionTriggerRatio(contextWindow: Int): Double =
-    val thresholdTokens = contextWindow - bufferForWindow(contextWindow)
-    thresholdTokens.toDouble / contextWindow
-
-  /**
-   * Exponential backoff: delay = compactionRetryDelayMs * 2^(failures - 1)
+  /** Exponential backoff: delay = compactionRetryDelayMs * 2^(failures - 1)
    * Returns 0 for failures=0 (no backoff needed).
    */
   def backoffMs(failures: Int): Long =
@@ -49,24 +27,8 @@ case class CompactConfig(
 end CompactConfig
 
 object CompactConfig:
-
-  private val configPath = PathUtil.dataRoot / "nebflow.json"
-
-  /** Load CompactConfig from nebflow.json, falling back to defaults. */
-  def apply(): CompactConfig =
-    if !os.exists(configPath) then new CompactConfig()
-    else
-      try
-        val json = parse(os.read(configPath)).toOption.getOrElse(Json.obj())
-        val compact = json.hcursor.downField("compact")
-        new CompactConfig(
-          microCacheTtlMinutes = compact.downField("microCacheTtlMinutes").as[Int].toOption.getOrElse(120),
-          microKeepRecent = compact.downField("microKeepRecent").as[Int].toOption.getOrElse(5),
-          circuitBreakerMax = compact.downField("circuitBreakerMax").as[Int].toOption.getOrElse(3),
-          bufferTokens = compact.downField("bufferTokens").as[Int].toOption.getOrElse(13000),
-          bufferRatio = compact.downField("bufferRatio").as[Double].toOption.getOrElse(0.10),
-          emergencyKeepMessages = compact.downField("emergencyKeepMessages").as[Int].toOption.getOrElse(20)
-        )
-      catch case _: Exception => new CompactConfig()
-
+  /** Return hardcoded defaults — no longer reads nebflow.json.
+   * The `compact` section in nebflow.json is silently ignored.
+   */
+  def apply(): CompactConfig = new CompactConfig()
 end CompactConfig

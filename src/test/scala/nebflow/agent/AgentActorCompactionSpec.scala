@@ -1,7 +1,7 @@
 package nebflow.agent
 
 import munit.FunSuite
-import nebflow.core.compact.CompactConfig
+import nebflow.core.compact.{CompactConfig, CompactThreshold}
 import nebflow.shared.{Message, MessageRole, TokenUsage}
 
 /**
@@ -116,8 +116,7 @@ class AgentActorCompactionSpec extends FunSuite:
 
   test("compaction success resets latestUsage to prevent re-trigger") {
     val contextWindow = 128000
-    val bufferTokens = CompactConfig().bufferForWindow(contextWindow)
-    val threshold = contextWindow - bufferTokens
+    val threshold = CompactThreshold.threshold(contextWindow)
     val highUsage = TokenUsage(inputTokens = threshold + 5000, outputTokens = 1000)
 
     val originalMsgs = List(
