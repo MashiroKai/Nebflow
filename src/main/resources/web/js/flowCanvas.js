@@ -114,6 +114,7 @@ function renderFlowsTab() {
   } else {
     scroll.innerHTML = defsHtml + runningHtml;
   }
+  overlayRoot();
   bindDagNodeClicks();
   scroll.querySelectorAll('.flow-def-view-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -147,20 +148,24 @@ function renderStaticDag(pane, dag) {
     description: dag.description,
     entry: dag.entry,
     status: 'static',
-    nodes: Object.fromEntries(
-      Object.entries(dag.nodes || {}).map(([id, n]) => [id, { nodeId: id, agent: n.agent, status: 'static' }])
-    ),
+    nodes: Object.entries(dag.nodes || {}).map(([id, n]) => ({
+      nodeId: id,
+      agent: (n && (n.agent || n.agentName)) || '',
+      status: 'static',
+    })),
     edges: Object.entries(dag.nodes || {}).flatMap(([from, n]) => {
-      const oc = n.onComplete;
+      const oc = n && n.onComplete;
+      if (!oc) return [];
       if (typeof oc === 'string') return [{ from, to: oc, condition: null }];
-      if (oc && oc.switch) return Object.entries(oc.cases || {}).map(([cond, to]) => ({ from, to, condition: cond }));
+      if (oc.goto) return [{ from, to: oc.goto, condition: null }];
+      if (oc.return) return [{ from, to: '$return', condition: null }];
+      if (oc.switch && oc.cases) return Object.entries(oc.cases).map(([cond, to]) => ({ from, to, condition: cond }));
       return [];
     }),
   };
-  import('./flowDag.js').then(({ dagCardHtml, bindDagNodeClicks }) => {
-    scroll.innerHTML = dagCardHtml(pseudoRf);
-    bindDagNodeClicks();
-  });
+  scroll.innerHTML = dagCardHtml(pseudoRf);
+  bindDagNodeClicks();
+  if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 // Render whichever tab(s) are open.
@@ -197,11 +202,10 @@ function renderFlowRunTab(instanceId) {
     scroll.className = 'stellar-container';
     pane.appendChild(scroll);
   }
-  import('./flowDag.js').then(({ renderStellarSystem, bindStellarNodeClicks }) => {
-    renderStellarSystem(scroll, flow ? [flow] : []);
-    bindStellarNodeClicks();
-    if (typeof lucide !== 'undefined') lucide.createIcons();
-  });
+  renderStellarSystem(scroll, flow ? [flow] : []);
+  overlayRoot();
+  bindStellarNodeClicks();
+  if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 // ── Auto-open Flows tab when running flows appear ──────────

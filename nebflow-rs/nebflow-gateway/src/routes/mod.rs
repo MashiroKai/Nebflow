@@ -14,6 +14,7 @@ pub mod sessions;
 pub mod skills;
 pub mod speech;
 pub mod static_files;
+pub mod teams;
 
 use std::sync::Arc;
 
@@ -140,6 +141,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/running-flows",
             get(|| async { Json(serde_json::json!({ "flows": [] })) }),
         )
+        .route("/api/flows/list", get(teams::list_flows))
         // Speech REST (no auth — internal calls, mirrors Scala)
         .route("/api/tts", post(speech::tts_handler))
         .route("/api/stt", post(speech::stt_handler))
