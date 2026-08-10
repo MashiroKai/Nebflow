@@ -124,7 +124,6 @@ Use this after writing or editing team.json / flow.json files. Always loads the 
             s"""Team '${team.name}' loaded and mounted successfully ($agentCount agents).
                |Lead: ${team.lead}
                |Members: ${team.members.mkString(", ")}
-               |${if team.flows.nonEmpty then s"Flows: ${team.flows.mkString(", ")}" else ""}
                |Trigger by Mailing the lead: Mail("${team.lead}", "your task")""".stripMargin.trim
           )
     yield result

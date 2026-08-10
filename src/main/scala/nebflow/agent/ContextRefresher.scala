@@ -319,18 +319,17 @@ object ContextRefresher:
       rulesMd = mergeRules(projectRules, folderRules)
       thinkingConfig <- resources.thinkingConfigRef.get
       (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
-      skillCatalog <- SkillService.buildSkillCatalog(state.execution.delegateCount)
+      skillCatalog <- SkillService.buildPerAgentCatalog(globalDef.skills)
+      flowCatalog <- SkillService.buildPerAgentFlowCatalog(globalDef.flows)
       teamCatalog <- buildTeamCatalogForSession(state.sessionId)
       // Memory: only Nebula (standalone, name="Nebula") and team agents get memory.
-      // Flow agents and other standalone agents (Coder/Explorer/etc) get no memory.
-      teamNameForMemory <- globalDef.category match
-        case "team" =>
-          state.sessionId match
-            case Some(sid) => nebflow.core.flow.FlowMembership.flowOfSession(sid)
-            case None => IO.pure(None)
-        case _ => IO.pure(None)
+      // Team agents get memory; standalone agents (Coder/Explorer/etc) don't.
+      teamNameForMemory <- state.sessionId match
+        case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
+        case None => IO.pure(None)
+      isTeamAgent = teamNameForMemory.isDefined
       memoryBlock =
-        if globalDef.category == "team" || globalDef.name == "Nebula" then
+        if isTeamAgent || globalDef.name == "Nebula" then
           buildMemoryBlock(globalDef.name, teamNameForMemory)
         else ""
     yield TurnContext(
@@ -343,6 +342,7 @@ object ContextRefresher:
       currentBranch,
       skillCatalog,
       teamCatalog,
+      flowCatalog,
       memoryBlock
     )
 
@@ -364,7 +364,7 @@ object ContextRefresher:
     sessionId match
       case Some(sid) =>
         for
-          teamNameOpt <- nebflow.core.flow.FlowMembership.flowOfSession(sid)
+          teamNameOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
           result <- teamNameOpt match
             case Some(teamName) =>
               // Team agent: show team-specific catalog

@@ -63,8 +63,12 @@ class WebSocketRoutes(
           case None =>
             metaOpt.flatMap(_.flowName) match
               case Some(fn) =>
-                nebflow.core.flow.FlowAgentActivator.resolveAgentFromDisk(fn, agentName, sharedResources).flatMap {
-                  case Some(defn) => IO.pure(defn)
+                nebflow.core.entity.EntityLoader.loadAgent(agentName).flatMap {
+                  case Some(entry) => IO.pure(AgentDef(
+                    name = entry.name, description = entry.description, tools = entry.tools,
+                    systemPrompt = entry.systemPrompt, category = entry.category,
+                    mcpServers = entry.mcpServers, model = entry.model
+                  ))
                   case None => nebulaFallback(agentName)
                 }
               case None => nebulaFallback(agentName)

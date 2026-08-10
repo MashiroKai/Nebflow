@@ -19,5 +19,7 @@ case class AgentDef(
   voiceEnabled: Boolean = true,
   model: Option[AgentModelConfig] = None,
   category: String = "standalone",
-  mcpServers: List[String] = Nil
+  mcpServers: List[String] = Nil,
+  skills: List[String] = Nil,   // skill names this agent can see
+  flows: List[String] = Nil     // flow names this agent can trigger
 )

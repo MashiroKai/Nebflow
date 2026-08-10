@@ -132,9 +132,14 @@ object EntityLoader:
       parseAgentJson(os.read(jsonPath)).toOption.flatMap { entry =>
         val sysMd = dir / "system.md"
         val prompt = if os.exists(sysMd) then os.read(sysMd) else ""
-        // Fall back to directory name if agent.json has no "name" field
         val resolvedName = if entry.name.nonEmpty then entry.name else dir.last
-        Some(entry.copy(name = resolvedName, systemPrompt = prompt))
+        // Infer category from directory path (not from JSON field)
+        val dirStr = dir.toString()
+        val inferredCategory =
+          if dirStr.contains("/teams/") then "team"
+          else if dirStr.contains("/flows/") then "flow"
+          else "standalone"
+        Some(entry.copy(name = resolvedName, systemPrompt = prompt, category = inferredCategory))
       }
 
   /** Load agent entry from `agents/<name>/agent.json` + `system.md`. */
@@ -256,7 +261,9 @@ object EntityLoader:
         systemPrompt = entry.systemPrompt,
         category = entry.category,
         mcpServers = entry.mcpServers,
-        model = entry.model
+        model = entry.model,
+        skills = entry.skills,
+        flows = entry.flows
       )
     }
 
@@ -364,10 +371,7 @@ object EntityLoader:
   def validateTeam(team: TeamDef, agents: Set[String]): List[String] =
     val missingLead = if !agents.contains(team.lead) then List(s"lead agent '${team.lead}' not found") else Nil
     val missingMembers = team.members.filterNot(agents.contains).map(m => s"member agent '$m' not found")
-    val missingFlows = team.flows
-      .filterNot(f => os.exists(flowsDir / s"$f.json"))
-      .map(f => s"flow '$f' not found")
-    missingLead ++ missingMembers ++ missingFlows
+    missingLead ++ missingMembers
 
   /** Validate a FlowDagDef: check all node agents exist, entry is valid, routes are valid. */
   def validateFlow(flow: FlowDagDef, agents: Set[String]): List[String] =
