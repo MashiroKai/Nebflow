@@ -167,7 +167,13 @@ export function connect() {
     localStorage.setItem('nebflow_token', token);
   }
   const storedToken = localStorage.getItem('nebflow_token') || token;
-  const wsUrl = `${proto}//${location.host}/ws${storedToken ? '?token=' + encodeURIComponent(storedToken) : ''}`;
+  // Set auth cookie so the WebSocket connection authenticates via cookie
+  // instead of exposing the token in the URL (history/logs/Referer leakage).
+  if (storedToken) {
+    document.cookie = `nebflow_token=${encodeURIComponent(storedToken)}; path=/; SameSite=Strict`;
+  }
+  // Connect without token in URL — relies on cookie auth.
+  const wsUrl = `${proto}//${location.host}/ws`;
   try {
     state.ws = new WebSocket(wsUrl);
   } catch (e) {
