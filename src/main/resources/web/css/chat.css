@@ -12,9 +12,9 @@
   flex: 1;
   overflow-y: auto;
   /* margin-top ≈ header center (16px header-offset + ~29px half header height).
-     margin-bottom ≈ input bar center (10px area padding + ~27px half bar height).
-     Messages scroll behind the glass and get clipped at each element's center. */
-  margin: 45px 0 37px;
+     margin-bottom is 0 — chat fills to #main bottom; spacing below the last
+     message is now controlled by JS (padding-bottom = #input-area height). */
+  margin: 45px 0 0;
   padding: 8px 0 36px;
   display: flex;
   flex-direction: column;
