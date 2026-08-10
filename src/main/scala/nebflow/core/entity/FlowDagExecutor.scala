@@ -339,6 +339,17 @@ object FlowDagExecutor:
   ): IO[NodeResult] =
     val rawWsSend = wsSend.getOrElse((_: Json) => IO.unit)
     val sessionId = s"dag-${flowName.take(10)}-$nodeId-${System.currentTimeMillis().toString.takeRight(6)}"
+    // Route flow agent events with nodeSessionId = this flow node's session id.
+    // Injected only when absent: AgentStreamEvent.toJson already stamps
+    // nodeSessionId for subagent events (protocol.scala withNodeSession), and
+    // an unconditional merge would clobber the nodeSessionId of a Delegate
+    // sub-agent spawned inside this flow agent (which must keep its
+    // "delegate-*" prefix so the frontend routes it to the delegate popup).
+    val routedWsSend: Json => IO[Unit] = (json: Json) =>
+      val withNode =
+        if json.hcursor.downField("nodeSessionId").as[String].isRight then json
+        else json.deepMerge(Json.obj("nodeSessionId" -> sessionId.asJson))
+      rawWsSend(withNode)
     for
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
@@ -358,7 +369,7 @@ object FlowDagExecutor:
         AgentActor(
           agentDef = agentDef,
           resources = resources,
-          wsSend = rawWsSend,
+          wsSend = routedWsSend,
           depth = 1,
           parentRef = parentAgentRef,
           sessionId = Some(sessionId),

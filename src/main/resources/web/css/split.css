@@ -233,18 +233,6 @@
   white-space: nowrap;
 }
 
-/* Session list agent tag */
-.session-agent-tag {
-  font-size: 10px;
-  color: var(--color-frame-text-muted);
-  margin-left: auto;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--color-frame-input-bg);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
 /* ===== Canvas Panel (画板) ===== */
 /* Generic display container on the right side.
    Always display:flex (never display:none) — mirrors the sidebar pattern.
@@ -357,12 +345,21 @@ body.canvas-open #canvas-panel {
   flex: 1;
   min-width: 0;
   overflow-x: auto;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border, rgba(128,128,128,0.35)) transparent;
   background: rgba(128, 128, 128, 0.08);
   border-radius: 10px;
   padding: 3px;
 }
-.canvas-tab-bar::-webkit-scrollbar { display: none; }
+.canvas-tab-bar::-webkit-scrollbar { height: 5px; }
+.canvas-tab-bar::-webkit-scrollbar-track { background: transparent; }
+.canvas-tab-bar::-webkit-scrollbar-thumb {
+  background: var(--color-border, rgba(128, 128, 128, 0.35));
+  border-radius: 3px;
+}
+.canvas-tab-bar::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted, rgba(128, 128, 128, 0.6));
+}
 
 /* ── Individual tab ── */
 @keyframes canvas-tab-enter {
@@ -437,6 +434,12 @@ body.canvas-open #canvas-panel {
 @media (prefers-color-scheme: dark) {
   .canvas-tab-bar {
     background: rgba(255, 255, 255, 0.04);
+  }
+  .canvas-tab-bar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.25);
+  }
+  .canvas-tab-bar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.4);
   }
   .canvas-tab:not(.active):hover {
     background: rgba(255, 255, 255, 0.1);
@@ -752,19 +755,6 @@ body.canvas-open #canvas-panel {
 .canvas-yaml-viewer code {
   font-family: inherit;
 }
-.canvas-code-viewer {
-  padding: 12px 0;
-}
-.canvas-code-viewer pre {
-  margin: 0;
-  border-radius: 8px;
-}
-.canvas-html-viewer {
-  padding: 16px 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
 
 /* ── Image viewer ── */
 .canvas-image-viewer {
@@ -856,55 +846,6 @@ body.canvas-open #canvas-panel {
   font-weight: 600;
 }
 
-/* ── CSV table ── */
-.canvas-csv-viewer {
-  padding: 12px;
-  overflow: auto;
-}
-.csv-table {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 12px;
-}
-.csv-table th,
-.csv-table td {
-  border: 1px solid var(--color-border, rgba(128,128,128,0.15));
-  padding: 6px 10px;
-  text-align: left;
-  white-space: nowrap;
-}
-.csv-table th {
-  background: var(--color-surface);
-  font-weight: 600;
-  color: var(--color-text);
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-.csv-table td {
-  color: var(--color-text-muted);
-}
-.csv-table tr:hover td {
-  background: var(--color-hover, rgba(128,128,128,0.05));
-}
-
-/* ── Text viewer ── */
-.canvas-text-viewer {
-  padding: 12px;
-}
-.canvas-text-viewer .text-file-info {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  opacity: 0.5;
-  margin-bottom: 8px;
-}
-.canvas-text-viewer pre {
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
 /* ── Error / Empty ── */
 .canvas-error {
   padding: 24px;
@@ -929,13 +870,6 @@ body.canvas-open #canvas-panel {
 }
 @keyframes canvas-spin {
   to { transform: rotate(360deg); }
-}
-.canvas-empty {
-  padding: 24px;
-  text-align: center;
-  color: var(--color-text-muted);
-  opacity: 0.4;
-  font-size: 13px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

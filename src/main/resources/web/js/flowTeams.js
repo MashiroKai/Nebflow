@@ -208,7 +208,9 @@ export async function populateTileModels(teams) {
         const resp = await fetch(`/api/agents/${encodeURIComponent(a.name)}/model`, { headers: authHeaders() });
         if (!resp.ok) continue;
         const cfg = await resp.json();
-        const current = cfg.current || cfg.preferred || cfg.default || '';
+        // preferred is the configured model — trust it over `current`
+        // (current is only a reference from the backend resolution).
+        const current = cfg.preferred || cfg.current || cfg.default || '';
         if (!current) continue;
         const slashIdx = current.lastIndexOf('/');
         const shortName = slashIdx >= 0 ? current.slice(slashIdx + 1) : current;

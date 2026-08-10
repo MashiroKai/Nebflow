@@ -16,6 +16,9 @@ function esc(s) {
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
 }
+// Icons for the System Prompt render/source toggle (mirror fileViewers.js)
+const CODE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+const EYE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 function shortModel(ref) {
   if (!ref) return '';
   const idx = ref.lastIndexOf('/');
@@ -179,7 +182,9 @@ export function renderAgentManager() {
 async function populateModelTag(name) {
   const model = await fetchAgentModel(name);
   if (!model) return;
-  const current = model.current || model.preferred || model.default || '';
+  // preferred is the configured model — trust it over `current`
+  // (current is only a reference from the backend resolution).
+  const current = model.preferred || model.current || model.default || '';
   if (!current) return;
   const tag = document.querySelector(`.agent-mgr-model-tag[data-agent="${esc(name)}"]`);
   if (!tag) return;
@@ -364,10 +369,14 @@ function renderAgentDetail(pane, name, detail, model) {
         <div class="agent-detail-flows-grid" id="agent-detail-flows-grid"><span class="agent-detail-chips-loading">Loading…</span></div>
       </div>
 
-      <div class="agent-detail-section">
-        <div class="agent-detail-label">System Prompt</div>
-        <textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}">${esc(prompt)}</textarea>
-        <button class="agent-detail-save-btn" id="agent-detail-save-prompt">Save</button>
+      <div class="agent-detail-section" id="agent-detail-prompt-section">
+        <div class="agent-detail-label-row">
+          <span class="agent-detail-label">System Prompt</span>
+          <button class="agent-detail-prompt-toggle" id="agent-detail-prompt-toggle" title="View source">${CODE_ICON_SVG}</button>
+        </div>
+        <div class="agent-detail-prompt-render canvas-md-viewer" id="agent-detail-prompt-render"></div>
+        <textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}" style="display:none">${esc(prompt)}</textarea>
+        <button class="agent-detail-save-btn" id="agent-detail-save-prompt" style="display:none">Save</button>
       </div>
     </div>`;
 
@@ -385,13 +394,39 @@ function renderAgentDetail(pane, name, detail, model) {
     renderModelDragList(modelListEl, name, effectiveList, current, allRefs);
   }
 
-  // Bind system prompt save
-  pane.querySelector('#agent-detail-save-prompt')?.addEventListener('click', () => {
-    const text = pane.querySelector('.agent-detail-prompt-edit').value;
+  // System prompt: rendered markdown view ↔ source textarea toggle.
+  // Rendered mode is default; Save only shows in source mode.
+  const promptRender = pane.querySelector('#agent-detail-prompt-render');
+  const promptEdit = pane.querySelector('.agent-detail-prompt-edit');
+  const promptToggle = pane.querySelector('#agent-detail-prompt-toggle');
+  const saveBtn = pane.querySelector('#agent-detail-save-prompt');
+
+  let renderMd = null;
+  let sourceMode = false;
+  import('./utils.js').then(({ renderMarkdownWithMath }) => {
+    renderMd = renderMarkdownWithMath;
+    if (pane.isConnected) promptRender.innerHTML = renderMd(prompt);
+  });
+
+  const setPromptMode = (src) => {
+    sourceMode = src;
+    promptToggle.innerHTML = src ? EYE_ICON_SVG : CODE_ICON_SVG;
+    promptToggle.title = src ? 'View rendered' : 'View source';
+    promptRender.style.display = src ? 'none' : '';
+    promptEdit.style.display = src ? '' : 'none';
+    saveBtn.style.display = src ? '' : 'none';
+    // Switching back to rendered re-renders the current textarea value
+    if (!src && renderMd) promptRender.innerHTML = renderMd(promptEdit.value);
+  };
+
+  promptToggle?.addEventListener('click', () => setPromptMode(!sourceMode));
+
+  // Bind system prompt save (source mode only)
+  saveBtn?.addEventListener('click', () => {
+    const text = promptEdit.value;
     sendWs({ type: 'updateAgentSystemPrompt', name, systemMd: text });
-    const btn = pane.querySelector('#agent-detail-save-prompt');
-    btn.textContent = 'Saved';
-    setTimeout(() => { btn.textContent = 'Save'; }, 1500);
+    saveBtn.textContent = 'Saved';
+    setTimeout(() => { saveBtn.textContent = 'Save'; }, 1500);
   });
 
   // Bind tool toggle chips

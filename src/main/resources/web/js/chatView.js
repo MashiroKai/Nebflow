@@ -18,7 +18,6 @@ import state from './state.js';
 export let activeView = null;
 
 export function setActiveView(v) { activeView = v; }
-export function getActiveView() { return activeView; }
 
 // ── ChatView class ──────────────────────────────────────────────────────
 

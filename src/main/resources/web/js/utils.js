@@ -327,13 +327,6 @@ export function attachToolClick(card) {
 }
 
 // === Scroll helpers ===
-export function shouldAutoScroll() {
-  if (!activeView) return false;
-  const chat = activeView.dom.chat;
-  const threshold = 60;
-  return chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold;
-}
-
 export function smartScroll() {
   if (!activeView) return;
   const chat = activeView.dom.chat;
@@ -493,34 +486,3 @@ export function createMsgCopyButton(text) {
   return btn;
 }
 
-const RECALL_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>';
-
-export function createMsgRecallButton(text) {
-  const btn = document.createElement('button');
-  btn.className = 'msg-copy msg-recall';
-  btn.title = t('chat.recall') || 'Recall';
-  btn.innerHTML = RECALL_SVG;
-  btn.onclick = (e) => {
-    e.stopPropagation();
-    recallUserMessage(text, btn);
-  };
-  return btn;
-}
-
-async function recallUserMessage(text, btn) {
-  const { activeView } = await import('./chatView.js');
-  const { sendWs } = await import('./ws.js');
-  const v = activeView;
-  if (!v || !v.sessionId) return;
-  // Put the text back into the input box
-  if (v.dom.input) {
-    v.dom.input.value = text;
-    v.dom.input.style.height = 'auto';
-    v.dom.input.focus();
-  }
-  // Send the recall request to the backend
-  sendWs({ type: 'recallMessage', sessionId: v.sessionId });
-  // Optimistically remove the message row from the DOM
-  const row = btn.closest('.row.user');
-  if (row) row.remove();
-}

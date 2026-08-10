@@ -195,8 +195,14 @@ export async function autoRestore() {
         if (!a.sessionId) continue;
         const restStatus = (a.status || 'idle').toLowerCase() === 'running' ? 'running' : 'idle';
         const liveStatus = agentStatus.get(a.sessionId);
+        // Live agentStart/agentDone events are the source of truth; the
+        // server's /api/teams/mounted status is only a fallback. Never let a
+        // stale "idle" from the server demote a live "running" — the backend
+        // busyMap (FlowTreeActor.markBusy/markIdle) has no callers and always
+        // reports idle, so a demote here would erase the running state the
+        // moment the Teams tab is re-opened.
         if (!liveStatus) agentStatus.set(a.sessionId, restStatus);
-        else if (liveStatus === 'running' && restStatus === 'idle') agentStatus.set(a.sessionId, 'idle');
+        else if (restStatus === 'running' && liveStatus !== 'running') agentStatus.set(a.sessionId, 'running');
       }
     }
     teamsLoaded = true;
@@ -231,7 +237,7 @@ export async function openTeams() {
   if (hasTab('teams')) {
     setActiveTab('teams');
   } else {
-    openTab('teams', 'Teams', { type: 'teams', closable: false });
+    openTab('teams', 'Teams', { type: 'teams', closable: true });
   }
   renderTeamsTab();
   autoRestore().then(() => { if (teams.length > 0) renderTeamsTab(); });

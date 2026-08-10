@@ -347,18 +347,6 @@ function renderMessage(m) {
   return '';
 }
 
-// ===== Update a single message in the DOM =====
-
-function updateMessageInDom(deviceId, msgId) {
-  // Only re-render if this device's modal is open
-  if (deviceId !== openDeviceId) return;
-  const msgs = dropboxMessages[deviceId] || [];
-  const msg = msgs.find(m => m.msgId === msgId);
-  if (msg) {
-    renderMessages(deviceId);
-  }
-}
-
 // ===== WS message handlers =====
 
 export function initDropbox() {

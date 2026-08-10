@@ -45,11 +45,6 @@ function savePanelOpen(open) {
   catch (_) {}
 }
 
-function clearCachedTasks(sessionId) {
-  if (!sessionId) return;
-  try { localStorage.removeItem(TASKS_CACHE_PREFIX + sessionId); } catch (_) {}
-}
-
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function $(sel) { return document.querySelector(sel); }

@@ -233,6 +233,14 @@ export function connect() {
       // Pong reply — clear pending flag (used by heartbeat + wake detection)
       if (msg.type === 'pong') { state.pendingPong = false; return; }
 
+      // ── BUG 6 fix: save/restore activeView ────────────────────────────
+      // activeView is a module-global (chatView.js). The delegate/flow
+      // interceptors below call setActiveView() to render into popup ChatViews,
+      // which would otherwise leak into subsequent rendering within the same
+      // event-loop tick. Snapshot here and restore after each interceptor
+      // branch so popup rendering never disturbs the user's current view.
+      const savedView = activeView;
+
       // ── Message filtering ────────────────────────────────────────────
       // GLOBAL/TERMINAL/STREAM sets are module-level (see top of file) for O(1)
       // lookup and to avoid per-message allocation.
@@ -274,6 +282,40 @@ export function connect() {
           try { h(msg, activeView); }
           catch (e) { console.error('[ws] delegate handler error for', msg.type, ':', e.message); }
         }
+        setActiveView(savedView); // restore pre-message view (BUG 6)
+        return;
+      }
+
+      // ── Team agent events: convert + route to the agent's popup ──
+      // MailTool.activateAgent stamps Mail-activated team agent events with
+      // nodeSessionId = "team-<sessionId>". Convert them to standard chat
+      // events (agentTextDelta → textDelta, etc. — same as the flow/delegate
+      // branches below) and route them to the popup ChatView. The popup is
+      // registered under the BARE sessionId (openStepPopup keys team popups
+      // with the unprefixed sid from /api/teams/mounted), so strip the
+      // prefix before converting/looking up. Must NOT fall through to the
+      // flow interceptor below — its ensureStepView would key on the
+      // prefixed id and never match the popup.
+      if (msg.nodeSessionId && msg.nodeSessionId.startsWith('team-')) {
+        const bareSid = msg.nodeSessionId.replace(/^team-/, '');
+        const teamView = findViewBySessionId(bareSid) || null;
+        setActiveView(teamView);
+        const converted = convertAgentEvent({ ...msg, nodeSessionId: bareSid });
+        if (converted) {
+          const convList = handlers[converted.type];
+          if (convList) for (const h of convList) {
+            try { h(converted, teamView); }
+            catch (e) { console.error('[ws] team handler error for', converted.type, ':', e.message); }
+          }
+        }
+        // Also dispatch the original event (status tracking, delegate
+        // indicator, stream timeouts) with the pre-routed view.
+        const teamList = handlers[msg.type];
+        if (teamList) for (const h of teamList) {
+          try { h(msg, view); }
+          catch (e) { console.error('[ws] team handler error for', msg.type, ':', e.message); }
+        }
+        setActiveView(savedView); // restore pre-message view (BUG 6)
         return;
       }
 
@@ -300,6 +342,7 @@ export function connect() {
           try { h(msg, activeView); }
           catch (e) { console.error('[ws] handler error for', msg.type, ':', e.message); }
         }
+        setActiveView(savedView); // restore pre-message view (BUG 6)
         return;
       }
 

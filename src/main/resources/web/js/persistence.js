@@ -31,18 +31,6 @@ function createAiCopyBadge(timestamp, text) {
   return badge;
 }
 
-// ---------- Duration formatting (mirrors chat.js formatDuration) ----------
-function formatDurationPersisted(ms) {
-  const totalSeconds = ms / 1000;
-  if (totalSeconds < 1) return '< 1s';
-  const rounded = Math.round(totalSeconds);
-  if (rounded < 60) return rounded + 's';
-  const minutes = Math.floor(rounded / 60);
-  const seconds = rounded % 60;
-  return minutes + 'm ' + seconds + 's';
-}
-
-
 // ---------- Safe localStorage write with quota handling ----------
 function safeSetItem(key, value) {
   try {

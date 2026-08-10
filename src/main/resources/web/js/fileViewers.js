@@ -4,7 +4,6 @@
 // ctx = { content, absPath, fileName, size, itemType }
 //
 // The registry maps itemType → viewer function.
-// New file types can be added via registerViewer().
 
 function getToken() {
   return localStorage.getItem('nebflow_token') || '';
@@ -87,6 +86,23 @@ const themePropScript = `<script>
       if(!s){s=document.createElement('style');s.id='nf-canvas-theme';document.head.appendChild(s);}
       s.textContent=':root{'+e.data._nfThemeVars+'}';
     }
+  });
+})();
+<\/script>`;
+
+/** Script injected into the iframe to intercept # anchor clicks and scroll
+ *  within the iframe instead of navigating to the parent URL. */
+const anchorNavScript = `<script>
+(function(){
+  document.addEventListener('click', function(e) {
+    var link = e.target.closest('a[href^="#"]');
+    if (!link) return;
+    var href = link.getAttribute('href');
+    if (!href || href === '#') { e.preventDefault(); window.scrollTo(0, 0); return; }
+    e.preventDefault();
+    var id = href.slice(1);
+    var target = document.getElementById(id);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 })();
 <\/script>`;
@@ -297,15 +313,20 @@ async function viewMarkdown(pane, { content, absPath, fileName }) {
       else slugCounts[slug] = 0;
       h.id = slug;
     });
-    // Handle TOC anchor clicks — scroll within the pane, not the window
+    // Handle TOC anchor clicks — scroll within the pane, not the window.
+    // marked v12 URL-encodes CJK chars in href="#..." anchors, but heading
+    // IDs use raw characters. Try decoded first, fall back to raw.
     mdViewer.addEventListener('click', (e) => {
       const link = e.target.closest('a[href^="#"]');
       if (!link) return;
       const href = link.getAttribute('href');
       if (!href || href === '#') return;
       e.preventDefault();
-      // [id="..."] selector avoids breakage on special chars (CJK, spaces)
-      const target = mdViewer.querySelector(`[id="${href.slice(1)}"]`);
+      const raw = href.slice(1);
+      let decoded;
+      try { decoded = decodeURIComponent(raw); } catch { decoded = raw; }
+      const target = mdViewer.querySelector(`[id="${decoded}"]`) ||
+                     mdViewer.querySelector(`[id="${raw}"]`);
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }
@@ -409,7 +430,7 @@ function viewHtml(pane, { content, absPath, fileName }) {
   <\/script>`;
 
   // 6. Assemble srcdoc with base styles (transparent bg, theme-aware, scrollable)
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${svgInlineScript}${themePropScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${svgInlineScript}${anchorNavScript}${themePropScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.style.width = '100%';
@@ -848,15 +869,6 @@ const viewers = {
   pptx: viewPptx,
   epub: viewEpub,
 };
-
-/**
- * Register a custom viewer for a file type.
- * @param {string} itemType — e.g. 'image', 'pdf', 'code'
- * @param {Function} fn — async (paneEl, ctx) => void
- */
-export function registerViewer(itemType, fn) {
-  viewers[itemType] = fn;
-}
 
 /**
  * Render file content into a Canvas tab pane using the appropriate viewer.

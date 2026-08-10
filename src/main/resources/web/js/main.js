@@ -17,7 +17,6 @@ import {
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
-  initHeaderModelInfo,
   persistUnread, createNewFolder, getCurrentFolderId,
   resetChatForActiveSession
 } from './sidebar.js';
@@ -49,17 +48,6 @@ import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import * as flowCanvas from './flowCanvas.js';
 import { initColResizers } from './colResizer.js';
 import { initActivityBar } from './activityBar.js';
-import { initModelPicker, refreshModelPicker } from './modelPicker.js';
-
-// Randomized cosmic thinking bubble text
-const THINKING_VARIANTS = 6; // chat.thinking.0 through .5
-let _lastThinkingIdx = -1;
-function randomThinkingText() {
-  let idx;
-  do { idx = Math.floor(Math.random() * THINKING_VARIANTS); } while (idx === _lastThinkingIdx && THINKING_VARIANTS > 1);
-  _lastThinkingIdx = idx;
-  return t('chat.thinking.' + idx);
-}
 
 // ---------- Live thinking timer ----------
 let _thinkingTimerInterval = null;
@@ -156,7 +144,6 @@ state.dom = {
   bgDropdownEl: document.getElementById('bg-dropdown'),
   bgDropdownListEl: document.getElementById('bg-dropdown')?.querySelector('.bg-dropdown-list'),
   // Header status indicators — surfaced on state.dom for ws.js indicator updates.
-  headerModelInfoEl: document.getElementById('header-model-info'),
   bypassToggleEl: document.getElementById('bypass-toggle'),
   delegateIndicatorEl: document.getElementById('delegate-indicator'),
   delegateDropdownEl: document.getElementById('delegate-dropdown'),
@@ -183,7 +170,6 @@ initChatView(
     voiceBtn: document.getElementById('voice-btn'),
     voiceOverlay: document.getElementById('voice-overlay'),
     voiceText: document.getElementById('voice-text'),
-    headerModelInfoEl: document.getElementById('header-model-info'),
     bgIndicatorEl: document.getElementById('bg-indicator'),
     bgCountEl: document.getElementById('bg-indicator')?.querySelector('.bg-count'),
     bgDropdownEl: document.getElementById('bg-dropdown'),
@@ -249,21 +235,6 @@ function updateAgentNotificationDot(agentName) {
     }
   } else if (dot) {
     dot.remove();
-  }
-}
-
-/** Render into a specific session's window from an async callback (outside
- *  the normal ws.js dispatch). Sets activeView to the target view so
- *  rendering functions write to the correct DOM, then restores. */
-function renderToSession(sessionId, fn) {
-  const view = findViewBySessionId(sessionId);
-  if (view) {
-    const saved = activeView;
-    setActiveView(view);
-    try { fn(); }
-    finally { setActiveView(saved); }
-  } else {
-    fn();
   }
 }
 
@@ -536,104 +507,6 @@ onMessage('toolArgDelta', (msg, view) => {
 // Header model info display
 if (!state.sessionModelInfo) state.sessionModelInfo = {};
 
-function formatTokens(n) {
-  if (n == null) return '';
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return Math.round(n / 1000) + 'k';
-  return String(n);
-}
-
-function updateHeaderModelInfo() {
-  if (!activeView) return;
-  const el = activeView.dom.headerModelInfoEl;
-  if (!el) return;
-  const sid = activeView?.sessionId;
-  const info = sid ? state.sessionModelInfo[sid] : null;
-  if (!info || !info.contextWindow) {
-    el.textContent = '';
-    el.style.display = 'none';
-    return;
-  }
-  const ratio = info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
-  const pct = Math.min(Math.round(ratio * 100), 100);
-  let barColor = '#4caf50'; // green
-  if (ratio > 0.5) barColor = '#d4a030'; // amber
-  if (ratio > 0.75) barColor = '#e53935'; // red
-
-  const thresholdPct = Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
-  const tooltip = info.inputTokens != null
-    ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%) · threshold ${thresholdPct}%`
-    : `${formatTokens(info.contextWindow)} context window`;
-
-  // Circular ring geometry (used in compact mode)
-  const R = 15;
-  const CIRC = 2 * Math.PI * R;
-  const dashLen = CIRC * pct / 100;
-  const thresholdAngle = thresholdPct * 3.6;
-
-  el.style.display = 'inline-flex';
-
-  // Incremental update: if structure already exists, patch values in-place
-  // to avoid innerHTML rebuild triggering ResizeObserver → compact toggle loop.
-  const existingBar = el.querySelector('.ctx-bar-wrap');
-  const existingRing = el.querySelector('.ctx-ring-wrap');
-
-  if (existingBar && existingRing) {
-    // Patch bar
-    existingBar.title = tooltip;
-    const fill = existingBar.querySelector('.ctx-bar-fill');
-    if (fill) { fill.style.width = pct + '%'; fill.style.background = barColor; }
-    const threshold = existingBar.querySelector('.ctx-bar-threshold');
-    if (threshold) threshold.style.left = thresholdPct + '%';
-    const thresholdLabel = existingBar.querySelector('.ctx-bar-threshold-label');
-    if (thresholdLabel) { thresholdLabel.style.left = thresholdPct + '%'; thresholdLabel.textContent = thresholdPct + '%'; }
-    const label = existingBar.querySelector('.ctx-bar-label');
-    if (label) label.textContent = `${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}`;
-
-    // Patch ring
-    existingRing.title = tooltip;
-    const ringFill = existingRing.querySelector('circle:nth-child(2)');
-    if (ringFill) {
-      ringFill.setAttribute('stroke', barColor);
-      ringFill.setAttribute('stroke-dasharray', `${dashLen} ${CIRC}`);
-    }
-    const ringLine = existingRing.querySelector('.ctx-ring-threshold');
-    if (ringLine) ringLine.setAttribute('transform', `rotate(${thresholdAngle} 18 18)`);
-    const ringPct = existingRing.querySelector('.ctx-ring-pct');
-    if (ringPct) ringPct.textContent = pct;
-    return;
-  }
-
-  // First render — build full structure
-  el.innerHTML = `
-    <div class="ctx-bar-wrap ctx-full" title="${tooltip}">
-      <div class="ctx-bar-track">
-        <div class="ctx-bar-fill" style="width:${pct}%;background:${barColor};"></div>
-        <div class="ctx-bar-threshold" style="left:${thresholdPct}%;"></div>
-        <div class="ctx-bar-threshold-label" style="left:${thresholdPct}%;">${thresholdPct}%</div>
-      </div>
-      <span class="ctx-bar-label">${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}</span>
-    </div>
-    <div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
-      <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
-        <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
-        <circle cx="18" cy="18" r="${R}" fill="none" stroke="${barColor}" stroke-width="3.5"
-                stroke-dasharray="${dashLen} ${CIRC}"
-                stroke-linecap="round"
-                transform="rotate(-90 18 18)"
-                style="transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"/>
-        <line x1="18" y1="1.5" x2="18" y2="5" stroke="rgba(200,80,80,0.7)" stroke-width="1.5"
-              transform="rotate(${thresholdAngle} 18 18)"
-              class="ctx-ring-threshold"/>
-      </svg>
-      <span class="ctx-ring-pct">${pct}</span>
-    </div>
-  `;
-
-  // Threshold marker is read-only display (value from backend CompactStart
-  // compactThreshold). No drag interaction — threshold is system-controlled.
-}
-state.updateHeaderModelInfo = updateHeaderModelInfo;
 
 // Real-time usage update after each LLM round (multi-round tool calling)
 onMessage('usageUpdate', (msg, view) => {
@@ -646,7 +519,6 @@ onMessage('usageUpdate', (msg, view) => {
       compactThreshold: msg.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
-    if (view) updateHeaderModelInfo();
   }
 });
 
@@ -670,7 +542,6 @@ onMessage('done', (msg, view) => {
       compactThreshold: msg.compactThreshold != null ? msg.compactThreshold : state.sessionModelInfo[sid]?.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
-    if (view) updateHeaderModelInfo();
   }
   // Flush any remaining buffered text/thinking for this session
   if (msg.sessionId) {
@@ -967,7 +838,6 @@ onMessage('sessionList', (msg, view) => {
   const activeId = msg.activeId;
 
   renderSessionSidebar(allSessions, activeId);
-  initHeaderModelInfo();
   // Mark the initial session as restored — getHistory is already sent by
   // resetChatForActiveSession (called inside renderSessionSidebar when activeId changes).
   if (!restoredSessionId && activeId) {
@@ -1340,7 +1210,10 @@ document.addEventListener('click', (e) => {
 
 onMessage('agentStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  const sid = msg.sessionId || state.activeSessionId;
+  // rootSessionId points at the top-level main session even for nested
+  // delegates (child → grandchild), so sessionDelegates stays keyed by the
+  // session the user is actually viewing.
+  const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || msg.name;
   if (view) view.stream.activeAgentId = aid;
@@ -1359,7 +1232,7 @@ onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessi
 
 onMessage('agentToolStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  const sid = msg.sessionId || state.activeSessionId;
+  const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
   if (aid && state.sessionDelegates[sid] && state.sessionDelegates[sid][aid]) {
@@ -1376,7 +1249,7 @@ onMessage('agentRetryStatus', (msg, view) => { resetStreamTimeout(msg.sessionId)
 
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  const sid = msg.sessionId || state.activeSessionId;
+  const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
   if (aid && state.sessionDelegates[sid]) {
@@ -1432,11 +1305,16 @@ onMessage('flowMail', (msg) => {
 // agentStart/agentDone carry nodeSessionId (set by FlowAgentActivator's wsSend wrapper).
 // ws.js intercepts them into the popup ChatView, but we also need to update
 // the flow canvas status pills.
+// Team agent events carry nodeSessionId = "team-<sessionId>"; strip the prefix
+// so agentStatus keys match the bare sessionId from /api/teams/mounted
+// (flowTeams.statusOf / flowCanvas.autoRestore look up by bare sid).
 onMessage('agentStart', (msg) => {
-  if (msg.nodeSessionId) flowCanvas.onAgentStart(msg.nodeSessionId);
+  const sid = msg.nodeSessionId ? msg.nodeSessionId.replace(/^team-/, '') : null;
+  if (sid) flowCanvas.onAgentStart(sid);
 });
 onMessage('agentDone', (msg) => {
-  if (msg.nodeSessionId) flowCanvas.onAgentDone(msg.nodeSessionId);
+  const sid = msg.nodeSessionId ? msg.nodeSessionId.replace(/^team-/, '') : null;
+  if (sid) flowCanvas.onAgentDone(sid);
 });
 
 onMessage('flowStarted', (msg) => {
@@ -1541,7 +1419,6 @@ onMessage('agentSessionList', (msg, view) => {
 
   // Render sidebar — active highlight shows the current active session
   renderSessionSidebar(sessions, state.activeSessionId);
-  initHeaderModelInfo();
 });
 
 onMessage('agentSystemPrompt', (msg, view) => showAgentModal(msg.name, msg.systemMd || ''));
@@ -1580,8 +1457,6 @@ onMessage('configData', (msg, view) => {
   if (settingsPanel && settingsPanel.classList.contains('active')) {
     renderSettings();
   }
-  // Refresh the input-bar model picker with the latest chain.
-  refreshModelPicker();
 });
 
 onMessage('configUpdated', (msg, view) => {
@@ -1596,7 +1471,6 @@ onMessage('configUpdated', (msg, view) => {
 onMessage('modelOptions', (msg, view) => {
   const models = msg.models || [];
   state.allModelRefs = models.map(m => m.ref).filter(Boolean);
-  refreshModelPicker();
 });
 
 onMessage('sessionModelSet', (msg, view) => {
@@ -1606,7 +1480,6 @@ onMessage('sessionModelSet', (msg, view) => {
 onMessage('modelChanged', (msg, view) => {
   if (msg.newModel) {
     state.currentModel = msg.newModel;
-    refreshModelPicker();
   }
 });
 
@@ -2082,15 +1955,6 @@ onMessage('forkComplete', (msg, view) => {
   renderSessionSidebar(state.sessions, msg.sessionId);
 });
 
-// ---------- 4b. Responsive header: full bar ↔ compact ring ----------
-// The context indicator (#header-model-info) lives in header-left, next to
-// the sidebar toggle. The session name (.header-center) is absolutely
-// positioned at the header's midpoint. When the header narrows, the session
-// name's left edge approaches the indicator's right edge.
-//
-// Trigger: gap between indicator's right edge and session name's left edge.
-//   gap < 8px  → switch to compact ring (saves ~92px)
-//   gap > 120px → switch back to full bar (hysteresis covers the 92px diff)
 // ── Global ESC handler: close any visible modal/overlay/dropdown ──────
 (function initGlobalEscHandler() {
   document.addEventListener('keydown', (e) => {
@@ -2228,7 +2092,6 @@ requestAnimationFrame(() => {
 });
 
 initActivityBar();
-initModelPicker();
 document.getElementById('canvas-toggle-btn')?.addEventListener('click', () => {
   // Toggle Canvas open/close — closing does NOT clear tabs.
   if (document.body.classList.contains('canvas-open')) {

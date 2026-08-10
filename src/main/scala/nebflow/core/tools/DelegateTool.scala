@@ -43,7 +43,21 @@ object DelegateTool extends Tool:
     val base = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
     val routeJson = Json.obj("nodeSessionId" -> subagentId.asJson)
     parentSessionId match
-      case Some(sid) => json => base(json.deepMerge(Json.obj("sessionId" -> sid.asJson)).deepMerge(routeJson))
+      case Some(sid) => json =>
+        // Carry the original parent sessionId as rootSessionId so nested
+        // delegates (child → grandchild) still index against the top-level
+        // main session on the frontend. routeWsSend wrappers compose such that
+        // the wrapper created first (closest to the root session) executes
+        // last, so overwriting here always yields the true root session id.
+        val withRoot = json.deepMerge(Json.obj("rootSessionId" -> sid.asJson))
+        val withSession = withRoot.deepMerge(Json.obj("sessionId" -> sid.asJson))
+        // Preserve an existing nodeSessionId: for nested delegates, toJson
+        // already stamped the grandchild's own nodeSessionId — overwriting it
+        // would route grandchild events into the child's popup.
+        val withNode =
+          if json.hcursor.downField("nodeSessionId").as[String].isRight then withSession
+          else withSession.deepMerge(routeJson)
+        base(withNode)
       case None => json => base(json.deepMerge(routeJson))
 
   /** Maximum sub-agent depth (matches AgentCore.MaxDepth). */
