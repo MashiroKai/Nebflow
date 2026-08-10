@@ -155,10 +155,10 @@ export function openCanvas(title = '') {
   document.body.classList.add('canvas-open');
 }
 
-/** Close the canvas panel and clear all tabs.
+/** Close the canvas panel (hide visually — tabs are preserved).
  *
  *  Mirrors the sidebar pattern: remove body class, CSS animates back to 0.
- *  After the transition, all tabs are removed. */
+ *  Tabs remain in memory and localStorage so they can be restored on reopen. */
 export function closeCanvas() {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
@@ -179,9 +179,8 @@ export function closeCanvas() {
   // Remove body class — CSS animates flex-basis + opacity back to 0.
   document.body.classList.remove('canvas-open');
 
-  // Cleanup after the CSS transition completes.
+  // Tabs are preserved — closing Canvas just hides the panel visually.
   closeTimeout = setTimeout(() => {
-    clearAllTabs();
     closeTimeout = null;
   }, 350);
 }
@@ -468,24 +467,6 @@ export function hasTab(id) {
   return tabs.has(id);
 }
 
-/** Remove all tabs and reset state. Called during canvas close.
- *  Dispatches 'canvas-tab-closed' for each tab so external code can clean up. */
-function clearAllTabs() {
-  tabs.forEach(t => {
-    // Dispose Monaco editor if present
-    if (t.paneEl._editorHandle) {
-      t.paneEl._editorHandle.dispose();
-      t.paneEl._editorHandle = null;
-    }
-    document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: t.id } }));
-    t.paneEl.remove();
-    t.tabEl.remove();
-  });
-  tabs.clear();
-  activeTabId = null;
-  previewTabs.clear();
-}
-
 // ── Content injection ──────────────────────────────────────
 
 /** Set content for a specific tab (or the active tab if no id given).
@@ -652,9 +633,8 @@ export function showCanvasHeader(visible) {
  *  Tabs without absPath (Teams/Flows panels) are restored synchronously
  *  and re-render from live state; file tabs re-fetch content on restore. */
 function persistTabs() {
-  // Don't overwrite saved tabs with an empty list — clearAllTabs (from
-  // closeCanvas) empties the in-memory Map, but the saved data should
-  // survive so tabs can be restored on next page load.
+  // Don't overwrite saved tabs with an empty list — transient states can
+  // empty the in-memory Map, but saved data should survive for restoration.
   if (tabs.size === 0) {
     console.log('[persistTabs] tabs empty — skipping save to preserve existing data');
     return;

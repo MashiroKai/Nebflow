@@ -591,7 +591,7 @@ export function applyPopCard(card, label, summary, inputJson, isError) {
       const fileName = popFilePath.split('/').pop() || popFilePath;
       window.dispatchEvent(new CustomEvent('workspace-open-item', {
         detail: {
-          id: 'pop:' + popFilePath,
+          id: 'file:' + popFilePath,
           title: popTitle || fileName,
           itemType: '',
           content: '',

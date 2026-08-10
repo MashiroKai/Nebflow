@@ -146,7 +146,7 @@ Example: {"filePath": "~/projects/README.md", "title": "README"}"""
               val msg = Json.obj(
                 "type" -> "popFile".asJson,
                 "item" -> Json.obj(
-                  "id" -> s"pop:${path.toString}".asJson,
+                  "id" -> s"file:${path.toString}".asJson,
                   "itemType" -> itemType.asJson,
                   "title" -> tabTitle.asJson,
                   "content" -> content.asJson,

@@ -206,20 +206,15 @@ export function getRunningFlows() {
 
 export function onSessionChange() { autoRestore(); }
 
-export async function toggleCanvas() {
-  const btn = document.getElementById('team-toggle-btn');
+export async function openTeams() {
+  const btn = document.getElementById('teams-btn');
   btn?.classList.add('active');
   if (hasTab('teams')) {
-    // Teams tab already exists — just switch to it (never close Canvas here).
-    // Closing is done via the pane's ✕ button, not the Teams button.
     setActiveTab('teams');
   } else {
     openTab('teams', 'Teams', { type: 'teams', closable: false });
   }
   renderTeamsTab();
-  // Always fetch fresh data — don't rely on potentially stale cache.
-  // If the initial load returned empty (e.g. teams not mounted yet),
-  // this ensures we retry on every panel open.
   autoRestore().then(() => { if (teams.length > 0) renderTeamsTab(); });
   fetchRunningFlows().then(() => {
     if (runningFlows.length > 0) maybeAutoOpenFlowsTab();
@@ -227,18 +222,30 @@ export async function toggleCanvas() {
   });
 }
 
+export async function openFlows() {
+  const btn = document.getElementById('flows-btn');
+  btn?.classList.add('active');
+  if (hasTab('flows')) {
+    setActiveTab('flows');
+  } else {
+    openTab('flows', 'Flows', { type: 'flow', closable: true });
+  }
+  renderFlowsTab();
+}
+
 // Test hook
 if (typeof window !== 'undefined') {
-  window.__testFlow = { openMailbox, openDefinition, toggleCanvas, openFlowRunTab, _teams: () => teams };
+  window.__testFlow = { openMailbox, openDefinition, openTeams, openFlowRunTab, _teams: () => teams };
 }
 
 document.addEventListener('canvas-tab-closed', (e) => {
   if (e.detail?.id === 'teams') {
     closeViewer();
-    document.getElementById('team-toggle-btn')?.classList.remove('active');
+    document.getElementById('teams-btn')?.classList.remove('active');
   }
-  if (e.detail?.id === 'flows') {
+  else if (e.detail?.id === 'flows') {
     closeViewer();
+    document.getElementById('flows-btn')?.classList.remove('active');
   }
 });
 
@@ -248,10 +255,13 @@ document.addEventListener('canvas-tab-closed', (e) => {
 window.addEventListener('canvas-tab-restore', (e) => {
   const { id } = e.detail || {};
   if (id === 'teams') {
-    document.getElementById('team-toggle-btn')?.classList.add('active');
+    document.getElementById('teams-btn')?.classList.add('active');
     renderTeamsTab();
   }
-  else if (id === 'flows') renderFlowsTab();
+  else if (id === 'flows') {
+    document.getElementById('flows-btn')?.classList.add('active');
+    renderFlowsTab();
+  }
 });
 
 // Re-fetch teams on WS reconnect — covers the race condition where

@@ -140,7 +140,7 @@ Message type (optional, default "INFO"):
             case Some(targetSid) =>
               TeamSessionRegistry.instanceAndAgentOfSession(targetSid).flatMap {
                 case Some((instance, agentName)) =>
-                  EntityLoader.loadAgent(agentName).flatMap {
+                  EntityLoader.loadTeamAgent(instance, agentName).flatMap {
                     case Some(entry) =>
                       val agentDef = AgentDef(
                         name = entry.name, description = entry.description, tools = entry.tools,
@@ -416,7 +416,11 @@ Message type (optional, default "INFO"):
       refOpt <- sessionOpt.traverse_ { session =>
         val agentName = session.agentName.getOrElse("")
         for
-          entryOpt <- EntityLoader.loadAgent(agentName)
+          // Use loadTeamAgent when session belongs to a team (checks team dir first, then global).
+          // Plain loadAgent only checks global agents/ which misses team-scoped agents like Manager.
+          entryOpt <- session.flowName match
+            case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
+            case None => EntityLoader.loadAgent(agentName)
           _ <- entryOpt.traverse_ { entry =>
             val agentDef = AgentDef(
               name = entry.name, description = entry.description, tools = entry.tools,
@@ -479,8 +483,9 @@ Message type (optional, default "INFO"):
     for
       fromOpt <- TeamSessionRegistry.agentOfSession(fromSid)
       toInfo <- TeamSessionRegistry.instanceAndAgentOfSession(toSid)
+      senderName = fromOpt.orElse(ctx.agentDef.map(_.name)).getOrElse("Nebula")
       (teamName, fromName) = toInfo match
-        case Some((inst, _)) => (inst, fromOpt.getOrElse("Nebula"))
+        case Some((inst, _)) => (inst, senderName)
         case None => ("", fromOpt.getOrElse(fromSid.take(8)))
       parentSid <- TeamSessionRegistry.parentSessionOf(teamName)
       mailboxSid = parentSid.getOrElse(ctx.sessionId.getOrElse(""))
