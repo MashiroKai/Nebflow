@@ -101,12 +101,12 @@
 }
 /* Context window indicator — always compact ring */
 
-/* Full horizontal bar — hidden (kept in DOM for threshold drag compatibility) */
+/* Full horizontal bar — hidden (kept in DOM for threshold display compatibility).
+   Threshold marker is read-only — no drag affordances (no ew-resize cursors). */
 .ctx-bar-wrap {
   display: none;
   align-items: center;
   gap: 8px;
-  cursor: ew-resize;
   padding: 2px 0;
   user-select: none;
 }
@@ -117,7 +117,6 @@
   background: rgba(128,128,128,0.15);
   border-radius: 2px;
   overflow: visible;
-  cursor: ew-resize;
   user-select: none;
 }
 .ctx-bar-fill {
@@ -132,20 +131,8 @@
   height: 12px;
   background: rgba(128,128,128,0.5);
   border-radius: 1px;
-  cursor: ew-resize;
   transition: background 0.15s ease, height 0.15s ease, top 0.15s ease;
   z-index: 2;
-}
-.ctx-bar-threshold:hover,
-.ctx-bar-threshold.dragging {
-  background: rgba(200,80,80,0.8);
-  height: 16px;
-  top: -6px;
-}
-.ctx-bar-track.dragging .ctx-bar-threshold {
-  background: rgba(200,80,80,0.8);
-  height: 16px;
-  top: -6px;
 }
 .ctx-bar-threshold-label {
   position: absolute;
@@ -169,7 +156,7 @@
   letter-spacing: 0.2px;
 }
 
-/* Compact ring — always shown */
+/* Compact ring — always shown (read-only threshold marker) */
 .ctx-ring-wrap {
   display: inline-flex;
   align-items: center;
@@ -177,7 +164,6 @@
   position: relative;
   width: 28px;
   height: 28px;
-  cursor: ew-resize;
   user-select: none;
 }
 .ctx-ring-svg {
