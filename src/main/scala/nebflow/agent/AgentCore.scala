@@ -284,6 +284,7 @@ private[agent] trait AgentCore:
             agentCategory = freshDef.category,
             agentName = freshDef.name,
             skillCatalog = turnCtx.skillCatalog,
+            flowCatalog = turnCtx.flowCatalog,
             teamCatalog = turnCtx.teamCatalog,
             memoryBlock = turnCtx.memoryBlock,
             taskListText = taskListText,

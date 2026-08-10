@@ -32,7 +32,7 @@ object TreeCommand:
 
   case class CancelPipeline(name: String) extends TreeCommand
 
-  /** FlowAgentActivator → FlowTreeActor: watch this agent actor for termination. */
+  /** Watch this agent actor for termination. */
   case class WatchAgent(
     ref: nebflow.actor.ActorRef[nebflow.agent.AgentCommand],
     sessionId: String

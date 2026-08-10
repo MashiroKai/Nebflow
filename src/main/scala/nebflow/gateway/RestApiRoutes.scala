@@ -999,8 +999,7 @@ class RestApiRoutes(
             "name" -> t.name.asJson,
             "description" -> t.description.asJson,
             "lead" -> t.lead.asJson,
-            "members" -> t.members.asJson,
-            "flows" -> t.flows.asJson
+            "members" -> t.members.asJson
           )
         }
         result <- Ok(io.circe.Json.obj("teams" -> teamsJson.asJson))
@@ -1217,6 +1216,40 @@ class RestApiRoutes(
 
     // ===== Entity API (Team/Flow/Agent management) =====
 
+    // PUT /agents/:name — update agent's skills/flows
+    case req @ PUT -> Root / "agents" / agentName =>
+      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      else
+        req.as[Json].flatMap { body =>
+          for
+            dirOpt <- EntityLoader.findAgentDir(agentName)
+            result <- dirOpt match
+              case Some(dir) =>
+                IO.blocking {
+                  val jsonPath = dir / "agent.json"
+                  val json = os.read(jsonPath)
+                  io.circe.parser.parse(json) match
+                    case Right(parsed) =>
+                      // Extract skills/flows from request body
+                      val skillsOpt = body.hcursor.downField("skills").as[Option[List[String]]]
+                      val flowsOpt = body.hcursor.downField("flows").as[Option[List[String]]]
+                      val merged = parsed
+                        .deepMerge(skillsOpt.toOption.map(s => Json.obj("skills" -> s.asJson)).getOrElse(Json.obj()))
+                        .deepMerge(flowsOpt.toOption.map(f => Json.obj("flows" -> f.asJson)).getOrElse(Json.obj()))
+                      os.write.over(jsonPath, merged.noSpaces)
+                      true
+                    case Left(_) => false
+                }.flatMap {
+                  case true =>
+                    Ok(Json.obj("updated" -> true.asJson))
+                  case false =>
+                    InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
+                }
+              case None =>
+                NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+          yield result
+        }
+
     // GET /teams/:name — team detail
     case GET -> Root / "teams" / teamName =>
       if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
@@ -1231,8 +1264,7 @@ class RestApiRoutes(
                   "name" -> team.name.asJson,
                   "description" -> team.description.asJson,
                   "lead" -> team.lead.asJson,
-                  "members" -> team.members.asJson,
-                  "flows" -> team.flows.asJson
+                  "members" -> team.members.asJson
                 )
               )
         yield result
@@ -1395,18 +1427,18 @@ class RestApiRoutes(
 
   /**
    * Build mounted teams JSON for the frontend (GET /api/teams/mounted).
-   *  Reads from live FlowMembership runtime state. Each team is a card with
+   *  Reads from live TeamSessionRegistry runtime state. Each team is a card with
    *  agent tiles showing status.
    */
   private def buildMountedTeamsJson(): IO[Json] =
     for
-      flowsMap <- nebflow.core.flow.FlowMembership.listMountedFlows
+      teamsMap <- nebflow.core.flow.TeamSessionRegistry.listMountedTeams
       teams <- EntityLoader.listTeams()
-      flows <- flowsMap.toList.sortBy(_._1).traverse { (instanceName, agents) =>
+      teamsList <- teamsMap.toList.sortBy(_._1).traverse { (instanceName, agents) =>
         val teamDefOpt = teams.get(instanceName)
         agents
           .traverse { (agentName, sid) =>
-            nebflow.core.flow.FlowMembership.isBusy(sid).map { busy =>
+            nebflow.core.flow.TeamSessionRegistry.isBusy(sid).map { busy =>
               Json.obj(
                 "name" -> agentName.asJson,
                 "sessionId" -> sid.asJson,
@@ -1419,12 +1451,11 @@ class RestApiRoutes(
             Json.obj(
               "name" -> instanceName.asJson,
               "type" -> "team".asJson,
-              "agents" -> agentsJson.asJson,
-              "flows" -> teamDefOpt.map(_.flows).getOrElse(List.empty[String]).asJson
+              "agents" -> agentsJson.asJson
             )
           }
       }
-    yield flows.asJson
+    yield teamsList.asJson
 
   // ── Flow editor helpers ──────────────────────────────────
 

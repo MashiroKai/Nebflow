@@ -56,8 +56,10 @@ object PromptSections:
     envInfo: String = "",
     /** Pre-rendered device info block (from AgentCore.deviceInfoBlock). */
     deviceInfo: String = "",
-    /** Pre-rendered skill catalog (from SkillService.buildSkillCatalog). */
+    /** Pre-rendered skill catalog (per-agent, from SkillService.buildPerAgentCatalog). */
     skillCatalog: String = "",
+    /** Pre-rendered flow catalog (per-agent, from SkillService.buildPerAgentFlowCatalog). */
+    flowCatalog: String = "",
     /** Pre-rendered team catalog (from TeamCatalog.buildCatalog). */
     teamCatalog: String = "",
     /** Pre-rendered memory block (from ContextRefresher.buildMemoryBlock). */
@@ -163,6 +165,11 @@ object PromptSections:
       800,
       condition = _.skillCatalog.nonEmpty,
       renderer = _.skillCatalog
+    ),
+    PromptSection.dynamic(
+      808,
+      condition = _.flowCatalog.nonEmpty,
+      renderer = _.flowCatalog
     ),
     PromptSection.dynamic(
       816,

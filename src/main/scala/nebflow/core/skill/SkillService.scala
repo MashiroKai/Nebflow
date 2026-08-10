@@ -1,8 +1,10 @@
 package nebflow.core.skill
 
 import cats.effect.IO
+import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Encoder, Json}
+import nebflow.core.entity.EntityLoader
 import nebflow.core.{NebflowLogger, PathUtil}
 
 // --- Data models ---
@@ -180,6 +182,43 @@ object SkillService:
    * The catalog tells the agent what skills exist and where to find them;
    * the agent reads the full skill file when it decides a skill is relevant.
    */
+  /**
+   * Build a skill catalog containing only the skills declared by the agent.
+   * Empty list → empty string (no injection, no global fallback).
+   */
+  def buildPerAgentCatalog(skillNames: List[String]): IO[String] =
+    if skillNames.isEmpty then IO.pure("")
+    else
+      listSkills().map { allSkills =>
+        val skillMap = allSkills.map(s => s.name -> s).toMap
+        val visible = skillNames.flatMap(skillMap.get).filter(_.description.nonEmpty)
+        if visible.isEmpty then ""
+        else
+          val entries = visible.map(s => s"- ${s.name}: ${s.description.take(200)}").mkString("\n")
+          s"""# Skills
+             |
+             |Skills live at ~/.nebflow/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
+             |
+             |$entries""".stripMargin
+      }
+
+  /**
+   * Build a flow catalog containing only the flows declared by the agent.
+   * Empty list → empty string (no injection).
+   */
+  def buildPerAgentFlowCatalog(flowNames: List[String]): IO[String] =
+    if flowNames.isEmpty then IO.pure("")
+    else
+      flowNames.traverse(name => EntityLoader.loadFlow(name)).map { opts =>
+        val visible = opts.flatten.filter(_.description.nonEmpty)
+        if visible.isEmpty then ""
+        else
+          val entries = visible.map(f => s"- ${f.name}: ${f.description.take(200)}").mkString("\n")
+          s"""# Available Flows
+             |
+             |$entries""".stripMargin
+      }
+
   def buildSkillCatalog(currentDelegateCount: Int): IO[String] =
     val now = System.currentTimeMillis()
     if now - catalogCache._1 < CatalogTtlMs then IO.pure(catalogCache._2)
