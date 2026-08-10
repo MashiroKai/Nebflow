@@ -171,6 +171,11 @@ Message type (optional, default "INFO"):
         case Some(sid) => resources.sessionStore.loadMessagesForSession(sid)
         case None => IO.pure(List.empty[Message])
 
+      // Inherit caller's safety mode so permission prompts are consistent
+      callerSafetyMode <- (ctx.sessionStore, ctx.sessionId) match
+        case (Some(store), Some(sid)) => store.getSafetyMode(sid)
+        case _ => IO.pure("confirm-edits")
+
       tempSession <- resources.sessionStore
         .createSession(s"fork-${java.util.UUID.randomUUID().toString.take(8)}", agentName = Some(agentDef.name))
         .handleErrorWith(e =>
@@ -187,7 +192,8 @@ Message type (optional, default "INFO"):
 
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
-      forkWs = (_: Json) => IO.unit
+      // Route permission prompts to the caller's WS so they are visible
+      forkWs = ctx.wsSend.getOrElse((_: Json) => IO.unit)
 
       agentRef <- system.spawn(
         AgentActor(
@@ -203,7 +209,7 @@ Message type (optional, default "INFO"):
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
           projectRoot = Some(ctx.projectRoot),
-          safetyMode = "bypass",
+          safetyMode = callerSafetyMode,
           expectsMail = false
         ),
         s"fork-${agentDef.name}-${java.util.UUID.randomUUID().toString.take(8)}"

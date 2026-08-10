@@ -272,10 +272,11 @@ class WebSocketRoutes(
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
-      // Query param takes priority (from localStorage), cookie as fallback
-      val paramToken = req.params.get("token").getOrElse("")
+      // Cookie takes priority to avoid token leakage in browser history/logs/Referer.
+      // Query param kept as fallback for cross-origin or first-load scenarios.
       val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
-      val provided = if paramToken.nonEmpty then paramToken else cookieToken
+      val paramToken = req.params.get("token").getOrElse("")
+      val provided = if cookieToken.nonEmpty then cookieToken else paramToken
       if Auth.validateToken(provided, token) then
         for
           outbound <- Queue.unbounded[IO, WebSocketFrame]

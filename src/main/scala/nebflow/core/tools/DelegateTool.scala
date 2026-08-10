@@ -6,6 +6,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
+import nebflow.core.flow.TeamSessionRegistry
 import nebflow.shared.{Message, MessageRole}
 
 /**
@@ -309,6 +310,14 @@ $prompt"""
       )
       _ = logger.info(s"Spawned background sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
       _ <- resources.subAgentRegistry.update(_ + (subagentId -> subagentRef))
+      // Inherit parent's team membership so team scope checks apply to sub-agent Mail
+      _ <- parentSessionId match
+        case Some(psid) =>
+          TeamSessionRegistry.teamOfSession(psid).flatMap {
+            case Some(teamName) => TeamSessionRegistry.registerSession(teamName, subagentId, subagentId)
+            case None => IO.unit
+          }
+        case None => IO.unit
       _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
       s"""Sub-agent '$agentName' started in background for: $description.
@@ -417,6 +426,14 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
       )
       _ = logger.info(s"Spawned persistent sub-agent: $subagentId (depth=$childDepth, agent=$agentName, addr=$address)")
       _ <- resources.subAgentRegistry.update(_ + (subagentId -> subagentRef))
+      // Inherit parent's team membership so team scope checks apply to sub-agent Mail
+      _ <- parentSessionId match
+        case Some(psid) =>
+          TeamSessionRegistry.teamOfSession(psid).flatMap {
+            case Some(teamName) => TeamSessionRegistry.registerSession(teamName, subagentId, subagentId)
+            case None => IO.unit
+          }
+        case None => IO.unit
       _ <- parentRef.fold(IO.unit)(ref => ref ! AgentCommand.SessionStarted(address, agentName, taskDescription))
       _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
