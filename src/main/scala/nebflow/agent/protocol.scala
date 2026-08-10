@@ -128,8 +128,6 @@ object AgentCommand:
   case class Stop(reason: String) extends AgentCommand
   case object ClearReadTracker extends AgentCommand
   case object ResetSession extends AgentCommand
-  case object CheckDream extends AgentCommand
-  case class DreamComplete(facts: List[String], messageCountAtDream: Int) extends AgentCommand
 
   case class UpdateGitBranch(branch: Option[String]) extends AgentCommand
 
@@ -457,14 +455,8 @@ case class SessionContext(
    *  Used by flow agents to enforce structured result reporting.
    */
   expectsMail: Boolean = false,
-  /** Message index where the current mail turn started (for progress extraction). */
-  mailTurnStart: Option[Int] = None,
   /** Total mail turns completed in this session. */
   mailTurnCount: Int = 0,
-  /** Last dream mode timestamp (epoch millis). */
-  lastDreamAt: Option[Long] = None,
-  /** Message count at last dream (to track new material). */
-  lastDreamMessageCount: Int = 0,
   /** Last experience extraction timestamp. */
   lastExperienceAt: Option[Long] = None
 )
@@ -701,16 +693,8 @@ extension (s: AgentState)
   def withContextWindow(window: Int): AgentState = s.copy(session = s.session.copy(contextWindow = window))
   def withAskMode(mode: Option[String]): AgentState = s.copy(session = s.session.copy(askMode = mode))
   def withLanguage(lang: Option[String]): AgentState = s.copy(session = s.session.copy(language = lang))
-  def mailTurnStart: Option[Int] = s.session.mailTurnStart
   def mailTurnCount: Int = s.session.mailTurnCount
-  def withMailTurnStart(idx: Option[Int]): AgentState = s.copy(session = s.session.copy(mailTurnStart = idx))
   def withMailTurnCount(count: Int): AgentState = s.copy(session = s.session.copy(mailTurnCount = count))
-  def lastDreamAt: Option[Long] = s.session.lastDreamAt
-  def lastDreamMessageCount: Int = s.session.lastDreamMessageCount
-  def withLastDreamAt(ts: Long): AgentState = s.copy(session = s.session.copy(lastDreamAt = Some(ts)))
-
-  def withLastDreamMessageCount(count: Int): AgentState =
-    s.copy(session = s.session.copy(lastDreamMessageCount = count))
   def lastExperienceAt: Option[Long] = s.session.lastExperienceAt
   def withLastExperienceAt(ts: Long): AgentState = s.copy(session = s.session.copy(lastExperienceAt = Some(ts)))
 

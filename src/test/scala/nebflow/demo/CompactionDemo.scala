@@ -82,12 +82,11 @@ class CompactionDemo extends munit.FunSuite:
 
     val estimatedTokens = TokenEstimator.estimate(messages)
     val contextWindow = 128000 // typical Claude 3.5 Sonnet
-    val threshold = contextWindow - CompactConfig().bufferForWindow(contextWindow)
+    val threshold = CompactThreshold.threshold(contextWindow)
 
     println(s"Estimated tokens (heuristic): $estimatedTokens")
     println(s"Agent context window: $contextWindow")
-    println(s"Buffer tokens: ${CompactConfig().bufferTokens}")
-    println(s"Threshold (window - buffer): $threshold")
+    println(s"Threshold (CompactThreshold): $threshold")
     println(s"Would auto-compact trigger? ${if estimatedTokens > threshold then "YES" else "NO"}")
 
     // ----------------------------------------------------------
@@ -95,7 +94,7 @@ class CompactionDemo extends munit.FunSuite:
     // ----------------------------------------------------------
     banner("3. FastMicroCompact (rule-driven, cache-cold only)")
 
-    FastMicroCompact(messages, cacheTtlMinutes = 0, keepRecent = 2) match
+    FastMicroCompact(messages) match
       case Some(compacted) =>
         println(s"  BEFORE: ${messages.size} messages")
         println(s"  AFTER:  ${compacted.size} messages (tool results replaced with placeholders)")

@@ -150,11 +150,8 @@ private[agent] trait AgentCore:
           yield result)
       else
         val inputTokensOpt = state.latestUsage.map(_.inputTokens)
-        // Team agents (depth >= 1): aggressive 20% threshold to prevent context overflow.
-        // Nebula (depth 0): standard threshold (contextWindow - max(13k, 10%))
-        val threshold =
-          if depth >= 1 then (state.contextWindow * 0.20).toInt
-          else state.contextWindow - config.bufferForWindow(state.contextWindow)
+        // Unified threshold: hardcoded, role-independent (CompactThreshold).
+        val threshold = CompactThreshold.threshold(state.contextWindow)
         val shouldCompact = inputTokensOpt match
           case Some(inputTokens) if inputTokens > 0 && inputTokens > threshold =>
             Some(s"inputTokens=$inputTokens threshold=$threshold")
@@ -183,19 +180,29 @@ private[agent] trait AgentCore:
     resumeAfterCompact: Boolean = true,
     postCompactInstruction: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    val profile = CompactionProfile.fromDepth(depth)
+    val hook = PreCompactionHooks.forProfile(profile)
+
+    // ── 1. Role-based pre-compaction extraction (fire-and-forget, non-blocking) ──
+    val preHookIO: IO[Unit] = hook
+      .run(state.messages, agentDef.name, state.sessionId, None, resources)
+      .handleErrorWith(e => IO(lifecycleLog.warn(s"Pre-compaction hook failed for ${agentDef.name}: ${e.getMessage}")).void)
+
+    // ── 2. Inject compact reminder (existing logic retained) ──
     val jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
     val pending = CompactionJob(jobId, mode, None, replyTo, resumeAfterCompact, postCompactInstruction)
     val compactState = state
       .withPendingCompaction(Some(pending))
       .withMessages(state.messages :+ CompactService.buildCompactReminder(depth))
     for
+      _ <- ctx.forkTurn(preHookIO)
       _ <- ctx.forkTurn(
         emitStreamIO(
           state.wsSend,
           AgentStreamEvent.CompactStart(
             mode,
             state.latestUsage.map(_.inputTokens),
-            Some(state.contextWindow - CompactConfig().bufferForWindow(state.contextWindow))
+            Some(CompactThreshold.threshold(state.contextWindow))
           ),
           isSubagent = depth > 0,
           state.sessionId

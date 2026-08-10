@@ -91,22 +91,4 @@ object DreamMode:
       content.substring(0, headerIdx) + newSection + content.substring(sectionEnd)
     else content + "\n\n" + newSection
 
-  /** Check if dream should trigger based on 5 conditions. */
-  def shouldTriggerDream(
-    now: Long,
-    pattern: UsagePattern,
-    lastActivity: Long,
-    messageCount: Int,
-    lastDreamAt: Option[Long],
-    lastDreamMessageCount: Int
-  ): Boolean =
-    val newMessages = messageCount - lastDreamMessageCount
-    val hasEnoughMaterial = newMessages >= 30
-    val notTooRecent = lastDreamAt.forall(now - _ > 30 * 60_000L)
-    val inWindow =
-      if pattern.isReliable then pattern.isInIdleWindow(now)
-      else (now - lastActivity) > 30 * 60_000L
-    hasEnoughMaterial && notTooRecent && inWindow
-  end shouldTriggerDream
-
 end DreamMode
