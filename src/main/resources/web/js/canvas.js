@@ -368,6 +368,51 @@ export function pinTab(id) {
   if (previewTabId === id) previewTabId = null;
 }
 
+/** Check whether a tab has unsaved edits — refresh must never clobber them.
+ *  Three sources (OR): the Monaco handle's getDirty() (viewMonaco and MD/HTML
+ *  source mode), the forwarded pane._dirty flag, and the 'dirty' class on the
+ *  tab label (canonical UI indicator from the editor-dirty-change listener). */
+function isTabDirty(entry) {
+  if (!entry) return false;
+  if (entry.paneEl?._editorHandle?.getDirty?.()) return true;
+  if (entry.paneEl?._dirty) return true;
+  return !!entry.tabEl?.querySelector('.canvas-tab-label')?.classList.contains('dirty');
+}
+
+/** Schedule a debounced readFile refresh for a file tab — another agent may
+ *  have modified the file since the tab was rendered. The response flows back
+ *  through fileContent → workspace-open-item → openWorkspaceItem, which
+ *  re-renders the existing pane.
+ *  Guards: panel tabs (no absPath), unsaved edits, MD/HTML source mode (an
+ *  editor is mounted — re-render would destroy it), a refresh already in
+ *  flight, and a cooldown window (also breaks the setActiveTab → readFile →
+ *  re-render → setActiveTab loop). */
+const FILE_REFRESH_DEBOUNCE = 300;
+const FILE_REFRESH_COOLDOWN = 2000;
+function scheduleFileRefresh(entry) {
+  if (!entry.absPath) return;
+  if (isTabDirty(entry)) return;
+  if (entry.paneEl?.dataset.sourceMode === '1') return;
+  if (entry._refreshing) return;
+  if (Date.now() - (entry._lastRefreshAt || 0) < FILE_REFRESH_COOLDOWN) return;
+  clearTimeout(entry._refreshTimer);
+  entry._refreshTimer = setTimeout(() => {
+    entry._refreshTimer = null;
+    if (!tabs.has(entry.id)) return;  // tab closed while debouncing — don't reopen it
+    if (isTabDirty(entry) || entry._refreshing) return;
+    entry._refreshing = true;
+    // Safety: never wedge the tab if the response never arrives
+    setTimeout(() => { entry._refreshing = false; }, 10000);
+    import('./ws.js').then(({ sendWs }) => {
+      if (!sendWs) { entry._refreshing = false; return; }
+      window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
+        detail: { path: entry.absPath, pinned: entry.pinned !== false }
+      }));
+      sendWs({ type: 'pop.readFile', path: entry.absPath, sessionId: undefined });
+    });
+  }, FILE_REFRESH_DEBOUNCE);
+}
+
 /** Switch the active tab — shows its pane, hides all others.
  *  Also notifies Monaco editors when they become active (for Ctrl+S focus).
  *  @param {string} id — Tab identifier. */
@@ -384,6 +429,10 @@ export function setActiveTab(id) {
   });
   document.dispatchEvent(new CustomEvent('canvas-tab-switched', { detail: { id } }));
   persistTabs();
+
+  // Live-refresh file tabs on activation (debounced, dirty-safe).
+  const entry = tabs.get(id);
+  if (entry) scheduleFileRefresh(entry);
 }
 
 /** Get the content pane element for a tab.
@@ -455,9 +504,22 @@ export async function openWorkspaceItem(item) {
   const { id, itemType, title, content, absPath, size, pinned } = item;
   if (!id) return;
 
-  // If tab already exists, just switch to it (and promote if pinned).
+  // If tab already exists: switch to it — and when this dispatch carries new
+  // content (e.g. a refresh readFile response), re-render the existing pane.
+  // Never re-render over unsaved edits or a mounted source-mode editor.
   if (tabs.has(id)) {
     if (pinned) pinTab(id);
+    const entry = tabs.get(id);
+    entry._refreshing = false;  // response arrived (or user-initiated open)
+    if (content && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
+      if (entry.paneEl._editorHandle) {
+        entry.paneEl._editorHandle.dispose();
+        entry.paneEl._editorHandle = null;
+      }
+      const { renderFile } = await import('./fileViewers.js');
+      await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
+      entry._lastRefreshAt = Date.now();
+    }
     setActiveTab(id);
     return;
   }
@@ -524,6 +586,7 @@ export async function openWorkspaceItem(item) {
 
   const { renderFile } = await import('./fileViewers.js');
   await renderFile(pane, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
+  entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
 }
 
 // ── Initialization ─────────────────────────────────────────
