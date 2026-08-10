@@ -3,8 +3,11 @@
 
 export const FLOW_CSS = `
 <style id="team-canvas-style">
-/* Tab pane: establish positioning context so overlays center within it */
-.canvas-tab-pane[data-type="flow"] {
+/* Tab pane: establish positioning context so overlays center within it.
+   Covers all flow-panel types: Teams list, Flows list, per-instance run. */
+.canvas-tab-pane[data-type="flow"],
+.canvas-tab-pane[data-type="teams"],
+.canvas-tab-pane[data-type="flow-run"] {
   position: relative;
   overflow: hidden;
 }
