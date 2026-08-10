@@ -565,20 +565,20 @@ export function showCanvasHeader(visible) {
 // ── Tab persistence ─────────────────────────────────────────
 
 /** Save open tabs (metadata only) to localStorage so they survive refresh.
- *  Stores: id, title, type, absPath, pinned. Content is re-fetched on restore. */
+ *  Stores: id, title, type, absPath (nullable), pinned, closable.
+ *  Tabs without absPath (Teams/Flows panels) are restored synchronously
+ *  and re-render from live state; file tabs re-fetch content on restore. */
 function persistTabs() {
   try {
     const serializable = [];
     for (const [, t] of tabs) {
-      // Skip tabs without absPath — they can't be restored from disk
-      // (e.g. flow visualization, workspace items without file paths)
-      if (!t.absPath) continue;
       serializable.push({
         id: t.id,
         title: t.title,
         type: t.type,
-        absPath: t.absPath,
+        absPath: t.absPath || null,   // null for panel tabs (Teams/Flows)
         pinned: t.pinned,
+        closable: t.closable !== false,  // default true
       });
     }
     localStorage.setItem(LS_TABS_KEY, JSON.stringify({
@@ -589,8 +589,13 @@ function persistTabs() {
 }
 
 /** Restore tabs from localStorage on page load.
- *  Re-opens each tab by sending a readFile WS message for its absPath.
- *  The existing fileContent → workspace-open-item pipeline handles rendering. */
+ *  Two-phase restore:
+ *  1. Panel tabs without absPath (Teams/Flows) are re-opened synchronously —
+ *     they re-render from live state via the 'canvas-tab-restore' event.
+ *  2. File tabs are re-opened asynchronously by sending a readFile WS message
+ *     for each absPath. The existing fileContent → workspace-open-item
+ *     pipeline handles rendering.
+ *  Finally the last active tab is re-activated. */
 export function restoreTabs() {
   try {
     const raw = localStorage.getItem(LS_TABS_KEY);
@@ -598,34 +603,57 @@ export function restoreTabs() {
     const data = JSON.parse(raw);
     if (!data.tabs || data.tabs.length === 0) return false;
 
-    // Defer WS import to avoid circular dependency
-    import('./ws.js').then(({ sendWs }) => {
-      data.tabs.forEach((tab, i) => {
-        // Dispatch workspace-open-item for each persisted tab.
-        // For binary files (images, PDFs), content will be empty, frontend fetches via /api/nf-file
-        const item = {
-          id: tab.id,
-          title: tab.title,
-          itemType: tab.type || 'code',
-          content: '',
-          absPath: tab.absPath,
-          pinned: tab.pinned !== false,
-        };
+    const panelTabs = data.tabs.filter(t => !t.absPath);
+    const fileTabs = data.tabs.filter(t => t.absPath);
 
-        // Send readFile to get content, but also set up a fallback:
-        // dispatch workspace-open-item with empty content — for binary files
-        // the viewer will fetch via /api/nf-file; for text files we need content.
-        // Use sendWs to request file content — the response will trigger
-        // the explorer's fileContent handler which opens the tab.
-        if (sendWs) {
-          // Mark this path as pinned so explorer's fileContent handler picks it up
-          window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
-            detail: { path: tab.absPath, pinned: tab.pinned !== false }
-          }));
-          sendWs({ type: 'pop.readFile', path: tab.absPath, sessionId: undefined });
-        }
+    // Phase 1 — panel tabs, synchronous.
+    // openTab replaces the current preview tab when opening a new unpinned
+    // tab, so open everything as pinned first, then revert the unpinned
+    // ones to preview state afterwards.
+    const unpinnedRestored = [];
+    for (const tab of panelTabs) {
+      const entry = openTab(tab.id, tab.title, {
+        type: tab.type || 'generic',
+        closable: tab.closable !== false,
+        pinned: true,
       });
-    });
+      if (!entry) continue;
+      if (tab.pinned === false) unpinnedRestored.push(entry);
+      // Let flowCanvas render the pane content for this panel tab.
+      window.dispatchEvent(new CustomEvent('canvas-tab-restore', {
+        detail: { id: tab.id, type: tab.type }
+      }));
+    }
+    for (const entry of unpinnedRestored) {
+      entry.pinned = false;
+      entry.tabEl.classList.add('preview');
+      previewTabId = entry.id;  // last unpinned tab becomes the preview tab
+    }
+    if (unpinnedRestored.length > 0) persistTabs();
+
+    // Phase 2 — file tabs, async via readFile WS.
+    // Defer WS import to avoid circular dependency.
+    if (fileTabs.length > 0) {
+      import('./ws.js').then(({ sendWs }) => {
+        fileTabs.forEach((tab) => {
+          // Send readFile to get content — the response triggers the
+          // explorer's fileContent handler which opens the tab.
+          // For binary files (images, PDFs) the viewer fetches via /api/nf-file.
+          if (sendWs) {
+            // Mark this path as pinned so explorer's fileContent handler picks it up
+            window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
+              detail: { path: tab.absPath, pinned: tab.pinned !== false }
+            }));
+            sendWs({ type: 'pop.readFile', path: tab.absPath, sessionId: undefined });
+          }
+        });
+        // Re-activate the last active tab if it already exists (panel tab).
+        // File tabs activate themselves as their readFile responses arrive.
+        if (data.activeTabId) setActiveTab(data.activeTabId);
+      });
+    } else if (data.activeTabId) {
+      setActiveTab(data.activeTabId);
+    }
     return true;
   } catch (e) { /* corrupt data — ignore */ }
   return false;
