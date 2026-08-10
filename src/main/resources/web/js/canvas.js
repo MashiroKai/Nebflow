@@ -332,6 +332,11 @@ export function closeTab(id) {
     entry.tabEl.remove();
     tabs.delete(id);
     if (previewTabId === id) previewTabId = null;
+    if (tabs.size === 0) {
+      // User closed the last tab — clear saved data so it doesn't restore
+      localStorage.removeItem(LS_TABS_KEY);
+      console.log('[closeTab] last tab closed — cleared localStorage');
+    }
     persistTabs();
 
     if (activeTabId === id) {
@@ -569,6 +574,13 @@ export function showCanvasHeader(visible) {
  *  Tabs without absPath (Teams/Flows panels) are restored synchronously
  *  and re-render from live state; file tabs re-fetch content on restore. */
 function persistTabs() {
+  // Don't overwrite saved tabs with an empty list — clearAllTabs (from
+  // closeCanvas) empties the in-memory Map, but the saved data should
+  // survive so tabs can be restored on next page load.
+  if (tabs.size === 0) {
+    console.log('[persistTabs] tabs empty — skipping save to preserve existing data');
+    return;
+  }
   try {
     const serializable = [];
     for (const [, t] of tabs) {
