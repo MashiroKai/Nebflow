@@ -7,7 +7,8 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
-import nebflow.core.flow.{FlowAgentActivator, FlowMailStore, FlowMembership}
+import nebflow.core.entity.EntityLoader
+import nebflow.core.flow.{FlowMailStore, TeamSessionRegistry}
 import nebflow.shared.{Message, MessageRole}
 
 import scala.concurrent.duration.*
@@ -126,7 +127,7 @@ Message type (optional, default "INFO"):
     (ctx.actorSystem, ctx.sharedResources, ctx.sessionId) match
       case (Some(system), Some(resources), Some(senderSid)) =>
         for
-          targetSidOpt <- FlowMembership.resolveSessionId(senderSid, address)
+          targetSidOpt <- TeamSessionRegistry.resolveSessionId(senderSid, address, resources.sessionStore)
           result <- targetSidOpt match
             case None =>
               IO.pure(
@@ -137,10 +138,15 @@ Message type (optional, default "INFO"):
                 )
               )
             case Some(targetSid) =>
-              FlowMembership.flowOfSession(targetSid).flatMap {
-                case Some(flowName) =>
-                  FlowAgentActivator.resolveAgentFromDisk(flowName, address, resources).flatMap {
-                    case Some(agentDef) =>
+              TeamSessionRegistry.instanceAndAgentOfSession(targetSid).flatMap {
+                case Some((instance, agentName)) =>
+                  EntityLoader.loadAgent(agentName).flatMap {
+                    case Some(entry) =>
+                      val agentDef = AgentDef(
+                        name = entry.name, description = entry.description, tools = entry.tools,
+                        systemPrompt = entry.systemPrompt, category = entry.category,
+                        mcpServers = entry.mcpServers, model = entry.model
+                      )
                       doFork(system, resources, agentDef, Some(targetSid), question, ctx)
                     case None =>
                       IO.pure(Left(ToolError(s"Agent '$address' definition not found.")))
@@ -161,12 +167,10 @@ Message type (optional, default "INFO"):
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     for
-      // Load the agent's conversation history (fork context)
       history <- agentSessionId match
         case Some(sid) => resources.sessionStore.loadMessagesForSession(sid)
         case None => IO.pure(List.empty[Message])
 
-      // Create a temporary session
       tempSession <- resources.sessionStore
         .createSession(s"fork-${java.util.UUID.randomUUID().toString.take(8)}", agentName = Some(agentDef.name))
         .handleErrorWith(e =>
@@ -183,7 +187,7 @@ Message type (optional, default "INFO"):
 
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
-      forkWs = (_: Json) => IO.unit // suppress WS events for forked agents
+      forkWs = (_: Json) => IO.unit
 
       agentRef <- system.spawn(
         AgentActor(
@@ -251,7 +255,6 @@ Message type (optional, default "INFO"):
   // Normal mode: async delivery
   // ============================================================
 
-  /** Deliver to a full address (nebflow://...) — legacy path. */
   private def deliverToAddress(
     address: String,
     message: String,
@@ -264,10 +267,6 @@ Message type (optional, default "INFO"):
       case Left(err) => IO.pure(Left(ToolError(s"Failed to resolve address '$address': ${err.getMessage}")))
     }
 
-  /**
-   * Deliver to a short name — resolves team name, agent name, or flow name.
-   *  Applies team scope check before delivery.
-   */
   private def deliverToShortName(
     address: String,
     message: String,
@@ -278,12 +277,10 @@ Message type (optional, default "INFO"):
     val senderSessionId = ctx.sessionId.getOrElse("")
     val senderName = ctx.agentDef.map(_.name).getOrElse("")
 
-    FlowMembership.flowOfSession(senderSessionId).flatMap {
+    TeamSessionRegistry.teamOfSession(senderSessionId).flatMap {
       case None =>
-        // Not in sessionFlows — could be Nebula, DAG agent, or unregistered team agent.
-        // Safety net: block "Nebula" access for any non-Nebula sender that isn't a confirmed manager.
         if address == "Nebula" && senderName != "Nebula" then
-          FlowMembership.isManager(senderSessionId).flatMap { isMgr =>
+          TeamSessionRegistry.isManager(senderSessionId).flatMap { isMgr =>
             if isMgr then deliverShortNameUnscoped(address, message, mailType, ctx, system, senderSessionId)
             else
               IO.pure(
@@ -295,18 +292,15 @@ Message type (optional, default "INFO"):
               )
           }
         else deliverShortNameUnscoped(address, message, mailType, ctx, system, senderSessionId)
-      case Some(flowId) =>
-        // Confirmed team agent — full scope check
-        checkTeamScope(address, flowId, senderSessionId).flatMap {
+      case Some(teamName) =>
+        checkTeamScope(address, teamName, senderSessionId).flatMap {
           case Some(error) => IO.pure(Left(ToolError(error)))
           case None =>
             deliverShortNameUnscoped(address, message, mailType, ctx, system, senderSessionId)
         }
     }
-
   end deliverToShortName
 
-  /** Actual delivery logic without scope checks. */
   private def deliverShortNameUnscoped(
     address: String,
     message: String,
@@ -316,12 +310,11 @@ Message type (optional, default "INFO"):
     senderSessionId: String
   ): IO[Either[ToolError, String]] =
     for
-      // 1. Check if it's a team name → forward to lead
-      teamOpt <- nebflow.core.entity.EntityLoader.loadTeam(address)
+      teamOpt <- EntityLoader.loadTeam(address)
       result <- teamOpt match
         case Some(team) =>
           for
-            leadSidOpt <- FlowMembership.resolveTeamAgent(address, team.lead)
+            leadSidOpt <- TeamSessionRegistry.findTeamAgent(address, team.lead)
             r <- leadSidOpt match
               case Some(targetSid) =>
                 for
@@ -341,9 +334,10 @@ Message type (optional, default "INFO"):
           yield r
 
         case None =>
-          // 2. Check FlowMembership (agent short name)
           for
-            sidOpt <- FlowMembership.resolveSessionId(senderSessionId, address)
+            sidOpt <- ctx.sharedResources match
+              case Some(res) => TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
+              case None => IO.pure(None)
             sr <- sidOpt match
               case Some(targetSid) =>
                 for
@@ -353,10 +347,9 @@ Message type (optional, default "INFO"):
                     case Left(_) => IO.unit
                 yield res
               case None =>
-                // Check if it's Nebula (the main orchestrator) — deliver to parent session
                 if address == "Nebula" then
                   for
-                    parentActorOpt <- nebflow.core.flow.FlowMembership.getParentActor(senderSessionId)
+                    parentActorOpt <- TeamSessionRegistry.getParentActor(senderSessionId)
                     res <- parentActorOpt match
                       case Some(ref) => sendMail(ref, "Nebula", message, mailType, ctx, system)
                       case None => mailNotFound(address)
@@ -365,29 +358,21 @@ Message type (optional, default "INFO"):
           yield sr
     yield result
 
-  /**
-   * Check if a team agent is allowed to send to the given address.
-   * Returns Some(errorMessage) if blocked, None if allowed.
-   *
-   * Rules:
-   *   - Team agent (non-manager): same team only. Cannot reach other teams or Nebula.
-   *   - Team manager: same team + Nebula (escalation channel). Cannot reach other teams.
-   */
-  private def checkTeamScope(address: String, flowId: String, senderSessionId: String): IO[Option[String]] =
+  private def checkTeamScope(address: String, teamName: String, senderSessionId: String): IO[Option[String]] =
     for
-      isMgr <- FlowMembership.isManager(senderSessionId)
-      teamOpt <- nebflow.core.entity.EntityLoader.loadTeam(address)
+      isMgr <- TeamSessionRegistry.isManager(senderSessionId)
+      teamOpt <- EntityLoader.loadTeam(address)
     yield teamOpt match
-      case Some(_) if address == flowId =>
-        None // Own team — allowed
+      case Some(_) if address == teamName =>
+        None
       case Some(_) =>
-        Some(s"Cannot mail outside your team. You are in team '$flowId'. Use your Manager to escalate to Nebula.")
+        Some(s"Cannot mail outside your team. You are in team '$teamName'. Use your Manager to escalate to Nebula.")
       case None if address == "Nebula" && isMgr =>
-        None // Manager → Nebula — allowed (escalation channel)
+        None
       case None if address == "Nebula" =>
         Some("Cannot mail Nebula directly. Use Mail(\"manager\", ...) to report to your Team Lead.")
       case None =>
-        None // Agent name — scoped resolveSessionId will handle cross-flow rejection
+        None
 
   /** Deliver to a session — ensure actor exists, then send Mail. */
   private def deliverToSession(
@@ -401,23 +386,65 @@ Message type (optional, default "INFO"):
     (ctx.sharedResources, ctx.actorSystem) match
       case (Some(resources), Some(actorSystem)) =>
         for
-          refOpt <- nebflow.core.flow.FlowAgentActivator.ensureSession(
-            sessionId,
-            ctx.agentActorRef,
-            resources,
-            actorSystem,
-            ctx.wsSend
-          )
+          // Check if actor already running
+          existingOpt <- TeamSessionRegistry.getRunningActor(sessionId)
+          refOpt <- existingOpt match
+            case Some(ref) => IO.pure(Some(ref))
+            case None =>
+              // Activate agent from session
+              activateAgent(sessionId, resources, actorSystem, ctx)
           result <- refOpt match
             case Some(ref) => sendMail(ref, shortName, message, mailType, ctx, system)
             case None =>
-              nebflow.core.flow.FlowMembership.getParentActor(sessionId).flatMap {
+              TeamSessionRegistry.getParentActor(sessionId).flatMap {
                 case Some(ref) => sendMail(ref, shortName, message, mailType, ctx, system)
                 case None => mailNotFound(shortName)
               }
         yield result
       case _ =>
         IO.pure(Left(ToolError(s"Cannot activate session for '$shortName': missing resources")))
+
+  /** Activate a team agent session by spawning an AgentActor (replaces FlowAgentActivator). */
+  private def activateAgent(
+    sessionId: String,
+    resources: SharedResources,
+    actorSystem: ActorSystem,
+    ctx: ToolContext
+  ): IO[Option[ActorRef[AgentCommand]]] =
+    for
+      sessionOpt <- resources.sessionStore.getSessionMeta(sessionId)
+      refOpt <- sessionOpt.traverse_ { session =>
+        val agentName = session.agentName.getOrElse("")
+        for
+          entryOpt <- EntityLoader.loadAgent(agentName)
+          _ <- entryOpt.traverse_ { entry =>
+            val agentDef = AgentDef(
+              name = entry.name, description = entry.description, tools = entry.tools,
+              systemPrompt = entry.systemPrompt, category = entry.category,
+              mcpServers = entry.mcpServers, model = entry.model
+            )
+            for
+              ref <- actorSystem.spawn(
+                AgentActor(
+                  agentDef = agentDef,
+                  resources = resources,
+                  wsSend = ctx.wsSend.getOrElse(_ => IO.unit),
+                  depth = 1,
+                  parentRef = ctx.agentActorRef,
+                  sessionId = Some(session.id),
+                  sessionName = Some(session.name),
+                  projectRoot = Some(ctx.projectRoot),
+                  safetyMode = "confirm-edits"
+                ),
+                s"mail-${session.id.take(8)}"
+              )
+              _ <- TeamSessionRegistry.registerActor(session.id, ref)
+            yield ref
+          }
+        yield ()
+      }
+      ref <- TeamSessionRegistry.getRunningActor(sessionId)
+    yield ref
 
   private def sendMail(
     ref: ActorRef[AgentCommand],
@@ -441,7 +468,6 @@ Message type (optional, default "INFO"):
       else s"Cannot deliver to '$address'. Use a team name or agent short name."
     IO.pure(Left(ToolError(msg)))
 
-  /** Emit flowMail WS event + persist to mailbox. */
   private def onMailDelivered(
     fromSid: String,
     toSid: String,
@@ -451,16 +477,16 @@ Message type (optional, default "INFO"):
   ): IO[Unit] =
     val preview = message.take(200)
     for
-      fromOpt <- FlowMembership.agentOfSession(fromSid)
-      toOpt <- FlowMembership.agentOfSession(toSid)
-      (flowName, fromName) = toOpt match
-        case Some((fid, _)) => (fid, fromOpt.map(_._2).getOrElse("Nebula"))
-        case None => ("", fromOpt.map(_._2).getOrElse(fromSid.take(8)))
-      parentSid <- FlowMembership.parentSessionOf(flowName)
+      fromOpt <- TeamSessionRegistry.agentOfSession(fromSid)
+      toInfo <- TeamSessionRegistry.instanceAndAgentOfSession(toSid)
+      (teamName, fromName) = toInfo match
+        case Some((inst, _)) => (inst, fromOpt.getOrElse("Nebula"))
+        case None => ("", fromOpt.getOrElse(fromSid.take(8)))
+      parentSid <- TeamSessionRegistry.parentSessionOf(teamName)
       mailboxSid = parentSid.getOrElse(ctx.sessionId.getOrElse(""))
       _ <-
-        if flowName.nonEmpty then
-          FlowMailStore.append(mailboxSid, flowName, FlowMailStore.MailRecord(fromName, toName, message))
+        if teamName.nonEmpty then
+          FlowMailStore.append(mailboxSid, teamName, FlowMailStore.MailRecord(fromName, toName, message))
         else IO.unit
       _ <- ctx.wsSend match
         case Some(send) =>
@@ -468,7 +494,7 @@ Message type (optional, default "INFO"):
             "type" -> "flowMail".asJson,
             "from" -> fromName.asJson,
             "to" -> toName.asJson,
-            "flowName" -> flowName.asJson,
+            "flowName" -> teamName.asJson,
             "preview" -> preview.asJson
           )
           send(event).handleErrorWith(_ => IO.unit)

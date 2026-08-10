@@ -145,7 +145,13 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     else if flowName.isDefined && targetAgentName.isDefined then
       IO.pure(Left(ToolError("Cannot specify both 'agent' and 'flow' parameters")))
     else if flowName.isDefined then
-      // Trigger flow via FlowDagRunner (moved from MailTool)
+      // Validate: agent must declare this flow in its flows list
+      ctx.agentDef match
+        case Some(ad) if !ad.flows.contains(flowName.get) =>
+          val allowed = if ad.flows.isEmpty then "(none — no flows declared)" else ad.flows.mkString(", ")
+          IO.pure(Left(ToolError(s"Flow '${flowName.get}' not allowed for agent '${ad.name}'. Allowed: $allowed")))
+        case _ =>
+      // Trigger flow via FlowDagRunner
       (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
         case (Some(resources), Some(sys), Some(callerRef)) =>
           for
