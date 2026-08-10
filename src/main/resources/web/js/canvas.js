@@ -26,7 +26,13 @@ let closeTimeout = null;
 // Map of tabId -> { id, title, type, paneEl, tabEl, closable }
 const tabs = new Map();
 let activeTabId = null;
-let previewTabId = null;  // current temporary (preview) tab
+// Preview (temporary) tabs, one per preview group — VS Code behavior, but
+// scoped: tabs only replace a preview tab within their own group. File tabs
+// (with absPath) share the 'file' group so opening a .md still replaces a
+// previewed .js; panel tabs ('teams', 'flows', 'flow-run', ...) each get
+// their own group so different panel types never replace each other.
+const previewTabs = new Map();  // previewKey -> tabId
+const previewKeyOf = (type, absPath) => absPath ? 'file' : (type || 'generic');
 
 // ── Drag-to-reorder ────────────────────────────────────────
 let draggedTabId = null;
@@ -210,20 +216,25 @@ export function openTab(id, title, opts = {}) {
   }
 
   // VS Code preview behavior: opening a new preview tab replaces the
-  // existing preview tab (if any). Pinned tabs are not affected.
-  if (!pinned && previewTabId && previewTabId !== id) {
-    const oldEntry = tabs.get(previewTabId);
-    if (oldEntry) {
-      if (oldEntry.paneEl._editorHandle) {
-        oldEntry.paneEl._editorHandle.dispose();
-        oldEntry.paneEl._editorHandle = null;
+  // existing preview tab in the same group (if any). Pinned tabs are not
+  // affected. Groups: all file tabs share 'file'; panel tabs are per-type.
+  const previewKey = previewKeyOf(type, opts.absPath);
+  if (!pinned) {
+    const oldPreviewId = previewTabs.get(previewKey);
+    if (oldPreviewId && oldPreviewId !== id) {
+      const oldEntry = tabs.get(oldPreviewId);
+      if (oldEntry) {
+        if (oldEntry.paneEl._editorHandle) {
+          oldEntry.paneEl._editorHandle.dispose();
+          oldEntry.paneEl._editorHandle = null;
+        }
+        document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: oldPreviewId } }));
+        oldEntry.paneEl.remove();
+        oldEntry.tabEl.remove();
+        tabs.delete(oldPreviewId);
+        previewTabs.delete(previewKey);
+        persistTabs();
       }
-      document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: previewTabId } }));
-      oldEntry.paneEl.remove();
-      oldEntry.tabEl.remove();
-      tabs.delete(previewTabId);
-      previewTabId = null;
-      persistTabs();
     }
   }
 
@@ -279,9 +290,10 @@ export function openTab(id, title, opts = {}) {
   const entry = { id, title, type, paneEl: pane, tabEl: tab, closable, pinned, absPath: opts.absPath || null };
   tabs.set(id, entry);
 
-  // Track preview tab — will be replaced when a new file is opened
+  // Track preview tab — will be replaced when a new tab in the same
+  // preview group is opened
   if (!pinned) {
-    previewTabId = id;
+    previewTabs.set(previewKey, id);
   }
 
   setActiveTab(id);
@@ -331,7 +343,7 @@ export function closeTab(id) {
     entry.paneEl.remove();
     entry.tabEl.remove();
     tabs.delete(id);
-    if (previewTabId === id) previewTabId = null;
+    for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
     if (tabs.size === 0) {
       // User closed the last tab — clear saved data so it doesn't restore
       localStorage.removeItem(LS_TABS_KEY);
@@ -365,7 +377,7 @@ export function pinTab(id) {
   if (!entry || entry.pinned) return;
   entry.pinned = true;
   entry.tabEl.classList.remove('preview');
-  if (previewTabId === id) previewTabId = null;
+  for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
 }
 
 /** Check whether a tab has unsaved edits — refresh must never clobber them.
@@ -471,7 +483,7 @@ function clearAllTabs() {
   });
   tabs.clear();
   activeTabId = null;
-  previewTabId = null;
+  previewTabs.clear();
 }
 
 // ── Content injection ──────────────────────────────────────
@@ -544,23 +556,26 @@ export async function openWorkspaceItem(item) {
     return;
   }
 
-  // VS Code preview behavior: if opening a preview file and the current
-  // preview tab is a different file, close it first (replace, not accumulate).
+  // VS Code preview behavior: if opening a preview tab and the current
+  // preview tab in the same group is a different tab, close it first
+  // (replace, not accumulate).
   // Use instant removal (no exit animation) so the new tab appears in the right
   // position immediately — animating the old tab's removal would leave the new
   // tab in the wrong position until the animation finishes.
-  if (!pinned && previewTabId && previewTabId !== id) {
-    const oldEntry = tabs.get(previewTabId);
+  const itemPreviewKey = previewKeyOf(itemType, absPath);
+  const oldPreviewId = previewTabs.get(itemPreviewKey);
+  if (!pinned && oldPreviewId && oldPreviewId !== id) {
+    const oldEntry = tabs.get(oldPreviewId);
     if (oldEntry) {
       if (oldEntry.paneEl._editorHandle) {
         oldEntry.paneEl._editorHandle.dispose();
         oldEntry.paneEl._editorHandle = null;
       }
-      document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: previewTabId } }));
+      document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: oldPreviewId } }));
       oldEntry.paneEl.remove();
       oldEntry.tabEl.remove();
-      tabs.delete(previewTabId);
-      previewTabId = null;
+      tabs.delete(oldPreviewId);
+      previewTabs.delete(itemPreviewKey);
       persistTabs();
     }
   }
@@ -647,6 +662,9 @@ function persistTabs() {
   try {
     const serializable = [];
     for (const [, t] of tabs) {
+      // Skip runtime flow-run tabs — their instanceId is invalid after a
+      // restart, so restoring them would leave dead tabs.
+      if (t.type === 'flow-run') continue;
       serializable.push({
         id: t.id,
         title: t.title,
@@ -696,7 +714,9 @@ export function restoreTabs() {
       return false;
     }
 
-    const panelTabs = data.tabs.filter(t => !t.absPath);
+    // flow-run tabs are runtime instances — never restore them (defensive;
+    // persistTabs already excludes them, but old saved data may not).
+    const panelTabs = data.tabs.filter(t => !t.absPath && t.type !== 'flow-run');
     const fileTabs = data.tabs.filter(t => t.absPath);
     console.log('[restoreTabs] restoring', panelTabs.length, 'panel tabs,', fileTabs.length, 'file tabs');
 
@@ -721,7 +741,8 @@ export function restoreTabs() {
     for (const entry of unpinnedRestored) {
       entry.pinned = false;
       entry.tabEl.classList.add('preview');
-      previewTabId = entry.id;  // last unpinned tab becomes the preview tab
+      // last unpinned tab in each group becomes that group's preview tab
+      previewTabs.set(previewKeyOf(entry.type, entry.absPath), entry.id);
     }
     if (unpinnedRestored.length > 0) persistTabs();
 

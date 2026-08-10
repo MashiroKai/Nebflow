@@ -69,6 +69,39 @@ function renderFlowsTab() {
 function renderOpenTabs() {
   if (hasTab('teams')) renderTeamsTab();
   if (hasTab('flows')) renderFlowsTab();
+  for (const f of runningFlows) {
+    if (hasTab(`flow-run-${f.instanceId}`)) renderFlowRunTab(f.instanceId);
+  }
+}
+
+// ── Flow run tab (per-instance runtime view) ───────────────
+
+/** Open a dedicated tab for one running flow instance.
+ *  Placeholder visualization (filtered DAG) — the full runtime view
+ *  (恒星系 animation) lands in P5. */
+export function openFlowRunTab(instanceId, flowName) {
+  if (!instanceId) return;
+  openTab(`flow-run-${instanceId}`, flowName || 'Flow run', { type: 'flow-run', closable: true });
+  renderFlowRunTab(instanceId);
+}
+
+function renderFlowRunTab(instanceId) {
+  const pane = getTabPane(`flow-run-${instanceId}`);
+  if (!pane) return;
+  if (!pane.querySelector('#team-canvas-style')) {
+    pane.insertAdjacentHTML('afterbegin', FLOW_CSS);
+  }
+  let scroll = pane.querySelector('.team-scroll');
+  if (!scroll) {
+    scroll = document.createElement('div');
+    scroll.className = 'team-scroll';
+    pane.appendChild(scroll);
+  }
+  const flow = runningFlows.find(f => f.instanceId === instanceId);
+  renderFlowsPanel(scroll, flow ? [flow] : []);
+  overlayRoot();
+  bindDagNodeClicks();
+  if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 // ── Auto-open Flows tab when running flows appear ──────────
@@ -181,7 +214,7 @@ export async function toggleCanvas() {
     // Closing is done via the pane's ✕ button, not the Teams button.
     setActiveTab('teams');
   } else {
-    openTab('teams', 'Teams', { type: 'flow', closable: false });
+    openTab('teams', 'Teams', { type: 'teams', closable: false });
   }
   renderTeamsTab();
   // Always fetch fresh data — don't rely on potentially stale cache.
@@ -196,7 +229,7 @@ export async function toggleCanvas() {
 
 // Test hook
 if (typeof window !== 'undefined') {
-  window.__testFlow = { openMailbox, openDefinition, toggleCanvas, _teams: () => teams };
+  window.__testFlow = { openMailbox, openDefinition, toggleCanvas, openFlowRunTab, _teams: () => teams };
 }
 
 document.addEventListener('canvas-tab-closed', (e) => {
