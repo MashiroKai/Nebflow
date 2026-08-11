@@ -138,9 +138,11 @@ Message type (optional, default "INFO"):
     (ctx.actorSystem, ctx.sharedResources, ctx.sessionId) match
       case (Some(system), Some(resources), Some(senderSid)) =>
         for
-          targetSidOpt <- TeamSessionRegistry.resolveSessionId(senderSid, address, resources.sessionStore)
-          result <- targetSidOpt match
-            case None =>
+          targetRes <- TeamSessionRegistry.resolveSessionId(senderSid, address, resources.sessionStore)
+          result <- targetRes match
+            case Left(ambErr) =>
+              IO.pure(Left(ToolError(ambErr)))
+            case Right(None) =>
               IO.pure(
                 Left(
                   ToolError(
@@ -148,7 +150,7 @@ Message type (optional, default "INFO"):
                   )
                 )
               )
-            case Some(targetSid) =>
+            case Right(Some(targetSid)) =>
               TeamSessionRegistry.instanceAndAgentOfSession(targetSid).flatMap {
                 case Some((instance, agentName)) =>
                   EntityLoader.loadTeamAgent(instance, agentName).flatMap {
@@ -481,18 +483,19 @@ Message type (optional, default "INFO"):
 
         case None =>
           for
-            sidOpt <- ctx.sharedResources match
+            targetRes <- ctx.sharedResources match
               case Some(res) => TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
-              case None => IO.pure(None)
-            sr <- sidOpt match
-              case Some(targetSid) =>
+              case None => IO.pure(Right(None))
+            sr <- targetRes match
+              case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
+              case Right(Some(targetSid)) =>
                 for
                   res <- deliverToSession(targetSid, address, message, mailType, ctx, system)
                   _ <- res match
                     case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
                     case Left(_) => IO.unit
                 yield res
-              case None =>
+              case Right(None) =>
                 if address == "Nebula" then
                   for
                     parentActorOpt <- TeamSessionRegistry.getParentActor(senderSessionId)
