@@ -321,7 +321,15 @@ private[agent] trait AgentCore:
             isSubTaskWorker = stateForLlm.isSubTaskWorker
           )
           systemStable = buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
-          isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
+          // User turn = the last message is a User message that is NOT a tool
+          // result. Tool-result messages are User role with Right(blocks)
+          // containing ContentBlock.ToolResult — those belong to the tool loop,
+          // not a new user turn. Attachments (Right(blocks) with Image/Text but
+          // no ToolResult) and tool-injected inputs (Left text from
+          // Mail/Delegate/SubTask) DO count as user turns.
+          isUserTurn = stateForLlm.messages.lastOption.exists { m =>
+            m.role == MessageRole.User && !m.content.toOption.exists(_.exists(_.isInstanceOf[ContentBlock.ToolResult]))
+          }
           reminders = SystemReminders.collectAll(isUserTurn)
           // Branch change: persist synchronously (no async message needed)
           _ <- turnCtx.branchChange match
@@ -335,21 +343,30 @@ private[agent] trait AgentCore:
               )
             case None => IO.unit
           loggedReminders <- SystemReminders.logAndReturn(reminders)
-          allReminders = loggedReminders ++ turnCtx.branchChange.toList
-          remindersText = SystemReminder.renderAll(allReminders)
-          dynamicMsg =
+          // The time reminder is PERSISTED as a real User message in the
+          // session history: folded into the working state so it flows into
+          // the persisted history (persistIfSession saves state.messages) and
+          // into the LLM request. Older time reminders are pruned to bound
+          // history growth. Other dynamic reminders (git branch change) stay
+          // request-only — injected per-turn, never persisted.
+          timeMsg =
+            if isCompactTurn || isAskTurn || loggedReminders.isEmpty then Nil
+            else List(Message(MessageRole.User, Left(SystemReminder.renderAll(loggedReminders))))
+          branchMsg =
             if isCompactTurn || isAskTurn then Nil
-            else if remindersText.nonEmpty then List(Message(MessageRole.User, Left(remindersText)))
-            else Nil
+            else turnCtx.branchChange.toList.map(r => Message(MessageRole.User, Left(r.render)))
+          stateWithReminder =
+            if timeMsg.isEmpty then stateForLlm
+            else stateForLlm.withMessages(SystemReminders.pruneTimeReminders(stateForLlm.messages ++ timeMsg))
           // Maintenance check: every N delegate/flow calls
           maintenanceMsg =
-            if MaintenanceService.shouldTrigger(stateForLlm, depth, isCompactTurn, isAskTurn) then
-              List(MaintenanceService.buildReminder(stateForLlm.delegateCount))
+            if MaintenanceService.shouldTrigger(stateWithReminder, depth, isCompactTurn, isAskTurn) then
+              List(MaintenanceService.buildReminder(stateWithReminder.delegateCount))
             else Nil
           freshTools =
             if isCompactTurn then Some(Nil) else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker)
           request = LlmRequest(
-            messages = stateForLlm.messages ++ dynamicMsg ++ maintenanceMsg,
+            messages = stateWithReminder.messages ++ branchMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = freshDef.name,
             tools = freshTools,
@@ -358,7 +375,7 @@ private[agent] trait AgentCore:
             systemStable = Some(systemStable),
             agentModel = freshDef.model
           )
-        yield (turnCtx, request)
+        yield (turnCtx, request, stateWithReminder)
 
         val agentStartIO =
           if depth > 0 && !isCompactTurn && !isAskTurn then
@@ -371,9 +388,9 @@ private[agent] trait AgentCore:
           else IO.unit
         for
           _ <- agentStartIO
-          (turnCtx, request) <- contextIo
+          (turnCtx, request, stateWithReminder) <- contextIo
           // Synchronously update gitBranch in state — no async message
-          stateWithBranch = stateForLlm.withGitBranch(turnCtx.currentBranch)
+          stateWithBranch = stateWithReminder.withGitBranch(turnCtx.currentBranch)
           _ <- ctx.forkTurn(
             resources.llm
               .sendStream(request, onAttempt = Some(onAttemptCb))
@@ -432,8 +449,8 @@ private[agent] trait AgentCore:
           depth,
           parentRef,
           // Update lastMaintenanceDelegateCount if maintenance was triggered this turn
-          (if MaintenanceService.shouldTrigger(stateForLlm, depth, isCompactTurn, isAskTurn) then
-             stateWithBranch.withLastMaintenanceDelegateCount(stateForLlm.delegateCount)
+          (if MaintenanceService.shouldTrigger(stateWithReminder, depth, isCompactTurn, isAskTurn) then
+             stateWithBranch.withLastMaintenanceDelegateCount(stateWithReminder.delegateCount)
            else stateWithBranch)
             .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
         )
