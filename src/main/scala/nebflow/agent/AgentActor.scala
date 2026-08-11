@@ -804,8 +804,12 @@ object AgentActor extends AgentCore with AgentSession:
           List(Message(MessageRole.User, Left(s"<system-reminder>\n$remindersText\n</system-reminder>")))
         else Nil
         // Inject ONE queued immediate input alongside tool results (serial processing).
-        val immInputOpt = state.execution.pendingImmediateInputs.headOption
-        val remainingImmInputs = state.execution.pendingImmediateInputs.drop(1)
+        // While compaction is in progress, keep inputs queued — injecting mid-compaction
+        // risks the input being lost in the summary. CompactionComplete drains them.
+        val (immInputOpt, remainingImmInputs) =
+          if state.pendingCompaction.isEmpty then
+            (state.execution.pendingImmediateInputs.headOption, state.execution.pendingImmediateInputs.drop(1))
+          else (None, state.execution.pendingImmediateInputs)
         val immediateMessages = immInputOpt match
           case Some(imm) =>
             logAgentEvent(
@@ -1036,6 +1040,10 @@ object AgentActor extends AgentCore with AgentSession:
                     compactionPending.flatMap(_.replyTo)
                   )
               else
+                // Drain any immediate inputs queued during compaction — inject the head
+                // and continue processing instead of silently dropping them at idle.
+                val immInputOpt = compactedState.execution.pendingImmediateInputs.headOption
+                val remainingImmInputs = compactedState.execution.pendingImmediateInputs.drop(1)
                 for
                   _ <- ctx.forkTurn(compactEmitIO)
                   _ <- ctx.forkTurn(
@@ -1046,7 +1054,28 @@ object AgentActor extends AgentCore with AgentSession:
                         )
                       )
                   )
-                yield idle(agentDef, resources, depth, parentRef, compactedState)
+                  result <- immInputOpt match
+                    case Some(imm) =>
+                      logAgentEvent(
+                        agentDef,
+                        depth,
+                        state.sessionId,
+                        state.sessionName,
+                        "immediate-input-injected-after-compaction",
+                        s"text=${imm.text.take(60)} remaining=${remainingImmInputs.size}"
+                      )
+                      val immMessage = imm.blocks match
+                        case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
+                        case _ => Message(MessageRole.User, Left(imm.text))
+                      val drainedState = compactedState.copy(execution =
+                        compactedState.execution.copy(
+                          messages = compactedState.messages :+ immMessage,
+                          pendingImmediateInputs = remainingImmInputs
+                        )
+                      )
+                      pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
+                    case None => IO.pure(idle(agentDef, resources, depth, parentRef, compactedState))
+                yield result
               end if
             case Left(err) =>
               logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "compaction-failed", s"err=$err")
@@ -1509,7 +1538,7 @@ object AgentActor extends AgentCore with AgentSession:
         _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithPending))
         result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
       yield result
-    else if state.execution.pendingImmediateInputs.nonEmpty then
+    else if state.pendingCompaction.isEmpty && state.execution.pendingImmediateInputs.nonEmpty then
       // Inject ONE queued immediate input (serial processing).
       val immInput = state.execution.pendingImmediateInputs.head
       val remainingInputs = state.execution.pendingImmediateInputs.tail
@@ -1620,7 +1649,12 @@ object AgentActor extends AgentCore with AgentSession:
         val keptInteraction = state.execution.interaction.filter(_.pendingPermission.isDefined)
         val updatedState = state
           .copy(execution =
-            ExecutionContext.idle(newMessages, state.execution.turnIdx).copy(interaction = keptInteraction)
+            ExecutionContext.idle(newMessages, state.execution.turnIdx)
+              .copy(
+                interaction = keptInteraction,
+                // Preserve queue when compaction is in progress — CompactionComplete drains it.
+                pendingImmediateInputs = state.execution.pendingImmediateInputs
+              )
           )
           .withMailTurnCount(state.mailTurnCount + 1)
         idle(agentDef, resources, depth, parentRef, updatedState)

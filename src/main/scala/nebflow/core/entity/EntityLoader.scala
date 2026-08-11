@@ -259,6 +259,7 @@ object EntityLoader:
         description = entry.description,
         tools = entry.tools,
         systemPrompt = entry.systemPrompt,
+        voiceEnabled = entry.voice,
         category = entry.category,
         mcpServers = entry.mcpServers,
         model = entry.model,
