@@ -21,12 +21,18 @@ import scala.concurrent.duration.*
  *   processes on next turn, sender doesn't wait. The standard communication method.
  * - ask=true: Synchronously fork the target agent's context (load their
  *   conversation history), ask the question, and block until the response arrives.
- *   The target's main task is NOT interrupted. Use for progress queries, quick
- *   questions, supplemental info. (The deprecated `fork` parameter is accepted as
- *   an alias for backward compatibility with persisted `.ui.json` records.)
+ *   If no answer within the background threshold (~60s), the ask converts to a
+ *   background task: the caller gets immediate feedback and the answer is later
+ *   injected into its conversation via ExternalEvent. The target's main task is
+ *   NOT interrupted. Use for progress queries, quick questions, supplemental info.
+ *   (The deprecated `fork` parameter is accepted as an alias for backward
+ *   compatibility with persisted `.ui.json` records.)
  */
 object MailTool extends Tool:
   private val logger = NebflowLogger(getClass)
+
+  /** After this wait, a synchronous ask converts to a background task instead of failing. */
+  private val AskBackgroundThreshold: FiniteDuration = 60.seconds
 
   val name: String = "Mail"
 
@@ -48,8 +54,11 @@ Default mode (ask omitted or false):
 Ask mode (ask: true):
   Synchronous — forks the target agent's context (loads their conversation history
   into a temporary instance), runs the LLM, and blocks until the answer is returned.
-  The agent's main task is NOT interrupted. Use for progress queries and quick
-  questions when you need an immediate answer without disrupting workflow.
+  The agent's main task is NOT interrupted. If the answer takes longer than ~60s,
+  the ask converts to a background task: you get immediate feedback, the fork keeps
+  running, and the answer is delivered later via a completion notification.
+  Use for progress queries and quick questions when you need an immediate answer
+  without disrupting workflow.
 
 Message type (optional, default "INFO"):
   Every Mail has a TYPE tag. Check the TYPE before acting — it tells you how to handle the Mail:
@@ -76,7 +85,7 @@ Message type (optional, default "INFO"):
         ),
         "ask" -> Json.obj(
           "type" -> "boolean".asJson,
-          "description" -> "If true, synchronously fork the target's context and block until the answer is returned (without interrupting their main task). Default: false.".asJson,
+          "description" -> "If true, synchronously fork the target's context and block until the answer is returned (without interrupting their main task). If no answer within ~60s, the ask converts to a background task — you get immediate feedback and the answer arrives later via a completion notification. Default: false.".asJson,
           "default" -> false.asJson
         ),
         "type" -> Json.obj(
@@ -149,7 +158,7 @@ Message type (optional, default "INFO"):
                         systemPrompt = entry.systemPrompt, category = entry.category,
                         mcpServers = entry.mcpServers, model = entry.model
                       )
-                      doFork(system, resources, agentDef, Some(targetSid), question, ctx)
+                      doFork(system, resources, agentDef, Some(targetSid), question, address, ctx)
                     case None =>
                       IO.pure(Left(ToolError(s"Agent '$address' definition not found.")))
                   }
@@ -166,6 +175,7 @@ Message type (optional, default "INFO"):
     agentDef: AgentDef,
     agentSessionId: Option[String],
     question: String,
+    address: String,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     for
@@ -227,23 +237,142 @@ Message type (optional, default "INFO"):
 
       _ <- agentRef ! AgentCommand.UserInput(question, Some(adapterRef))
 
-      result <- responseDeferred.get
-        .timeoutTo(120.seconds, IO.pure(Left[String, String]("Fork timed out after 120s")))
-        .flatMap {
-          case Right(text) =>
-            for
-              _ <- system.stop(agentRef).handleErrorWith(_ => IO.unit)
-              _ <- system.stop(adapterRef).handleErrorWith(_ => IO.unit)
-              _ <- resources.sessionStore.deleteSession(tempSession.id).handleErrorWith(_ => IO.unit)
-            yield Right(text)
-          case Left(err) =>
-            for
-              _ <- system.stop(agentRef).handleErrorWith(_ => IO.unit)
-              _ <- system.stop(adapterRef).handleErrorWith(_ => IO.unit)
-              _ <- resources.sessionStore.deleteSession(tempSession.id).handleErrorWith(_ => IO.unit)
-            yield Left(ToolError(err))
-        }
+      result <- waitForForkAnswer(
+        system,
+        resources,
+        agentRef,
+        adapterRef,
+        tempSession.id,
+        responseDeferred,
+        address,
+        ctx.agentDef.exists(_.category == "flow"),
+        ctx
+      )
     yield result
+
+  /**
+   * Wait for the fork answer.
+   *
+   * Flow-agent callers stay purely synchronous (no timeout) — their transient
+   * sessions cannot receive background completion notifications, so converting
+   * to background would deadlock the flow step.
+   *
+   * Other callers race the answer against the background threshold: if the
+   * answer arrives first, this is the old synchronous mode. If the threshold
+   * wins, the ask converts to a background task — same pattern as BashTool's
+   * auto-background: immediate feedback to the caller, the fork agent keeps
+   * running, and the answer is later injected into the caller's conversation
+   * via ExternalEvent. No hard timeout — the ask never fails on slowness.
+   */
+  private def waitForForkAnswer(
+    system: ActorSystem,
+    resources: SharedResources,
+    agentRef: ActorRef[AgentCommand],
+    adapterRef: ActorRef[AgentEvent],
+    tempSessionId: String,
+    responseDeferred: Deferred[IO, Either[String, String]],
+    address: String,
+    isFlowCaller: Boolean,
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    // Stop fork agent + adapter, delete temp session.
+    def cleanupFork: IO[Unit] =
+      system.stop(agentRef).handleErrorWith(_ => IO.unit) *>
+        system.stop(adapterRef).handleErrorWith(_ => IO.unit) *>
+        resources.sessionStore.deleteSession(tempSessionId).handleErrorWith(_ => IO.unit)
+
+    if isFlowCaller then
+      responseDeferred.get.flatMap {
+        case Right(text) => cleanupFork *> IO.pure(Right(text))
+        case Left(err)   => cleanupFork *> IO.pure(Left(ToolError(err)))
+      }
+    else
+      responseDeferred.get.race(IO.sleep(AskBackgroundThreshold)).flatMap {
+        case Left(Right(text)) => cleanupFork *> IO.pure(Right(text))
+        case Left(Left(err))   => cleanupFork *> IO.pure(Left(ToolError(err)))
+        case Right(_) =>
+          val jobId = s"ask-${java.util.UUID.randomUUID().toString.take(8)}"
+          val description = s"ask $address"
+          for
+            _ <- BgTaskRegistry.register(jobId, ctx.sessionId.getOrElse(""), description, "ask")
+            _ <- emitAskStarted(ctx, jobId, description)
+            // Detached fiber: wait for the fork to finish, then cleanup +
+            // notify the caller. Never fails the ask — the fork decides.
+            _ <- (responseDeferred.get
+              .flatMap {
+                case Right(text) =>
+                  cleanupFork *>
+                    BgTaskRegistry.unregister(jobId) *>
+                    emitAskFinished(ctx, jobId, description, succeeded = true) *>
+                    notifyAskCompleted(ctx, address, jobId, text, succeeded = true)
+                case Left(err) =>
+                  cleanupFork *>
+                    BgTaskRegistry.unregister(jobId) *>
+                    emitAskFinished(ctx, jobId, description, succeeded = false) *>
+                    notifyAskCompleted(ctx, address, jobId, err, succeeded = false)
+              })
+              .start
+              .void
+          yield Right(
+            s"[Ask moved to background] Mail ask to '$address' has been running for over " +
+              s"${AskBackgroundThreshold.toSeconds}s. The fork continues in the background — " +
+              "you will be notified when the answer arrives. Continue with other work or finish your turn."
+          )
+      }
+  end waitForForkAnswer
+
+  /** Emit a WS event so the frontend shows the ask as a background task. */
+  private def emitAskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
+    ctx.wsSend.fold(IO.unit) { send =>
+      send(
+        io.circe.Json.obj(
+          "type" -> "backgroundTaskUpdate".asJson,
+          "sessionId" -> ctx.sessionId.asJson,
+          "taskId" -> jobId.asJson,
+          "description" -> description.asJson,
+          "status" -> "running".asJson,
+          "startedAt" -> System.currentTimeMillis().asJson
+        )
+      ).handleErrorWith(e => logger.warn(s"WS send failed for ask job $jobId: ${e.getMessage}"))
+    }
+
+  /** Emit a WS event so the frontend dismisses the ask background indicator. */
+  private def emitAskFinished(ctx: ToolContext, jobId: String, description: String, succeeded: Boolean): IO[Unit] =
+    ctx.wsSend.fold(IO.unit) { send =>
+      send(
+        io.circe.Json.obj(
+          "type" -> "backgroundTaskUpdate".asJson,
+          "sessionId" -> ctx.sessionId.asJson,
+          "taskId" -> jobId.asJson,
+          "description" -> description.asJson,
+          "status" -> (if succeeded then "completed" else "failed").asJson
+        )
+      ).handleErrorWith(e => logger.warn(s"WS send failed for ask job $jobId: ${e.getMessage}"))
+    }
+
+  /** Inject the ask answer into the caller's conversation via ExternalEvent. */
+  private def notifyAskCompleted(
+    ctx: ToolContext,
+    address: String,
+    jobId: String,
+    answer: String,
+    succeeded: Boolean
+  ): IO[Unit] =
+    ctx.agentActorRef.fold(IO.unit) { ref =>
+      val eventType = if succeeded then "completed" else "failed"
+      val payload =
+        if succeeded then s"""[Mail ask completed] "$address" answered:\n$answer"""
+        else s"""[Mail ask failed] "$address" responded with an error:\n$answer"""
+      (ref ! AgentCommand.ExternalEvent(
+        source = "mail-ask",
+        eventType = eventType,
+        payload = payload,
+        metadata = io.circe.JsonObject(
+          "address" -> address.asJson,
+          "jobId" -> jobId.asJson
+        )
+      )).handleErrorWith(e => logger.warn(s"Failed to notify agent for ask job $jobId: ${e.getMessage}"))
+    }
 
   private def forkAdapter(
     agentName: String,
