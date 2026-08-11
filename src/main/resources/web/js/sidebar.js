@@ -103,7 +103,7 @@ function switchToSession(sessionId) {
   // Sync header indicators
   if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
   if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
-  if (typeof state.updateDelegateIndicator === 'function') state.updateDelegateIndicator();
+  if (typeof state.updateBgAgentIndicator === 'function') state.updateBgAgentIndicator();
   if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(chatViews.primary);
   // Close plan canvas if bound to a different session
   if (typeof state.onPlanSessionChange === 'function') state.onPlanSessionChange(sessionId);
@@ -1355,7 +1355,7 @@ export function resetChatForActiveSession() {
 
   renderTaskList(state.sessionTasks[sid] || [], undefined, sid);
   if (state.updateBgTasksUI) state.updateBgTasksUI();
-  if (state.updateDelegateIndicator) state.updateDelegateIndicator();
+  if (state.updateBgAgentIndicator) state.updateBgAgentIndicator();
   if (state.updateBypassToggle) state.updateBypassToggle(pv);
 }
 

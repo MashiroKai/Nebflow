@@ -291,7 +291,16 @@ function esc(s) {
 
 /** Signature of the fields we display — used to skip pointless re-renders. */
 function rowSignature(d) {
-  return `${d.id}|${d.status || ''}|${d.port ?? ''}|${d.autoStart ? 1 : 0}|${d.name || ''}`;
+  return `${d.id}|${normalizeStatus(d.status)}|${d.port ?? ''}|${d.autoStart ? 1 : 0}|${d.name || ''}|${d.portOpen ? 1 : 0}`;
+}
+
+/** Defensive status normalize — backend DaemonStatus may serialize as an
+ *  object ({"Running": {}}) instead of a plain string ("running"). */
+function normalizeStatus(raw) {
+  const s = raw || 'stopped';
+  return typeof s === 'object'
+    ? (Object.keys(s)[0] || '').toLowerCase() || 'stopped'
+    : String(s).toLowerCase();
 }
 
 // ── API ────────────────────────────────────────────────────
@@ -343,7 +352,7 @@ function renderList(animate = false) {
 
 /** Update only the status-dependent parts of an existing row (no rebuild). */
 function updateRowState(row, d) {
-  const status = d.status || 'stopped';
+  const status = normalizeStatus(d.status);
   const dot = row.querySelector('.daemon-status');
   if (dot) dot.className = `daemon-status ${status}`;
   const startStop = row.querySelector('[data-act="start"], [data-act="stop"]');
@@ -380,7 +389,7 @@ function buildRow(d, animate = false) {
   const row = document.createElement('div');
   row.className = 'daemon-row' + (animate ? ' anim' : '');
   row.dataset.id = d.id;
-  const status = d.status || 'stopped';
+  const status = normalizeStatus(d.status);
   // Clickable based on TCP port probe (portOpen), not process state — an
   // externally-started dev server has a live port but Stopped process state.
   const canOpen = !!d.portOpen && !!d.port;

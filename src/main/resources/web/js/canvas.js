@@ -430,6 +430,12 @@ export function setActiveTab(id) {
       t.paneEl.dispatchEvent(new CustomEvent('canvas-tab-activated'));
     }
   });
+  // Scroll the activated tab into view — with many tabs the active one can
+  // be clipped out of the horizontal tab bar.
+  const activated = tabs.get(id);
+  if (activated?.tabEl) {
+    activated.tabEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }
   document.dispatchEvent(new CustomEvent('canvas-tab-switched', { detail: { id } }));
   persistTabs();
 
