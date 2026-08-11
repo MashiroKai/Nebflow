@@ -159,8 +159,8 @@ const DAEMON_CSS = `
   font-size: 13px; font-weight: 500; color: var(--color-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.01em;
 }
-.daemon-name.clickable { cursor: pointer; transition: color 0.15s; }
-.daemon-name.clickable:hover { color: rgb(91, 127, 191); }
+.daemon-name.clickable { cursor: pointer; text-decoration: none; transition: color 0.15s; }
+.daemon-name.clickable:hover { color: rgb(91, 127, 191); text-decoration: none; }
 .daemon-port {
   font-size: 11px; color: var(--color-text-muted); opacity: 0.6;
   flex-shrink: 0; font-variant-numeric: tabular-nums;
@@ -399,7 +399,11 @@ function buildRow(d, animate = false) {
     <div class="daemon-status ${status}"></div>
     <div class="daemon-info">
       <div class="daemon-name-row">
-        <span class="daemon-name${canOpen ? ' clickable' : ''}" ${canOpen ? `data-url="http://localhost:${esc(d.port)}"` : ''}>${esc(d.name || d.id)}</span>
+        ${canOpen
+          /* Native <a> link — never blocked by Safari's popup blocker,
+             unlike window.open() called from a JS click handler. */
+          ? `<a class="daemon-name clickable" href="http://localhost:${esc(d.port)}" target="_blank" rel="noopener">${esc(d.name || d.id)}</a>`
+          : `<span class="daemon-name">${esc(d.name || d.id)}</span>`}
         ${d.port ? `<span class="daemon-port">:${esc(d.port)}</span>` : ''}
       </div>
       <div class="daemon-command">${esc(d.command || '')}</div>
@@ -421,15 +425,8 @@ function buildRow(d, animate = false) {
       </button>
     </div>`;
 
-  // Click daemon name to open URL in new tab (when port probe is open)
-  if (canOpen) {
-    const nameEl = row.querySelector('.daemon-name.clickable');
-    nameEl?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const url = nameEl.getAttribute('data-url');
-      if (url) window.open(url, '_blank', 'noopener');
-    });
-  }
+  // Daemon name is a native <a target="_blank"> when the port is open —
+  // no JS click handler needed (and none that Safari could block).
 
   // Auto-start toggle — optimistic flip + PUT, revert on failure.
   const autoInput = row.querySelector('.daemon-autostart-input');
