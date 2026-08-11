@@ -1,7 +1,7 @@
 // bgAgentPopup.js — Live message viewer for background sub-agents.
 //
-// When an agent uses the Delegate tool, sub-agent events arrive with
-// nodeSessionId = "delegate-<agentName>-<uuid>" (backend protocol). This
+// When an agent uses the Delegate/SubTask tool, sub-agent events arrive with
+// nodeSessionId = "delegate-<agentName>-<uuid>" / "subtask-<uuid>" (backend protocol). This
 // module intercepts those events in ws.js (via setBgAgentStepInterceptor)
 // and renders them into a popup ChatView — the same pattern as flowAgentPopup.js.
 //
@@ -10,6 +10,7 @@
 import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
 import { sendWs, onMessage, setBgAgentStepInterceptor } from './ws.js';
 import { restoreFromBackendHistory } from './persistence.js';
+import { isBgAgentId } from './utils.js';
 import state from './state.js';
 
 // ── Per-sub-agent state ────────────────────────────────────
@@ -280,8 +281,8 @@ onMessage('done', () => { if (popupOverlay) updatePopupCtxRing(); });
 // ── WS event interception ────────────────────────────────
 
 export function interceptBgAgentStep(msg) {
-  // "delegate-" prefix is backend protocol (DelegateTool session naming).
-  if (!msg.nodeSessionId || !msg.nodeSessionId.startsWith('delegate-')) return false;
+  // "delegate-"/"subtask-" prefix is backend protocol (DelegateTool/SubTaskTool session naming).
+  if (!msg.nodeSessionId || !isBgAgentId(msg.nodeSessionId)) return false;
   const entry = ensureStepView(msg.nodeSessionId);
 
   if (msg.type === 'agentStart') {

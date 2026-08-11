@@ -30,7 +30,7 @@ import {
 import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { renderWithRegistry } from './cardRegistry.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, isBgAgentId } from './utils.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
 import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
@@ -1261,8 +1261,8 @@ function renderBgAgentDropdown() {
     const status = info.done ? '<span class="bgagent-done">done</span>' : '<span class="bgagent-running">running</span>';
     const displayName = info.name || id;
     const label = info.task ? displayName + ' · ' + escapeHtml(info.task) : displayName;
-    // nodeSessionId for Delegate sub-agents starts with "delegate-" (backend protocol)
-    const nodeSessionId = id.startsWith('delegate-') ? id : null;
+    // nodeSessionId for Delegate/SubTask sub-agents starts with "delegate-"/"subtask-" (backend protocol)
+    const nodeSessionId = isBgAgentId(id) ? id : null;
     const clickAttr = nodeSessionId ? `data-node-session-id="${escapeHtml(nodeSessionId)}" style="cursor:pointer"` : '';
     return '<div class="bg-task-row" ' + clickAttr + '>' +
       '<div class="bg-task-info">' +
@@ -1364,7 +1364,7 @@ onMessage('agentDone', (msg, view) => {
     if (state.sessionBgAgents[sid][aid]) state.sessionBgAgents[sid][aid].done = true;
     if (view) renderBgAgentDropdown();
     // Clean up bg-agent popup view after a delay
-    if (aid.startsWith('delegate-')) cleanupBgAgentView(aid);
+    if (isBgAgentId(aid)) cleanupBgAgentView(aid);
     // Remove after 2s — always runs, even if the parent session isn't displayed
     setTimeout(() => {
       if (state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {

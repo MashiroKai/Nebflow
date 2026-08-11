@@ -489,3 +489,11 @@ export function createMsgCopyButton(text) {
   return btn;
 }
 
+
+/** Check whether a session/agent ID belongs to a background sub-agent
+ *  (Delegate sub-agent: "delegate-<agent>-<uuid8>"; SubTask worker:
+ *  "subtask-<uuid8>" — backend naming protocol). Single point of truth so
+ *  future prefixes only need one change. Used for bg-agent popup routing. */
+export function isBgAgentId(id) {
+  return typeof id === 'string' && (id.startsWith('delegate-') || id.startsWith('subtask-'));
+}
