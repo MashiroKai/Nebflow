@@ -666,7 +666,11 @@ export function restoreTabs() {
     for (const tab of panelTabs) {
       const entry = openTab(tab.id, tab.title, {
         type: tab.type || 'generic',
-        closable: tab.closable !== false,
+        // All tabs are closable in the current design. Ignore any stale
+        // closable:false saved by older versions (e.g. the Teams tab before
+        // it became closeable) — otherwise the restored tab silently loses
+        // its close button and openTeams() won't rebuild it.
+        closable: true,
         pinned: true,
       });
       if (!entry) continue;
