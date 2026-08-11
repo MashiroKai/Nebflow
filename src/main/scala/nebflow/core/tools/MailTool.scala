@@ -453,17 +453,22 @@ Message type (optional, default "INFO"):
             // the flow interceptor in ws.js would claim these events and render
             // team agent activity into a flow popup.
             //
-            // Preserve an existing nodeSessionId: events from sub-agents the
-            // team agent spawned via Delegate already carry a "delegate-..." id
-            // (stamped by DelegateTool.routeWsSend) — overwriting it here would
-            // route sub-agent events into the team popup and break their own.
+            // protocol.scala stamps every subagent event with nodeSessionId =
+            // sessionId, so the old "if nodeSessionId absent" guard was always
+            // true and the "team-" prefix never applied. Overwrite explicitly,
+            // except for "delegate-..." ids stamped by DelegateTool.routeWsSend
+            // (sub-agents the team agent spawned via Delegate must keep their
+            // own prefix so their events route to the delegate popup, not here).
             val teamWsSend: Json => IO[Unit] = (json: Json) =>
-              ctx.wsSend.getOrElse((_: Json) => IO.unit) {
-                val withNode =
-                  if json.hcursor.downField("nodeSessionId").as[String].isRight then json
-                  else json.deepMerge(Json.obj("nodeSessionId" -> s"team-${session.id}".asJson))
-                withNode
-              }
+              val underlying = ctx.wsSend.getOrElse((_: Json) => IO.unit)
+              val nsidOpt = json.hcursor.downField("nodeSessionId").as[String].toOption
+              val stamped = nsidOpt match
+                case Some(nsid) if nsid.startsWith("delegate-") => json
+                case _ =>
+                  json.asObject
+                    .map(obj => Json.fromJsonObject(obj.add("nodeSessionId", s"team-${session.id}".asJson)))
+                    .getOrElse(json)
+              underlying(stamped)
             for
               ref <- actorSystem.spawn(
                 AgentActor(
