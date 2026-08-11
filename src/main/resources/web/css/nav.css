@@ -308,7 +308,7 @@ body.sidebar-collapsed #activity-bar {
   padding: 6px 0; font-size: 13px;
 }
 .profile-item .label { color: var(--color-text-muted); }
-.profile-item .value { color: var(--color-text); font-weight: 500; }
+.profile-item .value { color: var(--color-text); font-weight: 400; }
 .profile-peers {
   margin-top: 12px; padding-top: 12px;
   border-top: 1px solid var(--glass-border, rgba(255,255,255,0.05));

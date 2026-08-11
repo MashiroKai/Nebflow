@@ -286,7 +286,7 @@ body.sidebar-collapsed #sidebar {
 }
 .header-dropdown-menu button.active {
   color: var(--color-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 .header-dropdown-menu button::before {
   content: '';

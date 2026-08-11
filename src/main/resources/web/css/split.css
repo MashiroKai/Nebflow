@@ -554,7 +554,7 @@ body.canvas-open #canvas-panel {
 .canvas-tab-label.dirty::before {
   content: '• ';
   color: var(--color-primary, #3b82f6);
-  font-weight: bold;
+  font-weight: 500;
 }
 
 /* Floating rendered↔source toggle (markdown & HTML viewers) */
