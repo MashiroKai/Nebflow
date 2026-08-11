@@ -6,11 +6,15 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
-import nebflow.core.flow.TeamSessionRegistry
 import nebflow.shared.{Message, MessageRole}
 
 /**
- * DelegateTool — lets an agent spawn a sub-agent for a subtask.
+ * DelegateTool — Nebula/调度器专用 sub-agent delegation.
+ *
+ * Only available to the Nebula root agent (NebulaExclusiveTools). Lets Nebula
+ * spawn a sub-agent for a subtask, either targeting a standalone agent or
+ * triggering a flow pipeline. Team members delegate via SubTaskTool instead
+ * (self-clone + ephemeral worker, no Mail identity).
  *
  * Two modes:
  *   - **Background** (default): returns immediately. The sub-agent's result
@@ -356,14 +360,6 @@ $prompt"""
           parentRef
         )
       ))
-      // Inherit parent's team membership so team scope checks apply to sub-agent Mail
-      _ <- parentSessionId match
-        case Some(psid) =>
-          TeamSessionRegistry.teamOfSession(psid).flatMap {
-            case Some(teamName) => TeamSessionRegistry.registerSession(teamName, subagentId, subagentId)
-            case None => IO.unit
-          }
-        case None => IO.unit
       _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
       s"""Sub-agent '$agentName' started in background for: $description.
@@ -398,7 +394,6 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
             )
           case None => IO.unit
         (notify *> resources.agentRegistry.update(_ - subagentId) *>
-          unregisterTeamMembership(subagentId) *>
           (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
           IO.pure(Behaviors.stopped[AgentEvent]))
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
@@ -485,14 +480,6 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
           parentRef
         )
       ))
-      // Inherit parent's team membership so team scope checks apply to sub-agent Mail
-      _ <- parentSessionId match
-        case Some(psid) =>
-          TeamSessionRegistry.teamOfSession(psid).flatMap {
-            case Some(teamName) => TeamSessionRegistry.registerSession(teamName, subagentId, subagentId)
-            case None => IO.unit
-          }
-        case None => IO.unit
       _ <- parentRef.fold(IO.unit)(ref => ref ! AgentCommand.SessionStarted(address, agentName, taskDescription))
       _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
@@ -554,7 +541,6 @@ You will be notified when the initial task completes."""
               case SystemSignal.Terminated(_) =>
                 // Persistent session died — unregister, notify parent, adapter stops
                 resources.agentRegistry.update(_ - subagentId) *>
-                  unregisterTeamMembership(subagentId) *>
                   notifyParentAndStop(
                     "failed",
                     s"[Session crashed] \"$description\": persistent session terminated unexpectedly",
@@ -571,16 +557,5 @@ You will be notified when the initial task completes."""
       }
       .filter(_.nonEmpty)
       .getOrElse("")
-
-  /**
-   * Remove the delegate's inherited team-membership entry from the session
-   * registry once the sub-agent is done. Keeps Mail routing intact while the
-   * delegate is alive; prevents ghost `delegate-*` entries after it dies.
-   */
-  private def unregisterTeamMembership(subagentId: String): IO[Unit] =
-    TeamSessionRegistry.teamOfSession(subagentId).flatMap {
-      case Some(teamName) => TeamSessionRegistry.unregisterAgent(teamName, subagentId, subagentId)
-      case None => IO.unit
-    }
 
 end DelegateTool

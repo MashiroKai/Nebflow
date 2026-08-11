@@ -29,9 +29,12 @@ private[agent] trait AgentCore:
   /**
    * Nebula-exclusive tools: only available when agentName == "Nebula".
    * - Schedule: session-scoped scheduled tasks
+   * - Delegate: 调度器/根 agent 专用——指派 standalone agent 或触发 flow。
+   *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
    */
   private val NebulaExclusiveTools = Set(
-    "Schedule"
+    "Schedule",
+    "Delegate"
   )
 
   /** Tools available to Nebula and Team Leads, but NOT workers. */
@@ -253,7 +256,7 @@ private[agent] trait AgentCore:
         val isCompactTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Compact)
         val isSaveTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Save)
         val isAskTurn = state.askMode.isDefined
-        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth)
+        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker)
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
         // Track the first model that failed (for modelChanged notification)
@@ -290,7 +293,7 @@ private[agent] trait AgentCore:
           freshDef = turnCtx.agentDef
           voiceMuted <- resources.voiceMutedRef.get
           voiceEnabled = freshDef.voiceEnabled && !voiceMuted
-          allowedTools = buildAllowedToolSet(freshDef, depth)
+          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker)
           devInfo = deviceInfoBlock
           sessionsText = formatAgentSessions(stateForLlm.agentSessions)
           // Load active tasks for system prompt injection (real-time per turn)
@@ -314,7 +317,8 @@ private[agent] trait AgentCore:
             teamCatalog = turnCtx.teamCatalog,
             memoryBlock = turnCtx.memoryBlock,
             taskListText = taskListText,
-            rulesMd = turnCtx.rulesMd
+            rulesMd = turnCtx.rulesMd,
+            isSubTaskWorker = stateForLlm.isSubTaskWorker
           )
           systemStable = buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
           isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
@@ -343,7 +347,7 @@ private[agent] trait AgentCore:
               List(MaintenanceService.buildReminder(stateForLlm.delegateCount))
             else Nil
           freshTools =
-            if isCompactTurn then Some(Nil) else buildToolList(freshDef, depth)
+            if isCompactTurn then Some(Nil) else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker)
           request = LlmRequest(
             messages = stateForLlm.messages ++ dynamicMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
@@ -446,7 +450,7 @@ private[agent] trait AgentCore:
     replyTo: Option[ActorRef[AgentEvent]],
     processing: ProcessingFn
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val allowedTools = buildAllowedToolSet(agentDef, depth)
+    val allowedTools = buildAllowedToolSet(agentDef, depth, state.isSubTaskWorker)
     val (filteredCalls, droppedCalls) = result.toolCalls.partition(tc => allowedTools.contains(tc.name))
     if droppedCalls.nonEmpty then
       NebflowLogger
@@ -797,7 +801,7 @@ private[agent] trait AgentCore:
         }
       case None => IO.pure(ToolExecResult(s"No such tool available: ${call.name}", isError = true))
 
-  protected def buildAllowedToolSet(agentDef: AgentDef, depth: Int = 0): Set[String] =
+  protected def buildAllowedToolSet(agentDef: AgentDef, depth: Int = 0, isSubTaskWorker: Boolean = false): Set[String] =
     val base = agentDef.tools match
       case Nil => Set.empty[String]
       case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
@@ -832,13 +836,16 @@ private[agent] trait AgentCore:
         taskFiltered.filter(t =>
           !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith)
         )
-    // Delegate available to all agents (MaxDepth recursion guard still applies)
-    mcpFiltered
+    // SubTask workers are leaf agents: no Mail / no further delegation.
+    // Delegate is Nebula-exclusive (filtered above for everyone else); this
+    // also defends against a worker whose agent.json explicitly lists them.
+    if isSubTaskWorker then mcpFiltered -- Set("Mail", "SubTask", "Delegate")
+    else mcpFiltered
 
   end buildAllowedToolSet
 
-  protected def buildToolList(agentDef: AgentDef, depth: Int = 0): Option[List[ToolDefinition]] =
-    val allowedSet = buildAllowedToolSet(agentDef, depth)
+  protected def buildToolList(agentDef: AgentDef, depth: Int = 0, isSubTaskWorker: Boolean = false): Option[List[ToolDefinition]] =
+    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker)
     Some(ToolRegistry.ALL_TOOLS.filter(t => allowedSet.contains(t.name)))
 
   protected def emitStream(
@@ -1014,7 +1021,10 @@ private[agent] trait AgentCore:
     ctx: PromptContext
   ): String =
     val rawPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
-    val cleanedPrompt = PromptSections.stripAllMigrated(rawPrompt)
+    // SubTask workers inherit the parent's system.md for domain knowledge but
+    // team interaction content is stripped (no team / no Mail / no reporting).
+    val base = if ctx.isSubTaskWorker then SubTaskPrompt.stripTeamContent(rawPrompt) else rawPrompt
+    val cleanedPrompt = PromptSections.stripAllMigrated(base)
     val conditionalBlocks = PromptSections.buildConditionalBlocks(ctx)
     val separator = if conditionalBlocks.nonEmpty then "\n\n" else ""
     s"$systemPrefix$cleanedPrompt$separator$conditionalBlocks"

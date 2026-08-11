@@ -1954,7 +1954,7 @@ class WebSocketRoutes(
             // subsequent realtime events (agentToolStart/agentDone key on it).
             sharedResources.agentRegistry.get.flatMap { registry =>
               val active = registry.values.toList.filter(r =>
-                r.kind == AgentKind.Delegate || r.kind == AgentKind.Ephemeral || r.kind == AgentKind.Flow
+                r.kind == AgentKind.Delegate || r.kind == AgentKind.Ephemeral || r.kind == AgentKind.Flow || r.kind == AgentKind.SubTask
               )
               active.traverse { rec =>
                 sessionStore.getSessionMeta(rec.sessionId).map { meta =>

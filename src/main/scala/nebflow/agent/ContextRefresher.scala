@@ -324,15 +324,19 @@ object ContextRefresher:
           }
         case None => resources.agentLibrary.get(agentDef.name)
       globalDef = freshDefOpt.getOrElse(agentDef)
+      // SubTask workers are leaf task-execution pipelines: strip all team /
+      // manager / memory context — the prompt is their only context source.
+      isWorker = state.isSubTaskWorker
       // Load all-agent prefix + category-specific prefix
       allPrefixRaw <- systemPrefixForAll.get
-      categoryPrefix <- globalDef.category match
+      categoryPrefix <- if isWorker then IO.pure("")
+                        else globalDef.category match
         case "team" => systemPrefixForTeams.get
         case "flow" => systemPrefixForFlows.get
         case _ => IO.pure("")
       // Manager prefix: only for Team Manager agents
-      managerPrefix <- if globalDef.name == "Manager" then managerPrefixSource.get
-                       else IO.pure("")
+      managerPrefix <- if isWorker || globalDef.name != "Manager" then IO.pure("")
+                       else managerPrefixSource.get
       systemPrefixRaw = allPrefixRaw + categoryPrefix + managerPrefix
       systemPrefix = systemPrefixRaw
       projectRoot <- resolveProjectRoot(state.folderId, resources, globalDef.name)
@@ -351,13 +355,16 @@ object ContextRefresher:
       thinkingConfig <- resources.thinkingConfigRef.get
       (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
       skillCatalog <- SkillService.buildPerAgentCatalog(globalDef.skills)
-      flowCatalog <- SkillService.buildPerAgentFlowCatalog(globalDef.flows)
-      teamCatalog <- buildTeamCatalogForSession(state.sessionId)
+      flowCatalog <- if isWorker then IO.pure("")
+                     else SkillService.buildPerAgentFlowCatalog(globalDef.flows)
+      teamCatalog <- if isWorker then IO.pure("")
+                     else buildTeamCatalogForSession(state.sessionId)
       // Memory: only Nebula (standalone, name="Nebula") and team agents get memory.
       // Team agents get memory; standalone agents (Coder/Explorer/etc) don't.
+      // SubTask workers get none — clean context, prompt is the only input.
       isTeamAgent = teamNameOpt.isDefined
       memoryBlock =
-        if isTeamAgent || globalDef.name == "Nebula" then
+        if !isWorker && (isTeamAgent || globalDef.name == "Nebula") then
           buildMemoryBlock(globalDef.name, teamNameOpt)
         else ""
     yield TurnContext(

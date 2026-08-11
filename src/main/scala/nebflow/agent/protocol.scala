@@ -183,7 +183,7 @@ end AgentCommand
  * discriminator; P3 drops the prefixes entirely and routes by this field.
  */
 enum AgentKind:
-  case Root, Team, Flow, Delegate, Ephemeral, Plan
+  case Root, Team, Flow, Delegate, Ephemeral, Plan, SubTask
 
 /**
  * Unified registry entry — one identity per agent (P1 统一注册表).
@@ -567,7 +567,14 @@ case class SessionContext(
   /** Total mail turns completed in this session. */
   mailTurnCount: Int = 0,
   /** Last experience extraction timestamp. */
-  lastExperienceAt: Option[Long] = None
+  lastExperienceAt: Option[Long] = None,
+  /**
+   * True when this agent is a SubTask worker (spawned via SubTaskTool).
+   * Workers are leaf agents: no Mail/SubTask/Delegate tools, no team
+   * context injection (categoryPrefix/managerPrefix/memoryBlock/teamCatalog/
+   * flowCatalog stripped), and a fixed Worker Block appended to the prompt.
+   */
+  isSubTaskWorker: Boolean = false
 )
 
 case class InteractionState(
@@ -699,7 +706,8 @@ object AgentState:
     safetyMode: String = "confirm-edits",
     gitBranch: Option[String] = None,
     expectsMail: Boolean = false,
-    rootSessionId: String = ""
+    rootSessionId: String = "",
+    isSubTaskWorker: Boolean = false
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -720,7 +728,8 @@ object AgentState:
         gitBranch = gitBranch,
         safetyMode = safetyMode,
         expectsMail = expectsMail,
-        rootSessionId = rootSessionId
+        rootSessionId = rootSessionId,
+        isSubTaskWorker = isSubTaskWorker
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
@@ -764,6 +773,7 @@ extension (s: AgentState)
   def safetyMode: String = s.session.safetyMode
   def rootSessionId: String = s.session.rootSessionId
   def expectsMail: Boolean = s.session.expectsMail
+  def isSubTaskWorker: Boolean = s.session.isSubTaskWorker
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)
