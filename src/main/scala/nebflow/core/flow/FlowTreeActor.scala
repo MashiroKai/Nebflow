@@ -75,21 +75,20 @@ object TeamSessionRegistry:
 
   /** Resolve a short agent name to a sessionId within a team instance. */
   def resolveSessionId(senderSid: String, address: String, sessionStore: nebflow.gateway.SessionStore): IO[Option[String]] =
-    // Find which instance the sender belongs to
     sessionMap.get.flatMap { m =>
-      // Try exact (instance, address) match first
-      val direct = m.collectFirst { case ((inst, `address`), sid) => (inst, sid) }
-      direct match
-        case Some((_, sid)) => IO.pure(Some(sid))
+      // Sender's own instance — resolve same-team agent first.
+      val senderInstance = m.collectFirst { case ((inst, _), sid) if sid == senderSid => inst }
+      senderInstance match
+        case Some(inst) =>
+          m.get((inst, address)) match
+            case Some(sid) => IO.pure(Some(sid))
+            case None =>
+              // Same-team miss: fall back to any instance with that name
+              // (e.g. a standalone session, or another team's manager).
+              IO.pure(m.collectFirst { case ((_, `address`), sid) => sid })
         case None =>
-          // Find sender's instance
-          val senderInstance = m.collectFirst { case ((inst, _), sid) if sid == senderSid => inst }
-          senderInstance match
-            case Some(inst) =>
-              m.get((inst, address)) match
-                case Some(sid) => IO.pure(Some(sid))
-                case None => IO.pure(None)
-            case None => IO.pure(None)
+          // Sender isn't in any team — global exact match only.
+          IO.pure(m.collectFirst { case ((_, `address`), sid) => sid })
     }
 
   /** Get the agent name for a session. */
