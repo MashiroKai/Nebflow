@@ -451,13 +451,23 @@ enum AgentStatus:
 
 case class CompactionResult(before: Int, after: Int)
 
+/**
+ * Compaction execution phase. Two-stage model:
+ *  - Save:    tools available, agent writes durable memory/skills with Write/Edit,
+ *             ends the turn (toolCalls.isEmpty) → transitions to Compact.
+ *  - Compact: tools disabled, single text-only summary turn (existing behavior).
+ */
+enum CompactionPhase:
+  case Save, Compact
+
 case class CompactionJob(
   subagentId: String,
   mode: String,
   replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None,
   replyTo: Option[ActorRef[AgentEvent]] = None,
   resumeAfterCompact: Boolean = true,
-  postCompactInstruction: Option[String] = None
+  postCompactInstruction: Option[String] = None,
+  phase: CompactionPhase = CompactionPhase.Compact // default Compact → existing call sites unchanged
 )
 
 case class TurnContext(

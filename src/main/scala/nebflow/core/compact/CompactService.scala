@@ -42,6 +42,127 @@ object CompactService:
     Message(MessageRole.User, Left(prompt))
 
   // ------------------------------------------------------------------
+  // Save-memory reminder — stage 1 of the two-stage compaction model
+  // ------------------------------------------------------------------
+
+  /**
+   * Build the save-memory reminder injected BEFORE the compact reminder
+   * (two-stage model). Tools stay available so the agent can Write/Edit
+   * durable memory and skills; ending the turn (toolCalls.isEmpty) is the
+   * completion signal that transitions to the compact stage.
+   *
+   * Only agents that receive a memory block (Nebula + team agents, mirroring
+   * ContextRefresher's injection condition) get a save turn; others go
+   * straight to compact (behavior unchanged).
+   */
+  def buildSaveMemoryReminder(depth: Int): Message =
+    val profile = CompactionProfile.fromDepth(depth)
+    val prompt = profile match
+      case CompactionProfile.Worker => WorkerSaveMemoryReminder
+      case CompactionProfile.Manager => ManagerSaveMemoryReminder
+      case _ => RootSaveMemoryReminder
+    Message(MessageRole.User, Left(prompt))
+
+  /** Shared preamble for all save-memory profiles. */
+  private val SaveMemoryPreamble =
+    """<system-reminder>
+      |Context compaction is approaching — the conversation is about to be compressed.
+      |BEFORE compression, save durable information from this conversation to your
+      |persistent memory and skills.
+      |
+      |Tools ARE AVAILABLE this turn. Use the Write or Edit tool on the memory files
+      |directly (paths and entry format are in the Memory section of your system prompt).
+      |
+      |Only save information that matters across sessions:
+      |- User preferences, corrections, workflow patterns
+      |- Project decisions, technical knowledge, environment facts
+      |- Do NOT log transient state or one-off task details
+      |
+      |Maintain memory as a living document: merge related entries, delete outdated
+      |ones, resolve conflicts — don't just append.
+      |
+      |LANGUAGE RULE — write your memory entries in the SAME language as the user's messages.
+      |
+      |Your ONLY task this turn is to organize your memory and skills with the
+      |Write/Edit tools. When the organizing is done, END THIS TURN directly — do not
+      |output any extra text. Ending the turn is the completion signal; the system
+      |will proceed to compaction automatically.
+      |
+      |Already-saved information does not need to be repeated in the compaction
+      |summary afterwards.
+      |""".stripMargin
+
+  /**
+   * Root agent (Nebula, depth 0) — the orchestrator.
+   *  Focus: user dynamic facts, orchestration knowledge, long-term project state.
+   */
+  private val RootSaveMemoryReminder = SaveMemoryPreamble +
+    """You are the ROOT agent (Nebula). This save turn is about the USER and ORCHESTRATION:
+      |
+      |1. USER DYNAMIC FACTS → write to ~/.nebflow/User.md (user-level, applies to all agents):
+      |   - Corrections of your output or approach — record what they wanted instead
+      |   - Direct instructions that skip your questions — record their default preference
+      |   - Repeated working style (naming, workflow, tool choices — after 2-3 consistent observations)
+      |   - Workflow preferences and environment facts (paths, ports, proxies, devices)
+      |
+      |2. ORCHESTRATION KNOWLEDGE → write to ~/.nebflow/agents/Nebula/memory.md:
+      |   - Team/flow selection decisions and routing rules that proved effective
+      |   - Cross-project patterns, division of labor between agents
+      |   - Which agent handles which task type (observed capabilities)
+      |
+      |3. LONG-TERM PROJECT STATE (only what outlives this session):
+      |   - Active branches, worktrees, pending merges
+      |   - Design decisions with trade-offs still in force
+      |
+      |Skip one-off task details — they belong to the compaction summary, not memory.
+      |""".stripMargin
+
+  /**
+   * Flow Manager (depth 1) — coordinator within a project/team.
+   *  Focus: project coordination state so routing can resume seamlessly.
+   */
+  private val ManagerSaveMemoryReminder = SaveMemoryPreamble +
+    """You are a FLOW/TEAM MANAGER. This save turn is about COORDINATION STATE:
+      |write to ~/.nebflow/teams/<team>/agents/<name>/memory.md (your own memory file).
+      |
+      |1. PROGRESS — what has been completed since the last save, per dispatched task
+      |2. DISPATCHED TASK RESULTS — for each agent you dispatched and heard back from:
+      |   Agent → task → status (done/failed/pending) → key outcome
+      |3. PENDING DISPATCHES — what you still await or must send next
+      |4. KEY DECISIONS & TRADE-OFFS — decisions made during coordination, with the
+      |   reasoning so you don't re-litigate them after compaction
+      |5. ARTIFACT LOCATIONS — files each agent produced (path + what it is), so you
+      |   can point users/agents at results without re-searching
+      |
+      |Skip routine tool chatter and transient waiting states. Keep entries durable
+      |enough that a fresh session can resume routing without re-reading the whole log.
+      |""".stripMargin
+
+  /**
+   * Flow Worker (depth 2+) — implementation agent within a flow.
+   *  Focus: technical experience (pitfalls, effective practices, tool behavior)
+   *  plus current-task conclusions.
+   */
+  private val WorkerSaveMemoryReminder = SaveMemoryPreamble +
+    """You are a FLOW WORKER. This save turn is about TECHNICAL EXPERIENCE:
+      |write to ~/.nebflow/teams/<team>/agents/<name>/memory.md (your own memory file).
+      |
+      |1. PITFALLS & FIXES — bugs you hit and how you fixed them (root cause matters more
+      |   than the exact patch); anything you'd want to avoid re-discovering next time
+      |2. EFFECTIVE PRACTICES — approaches that worked in this domain (tests, build, layout)
+      |3. TOOL BEHAVIOR — non-obvious tool semantics you discovered (output formats, gotchas,
+      |   failure modes) that cost you time
+      |4. REUSABLE CAPABILITIES — if this conversation produced a repeatable procedure
+      |   (seen 2+ times or clearly generalizable), organize it as a skill following the
+      |   skill-creator spec: ~/.nebflow/skills/<kebab-case-name>/SKILL.md with frontmatter
+      |   (name + description: what AND when). One skill = one purpose; no one-off skills.
+      |5. CURRENT TASK KEY CONCLUSIONS — files changed, decisions, blockers — so the next
+      |   session resumes cleanly
+      |
+      |Be concise: keep only what is reusable, not full history.
+      |""".stripMargin
+
+  // ------------------------------------------------------------------
   // Profile-specific compact prompts
   // ------------------------------------------------------------------
 
