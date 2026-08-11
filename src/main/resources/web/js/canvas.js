@@ -262,28 +262,8 @@ export function openTab(id, title, opts = {}) {
     : '';
   tab.innerHTML = `<span class="canvas-tab-label">${title}</span>${closeHtml}`;
 
-  // Click tab (not close button) → switch to it.
-  tab.addEventListener('click', (e) => {
-    if (e.target.closest('.canvas-tab-close')) return;
-    setActiveTab(id);
-  });
-
-  // Double-click tab → promote to pinned (VS Code behavior)
-  tab.addEventListener('dblclick', (e) => {
-    e.stopPropagation();
-    pinTab(id);
-  });
-
-  // Click close button → close tab.
-  const closeBtn = tab.querySelector('.canvas-tab-close');
-  if (closeBtn) {
-    closeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      closeTab(id);
-    });
-  }
-
-  // Drag-to-reorder
+  // Drag-to-reorder (per-tab; click/dblclick/close are delegated to #canvas-tab-bar
+  // in initCanvas — immune to listener loss on rebuilt/restored tabs).
   attachDragHandlers(tab, id);
 
   tabBar.appendChild(tab);
@@ -568,6 +548,39 @@ export function initCanvas() {
   const closeBtn = document.getElementById('canvas-close-btn');
   if (closeBtn) {
     closeBtn.addEventListener('click', closeCanvas);
+  }
+
+  // Event delegation on the tab bar (defensive fix for task L: per-tab listeners
+  // could silently stop firing after long sessions — e.g. listener loss on tabs
+  // rebuilt during restore/reorder). One delegated listener on the stable
+  // #canvas-tab-bar container covers all tabs, present and future.
+  const tabBar = document.getElementById('canvas-tab-bar');
+  if (tabBar && !tabBar._delegated) {
+    tabBar._delegated = true;
+
+    // Click: close button → close tab; anywhere else on a tab → activate it.
+    tabBar.addEventListener('click', (e) => {
+      const tabEl = e.target.closest('.canvas-tab');
+      if (!tabEl || !tabBar.contains(tabEl)) return;
+      const id = tabEl.dataset.tabId;
+      if (!id) return;
+      if (e.target.closest('.canvas-tab-close')) {
+        e.stopPropagation();
+        closeTab(id);
+      } else {
+        setActiveTab(id);
+      }
+    });
+
+    // Double-click tab → promote to pinned (VS Code behavior).
+    tabBar.addEventListener('dblclick', (e) => {
+      const tabEl = e.target.closest('.canvas-tab');
+      if (!tabEl || !tabBar.contains(tabEl)) return;
+      const id = tabEl.dataset.tabId;
+      if (!id) return;
+      e.stopPropagation();
+      pinTab(id);
+    });
   }
 
   // Listen for workspace-open-item events (dispatched on window by explorer.js).
