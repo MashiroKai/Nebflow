@@ -60,7 +60,12 @@ case class DaemonState(
   exitCode: Option[Int] = None,
   recentOutput: String = "",
   command: List[String] = Nil,
-  port: Option[Int] = None
+  port: Option[Int] = None,
+  // Independent reachability probe: true when a TCP connect to `port` succeeds.
+  // Decoupled from process status — an externally-started server (not managed by
+  // DaemonService) can still be reachable, and a dead port makes a live process
+  // non-clickable. None when the config declares no port.
+  portOpen: Option[Boolean] = None
 )
 
 object DaemonState:

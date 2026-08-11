@@ -103,14 +103,17 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
 
   /** Get the current state of a single daemon. */
   def getState(id: String): IO[Option[DaemonState]] =
-    entries.get.map(_.get(id).map(entry => toState(id, entry)))
+    entries.get.flatMap(_.get(id) match
+      case Some(entry) => toStateIO(id, entry).map(Some(_))
+      case None => IO.pure(None)
+    )
 
-  /** Get states for a list of daemon configs (merges config + runtime status). */
+  /** Get states for a list of daemon configs (merges config + runtime status + port probe). */
   def getStates(configs: List[DaemonConfig]): IO[List[DaemonState]] =
-    entries.get.map { map =>
-      configs.map { cfg =>
+    entries.get.flatMap { map =>
+      configs.traverse { cfg =>
         val entry = map.getOrElse(cfg.id, DaemonEntry(cfg))
-        toState(cfg.id, entry)
+        toStateIO(cfg.id, entry)
       }
     }
 
@@ -156,7 +159,11 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
             logger.info(s"[daemon] Started '${config.name}' (pid=$pid)") *>
             // Monitor fiber: detect process exit
             monitorExit(config.id, process, fiber).start.void *>
-            entries.get.map(_.get(config.id).map(e => toState(config.id, e)).getOrElse(toState(config.id, entry)))
+            entries.get.flatMap { map =>
+              map.get(config.id) match
+                case Some(e) => toStateIO(config.id, e)
+                case None => toStateIO(config.id, entry)
+            }
         }
     }
 
@@ -180,7 +187,11 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
         )
       } *>
       logger.info(s"[daemon] Stopped '${entry.config.name}'") *>
-      entries.get.map(_.get(id).map(e => toState(id, e)))
+      entries.get.flatMap { map =>
+        map.get(id) match
+          case Some(e) => toStateIO(id, e).map(Some(_))
+          case None => IO.pure(Some(toState(id, entry)))
+      }
 
   /** Background fiber: read stdout+stderr lines into ring buffer. */
   private def readOutput(id: String, process: Process): IO[Unit] =
@@ -264,6 +275,29 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
       command = entry.config.command,
       port = entry.config.port
     )
+
+  /** toState + TCP reachability probe on the configured port (if any). */
+  private def toStateIO(id: String, entry: DaemonEntry): IO[DaemonState] =
+    entry.config.port match
+      case Some(port) =>
+        IO.blocking(probePort(port)).map(open => toState(id, entry).copy(portOpen = Some(open)))
+      case None => IO.pure(toState(id, entry))
+
+  /**
+   * Lightweight TCP connect probe — decoupled from process status.
+   * An externally-started server (not managed by DaemonService) is still
+   * reported reachable; a live process with a dead port is not clickable.
+   * Timeout ≤ 500ms; any failure → false.
+   */
+  private def probePort(port: Int): Boolean =
+    val socket = new java.net.Socket()
+    try
+      socket.connect(new java.net.InetSocketAddress("127.0.0.1", port), 500)
+      true
+    catch case _: Exception => false
+    finally
+      try socket.close()
+      catch case _: Exception => ()
 
   private def getPid(process: Process): Option[Long] =
     try Some(process.pid())
