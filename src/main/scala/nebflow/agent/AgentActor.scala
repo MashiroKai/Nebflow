@@ -929,19 +929,26 @@ object AgentActor extends AgentCore with AgentSession:
           if imageBlocks.nonEmpty then List(Message(MessageRole.User, Right(imageBlocks)))
           else Nil
         val baseMessages = tc.compactedMessages.getOrElse(state.messages)
-        val pendingEvents = state.execution.pendingEvents
-        val eventMessages = if pendingEvents.nonEmpty then
-          logAgentEvent(
-            agentDef,
-            depth,
-            state.sessionId,
-            state.sessionName,
-            "pending-events-injected-at-tools-complete",
-            s"events=${pendingEvents.size}"
-          )
-          val remindersText = pendingEvents.map(e => e.payload).mkString("\n\n")
-          List(Message(MessageRole.User, Left(s"<system-reminder>\n$remindersText\n</system-reminder>")))
-        else Nil
+        // Inject ONE queued external event alongside tool results (serial
+        // processing, same as pendingImmediateInputs). Multiple simultaneously
+        // due events (e.g. scheduled tasks) are consumed strictly one at a time
+        // — no concurrency, no aggregation — the remainder stays queued for the
+        // next turn boundary.
+        val (eventOpt, remainingEvents) = state.execution.pendingEvents.headOption match
+          case Some(e) => (Some(e), state.execution.pendingEvents.drop(1))
+          case None => (None, state.execution.pendingEvents)
+        val eventMessages = eventOpt match
+          case Some(e) =>
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "pending-events-injected-at-tools-complete",
+              s"events=1 remaining=${remainingEvents.size}"
+            )
+            List(Message(MessageRole.User, Left(s"<system-reminder>\n${e.payload}\n</system-reminder>")))
+          case None => Nil
         // Inject ONE queued immediate input alongside tool results (serial processing).
         // While compaction is in progress, keep inputs queued — injecting mid-compaction
         // risks the input being lost in the summary. CompactionComplete drains them.
@@ -984,7 +991,7 @@ object AgentActor extends AgentCore with AgentSession:
                 // 5-minute timeout. Only pendingPermission survives (bounded by
                 // PermissionTimeout), pendingAskUserReplyTo still resets.
                 interaction = state.execution.interaction.filter(_.pendingPermission.isDefined),
-                pendingEvents = Nil,
+                pendingEvents = remainingEvents,
                 pendingImmediateInputs = remainingImmInputs,
                 delegateCount = newDelegateCount,
                 mailUsedThisTurn = state.mailUsedThisTurn ||
@@ -1668,9 +1675,12 @@ object AgentActor extends AgentCore with AgentSession:
             )
           )
         else IO.unit
-      val remindersText = queuedEvents.map(_.payload).mkString("\n\n")
+      // Serial processing — consume ONE queued event per turn (chatQueue
+      // semantics), keep the rest queued so they're handled one at a time.
+      val headEvent = queuedEvents.head
+      val remainingEvents = queuedEvents.tail
       val eventMessages = List(
-        Message(MessageRole.User, Left(s"<system-reminder>\n$remindersText\n</system-reminder>"))
+        Message(MessageRole.User, Left(s"<system-reminder>\n${headEvent.payload}\n</system-reminder>"))
       )
       val messagesWithPending = newMessages ++ eventMessages
       logAgentEvent(
@@ -1679,12 +1689,12 @@ object AgentActor extends AgentCore with AgentSession:
         state.sessionId,
         state.sessionName,
         "pending-messages-injected",
-        s"events=${queuedEvents.size}"
+        s"events=1 remaining=${remainingEvents.size}"
       )
       val updatedState = state.copy(execution =
         ExecutionContext
           .idle(messagesWithPending, state.execution.turnIdx)
-          .copy(pendingImmediateInputs = state.execution.pendingImmediateInputs)
+          .copy(pendingEvents = remainingEvents, pendingImmediateInputs = state.execution.pendingImmediateInputs)
       )
       for
         _ <- roundCompleteIO

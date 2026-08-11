@@ -3,6 +3,7 @@ package nebflow.core
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.NebflowLogger
+import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
 import nebflow.shared.{Message, MessageRole}
 
 import java.time.ZonedDateTime
@@ -49,6 +50,84 @@ object SystemReminders:
 
     reminders.toList
   end collectAll
+
+  /**
+   * Collect per-turn reminders including time-of-day context (peak/off-peak +
+   * next idle window from usage history) and a summary of pending scheduled
+   * tasks for this session. IO because it queries the scheduled-task store and
+   * the persisted usage pattern.
+   */
+  def collectAllIO(
+    isUserTurn: Boolean,
+    taskStore: ScheduledTaskStore,
+    sessionId: Option[String]
+  ): IO[List[SystemReminder]] =
+    if !isUserTurn then IO.pure(Nil)
+    else
+      for
+        pattern <- UsageTracker.loadPattern()
+        pending <- sessionId.fold(IO.pure(Nil: List[ScheduledTask]))(taskStore.loadTasks)
+        reminders = collectAll(isUserTurn = true) ++
+          timeContextReminder(pattern) ++
+          pendingScheduleReminder(pending)
+      yield reminders
+
+  /** Peak (14-18 on weekdays) / off-peak + next idle window from usage history. */
+  private def timeContextReminder(pattern: UsagePattern): Option[SystemReminder] =
+    val now = ZonedDateTime.now()
+    val isPeak = now.getDayOfWeek.getValue <= 5 && now.getHour >= 14 && now.getHour < 18
+    val peakPart = if isPeak then "Peak hours active (14:00-18:00, 3x pricing)" else "Off-peak hours"
+    val idlePart = nextIdleWindow(pattern, now) match
+      case Some(w) => s"Next idle window: ${w.startHour}:00 (${w.durationHours}h)"
+      case None => ""
+    val content = s"$peakPart. $idlePart".trim
+    if content.isEmpty then None else Some(SystemReminder("time-context", content))
+
+  /** Find the next idle window strictly after now (today or upcoming days). */
+  private def nextIdleWindow(pattern: UsagePattern, now: ZonedDateTime): Option[TimeWindow] =
+    if pattern.idleWindows.isEmpty then None
+    else
+      val todayDow = now.getDayOfWeek.getValue % 7
+      val nowHour = now.getHour
+      // Candidates today (later hours) and the next 7 days
+      (0 to 7).iterator
+        .flatMap { dayOffset =>
+          val dow = (todayDow + dayOffset) % 7
+          pattern.idleWindows.filter(_.dayOfWeek == dow).map(w => (dayOffset, w))
+        }
+        .collectFirst {
+          case (0, w) if w.startHour > nowHour => w
+          case (dayOffset, w) if dayOffset > 0 => w
+        }
+
+  /** Summary of this session's pending (untriggered) scheduled tasks. */
+  private def pendingScheduleReminder(pending: List[ScheduledTask]): Option[SystemReminder] =
+    if pending.isEmpty then None
+    else
+      val now = System.currentTimeMillis()
+      val effective = pending.filter(t => t.enabled && !t.triggered && t.triggerAt > now)
+      val lines = effective
+        .sortBy(_.triggerAt)
+        .take(5)
+        .map { t =>
+          val when = formatScheduleTime(t.triggerAt, now)
+          val repeat = t.repeat.fold("")(r => s" ($r)")
+          s"- [$when] ${t.content.take(60)}$repeat"
+        }
+      if lines.isEmpty then None
+      else Some(SystemReminder("schedule", s"Pending schedules (${effective.size}):\n${lines.mkString("\n")}"))
+
+  private def formatScheduleTime(epochMs: Long, nowMs: Long): String =
+    val zdt = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(epochMs), java.time.ZoneId.systemDefault())
+    val nowZdt = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(nowMs), java.time.ZoneId.systemDefault())
+    val fmt = DateTimeFormatter.ofPattern("HH:mm")
+    val sameDay = zdt.toLocalDate == nowZdt.toLocalDate
+    val tomorrow = zdt.toLocalDate == nowZdt.toLocalDate.plusDays(1)
+    val day =
+      if sameDay then "today"
+      else if tomorrow then "tomorrow"
+      else zdt.format(DateTimeFormatter.ofPattern("MM-dd"))
+    s"${zdt.format(fmt)} $day"
 
   /** Log reminders and return them wrapped in IO. */
   def logAndReturn(reminders: List[SystemReminder]): IO[List[SystemReminder]] =

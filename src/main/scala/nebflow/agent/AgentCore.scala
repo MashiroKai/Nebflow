@@ -330,7 +330,11 @@ private[agent] trait AgentCore:
           isUserTurn = stateForLlm.messages.lastOption.exists { m =>
             m.role == MessageRole.User && !m.content.toOption.exists(_.exists(_.isInstanceOf[ContentBlock.ToolResult]))
           }
-          reminders = SystemReminders.collectAll(isUserTurn)
+          reminders <- SystemReminders.collectAllIO(
+            isUserTurn,
+            resources.scheduledTaskStore,
+            stateForLlm.sessionId
+          )
           // Branch change: persist synchronously (no async message needed)
           _ <- turnCtx.branchChange match
             case Some(_) =>
@@ -347,11 +351,16 @@ private[agent] trait AgentCore:
           // session history: folded into the working state so it flows into
           // the persisted history (persistIfSession saves state.messages) and
           // into the LLM request. Older time reminders are pruned to bound
-          // history growth. Other dynamic reminders (git branch change) stay
-          // request-only — injected per-turn, never persisted.
+          // history growth. Dynamic context (peak/idle windows, pending
+          // schedules) stays request-only — injected per-turn, never persisted.
+          timeReminders = loggedReminders.filter(_.category == "time")
+          contextReminders = loggedReminders.filterNot(_.category == "time")
           timeMsg =
-            if isCompactTurn || isAskTurn || loggedReminders.isEmpty then Nil
-            else List(Message(MessageRole.User, Left(SystemReminder.renderAll(loggedReminders))))
+            if isCompactTurn || isAskTurn || timeReminders.isEmpty then Nil
+            else List(Message(MessageRole.User, Left(SystemReminder.renderAll(timeReminders))))
+          contextMsg =
+            if isCompactTurn || isAskTurn || contextReminders.isEmpty then Nil
+            else List(Message(MessageRole.User, Left(SystemReminder.renderAll(contextReminders))))
           branchMsg =
             if isCompactTurn || isAskTurn then Nil
             else turnCtx.branchChange.toList.map(r => Message(MessageRole.User, Left(r.render)))
@@ -366,7 +375,7 @@ private[agent] trait AgentCore:
           freshTools =
             if isCompactTurn then Some(Nil) else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker)
           request = LlmRequest(
-            messages = stateWithReminder.messages ++ branchMsg ++ maintenanceMsg,
+            messages = stateWithReminder.messages ++ contextMsg ++ branchMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = freshDef.name,
             tools = freshTools,

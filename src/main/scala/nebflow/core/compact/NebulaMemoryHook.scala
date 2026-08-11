@@ -2,7 +2,7 @@ package nebflow.core.compact
 
 import cats.effect.IO
 import nebflow.agent.SharedResources
-import nebflow.core.{NebflowLogger, UsagePattern}
+import nebflow.core.{NebflowLogger, UsagePattern, UsageTracker}
 import nebflow.shared.*
 
 /**
@@ -27,9 +27,10 @@ object NebulaMemoryHook extends PreCompactionHook:
     else
       for
         facts <- extractFacts(messages, agentName, sessionId, resources)
+        pattern <- UsageTracker.analyzePattern()
         _ <- if facts.nonEmpty then
           DreamMode
-            .updateMemory(facts, UsagePattern.empty)
+            .updateMemory(facts, pattern)
             .handleErrorWith(e => IO(logger.warn(s"Memory update failed: ${e.getMessage}")).void)
         else IO.unit
       yield ()
