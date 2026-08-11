@@ -706,8 +706,12 @@ private[agent] trait AgentCore:
       case names => names.toSet
     // Mail is always available — it's a communication primitive, not a domain tool
     // Issue is always available — agents should be able to report system problems
-    // FlowReport is always available — flow agents use it to report verdict + output
-    val withBuiltin = base + "Mail" + "Issue" + "FlowReport"
+    // FlowReport is available only to flow-category agents
+    val withBuiltin =
+      if agentDef.category == "flow" then
+        base + "Mail" + "Issue" + "FlowReport"
+      else
+        base + "Mail" + "Issue"
     val isNebula = agentDef.name == "Nebula"
     val nebulaFiltered = if isNebula then withBuiltin else withBuiltin -- NebulaExclusiveTools
     // Task tools: available to Nebula and Team Lead, NOT workers

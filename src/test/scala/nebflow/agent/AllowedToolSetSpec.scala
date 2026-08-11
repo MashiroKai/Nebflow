@@ -28,7 +28,7 @@ class AllowedToolSetSpec extends FunSuite:
   test("concrete tools list yields exactly those tools + Mail + Issue"):
     val defn = mkDef("researcher", List("Read", "Glob", "Grep"))
     val allowed = CoreProbe.allowed(defn)
-    assertEquals(allowed, Set("Read", "Glob", "Grep", "Mail", "Issue", "FlowReport"))
+    assertEquals(allowed, Set("Read", "Glob", "Grep", "Mail", "Issue"))
 
   test("'*' expands to all registered tools, minus Nebula-exclusive for non-Nebula"):
     val defn = mkDef("omni", List("*"))
@@ -48,12 +48,19 @@ class AllowedToolSetSpec extends FunSuite:
     // Schedule is stripped for non-Nebula agents
     assert(!allowed.contains("Schedule"))
 
-  test("Mail, Issue, and FlowReport are always available even when not listed"):
+  test("Mail and Issue are always available even when not listed"):
     val defn = mkDef("minimal", List("Read"))
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Mail"))
     assert(allowed.contains("Issue"))
-    assert(allowed.contains("FlowReport"))
+
+  test("FlowReport is available only to flow-category agents"):
+    val flowDefn = mkDef("reviewer", List("Read")).copy(category = "flow")
+    val teamDefn = mkDef("backend", List("Read")).copy(category = "team")
+    val stdDefn = mkDef("explorer", List("Read")).copy(category = "standalone")
+    assert(CoreProbe.allowed(flowDefn).contains("FlowReport"), "flow agent keeps FlowReport")
+    assert(!CoreProbe.allowed(teamDefn).contains("FlowReport"), "team agent does not get FlowReport")
+    assert(!CoreProbe.allowed(stdDefn).contains("FlowReport"), "standalone agent does not get FlowReport")
 
   test("non-Nebula agents can use AskUserQuestion if listed"):
     // AskUserQuestion is no longer Nebula-exclusive — any agent that requests it gets it.
