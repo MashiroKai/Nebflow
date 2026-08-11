@@ -2,6 +2,7 @@ package nebflow.llm
 
 import cats.effect.IO
 import cats.effect.kernel.Ref
+import cats.effect.std.Dispatcher
 import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.*
@@ -88,7 +89,20 @@ object LlmInterface:
     options: Option[LlmOptions] = None,
     configRef: Option[Ref[IO, NebflowServiceConfig]] = None
   ): IO[(LlmHandle[IO], ProviderRegistry, ProviderHealthMonitor, IO[Unit])] =
-    HttpClientFs2Backend.resource[IO]().allocated.flatMap { case (backend, release) =>
+    // Force HTTP/1.1: the JDK HttpClient's HTTP/2 connection-reuse + TLS 1.3
+    // session resumption clashes with the USTC gateway reverse proxy
+    // (nginx/one-api style), producing intermittent bad_record_mac TLS alerts
+    // on reused connections. curl never hits it — each request is a fresh
+    // connection. HTTP/1.1 removes the multiplexed-reuse path entirely; if
+    // bad_record_mac persists, next step is disabling TLS 1.3 resumption.
+    val httpClient = java.net.http.HttpClient
+      .newBuilder()
+      .version(java.net.http.HttpClient.Version.HTTP_1_1)
+      .build()
+    Dispatcher.parallel[IO].allocated.flatMap { case (dispatcher, releaseDispatcher) =>
+      val backend = HttpClientFs2Backend.usingClient[IO](httpClient, dispatcher)
+      val release: IO[Unit] = releaseDispatcher *> IO(backend.close())
+      IO.pure(backend).flatMap { backend =>
       val config = Config.loadServiceConfig(options.flatMap(_.configPath))
       val cfgRef: Ref[IO, NebflowServiceConfig] = configRef.getOrElse(Ref.unsafe(config))
       val registry = ProviderRegistry(cfgRef, backend)
@@ -534,5 +548,6 @@ object LlmInterface:
         (handle, registry, healthMonitor, release)
       end result
       IO(result).onError(_ => release)
+      }
     }
 end LlmInterface
