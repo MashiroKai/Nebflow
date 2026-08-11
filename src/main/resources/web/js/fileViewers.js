@@ -107,6 +107,19 @@ const anchorNavScript = `<script>
 })();
 <\/script>`;
 
+/** Script injected into the iframe to forward image clicks to the parent
+ *  for lightbox preview. Uses the _nfImagePreview message prefix. */
+const imgClickScript = `<script>
+(function(){
+  document.addEventListener('click', function(e){
+    var img = e.target.closest ? e.target.closest('img') : null;
+    if (!img) return;
+    e.preventDefault();
+    parent.postMessage({ _nfImagePreview: { src: img.currentSrc || img.src, alt: img.alt || '' } }, window.location.origin);
+  }, true);
+})();
+<\/script>`;
+
 /** Watch for system theme changes and propagate CSS vars to all Canvas HTML iframes.
  *  Initialized once on first viewHtml call. */
 let _canvasThemeWatcherInit = false;
@@ -430,7 +443,7 @@ function viewHtml(pane, { content, absPath, fileName }) {
   <\/script>`;
 
   // 6. Assemble srcdoc with base styles (transparent bg, theme-aware, scrollable)
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${svgInlineScript}${anchorNavScript}${themePropScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${svgInlineScript}${imgClickScript}${anchorNavScript}${themePropScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.style.width = '100%';

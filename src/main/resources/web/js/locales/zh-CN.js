@@ -334,4 +334,9 @@ export default {
   'daemons.stop': '停止',
   'daemons.restart': '重启',
   'daemons.restartFirst': '先启动',
+  // === Lightbox（图片预览） ===
+  'lightbox.ariaLabel': '图片预览',
+  'lightbox.close': '关闭预览',
+  'lightbox.loading': '加载中…',
+  'lightbox.loadError': '图片加载失败',
 };
