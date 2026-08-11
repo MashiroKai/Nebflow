@@ -40,7 +40,7 @@ import { initDaemons } from './daemons.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { handleFlowAgentHistory } from './flowAgentPopup.js';
-import { handleDelegateHistory, openStepPopup as openDelegatePopup, cleanupDelegateView } from './delegatePopup.js';
+import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
 import { initNeblink, checkPairingRedirect } from './neblink.js';
 import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
@@ -148,9 +148,9 @@ state.dom = {
   // Header status indicators — surfaced on state.dom for ws.js indicator updates.
   headerModelInfoEl: document.getElementById('header-model-info'),
   bypassToggleEl: document.getElementById('bypass-toggle'),
-  delegateIndicatorEl: document.getElementById('delegate-indicator'),
-  delegateDropdownEl: document.getElementById('delegate-dropdown'),
-  delegateDropdownListEl: document.getElementById('delegate-dropdown')?.querySelector('.bg-dropdown-list'),
+  bgagentIndicatorEl: document.getElementById('bgagent-indicator'),
+  bgagentDropdownEl: document.getElementById('bgagent-dropdown'),
+  bgagentDropdownListEl: document.getElementById('bgagent-dropdown')?.querySelector('.bg-dropdown-list'),
   memoryBtnEl: document.getElementById('memory-btn'),
 };
 
@@ -179,9 +179,9 @@ initChatView(
     bgCountEl: document.getElementById('bg-indicator')?.querySelector('.bg-count'),
     bgDropdownEl: document.getElementById('bg-dropdown'),
     bgDropdownListEl: document.getElementById('bg-dropdown')?.querySelector('.bg-dropdown-list'),
-    delegateIndicatorEl: document.getElementById('delegate-indicator'),
-    delegateDropdownEl: document.getElementById('delegate-dropdown'),
-    delegateDropdownListEl: document.getElementById('delegate-dropdown')?.querySelector('.bg-dropdown-list'),
+    bgagentIndicatorEl: document.getElementById('bgagent-indicator'),
+    bgagentDropdownEl: document.getElementById('bgagent-dropdown'),
+    bgagentDropdownListEl: document.getElementById('bgagent-dropdown')?.querySelector('.bg-dropdown-list'),
     sessionNameEl: document.getElementById('session-name'),
   }
 );
@@ -976,8 +976,8 @@ function clearHistoryIndicators() {
 // For initial load: replaces chat content.
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg, view) => {
-  // Delegate sub-agent sessions are handled by the delegate popup viewer.
-  if (handleDelegateHistory(msg)) return;
+  // Background sub-agent sessions are handled by the bg-agent popup viewer.
+  if (handleBgAgentHistory(msg)) return;
   // Flow agent sessions are handled by the popup viewer, not the primary chat.
   if (handleFlowAgentHistory(msg)) return;
 
@@ -1208,48 +1208,48 @@ onMessage('historyPage', (msg, view) => {
 });
 
 // --- Multi-agent events ---
-// Sub-agent activity shows a header indicator (like Bash background tasks).
+// Background sub-agent activity shows a header indicator (like Bash background tasks).
 // No tool cards or text rendered in the chat — the parent's Delegate tool
 // card (spinner → result) is the only chat-level feedback.
 // Click the indicator to see a dropdown with per-agent status.
 
-function updateDelegateIndicator() {
+function updateBgAgentIndicator() {
   if (!activeView) return;
-  const el = activeView.dom.delegateIndicatorEl;
+  const el = activeView.dom.bgagentIndicatorEl;
   if (!el) return;
   const sid = activeView?.sessionId;
-  const delegates = (sid && state.sessionDelegates[sid]) || {};
-  const count = Object.keys(delegates).length;
+  const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
+  const count = Object.keys(bgAgents).length;
   if (count > 0) {
     el.classList.remove('hidden');
-    el.querySelector('.delegate-count').textContent = count;
+    el.querySelector('.bgagent-count').textContent = count;
   } else {
     el.classList.add('hidden');
-    const dropdown = activeView.dom.delegateDropdownEl;
+    const dropdown = activeView.dom.bgagentDropdownEl;
     if (dropdown) dropdown.classList.add('hidden');
   }
-  renderDelegateDropdown();
+  renderBgAgentDropdown();
 }
-state.updateDelegateIndicator = updateDelegateIndicator;
+state.updateBgAgentIndicator = updateBgAgentIndicator;
 
-function renderDelegateDropdown() {
+function renderBgAgentDropdown() {
   if (!activeView) return;
-  const listEl = activeView.dom.delegateDropdownListEl;
+  const listEl = activeView.dom.bgagentDropdownListEl;
   if (!listEl) return;
   const sid = activeView?.sessionId;
-  const delegates = (sid && state.sessionDelegates[sid]) || {};
-  const entries = Object.entries(delegates);
+  const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
+  const entries = Object.entries(bgAgents);
   if (entries.length === 0) {
     listEl.innerHTML = '';
     return;
   }
   listEl.innerHTML = entries.map(([id, info]) => {
     const toolLabel = info.currentTool || '';
-    const toolPart = toolLabel ? '<span class="delegate-tool">' + escapeHtml(toolLabel) + '</span>' : '';
-    const status = info.done ? '<span class="delegate-done">done</span>' : '<span class="delegate-running">running</span>';
+    const toolPart = toolLabel ? '<span class="bgagent-tool">' + escapeHtml(toolLabel) + '</span>' : '';
+    const status = info.done ? '<span class="bgagent-done">done</span>' : '<span class="bgagent-running">running</span>';
     const displayName = info.name || id;
     const label = info.task ? displayName + ' · ' + escapeHtml(info.task) : displayName;
-    // nodeSessionId for delegate sub-agents starts with "delegate-"
+    // nodeSessionId for Delegate sub-agents starts with "delegate-" (backend protocol)
     const nodeSessionId = id.startsWith('delegate-') ? id : null;
     const clickAttr = nodeSessionId ? `data-node-session-id="${escapeHtml(nodeSessionId)}" style="cursor:pointer"` : '';
     return '<div class="bg-task-row" ' + clickAttr + '>' +
@@ -1260,16 +1260,16 @@ function renderDelegateDropdown() {
     '</div>';
   }).join('');
 
-  // Wire click handlers for delegate rows
+  // Wire click handlers for sub-agent rows
   listEl.querySelectorAll('[data-node-session-id]').forEach(row => {
     row.addEventListener('click', (e) => {
       e.stopPropagation();
       const nodeSessionId = row.getAttribute('data-node-session-id');
-      const info = delegates[nodeSessionId];
+      const info = bgAgents[nodeSessionId];
       if (info) {
-        openDelegatePopup(nodeSessionId, info.name, info.task);
+        openBgAgentPopup(nodeSessionId, info.name, info.task);
         // Close the dropdown
-        const dropdown = activeView.dom.delegateDropdownEl;
+        const dropdown = activeView.dom.bgagentDropdownEl;
         if (dropdown) dropdown.classList.add('hidden');
       }
     });
@@ -1278,14 +1278,14 @@ function renderDelegateDropdown() {
 
 // Toggle dropdown on indicator click — register for ALL views
 Object.values(chatViews).forEach(v => {
-  const indicator = v.dom.delegateIndicatorEl;
-  const dropdown = v.dom.delegateDropdownEl;
+  const indicator = v.dom.bgagentIndicatorEl;
+  const dropdown = v.dom.bgagentDropdownEl;
   if (!indicator || !dropdown) return;
   indicator.addEventListener('click', (e) => {
     e.stopPropagation();
     setActiveView(v);
     if (dropdown.classList.contains('hidden')) {
-      renderDelegateDropdown();
+      renderBgAgentDropdown();
       dropdown.classList.remove('hidden');
     } else {
       dropdown.classList.add('hidden');
@@ -1296,8 +1296,8 @@ Object.values(chatViews).forEach(v => {
 // Close dropdown on outside click
 document.addEventListener('click', (e) => {
   Object.values(chatViews).forEach(v => {
-    const dropdown = v.dom.delegateDropdownEl;
-    const indicator = v.dom.delegateIndicatorEl;
+    const dropdown = v.dom.bgagentDropdownEl;
+    const indicator = v.dom.bgagentIndicatorEl;
     if (dropdown && !dropdown.contains(e.target) && indicator && !indicator.contains(e.target)) {
       dropdown.classList.add('hidden');
     }
@@ -1307,20 +1307,20 @@ document.addEventListener('click', (e) => {
 onMessage('agentStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   // rootSessionId points at the top-level main session even for nested
-  // delegates (child → grandchild), so sessionDelegates stays keyed by the
+  // sub-agents (child → grandchild), so sessionBgAgents stays keyed by the
   // session the user is actually viewing.
   const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || msg.name;
   if (view) view.stream.activeAgentId = aid;
-  if (!state.sessionDelegates[sid]) state.sessionDelegates[sid] = {};
-  state.sessionDelegates[sid][aid] = {
+  if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
+  state.sessionBgAgents[sid][aid] = {
     name: msg.name || aid,
     task: msg.taskDescription || '',
     currentTool: null,
     done: false,
   };
-  if (view) updateDelegateIndicator();
+  if (view) updateBgAgentIndicator();
 });
 
 onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); });
@@ -1331,9 +1331,9 @@ onMessage('agentToolStart', (msg, view) => {
   const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
-  if (aid && state.sessionDelegates[sid] && state.sessionDelegates[sid][aid]) {
-    state.sessionDelegates[sid][aid].currentTool = msg.label;
-    if (view) renderDelegateDropdown();
+  if (aid && state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
+    state.sessionBgAgents[sid][aid].currentTool = msg.label;
+    if (view) renderBgAgentDropdown();
   }
 });
 
@@ -1348,25 +1348,25 @@ onMessage('agentDone', (msg, view) => {
   const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
-  if (aid && state.sessionDelegates[sid]) {
-    if (state.sessionDelegates[sid][aid]) state.sessionDelegates[sid][aid].done = true;
-    if (view) renderDelegateDropdown();
-    // Clean up delegate popup view after a delay
-    if (aid.startsWith('delegate-')) cleanupDelegateView(aid);
+  if (aid && state.sessionBgAgents[sid]) {
+    if (state.sessionBgAgents[sid][aid]) state.sessionBgAgents[sid][aid].done = true;
+    if (view) renderBgAgentDropdown();
+    // Clean up bg-agent popup view after a delay
+    if (aid.startsWith('delegate-')) cleanupBgAgentView(aid);
     // Remove after 2s — always runs, even if the parent session isn't displayed
     setTimeout(() => {
-      if (state.sessionDelegates[sid] && state.sessionDelegates[sid][aid]) {
-        delete state.sessionDelegates[sid][aid];
+      if (state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
+        delete state.sessionBgAgents[sid][aid];
         // Clean up empty session entries
-        if (Object.keys(state.sessionDelegates[sid]).length === 0) {
-          delete state.sessionDelegates[sid];
+        if (Object.keys(state.sessionBgAgents[sid]).length === 0) {
+          delete state.sessionBgAgents[sid];
         }
         // Update indicator if the affected view is currently displayed
         const targetView = findViewBySessionId(sid);
         if (targetView) {
           const saved = activeView;
           setActiveView(targetView);
-          updateDelegateIndicator();
+          updateBgAgentIndicator();
           setActiveView(saved);
         }
       }
@@ -1762,44 +1762,6 @@ function renderBgDropdown() {
     row.appendChild(cancelBtn);
     listEl.appendChild(row);
   });
-
-  // Flow entries
-  const flows = flowCanvas.getRunningFlows();
-  flows.forEach(flow => {
-    const row = document.createElement('div');
-    row.className = 'bg-task-row';
-    const info = document.createElement('div');
-    info.className = 'bg-task-info';
-    const desc = document.createElement('span');
-    desc.className = 'bg-task-desc';
-    desc.textContent = flow.flowName || flow.name;
-    const meta = document.createElement('div');
-    meta.className = 'bg-task-meta';
-    const progress = document.createElement('span');
-    progress.className = 'bg-task-id';
-    progress.textContent = `${flow.done}/${flow.total} steps`;
-    if (flow.running > 0) {
-      const runningTag = document.createElement('span');
-      runningTag.className = 'bg-task-status bg-status-active';
-      runningTag.textContent = `${flow.running} running`;
-      meta.appendChild(runningTag);
-    }
-    meta.appendChild(progress);
-    info.appendChild(desc);
-    info.appendChild(meta);
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'bg-task-cancel';
-    cancelBtn.textContent = t('bg.cancel');
-    cancelBtn.onclick = (e) => {
-      e.stopPropagation();
-      cancelBtn.disabled = true;
-      cancelBtn.textContent = '...';
-      sendWs({ type: 'cancelFlow', name: flow.name, sessionId: state.activeSessionId });
-    };
-    row.appendChild(info);
-    row.appendChild(cancelBtn);
-    listEl.appendChild(row);
-  });
 }
 
 function startBgTimer() {
@@ -1823,14 +1785,15 @@ function stopBgTimer() {
 }
 
 function updateBgTasksUI() {
+  // Background tasks only — running flows are tracked separately on the
+  // flow canvas (getRunningFlows), not in this indicator.
   const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
   const now = Date.now();
   const active = tasks.filter(task =>
     task.status === 'running' || task.status === 'cancelling' ||
     (task.finishedAt && (now - task.finishedAt < 3000))
   );
-  const flows = flowCanvas.getRunningFlows();
-  const totalCount = active.length + flows.length;
+  const totalCount = active.length;
   const el = activeView.dom.bgIndicatorEl;
   const countEl = activeView.dom.bgCountEl;
   const dropdown = activeView.dom.bgDropdownEl;
@@ -2080,9 +2043,9 @@ onMessage('forkComplete', (msg, view) => {
       return;
     }
 
-    const delegate = document.getElementById('delegate-dropdown');
-    if (delegate && !delegate.classList.contains('hidden')) {
-      delegate.classList.add('hidden');
+    const bgAgentDropdown = document.getElementById('bgagent-dropdown');
+    if (bgAgentDropdown && !bgAgentDropdown.classList.contains('hidden')) {
+      bgAgentDropdown.classList.add('hidden');
       e.preventDefault();
       return;
     }
@@ -2384,10 +2347,10 @@ onMessage('activeBgTasks', (msg) => {
       delete state.sessionBgTasks[sid];
     }
   }
-  // Also clean stale delegate indicators — any session that has delegates
+  // Also clean stale sub-agent indicators — any session that has sub-agents
   // tracked locally but no longer has an active agent on the backend
-  // can't be reliably detected here (delegates use actor system, not BgTaskRegistry).
-  // The agentDone fix (global sessionDelegates) already handles missed events.
+  // can't be reliably detected here (sub-agents use actor system, not BgTaskRegistry).
+  // The agentDone fix (global sessionBgAgents) already handles missed events.
   // Refresh the UI for the active view
   if (activeView) updateBgTasksUI();
 });

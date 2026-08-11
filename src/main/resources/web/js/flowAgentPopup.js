@@ -222,7 +222,7 @@ function ensureStepView(sessionId) {
     voiceBtn: null, voiceOverlay: null, voiceText: null,
     headerModelInfoEl: null, bgIndicatorEl: null, bgCountEl: null,
     bgDropdownEl: null, bgDropdownListEl: null,
-    delegateIndicatorEl: null, delegateDropdownEl: null, delegateDropdownListEl: null,
+    bgagentIndicatorEl: null, bgagentDropdownEl: null, bgagentDropdownListEl: null,
     sessionNameEl: null,
   };
   const view = new ChatView('flow-' + sessionId, fakeDom);

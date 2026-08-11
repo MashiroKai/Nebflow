@@ -4,7 +4,7 @@
 // - Plan result is displayed as a centered glassmorphism card inline in the
 //   main chat area (not a separate canvas panel).
 // - The plan agent shows as a normal sub-agent: its agentStart, agentToolStart,
-//   agentDone events flow through normal dispatch so the delegate indicator
+//   agentDone events flow through normal dispatch so the bg-agent indicator
 //   and tool activity are visible. Only agentTextDelta is intercepted to
 //   accumulate the plan text for the card.
 // - Session-bound: switching sessions removes the card; switching back to a

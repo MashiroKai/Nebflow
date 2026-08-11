@@ -10,12 +10,12 @@ import { findViewBySessionId, setActiveView, activeView, chatViews } from './cha
 let flowStepInterceptor = null;
 export function setFlowStepInterceptor(fn) { flowStepInterceptor = fn; }
 
-// ── Delegate-step interceptor (registered by delegatePopup.js) ──────────
-// Same pattern as flowStepInterceptor. Checked FIRST so delegate events
-// (nodeSessionId starts with "delegate-") don't get swallowed by the
-// flowStepInterceptor which claims all nodeSessionId events.
-let delegateStepInterceptor = null;
-export function setDelegateStepInterceptor(fn) { delegateStepInterceptor = fn; }
+// ── Background-agent step interceptor (registered by bgAgentPopup.js) ────
+// Same pattern as flowStepInterceptor. Checked FIRST so background sub-agent
+// events (nodeSessionId starts with "delegate-" — backend protocol) don't get
+// swallowed by the flowStepInterceptor which claims all nodeSessionId events.
+let bgAgentStepInterceptor = null;
+export function setBgAgentStepInterceptor(fn) { bgAgentStepInterceptor = fn; }
 
 /**
  * Convert agent* events (agentTextDelta, agentToolStart, etc.) to standard
@@ -233,7 +233,7 @@ export function connect() {
       if (msg.type === 'pong') { state.pendingPong = false; return; }
 
       // ── BUG 6 fix: save/restore activeView ────────────────────────────
-      // activeView is a module-global (chatView.js). The delegate/flow
+      // activeView is a module-global (chatView.js). The bg-agent/flow
       // interceptors below call setActiveView() to render into popup ChatViews,
       // which would otherwise leak into subsequent rendering within the same
       // event-loop tick. Snapshot here and restore after each interceptor
@@ -261,25 +261,26 @@ export function connect() {
       }
       setActiveView(view || null);
 
-      // ── Delegate popup: intercept events with nodeSessionId ─────
+      // ── Background-agent popup: intercept events with nodeSessionId ─────
       // Delegate sub-agent events carry nodeSessionId (injected by DelegateTool's
-      // routeWsSend). Route them to the delegate popup's ChatView.
+      // routeWsSend — the "delegate-" prefix is backend protocol). Route them
+      // to the bg-agent popup's ChatView.
       // Checked BEFORE flowStepInterceptor because both use nodeSessionId —
       // delegate IDs start with "delegate-" so we can distinguish.
-      if (msg.nodeSessionId && msg.nodeSessionId.startsWith('delegate-') && delegateStepInterceptor && delegateStepInterceptor(msg)) {
+      if (msg.nodeSessionId && msg.nodeSessionId.startsWith('delegate-') && bgAgentStepInterceptor && bgAgentStepInterceptor(msg)) {
         const converted = convertAgentEvent(msg);
         if (converted) {
           const convList = handlers[converted.type];
           if (convList) for (const h of convList) {
             try { h(converted, activeView); }
-            catch (e) { console.error('[ws] delegate handler error for', converted.type, ':', e.message); }
+            catch (e) { console.error('[ws] bg-agent handler error for', converted.type, ':', e.message); }
           }
         }
-        // Also dispatch the original event (for delegate indicator status, etc.)
+        // Also dispatch the original event (for bg-agent indicator status, etc.)
         const list = handlers[msg.type];
         if (list) for (const h of list) {
           try { h(msg, activeView); }
-          catch (e) { console.error('[ws] delegate handler error for', msg.type, ':', e.message); }
+          catch (e) { console.error('[ws] bg-agent handler error for', msg.type, ':', e.message); }
         }
         setActiveView(savedView); // restore pre-message view (BUG 6)
         return;
@@ -349,7 +350,7 @@ export function connect() {
       // We accumulate plan text for the card, but let all other plan agent
       // events (agentStart, agentToolStart, agentDone, etc.) flow through
       // normal dispatch so the plan agent shows as a sub-agent with its
-      // delegate indicator and tool activity.
+      // bg-agent indicator and tool activity.
       if (msg.agentId && state.planAgentId === msg.agentId && msg.type === 'agentTextDelta') {
         const planList = handlers['_planAgent'];
         if (planList) for (const h of planList) {
