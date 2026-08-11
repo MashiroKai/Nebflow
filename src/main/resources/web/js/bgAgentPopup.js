@@ -1,18 +1,18 @@
-// delegatePopup.js — Live message viewer for Delegate sub-agents.
+// bgAgentPopup.js — Live message viewer for background sub-agents.
 //
 // When an agent uses the Delegate tool, sub-agent events arrive with
-// nodeSessionId = "delegate-<agentName>-<uuid>". This module intercepts
-// those events in ws.js (via setDelegateStepInterceptor) and renders them
-// into a popup ChatView — the same pattern as flowAgentPopup.js.
+// nodeSessionId = "delegate-<agentName>-<uuid>" (backend protocol). This
+// module intercepts those events in ws.js (via setBgAgentStepInterceptor)
+// and renders them into a popup ChatView — the same pattern as flowAgentPopup.js.
 //
-// The user opens the popup by clicking the delegate dropdown entry.
+// The user opens the popup by clicking the bg-agent dropdown entry.
 
 import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
-import { sendWs, onMessage, setDelegateStepInterceptor } from './ws.js';
+import { sendWs, onMessage, setBgAgentStepInterceptor } from './ws.js';
 import { restoreFromBackendHistory } from './persistence.js';
 import state from './state.js';
 
-// ── Per-delegate state ─────────────────────────────────────
+// ── Per-sub-agent state ────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
 const stepViews = new Map();
 let currentStepId = null;
@@ -51,10 +51,10 @@ function ensureStepView(sessionId) {
     voiceBtn: null, voiceOverlay: null, voiceText: null,
     headerModelInfoEl: null, bgIndicatorEl: null, bgCountEl: null,
     bgDropdownEl: null, bgDropdownListEl: null,
-    delegateIndicatorEl: null, delegateDropdownEl: null, delegateDropdownListEl: null,
+    bgagentIndicatorEl: null, bgagentDropdownEl: null, bgagentDropdownListEl: null,
     sessionNameEl: null,
   };
-  const view = new ChatView('delegate-' + sessionId, fakeDom);
+  const view = new ChatView('bgagent-' + sessionId, fakeDom);
   view.mounted = true;
   view.sessionId = sessionId;
 
@@ -79,17 +79,17 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   popupOverlay = document.createElement('div');
   popupOverlay.className = 'flow-agent-overlay fullscreen';
 
-  // Mount on document.body for delegate popups (not inside a flow card)
+  // Mount on document.body for bg-agent popups (not inside a flow card)
   popupOverlay.innerHTML = `
     <div class="flow-agent-modal">
       <div class="flow-agent-header">
         <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || 'Sub-agent')}</span>
         <span class="flow-agent-subtitle">${esc(taskDescription || entry.meta.task || '')}</span>
-        <span class="flow-agent-model" id="delegate-agent-model"></span>
-        <span class="flow-agent-ctx" id="delegate-agent-ctx"></span>
-        <div class="flow-agent-close" id="delegate-agent-close">✕</div>
+        <span class="flow-agent-model" id="bgagent-model"></span>
+        <span class="flow-agent-ctx" id="bgagent-ctx"></span>
+        <div class="flow-agent-close" id="bgagent-close">✕</div>
       </div>
-      <div class="flow-agent-footer" id="delegate-agent-footer">
+      <div class="flow-agent-footer" id="bgagent-footer">
         <span class="fa-status-dot"></span>
         <span class="fa-task">${esc(entry.meta.task || 'Session')}</span>
       </div>
@@ -105,7 +105,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
 
   const modal = popupOverlay.querySelector('.flow-agent-modal');
 
-  const footer = popupOverlay.querySelector('#delegate-agent-footer');
+  const footer = popupOverlay.querySelector('#bgagent-footer');
   modal.insertBefore(entry.container, footer);
   entry.footerEl = footer;
 
@@ -115,7 +115,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   const header = popupOverlay.querySelector('.flow-agent-header');
   if (header) {
     header.addEventListener('mousedown', (e) => {
-      if (e.target.id === 'delegate-agent-close') return;
+      if (e.target.id === 'bgagent-close') return;
       e.preventDefault();
       const overlayRect = popupOverlay.getBoundingClientRect();
       const modalRect = modal.getBoundingClientRect();
@@ -141,7 +141,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   }
 
   popupOverlay.addEventListener('click', (e) => {
-    if (e.target === popupOverlay || e.target.id === 'delegate-agent-close') closeStepPopup();
+    if (e.target === popupOverlay || e.target.id === 'bgagent-close') closeStepPopup();
   });
 
   entry.container.addEventListener('scroll', () => {
@@ -204,7 +204,7 @@ function fmtTokens(n) {
 
 function updatePopupCtxRing() {
   if (!popupOverlay || !currentStepId) return;
-  const el = popupOverlay.querySelector('#delegate-agent-ctx');
+  const el = popupOverlay.querySelector('#bgagent-ctx');
   if (!el) return;
   const info = state.sessionModelInfo[currentStepId];
   if (!info || !info.contextWindow) { el.innerHTML = ''; el.style.display = 'none'; return; }
@@ -244,7 +244,8 @@ onMessage('done', () => { if (popupOverlay) updatePopupCtxRing(); });
 
 // ── WS event interception ────────────────────────────────
 
-export function interceptDelegateStep(msg) {
+export function interceptBgAgentStep(msg) {
+  // "delegate-" prefix is backend protocol (DelegateTool session naming).
   if (!msg.nodeSessionId || !msg.nodeSessionId.startsWith('delegate-')) return false;
   const entry = ensureStepView(msg.nodeSessionId);
 
@@ -271,11 +272,11 @@ export function interceptDelegateStep(msg) {
   return true;
 }
 
-setDelegateStepInterceptor(interceptDelegateStep);
+setBgAgentStepInterceptor(interceptBgAgentStep);
 
 // ── historyPage handler ───────────────────────────────────
 
-export function handleDelegateHistory(msg) {
+export function handleBgAgentHistory(msg) {
   const entry = stepViews.get(msg.sessionId);
   if (!entry) return false;
 
@@ -317,9 +318,9 @@ function updateFooterStatus(entry) {
   }
 }
 
-// ── Cleanup when delegate session ends ────────────────────
-// Called from main.js agentDone handler when a delegate sub-agent finishes.
-export function cleanupDelegateView(nodeSessionId) {
+// ── Cleanup when a sub-agent session ends ─────────────────
+// Called from main.js agentDone handler when a background sub-agent finishes.
+export function cleanupBgAgentView(nodeSessionId) {
   // Keep the view for a few seconds so the user can read the output,
   // then remove it.
   setTimeout(() => {
@@ -342,7 +343,7 @@ async function fetchAgentModelBadge(agentName) {
     const resp = await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers });
     if (!resp.ok) return;
     const cfg = await resp.json();
-    const el = popupOverlay?.querySelector('#delegate-agent-model');
+    const el = popupOverlay?.querySelector('#bgagent-model');
     if (!el) return;
     const current = cfg.preferred || cfg.current || cfg.default || '';
     if (!current) { el.innerHTML = ''; return; }
