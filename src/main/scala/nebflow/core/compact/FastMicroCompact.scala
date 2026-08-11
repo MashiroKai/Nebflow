@@ -57,7 +57,7 @@ object FastMicroCompact:
   private def doCompact(messages: List[Message]): Option[List[Message]] =
     // Collect compactable tool_use IDs in order of appearance
     val allToolUseIds = messages.flatMap {
-      case Message(MessageRole.Assistant, Right(blocks), _) =>
+      case Message(MessageRole.Assistant, Right(blocks), _, _) =>
         blocks.collect {
           case ContentBlock.ToolUse(id, name, _) if CompactableTools.contains(name) => id
         }
@@ -72,7 +72,7 @@ object FastMicroCompact:
       if clearSet.isEmpty then None
       else
         val result = messages.map {
-          case msg @ Message(MessageRole.User, Right(blocks), _) =>
+          case msg @ Message(MessageRole.User, Right(blocks), _, _) =>
             val newBlocks = blocks.map {
               case tr: ContentBlock.ToolResult if clearSet.contains(tr.toolUseId) && tr.content != Placeholder =>
                 tr.copy(content = Placeholder)
