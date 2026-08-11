@@ -537,11 +537,11 @@ body.drag-over #input-bar {
 }
 .queue-item-btn.immediate {
   color: var(--color-primary);
-  border-color: rgba(var(--sapphire), 0.25);
+  border-color: rgb(var(--sapphire) / 0.25);
 }
 .queue-item-btn.immediate:hover {
-  background: rgba(var(--sapphire), 0.12);
-  border-color: rgba(var(--sapphire), 0.4);
+  background: rgb(var(--sapphire) / 0.12);
+  border-color: rgb(var(--sapphire) / 0.4);
 }
 .queue-item-btn.recall {
   padding: 3px 7px;
@@ -555,7 +555,7 @@ body.drag-over #input-bar {
 }
 .queue-item-btn.recall:hover {
   color: var(--color-primary);
-  background: rgba(var(--sapphire), 0.12);
+  background: rgb(var(--sapphire) / 0.12);
 }
 .queue-item-btn.remove {
   padding: 3px 7px;
@@ -601,7 +601,7 @@ body.drag-over #input-bar {
       0px 8px 24px rgba(0, 0, 0, 0.35);
   }
   .queue-item-btn.immediate:hover {
-    background: rgba(var(--sapphire), 0.18);
+    background: rgb(var(--sapphire) / 0.18);
   }
 
   .slash-item { border-bottom-color: #2a2d35; }

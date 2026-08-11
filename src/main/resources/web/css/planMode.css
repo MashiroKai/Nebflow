@@ -185,7 +185,7 @@
   padding: 6px 14px;
   border: 1px solid var(--sapphire-edge);
   border-radius: 9999px;
-  background: rgba(var(--sapphire), 0.02);
+  background: rgb(var(--sapphire) / 0.02);
   color: var(--color-frame-text-muted);
   font-size: 12px;
   font-weight: 500;
@@ -199,12 +199,12 @@
 }
 
 .plan-glass-btn:hover {
-  background: rgba(var(--sapphire), 0.06);
+  background: rgb(var(--sapphire) / 0.06);
   border-color: var(--sapphire-edge-strong);
   color: var(--color-frame-text-bright);
   box-shadow:
-    0 0 8px rgba(var(--sapphire-glow), 0.06),
-    0 0 20px rgba(var(--sapphire-glow), 0.03);
+    0 0 8px rgb(var(--sapphire-glow) / 0.06),
+    0 0 20px rgb(var(--sapphire-glow) / 0.03);
 }
 
 .plan-glass-btn:active {
@@ -213,17 +213,17 @@
 
 /* Approve — sapphire accent */
 .plan-btn-approve {
-  border-color: rgba(var(--sapphire), 0.3);
+  border-color: rgb(var(--sapphire) / 0.3);
   color: rgb(var(--sapphire));
-  background: rgba(var(--sapphire), 0.05);
+  background: rgb(var(--sapphire) / 0.05);
 }
 
 .plan-btn-approve:hover {
-  background: rgba(var(--sapphire), 0.10);
-  border-color: rgba(var(--sapphire), 0.5);
+  background: rgb(var(--sapphire) / 0.10);
+  border-color: rgb(var(--sapphire) / 0.5);
   box-shadow:
-    0 0 12px rgba(var(--sapphire-glow), 0.12),
-    0 0 24px rgba(var(--sapphire-glow), 0.06);
+    0 0 12px rgb(var(--sapphire-glow) / 0.12),
+    0 0 24px rgb(var(--sapphire-glow) / 0.06);
 }
 
 /* Cancel — destructive on hover */
