@@ -672,29 +672,48 @@ private[agent] trait AgentCore:
     sourceSession: String,
     rootSessionId: String
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
-    toolCtx.sharedResources.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
-      case Some(hub) =>
-        (hub ! InteractionHubCommand.Request(InteractionRequest(
-          requestId = java.util.UUID.randomUUID().toString.take(8),
-          kind = InteractionKind.Permission,
-          payload = permJson,
-          reply = InteractionReply.PermissionReply(deferred),
-          rootSessionId = rootSessionId,
-          sourceAgent = sourceAgent,
-          sourceSession = sourceSession
-        ))).void
-      case None =>
-        // Hub not spawned (early boot / tests): P1 fallback — the requesting
-        // agent holds the Deferred itself and renders locally.
-        (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
-          state.wsSend(
-            permJson.deepMerge(Json.obj(
-              "sessionId" -> state.sessionId.asJson,
-              "sourceAgent" -> sourceAgent.asJson,
-              "sourceSession" -> sourceSession.asJson
-            ))
-          )
-    }
+    // Origin attribution for the permission card: team name (authoritative via
+    // TeamSessionRegistry) or flow name (parsed from sessionName "flowName/nodeId"
+    // set by FlowDagExecutor, confirmed via agentRegistry kind == Flow so a
+    // standalone agent whose sessionName happens to contain '/' is not misread).
+    val resourcesOpt = toolCtx.sharedResources
+    for
+      teamOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sourceSession)
+      recordOpt <- resourcesOpt
+        .fold(IO.pure(Option.empty[AgentRecord]))(_.agentRegistry.get.map(_.get(sourceSession)))
+      flowOpt = (teamOpt, recordOpt, state.sessionName) match
+        case (None, Some(rec), Some(sn)) if rec.kind == AgentKind.Flow && sn.contains("/") =>
+          Some(sn.takeWhile(_ != '/'))
+        case _ => None
+      enrichment =
+        val teamFld = teamOpt.map(t => Json.obj("sourceTeam" -> t.asJson)).getOrElse(Json.obj())
+        val flowFld = flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
+        teamFld.deepMerge(flowFld)
+      enriched = permJson.deepMerge(enrichment)
+      _ <- resourcesOpt.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
+        case Some(hub) =>
+          (hub ! InteractionHubCommand.Request(InteractionRequest(
+            requestId = java.util.UUID.randomUUID().toString.take(8),
+            kind = InteractionKind.Permission,
+            payload = enriched,
+            reply = InteractionReply.PermissionReply(deferred),
+            rootSessionId = rootSessionId,
+            sourceAgent = sourceAgent,
+            sourceSession = sourceSession
+          ))).void
+        case None =>
+          // Hub not spawned (early boot / tests): P1 fallback — the requesting
+          // agent holds the Deferred itself and renders locally.
+          (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
+            state.wsSend(
+              enriched.deepMerge(Json.obj(
+                "sessionId" -> state.sessionId.asJson,
+                "sourceAgent" -> sourceAgent.asJson,
+                "sourceSession" -> sourceSession.asJson
+              ))
+            )
+      }
+    yield ()
 
   protected def executeTool(call: ToolCall, ctx: ToolContext): IO[ToolExecResult] =
     ToolRegistry.TOOL_MAP.get(call.name) match
