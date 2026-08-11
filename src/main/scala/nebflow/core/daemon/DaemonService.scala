@@ -287,17 +287,21 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
    * Lightweight TCP connect probe — decoupled from process status.
    * An externally-started server (not managed by DaemonService) is still
    * reported reachable; a live process with a dead port is not clickable.
-   * Timeout ≤ 500ms; any failure → false.
+   *
+   * Tries IPv4 first, then IPv6 — Node/Astro/Vite dev servers often bind
+   * only to `[::1]`, which a pure `127.0.0.1` probe would miss.
    */
   private def probePort(port: Int): Boolean =
-    val socket = new java.net.Socket()
-    try
-      socket.connect(new java.net.InetSocketAddress("127.0.0.1", port), 500)
-      true
-    catch case _: Exception => false
-    finally
-      try socket.close()
-      catch case _: Exception => ()
+    def tryConnect(host: String): Boolean =
+      val socket = new java.net.Socket()
+      try
+        socket.connect(new java.net.InetSocketAddress(host, port), 500)
+        true
+      catch case _: Exception => false
+      finally
+        try socket.close()
+        catch case _: Exception => ()
+    tryConnect("127.0.0.1") || tryConnect("::1")
 
   private def getPid(process: Process): Option[Long] =
     try Some(process.pid())
