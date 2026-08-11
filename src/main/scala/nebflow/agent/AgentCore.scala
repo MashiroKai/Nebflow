@@ -773,24 +773,56 @@ private[agent] trait AgentCore:
     isCompactTurn: Boolean = false
   )(using ctx: ActorContext[AgentCommand]): fs2.Pipe[IO, StreamChunk, StreamChunk] =
     stream =>
-      stream.evalTap {
-        case StreamChunk.TextDelta(delta) if delta.nonEmpty && !isCompactTurn =>
+      // ── WS event batching for TextDelta ──────────────────────────────
+      // Accumulate text deltas and flush in batches (max 50 deltas or 50ms
+      // window). A 1000-token LLM response produces 500-1000 TextDelta chunks;
+      // batching reduces WS JSON construction + send from ~800 to ~16 calls.
+      // Non-TextDelta events (ToolCall, Thinking, Done) trigger an immediate
+      // flush first so event ordering is preserved on the frontend.
+      //
+      // Mutable state is local to this pipe invocation — each agent's stream
+      // creates its own accumulators, and fs2 processes elements sequentially.
+      val textBuf = new StringBuilder(512)
+      var textCount = 0
+      var lastFlushMs = System.currentTimeMillis()
+      val MaxBatch = 50
+      val FlushWindowMs = 50L
+
+      def flushText(): IO[Unit] =
+        if textBuf.isEmpty then IO.unit
+        else
+          val delta = textBuf.toString
+          textBuf.setLength(0)
+          textCount = 0
+          lastFlushMs = System.currentTimeMillis()
           val json =
             if isAskMode then
               Json.obj("type" -> "askTextDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
             else if isSubagent then AgentStreamEvent.TextDelta(delta).toJson(ctx.self.path.name, true, None)
             else Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
           wsSend(json)
+
+      stream.evalTap {
+        case StreamChunk.TextDelta(delta) if delta.nonEmpty && !isCompactTurn =>
+          textBuf.append(delta)
+          textCount += 1
+          if textCount >= MaxBatch || System.currentTimeMillis() - lastFlushMs >= FlushWindowMs then
+            flushText()
+          else IO.unit
+
+        // Non-TextDelta events: flush any pending text first, preserving event order.
         case StreamChunk.ThinkingDelta(delta) if delta.nonEmpty && !isCompactTurn =>
           val json =
             if isSubagent then AgentStreamEvent.Thinking.toJson(ctx.self.path.name, true, None)
             else Json.obj("type" -> "thinkingDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
-          wsSend(json)
+          flushText() *> wsSend(json)
+
         case StreamChunk.ToolCallStart(name) if name != "AskUserQuestion" && !isCompactTurn =>
           val json =
             if isSubagent then AgentStreamEvent.ToolCallDetected(name).toJson(ctx.self.path.name, true, None)
             else Json.obj("type" -> "toolCallDetected".asJson, "sessionId" -> sessionId.asJson, "name" -> name.asJson)
-          wsSend(json)
+          flushText() *> wsSend(json)
+
         case StreamChunk.ToolCallChunk(tc) if tc.name != "AskUserQuestion" && !isCompactTurn =>
           val json =
             if isSubagent then
@@ -801,7 +833,8 @@ private[agent] trait AgentCore:
                 "sessionId" -> sessionId.asJson,
                 "label" -> nebflow.core.summarizeToolCall(tc).asJson
               )
-          wsSend(json)
+          flushText() *> wsSend(json)
+
         case StreamChunk.ToolArgDelta(toolName, delta) if delta.nonEmpty && !isCompactTurn && !isSubagent =>
           val json = Json.obj(
             "type" -> "toolArgDelta".asJson,
@@ -809,7 +842,11 @@ private[agent] trait AgentCore:
             "toolName" -> toolName.asJson,
             "delta" -> delta.asJson
           )
-          wsSend(json)
+          flushText() *> wsSend(json)
+
+        // Stream end: flush any remaining buffered text so no deltas are lost.
+        case StreamChunk.Done(_, _, _, _) => flushText()
+
         case _ => IO.unit
       }
 
