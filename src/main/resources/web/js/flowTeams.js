@@ -109,6 +109,7 @@ export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
            data-flow="${esc(flow.name)}"
            data-agent="${esc(a.name)}"
            data-sid="${esc(a.sessionId || '')}"
+           data-status="${esc(st)}"
            title="${esc(a.duty || a.description || a.name)}">
         <div class="team-tile-dot"></div>
         <div class="team-tile-name">${esc(a.name)}</div>
@@ -216,8 +217,12 @@ export async function populateTileModels(teams) {
         const shortName = slashIdx >= 0 ? current.slice(slashIdx + 1) : current;
         const roleEl = tile.querySelector('.team-tile-role');
         if (roleEl) {
+          // role comes from the fixed data-status attribute — NOT from
+          // roleEl.textContent — so re-invoking this function (async fetch
+          // racing with WS-triggered re-renders) never appends the model
+          // name twice.
           const isMgr = !!a.manager;
-          const role = isMgr ? 'manager' : (roleEl.textContent || 'idle');
+          const role = isMgr ? 'manager' : (tile.getAttribute('data-status') || 'idle');
           roleEl.textContent = `${role} · ${shortName}`;
         }
       } catch (e) { /* skip */ }
