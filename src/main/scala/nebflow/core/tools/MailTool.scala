@@ -17,11 +17,13 @@ import scala.concurrent.duration.*
  * Agent-to-agent communication tool.
  *
  * Two modes:
- * - Default (fork=false): Send a message to another agent. Async — recipient
+ * - Default (ask=false): Send a message to another agent. Async — recipient
  *   processes on next turn, sender doesn't wait. The standard communication method.
- * - fork=true: Fork the target agent's context (load their conversation history),
- *   ask the question, and return the response immediately. The target's main task
- *   is NOT interrupted. Use for progress queries, quick questions, supplemental info.
+ * - ask=true: Synchronously fork the target agent's context (load their
+ *   conversation history), ask the question, and block until the response arrives.
+ *   The target's main task is NOT interrupted. Use for progress queries, quick
+ *   questions, supplemental info. (The deprecated `fork` parameter is accepted as
+ *   an alias for backward compatibility with persisted `.ui.json` records.)
  */
 object MailTool extends Tool:
   private val logger = NebflowLogger(getClass)
@@ -39,15 +41,15 @@ The address can be:
 
 For triggering flows or spawning standalone agents, use the Delegate tool instead.
 
-Default mode (fork omitted or false):
+Default mode (ask omitted or false):
   Async send. If the recipient is idle, delivered immediately. If busy, queued
   and injected at the next turn boundary. You don't wait for a response.
 
-Fork mode (fork: true):
-  Forks the target agent's context — loads their conversation history into a
-  temporary instance, asks the question, and returns the answer immediately.
-  The agent's main task is NOT interrupted. Use for progress queries and
-  quick questions when you need an immediate answer without disrupting workflow.
+Ask mode (ask: true):
+  Synchronous — forks the target agent's context (loads their conversation history
+  into a temporary instance), runs the LLM, and blocks until the answer is returned.
+  The agent's main task is NOT interrupted. Use for progress queries and quick
+  questions when you need an immediate answer without disrupting workflow.
 
 Message type (optional, default "INFO"):
   Every Mail has a TYPE tag. Check the TYPE before acting — it tells you how to handle the Mail:
@@ -72,9 +74,9 @@ Message type (optional, default "INFO"):
           "type" -> "string".asJson,
           "description" -> "The message or question to send".asJson
         ),
-        "fork" -> Json.obj(
+        "ask" -> Json.obj(
           "type" -> "boolean".asJson,
-          "description" -> "If true, fork the target's context and get an immediate response without interrupting their main task. Default: false.".asJson,
+          "description" -> "If true, synchronously fork the target's context and block until the answer is returned (without interrupting their main task). Default: false.".asJson,
           "default" -> false.asJson
         ),
         "type" -> Json.obj(
@@ -90,22 +92,22 @@ Message type (optional, default "INFO"):
 
   def summarize(input: JsonObject): String =
     val addr = input("address").flatMap(_.asString).getOrElse("?")
-    val fork = input("fork").flatMap(_.asBoolean).getOrElse(false)
+    val ask = input("ask").orElse(input("fork")).flatMap(_.asBoolean).getOrElse(false)
     val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
     val typeStr = if mailType != "INFO" then s" [$mailType]" else ""
-    if fork then s"Mail(→$addr, fork)$typeStr" else s"Mail(→$addr)$typeStr"
+    if ask then s"Mail(→$addr, ask)$typeStr" else s"Mail(→$addr)$typeStr"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val address = input("address").flatMap(_.asString).getOrElse("")
     val message = input("message").flatMap(_.asString).getOrElse("")
-    val fork = input("fork").flatMap(_.asBoolean).getOrElse(false)
+    val ask = input("ask").orElse(input("fork")).flatMap(_.asBoolean).getOrElse(false)
     val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
 
     if address.isEmpty then IO.pure(Left(ToolError("Missing required parameter: address")))
     else if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
-    else if fork then forkAndAsk(address, message, ctx)
+    else if ask then forkAndAsk(address, message, ctx)
     else
       ctx.actorSystem match
         case None =>

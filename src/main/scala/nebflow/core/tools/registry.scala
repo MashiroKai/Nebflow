@@ -37,7 +37,7 @@ object ToolRegistry:
       "SaveWorkspaceItem" -> SaveWorkspaceItemTool,
       // Agent lifecycle — always available, no tool whitelist filtering
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
-      // Unified agent communication (message + fork modes)
+      // Unified agent communication (message + ask modes)
       "Mail" -> MailTool,
       // Sub-agent delegation (background + persistent modes)
       "Delegate" -> DelegateTool,
