@@ -328,6 +328,7 @@ export default {
   'dropbox.failed': '传输失败',
 
   // === Daemons (Dev Servers) ===
+  'daemons.title': '开发服务器',
   'daemons.empty': '暂无服务',
   'daemons.emptyHint': '点击 + 添加守护进程',
   'daemons.start': '启动',
