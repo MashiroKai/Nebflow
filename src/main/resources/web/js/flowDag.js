@@ -112,11 +112,12 @@ export function layoutDagNodes(rf) {
 
 // ── Solar-system node ──────────────────────────────────────
 
-/** Scatter angles for orbit dots (per ring index) so pending dots don't stack. */
+/** One dot per ring, angularly offset so the three orbit points are
+ *  distributed around the circle — clean "three rings, three dots" look. */
 const DOT_ANGLES = {
-  outer: [0, 120, 240],
-  middle: [45, 165, 285],
-  inner: [90, 210, 330],
+  outer: [0],      // outer ring dot at 0°
+  middle: [180],   // middle ring dot at 180°
+  inner: [90],     // inner ring dot at 90°
 };
 const RING_RADII = { outer: 48, middle: 35, inner: 23 };
 
