@@ -46,6 +46,11 @@ object TeamSessionRegistry:
   def registerSession(instance: String, agent: String, sid: String): IO[Unit] =
     sessionMap.update(_ + ((instance, agent) -> sid))
 
+  /** Reset all registries (tests). */
+  def clear: IO[Unit] =
+    sessionMap.set(Map.empty) *> actorMap.set(Map.empty) *> managerMap.set(Map.empty) *>
+      parentSessionMap.set(Map.empty) *> parentActorMap.set(Map.empty) *> busyMap.set(Set.empty)
+
   def registerActor(sid: String, ref: ActorRef[AgentCommand]): IO[Unit] =
     actorMap.update(_ + (sid -> ref))
 
@@ -92,23 +97,67 @@ object TeamSessionRegistry:
   def parentSessionOf(instance: String): IO[Option[String]] =
     parentSessionMap.get.map(_.get(instance))
 
-  /** Resolve a short agent name to a sessionId within a team instance. */
-  def resolveSessionId(senderSid: String, address: String, sessionStore: nebflow.gateway.SessionStore): IO[Option[String]] =
-    sessionMap.get.flatMap { m =>
-      // Sender's own instance — resolve same-team agent first.
-      val senderInstance = m.collectFirst { case ((inst, _), sid) if sid == senderSid => inst }
-      senderInstance match
-        case Some(inst) =>
-          m.get((inst, address)) match
-            case Some(sid) => IO.pure(Some(sid))
-            case None =>
-              // Same-team miss: fall back to any instance with that name
-              // (e.g. a standalone session, or another team's manager).
-              IO.pure(m.collectFirst { case ((_, `address`), sid) => sid })
-        case None =>
-          // Sender isn't in any team — global exact match only.
-          IO.pure(m.collectFirst { case ((_, `address`), sid) => sid })
-    }
+  /**
+   * Resolve a short agent name to a sessionId within a team instance.
+   *
+   * Address formats:
+   *   - "team/agent" — exact scoped lookup (e.g. "nebflow-project/Backend").
+   *   - "agent" — same-team first (when the sender belongs to a team), then a
+   *     global lookup with ambiguity detection: if multiple teams have an
+   *     agent with this short name, the call FAILS with the candidate list
+   *     instead of silently picking one — Map iteration order is not
+   *     deterministic, so collectFirst can hit any team.
+   *
+   * Returns:
+   *   - Right(Some(sid)) — resolved
+   *   - Right(None) — not found anywhere
+   *   - Left(error) — ambiguous short name (candidates listed) or team not found
+   */
+  def resolveSessionId(senderSid: String, address: String, sessionStore: nebflow.gateway.SessionStore): IO[Either[String, Option[String]]] =
+    // "team/agent" scoped format — exact match, no ambiguity.
+    val slashIdx = address.indexOf('/')
+    if slashIdx > 0 then
+      val (team, agent) = (address.substring(0, slashIdx), address.substring(slashIdx + 1))
+      sessionMap.get.map { m =>
+        m.get((team, agent)) match
+          case Some(sid) => Right(Some(sid))
+          case None =>
+            if m.keys.exists(_._1 == team) then Right(None)
+            else Left(s"Team '$team' not found or not mounted. Use Load(type: \"team\", name: \"$team\") first.")
+      }
+    else
+      sessionMap.get.flatMap { m =>
+        // Sender's own instance — resolve same-team agent first.
+        val senderInstance = m.collectFirst { case ((inst, _), sid) if sid == senderSid => inst }
+        senderInstance match
+          case Some(inst) =>
+            m.get((inst, address)) match
+              case Some(sid) => IO.pure(Right(Some(sid)))
+              case None =>
+                // Same-team miss: fall back to any instance with that name
+                // (e.g. a standalone session, or another team's manager),
+                // with ambiguity detection.
+                IO.pure(resolveGlobal(m, address))
+          case None =>
+            // Sender isn't in any team — global exact match only, with
+            // ambiguity detection.
+            IO.pure(resolveGlobal(m, address))
+      }
+
+  /** Global short-name lookup with ambiguity detection. */
+  private def resolveGlobal(
+    m: Map[(String, String), String],
+    address: String
+  ): Either[String, Option[String]] =
+    m.toList.collect { case ((inst, `address`), sid) => (inst, sid) } match
+      case Nil => Right(None)
+      case (_, sid) :: Nil => Right(Some(sid))
+      case many =>
+        val teams = many.map(_._1).distinct.sorted.mkString(", ")
+        Left(
+          s"Agent '$address' is ambiguous: found in ${many.size} teams ($teams). " +
+            s"Use \"team/agent\" format (e.g. \"${many.head._1}/$address\") to disambiguate."
+        )
 
   /** Get the agent name for a session. */
   def agentOfSession(sid: String): IO[Option[String]] =
