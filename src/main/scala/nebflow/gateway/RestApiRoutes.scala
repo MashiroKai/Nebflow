@@ -1479,10 +1479,17 @@ class RestApiRoutes(
         sharedResources.daemonService match
           case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
           case Some(svc) =>
-            svc.stop(daemonId).flatMap { _ =>
-              val store = new DaemonStore()
-              store.remove(daemonId) *> Ok(Json.obj("deleted" -> true.asJson))
-            }
+            // Decouple stop from remove: a failure OR hang while stopping the
+            // process must NOT block removal of the config entry. doStop can
+            // raise (fiber-cancel / kill edge case) or hang (readFiber blocked
+            // on a stdout pipe held open by an orphaned grandchild process), so
+            // we bound it with a timeout and recover any error. The user asked
+            // to delete the daemon, so daemons.json is updated regardless —
+            // otherwise the entry reappears on the next GET /daemons.
+            val store = new DaemonStore()
+            svc.stop(daemonId).timeout(15.seconds).handleErrorWith { e =>
+              logger.warn(s"Stop failed/timed out for daemon '$daemonId' during delete; removing config anyway: ${e.getMessage}")
+            } *> store.remove(daemonId) *> Ok(Json.obj("deleted" -> true.asJson))
       }
 
     // POST /daemons/:id/start — start a daemon
