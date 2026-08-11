@@ -24,23 +24,58 @@ export function renderTaskList(tasks, container, sessionId) {
   container = container || document.getElementById('task-list');
   if (!container) return;
 
-  if (!tasks || tasks.length === 0) {
-    container.classList.remove('has-tasks');
-    container.innerHTML = '';
-    return;
-  }
+  // Build previous snapshot: taskId → status
+  const prevSnapshot = container._taskSnapshot || {};
 
-  // Show only active tasks (pending/in_progress); completed/failed are hidden
-  const active = tasks.filter(t => activeStatuses.has(t.status));
+  const isEmpty = !tasks || tasks.length === 0;
+  const active = isEmpty ? [] : tasks.filter(t => activeStatuses.has(t.status));
 
   if (active.length === 0) {
-    container.classList.remove('has-tasks');
-    container.innerHTML = '';
+    // Fade out existing card before clearing
+    const card = container.querySelector('.task-card');
+    if (card && Object.keys(prevSnapshot).length > 0) {
+      card.classList.add('task-card-leaving');
+      setTimeout(() => {
+        container.innerHTML = '';
+        container.classList.remove('has-tasks');
+      }, 300);
+    } else {
+      container.innerHTML = '';
+      container.classList.remove('has-tasks');
+    }
+    container._taskSnapshot = {};
     return;
   }
 
-  container.classList.add('has-tasks');
+  // Build new snapshot
+  const newSnapshot = {};
+  active.forEach(t => { newSnapshot[t.id] = t.status; });
 
+  // Detect items to animate out (existed before, now completed/gone)
+  const leavingIds = Object.keys(prevSnapshot).filter(id => !newSnapshot[id]);
+
+  // If there are leaving items, animate them out first, then re-render after 350ms
+  if (leavingIds.length > 0) {
+    let pendingLeave = leavingIds.length;
+    leavingIds.forEach(id => {
+      const el = container.querySelector(`[data-task-id="${id}"]`);
+      if (el) {
+        el.classList.add('task-leaving');
+      }
+      pendingLeave--;
+    });
+
+    // Delay the re-render to let leave animation play
+    setTimeout(() => doRender(container, tasks, active, sessionId, prevSnapshot, newSnapshot), 350);
+  } else {
+    doRender(container, tasks, active, sessionId, prevSnapshot, newSnapshot);
+  }
+
+  container._taskSnapshot = newSnapshot;
+}
+
+function doRender(container, allTasks, active, sessionId, prevSnapshot, newSnapshot) {
+  container.classList.add('has-tasks');
   const collapsed = isCollapsed();
 
   // Build parent → children map
@@ -50,16 +85,12 @@ export function renderTaskList(tasks, container, sessionId) {
     if (!byParent.has(pid)) byParent.set(pid, []);
     byParent.get(pid).push(t);
   });
-
-  // Sort within each parent by ID
   byParent.forEach(arr => arr.sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0)));
 
-  // Roots are tasks with no parent or whose parent is not visible
   const activeIds = new Set(active.map(t => t.id));
   const roots = active
     .filter(t => !t.parentId || !activeIds.has(t.parentId))
     .sort((a, b) => {
-      // in_progress first, then pending, then completed
       if (a.status !== b.status) {
         const order = { in_progress: 0, pending: 1, completed: 2 };
         return (order[a.status] ?? 3) - (order[b.status] ?? 3);
@@ -67,7 +98,6 @@ export function renderTaskList(tasks, container, sessionId) {
       return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
     });
 
-  // Stats — only show active counts, no completed
   const counts = { pending: 0, in_progress: 0 };
   active.forEach(t => { counts[t.status]++; });
 
@@ -79,7 +109,6 @@ export function renderTaskList(tasks, container, sessionId) {
   if (counts.pending > 0) parts.push(t('task.open', { count: counts.pending }));
   if (parts.length > 0) html += `<span class="task-stats">${parts.join(', ')}</span>`;
   html += '</div>';
-
   html += `<div class="task-body"><div class="task-body-inner">`;
 
   let visibleCount = 0;
@@ -92,6 +121,14 @@ export function renderTaskList(tasks, container, sessionId) {
     cls += isActive ? ' task-active' : ' task-pending';
     if (depth > 0) cls += ' task-child';
 
+    // Transition class: flip if status changed, entering if new
+    const prevStatus = prevSnapshot[task.id];
+    if (prevStatus && prevStatus !== task.status) {
+      cls += ' task-flipping';
+    } else if (!prevStatus) {
+      cls += ' task-entering';
+    }
+
     const indent = depth * 16;
     const label = (isActive && task.activeForm) ? task.activeForm : task.subject;
 
@@ -101,7 +138,6 @@ export function renderTaskList(tasks, container, sessionId) {
     html += `<span class="task-label">${escapeHtml(label)}</span>`;
     html += '</div>';
 
-    // Render children
     const children = byParent.get(task.id) || [];
     children.forEach(c => renderTaskItem(c, depth + 1));
   }
@@ -113,8 +149,8 @@ export function renderTaskList(tasks, container, sessionId) {
     html += `<div class="task-more">${t('task.more', { count: totalShown - MAX_VISIBLE })}</div>`;
   }
 
-  html += '</div></div>'; // .task-body-inner / .task-body
-  html += '</div>'; // .task-card
+  html += '</div></div>';
+  html += '</div>';
   container.innerHTML = html;
 
   if (typeof lucide !== 'undefined') lucide.createIcons();
