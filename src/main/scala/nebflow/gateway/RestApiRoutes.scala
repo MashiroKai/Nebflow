@@ -961,7 +961,7 @@ class RestApiRoutes(
               val route: Json = node.onComplete match
                 case nebflow.core.entity.NodeRoute.Goto(t) => Json.fromString(t)
                 case nebflow.core.entity.NodeRoute.Return => Json.fromString("$return")
-                case nebflow.core.entity.NodeRoute.Switch(expr, cases) =>
+                case nebflow.core.entity.NodeRoute.Switch(expr, cases, _) =>
                   val casesObj = io.circe.JsonObject.fromIterable(cases.map { (k, v) =>
                     val target: String = v match
                       case nebflow.core.entity.NodeRoute.Goto(t) => t
@@ -1282,7 +1282,7 @@ class RestApiRoutes(
             node.onComplete match
               case NodeRoute.Goto(target) => List((nodeId, target, None))
               case NodeRoute.Return => List((nodeId, "$return", None))
-              case NodeRoute.Switch(_, cases) =>
+              case NodeRoute.Switch(_, cases, _) =>
                 cases.toList.map { (cond, route) =>
                   val target = route match
                     case NodeRoute.Goto(t) => t

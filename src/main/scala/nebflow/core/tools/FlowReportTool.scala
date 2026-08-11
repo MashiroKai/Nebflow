@@ -35,7 +35,10 @@ object FlowReportTool extends Tool:
     """Report your result to the flow pipeline. You MUST call this tool before finishing — your turn will not complete without it.
 
 ## Parameters
-- verdict (string, required): Your assessment. Must be one of the values expected by the current flow node's switch cases (e.g. "pass", "fail", "retry"). If the node has no switch routing, use "done".
+- verdict (string, required): Your assessment. Allowed values:
+  - Switch node (has onComplete.switch in flow.json): exactly one of the case keys declared there — the flow's contract is the single authority (e.g. "pass" | "fix", "merge" | "reject", "ok" | "error").
+  - No switch routing (sequential node): "done".
+  - Generic binary outcome: "ok" / "error".
 - output (string, required): Your work output — findings, code changes, analysis results, etc.
 
 ## Rules
@@ -49,7 +52,7 @@ object FlowReportTool extends Tool:
       "properties" -> Json.obj(
         "verdict" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Assessment verdict. Must match a case key in the flow's switch routing.".asJson
+          "description" -> "Assessment verdict. One of: the flow.json switch case keys for this node (authoritative), \"done\" for sequential nodes, or \"ok\"/\"error\" for generic binary outcomes.".asJson
         ),
         "output" -> Json.obj(
           "type" -> "string".asJson,
