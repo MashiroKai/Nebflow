@@ -381,14 +381,16 @@ function buildRow(d, animate = false) {
   row.className = 'daemon-row' + (animate ? ' anim' : '');
   row.dataset.id = d.id;
   const status = d.status || 'stopped';
-  const hasPort = !!d.port;
+  // Clickable only when running (a port alone isn't enough — a stopped
+  // daemon would open a dead localhost URL)
+  const canOpen = status === 'running' && !!d.port;
   const canRestart = status === 'running' || status === 'starting';
 
   row.innerHTML = `
     <div class="daemon-status ${status}"></div>
     <div class="daemon-info">
       <div class="daemon-name-row">
-        <span class="daemon-name${hasPort ? ' clickable' : ''}" ${hasPort ? `data-url="http://localhost:${esc(d.port)}"` : ''}>${esc(d.name || d.id)}</span>
+        <span class="daemon-name${canOpen ? ' clickable' : ''}" ${canOpen ? `data-url="http://localhost:${esc(d.port)}"` : ''}>${esc(d.name || d.id)}</span>
         ${d.port ? `<span class="daemon-port">:${esc(d.port)}</span>` : ''}
       </div>
       <div class="daemon-command">${esc(d.command || '')}</div>
@@ -410,8 +412,8 @@ function buildRow(d, animate = false) {
       </button>
     </div>`;
 
-  // Click daemon name to open URL in new tab
-  if (hasPort) {
+  // Click daemon name to open URL in new tab (running daemons only)
+  if (canOpen) {
     const nameEl = row.querySelector('.daemon-name.clickable');
     nameEl?.addEventListener('click', (e) => {
       e.stopPropagation();

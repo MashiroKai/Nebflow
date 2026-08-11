@@ -70,10 +70,8 @@
   font-size: 15px;
   font-weight: 600;
   white-space: nowrap;
-  cursor: pointer;
-  transition: opacity 0.15s;
+  user-select: none;
 }
-#header #session-name:hover { opacity: 0.7; }
 #header .memory-btn {
   background: none;
   border: none;
