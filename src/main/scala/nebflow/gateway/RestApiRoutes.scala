@@ -225,7 +225,7 @@ class RestApiRoutes(
               else Nil
             }
           }
-          globalList = globalAgents.values.filter(_.name != "Nebula").toList.map { a =>
+          globalList = globalAgents.values.toList.map { a =>
             Json.obj(
               "name" -> a.name.asJson,
               "description" -> a.description.asJson,
@@ -1102,7 +1102,7 @@ class RestApiRoutes(
             else Nil
           }
         }
-        globalList = globalAgents.values.filter(_.name != "Nebula").map { a =>
+        globalList = globalAgents.values.map { a =>
           Json.obj(
             "name" -> a.name.asJson,
             "description" -> a.description.asJson,

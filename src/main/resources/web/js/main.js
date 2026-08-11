@@ -2217,15 +2217,6 @@ planMode.init();
 const _idleCb = window.requestIdleCallback || ((fn) => setTimeout(fn, 2000));
 _idleCb(() => import('./monacoEditor.js').then(({ preloadMonaco }) => preloadMonaco().catch(() => {})));
 
-// ---------- Click agent name in header → open agent config modal ----------
-document.getElementById('session-name')?.addEventListener('click', () => {
-  const active = state.sessions.find(s => s.id === state.activeSessionId);
-  const agentName = active?.agentName || 'Nebula';
-  // Show modal immediately with cached data, then fetch fresh system prompt
-  showAgentModal(agentName, '');
-  sendWs({ type: 'getAgentSystemPrompt', name: agentName });
-});
-
 // ---------- Plan mode event handlers ----------
 onMessage('planStart', (msg, view) => planMode.onPlanStart(msg, view));
 onMessage('planReady', (msg, view) => planMode.onPlanReady(msg, view));
