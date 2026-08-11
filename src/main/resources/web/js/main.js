@@ -2003,10 +2003,6 @@ onMessage('rulesDeleted', (msg, view) => handleRulesDeleted(msg));
 // --- Browse Result (path picker) ---
 onMessage('browseResult', (msg, view) => handleBrowseResult(msg));
 
-// --- Card design prompt ---
-onMessage('cardDesignData', (msg, view) => { state.cardDesignPrompt = msg.content || ''; });
-onMessage('cardDesignSaved', () => { /* saved confirmation */ });
-
 // --- Update check ---
 onMessage('updateCheckResult', (msg, view) => {
   const statusEl = document.getElementById('update-status');
@@ -2061,7 +2057,7 @@ onMessage('forkComplete', (msg, view) => {
 
     // Full-screen overlay modals — click the overlay to trigger its close handler
     const overlays = [
-      '#memory-overlay', '#card-design-overlay', '#rules-overlay',
+      '#memory-overlay', '#rules-overlay',
       '#path-picker-overlay', '#modal-overlay', '#agent-overlay',
     ];
     for (const sel of overlays) {

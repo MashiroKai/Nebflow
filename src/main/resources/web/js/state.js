@@ -154,9 +154,6 @@ export default {
   COMPACT_THRESHOLD: 0.90,
   updateHeaderModelInfo: null,
 
-  // Card design prompt
-  cardDesignPrompt: '',
-
   // Plan mode: agentId of the active plan agent (null when not in plan mode)
   planAgentId: null,
   // Plan mode: sessionId that triggered plan mode

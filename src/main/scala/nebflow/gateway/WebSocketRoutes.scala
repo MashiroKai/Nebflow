@@ -2317,36 +2317,6 @@ class WebSocketRoutes(
               )
             }
 
-          case "getCardDesign" =>
-            val path = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "card-design-prompt.md")
-            IO.blocking {
-              if java.nio.file.Files.exists(path) then
-                new String(java.nio.file.Files.readAllBytes(path), java.nio.charset.StandardCharsets.UTF_8)
-              else ""
-            }.flatMap { content =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "cardDesignData".asJson,
-                  "content" -> content.asJson
-                )
-              )
-            }
-
-          case "saveCardDesign" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val content = json.hcursor.downField("content").as[String].getOrElse("")
-            val path = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "card-design-prompt.md")
-            IO.blocking {
-              java.nio.file.Files.write(path, content.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            }.flatMap { _ =>
-              wsSend(io.circe.Json.obj("type" -> "cardDesignSaved".asJson, "ok" -> true.asJson))
-            }.handleErrorWith { e =>
-              wsSend(
-                io.circe.Json
-                  .obj("type" -> "error".asJson, "message" -> s"Failed to save card design: ${e.getMessage}".asJson)
-              )
-            }
-
           case "checkUpdate" =>
             val currentVer = nebflow.Version.string
             val result = IO

@@ -70,12 +70,6 @@ export default {
   'settings.updating': '更新中...',
   'settings.updateLater': '稍后',
   'settings.updateError': '检查更新失败',
-  'settings.cardDesign': '卡片设计',
-  'settings.cardDesignHint': '自定义 Card 工具的视觉设计指导。所有 agent 使用 Card 工具时会遵循此指导。',
-  'settings.cardDesignReset': '恢复默认',
-  'settings.cardDesignResetConfirm': '确定恢复默认设计指导？当前内容将被覆盖。',
-  'settings.cardDesignEdit': '编辑设计指导',
-  'settings.cardDesignPlaceholder': '# 卡片视觉设计规范\n\n用 Markdown 描述 Card 工具的样式指南...',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',

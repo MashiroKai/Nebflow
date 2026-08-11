@@ -73,7 +73,6 @@ const GLOBAL_MSG_TYPES = new Set([
   'agentSystemPrompt', 'agentSystemPromptSaved',
   'mcpServersUpdate', 'configData', 'configUpdated', 'modelOptions',
   'memoryData', 'memorySaved', 'memoryStatus', 'memoryChanged',
-  'cardDesignData', 'cardDesignSaved',
   'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
   'browseResult',
   'updateCheckResult', 'updateStarted', 'updateCompleted',

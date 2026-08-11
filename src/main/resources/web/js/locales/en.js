@@ -70,12 +70,6 @@ export default {
   'settings.updating': 'Updating...',
   'settings.updateLater': 'Later',
   'settings.updateError': 'Update check failed',
-  'settings.cardDesign': 'Card Design',
-  'settings.cardDesignHint': 'Customize visual design guidelines for the Card tool. All agents follow this guide when using Card.',
-  'settings.cardDesignReset': 'Reset to Default',
-  'settings.cardDesignResetConfirm': 'Reset to default design guidelines? Current content will be overwritten.',
-  'settings.cardDesignEdit': 'Edit Design Guidelines',
-  'settings.cardDesignPlaceholder': '# Card Visual Design Guidelines\n\nDescribe the style guide for the Card tool in Markdown...',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',

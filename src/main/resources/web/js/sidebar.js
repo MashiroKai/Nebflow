@@ -285,9 +285,6 @@ export function renderSettings() {
   const mcpServers = state.mcpServers || [];
   const providerNames = Object.keys(providers);
 
-  // Load card design prompt
-  sendWs({type: 'getCardDesign'});
-
   // Build language selector options
   const locales = getAvailableLocales();
   const localeLabels = { 'zh-CN': '中文', en: 'English' };
@@ -333,11 +330,6 @@ export function renderSettings() {
         ${mcpServers.map(s => renderMcpServerCard(s.id, s.enabled)).join('')}
         ${mcpServers.length === 0 ? `<div class="cfg-empty">${t('settings.noMcp')}</div>` : ''}
       </div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.cardDesign')}</div>
-      <div class="cfg-hint" style="margin-bottom:8px">${t('settings.cardDesignHint')}</div>
-      <button class="cfg-btn" id="btn-edit-card-design">${t('settings.cardDesignEdit')}</button>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
@@ -552,11 +544,6 @@ function bindSettingsEvents(content, cfg) {
 
   document.getElementById('btn-reload-config')?.addEventListener('click', () => {
     sendWs({type: 'getConfig'});
-  });
-
-  // --- Card design prompt ---
-  document.getElementById('btn-edit-card-design')?.addEventListener('click', () => {
-    import('./modal.js').then(m => m.showCardDesignModal());
   });
 
   // --- Check for updates ---
