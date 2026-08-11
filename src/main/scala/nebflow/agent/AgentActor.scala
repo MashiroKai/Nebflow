@@ -95,6 +95,43 @@ object AgentActor extends AgentCore with AgentSession:
       ctx.forkTurn(resources.hookEngine.onStop(hookCtx) *> resources.hookEngine.onSessionEnd(hookCtx))
     else IO.unit
 
+  /**
+   * Build the "askUser" WS payload for the frontend. When the question comes
+   * from a sub-agent (ForwardAskUser), agentName is set to the source agent
+   * for attribution and sourceAgent/sourceSession carry the origin info.
+   */
+  private def buildAskUserJson(
+    sessionId: Option[String],
+    agentName: String,
+    items: List[AskItem],
+    sourceAgent: Option[String] = None,
+    sourceSession: Option[String] = None
+  ): Json =
+    val fields = scala.collection.mutable.ListBuffer(
+      "type" -> "askUser".asJson,
+      "sessionId" -> sessionId.asJson,
+      "agentName" -> agentName.asJson
+    )
+    sourceAgent.foreach(sa => fields += "sourceAgent" -> sa.asJson)
+    sourceSession.foreach(ss => fields += "sourceSession" -> ss.asJson)
+    fields += "items" -> Json.fromValues(items.map { item =>
+      val base = scala.collection.mutable.ListBuffer(
+        "question" -> item.question.asJson,
+        "options" -> Json.fromValues(item.options.map { opt =>
+          val optFields = scala.collection.mutable.ListBuffer("label" -> opt.label.asJson)
+          opt.description.foreach(d => optFields += "description" -> d.asJson)
+          Json.obj(optFields.toList*)
+        }),
+        "allowOther" -> item.allowOther.asJson
+      )
+      item.id.foreach(id => base += "id" -> id.asJson)
+      item.dependsOn.foreach { dep =>
+        base += "dependsOn" -> Json.obj("ref" -> dep.ref.asJson, "equals" -> dep.equals.asJson)
+      }
+      Json.obj(base.toList*)
+    })
+    Json.obj(fields.toList*)
+
   // ============================================================
   // Idle state
   // ============================================================
@@ -328,6 +365,36 @@ object AgentActor extends AgentCore with AgentSession:
             ))
           state.wsSend(modifiedJson).handleErrorWith(_ => IO.unit) *>
             IO.pure(idle(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred))))
+
+      case AgentCommand.ForwardAskUser(replyTo, items, sourceAgent, sourceSession) =>
+        // Sub-agent forwarded an AskUser question. If we are also a sub-agent,
+        // relay it up the chain; otherwise render it in our own window with
+        // source attribution and store replyTo so UserAnswered routes back.
+        parentRef match
+          case Some(grandParent) =>
+            (grandParent ! AgentCommand.ForwardAskUser(replyTo, items, sourceAgent, sourceSession)) *>
+              IO.pure(idle(agentDef, resources, depth, parentRef, state))
+          case None =>
+            val roundCompleteJson = state.sessionId.map { sid =>
+              Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson)
+            }
+            val askJson =
+              buildAskUserJson(state.sessionId, sourceAgent, items, Some(sourceAgent), Some(sourceSession))
+            val updatedInteraction = Some(
+              InteractionState(
+                pendingAskUser = None,
+                pendingPermission = state.pendingPermission,
+                pendingAskUserReplyTo = replyTo
+              )
+            )
+            val updatedState = state.copy(execution = state.execution.copy(interaction = updatedInteraction))
+            ctx.forkTurn(
+              (roundCompleteJson.map(state.wsSend).getOrElse(IO.unit)).handleErrorWith(_ => IO.unit) *>
+                state.wsSend(askJson).handleErrorWith { e =>
+                  replyTo.foreach(r => (r ! Nil))
+                  IO.unit
+                }
+            ) *> IO.pure(idle(agentDef, resources, depth, parentRef, updatedState))
 
       case AgentCommand.SetSafetyMode(mode) =>
         IO.pure(
@@ -1067,45 +1134,36 @@ object AgentActor extends AgentCore with AgentSession:
 
       // --- AskUser from tool ---
       case AgentCommand.AskUser(requestId, items, replyToOpt) =>
-        val roundCompleteJson = state.sessionId.map { sid =>
-          Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson)
-        }
-        val askJson = Json.obj(
-          "type" -> "askUser".asJson,
-          "sessionId" -> state.sessionId.asJson,
-          "agentName" -> agentDef.name.asJson,
-          "items" -> Json.fromValues(items.map { item =>
-            val base = scala.collection.mutable.ListBuffer(
-              "question" -> item.question.asJson,
-              "options" -> Json.fromValues(item.options.map { opt =>
-                val fields = scala.collection.mutable.ListBuffer("label" -> opt.label.asJson)
-                opt.description.foreach(d => fields += "description" -> d.asJson)
-                Json.obj(fields.toList*)
-              }),
-              "allowOther" -> item.allowOther.asJson
+        parentRef match
+          case Some(parent) =>
+            // Sub-agent: forward to the parent so the question renders in the
+            // parent (root) window. The parent stores replyTo and routes the
+            // user's answers back to our AskUserQuestionTool `.?` deferred.
+            val srcAgent = agentDef.name
+            val srcSession = state.sessionId.getOrElse("")
+            (parent ! AgentCommand.ForwardAskUser(replyToOpt, items, srcAgent, srcSession)) *>
+              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+          case None =>
+            // Root agent: send the question directly to the frontend.
+            val roundCompleteJson = state.sessionId.map { sid =>
+              Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson)
+            }
+            val askJson = buildAskUserJson(state.sessionId, agentDef.name, items)
+            val updatedInteraction = Some(
+              InteractionState(
+                pendingAskUser = None,
+                pendingPermission = state.pendingPermission,
+                pendingAskUserReplyTo = replyToOpt
+              )
             )
-            item.id.foreach(id => base += "id" -> id.asJson)
-            item.dependsOn.foreach { dep =>
-              base += "dependsOn" -> Json.obj("ref" -> dep.ref.asJson, "equals" -> dep.equals.asJson)
-            }
-            Json.obj(base.toList*)
-          })
-        )
-        val updatedInteraction = Some(
-          InteractionState(
-            pendingAskUser = None,
-            pendingPermission = state.pendingPermission,
-            pendingAskUserReplyTo = replyToOpt
-          )
-        )
-        val updatedState = state.copy(execution = state.execution.copy(interaction = updatedInteraction))
-        ctx.forkTurn(
-          (roundCompleteJson.map(state.wsSend).getOrElse(IO.unit)).handleErrorWith(_ => IO.unit) *>
-            state.wsSend(askJson).handleErrorWith { e =>
-              replyToOpt.foreach(replyTo => (replyTo ! Nil))
-              IO.unit
-            }
-        ) *> IO.pure(processing(agentDef, resources, depth, parentRef, updatedState, pending))
+            val updatedState = state.copy(execution = state.execution.copy(interaction = updatedInteraction))
+            ctx.forkTurn(
+              (roundCompleteJson.map(state.wsSend).getOrElse(IO.unit)).handleErrorWith(_ => IO.unit) *>
+                state.wsSend(askJson).handleErrorWith { e =>
+                  replyToOpt.foreach(replyTo => (replyTo ! Nil))
+                  IO.unit
+                }
+            ) *> IO.pure(processing(agentDef, resources, depth, parentRef, updatedState, pending))
 
       // --- User answered while processing ---
       case AgentCommand.UserAnswered(answers) =>
@@ -1160,6 +1218,36 @@ object AgentActor extends AgentCore with AgentSession:
             IO.pure(
               processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending)
             )
+
+      // --- Sub-agent forwarded an AskUser question while processing ---
+      case AgentCommand.ForwardAskUser(replyTo, items, sourceAgent, sourceSession) =>
+        // If we are also a sub-agent, relay the question up the chain; the root
+        // agent renders it in its window and routes the answer back via replyTo.
+        parentRef match
+          case Some(grandParent) =>
+            (grandParent ! AgentCommand.ForwardAskUser(replyTo, items, sourceAgent, sourceSession)) *>
+              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+          case None =>
+            val roundCompleteJson = state.sessionId.map { sid =>
+              Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson)
+            }
+            val askJson =
+              buildAskUserJson(state.sessionId, sourceAgent, items, Some(sourceAgent), Some(sourceSession))
+            val updatedInteraction = Some(
+              InteractionState(
+                pendingAskUser = None,
+                pendingPermission = state.pendingPermission,
+                pendingAskUserReplyTo = replyTo
+              )
+            )
+            val updatedState = state.copy(execution = state.execution.copy(interaction = updatedInteraction))
+            ctx.forkTurn(
+              (roundCompleteJson.map(state.wsSend).getOrElse(IO.unit)).handleErrorWith(_ => IO.unit) *>
+                state.wsSend(askJson).handleErrorWith { e =>
+                  replyTo.foreach(r => (r ! Nil))
+                  IO.unit
+                }
+            ) *> IO.pure(processing(agentDef, resources, depth, parentRef, updatedState, pending))
 
       // --- Bypass toggled while processing ---
       case AgentCommand.SetSafetyMode(mode) =>

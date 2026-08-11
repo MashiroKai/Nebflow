@@ -100,6 +100,19 @@ object AgentCommand:
     sourceSession: String
   ) extends AgentCommand
 
+  /**
+   * Sub-agent → parent: forward an AskUserQuestion request so the question
+   * renders in the parent (root) window, with source attribution. The replyTo
+   * actor (created by the sub-agent's AskUserQuestionTool `.?`) is stored by
+   * the root agent so UserAnswered routes the answers back to the sub-agent.
+   */
+  case class ForwardAskUser(
+    replyTo: Option[ActorRef[List[String]]],
+    items: List[AskItem],
+    sourceAgent: String,
+    sourceSession: String
+  ) extends AgentCommand
+
   /** Frontend → agent: update safety mode for this session. */
   case class SetSafetyMode(mode: nebflow.core.SafetyMode) extends AgentCommand
 
