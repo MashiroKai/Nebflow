@@ -9,6 +9,7 @@ import nebflow.agent.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.ask.AskService
 import nebflow.core.compact.*
+import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.tools.AskUserQuestionTool
 import nebflow.llm.{Fallback, FallbackExhaustedError}
 import nebflow.shared.*
@@ -911,6 +912,9 @@ object AgentActor extends AgentCore with AgentSession:
           _ <- state.pendingCompaction
             .flatMap(_.replyDeferred)
             .traverse_(d => d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit))
+          // Back to idle without finishing the turn — clear the busy mark so a
+          // interrupted team agent isn't stuck "running" in the Teams panel.
+          _ <- markTeamIdle(agentDef, state.sessionId)
         yield
           val interruptedState = state.resetForInterrupt.withPendingCompaction(None)
           idle(agentDef, resources, depth, parentRef, interruptedState)
@@ -944,7 +948,8 @@ object AgentActor extends AgentCore with AgentSession:
             )
           case _ =>
             // No checkpoint — go to idle
-            IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
+            markTeamIdle(agentDef, state.sessionId) *>
+              IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
 
       // --- Supervisor restart ---
       case AgentCommand.RestartAgent(level) =>
@@ -1309,6 +1314,7 @@ object AgentActor extends AgentCore with AgentSession:
         for
           _ <- c.log.error(s"Agent error in processing, returning to idle: ${err.getMessage}")
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+          _ <- markTeamIdle(agentDef, state.sessionId)
         yield idle(agentDef, resources, depth, parentRef, state.withStatus(AgentStatus.Idle).withInteraction(None))
   end processing
   // ============================================================
@@ -1688,6 +1694,10 @@ object AgentActor extends AgentCore with AgentSession:
           )
         )
         _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), newMessages))
+        // Turn fully finished (no pending events / immediate inputs) — back to
+        // idle, so clear the team busy mark. The two earlier branches re-enter
+        // pipeLlmCall which re-marks busy, so they must NOT clear here.
+        _ <- markTeamIdle(agentDef, state.sessionId)
       yield
         val keptInteraction = state.execution.interaction.filter(_.pendingPermission.isDefined)
         val updatedState = state
@@ -1709,6 +1719,26 @@ object AgentActor extends AgentCore with AgentSession:
   // Pipe wrappers
   // ============================================================
 
+  /**
+   * Team busy signal for the /api/teams/mounted status fallback (busyMap).
+   * The frontend prefers realtime agentStart/agentDone events, but on page
+   * load / event loss it falls back to the mounted status field — which stays
+   * idle forever unless something writes the busyMap. Only team agents
+   * (category inferred from `teams/` path by loadAgentFromDir) are shown as
+   * team tiles, so only they need marking.
+   *
+   * Errors are swallowed: a failed status record must never break the turn.
+   */
+  private def markTeamBusy(agentDef: AgentDef, sid: Option[String]): IO[Unit] =
+    if agentDef.category == "team" then
+      sid.fold(IO.unit)(s => TeamSessionRegistry.markBusy(s).handleErrorWith(_ => IO.unit))
+    else IO.unit
+
+  private def markTeamIdle(agentDef: AgentDef, sid: Option[String]): IO[Unit] =
+    if agentDef.category == "team" then
+      sid.fold(IO.unit)(s => TeamSessionRegistry.markIdle(s).handleErrorWith(_ => IO.unit))
+    else IO.unit
+
   private def pipeLlmCall(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -1717,15 +1747,18 @@ object AgentActor extends AgentCore with AgentSession:
     state: AgentState,
     replyTo: Option[ActorRef[AgentEvent]]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    super.pipeLlmCall(
-      agentDef,
-      resources,
-      depth,
-      parentRef,
-      state,
-      replyTo,
-      (ad, r, d, p, s) => processing(ad, r, d, p, s)
-    )
+    // Turn start: mark team agent busy. Idempotent (Set), so the recursive
+    // multi-tool-call turns that re-enter pipeLlmCall are harmless.
+    markTeamBusy(agentDef, state.sessionId) *>
+      super.pipeLlmCall(
+        agentDef,
+        resources,
+        depth,
+        parentRef,
+        state,
+        replyTo,
+        (ad, r, d, p, s) => processing(ad, r, d, p, s)
+      )
 
   private def pipeToolExecutions(
     agentDef: AgentDef,
