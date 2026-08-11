@@ -3401,16 +3401,21 @@ class WebSocketRoutes(
                         nsid,
                         List(UiMessage.Ai(text, durationMs, model, None, System.currentTimeMillis()))
                       )
-                    else if durationMs.isDefined then
-                      // No text (flushed earlier) — backfill duration/model onto
-                      // the last saved AI message for this flow agent.
+                    else
+                      // No text (flushed earlier by agentToolEnd) — backfill
+                      // model + timestamp onto the last saved AI message. We no
+                      // longer gate on durationMs.isDefined: when sessionTurnStarts
+                      // was never set (startTime=0 → durationMs=None), team agent
+                      // AI messages still need model and timestamp so the popup
+                      // renders the badge (model name + time). durationMs stays
+                      // None when unknown; the frontend falls back to a simpler
+                      // badge (model + timestamp, no thinking phrase).
                       sharedResources.sessionStore.updateLastAiMeta(
                         nsid,
                         durationMs,
                         model,
                         System.currentTimeMillis()
                       )
-                    else IO.unit
                   }
               }
           case _ => IO.unit
