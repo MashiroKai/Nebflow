@@ -44,7 +44,8 @@ object FlowDagExecutor:
     actorSystem: ActorSystem,
     wsSend: Option[Json => IO[Unit]],
     instanceId: String,
-    parentAgentRef: Option[ActorRef[AgentCommand]] = None
+    parentAgentRef: Option[ActorRef[AgentCommand]] = None,
+    rootSessionId: String = ""
   ): IO[Either[String, String]] =
 
     val emitWs = wsSend.getOrElse((_: Json) => IO.unit)
@@ -104,7 +105,7 @@ object FlowDagExecutor:
                   mcpServers = entry.mcpServers,
                   model = entry.model
                 )
-                executeAgent(nodeId, node.agent, agentDef, inputText, resources, actorSystem, wsSend, flow.name, parentAgentRef)
+                executeAgent(nodeId, node.agent, agentDef, inputText, resources, actorSystem, wsSend, flow.name, parentAgentRef, rootSessionId)
             updatedCtx = ctx.copy(nodeOutputs = ctx.nodeOutputs + (nodeId -> result.output))
           yield (result, updatedCtx)
           end for
@@ -357,10 +358,14 @@ object FlowDagExecutor:
     actorSystem: ActorSystem,
     wsSend: Option[Json => IO[Unit]],
     flowName: String,
-    parentAgentRef: Option[ActorRef[AgentCommand]] = None
+    parentAgentRef: Option[ActorRef[AgentCommand]] = None,
+    rootSessionId: String = ""
   ): IO[NodeResult] =
     val rawWsSend = wsSend.getOrElse((_: Json) => IO.unit)
     val sessionId = s"dag-${flowName.take(10)}-$nodeId-${System.currentTimeMillis().toString.takeRight(6)}"
+    // P2: flow nodes inherit the triggering agent's root session so their
+    // InteractionRequests render in the Nebula window and share its policy.
+    val effectiveRootSessionId = if rootSessionId.nonEmpty then rootSessionId else sessionId
     // Route flow agent events with nodeSessionId = this flow node's session id.
     // Injected only when absent: AgentStreamEvent.toJson already stamps
     // nodeSessionId for subagent events (protocol.scala withNodeSession), and
@@ -400,7 +405,8 @@ object FlowDagExecutor:
           readTracker = Some(readTracker),
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
-          expectsMail = false
+          expectsMail = false,
+          rootSessionId = effectiveRootSessionId
         ),
         s"dagnode-${nodeId.take(10)}-${sessionId.take(8)}"
       )
@@ -408,7 +414,7 @@ object FlowDagExecutor:
       // previously missing entirely, so permission answers routed to a ghost
       // root agent and were silently dropped (D2 for dag-* sessions).
       _ <- resources.agentRegistry.update(_ + (
-        sessionId -> AgentRecord(sessionId, ref, AgentKind.Flow, sessionId, parentAgentRef)
+        sessionId -> AgentRecord(sessionId, ref, AgentKind.Flow, effectiveRootSessionId, parentAgentRef)
       ))
       // Send input with the bridge actor as replyTo
       _ <- (ref ! AgentCommand.UserInput(

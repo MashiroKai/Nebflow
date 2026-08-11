@@ -38,9 +38,18 @@ object AgentActor extends AgentCore with AgentSession:
     folderId: Option[String] = None,
     safetyMode: String = "confirm-edits",
     gitBranch: Option[String] = None,
-    expectsMail: Boolean = false
+    expectsMail: Boolean = false,
+    /**
+     * P2: permission-policy bucket (inheritance anchor). Explicitly passed at
+     * every spawn site (Root=itself, Team=parent root session, Flow/Ephemeral=
+     * itself, Delegate=resolved caller root). Falls back to sessionId so legacy
+     * spawn sites still get a sane bucket (P1 best-effort behavior).
+     */
+    rootSessionId: String = ""
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
+      val effectiveRootSessionId =
+        if rootSessionId.nonEmpty then rootSessionId else sessionId.getOrElse("")
       logAgentEvent(
         agentDef,
         depth,
@@ -74,7 +83,8 @@ object AgentActor extends AgentCore with AgentSession:
             folderId = folderId,
             safetyMode = safetyMode,
             gitBranch = gitBranch,
-            expectsMail = expectsMail
+            expectsMail = expectsMail,
+            rootSessionId = effectiveRootSessionId
           )
         )(using ctx)
       )
@@ -316,12 +326,6 @@ object AgentActor extends AgentCore with AgentSession:
         yield result
         end for
 
-      case AgentCommand.UserAnswered(answers) =>
-        state.execution.interaction.flatMap(_.pendingAskUserReplyTo) match
-          case Some(replyTo) =>
-            (replyTo ! answers) *> IO.pure(idle(agentDef, resources, depth, parentRef, state.withInteraction(None)))
-          case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
-
       case AgentCommand.UpdateGitBranch(branch) =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state.withGitBranch(branch)))
 
@@ -343,75 +347,22 @@ object AgentActor extends AgentCore with AgentSession:
             ) *> IO.pure(idle(agentDef, resources, depth, parentRef, state))
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
-      case AgentCommand.PermissionAnswered(approved) =>
-        state.pendingPermission match
-          case Some(deferred) =>
-            deferred.complete(approved).void.handleErrorWith(_ => IO.unit) *>
-              IO.pure(idle(agentDef, resources, depth, parentRef, state))
-          case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
-
-      case AgentCommand.ForwardPermission(deferred, permJson, sourceAgent, sourceSession) =>
-        // Sub-agent forwarded a permission request. If we are also a sub-agent,
-        // relay it up the chain (aligned with ForwardAskUser) so the request
-        // reaches the root (Nebula) window; the root overrides sessionId,
-        // preserves source info and sends to frontend.
-        parentRef match
-          case Some(grandParent) =>
-            (grandParent ! AgentCommand.ForwardPermission(deferred, permJson, sourceAgent, sourceSession)) *>
-              IO.pure(idle(agentDef, resources, depth, parentRef, state))
-          case None =>
-            if state.pendingPermission.isDefined then
-              // D4 (P1 mitigation): single-slot conflict — log explicitly instead
-              // of silently rejecting; full queueing lands with InteractionHub (P2).
-              logger.warn(
-                s"ForwardPermission conflict: dropping permission from sourceAgent=$sourceAgent while another is pending"
-              ) *>
-                deferred.complete(false).void.handleErrorWith(_ => IO.unit) *>
-                IO.pure(idle(agentDef, resources, depth, parentRef, state))
-            else
-              val modifiedJson = permJson
-                .deepMerge(Json.obj(
-                  "sessionId" -> state.sessionId.asJson,
-                  "sourceAgent" -> sourceAgent.asJson,
-                  "sourceSession" -> sourceSession.asJson
-                ))
-              state.wsSend(modifiedJson).handleErrorWith(_ => IO.unit) *>
-                IO.pure(idle(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred))))
-
-      case AgentCommand.ForwardAskUser(replyTo, items, sourceAgent, sourceSession) =>
-        // Sub-agent forwarded an AskUser question. If we are also a sub-agent,
-        // relay it up the chain; otherwise render it in our own window with
-        // source attribution and store replyTo so UserAnswered routes back.
-        parentRef match
-          case Some(grandParent) =>
-            (grandParent ! AgentCommand.ForwardAskUser(replyTo, items, sourceAgent, sourceSession)) *>
-              IO.pure(idle(agentDef, resources, depth, parentRef, state))
-          case None =>
-            val roundCompleteJson = state.sessionId.map { sid =>
-              Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson)
-            }
-            val askJson =
-              buildAskUserJson(state.sessionId, sourceAgent, items, Some(sourceAgent), Some(sourceSession))
-            val updatedInteraction = Some(
-              InteractionState(
-                pendingAskUser = None,
-                pendingPermission = state.pendingPermission,
-                pendingAskUserReplyTo = replyTo
-              )
-            )
-            val updatedState = state.copy(execution = state.execution.copy(interaction = updatedInteraction))
-            ctx.forkTurn(
-              (roundCompleteJson.map(state.wsSend).getOrElse(IO.unit)).handleErrorWith(_ => IO.unit) *>
-                state.wsSend(askJson).handleErrorWith { e =>
-                  replyTo.foreach(r => (r ! Nil))
-                  IO.unit
-                }
-            ) *> IO.pure(idle(agentDef, resources, depth, parentRef, updatedState))
-
       case AgentCommand.SetSafetyMode(mode) =>
-        IO.pure(
-          idle(agentDef, resources, depth, parentRef, state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)))
-        )
+        // P2: write the root session's permission-policy bucket (dynamic
+        // inheritance). The per-agent safetyMode copy is kept in sync for P3
+        // cleanup; the decision point reads the policy, not this field.
+        val policy = PermissionPolicy(safetyMode = mode)
+        resources.permissionPolicies
+          .update(_ + (state.session.rootSessionId -> policy)) *>
+          IO.pure(
+            idle(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state.withSafetyMode(nebflow.core.SafetyMode.toString(mode))
+            )
+          )
 
       case AgentCommand.StartPlan(task) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-start", s"task=${task.take(60)}")
@@ -651,15 +602,18 @@ object AgentActor extends AgentCore with AgentSession:
         yield Behaviors.stopped
 
       case AgentCommand.SetSafetyMode(mode) =>
-        IO.pure(
-          planWaiting(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withSafetyMode(nebflow.core.SafetyMode.toString(mode))
+        val policy = PermissionPolicy(safetyMode = mode)
+        resources.permissionPolicies
+          .update(_ + (state.session.rootSessionId -> policy)) *>
+          IO.pure(
+            planWaiting(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state.withSafetyMode(nebflow.core.SafetyMode.toString(mode))
+            )
           )
-        )
 
       // Buffer user messages while planning
       case msg: AgentCommand.UserInput =>
@@ -1166,143 +1120,55 @@ object AgentActor extends AgentCore with AgentSession:
 
       // --- AskUser from tool ---
       case AgentCommand.AskUser(requestId, items, replyToOpt) =>
-        parentRef match
-          case Some(parent) =>
-            // Sub-agent: forward to the parent so the question renders in the
-            // parent (root) window. The parent stores replyTo and routes the
-            // user's answers back to our AskUserQuestionTool `.?` deferred.
-            val srcAgent = agentDef.name
-            val srcSession = state.sessionId.getOrElse("")
-            (parent ! AgentCommand.ForwardAskUser(replyToOpt, items, srcAgent, srcSession)) *>
-              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        // P2: every agent (root or sub-agent) sends the question straight to
+        // the InteractionHub — no ForwardAskUser relay chain. The hub holds
+        // replyTo, renders the question in the Nebula window (sessionId =
+        // rootSessionId + source attribution) and routes the answers back.
+        val srcAgent = agentDef.name
+        val srcSession = state.sessionId.getOrElse("")
+        val rootSid =
+          Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
+        val payload = buildAskUserJson(Some(rootSid), srcAgent, items, Some(srcAgent), Some(srcSession))
+        val sendIO = resources.interactionHubRef.get.flatMap {
+          case Some(hub) =>
+            (hub ! InteractionHubCommand.Request(InteractionRequest(
+              requestId = requestId,
+              kind = InteractionKind.AskUser,
+              payload = payload,
+              reply = InteractionReply.AskUserReply(replyToOpt),
+              rootSessionId = rootSid,
+              sourceAgent = srcAgent,
+              sourceSession = srcSession
+            ))).void
           case None =>
-            // Root agent: send the question directly to the frontend.
-            val roundCompleteJson = state.sessionId.map { sid =>
-              Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson)
-            }
-            val askJson = buildAskUserJson(state.sessionId, agentDef.name, items)
-            val updatedInteraction = Some(
-              InteractionState(
-                pendingAskUser = None,
-                pendingPermission = state.pendingPermission,
-                pendingAskUserReplyTo = replyToOpt
-              )
-            )
-            val updatedState = state.copy(execution = state.execution.copy(interaction = updatedInteraction))
-            ctx.forkTurn(
-              (roundCompleteJson.map(state.wsSend).getOrElse(IO.unit)).handleErrorWith(_ => IO.unit) *>
-                state.wsSend(askJson).handleErrorWith { e =>
-                  replyToOpt.foreach(replyTo => (replyTo ! Nil))
-                  IO.unit
-                }
-            ) *> IO.pure(processing(agentDef, resources, depth, parentRef, updatedState, pending))
+            // Hub not spawned (early boot / tests): cancel the ask so the
+            // caller's AskUserQuestionTool `.?` does not hang forever.
+            logger.warn(
+              s"AskUser dropped: InteractionHub not spawned (requestId=$requestId sourceAgent=$srcAgent)"
+            ) *>
+              replyToOpt.fold(IO.unit)(replyTo => (replyTo ! Nil))
+        }
+        sendIO *> IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
-      // --- User answered while processing ---
-      case AgentCommand.UserAnswered(answers) =>
-        state.execution.interaction.flatMap(_.pendingAskUserReplyTo) match
-          case Some(replyTo) =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "user-answered-in-processing",
-              s"answers=${answers.size}"
-            )
-            (replyTo ! answers) *> IO.pure(
-              processing(agentDef, resources, depth, parentRef, state.withInteraction(None), pending)
-            )
-          case None => IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-
-      // --- Permission answered while processing ---
-      case AgentCommand.PermissionAnswered(approved) =>
-        state.pendingPermission match
-          case Some(deferred) =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "permission-answered-in-processing",
-              s"approved=$approved"
-            )
-            deferred.complete(approved).void.handleErrorWith(_ => IO.unit) *>
-              IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(None), pending))
-          case None => IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-
-      // --- Set permission deferred while processing ---
+      // --- Set permission deferred while processing (P1 fallback, hub absent) ---
       case AgentCommand.SetPermissionDeferred(deferred) =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending))
 
-      // --- Sub-agent forwarded a permission request while processing ---
-      case AgentCommand.ForwardPermission(deferred, permJson, sourceAgent, sourceSession) =>
-        // If we are also a sub-agent, relay the request up the chain (aligned
-        // with ForwardAskUser) so it reaches the root (Nebula) window.
-        parentRef match
-          case Some(grandParent) =>
-            (grandParent ! AgentCommand.ForwardPermission(deferred, permJson, sourceAgent, sourceSession)) *>
-              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-          case None =>
-            if state.pendingPermission.isDefined then
-              logger.warn(
-                s"ForwardPermission conflict: dropping permission from sourceAgent=$sourceAgent while another is pending"
-              ) *>
-                deferred.complete(false).void.handleErrorWith(_ => IO.unit) *>
-                IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-            else
-              val modifiedJson = permJson
-                .deepMerge(Json.obj(
-                  "sessionId" -> state.sessionId.asJson,
-                  "sourceAgent" -> sourceAgent.asJson,
-                  "sourceSession" -> sourceSession.asJson
-                ))
-              state.wsSend(modifiedJson).handleErrorWith(_ => IO.unit) *>
-                IO.pure(
-                  processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending)
-                )
-
-      // --- Sub-agent forwarded an AskUser question while processing ---
-      case AgentCommand.ForwardAskUser(replyTo, items, sourceAgent, sourceSession) =>
-        // If we are also a sub-agent, relay the question up the chain; the root
-        // agent renders it in its window and routes the answer back via replyTo.
-        parentRef match
-          case Some(grandParent) =>
-            (grandParent ! AgentCommand.ForwardAskUser(replyTo, items, sourceAgent, sourceSession)) *>
-              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-          case None =>
-            val roundCompleteJson = state.sessionId.map { sid =>
-              Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson)
-            }
-            val askJson =
-              buildAskUserJson(state.sessionId, sourceAgent, items, Some(sourceAgent), Some(sourceSession))
-            val updatedInteraction = Some(
-              InteractionState(
-                pendingAskUser = None,
-                pendingPermission = state.pendingPermission,
-                pendingAskUserReplyTo = replyTo
-              )
-            )
-            val updatedState = state.copy(execution = state.execution.copy(interaction = updatedInteraction))
-            ctx.forkTurn(
-              (roundCompleteJson.map(state.wsSend).getOrElse(IO.unit)).handleErrorWith(_ => IO.unit) *>
-                state.wsSend(askJson).handleErrorWith { e =>
-                  replyTo.foreach(r => (r ! Nil))
-                  IO.unit
-                }
-            ) *> IO.pure(processing(agentDef, resources, depth, parentRef, updatedState, pending))
-
       // --- Bypass toggled while processing ---
       case AgentCommand.SetSafetyMode(mode) =>
-        IO.pure(
-          processing(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)),
-            pending
+        val policy = PermissionPolicy(safetyMode = mode)
+        resources.permissionPolicies
+          .update(_ + (state.session.rootSessionId -> policy)) *>
+          IO.pure(
+            processing(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)),
+              pending
+            )
           )
-        )
 
       // --- Session model switched ---
       case AgentCommand.UpdateContextWindow(window) =>

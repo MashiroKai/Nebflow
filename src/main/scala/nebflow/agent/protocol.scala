@@ -86,33 +86,6 @@ object AgentCommand:
     replyTo: cats.effect.Deferred[IO, Either[String, Int]]
   ) extends AgentCommand
 
-  case class UserAnswered(answers: List[String]) extends AgentCommand
-  case class PermissionAnswered(approved: Boolean) extends AgentCommand
-
-  /**
-   * Sub-agent → parent: forward a permission request so the parent can track
-   * the Deferred and route the frontend answer back to the sub-agent.
-   */
-  case class ForwardPermission(
-    deferred: cats.effect.Deferred[IO, Boolean],
-    permJson: Json,
-    sourceAgent: String,
-    sourceSession: String
-  ) extends AgentCommand
-
-  /**
-   * Sub-agent → parent: forward an AskUserQuestion request so the question
-   * renders in the parent (root) window, with source attribution. The replyTo
-   * actor (created by the sub-agent's AskUserQuestionTool `.?`) is stored by
-   * the root agent so UserAnswered routes the answers back to the sub-agent.
-   */
-  case class ForwardAskUser(
-    replyTo: Option[ActorRef[List[String]]],
-    items: List[AskItem],
-    sourceAgent: String,
-    sourceSession: String
-  ) extends AgentCommand
-
   /** Frontend → agent: update safety mode for this session. */
   case class SetSafetyMode(mode: nebflow.core.SafetyMode) extends AgentCommand
 
@@ -226,6 +199,81 @@ case class AgentRecord(
   kind: AgentKind,
   rootSessionId: String,
   parentRef: Option[ActorRef[AgentCommand]] = None
+)
+
+// ============================================================
+// P2 — Permission policy (per root session) + InteractionHub protocol
+// ============================================================
+
+/**
+ * One permission policy per Nebula root session (P2). All agents in a root
+ * session's tree (Team/Flow/Delegate/Ephemeral/itself) *dynamically inherit*
+ * the bucket — the decision point reads it at request time, never copies it.
+ *
+ * `allow`/`deny` are model-reserved tool-name sets (UI exposes them later);
+ * while empty the behavior is identical to the old per-session safetyMode.
+ */
+case class PermissionPolicy(
+  safetyMode: nebflow.core.SafetyMode = nebflow.core.SafetyMode.ConfirmEdits,
+  allow: Set[String] = Set.empty,
+  deny: Set[String] = Set.empty
+)
+
+object PermissionPolicy:
+  val default: PermissionPolicy = PermissionPolicy()
+
+/** Interaction kind — what the user is being asked (P2). */
+enum InteractionKind:
+  case Permission, AskUser
+
+/**
+ * Reply target for an interaction request (P2). Held by the InteractionHub —
+ * NOT by the requesting agent — so it survives the requesting agent's turn
+ * lifecycle (D3) and supports multiple concurrent requests (D4, multi-slot
+ * queueing keyed by requestId).
+ */
+sealed trait InteractionReply
+object InteractionReply:
+  final case class PermissionReply(deferred: cats.effect.Deferred[IO, Boolean]) extends InteractionReply
+  final case class AskUserReply(replyTo: Option[ActorRef[List[String]]]) extends InteractionReply
+
+/**
+ * Unified interaction request (P2). ForwardPermission/ForwardAskUser are gone:
+ * every agent (root or sub-agent) sends this directly to the InteractionHub,
+ * which renders the card/question in the Nebula (root) window and routes the
+ * answer back by requestId.
+ *
+ * @param requestId     unique id used to route the answer (multi-slot queue)
+ * @param kind          Permission | AskUser
+ * @param payload       card/question JSON (type/summary/items/…); the hub
+ *                      overrides sessionId=rootSessionId and adds requestId
+ * @param reply         PermissionReply(deferred) | AskUserReply(replyTo)
+ * @param rootSessionId permission-policy bucket + wsSend routing key
+ * @param sourceAgent   originating agent name (UI attribution badge)
+ * @param sourceSession originating agent session id (UI attribution badge)
+ */
+final case class InteractionRequest(
+  requestId: String,
+  kind: InteractionKind,
+  payload: Json,
+  reply: InteractionReply,
+  rootSessionId: String,
+  sourceAgent: String,
+  sourceSession: String
+)
+
+/**
+ * Unified interaction answer (P2). Frontend answers (permissionAnswer /
+ * askUserAnswer) are translated by the gateway into this and sent to the hub.
+ * When `requestId` is empty (old frontend, no requestId support) the hub falls
+ * back to matching the oldest pending request for `rootSessionId`.
+ *
+ * payload: Permission → {"approved": Boolean}; AskUser → {"answers": [...]}
+ */
+final case class InteractionAnswered(
+  requestId: String,
+  rootSessionId: String,
+  payload: Json
 )
 
 /**
@@ -501,6 +549,13 @@ case class SessionContext(
   chatWidth: Int = 0,
   gitBranch: Option[String] = None,
   safetyMode: String = "confirm-edits",
+  /**
+   * P2: permission-policy bucket + interaction routing anchor. Passed as a
+   * constructor parameter at every spawn site (Root=itself, Team=parent root
+   * session, Flow/Ephemeral=itself, Delegate=resolved caller root). Falls back
+   * to sessionId so legacy spawn sites still get a sane bucket.
+   */
+  rootSessionId: String = "",
   pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
   pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
   pendingAskUserReplyTo: Option[ActorRef[List[String]]] = None,
@@ -640,7 +695,8 @@ object AgentState:
     folderId: Option[String] = None,
     safetyMode: String = "confirm-edits",
     gitBranch: Option[String] = None,
-    expectsMail: Boolean = false
+    expectsMail: Boolean = false,
+    rootSessionId: String = ""
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -660,7 +716,8 @@ object AgentState:
         rulesMd = rulesMd,
         gitBranch = gitBranch,
         safetyMode = safetyMode,
-        expectsMail = expectsMail
+        expectsMail = expectsMail,
+        rootSessionId = rootSessionId
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
@@ -702,6 +759,7 @@ extension (s: AgentState)
   def folderId: Option[String] = s.session.folderId
   def gitBranch: Option[String] = s.session.gitBranch
   def safetyMode: String = s.session.safetyMode
+  def rootSessionId: String = s.session.rootSessionId
   def expectsMail: Boolean = s.session.expectsMail
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)

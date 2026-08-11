@@ -75,7 +75,10 @@ object PlanAgent:
           readTracker = Some(readTracker),
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
-          projectRoot = Some(projectRoot)
+          projectRoot = Some(projectRoot),
+          // P2: the plan agent shares the main agent's session — it inherits
+          // the same root-session policy bucket.
+          rootSessionId = parentSessionId.getOrElse("")
         ),
         planAgentId
       )

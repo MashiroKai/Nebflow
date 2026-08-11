@@ -175,6 +175,11 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
       (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
         case (Some(resources), Some(sys), Some(callerRef)) =>
           for
+            // P2: resolve the caller's root session so flow nodes inherit the
+            // same permission policy and render interactions in the Nebula window.
+            callerRoot <- ctx.sessionId match
+              case Some(sid) => resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+              case None => IO.pure("")
             flowOpt <- nebflow.core.entity.EntityLoader.loadFlow(flowName.get)
             r <- flowOpt match
               case Some(flowDef) =>
@@ -183,7 +188,7 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
                     nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
                     s"dag-runner-${flowName.get.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
                   )
-                  _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(flowDef, prompt, callerRef)).void
+                  _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(flowDef, prompt, callerRef, callerRoot)).void
                 yield Right(s"Flow '${flowName.get}' started. Result will be delivered when complete.")
               case None =>
                 IO.pure(Left(ToolError(s"Flow '${flowName.get}' not found")))
@@ -239,41 +244,53 @@ $prompt"""
               val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
                 case (Some(store), Some(sid)) => store.getSafetyMode(sid)
                 case _ => IO.pure("confirm-edits")
-              safetyModeIO.flatMap { safetyMode =>
-                if lifecycle == "persistent" then
-                  spawnPersistent(
-                    agentDef = agentDef,
-                    prompt = adjustedPrompt,
-                    description = description,
-                    taskDescription = taskDescription,
-                    agentName = agentName,
-                    initialMessages = initialMessages,
-                    system = system,
-                    resources = resources,
-                    parentDepth = ctx.depth,
-                    parentRef = ctx.agentActorRef,
-                    wsSend = ctx.wsSend,
-                    projectRoot = ctx.projectRoot,
-                    parentSessionId = ctx.sessionId,
-                    safetyMode = safetyMode
-                  )
-                else
-                  spawnBackground(
-                    agentDef = agentDef,
-                    prompt = adjustedPrompt,
-                    description = description,
-                    agentName = agentName,
-                    initialMessages = initialMessages,
-                    system = system,
-                    resources = resources,
-                    parentDepth = ctx.depth,
-                    parentRef = ctx.agentActorRef,
-                    wsSend = ctx.wsSend,
-                    projectRoot = ctx.projectRoot,
-                    parentSessionId = ctx.sessionId,
-                    safetyMode = safetyMode
-                  )
-              }
+              // P2: resolve the caller's permission-policy bucket (root session)
+              // so the delegate inherits the same policy as the caller — the
+              // whole tree anchors to one rootSessionId.
+              val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
+                case (Some(res), Some(sid)) =>
+                  res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+                case _ => IO.pure(ctx.sessionId.getOrElse(""))
+              for
+                safetyMode <- safetyModeIO
+                rootSid <- callerRootIO
+                result <-
+                  if lifecycle == "persistent" then
+                    spawnPersistent(
+                      agentDef = agentDef,
+                      prompt = adjustedPrompt,
+                      description = description,
+                      taskDescription = taskDescription,
+                      agentName = agentName,
+                      initialMessages = initialMessages,
+                      system = system,
+                      resources = resources,
+                      parentDepth = ctx.depth,
+                      parentRef = ctx.agentActorRef,
+                      wsSend = ctx.wsSend,
+                      projectRoot = ctx.projectRoot,
+                      parentSessionId = ctx.sessionId,
+                      safetyMode = safetyMode,
+                      rootSessionId = rootSid
+                    )
+                  else
+                    spawnBackground(
+                      agentDef = agentDef,
+                      prompt = adjustedPrompt,
+                      description = description,
+                      agentName = agentName,
+                      initialMessages = initialMessages,
+                      system = system,
+                      resources = resources,
+                      parentDepth = ctx.depth,
+                      parentRef = ctx.agentActorRef,
+                      wsSend = ctx.wsSend,
+                      projectRoot = ctx.projectRoot,
+                      parentSessionId = ctx.sessionId,
+                      safetyMode = safetyMode,
+                      rootSessionId = rootSid
+                    )
+              yield result
             case _ =>
               IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
       }
@@ -297,7 +314,8 @@ $prompt"""
     wsSend: Option[io.circe.Json => IO[Unit]],
     projectRoot: String,
     parentSessionId: Option[String] = None,
-    safetyMode: String = "confirm-edits"
+    safetyMode: String = "confirm-edits",
+    rootSessionId: String = ""
   ): IO[Either[ToolError, String]] =
     for
       readTracker <- ReadTracker.create
@@ -319,7 +337,8 @@ $prompt"""
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
           projectRoot = Some(projectRoot),
-          safetyMode = safetyMode
+          safetyMode = safetyMode,
+          rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
         ),
         subagentId
       )
@@ -329,7 +348,13 @@ $prompt"""
       )
       _ = logger.info(s"Spawned background sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
       _ <- resources.agentRegistry.update(_ + (
-        subagentId -> AgentRecord(subagentId, subagentRef, AgentKind.Delegate, parentSessionId.getOrElse(subagentId), parentRef)
+        subagentId -> AgentRecord(
+          subagentId,
+          subagentRef,
+          AgentKind.Delegate,
+          if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId),
+          parentRef
+        )
       ))
       // Inherit parent's team membership so team scope checks apply to sub-agent Mail
       _ <- parentSessionId match
@@ -414,7 +439,8 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
     wsSend: Option[io.circe.Json => IO[Unit]],
     projectRoot: String,
     parentSessionId: Option[String] = None,
-    safetyMode: String = "confirm-edits"
+    safetyMode: String = "confirm-edits",
+    rootSessionId: String = ""
   ): IO[Either[ToolError, String]] =
     for
       readTracker <- ReadTracker.create
@@ -436,7 +462,8 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
           projectRoot = Some(projectRoot),
-          safetyMode = safetyMode
+          safetyMode = safetyMode,
+          rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
         ),
         subagentId
       )
@@ -447,7 +474,13 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
       )
       _ = logger.info(s"Spawned persistent sub-agent: $subagentId (depth=$childDepth, agent=$agentName, addr=$address)")
       _ <- resources.agentRegistry.update(_ + (
-        subagentId -> AgentRecord(subagentId, subagentRef, AgentKind.Delegate, parentSessionId.getOrElse(subagentId), parentRef)
+        subagentId -> AgentRecord(
+          subagentId,
+          subagentRef,
+          AgentKind.Delegate,
+          if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId),
+          parentRef
+        )
       ))
       // Inherit parent's team membership so team scope checks apply to sub-agent Mail
       _ <- parentSessionId match

@@ -588,7 +588,11 @@ object FlowTreeActor:
               systemPrompt = entry.systemPrompt, category = entry.category,
               mcpServers = entry.mcpServers, model = entry.model
             )
+            val rootSid = cfg.sessionId.getOrElse(session.id)
             for
+              policyOpt <- cfg.resources.permissionPolicies.get.map(_.get(rootSid))
+              safetyMode =
+                policyOpt.map(p => nebflow.core.SafetyMode.toString(p.safetyMode)).getOrElse(cfg.safetyMode)
               ref <- cfg.resources.actorSystem.spawn(
                 AgentActor(
                   agentDef = agentDef,
@@ -599,11 +603,12 @@ object FlowTreeActor:
                   sessionId = Some(session.id),
                   sessionName = Some(session.name),
                   projectRoot = Some(cfg.projectRoot),
-                  safetyMode = cfg.safetyMode
+                  safetyMode = safetyMode,
+                  rootSessionId = rootSid
                 ),
                 s"resume-${session.id.take(8)}"
               )
-              _ <- TeamSessionRegistry.registerActor(session.id, ref, cfg.resources, cfg.sessionId.getOrElse(session.id))
+              _ <- TeamSessionRegistry.registerActor(session.id, ref, cfg.resources, rootSid)
               _ <- (ref ! AgentCommand.ResumeTurn(turnStartMessageCount, turnIdx)).void
               _ <- emit(cfg, "flowResumed", "sessionId" -> session.id.asJson)
             yield ()
