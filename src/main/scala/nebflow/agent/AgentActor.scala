@@ -25,6 +25,58 @@ object AgentActor extends AgentCore with AgentSession:
   private val LlmFailRetryMax = 2
   private val logger = NebflowLogger.forName("nebflow.agent")
 
+  /**
+   * Infer the injection source (任务 P) for a tool-originated UserInput that
+   * did not carry an explicit source. Discriminator: clientMessageId is empty
+   * (user WS inputs always carry one). The source is derived from the agent's
+   * own session id prefix, falling back to the fork-adapter replyTo for
+   * Mail ask/fork spawns, and finally the generic "tool".
+   *
+   *   delegate-… → "delegate"   SubTaskTool worker
+   *   subtask-…  → "subtask"    SubTaskTool worker
+   *   dag-…      → "flow"       FlowDagExecutor node
+   *   fork-adapter replyTo      → "ask"        Mail ask/fork
+   *   otherwise  → "tool"
+   */
+  private def inferInjectionSource(
+    sessionId: Option[String],
+    replyTo: Option[ActorRef[AgentEvent]]
+  ): Option[String] =
+    val sid = sessionId.getOrElse("")
+    if sid.startsWith("delegate-") then Some("delegate")
+    else if sid.startsWith("subtask-") then Some("subtask")
+    else if sid.startsWith("dag-") then Some("flow")
+    else if replyTo.exists(_.path.name.startsWith("fork-adapter")) then Some("ask")
+    else Some("tool")
+
+  /**
+   * Emit a `user` WS event so the frontend renders an injected-task bubble
+   * (浅蓝, source-labeled) instead of leaving the task prompt invisible.
+   * Mirrors the `user` event shape the frontend already handles for normal
+   * user input (SessionRecorder records it as UiMessage.User with injected=true).
+   */
+  private def emitInjectedUserEvent(
+    wsSend: Json => IO[Unit],
+    sessionId: Option[String],
+    text: String,
+    source: String
+  )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
+    sessionId.fold(IO.unit) { sid =>
+      ctx.forkTurn(
+        wsSend(
+          Json.obj(
+            "type" -> "user".asJson,
+            "text" -> text.asJson,
+            "injected" -> true.asJson,
+            "source" -> source.asJson,
+            "sessionId" -> sid.asJson
+          )
+        ).handleErrorWith(e =>
+          IO(logger.warn(s"injected user event failed: ${e.getMessage}"))
+        )
+      )
+    }
+
   def apply(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -161,7 +213,7 @@ object AgentActor extends AgentCore with AgentSession:
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
-      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth) =>
+      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source) =>
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then
           logger.info(s"Dropping duplicate message with clientMessageId=${clientMessageId.getOrElse("")}")
@@ -179,16 +231,28 @@ object AgentActor extends AgentCore with AgentSession:
           val stateWithWidth =
             if chatWidth > 0 then stateWithLang.copy(session = stateWithLang.session.copy(chatWidth = chatWidth))
             else stateWithLang
-          val userMsg = blocks.filter(_.nonEmpty) match
+          // Injection source (任务 P): user WS inputs always carry clientMessageId.
+          // Tool-injected inputs (Mail ask/fork, Delegate, SubTask, ImmediateInput
+          // converted from Mail delivery) have clientMessageId=None → emit a user
+          // event so the frontend renders the task prompt as a visible bubble.
+          val injectionSource: Option[String] =
+            if clientMessageId.isDefined then None
+            else source.orElse(inferInjectionSource(state.sessionId, replyTo))
+          val userMsg = (blocks.filter(_.nonEmpty) match
             case Some(bl) => Message(MessageRole.User, Right(bl))
             case None => Message(MessageRole.User, Left(text))
+          ).copy(source = injectionSource)
           val newMessages = stateWithWidth.messages :+ userMsg
           val sessionBusyIO =
             if depth == 0 then
               stateWithWidth.sessionId.fold(IO.unit)(sid => emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
             else IO.unit
+          val injectedEventIO = injectionSource match
+            case Some(src) => emitInjectedUserEvent(stateWithWidth.wsSend, stateWithWidth.sessionId, text, src)
+            case None => IO.unit
           for
             _ <- sessionBusyIO
+            _ <- injectedEventIO
             result <- pipeLlmCall(
               agentDef,
               resources,
@@ -220,13 +284,16 @@ object AgentActor extends AgentCore with AgentSession:
         )
         val combinedText = s"<skill name=\"$skillName\">\n$skillContent\n</skill>\n\n$input"
         val processingState = state
-          .withMessages(state.messages :+ Message(MessageRole.User, Left(combinedText)))
+          .withMessages(
+            state.messages :+ Message(MessageRole.User, Left(combinedText), source = Some("skill"))
+          )
           .withStatus(AgentStatus.Processing)
         val sessionBusyIO2 =
           if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit
         for
           _ <- sessionBusyIO2
+          _ <- emitInjectedUserEvent(state.wsSend, state.sessionId, input, "skill")
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None)
         yield result
 
@@ -416,8 +483,8 @@ object AgentActor extends AgentCore with AgentSession:
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
-      case AgentCommand.ImmediateInput(text, blocks) =>
-        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0)
+      case AgentCommand.ImmediateInput(text, blocks, source) =>
+        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source)
         yield idle(agentDef, resources, depth, parentRef, state)
 
       // Supervisor restart in idle state
@@ -866,10 +933,15 @@ object AgentActor extends AgentCore with AgentSession:
               "immediate-input-injected-at-tools-complete",
               s"text=${imm.text.take(60)} remaining=${remainingImmInputs.size}"
             )
-            List(imm.blocks match
+            List((imm.blocks match
               case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-              case _ => Message(MessageRole.User, Left(imm.text)))
+              case _ => Message(MessageRole.User, Left(imm.text))
+            ).copy(source = imm.source))
           case None => Nil
+        val immEventIO = immInputOpt match
+          case Some(imm) if imm.source.isDefined =>
+            emitInjectedUserEvent(state.wsSend, state.sessionId, imm.text, imm.source.get)
+          case _ => IO.unit
         val newMessages =
           baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages
         // Increment delegate count for Delegate/SubTask calls
@@ -900,6 +972,7 @@ object AgentActor extends AgentCore with AgentSession:
                 IO(NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}"))
               )
           )
+          _ <- immEventIO
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
         yield result
 
@@ -1114,16 +1187,22 @@ object AgentActor extends AgentCore with AgentSession:
                         "immediate-input-injected-after-compaction",
                         s"text=${imm.text.take(60)} remaining=${remainingImmInputs.size}"
                       )
-                      val immMessage = imm.blocks match
+                      val immMessage = (imm.blocks match
                         case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
                         case _ => Message(MessageRole.User, Left(imm.text))
+                      ).copy(source = imm.source)
                       val drainedState = compactedState.copy(execution =
                         compactedState.execution.copy(
                           messages = compactedState.messages :+ immMessage,
                           pendingImmediateInputs = remainingImmInputs
                         )
                       )
-                      pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
+                      for
+                        _ <- imm.source match
+                          case Some(src) => emitInjectedUserEvent(state.wsSend, state.sessionId, imm.text, src)
+                          case None => IO.unit
+                        res <- pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
+                      yield res
                     case None => IO.pure(idle(agentDef, resources, depth, parentRef, compactedState))
                 yield result
               end if
@@ -1613,9 +1692,10 @@ object AgentActor extends AgentCore with AgentSession:
             )
           )
         else IO.unit
-      val immMessage = immInput.blocks match
+      val immMessage = (immInput.blocks match
         case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
         case _ => Message(MessageRole.User, Left(immInput.text))
+      ).copy(source = immInput.source)
       val messagesWithImmediate = newMessages ++ List(immMessage)
       val updatedState = state
         .copy(execution =
@@ -1626,6 +1706,9 @@ object AgentActor extends AgentCore with AgentSession:
       for
         _ <- roundCompleteIO
         _ <- if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true)) else IO.unit
+        _ <- immInput.source match
+          case Some(src) => emitInjectedUserEvent(state.wsSend, state.sessionId, immInput.text, src)
+          case None => IO.unit
         _ <- state.sessionId.fold(IO.unit)(sid =>
           ctx.forkTurn(
             (resources.sessionStore.saveMessagesForSession(sid, messagesWithImmediate) *>
@@ -2168,7 +2251,7 @@ object AgentActor extends AgentCore with AgentSession:
     summary: String
   ): Either[String, (List[Message], Int)] =
     val allToolUseIds = messages.flatMap {
-      case Message(MessageRole.Assistant, Right(blocks), _) =>
+      case Message(MessageRole.Assistant, Right(blocks), _, _) =>
         blocks.collect { case ContentBlock.ToolUse(id, _, _) => id }
       case _ => Nil
     }.reverse
@@ -2178,7 +2261,7 @@ object AgentActor extends AgentCore with AgentSession:
       if selectedIds.isEmpty then Left("Selected rounds exceed available tool calls")
       else
         val (updated, count) = messages.foldLeft((Vector.empty[Message], 0)) {
-          case ((acc, c), msg @ Message(MessageRole.User, Right(blocks), _)) =>
+          case ((acc, c), msg @ Message(MessageRole.User, Right(blocks), _, _)) =>
             val (newBlocks, nc) = blocks.foldLeft((Vector.empty[ContentBlock], c)) {
               case ((ba, bc), tr: ContentBlock.ToolResult) if selectedIds.contains(tr.toolUseId) =>
                 (ba :+ tr.copy(content = s"[Replaced — see RemoveUnnecessary result above]"), bc + 1)

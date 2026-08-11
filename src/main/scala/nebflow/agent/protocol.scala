@@ -20,12 +20,20 @@ object AgentCommand:
     replyTo: Option[ActorRef[AgentEvent]] = None,
     clientMessageId: Option[String] = None,
     blocks: Option[List[ContentBlock]] = None,
-    chatWidth: Int = 0
+    chatWidth: Int = 0,
+    /**
+     * Injection source marker (任务 P): Some(...) when this input was injected
+     * by a tool (Mail/Delegate/SubTask/skill/ask) rather than typed by the
+     * user. User WS inputs always carry clientMessageId and source=None.
+     */
+    source: Option[String] = None
   ) extends AgentCommand
 
   case class ImmediateInput(
     text: String,
-    blocks: Option[List[ContentBlock]] = None
+    blocks: Option[List[ContentBlock]] = None,
+    /** Injection source marker (任务 P), e.g. "mail" for Mail delivery. */
+    source: Option[String] = None
   ) extends AgentCommand
   case class Interrupt() extends AgentCommand
 

@@ -99,7 +99,7 @@ class CompactionDemo extends munit.FunSuite:
         println(s"  BEFORE: ${messages.size} messages")
         println(s"  AFTER:  ${compacted.size} messages (tool results replaced with placeholders)")
         val toolResults = compacted.flatMap {
-          case Message(_, Right(blocks), _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
+          case Message(_, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
           case _ => Nil
         }
         val replaced = toolResults.count(_.content == "[Output removed to free context space]")

@@ -60,7 +60,7 @@ class FastMicroCompactSpec extends CatsEffectSuite:
     val result = FastMicroCompact(messages)
     assert(result.isDefined, "Should fire when cache is cold")
     val toolResults = result.get.flatMap {
-      case Message(_, Right(blocks), _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
+      case Message(_, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
       case _ => Nil
     }
     assertEquals(toolResults.find(_.toolUseId == "tu1").get.content, "[Output removed to free context space]")
@@ -124,7 +124,7 @@ class FastMicroCompactSpec extends CatsEffectSuite:
     val result = FastMicroCompact(messages)
     assert(result.isDefined)
     val toolResults = result.get.flatMap {
-      case Message(_, Right(blocks), _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
+      case Message(_, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
       case _ => Nil
     }
     // Read tu1, tu2 are compactable and old → replaced
