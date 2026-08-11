@@ -1,6 +1,7 @@
 package nebflow.agent
 
 import nebflow.agent.PromptSections.*
+import nebflow.core.PathUtil
 
 class PromptSectionsSpec extends munit.FunSuite:
 
@@ -213,5 +214,37 @@ class PromptSectionsSpec extends munit.FunSuite:
     assert(cond(PromptContext(availableTools = Set("Read", "Write", "Grep"))))
     assert(!cond(PromptContext(availableTools = Set("Read")))) // missing Write
     assert(!cond(PromptContext(availableTools = Set.empty)))
+
+  // ============================================================
+  // Cache v2 (2026-08-11): task list moved out of systemStable
+  // ============================================================
+
+  test("Task list excluded from system prompt (cache v2 — moves to user-turn reminder)"):
+    val ctx = PromptContext(taskListText = "## Current Tasks\n\n#1 [pending] Fix the cache bug")
+    val blocks = buildConditionalBlocks(ctx)
+    assert(!blocks.contains("## Current Tasks"), "task list must not be part of systemStable")
+    assert(!blocks.contains("Fix the cache bug"))
+
+  test("envInfoSection renders the file-based Environment block for change detection"):
+    // Self-contained: build a temp environment section so the test does not
+    // depend on ~/.nebflow existing or on test-class ordering (other suites
+    // set a global dataRoot). The previous dataRoot is restored afterwards;
+    // loadFileSectionsCached is mtime-keyed, so the next call re-reads from
+    // the restored root automatically.
+    val prevRoot = PathUtil.dataRoot
+    val tempRoot = os.pwd / "target" / "test-env-info"
+    val envDir = tempRoot / "prompts" / "sections" / "environment"
+    try
+      os.remove.all(tempRoot)
+      os.makeDir.all(envDir)
+      os.write.over(envDir / "condition.json", """{"order": 100, "condition": "always"}""")
+      os.write.over(envDir / "prompt.md", "## Environment\n\n| Chat width | ~{{chat_width}}px |")
+      PathUtil.setDataRoot(tempRoot)
+      val env = envInfoSection(PromptContext(chatWidth = 1200))
+      assert(env.contains("## Environment"), "environment section should be rendered")
+      assert(env.contains("Chat width"), env)
+    finally
+      PathUtil.setDataRoot(prevRoot)
+      os.remove.all(tempRoot)
 
 end PromptSectionsSpec

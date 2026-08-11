@@ -126,4 +126,61 @@ class ScheduleV2Spec extends CatsEffectSuite:
       assert(ctx.content.contains("Next idle window"), ctx.content)
       assert(ctx.content.contains("23:00"), ctx.content)
 
+  // ------------------------------------------------------------------
+  // Cache v2 (2026-08-11): dynamic sections moved out of systemStable
+  // are injected as user-turn reminders (devices/sessions/env/tasks/language).
+  // ------------------------------------------------------------------
+
+  test("collectAllIO injects cache-v2 dynamic reminders when values are present"):
+    for
+      _ <- reset()
+      reminders <- SystemReminders.collectAllIO(
+        true,
+        taskStore,
+        Some("s1"),
+        deviceInfo = "local (MacBook); Desktop-PC",
+        sessionsText = "# Active Sessions\n\naddr-1 — Explorer: investigating (running)",
+        taskListText = "## Current Tasks\n\n#1 [pending] Fix the cache bug",
+        language = Some("Chinese"),
+        envInfo = "## Environment\n\n| Chat width | ~1200px |"
+      )
+    yield
+      val cats = reminders.map(_.category)
+      assert(cats.contains("devices"), s"expected devices, got $cats")
+      assert(cats.contains("sessions"), s"expected sessions, got $cats")
+      assert(cats.contains("environment"), s"expected environment, got $cats")
+      assert(cats.contains("tasks"), s"expected tasks, got $cats")
+      assert(cats.contains("language"), s"expected language, got $cats")
+      val tasks = reminders.find(_.category == "tasks").get
+      assert(tasks.content.contains("Fix the cache bug"), tasks.content)
+      val lang = reminders.find(_.category == "language").get
+      assert(lang.content.contains("Chinese"), lang.content)
+      val dev = reminders.find(_.category == "devices").get
+      assert(dev.content.contains("Desktop-PC"), dev.content)
+
+  test("collectAllIO omits cache-v2 reminders when values are empty (time stays)"):
+    for
+      _ <- reset()
+      reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"))
+    yield
+      val cats = reminders.map(_.category)
+      assert(!cats.contains("devices"), cats)
+      assert(!cats.contains("sessions"), cats)
+      assert(!cats.contains("environment"), cats)
+      assert(!cats.contains("tasks"), cats)
+      assert(!cats.contains("language"), cats)
+      assert(cats.contains("time"), "time reminder must remain (持久化语义不受影响)")
+
+  test("collectAllIO suppresses cache-v2 reminders on non-user turns"):
+    for
+      _ <- reset()
+      reminders <- SystemReminders.collectAllIO(
+        false,
+        taskStore,
+        Some("s1"),
+        deviceInfo = "local (MacBook)",
+        taskListText = "## Current Tasks\n\n#1 [pending] x"
+      )
+    yield assertEquals(reminders.size, 0)
+
 end ScheduleV2Spec

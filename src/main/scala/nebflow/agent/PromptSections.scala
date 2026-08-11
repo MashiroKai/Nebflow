@@ -155,13 +155,6 @@ object PromptSections:
       renderer = ctx => languageBlock(ctx.language.get)
     ),
 
-    // --- Task list (always visible to agent) ---
-    PromptSection.dynamic(
-      630,
-      condition = _.taskListText.nonEmpty,
-      renderer = _.taskListText
-    ),
-
     // --- Catalog sections ---
     PromptSection.dynamic(
       800,
@@ -380,6 +373,21 @@ object PromptSections:
   /** All sections: dynamic (code-defined) + file-based (user-editable). */
   def all: List[PromptSection] =
     dynamicSections ++ loadFileSectionsCached()
+
+  /**
+   * Render just the file-based Environment section (order < 200) — cache
+   * optimization v2 change detection. The env block stays in systemStable
+   * (initial injection + lifecycle-node rebuild); mid-session changes (chat
+   * width, PID, ...) are reported via a system reminder instead of rebuilding
+   * the whole system prompt. Order < 200 captures the environment directory
+   * (order 100) and nothing else (tool guides are 400+, voice 500).
+   */
+  def envInfoSection(ctx: PromptContext): String =
+    loadFileSectionsCached()
+      .filter(s => s.order < 200 && s.shouldInclude(ctx))
+      .map(_.render(ctx))
+      .filter(_.nonEmpty)
+      .mkString("\n\n")
 
   /** Render the language instruction block for the given language. */
   private def languageBlock(lang: String): String =

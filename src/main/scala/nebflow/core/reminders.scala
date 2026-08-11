@@ -56,11 +56,22 @@ object SystemReminders:
    * next idle window from usage history) and a summary of pending scheduled
    * tasks for this session. IO because it queries the scheduled-task store and
    * the persisted usage pattern.
+   *
+   * Cache-optimization v2 (2026-08-11): dynamic values that were moved OUT of
+   * the per-turn system prompt are injected here instead — request-level
+   * reminders (never persisted). Callers pass the *current* values; only
+   * changed values produce a reminder (task list is always reported on user
+   * turns). The time reminder keeps its persisted semantics (任务 O).
    */
   def collectAllIO(
     isUserTurn: Boolean,
     taskStore: ScheduledTaskStore,
-    sessionId: Option[String]
+    sessionId: Option[String],
+    deviceInfo: String = "",
+    sessionsText: String = "",
+    taskListText: String = "",
+    language: Option[String] = None,
+    envInfo: String = ""
   ): IO[List[SystemReminder]] =
     if !isUserTurn then IO.pure(Nil)
     else
@@ -69,8 +80,37 @@ object SystemReminders:
         pending <- sessionId.fold(IO.pure(Nil: List[ScheduledTask]))(taskStore.loadTasks)
         reminders = collectAll(isUserTurn = true) ++
           timeContextReminder(pattern) ++
-          pendingScheduleReminder(pending)
+          pendingScheduleReminder(pending) ++
+          devicesReminder(deviceInfo) ++
+          sessionsReminder(sessionsText) ++
+          envReminder(envInfo) ++
+          tasksReminder(taskListText) ++
+          languageReminder(language)
       yield reminders
+
+  /** Devices changed since systemStable was built (cache v2). */
+  private def devicesReminder(deviceInfo: String): Option[SystemReminder] =
+    if deviceInfo.isEmpty then None
+    else Some(SystemReminder("devices", s"Devices changed:\n$deviceInfo"))
+
+  /** Active sessions changed since systemStable was built (cache v2). */
+  private def sessionsReminder(sessionsText: String): Option[SystemReminder] =
+    if sessionsText.isEmpty then None
+    else Some(SystemReminder("sessions", s"Active sessions changed:\n$sessionsText"))
+
+  /** Environment section (chat width / PID / platform) changed (cache v2). */
+  private def envReminder(envInfo: String): Option[SystemReminder] =
+    if envInfo.isEmpty then None
+    else Some(SystemReminder("environment", s"Environment changed:\n$envInfo"))
+
+  /** Current task list — user-turn only, never part of systemStable (cache v2). */
+  private def tasksReminder(taskListText: String): Option[SystemReminder] =
+    if taskListText.isEmpty then None
+    else Some(SystemReminder("tasks", s"Current tasks:\n$taskListText"))
+
+  /** Language setting changed since systemStable was built (cache v2). */
+  private def languageReminder(language: Option[String]): Option[SystemReminder] =
+    language.map(lang => SystemReminder("language", s"Language changed: respond in $lang"))
 
   /** Peak (14-18 on weekdays) / off-peak + next idle window from usage history. */
   private def timeContextReminder(pattern: UsagePattern): Option[SystemReminder] =

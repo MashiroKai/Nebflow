@@ -683,12 +683,29 @@ case class PlanModeState(
   taskDescription: String = ""
 )
 
+/**
+ * Snapshot of the dynamic values injected into systemStable at its last build
+ * (cache-optimization v2). systemStable is rebuilt only at lifecycle nodes
+ * (new session / compaction complete / restart); mid-session changes to these
+ * values are reported via change reminders instead of invalidating the cache.
+ */
+case class SystemStableSnapshot(
+  devices: String = "",
+  sessions: String = "",
+  language: Option[String] = None,
+  envInfo: String = ""
+)
+
 case class AgentState(
   session: SessionContext,
   execution: ExecutionContext,
   compaction: CompactionState,
   agentSessions: List[AgentSessionInfo],
-  planMode: Option[PlanModeState]
+  planMode: Option[PlanModeState],
+  /** Last built systemStable string — reused on non-lifecycle turns. */
+  cachedSystemStable: Option[String],
+  /** Dynamic values at the time systemStable was last built (change detection). */
+  stableSnapshot: Option[SystemStableSnapshot]
 )
 
 object AgentState:
@@ -744,6 +761,8 @@ object AgentState:
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
       Nil,
+      None,
+      None,
       None
     )
   end apply
@@ -853,6 +872,16 @@ extension (s: AgentState)
     s.copy(session = s.session.copy(safetyMode = mode))
 
   def withPlanMode(pm: Option[PlanModeState]): AgentState = s.copy(planMode = pm)
+
+  // --- Cache v2: systemStable + dynamic snapshot (lifecycle-node updates) ---
+
+  /** Store the rebuilt systemStable and the dynamic snapshot it was built from. */
+  def withSystemStableCache(stable: String, snapshot: SystemStableSnapshot): AgentState =
+    s.copy(cachedSystemStable = Some(stable), stableSnapshot = Some(snapshot))
+
+  /** Mark the cache for rebuild (called at compaction complete / session reset). */
+  def invalidateSystemStableCache: AgentState =
+    s.copy(cachedSystemStable = None, stableSnapshot = None)
 
   def delegateCount: Int = s.execution.delegateCount
   def lastMaintenanceDelegateCount: Int = s.execution.lastMaintenanceDelegateCount
