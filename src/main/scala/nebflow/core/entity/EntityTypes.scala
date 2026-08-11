@@ -112,7 +112,11 @@ object NodeRoute:
   case class Goto(nodeId: String) extends NodeRoute
 
   /** Conditional branch: match switch expression against cases. */
-  case class Switch(switchExpr: String, cases: Map[String, NodeRoute]) extends NodeRoute
+  case class Switch(
+    switchExpr: String,
+    cases: Map[String, NodeRoute],
+    default: Option[NodeRoute] = None // conservative route when no case matches (e.g. $return)
+  ) extends NodeRoute
 
   /** Terminate the flow, return result. */
   case object Return extends NodeRoute
@@ -132,16 +136,18 @@ object NodeRoute:
           switchExpr <- c.downField("switch").as[String]
           casesRaw <- c.downField("cases").as[Map[String, Json]]
           cases <- casesRaw.toList.traverse { (k, v) => v.as[NodeRoute].map(k -> _) }
-        yield Switch(switchExpr, cases.toMap)
+          default <- c.downField("default").as[Option[NodeRoute]]
+        yield Switch(switchExpr, cases.toMap, default)
   }
 
   given Encoder[NodeRoute] = Encoder.instance {
     case Goto(id) => Json.fromString(id)
     case Return => Json.fromString("$return")
-    case Switch(expr, cases) =>
+    case Switch(expr, cases, default) =>
       Json.obj(
         "switch" -> Json.fromString(expr),
-        "cases" -> cases.asJson
+        "cases" -> cases.asJson,
+        "default" -> default.asJson
       )
   }
 end NodeRoute
@@ -239,7 +245,16 @@ end FlowDagDef
 // Runtime state (internal to DAG executor)
 // ============================================================
 
-/** Execution result of a single node. */
+/**
+ * Execution result of a single node.
+ *
+ * Contract:
+ *  - `success` drives the LIFECYCLE status (NodeStatus via
+ *    NodeStatus.toNodeResult) — completed on true, failed on false.
+ *  - `verdict` is a ROUTING value for switch nodes, decoupled from lifecycle:
+ *    it feeds VerdictFamily.matchCase to select the next edge. When absent,
+ *    the executor extracts a value from `output` (JSON field / text regex).
+ */
 case class NodeResult(
   nodeId: String,
   output: String,

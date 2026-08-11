@@ -7,6 +7,7 @@ import io.circe.syntax.given
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
+import nebflow.core.flow.{NodeStatus, VerdictFamily}
 import nebflow.core.tools.{FileHistory, FlowReportStore, ReadTracker}
 import nebflow.shared.{Message, MessageRole}
 
@@ -48,14 +49,14 @@ object FlowDagExecutor:
 
     val emitWs = wsSend.getOrElse((_: Json) => IO.unit)
 
-    /** Emit a flowProgress WS event. */
-    def emitProgress(nodeId: String, status: String, extra: (String, Json)*): IO[Unit] =
+    /** Emit a flowProgress WS event. Status serializes via NodeStatus.wire (stable wire values). */
+    def emitProgress(nodeId: String, status: NodeStatus, extra: (String, Json)*): IO[Unit] =
       val fields = List(
         "type" -> "flowProgress".asJson,
         "instanceId" -> instanceId.asJson,
         "flowName" -> flow.name.asJson,
         "nodeId" -> nodeId.asJson,
-        "status" -> status.asJson
+        "status" -> status.wire.asJson
       ) ++ extra
       emitWs(Json.obj(fields*))
 
@@ -159,27 +160,47 @@ object FlowDagExecutor:
                   totalLoops = ctx.totalLoops + 1
                 )
                 runNode(target, newCtx)
-            case NodeRoute.Switch(switchExpr, cases) =>
-              val fieldValue = result.verdict.getOrElse {
+            case NodeRoute.Switch(switchExpr, cases, default) =>
+              // Verdict priority: FlowReport verdict (structured, trustworthy) →
+              // extract from output via the five-stage pipeline.
+              val rawValue = result.verdict.getOrElse {
                 extractSwitchValue(switchExpr, result.output, ctx, cases)
               }
-              cases.get(fieldValue) match
-                case Some(NodeRoute.Return) =>
-                  IO.pure(Right(result.output))
-                case Some(NodeRoute.Goto(target)) =>
-                  val loopKey = s"${result.nodeId}->$target"
-                  val newCount = ctx.loopCounts.getOrElse(loopKey, 0) + 1
-                  if newCount > flow.maxLoop then IO.pure(Left(s"Max loop (${flow.maxLoop}) exceeded at edge $loopKey"))
-                  else
-                    val newCtx = ctx.copy(
-                      loopCounts = ctx.loopCounts + (loopKey -> newCount),
-                      totalLoops = ctx.totalLoops + 1
-                    )
-                    runNode(target, newCtx)
-                case Some(NodeRoute.Switch(_, _)) =>
-                  IO.pure(Left(s"Nested switch not supported in routing"))
+              // Normalize: exact → same-family → substring (warn). flow.json
+              // declares only standard keys; aliases (pass/success/done → ok,
+              // fail/error → error) are the engine's responsibility.
+              val matchedKey = VerdictFamily.matchCase(rawValue, cases.keySet)
+              def routeTo(route: NodeRoute): IO[Either[String, String]] =
+                route match
+                  case NodeRoute.Return =>
+                    IO.pure(Right(result.output))
+                  case NodeRoute.Goto(target) =>
+                    val loopKey = s"${result.nodeId}->$target"
+                    val newCount = ctx.loopCounts.getOrElse(loopKey, 0) + 1
+                    if newCount > flow.maxLoop then
+                      IO.pure(Left(s"Max loop (${flow.maxLoop}) exceeded at edge $loopKey"))
+                    else
+                      val newCtx = ctx.copy(
+                        loopCounts = ctx.loopCounts + (loopKey -> newCount),
+                        totalLoops = ctx.totalLoops + 1
+                      )
+                      runNode(target, newCtx)
+                  case NodeRoute.Switch(_, _, _) =>
+                    IO.pure(Left(s"Nested switch not supported in routing"))
+              matchedKey match
+                case Some(key) => routeTo(cases(key))
                 case None =>
-                  IO.pure(Left(s"Switch '$switchExpr' value '$fieldValue' matched no case"))
+                  // No case matched — conservative `default` route, else a clear
+                  // error listing the available cases (replaces bare "matched no case").
+                  default match
+                    case Some(route) => routeTo(route)
+                    case None =>
+                      IO.pure(
+                        Left(
+                          s"Switch '$switchExpr' value '$rawValue' matched no case. " +
+                            s"Available cases: ${cases.keys.toList.sorted.mkString(", ")}"
+                        )
+                      )
               end match
 
     /** Run a node: execute -> handleResult -> route. */
@@ -192,15 +213,16 @@ object FlowDagExecutor:
         else
           for
             _ <- logger.info(s"Flow '${flow.name}': executing node '$nodeId'")
-            _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, "running")
-            _ <- emitProgress(nodeId, "running")
+            _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, NodeStatus.Running)
+            _ <- emitProgress(nodeId, NodeStatus.Running)
             (result, ctx2) <- executeNode(nodeId, ctx)
+            status = NodeStatus.toNodeStatus(result, cancelled = false)
             _ <-
-              if result.success then
-                nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, "completed", result.output) *>
+              if status == NodeStatus.Completed then
+                nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, NodeStatus.Completed, result.output) *>
                   emitProgress(
                     nodeId,
-                    "completed",
+                    NodeStatus.Completed,
                     "output" -> (if result.output.length > 200 then result.output.take(197) + "..."
                                  else result.output).asJson
                   )
@@ -208,11 +230,11 @@ object FlowDagExecutor:
                 nebflow.core.flow.RunningFlowRegistry.setNodeStatus(
                   instanceId,
                   nodeId,
-                  "failed",
+                  NodeStatus.Failed,
                   "",
                   result.error.getOrElse("unknown")
                 ) *>
-                  emitProgress(nodeId, "failed", "error" -> result.error.getOrElse("unknown").asJson)
+                  emitProgress(nodeId, NodeStatus.Failed, "error" -> result.error.getOrElse("unknown").asJson)
             handled <- handleResult(nodeId, result, ctx2)
             finalResult <- handled match
               case Left(err) => IO.pure(Left(err))
@@ -242,7 +264,7 @@ object FlowDagExecutor:
             node.onComplete match
               case NodeRoute.Goto(target) => List(Json.obj("from" -> nodeId.asJson, "to" -> target.asJson, "condition" -> Json.Null))
               case NodeRoute.Return => List(Json.obj("from" -> nodeId.asJson, "to" -> "$return".asJson, "condition" -> Json.Null))
-              case NodeRoute.Switch(_, cases) =>
+              case NodeRoute.Switch(_, cases, _) =>
                 cases.toList.map { (cond, route) =>
                   val target = route match
                     case NodeRoute.Goto(t) => t
@@ -259,7 +281,7 @@ object FlowDagExecutor:
       _ <- if cancelled then IO.unit
            else nebflow.core.flow.RunningFlowRegistry.update(instanceId)(rf =>
              rf.copy(
-               status = if result.isRight then "completed" else "failed",
+               status = if result.isRight then NodeStatus.Completed else NodeStatus.Failed,
                completedAt = Some(System.currentTimeMillis())
              )
            )
@@ -283,7 +305,7 @@ object FlowDagExecutor:
       nodeId -> nebflow.core.flow.RunningFlowRegistry.NodeState(
         nodeId = nodeId,
         agent = node.agent,
-        status = "pending"
+        status = NodeStatus.Pending
       )
     }.toMap
 
@@ -292,7 +314,7 @@ object FlowDagExecutor:
       node.onComplete match
         case NodeRoute.Goto(target) => List((nodeId, target, None))
         case NodeRoute.Return => List((nodeId, "$return", None))
-        case NodeRoute.Switch(_, cases) =>
+        case NodeRoute.Switch(_, cases, _) =>
           cases.toList.map { (cond, route) =>
             val target = route match
               case NodeRoute.Goto(t) => t
@@ -310,7 +332,7 @@ object FlowDagExecutor:
         entry = flow.entry,
         nodes = nodes,
         edges = edges,
-        status = "running",
+        status = NodeStatus.Running,
         startedAt = System.currentTimeMillis()
       )
     )
@@ -458,7 +480,13 @@ object FlowDagExecutor:
    * Extract a field value from node output for switch routing.
    *  switchExpr format: "$reviewer.verdict"
    *  -> look up reviewer's output, try to parse as JSON and extract "verdict" field
-   *  -> fallback: scan output for keyword matching case keys
+   *  -> fallback: text regex `(?i)\b(?:verdict|status)\s*[:：]\s*(\w+)` (covers
+   *     plain-text "VERDICT: pass" output, e.g. entity-creator)
+   *  -> fallback: case-insensitive substring containment against case keys (warn)
+   *  -> "unknown" (the route layer then applies default / explicit error)
+   *
+   *  FlowReport verdict (when the agent called the tool) is the stage-1 source,
+   *  already consumed by route() before this pipeline runs.
    */
   private def extractSwitchValue(
     switchExpr: String,
@@ -470,17 +498,28 @@ object FlowDagExecutor:
     switchExpr match
       case pattern(nodeId, field) =>
         val output = ctx.nodeOutputs.getOrElse(nodeId, currentNodeOutput)
-        // Try JSON parsing
-        io.circe.parser
+        // ① JSON field extraction
+        val fromJson = io.circe.parser
           .parse(output)
           .toOption
           .flatMap(_.hcursor.downField(field).as[String].toOption)
-          .getOrElse {
-            // Fallback: match against case keys (case-insensitive contains)
-            cases.keys
-              .find(k => output.toLowerCase.contains(k.toLowerCase))
-              .getOrElse("unknown")
+          .map(_.trim)
+          .filter(_.nonEmpty)
+        fromJson.getOrElse {
+          // ② Text regex: "VERDICT: pass" / "status: ok"
+          val regex = "(?i)\\b(?:verdict|status)\\s*[:：]\\s*(\\w+)".r
+          val fromRegex = regex.findFirstMatchIn(output).map(_.group(1))
+          fromRegex.getOrElse {
+            // ③ Case-insensitive substring containment (legacy fallback, warns)
+            cases.keys.find(k => output.toLowerCase.contains(k.toLowerCase)) match
+              case Some(hit) =>
+                logger.warnSync(
+                  s"Switch '$switchExpr': matched case '$hit' by substring containment (legacy fallback — prefer JSON/FlowReport verdicts)"
+                )
+                hit
+              case None => "unknown"
           }
+        }
       case _ => "unknown"
     end match
   end extractSwitchValue
