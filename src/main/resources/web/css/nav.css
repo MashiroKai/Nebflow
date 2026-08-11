@@ -41,6 +41,8 @@
   gap: 2px;
 }
 .nav-agent:hover { background: var(--color-frame-hover); }
+.nav-agent:focus { outline: none; }
+.nav-agent { -webkit-tap-highlight-color: transparent; }
 .nav-agent.active { background: var(--color-frame-active); }
 .nav-agent.active::before {
   content: '';
@@ -50,7 +52,7 @@
   bottom: 6px;
   width: 3px;
   border-radius: 0 2px 2px 0;
-  background: var(--color-primary);
+  background: var(--color-frame-text-muted);
 }
 .nav-agent-icon {
   font-size: 18px;
@@ -58,7 +60,7 @@
   color: var(--color-frame-text-muted, #888);
 }
 .nav-agent.active .nav-agent-icon {
-  color: var(--color-primary);
+  color: var(--color-frame-text-bright);
   filter: drop-shadow(0 0 2px rgba(0,0,0,0.18)) brightness(1.1);
 }
 .nav-agent-icon svg {
@@ -88,7 +90,7 @@
   line-height: 1;
 }
 .nav-agent.active .nav-agent-label {
-  color: var(--color-primary);
+  color: var(--color-frame-text-bright);
 }
 
 /* Notification dot on agent avatar */
@@ -249,6 +251,8 @@ body.sidebar-collapsed #activity-bar {
   color: var(--color-frame-text-bright);
   background: var(--color-frame-hover);
 }
+.activity-btn:focus { outline: none; }
+.activity-btn { -webkit-tap-highlight-color: transparent; }
 .activity-btn.active {
   color: var(--color-frame-text-bright);
   background: var(--color-frame-active);
@@ -263,7 +267,7 @@ body.sidebar-collapsed #activity-bar {
   bottom: 6px;
   width: 3px;
   border-radius: 0 2px 2px 0;
-  background: var(--color-primary);
+  background: var(--color-frame-text-muted);
 }
 .activity-btn svg {
   width: 19px;
