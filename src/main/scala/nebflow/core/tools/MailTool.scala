@@ -473,8 +473,8 @@ Message type (optional, default "INFO"):
     TeamSessionRegistry.teamOfSession(senderSessionId).flatMap {
       case None =>
         if address == "Nebula" && senderName != "Nebula" then
-          TeamSessionRegistry.isManager(senderSessionId).flatMap { isMgr =>
-            if isMgr then deliverShortNameUnscoped(address, message, mailType, ctx, system, senderSessionId)
+          canMailNebula(senderName, senderSessionId).flatMap { canMail =>
+            if canMail then deliverShortNameUnscoped(address, message, mailType, ctx, system, senderSessionId)
             else
               IO.pure(
                 Left(
@@ -486,13 +486,31 @@ Message type (optional, default "INFO"):
           }
         else deliverShortNameUnscoped(address, message, mailType, ctx, system, senderSessionId)
       case Some(teamName) =>
-        checkTeamScope(address, teamName, senderSessionId).flatMap {
+        checkTeamScope(address, teamName, senderSessionId, senderName).flatMap {
           case Some(error) => IO.pure(Left(ToolError(error)))
           case None =>
             deliverShortNameUnscoped(address, message, mailType, ctx, system, senderSessionId)
         }
     }
   end deliverToShortName
+
+  /**
+   * Who may mail Nebula directly: a registered team Manager (managerMap) OR
+   * any team lead by definition (agent.json lead of a mounted/defined team).
+   * The name-based fallback covers fork/temporary sessions — a forked Manager
+   * keeps the Manager agentDef (and its lead role) but its sessionId is not
+   * registered in managerMap, so sid-only checks would wrongly reject it.
+   */
+  private def canMailNebula(senderName: String, senderSessionId: String): IO[Boolean] =
+    TeamSessionRegistry.isManager(senderSessionId).flatMap { isMgr =>
+      if isMgr then IO.pure(true)
+      else if senderName.isEmpty then IO.pure(false)
+      else EntityLoader.listTeams().map(_.values.exists(_.lead == senderName))
+    }
+
+  /** Locate the Nebula root agent's actor in the unified AgentRegistry (kind == Root). */
+  private def resolveNebulaRef(resources: SharedResources): IO[Option[ActorRef[AgentCommand]]] =
+    resources.agentRegistry.get.map(_.collectFirst { case (_, rec) if rec.kind == AgentKind.Root => rec.ref })
 
   private def deliverShortNameUnscoped(
     address: String,
@@ -550,28 +568,45 @@ Message type (optional, default "INFO"):
                           case Left(_) => IO.unit
                       yield res
                     case Right(None) =>
-                      if address == "Nebula" then
+                      val isNebulaTarget = address == "Nebula" || address.endsWith("/Nebula")
+                      if isNebulaTarget then
                         for
+                          // Prefer the parent-actor route (team agents have their
+                          // parent registered at mount time). Fork/temporary sessions
+                          // have no registered parent — fall back to the Nebula root
+                          // session's actor in the unified AgentRegistry.
                           parentActorOpt <- TeamSessionRegistry.getParentActor(senderSessionId)
                           res <- parentActorOpt match
                             case Some(ref) => sendMail(ref, "Nebula", message, mailType, ctx, system)
-                            case None => mailNotFound(address)
+                            case None =>
+                              ctx.sharedResources match
+                                case Some(res) =>
+                                  resolveNebulaRef(res).flatMap {
+                                    case Some(ref) => sendMail(ref, "Nebula", message, mailType, ctx, system)
+                                    case None => mailNotFound(address)
+                                  }
+                                case None => mailNotFound(address)
                         yield res
                       else mailNotFound(address)
                 yield sr2
           yield sr
     yield result
 
-  private def checkTeamScope(address: String, teamName: String, senderSessionId: String): IO[Option[String]] =
+  private def checkTeamScope(
+    address: String,
+    teamName: String,
+    senderSessionId: String,
+    senderName: String
+  ): IO[Option[String]] =
     for
-      isMgr <- TeamSessionRegistry.isManager(senderSessionId)
       teamOpt <- EntityLoader.loadTeam(address)
+      canNebula <- canMailNebula(senderName, senderSessionId)
     yield teamOpt match
       case Some(_) if address == teamName =>
         None
       case Some(_) =>
         Some(s"Cannot mail outside your team. You are in team '$teamName'. Use your Manager to escalate to Nebula.")
-      case None if address == "Nebula" && isMgr =>
+      case None if address == "Nebula" && canNebula =>
         None
       case None if address == "Nebula" =>
         Some("Cannot mail Nebula directly. Use Mail(\"manager\", ...) to report to your Team Lead.")
