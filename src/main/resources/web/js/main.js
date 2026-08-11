@@ -2335,6 +2335,9 @@ onReconnect(() => {
   }
   // Sync background task state — completion events may have been missed
   sendWs({ type: 'getActiveBgTasks' });
+  // Sync background sub-agent state — agentStart events are not replayed
+  // after a page refresh, so the indicator count would be lost without this
+  sendWs({ type: 'getActiveAgents' });
 });
 
 // ---------- Reconnect: sync background tasks ----------
@@ -2365,6 +2368,29 @@ onMessage('activeBgTasks', (msg) => {
   // The agentDone fix (global sessionBgAgents) already handles missed events.
   // Refresh the UI for the active view
   if (activeView) updateBgTasksUI();
+});
+
+// ---------- Reconnect: sync background sub-agents ----------
+// Backend responds to getActiveAgents with currently-running sub-agents:
+//   { type: "activeAgents", agents: [{ sessionId, agentId, agentName, rootSessionId, kind }] }
+// Rebuild sessionBgAgents from backend truth — real-time agentStart events
+// are not replayed after a page refresh (F5), and anything not listed has
+// finished (the backend registry no longer tracks it).
+onMessage('activeAgents', (msg) => {
+  const agents = msg.agents || [];
+  state.sessionBgAgents = {};
+  for (const a of agents) {
+    const sid = a.rootSessionId || a.sessionId;
+    if (!sid || !a.agentId) continue;
+    if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
+    state.sessionBgAgents[sid][a.agentId] = {
+      name: a.agentName || a.agentId,
+      task: '',
+      currentTool: null,
+      done: false,
+    };
+  }
+  if (activeView) updateBgAgentIndicator();
 });
 
 // Scroll listener (primary window)
