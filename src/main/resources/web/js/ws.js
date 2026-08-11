@@ -1,5 +1,6 @@
 import state from './state.js';
 import { findViewBySessionId, setActiveView, activeView, chatViews } from './chatView.js';
+import { isBgAgentId } from './utils.js';
 
 // ── Flow-step interceptor (registered by flowAgentPopup.js) ─────────────
 // ws.js must NOT import flowAgentPopup.js directly: that creates a circular
@@ -12,7 +13,7 @@ export function setFlowStepInterceptor(fn) { flowStepInterceptor = fn; }
 
 // ── Background-agent step interceptor (registered by bgAgentPopup.js) ────
 // Same pattern as flowStepInterceptor. Checked FIRST so background sub-agent
-// events (nodeSessionId starts with "delegate-" — backend protocol) don't get
+// events (nodeSessionId starts with "delegate-"/"subtask-" — backend protocol) don't get
 // swallowed by the flowStepInterceptor which claims all nodeSessionId events.
 let bgAgentStepInterceptor = null;
 export function setBgAgentStepInterceptor(fn) { bgAgentStepInterceptor = fn; }
@@ -284,8 +285,8 @@ export function connect() {
       // routeWsSend — the "delegate-" prefix is backend protocol). Route them
       // to the bg-agent popup's ChatView.
       // Checked BEFORE flowStepInterceptor because both use nodeSessionId —
-      // delegate IDs start with "delegate-" so we can distinguish.
-      if (msg.nodeSessionId && msg.nodeSessionId.startsWith('delegate-') && bgAgentStepInterceptor && bgAgentStepInterceptor(msg)) {
+      // bg-agent IDs start with "delegate-"/"subtask-" so we can distinguish.
+      if (msg.nodeSessionId && isBgAgentId(msg.nodeSessionId) && bgAgentStepInterceptor && bgAgentStepInterceptor(msg)) {
         const converted = convertAgentEvent(msg);
         if (converted) {
           const convList = handlers[converted.type];
