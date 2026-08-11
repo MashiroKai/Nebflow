@@ -30,49 +30,6 @@ function showAttachmentBanner(message) {
 
 // ---------- Slash Commands ----------
 const slashCommands = {
-  '/clear': {
-    desc: () => t('slash.clear'),
-    run: () => {
-      const v = activeView;
-      sendWs({type:'command', command:'clear', sessionId: v.sessionId});
-      delete state.sessionTasks[v.sessionId];
-      renderTaskList([]);
-      // Clean up stream state — remove orphaned thinking placeholders and
-      // reset stream variables so the next message starts fresh.
-      if (window.__stopThinkingTimer) window.__stopThinkingTimer();
-      cancelToolStreamRAF();
-      v.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
-        const row = el.closest('.row');
-        if (row) row.remove();
-      });
-      v.stream.currentAiBubble = null;
-      v.stream.aiText = '';
-      v.stream.currentThinkingBubble = null;
-      v.stream.thinkingText = '';
-      v.stream.toolStreamText = '';
-      v.stream.toolStreamToolName = '';
-      renderSystemBubble(t('slash.clearDone'));
-    }
-  },
-  '/compact': {
-    desc: () => t('slash.compact'),
-    run: () => {
-      enterCompactMode();
-    }
-  },
-  '/fork': {
-    desc: () => t('slash.fork'),
-    run: () => {
-      sendWs({type:'command', command:'fork', sessionId: activeView.sessionId});
-      renderSystemBubble(t('slash.forkPending'));
-    }
-  },
-  '/plan': {
-    desc: () => 'Enter plan mode — analyze and plan before executing',
-    run: () => {
-      enterPlanMode();
-    }
-  },
   '/ask': {
     desc: () => t('slash.ask'),
     run: () => {
