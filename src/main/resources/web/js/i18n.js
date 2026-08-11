@@ -138,6 +138,10 @@ export function applyLocaleToHtml() {
   const bgHeader = document.querySelector('.bg-dropdown-header');
   if (bgHeader) bgHeader.textContent = t('header.bgTasks');
 
+  // Daemon panel title (single element — precise selector, not class-first match)
+  const daemonPanelTitle = document.querySelector('#daemon-panel .daemon-panel-title');
+  if (daemonPanelTitle) daemonPanelTitle.textContent = t('daemons.title');
+
   // Settings nav item title
   const settingsNavItem = document.querySelector('.nav-item[data-tab="settings"]');
   if (settingsNavItem) settingsNavItem.title = t('nav.settings');

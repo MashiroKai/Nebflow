@@ -327,6 +327,7 @@ export default {
   'dropbox.failed': 'Transfer failed',
 
   // === Daemons (Dev Servers) ===
+  'daemons.title': 'Dev Servers',
   'daemons.empty': 'No dev servers',
   'daemons.emptyHint': 'Click + to add a daemon',
   'daemons.start': 'Start',
