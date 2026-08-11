@@ -7,7 +7,7 @@ import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
-import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard } from './chat.js';
+import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow } from './chat.js';
 
 // ---------- AI message badge (no duration) ----------
 // Builds a duration-badge pill with timestamp + copy button, matching
@@ -167,6 +167,12 @@ export function restoreFromStorage() {
   const msgs = loadMsgs();
   msgs.forEach((m, i) => {
     if (m.type === 'user') {
+      // Injected messages (task P+Q): render as light-blue bubble via the
+      // shared builder — same visual as the live WS path.
+      if (m.injected && m.source) {
+        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp));
+        return;
+      }
       // Look ahead: if next message is a skill-activated system message,
       // render as a skill bubble (with label) instead of a plain user bubble.
       const next = msgs[i + 1];
@@ -497,6 +503,11 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   msgs.forEach((m, i) => {
     if (skipMsg) { skipMsg = false; return; }
     if (m.type === 'user') {
+      // Injected messages (task P+Q): light-blue bubble via shared builder.
+      if (m.injected && m.source) {
+        fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp));
+        return;
+      }
       // Look ahead: if next message is a skill-activated system message,
       // render as a skill bubble (with label) instead of a plain user bubble.
       const next = msgs[i + 1];

@@ -324,6 +324,72 @@ export function renderUserBubble(text, attachments, timestamp) {
   return { type: 'user', text, timestamp: ts, attachments: (attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) };
 }
 
+// ---------- Injected bubble (task P+Q: tool-injected prompts & result notifications) ----------
+// Mail/Delegate/SubTask/Skill/Flow/ExternalEvent injections arrive as WS
+// {type:"user", injected:true, source} and are persisted as UiMessage.User
+// with source. Rendered as a light-blue bubble on the user side (right),
+// visually distinct from the user's own green bubble.
+
+/** Map backend injection source → display label. Sources are tool/protocol
+ *  names (proper nouns) — no i18n needed. Unknown sources are capitalized. */
+const INJECTED_SOURCE_LABELS = {
+  mail: 'Mail', delegate: 'Delegate', subtask: 'SubTask', skill: 'Skill',
+  ask: 'Ask', flow: 'Flow', tool: 'Tool', api: 'API',
+};
+export function injectedSourceLabel(source) {
+  if (!source) return '';
+  return INJECTED_SOURCE_LABELS[source] || source.charAt(0).toUpperCase() + source.slice(1);
+}
+
+/** Build a row element for an injected message (pure builder — no DOM append,
+ *  no scroll). Shared by live render (renderInjectedBubble) and history
+ *  restore (persistence.js) so both paths render identically. */
+export function buildInjectedRow(text, source, timestamp) {
+  const row = document.createElement('div');
+  row.className = 'row user';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble injected';
+  const label = document.createElement('div');
+  label.className = 'ask-label injected-source-label';
+  label.textContent = injectedSourceLabel(source);
+  const content = document.createElement('div');
+  content.textContent = text;
+  bubble.appendChild(label);
+  bubble.appendChild(content);
+  row.appendChild(bubble);
+
+  // Timestamp + copy button (same pill badge as user bubble) — only when a
+  // real timestamp is provided; history restore may lack one.
+  if (timestamp) {
+    const badge = document.createElement('div');
+    badge.className = 'duration-badge';
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'duration-badge-time';
+    timeSpan.setAttribute('data-ts', timestamp);
+    timeSpan.textContent = formatHm(timestamp);
+    timeSpan.title = '点击切换 12/24 小时制';
+    timeSpan.addEventListener('click', toggleTimeFormat);
+    badge.appendChild(timeSpan);
+    if (text) {
+      const div = document.createElement('span');
+      div.className = 'duration-badge-divider';
+      badge.appendChild(div);
+      badge.appendChild(createMsgCopyButton(text));
+    }
+    row.appendChild(badge);
+  }
+  return row;
+}
+
+/** Live-render an injected message into the active view. */
+export function renderInjectedBubble(text, source, timestamp) {
+  const chat = activeView.dom.chat;
+  const row = buildInjectedRow(text, source, timestamp || Date.now());
+  chat.appendChild(row);
+  chat.scrollTop = chat.scrollHeight;
+}
+
 /** Format epoch millis as HH:MM (24h) or h:MM AM/PM (12h), respecting user preference */
 export function formatHm(ms) {
   const d = new Date(ms);
