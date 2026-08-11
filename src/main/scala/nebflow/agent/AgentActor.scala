@@ -342,6 +342,7 @@ object AgentActor extends AgentCore with AgentSession:
             .withCompactionFailures(0)
             .withLastCompactionFailureAt(0L)
             .withRecentMessageIds(Nil)
+            .invalidateSystemStableCache
           idle(agentDef, resources, depth, parentRef, resetState)
 
       case AgentCommand.TriggerCompaction(mode, replyDeferred, postCompactInstruction) =>
@@ -438,14 +439,17 @@ object AgentActor extends AgentCore with AgentSession:
           "stale-compaction-discarded",
           result.fold(err => s"err=${err.take(60)}", msgs => s"ok=${msgs.size}msgs")
         )
+        // Compaction finished (even if stale): messages shrank, the cached
+        // systemStable is rebuilt on the next turn.
+        val staleState = state.invalidateSystemStableCache
         state.pendingCompaction.flatMap(_.replyDeferred) match
           case Some(d) =>
             ctx.forkTurn(
               d.complete(Left("Compaction result arrived after agent returned to idle"))
                 .void
                 .handleErrorWith(_ => IO.unit)
-            ) *> IO.pure(idle(agentDef, resources, depth, parentRef, state))
-          case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
+            ) *> IO.pure(idle(agentDef, resources, depth, parentRef, staleState))
+          case None => IO.pure(idle(agentDef, resources, depth, parentRef, staleState))
 
       case AgentCommand.SetSafetyMode(mode) =>
         // P2: write the root session's permission-policy bucket (dynamic
@@ -1115,6 +1119,7 @@ object AgentActor extends AgentCore with AgentSession:
             .withCompactionFailures(0)
             .withLastCompactionFailureAt(0L)
             .withRecentMessageIds(Nil)
+            .invalidateSystemStableCache
             .resetToIdle(Nil)
           idle(agentDef, resources, depth, parentRef, resetState)
 
@@ -1182,6 +1187,9 @@ object AgentActor extends AgentCore with AgentSession:
                 .withCompactionFailures(0)
                 .withEmptyResponseRetries(0)
                 .withLatestUsage(None)
+                // Cache v2: compaction shrinks history; the cached systemStable
+                // is rebuilt on the next turn (lifecycle node).
+                .invalidateSystemStableCache
               if compactionPending.exists(_.resumeAfterCompact) then
                 val stateWithInstruction = compactionPending.flatMap(_.postCompactInstruction) match
                   case Some(instruction) =>

@@ -296,10 +296,24 @@ private[agent] trait AgentCore:
           allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker)
           devInfo = deviceInfoBlock
           sessionsText = formatAgentSessions(stateForLlm.agentSessions)
-          // Load active tasks for system prompt injection (real-time per turn)
+          // Cache v2: the task list is fetched every turn but NO LONGER injected
+          // into systemStable — it travels as a user-turn reminder instead
+          // (keeps the system prompt stable across task create/update/dismiss).
           taskListText <- stateForLlm.sessionId match
             case Some(sid) => resources.taskStore.renderForPrompt(sid)
             case None => IO.pure("")
+          // Env section text (rendered from data.sh + prompt.md) — participates
+          // in change detection. chatWidth is the only ctx input the env block
+          // uses (version/PID/port come from sys props).
+          envInfo = PromptSections.envInfoSection(
+            PromptContext(chatWidth = stateForLlm.session.chatWidth)
+          )
+          // Snapshot of the dynamic values at systemStable build time.
+          currentSnapshot = SystemStableSnapshot(devInfo, sessionsText, stateForLlm.language, envInfo)
+          // Lifecycle nodes (new session / compaction / restart): rebuild the
+          // whole systemStable and refresh the snapshot — mid-session changes
+          // are reported via reminders instead of invalidating the cache.
+          isLifecycleRebuild = isCompactTurn || stateForLlm.cachedSystemStable.isEmpty
           promptCtx = PromptContext(
             availableTools = allowedTools,
             depth = depth,
@@ -316,11 +330,28 @@ private[agent] trait AgentCore:
             flowCatalog = turnCtx.flowCatalog,
             teamCatalog = turnCtx.teamCatalog,
             memoryBlock = turnCtx.memoryBlock,
-            taskListText = taskListText,
             rulesMd = turnCtx.rulesMd,
             isSubTaskWorker = stateForLlm.isSubTaskWorker
           )
-          systemStable = buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
+          // systemStable: rebuilt only at lifecycle nodes; otherwise reuse the
+          // cached string byte-for-byte (provider prefix cache stays hit).
+          // Memory block (turnCtx.memoryBlock) is therefore consumed only at
+          // rebuild — memory edits take effect at the next lifecycle node.
+          (systemStable, changeDevices, changeSessions, changeEnv, changeLanguage) =
+            if isLifecycleRebuild then
+              (buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx), "", "", "", Option.empty[String])
+            else
+              val cached = stateForLlm.cachedSystemStable.getOrElse(
+                buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
+              )
+              val snap = stateForLlm.stableSnapshot.getOrElse(currentSnapshot)
+              (
+                cached,
+                if snap.devices != devInfo then devInfo else "",
+                if snap.sessions != sessionsText then sessionsText else "",
+                if snap.envInfo != envInfo then envInfo else "",
+                if snap.language != stateForLlm.language then stateForLlm.language else None
+              )
           // User turn = the last message is a User message that is NOT a tool
           // result. Tool-result messages are User role with Right(blocks)
           // containing ContentBlock.ToolResult — those belong to the tool loop,
@@ -333,7 +364,12 @@ private[agent] trait AgentCore:
           reminders <- SystemReminders.collectAllIO(
             isUserTurn,
             resources.scheduledTaskStore,
-            stateForLlm.sessionId
+            stateForLlm.sessionId,
+            deviceInfo = changeDevices,
+            sessionsText = changeSessions,
+            taskListText = taskListText,
+            language = changeLanguage,
+            envInfo = changeEnv
           )
           // Branch change: persist synchronously (no async message needed)
           _ <- turnCtx.branchChange match
@@ -367,6 +403,12 @@ private[agent] trait AgentCore:
           stateWithReminder =
             if timeMsg.isEmpty then stateForLlm
             else stateForLlm.withMessages(SystemReminders.pruneTimeReminders(stateForLlm.messages ++ timeMsg))
+          // Cache v2: persist the rebuilt systemStable + snapshot in state at
+          // lifecycle nodes (next turns reuse it). Non-lifecycle turns keep the
+          // existing cache untouched.
+          stateWithCache =
+            if isLifecycleRebuild then stateWithReminder.withSystemStableCache(systemStable, currentSnapshot)
+            else stateWithReminder
           // Maintenance check: every N delegate/flow calls
           maintenanceMsg =
             if MaintenanceService.shouldTrigger(stateWithReminder, depth, isCompactTurn, isAskTurn) then
@@ -384,7 +426,7 @@ private[agent] trait AgentCore:
             systemStable = Some(systemStable),
             agentModel = freshDef.model
           )
-        yield (turnCtx, request, stateWithReminder)
+        yield (turnCtx, request, stateWithCache)
 
         val agentStartIO =
           if depth > 0 && !isCompactTurn && !isAskTurn then
