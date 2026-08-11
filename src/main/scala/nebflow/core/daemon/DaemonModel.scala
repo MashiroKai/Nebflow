@@ -47,8 +47,18 @@ object DaemonConfig:
 end DaemonConfig
 
 /** Runtime status of a managed daemon. */
-enum DaemonStatus derives Encoder, Decoder:
+enum DaemonStatus:
   case Stopped, Running, Crashed, Starting
+
+object DaemonStatus:
+  // Serialize as lowercase string ("running"), matching the frontend's
+  // `daemon-status ${status}` CSS class contract. The Scala 3 derived
+  // encoder would emit {"Running": {}} which the frontend can't use.
+  given Encoder[DaemonStatus] = Encoder.encodeString.contramap(_.toString.toLowerCase)
+  given Decoder[DaemonStatus] = Decoder.decodeString.emap(s =>
+    DaemonStatus.values.find(_.toString.equalsIgnoreCase(s)).toRight(s"Unknown daemon status: $s")
+  )
+end DaemonStatus
 
 /** Full runtime status of a daemon — returned by REST API. */
 case class DaemonState(
