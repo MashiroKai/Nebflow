@@ -499,13 +499,14 @@ private[agent] trait AgentCore:
              sessionIdOpt
            )
          else IO.unit) *>
-          (if ToolReversibility.isReversible(
-               call.name,
-               call.input,
-               nebflow.core.SafetyMode.fromString(state.safetyMode)
-             )
-           then executeTool(call, callCtx)
-           else askUserPermission(call, state, permissionDeferredRef, callCtx))
+          permissionDecision(resources, state, call).flatMap {
+            case PermissionDecision.Allow => executeTool(call, callCtx)
+            case PermissionDecision.Deny =>
+              IO.pure(
+                ToolExecResult(s"Tool ${call.name} is denied by the session permission policy", isError = true)
+              )
+            case PermissionDecision.Ask => askUserPermission(call, state, permissionDeferredRef, callCtx)
+          }
             .map(r => (call, r))
             .attempt
             .map {
@@ -565,6 +566,29 @@ private[agent] trait AgentCore:
 
   end pipeToolExecutions
 
+  /**
+   * P2: permission decision reads the root session's PermissionPolicy bucket
+   * (permissionPolicies[rootSessionId]) — dynamic inheritance, NOT the
+   * per-agent state.safetyMode copy (D5). Decision order: deny → reject
+   * (no card); allow → auto-approve; otherwise reversible-by-safetyMode.
+   */
+  private enum PermissionDecision:
+    case Allow, Deny, Ask
+
+  private def permissionDecision(
+    resources: SharedResources,
+    state: AgentState,
+    call: ToolCall
+  ): IO[PermissionDecision] =
+    resources.permissionPolicies.get.map { policies =>
+      val rootSid = Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
+      val policy = policies.getOrElse(rootSid, PermissionPolicy.default)
+      if policy.deny.contains(call.name) then PermissionDecision.Deny
+      else if policy.allow.contains(call.name) then PermissionDecision.Allow
+      else if ToolReversibility.isReversible(call.name, call.input, policy.safetyMode) then PermissionDecision.Allow
+      else PermissionDecision.Ask
+    }
+
   private def askUserPermission(
     call: ToolCall,
     state: AgentState,
@@ -588,31 +612,25 @@ private[agent] trait AgentCore:
                   case Some(m) if !Set("GET", "HEAD", "OPTIONS").contains(m) => 2
                   case _ => 0
               else 1
-            val sourceAgent = toolCtx.agentDef.map(_.name).getOrElse("unknown")
-            val sourceSession = state.sessionId.getOrElse("")
             Json.obj(
               "type" -> "askPermission".asJson,
-              "sessionId" -> state.sessionId.asJson,
               "toolName" -> call.name.asJson,
               "summary" -> summary.asJson,
               "input" -> call.input.asJson,
-              "dangerLevel" -> dangerLevel.asJson,
-              "sourceAgent" -> sourceAgent.asJson,
-              "sourceSession" -> sourceSession.asJson
+              "dangerLevel" -> dangerLevel.asJson
             )
           }.flatMap { permJson =>
-            // Sub-agents forward permission to parent agent so the answer
-            // (routed by sessionId to the root agent) reaches the right Deferred.
+            // P2: every agent (root or sub-agent) sends the request straight to
+            // the InteractionHub — no depth/parentRef relay chain. The hub holds
+            // the Deferred, renders the card in the Nebula window and routes the
+            // answer back by requestId. The 5-minute timeout stays on the
+            // requesting side (hub only routes).
             val sourceAgent = toolCtx.agentDef.map(_.name).getOrElse("unknown")
             val sourceSession = state.sessionId.getOrElse("")
-            val sendPermission =
-              if state.depth > 0 && toolCtx.parentRef.isDefined then
-                toolCtx.parentRef.get ! AgentCommand.ForwardPermission(
-                  deferred, permJson, sourceAgent, sourceSession
-                )
-              else (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *> state.wsSend(permJson)
+            val rootSessionId =
+              Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
             for
-              _ <- sendPermission
+              _ <- sendPermissionRequest(toolCtx, state, permJson, deferred, sourceAgent, sourceSession, rootSessionId)
               approvedOpt <- deferred.get
                 .map(Some(_))
                 .timeoutTo(PermissionTimeout, IO.pure(None))
@@ -623,11 +641,12 @@ private[agent] trait AgentCore:
                   else IO.pure(ToolExecResult("Permission denied by user", isError = true))
                 case None =>
                   // Timeout — dismiss the permission popup on the frontend
+                  // (the card is rendered at sessionId = rootSessionId).
                   state
                     .wsSend(
                       Json.obj(
                         "type" -> "permissionExpired".asJson,
-                        "sessionId" -> state.sessionId.asJson
+                        "sessionId" -> rootSessionId.asJson
                       )
                     )
                     .handleErrorWith(_ => IO.unit) *>
@@ -642,6 +661,40 @@ private[agent] trait AgentCore:
           }
         )
     }.flatten
+
+  /** Send a permission request to the InteractionHub (P2), or fall back to P1 local render. */
+  private def sendPermissionRequest(
+    toolCtx: ToolContext,
+    state: AgentState,
+    permJson: Json,
+    deferred: cats.effect.Deferred[IO, Boolean],
+    sourceAgent: String,
+    sourceSession: String,
+    rootSessionId: String
+  )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
+    toolCtx.sharedResources.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
+      case Some(hub) =>
+        (hub ! InteractionHubCommand.Request(InteractionRequest(
+          requestId = java.util.UUID.randomUUID().toString.take(8),
+          kind = InteractionKind.Permission,
+          payload = permJson,
+          reply = InteractionReply.PermissionReply(deferred),
+          rootSessionId = rootSessionId,
+          sourceAgent = sourceAgent,
+          sourceSession = sourceSession
+        ))).void
+      case None =>
+        // Hub not spawned (early boot / tests): P1 fallback — the requesting
+        // agent holds the Deferred itself and renders locally.
+        (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
+          state.wsSend(
+            permJson.deepMerge(Json.obj(
+              "sessionId" -> state.sessionId.asJson,
+              "sourceAgent" -> sourceAgent.asJson,
+              "sourceSession" -> sourceSession.asJson
+            ))
+          )
+    }
 
   protected def executeTool(call: ToolCall, ctx: ToolContext): IO[ToolExecResult] =
     ToolRegistry.TOOL_MAP.get(call.name) match

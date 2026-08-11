@@ -176,6 +176,13 @@ Message type (optional, default "INFO"):
         case (Some(store), Some(sid)) => store.getSafetyMode(sid)
         case _ => IO.pure("confirm-edits")
 
+      // P2: resolve the caller's permission-policy bucket so the fork agent
+      // inherits the same root-session policy and renders interactions in the
+      // same Nebula window as the caller.
+      callerRootSessionId <- ctx.sessionId match
+        case Some(sid) => resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+        case None => IO.pure("")
+
       tempSession <- resources.sessionStore
         .createSession(s"fork-${java.util.UUID.randomUUID().toString.take(8)}", agentName = Some(agentDef.name))
         .handleErrorWith(e =>
@@ -210,7 +217,8 @@ Message type (optional, default "INFO"):
           contextWindow = resources.contextWindow,
           projectRoot = Some(ctx.projectRoot),
           safetyMode = callerSafetyMode,
-          expectsMail = false
+          expectsMail = false,
+          rootSessionId = callerRootSessionId
         ),
         s"fork-${agentDef.name}-${java.util.UUID.randomUUID().toString.take(8)}"
       )
@@ -422,8 +430,14 @@ Message type (optional, default "INFO"):
       refOpt <- sessionOpt.traverse_ { session =>
         val agentName = session.agentName.getOrElse("")
         for
-          // Use loadTeamAgent when session belongs to a team (checks team dir first, then global).
-          // Plain loadAgent only checks global agents/ which misses team-scoped agents like Manager.
+          // P2: resolve the Nebula root session (permission-policy anchor) first
+          // so the spawned agent inherits the root's policy bucket and its
+          // InteractionRequests render in the Nebula window.
+          parentSidOpt <- TeamSessionRegistry.parentSessionOf(session.flowName.getOrElse(""))
+          rootSid = parentSidOpt.getOrElse(session.id)
+          policyOpt <- resources.permissionPolicies.get.map(_.get(rootSid))
+          safetyMode =
+            policyOpt.map(p => nebflow.core.SafetyMode.toString(p.safetyMode)).getOrElse(session.safetyMode)
           entryOpt <- session.flowName match
             case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
             case None => EntityLoader.loadAgent(agentName)
@@ -461,21 +475,18 @@ Message type (optional, default "INFO"):
                   sessionId = Some(session.id),
                   sessionName = Some(session.name),
                   projectRoot = Some(ctx.projectRoot),
-                  safetyMode = session.safetyMode
+                  safetyMode = safetyMode,
+                  rootSessionId = rootSid
                 ),
                 s"mail-${session.id.take(8)}"
               )
-              // P1: resolve the Nebula root session (permission-policy anchor) and
-              // dual-write into the unified AgentRegistry so interaction answers
-              // (permissionAnswer/askUserAnswer) route to this team agent.
-              parentSidOpt <- TeamSessionRegistry.parentSessionOf(session.flowName.getOrElse(""))
               _ <- TeamSessionRegistry.registerActor(session.id, ref)
               _ <- resources.agentRegistry.update(_ + (
                 session.id -> AgentRecord(
                   sessionId = session.id,
                   ref = ref,
                   kind = AgentKind.Team,
-                  rootSessionId = parentSidOpt.getOrElse(session.id),
+                  rootSessionId = rootSid,
                   parentRef = ctx.agentActorRef
                 )
               ))

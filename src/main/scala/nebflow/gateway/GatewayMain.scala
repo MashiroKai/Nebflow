@@ -307,7 +307,14 @@ object GatewayMain extends IOApp.Simple:
                                   val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>
                                     logger.warn(s"Telemetry init failed: ${e.getMessage}").as(None)
                                   }
-                                  telemetryIO.flatMap { telemetry =>
+                                  // P2: spawn the global InteractionHub and publish its ref.
+                                  // Every agent's permission/AskUser requests and every frontend
+                                  // interaction answer route through this single actor.
+                                  val hubSetup: IO[Unit] =
+                                    actorSystem.spawn(nebflow.agent.InteractionHub(), "interaction-hub").flatMap { hubRef =>
+                                      sharedResources.interactionHubRef.set(Some(hubRef))
+                                    }
+                                  hubSetup *> telemetryIO.flatMap { telemetry =>
                                     val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
                                     val sessionService = new SessionService(sessionStore)
                                     val agentService = new AgentService(agentLibrary)

@@ -60,7 +60,10 @@ object EphemeralAgentRunner:
             readTracker = None,
             fileHistory = None,
             contextWindow = resources.contextWindow,
-            expectsMail = false
+            expectsMail = false,
+            // P2: standalone agent buckets its own permission policy (same as
+            // its AgentRecord below).
+            rootSessionId = sessionId
           ),
           s"ephemeral-agent-${agentDef.name.take(10)}"
         )

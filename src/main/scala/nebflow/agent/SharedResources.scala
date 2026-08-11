@@ -62,5 +62,21 @@ case class SharedResources(
    * caches (P3 removes them). Interaction answers route through this map only —
    * a lookup miss never spawns a ghost agent.
    */
-  agentRegistry: Ref[IO, Map[String, AgentRecord]] = Ref.unsafe[IO, Map[String, AgentRecord]](Map.empty)
+  agentRegistry: Ref[IO, Map[String, AgentRecord]] = Ref.unsafe[IO, Map[String, AgentRecord]](Map.empty),
+  /**
+   * P2 全局权限策略: one PermissionPolicy per Nebula root session, keyed by
+   * rootSessionId. Every agent in a root session's tree reads this bucket at
+   * decision time (dynamic inheritance — never a per-agent snapshot).
+   * Seeded by ensureRootAgent from session meta; written by SetSafetyMode.
+   */
+  permissionPolicies: Ref[IO, Map[String, PermissionPolicy]] =
+    Ref.unsafe[IO, Map[String, PermissionPolicy]](Map.empty),
+  /**
+   * P2 InteractionHub: spawned once by GatewayMain at startup. Agents send
+   * InteractionRequest here for permission/AskUser; gateway forwards frontend
+   * answers as InteractionAnswered. Option so SharedResources can be built
+   * before the hub actor exists (tests, early boot).
+   */
+  interactionHubRef: Ref[IO, Option[ActorRef[InteractionHubCommand]]] =
+    Ref.unsafe[IO, Option[ActorRef[InteractionHubCommand]]](None)
 )

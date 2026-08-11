@@ -137,7 +137,8 @@ class WebSocketRoutes(
                 rulesMd = resolvedRules,
                 folderId = folderId,
                 safetyMode = metaOpt.map(_.safetyMode).getOrElse("confirm-edits"),
-                gitBranch = metaOpt.flatMap(_.gitBranch)
+                gitBranch = metaOpt.flatMap(_.gitBranch),
+                rootSessionId = sessionId
               ),
               s"agent-$sessionId"
             )
@@ -169,12 +170,40 @@ class WebSocketRoutes(
                   parentRef = None
                 )
               )) *>
+              // P2: register this root session as the InteractionHub render
+              // target (cards/questions appear in the Nebula window) and seed
+              // its permission-policy bucket from persisted session meta
+              // (backward compatible with per-session safetyMode).
+              registerRootInteraction(sessionId, recordingWsSend) *>
+              seedPermissionPolicy(sessionId, safetyMode) *>
               initFlowTree(sessionId, ref, pr, safetyMode)
                 .handleErrorWith(e => logger.error(s"initFlowTree failed for session $sessionId: ${e.getMessage}"))
                 .start
                 .as(ref)
           }
     }
+
+  /**
+   * P2: register a root session's recording wsSend with the InteractionHub so
+   * permission/AskUser cards render in the Nebula window and persist to the
+   * root session's ui.json.
+   */
+  private def registerRootInteraction(sessionId: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
+    sharedResources.interactionHubRef.get.flatMap {
+      case Some(hub) => (hub ! nebflow.agent.InteractionHubCommand.RegisterRoot(sessionId, wsSend)).void
+      case None => IO.unit
+    }
+
+  private def unregisterRootInteraction(sessionId: String): IO[Unit] =
+    sharedResources.interactionHubRef.get.flatMap {
+      case Some(hub) => (hub ! nebflow.agent.InteractionHubCommand.UnregisterRoot(sessionId)).void
+      case None => IO.unit
+    }
+
+  /** P2: seed the root session's permission-policy bucket from persisted meta. */
+  private def seedPermissionPolicy(sessionId: String, safetyMode: String): IO[Unit] =
+    val mode = nebflow.core.SafetyMode.fromString(safetyMode)
+    sharedResources.permissionPolicies.update(_ + (sessionId -> nebflow.agent.PermissionPolicy(safetyMode = mode)))
 
   /** Create and register a FlowTreeActor for a session. Fire-and-forget via .start. */
   private def initFlowTree(
@@ -203,6 +232,7 @@ class WebSocketRoutes(
   private def removeRootAgent(sessionId: String): IO[Unit] =
     FlowTreeRegistry.unregister(sessionId) *>
       sharedResources.agentRegistry.update(_ - sessionId) *>
+      unregisterRootInteraction(sessionId) *>
       rootAgents.modify { agents =>
         agents.get(sessionId) match
           case Some(ref) =>
@@ -212,6 +242,35 @@ class WebSocketRoutes(
             )
           case None => (agents, IO.unit)
       }.flatten
+
+  /**
+   * P2: translate a frontend interaction answer (permissionAnswer/askUserAnswer)
+   * into an InteractionAnswered for the hub. New frontends attach requestId →
+   * the hub matches exactly (multi-slot). Old frontends omit requestId → the
+   * hub falls back to the oldest pending request for the resolved root session
+   * (incremental compatibility; the card is always rendered at sessionId =
+   * rootSessionId). Answers never touch routeToAgent, so no ghost agent can
+   * ever be created by an answer (D2).
+   */
+  private def forwardInteractionAnswer(requestId: String, sessionId: String, payload: io.circe.Json): IO[Unit] =
+    if sessionId.nonEmpty then
+      sharedResources.interactionHubRef.get.flatMap {
+        case Some(hub) =>
+          for
+            rootSid <- resolveRootSessionId(sessionId)
+            _ <- (hub ! nebflow.agent.InteractionHubCommand.Answered(
+              nebflow.agent.InteractionAnswered(requestId, rootSid, payload)
+            )).void
+          yield ()
+        case None =>
+          logger.warn("Interaction answer dropped: InteractionHub not spawned") *> IO.unit
+      }
+    else logger.warn("Dropping interaction answer: no sessionId provided") *> IO.unit
+
+  /** Resolve the permission-policy bucket (root session) of a sessionId. */
+  private def resolveRootSessionId(sessionId: String): IO[String] =
+    sharedResources.agentRegistry.get
+      .map(_.get(sessionId).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sessionId))
 
   /**
    * Route a message to a registered agent — **lookup only, never spawns**.
@@ -298,7 +357,7 @@ class WebSocketRoutes(
 
   /**
    * Public API for bridge card-action callbacks to send specific AgentCommands
-   * (e.g. PermissionAnswered, UserAnswered) to a session's agent.
+   * (e.g. Interrupt, PlanApproved) to a session's agent.
    */
   def handleBridgeAgentCommand(sessionId: String, command: AgentCommand): IO[Unit] =
     if sessionId.isEmpty then IO.unit
@@ -714,18 +773,21 @@ class WebSocketRoutes(
             (hc.downField("answers").as[List[String]], hc.downField("sessionId").as[String]) match
               case (Right(answers), Right(askSessionId)) =>
                 val answerText = answers.mkString("\n")
+                val requestId = hc.downField("requestId").as[String].toOption.getOrElse("")
                 sessionStore.appendUiMessages(
                   askSessionId,
                   List(UiMessage.User(answerText, timestamp = System.currentTimeMillis()))
                 ) *>
-                  routeToAgent(askSessionId)(ref => ref ! AgentCommand.UserAnswered(answers))
+                  forwardInteractionAnswer(requestId, askSessionId, io.circe.Json.obj("answers" -> answers.asJson))
               case _ => IO.unit
 
           case "permissionAnswer" =>
-            val approved = parse(text).flatMap(_.hcursor.downField("approved").as[Boolean]).getOrElse(false)
-            val permSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val approved = json.hcursor.downField("approved").as[Boolean].getOrElse(false)
+            val permSessionId = json.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
+            val requestId = json.hcursor.downField("requestId").as[String].toOption.getOrElse("")
             logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
-              routeToAgent(permSessionId)(ref => ref ! AgentCommand.PermissionAnswered(approved))
+              forwardInteractionAnswer(requestId, permSessionId, io.circe.Json.obj("approved" -> approved.asJson))
 
           case "planApprove" =>
             val planSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
