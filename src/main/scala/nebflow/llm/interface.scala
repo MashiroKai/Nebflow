@@ -497,24 +497,23 @@ object LlmInterface:
                                                 val skipMsg =
                                                   if isTimeout then "inactivity timeout, skipping to next provider"
                                                   else "retries exhausted"
-                                                // Align with the Rust locked-stream guard (handle.rs):
-                                                // if partial content was already streamed (locked), a timeout
-                                                // mid-stream must NOT mark the provider Down — that would
-                                                // trigger DOWN→probe→UP→timeout→DOWN loops for slow models.
-                                                // A timeout with zero output (locked=false) still marks Down:
-                                                // the provider produced nothing, so the next request should
-                                                // try another candidate before blocking on recovery.
-                                                val markDown =
-                                                  if isTimeout && locked then IO.unit
-                                                  else healthMonitor
-                                                      .markDown(candidate.providerId, candidate.model, downReason)
+                                                // Align with the Rust handle.rs fallback branch: timeout is
+                                                // classified Permanent, so the stream ALWAYS markDowns here
+                                                // (Rust handle.rs L720-735 has no locked check on mark_down).
+                                                // The locked-stream guard only: (1) propagates non-timeout
+                                                // errors when partial content was streamed (L681-685), and
+                                                // (2) resets the lock on timeout so the Done-without-content
+                                                // check doesn't fire mid-fallback. Scala mirrors both above.
+                                                // DOWN→probe→UP→timeout→DOWN churn is bounded by the
+                                                // waitForAnyUp timeout (120s) at the all-Down gate.
                                                 fs2.Stream.eval(
                                                   resetLock *> logger.warn(
                                                     s"Stream fallback: ${candidate.providerId}/${candidate.model} $skipMsg"
                                                   )
                                                     *> failureRef.update(_ :+ attempt)
                                                     *> notify
-                                                    *> markDown
+                                                    *> healthMonitor
+                                                      .markDown(candidate.providerId, candidate.model, downReason)
                                                 ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                                               end if
                                           end match
