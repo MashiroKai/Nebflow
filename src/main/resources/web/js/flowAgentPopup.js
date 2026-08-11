@@ -170,6 +170,22 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   opacity: 0; pointer-events: none;
   left: -9999px;
 }
+
+/* Fullscreen variant — mounted on document.body (Delegate popup) */
+.flow-agent-overlay.fullscreen {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 1000;
+  background: rgba(0,0,0,0.15);
+  animation: fa-fade-in 0.2s ease;
+}
+.flow-agent-overlay.fullscreen .flow-agent-modal {
+  position: relative;
+  left: auto; top: auto;
+  transform: none;
+  width: 90%; max-width: 720px;
+  height: 80vh; max-height: 85vh;
+  margin: 6vh auto;
+}
 </style>`;
 
 if (!document.getElementById('flow-agent-popup-css')) {

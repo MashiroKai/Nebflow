@@ -20,13 +20,9 @@ let popupOverlay = null;
 let popupResizeObs = null;
 
 // ── CSS (shared with flowAgentPopup — same modal style) ───
-// Only inject if flowAgentPopup hasn't already done it.
-if (!document.getElementById('flow-agent-popup-css')) {
-  // Reuse the same CSS class names so we get identical styling.
-  // flowAgentPopup.js will inject the actual styles; if it loads after us,
-  // the classes still work because CSS is global. If it never loads (edge
-  // case), the popup still works — just unstyled.
-}
+// The CSS is injected by flowAgentPopup.js at module load time.
+// Both modules are always loaded together since they're imported by other
+// modules, so the shared class names are always available.
 
 // ── Hidden container for background rendering ─────────────
 let hiddenRoot = null;
@@ -81,7 +77,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   const entry = ensureStepView(currentStepId);
 
   popupOverlay = document.createElement('div');
-  popupOverlay.className = 'flow-agent-overlay';
+  popupOverlay.className = 'flow-agent-overlay fullscreen';
 
   // Mount on document.body for delegate popups (not inside a flow card)
   popupOverlay.innerHTML = `
@@ -100,33 +96,49 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
     </div>
   `;
 
-  // Position overlay to fill the main chat area (not the full viewport)
-  const chatArea = document.getElementById('chat-container') || document.body;
-  popupOverlay.style.position = 'fixed';
-  popupOverlay.style.top = '0';
-  popupOverlay.style.left = '0';
-  popupOverlay.style.right = '0';
-  popupOverlay.style.bottom = '0';
-  popupOverlay.style.zIndex = '1000';
-  popupOverlay.style.background = 'rgba(0,0,0,0.3)';
+  // Async-fetch agent model info for header badge
+  if (agentName) {
+    fetchAgentModelBadge(agentName);
+  }
 
   document.body.appendChild(popupOverlay);
 
   const modal = popupOverlay.querySelector('.flow-agent-modal');
-  modal.style.position = 'relative';
-  modal.style.left = 'auto';
-  modal.style.top = 'auto';
-  modal.style.transform = 'none';
-  modal.style.margin = '5vh auto';
-  modal.style.width = '90%';
-  modal.style.maxWidth = '700px';
-  modal.style.height = '80vh';
 
   const footer = popupOverlay.querySelector('#delegate-agent-footer');
   modal.insertBefore(entry.container, footer);
   entry.footerEl = footer;
 
   updateFooterStatus(entry);
+
+  // ── Drag: mousedown on header moves the modal ──
+  const header = popupOverlay.querySelector('.flow-agent-header');
+  if (header) {
+    header.addEventListener('mousedown', (e) => {
+      if (e.target.id === 'delegate-agent-close') return;
+      e.preventDefault();
+      const overlayRect = popupOverlay.getBoundingClientRect();
+      const modalRect = modal.getBoundingClientRect();
+      const startX = e.clientX - modalRect.left;
+      const startY = e.clientY - modalRect.top;
+
+      const onMove = (ev) => {
+        let newLeft = ev.clientX - overlayRect.left - startX;
+        let newTop = ev.clientY - overlayRect.top - startY;
+        newLeft = Math.max(0, Math.min(newLeft, overlayRect.width - modalRect.width));
+        newTop = Math.max(0, Math.min(newTop, overlayRect.height - modalRect.height));
+        modal.style.transform = 'none';
+        modal.style.left = newLeft + 'px';
+        modal.style.top = newTop + 'px';
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
 
   popupOverlay.addEventListener('click', (e) => {
     if (e.target === popupOverlay || e.target.id === 'delegate-agent-close') closeStepPopup();
@@ -320,4 +332,23 @@ function esc(str) {
   if (!str) return '';
   return String(str).replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>')
     .replace(/"/g, '"').replace(/'/g, '&#039;');
+}
+
+/** Fetch agent model config and render a badge in the popup header. */
+async function fetchAgentModelBadge(agentName) {
+  try {
+    const token = localStorage.getItem('nebflow_token') || '';
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const resp = await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers });
+    if (!resp.ok) return;
+    const cfg = await resp.json();
+    const el = popupOverlay?.querySelector('#delegate-agent-model');
+    if (!el) return;
+    const current = cfg.preferred || cfg.current || cfg.default || '';
+    if (!current) { el.innerHTML = ''; return; }
+    const isFallback = cfg.preferred && current !== cfg.preferred;
+    el.innerHTML = isFallback
+      ? `<span class="flow-agent-model-badge">${esc(current)}</span>`
+      : `<span class="flow-agent-subtitle">${esc(current)}</span>`;
+  } catch (e) { /* non-critical */ }
 }
