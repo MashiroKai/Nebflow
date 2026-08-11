@@ -159,7 +159,16 @@ function renderStaticDag(pane, dag) {
 }
 
 // Render whichever tab(s) are open.
+// Debounced — high-frequency WS events (agentStart/agentDone/flowMail/
+// flowProgress/treeBranch*) collapse into a single render instead of
+// rebuilding the DOM per event (which replays animations and resets scroll).
+let renderTimer = null;
 function renderOpenTabs() {
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(renderOpenTabsNow, 150);
+}
+
+function renderOpenTabsNow() {
   if (hasTab('teams')) renderTeamsTab();
   if (hasTab('flows')) renderFlowsTab();
   for (const f of runningFlows) {

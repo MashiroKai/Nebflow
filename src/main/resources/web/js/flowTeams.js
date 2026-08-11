@@ -14,6 +14,12 @@ const dagCache = new Map();           // flowName → { ordered: [{nodeId, agent
 const expandedFlows = new Set();      // "teamName/flowName" keys
 const manuallyCollapsed = new Set();  // same key — prevents auto-expand
 
+// ── Model label cache ──────────────────────────────────────
+// The model label is stable for the session — resolve it once per agent and
+// reuse on every re-render instead of re-fetching /api/agents/:name/model.
+const modelCache = new Map();         // agentName → shortName
+const modelPending = new Set();       // agentName keys with an in-flight fetch
+
 export function statusOf(agent, agentStatus) {
   const live = agent.sessionId ? agentStatus.get(agent.sessionId) : null;
   const s = (live || agent.status || 'idle').toLowerCase();
@@ -201,10 +207,29 @@ export function bindTileClicks() {
 
 /** Async-fetch model labels for all agent tiles and inject them. */
 export async function populateTileModels(teams) {
+  const tileSel = (flowName, agentName) =>
+    `.team-tile[data-agent="${esc(agentName)}"][data-flow="${esc(flowName)}"]`;
   for (const flow of teams) {
     for (const a of (flow.agents || [])) {
-      const tile = document.querySelector(`.team-tile[data-agent="${esc(a.name)}"][data-flow="${esc(flow.name)}"]`);
+      const tile = document.querySelector(tileSel(flow.name, a.name));
       if (!tile) continue;
+      // role comes from the fixed data-status attribute — NOT from
+      // roleEl.textContent — so re-invoking this function (async fetch
+      // racing with WS-triggered re-renders) never appends the model
+      // name twice.
+      const writeLabel = (el, shortName) => {
+        if (!el.isConnected) return; // panel was rebuilt while we awaited
+        const roleEl = el.querySelector('.team-tile-role');
+        if (!roleEl) return;
+        const role = !!a.manager ? 'manager' : (el.getAttribute('data-status') || 'idle');
+        roleEl.textContent = `${role} · ${shortName}`;
+      };
+      // Cache hit — write synchronously, no fetch.
+      const cached = modelCache.get(a.name);
+      if (cached) { writeLabel(tile, cached); continue; }
+      // One in-flight fetch per agent — concurrent re-renders share it.
+      if (modelPending.has(a.name)) continue;
+      modelPending.add(a.name);
       try {
         const resp = await fetch(`/api/agents/${encodeURIComponent(a.name)}/model`, { headers: authHeaders() });
         if (!resp.ok) continue;
@@ -215,17 +240,13 @@ export async function populateTileModels(teams) {
         if (!current) continue;
         const slashIdx = current.lastIndexOf('/');
         const shortName = slashIdx >= 0 ? current.slice(slashIdx + 1) : current;
-        const roleEl = tile.querySelector('.team-tile-role');
-        if (roleEl) {
-          // role comes from the fixed data-status attribute — NOT from
-          // roleEl.textContent — so re-invoking this function (async fetch
-          // racing with WS-triggered re-renders) never appends the model
-          // name twice.
-          const isMgr = !!a.manager;
-          const role = isMgr ? 'manager' : (tile.getAttribute('data-status') || 'idle');
-          roleEl.textContent = `${role} · ${shortName}`;
-        }
+        modelCache.set(a.name, shortName);
+        // Re-query the tile — the panel may have been rebuilt while we awaited,
+        // leaving our original `tile` reference detached.
+        const liveTile = document.querySelector(tileSel(flow.name, a.name));
+        if (liveTile) writeLabel(liveTile, shortName);
       } catch (e) { /* skip */ }
+      finally { modelPending.delete(a.name); }
     }
   }
 }
