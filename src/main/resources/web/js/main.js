@@ -1325,6 +1325,10 @@ onMessage('flowProgress', (msg) => {
   flowCanvas.onFlowProgress(msg);
 });
 
+onMessage('flowStarted', (msg) => {
+  flowCanvas.onFlowStarted(msg);
+});
+
 onMessage('flowCompleted', (msg) => {
   flowCanvas.onFlowCompleted(msg);
 });

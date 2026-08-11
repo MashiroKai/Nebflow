@@ -7,7 +7,7 @@ import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab } from './canva
 import { FLOW_CSS } from './flowCss.js';
 import { esc, authHeaders, overlayRoot } from './flowHelpers.js';
 import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf, populateTileModels } from './flowTeams.js';
-import { renderFlowRunInto, bindDagNodeClicks } from './flowDag.js';
+import { renderFlowRunInto, renderFlowsPanel, bindDagNodeClicks, dagCardHtml, renderStellarSystem, bindStellarNodeClicks } from './flowDag.js';
 import { renderFlowList } from './flowList.js';
 import { closeViewer, openMailbox, openRules, openDefinition } from './flowViewers.js';
 import { onReconnect } from './ws.js';
@@ -20,6 +20,16 @@ const mailFlash = new Map();
 let autoRestoreRetryCount = 0;
 let runningFlows = [];
 let flowsTabAutoOpened = false;  // prevent repeated auto-open
+let flowDefs = [];
+
+async function fetchFlowDefs() {
+  try {
+    const resp = await fetch('/api/flows/list', { headers: authHeaders() });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    flowDefs = data.flows || [];
+  } catch (e) { /* non-critical */ }
+}
 
 // ── Teams tab ──────────────────────────────────────────────
 
@@ -58,11 +68,94 @@ function renderFlowsTab() {
     scroll = document.createElement('div');
     scroll.className = 'team-scroll';
     scroll.id = 'flow-scroll-flows';
+    scroll.style.flexDirection = 'column';
+    scroll.style.alignItems = 'stretch';
     pane.appendChild(scroll);
-    // Load the static flow list once per tab lifecycle.
-    renderFlowList(scroll);
+    // Flow definitions are rendered inline below from the flowDefs state
+    // (populated by fetchFlowDefs). The previous renderFlowList() call was
+    // removed because its async fetch would race with and overwrite the
+    // inline content.
+  }
+  let defsHtml = '';
+  if (flowDefs.length > 0) {
+    defsHtml = `<div class="flow-defs-section">
+      <div class="flow-defs-header">Flow Definitions</div>
+      <div class="flow-defs-grid">
+        ${flowDefs.map(fd => `
+          <div class="flow-def-card" data-flow-name="${esc(fd.name)}">
+            <div class="flow-def-name">${esc(fd.name)}</div>
+            ${fd.description ? `<div class="flow-def-desc">${esc(fd.description)}</div>` : ''}
+            <div class="flow-def-meta">${fd.nodeCount || 0} nodes</div>
+            <button class="flow-def-view-btn" data-flow-name="${esc(fd.name)}">View DAG \u2192</button>
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+  }
+  let runningHtml = '';
+  if (runningFlows.length > 0) {
+    runningHtml = `<div class="flow-running-section">
+      <div class="flow-defs-header">Running Instances</div>
+      ${runningFlows.map(rf => dagCardHtml(rf)).join('')}
+    </div>`;
+  }
+  if (flowDefs.length === 0 && runningFlows.length === 0) {
+    scroll.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">No flows defined</div></div>`;
+  } else {
+    scroll.innerHTML = defsHtml + runningHtml;
   }
   overlayRoot();
+  bindDagNodeClicks();
+  scroll.querySelectorAll('.flow-def-view-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const flowName = btn.dataset.flowName;
+      openTab(`flow-def-${flowName}`, `DAG: ${flowName}`, { type: 'flow', closable: true });
+      const defPane = getTabPane(`flow-def-${flowName}`);
+      if (defPane) {
+        defPane.innerHTML = '<div class="agent-detail-loading">Loading DAG...</div>';
+        fetch(`/api/flow/dag/${encodeURIComponent(flowName)}`, { headers: authHeaders() })
+          .then(r => r.json())
+          .then(dag => renderStaticDag(defPane, dag));
+      }
+    });
+  });
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function renderStaticDag(pane, dag) {
+  if (!pane.querySelector('#team-canvas-style')) {
+    pane.insertAdjacentHTML('afterbegin', FLOW_CSS);
+  }
+  let scroll = pane.querySelector('.team-scroll');
+  if (!scroll) {
+    scroll = document.createElement('div');
+    scroll.className = 'team-scroll';
+    scroll.style.flexDirection = 'column';
+    pane.appendChild(scroll);
+  }
+  const pseudoRf = {
+    flowName: dag.name,
+    description: dag.description,
+    entry: dag.entry,
+    status: 'static',
+    nodes: Object.entries(dag.nodes || {}).map(([id, n]) => ({
+      nodeId: id,
+      agent: (n && (n.agent || n.agentName)) || '',
+      status: 'static',
+    })),
+    edges: Object.entries(dag.nodes || {}).flatMap(([from, n]) => {
+      const oc = n && n.onComplete;
+      if (!oc) return [];
+      if (typeof oc === 'string') return [{ from, to: oc, condition: null }];
+      if (oc.goto) return [{ from, to: oc.goto, condition: null }];
+      if (oc.return) return [{ from, to: '$return', condition: null }];
+      if (oc.switch && oc.cases) return Object.entries(oc.cases).map(([cond, to]) => ({ from, to, condition: cond }));
+      return [];
+    }),
+  };
+  scroll.innerHTML = dagCardHtml(pseudoRf);
+  bindDagNodeClicks();
+  if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 // Render whichever tab(s) are open.
@@ -91,6 +184,7 @@ function renderFlowRunTab(instanceId) {
   }
   let scroll = pane.querySelector('.team-scroll');
   if (!scroll) {
+    pane.innerHTML = '';
     scroll = document.createElement('div');
     scroll.className = 'team-scroll';
     scroll.style.display = 'block';
@@ -255,6 +349,7 @@ export async function openFlows() {
   } else {
     openTab('flows', 'Flows', { type: 'flow', closable: true });
   }
+  await fetchFlowDefs();
   renderFlowsTab();
 }
 
