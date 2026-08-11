@@ -43,22 +43,24 @@ body.nf-lightbox-open { overflow: hidden; }
   position: absolute;
   top: 16px;
   right: 16px;
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-surface);
-  color: var(--color-text);
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  /* Fixed light icon: the backdrop is a dark translucent overlay in both
+     themes, so --color-text would be unreadable in light mode. */
+  color: rgba(255, 255, 255, 0.92);
   cursor: pointer;
-  opacity: 0.85;
+  opacity: 0.35;
   transition: opacity 150ms ease, transform 150ms ease;
 }
-.nf-lightbox-close:hover { opacity: 1; transform: scale(1.05); }
+.nf-lightbox-close:hover { opacity: 0.7; transform: scale(1.08); }
 .nf-lightbox-close:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline: 2px solid rgb(var(--sapphire) / 0.7);
   outline-offset: 2px;
 }
 
