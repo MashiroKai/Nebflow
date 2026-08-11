@@ -58,10 +58,26 @@ class DaemonSpec extends FunSuite:
     assertEquals(decode[DaemonConfigFile](json), Right(file))
   }
 
-  test("DaemonStatus encodes as string") {
-    assert(DaemonStatus.Running.asJson.noSpaces.contains(""""Running""""))
-    assert(DaemonStatus.Stopped.asJson.noSpaces.contains(""""Stopped""""))
-    assert(DaemonStatus.Crashed.asJson.noSpaces.contains(""""Crashed""""))
+  test("DaemonStatus encodes as lowercase string") {
+    assert(DaemonStatus.Running.asJson.noSpaces.contains(""""running""""))
+    assert(DaemonStatus.Stopped.asJson.noSpaces.contains(""""stopped""""))
+    assert(DaemonStatus.Crashed.asJson.noSpaces.contains(""""crashed""""))
+    assert(DaemonStatus.Starting.asJson.noSpaces.contains(""""starting""""))
+    // must NOT be the Scala-3 derived object format {"Running": {}}
+    assert(!DaemonStatus.Running.asJson.noSpaces.contains(""""Running""""))
+  }
+
+  test("DaemonStatus decode accepts lowercase and case-insensitive input") {
+    assertEquals(decode[DaemonStatus](""""running""""), Right(DaemonStatus.Running))
+    assertEquals(decode[DaemonStatus](""""RUNNING""""), Right(DaemonStatus.Running))
+    assertEquals(decode[DaemonStatus](""""stopped""""), Right(DaemonStatus.Stopped))
+    assert(decode[DaemonStatus](""""bogus"""").isLeft)
+  }
+
+  test("DaemonState serializes status as lowercase string") {
+    val state = DaemonState(id = "web", name = "Web Server", status = DaemonStatus.Running)
+    assertEquals(state.asJson.hcursor.downField("status").as[String], Right("running"))
+    assertEquals(decode[DaemonState](state.asJson.noSpaces), Right(state))
   }
 
   // ── DaemonStore tests ──────────────────────────────────
