@@ -4,7 +4,7 @@ import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath } from '
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
   setBusy, clearBusy, clearStatus,
-  renderUserBubble, appendAiText, finishAi,
+  renderUserBubble, renderInjectedBubble, appendAiText, finishAi,
   appendAgentText, finishAgent, getAgentColor,
   renderTool, renderToolPending, renderError, renderTimeoutNotice,
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
@@ -1600,6 +1600,22 @@ onMessage('modelChanged', (msg, view) => {
 onMessage('retryStatus', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   if (view) renderRetryStatus(msg.message);
+});
+
+// --- Injected user message (task P+Q: Mail/Delegate/SubTask/Skill/Flow injections
+// and ExternalEvent result notifications). Backend emits {type:"user",
+// injected:true, source, text, sessionId}. Render as a light-blue bubble so
+// tool-originated prompts are visible and distinct from the user's own input.
+onMessage('user', (msg, view) => {
+  if (!msg.injected) return; // non-injected user events are not emitted; guard anyway
+  const sid = msg.sessionId;
+  if (!sid) return;
+  state.turnExpecting[sid] = true;
+  saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null }, sid);
+  if (sid === state.activeSessionId && view) {
+    renderInjectedBubble(msg.text, msg.source, msg.timestamp);
+    smartScroll();
+  }
 });
 
 // --- Bridge user message (e.g. from external platform) ---
