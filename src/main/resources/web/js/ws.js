@@ -17,6 +17,24 @@ export function setFlowStepInterceptor(fn) { flowStepInterceptor = fn; }
 let bgAgentStepInterceptor = null;
 export function setBgAgentStepInterceptor(fn) { bgAgentStepInterceptor = fn; }
 
+// ── Hidden-view render gating ─────────────────────────────────────────────
+// Popup ChatViews (flow / bg-agent / team) have visible === false while their
+// popup is closed. Streaming events for hidden views are dispatched with
+// view=null so chat.js handlers skip DOM rendering entirely — the global
+// per-session buffers in state.js (sessionTexts/sessionThinkingBuffers/...)
+// still accumulate, so nothing is lost; the popup re-renders from backend
+// history when opened (dirtyWhileHidden forces the refresh).
+// Interactive events (askUser/askPermission) are exempt: they keep the real
+// view and render into the hidden container immediately — low frequency,
+// negligible cost, and the prompt must exist when the popup opens.
+function streamDispatchView(view) {
+  if (view && view.visible === false) {
+    view.dirtyWhileHidden = true;
+    return null;
+  }
+  return view;
+}
+
 /**
  * Convert agent* events (agentTextDelta, agentToolStart, etc.) to standard
  * chat events (textDelta, toolStart, etc.) so the same rendering pipeline
@@ -271,15 +289,19 @@ export function connect() {
         const converted = convertAgentEvent(msg);
         if (converted) {
           const convList = handlers[converted.type];
+          // Hidden popup → view=null: accumulate state buffers only, no DOM.
+          const convView = streamDispatchView(activeView);
           if (convList) for (const h of convList) {
-            try { h(converted, activeView); }
+            try { h(converted, convView); }
             catch (e) { console.error('[ws] bg-agent handler error for', converted.type, ':', e.message); }
           }
         }
         // Also dispatch the original event (for bg-agent indicator status, etc.)
+        // Interactive events keep the real view (render into hidden container).
+        const origView = (msg.type === 'askUser' || msg.type === 'askPermission') ? activeView : streamDispatchView(activeView);
         const list = handlers[msg.type];
         if (list) for (const h of list) {
-          try { h(msg, activeView); }
+          try { h(msg, origView); }
           catch (e) { console.error('[ws] bg-agent handler error for', msg.type, ':', e.message); }
         }
         setActiveView(savedView); // restore pre-message view (BUG 6)
@@ -303,8 +325,9 @@ export function connect() {
         const converted = convertAgentEvent({ ...msg, nodeSessionId: bareSid });
         if (converted) {
           const convList = handlers[converted.type];
+          const convView = streamDispatchView(teamView);
           if (convList) for (const h of convList) {
-            try { h(converted, teamView); }
+            try { h(converted, convView); }
             catch (e) { console.error('[ws] team handler error for', converted.type, ':', e.message); }
           }
         }
@@ -331,15 +354,19 @@ export function connect() {
         const converted = convertAgentEvent(msg);
         if (converted) {
           const convList = handlers[converted.type];
+          // Hidden popup → view=null: accumulate state buffers only, no DOM.
+          const convView = streamDispatchView(activeView);
           if (convList) for (const h of convList) {
-            try { h(converted, activeView); }
+            try { h(converted, convView); }
             catch (e) { console.error('[ws] handler error for', converted.type, ':', e.message); }
           }
         }
         // Also dispatch the original event (for status tracking, etc.)
+        // Interactive events keep the real view (render into hidden container).
+        const origView = (msg.type === 'askUser' || msg.type === 'askPermission') ? activeView : streamDispatchView(activeView);
         const list = handlers[msg.type];
         if (list) for (const h of list) {
-          try { h(msg, activeView); }
+          try { h(msg, origView); }
           catch (e) { console.error('[ws] handler error for', msg.type, ':', e.message); }
         }
         setActiveView(savedView); // restore pre-message view (BUG 6)

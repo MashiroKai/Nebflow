@@ -185,6 +185,21 @@ export function isCanvasOpen() {
 
 // ── Tab management ─────────────────────────────────────────
 
+/** Dispose a closing tab's Monaco editor, freeing the shared model once no
+ *  other live editor references it (models are never auto-freed — without
+ *  this every file ever opened stays in memory). Tabs in rendered mode
+ *  (markdown source toggle) have no mounted handle; their cached model is
+ *  released by path instead. Safe for panes that never had an editor. */
+function disposeTabEditor(entry) {
+  const handle = entry.paneEl?._editorHandle;
+  if (handle) {
+    handle.dispose({ disposeModel: true });
+    entry.paneEl._editorHandle = null;
+  } else if (entry.absPath) {
+    import('./monacoEditor.js').then((m) => m.releaseModelIfUnused(entry.absPath));
+  }
+}
+
 /** Open a tab — create it if it doesn't exist, then switch to it.
  *  Opens the canvas panel if it's not already open.
  *
@@ -215,10 +230,7 @@ export function openTab(id, title, opts = {}) {
     if (oldPreviewId && oldPreviewId !== id) {
       const oldEntry = tabs.get(oldPreviewId);
       if (oldEntry) {
-        if (oldEntry.paneEl._editorHandle) {
-          oldEntry.paneEl._editorHandle.dispose();
-          oldEntry.paneEl._editorHandle = null;
-        }
+        disposeTabEditor(oldEntry);
         document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: oldPreviewId } }));
         oldEntry.paneEl.remove();
         oldEntry.tabEl.remove();
@@ -302,10 +314,7 @@ export function closeTab(id) {
   if (!entry) return;
 
   // Dispose Monaco editor if present
-  if (entry.paneEl._editorHandle) {
-    entry.paneEl._editorHandle.dispose();
-    entry.paneEl._editorHandle = null;
-  }
+  disposeTabEditor(entry);
 
   document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id } }));
 
@@ -327,10 +336,7 @@ export function closeTab(id) {
   }
 
   const finalize = () => {
-    if (entry.paneEl._editorHandle) {
-      entry.paneEl._editorHandle.dispose();
-      entry.paneEl._editorHandle = null;
-    }
+    disposeTabEditor(entry);
     entry.paneEl.remove();
     entry.tabEl.remove();
     tabs.delete(id);
@@ -521,10 +527,7 @@ export async function openWorkspaceItem(item) {
   if (!pinned && oldPreviewId && oldPreviewId !== id) {
     const oldEntry = tabs.get(oldPreviewId);
     if (oldEntry) {
-      if (oldEntry.paneEl._editorHandle) {
-        oldEntry.paneEl._editorHandle.dispose();
-        oldEntry.paneEl._editorHandle = null;
-      }
+      disposeTabEditor(oldEntry);
       document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: oldPreviewId } }));
       oldEntry.paneEl.remove();
       oldEntry.tabEl.remove();

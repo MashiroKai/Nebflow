@@ -57,9 +57,12 @@ function ensureStepView(sessionId) {
   const view = new ChatView('bgagent-' + sessionId, fakeDom);
   view.mounted = true;
   view.sessionId = sessionId;
+  // Hidden until the popup opens — ws.js gates DOM rendering while false.
+  view.visible = false;
 
   const entry = { view, container, meta: { agentName: '', task: '', status: '' }, historyLoaded: false };
   stepViews.set(sessionId, entry);
+  enforceStepViewCap();
   return entry;
 }
 
@@ -75,6 +78,20 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   currentStepId = nodeSessionId;
 
   const entry = ensureStepView(currentStepId);
+  entry.view.visible = true;
+
+  // Events were skipped while hidden → DOM is stale or empty. Force a full
+  // refresh from backend history (same pipeline as first open) and seed
+  // in-flight stream text so the current turn's tail renders live.
+  if (entry.view.dirtyWhileHidden) {
+    entry.view.dirtyWhileHidden = false;
+    entry.view.resetStream();
+    entry.container.innerHTML = '';
+    entry.historyLoaded = false;
+    const sid = entry.view.sessionId;
+    if (state.sessionTexts[sid]) entry.view.stream.aiText = state.sessionTexts[sid];
+    if (state.sessionThinkingBuffers[sid]) entry.view.stream.thinkingText = state.sessionThinkingBuffers[sid];
+  }
 
   popupOverlay = document.createElement('div');
   popupOverlay.className = 'flow-agent-overlay fullscreen';
@@ -173,8 +190,10 @@ export function closeStepPopup() {
   if (currentStepId) {
     const entry = stepViews.get(currentStepId);
     if (entry) {
+      entry.view.visible = false; // hidden — ws.js gates DOM rendering again
       getHiddenRoot().appendChild(entry.container);
       entry.footerEl = null;
+      if (entry.meta.status === 'done') cleanupBgAgentView(currentStepId);
     }
   }
   if (popupResizeObs) {
@@ -191,6 +210,22 @@ export function removeStepView(sessionId) {
   if (entry) {
     entry.container.remove();
     stepViews.delete(sessionId);
+  }
+}
+
+/** Simple LRU — evict oldest views (Map insertion order) beyond the cap.
+ *  Never evicts the currently open view. */
+const STEP_VIEW_LRU_CAP = 20;
+function enforceStepViewCap() {
+  while (stepViews.size > STEP_VIEW_LRU_CAP) {
+    let evicted = false;
+    for (const key of stepViews.keys()) {
+      if (key === currentStepId && popupOverlay) continue;
+      removeStepView(key);
+      evicted = true;
+      break;
+    }
+    if (!evicted) break;
   }
 }
 
@@ -324,6 +359,8 @@ export function cleanupBgAgentView(nodeSessionId) {
   // Keep the view for a few seconds so the user can read the output,
   // then remove it.
   setTimeout(() => {
+    // Never destroy the view while the user is looking at it.
+    if (currentStepId === nodeSessionId && popupOverlay) return;
     removeStepView(nodeSessionId);
   }, 5000);
 }

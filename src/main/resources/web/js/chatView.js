@@ -32,6 +32,16 @@ export class ChatView {
     this.sessionId = null;
     this.mounted = true;
 
+    // ── Visibility gating ──
+    // The primary view is always visible. Popup views (flow / bg-agent) start
+    // hidden: while visible === false, ws.js dispatches their streaming events
+    // with view=null so chat.js skips DOM rendering entirely (global state
+    // buffers in state.js still accumulate — nothing is lost).
+    this.visible = true;
+    // Set when events were skipped while hidden. openStepPopup checks this to
+    // force a full history refresh instead of showing stale/partial DOM.
+    this.dirtyWhileHidden = false;
+
     // ── Streaming state ──
     this.stream = {
       aiText: '',

@@ -34,12 +34,25 @@ const VoicePlayer = {
   processing: false,
   muted: localStorage.getItem('voiceMuted') === 'true',
   _current: null, // { audio, url, element, resolve }
-  _cache: new Map(), // text → Promise<blobUrl>（流式预取 + 缓存）
+  _cache: new Map(), // text → Promise<blobUrl>（流式预取 + 缓存，有界 LRU）
+  _cacheLimit: 20,   // evicted entries get URL.revokeObjectURL — blob URLs pin memory until revoked
+
+  /** Insert into the bounded LRU cache. Evicts the oldest entry and revokes
+   *  its blob URL once the (possibly in-flight) fetch resolves. */
+  _cacheSet(text, promise) {
+    if (this._cache.has(text)) this._cache.delete(text);
+    this._cache.set(text, promise);
+    while (this._cache.size > this._cacheLimit) {
+      const [oldestKey, oldestPromise] = this._cache.entries().next().value;
+      this._cache.delete(oldestKey);
+      Promise.resolve(oldestPromise).then(url => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
+    }
+  },
 
   /** 流式预取：检测到完整 voice 块时立即发起 TTS 请求（并行，不等结果）。 */
   prefetch(text) {
     if (!text || this._cache.has(text)) return;
-    this._cache.set(text, this._fetchTts(text));
+    this._cacheSet(text, this._fetchTts(text));
   },
 
   /** 调用后端 TTS API，返回 blobUrl 的 Promise。 */
@@ -60,9 +73,15 @@ const VoicePlayer = {
 
   /** 获取音频 URL：有缓存用缓存（可能还在 in-flight），没有就发请求。 */
   async _getAudioUrl(text) {
-    if (this._cache.has(text)) return await this._cache.get(text);
+    if (this._cache.has(text)) {
+      // LRU touch — move to newest so frequently replayed clips survive.
+      const p = this._cache.get(text);
+      this._cache.delete(text);
+      this._cache.set(text, p);
+      return await p;
+    }
     const p = this._fetchTts(text);
-    this._cache.set(text, p);
+    this._cacheSet(text, p);
     return await p;
   },
 
@@ -113,7 +132,13 @@ const VoicePlayer = {
     this.queue = [];
     if (this._current) {
       this._current.audio.pause();
-      this._current.resolve('cancelled');
+      // Revoke the in-flight blob URL and drop its cache entry so the revoked
+      // URL can never be replayed from cache (a replay simply re-fetches).
+      const cur = this._current;
+      const text = cur.element ? cur.element.textContent : null;
+      if (text) this._cache.delete(text);
+      if (cur.url) URL.revokeObjectURL(cur.url);
+      cur.resolve('cancelled');
     }
   },
 
@@ -312,53 +337,114 @@ export function formatHm(ms) {
   return String(d.getHours()).padStart(2, '0') + ':' + mm;
 }
 
+// ---------- rAF stream render scheduler ----------
+// Coalesces high-frequency streaming deltas into one DOM render per frame.
+// Slots are keyed per (view, key) so concurrent views (main window + an open
+// popup) and concurrent streams (ai / agent:<id> / ask) coalesce independently.
+// The target is refreshed on every delta, so the pending rAF always renders
+// the latest accumulated text into the latest bubble. This generalizes the
+// module-level rAF pattern of appendThinkingDelta.
+function scheduleStreamRender(view, key, target, render) {
+  if (!view._streamRafSlots) view._streamRafSlots = {};
+  let slot = view._streamRafSlots[key];
+  if (!slot) slot = view._streamRafSlots[key] = { raf: null, target: null, render: null };
+  slot.target = target;
+  slot.render = render;
+  if (!slot.raf) {
+    slot.raf = requestAnimationFrame(() => {
+      slot.raf = null;
+      const t = slot.target; slot.target = null;
+      const r = slot.render; slot.render = null;
+      if (t && r) r(t);
+    });
+  }
+}
+
+/** Cancel a pending stream render — finish*() calls this before its final render. */
+function cancelStreamRender(view, key) {
+  const slot = view && view._streamRafSlots ? view._streamRafSlots[key] : null;
+  if (slot && slot.raf) {
+    cancelAnimationFrame(slot.raf);
+    slot.raf = null;
+    slot.target = null;
+    slot.render = null;
+  }
+}
+
+/** rAF-time scroll — mirrors smartScroll()'s snapped || near-bottom logic but
+ *  scrolls the chat element captured at schedule time (activeView may point
+ *  elsewhere by fire time). Same approach as appendThinkingDelta's rAF. */
+function rafScrollChat(target) {
+  const threshold = 60;
+  if (target.snapped || target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+    target.chat.scrollTop = target.chat.scrollHeight;
+  }
+}
+
 // ---------- AI text streaming ----------
 export function appendAiText(text) {
-  const chat = activeView.dom.chat;
-  activeView.stream.aiText += text;
+  const view = activeView;
+  const chat = view.dom.chat;
+  view.stream.aiText += text;
   // 流式检测：发现完整的 <voice>...</voice> 块立即并行预取 TTS
-  const voiceMatches = activeView.stream.aiText.match(/<voice>([\s\S]+?)<\/voice>/g);
+  const voiceMatches = view.stream.aiText.match(/<voice>([\s\S]+?)<\/voice>/g);
   if (voiceMatches) {
     voiceMatches.forEach(m => {
       const content = m.replace(/<\/?voice>/g, '').trim();
       VoicePlayer.prefetch(content);
     });
   }
-  if (activeView.stream.currentAiBubble && activeView.stream.currentAiBubble.classList.contains('thinking-placeholder')) {
+  if (view.stream.currentAiBubble && view.stream.currentAiBubble.classList.contains('thinking-placeholder')) {
     if (window.__stopThinkingTimer) window.__stopThinkingTimer();
-    activeView.stream.currentAiBubble.classList.remove('thinking-placeholder');
-    activeView.stream.currentAiBubble.innerHTML = '';
+    view.stream.currentAiBubble.classList.remove('thinking-placeholder');
+    view.stream.currentAiBubble.innerHTML = '';
   }
-  if (!activeView.stream.currentAiBubble) {
+  if (!view.stream.currentAiBubble) {
     const row = document.createElement('div');
     row.className = 'row ai';
-    activeView.stream.currentAiBubble = document.createElement('div');
-    activeView.stream.currentAiBubble.className = 'bubble ai';
-    row.appendChild(activeView.stream.currentAiBubble);
+    view.stream.currentAiBubble = document.createElement('div');
+    view.stream.currentAiBubble.className = 'bubble ai';
+    row.appendChild(view.stream.currentAiBubble);
     chat.appendChild(row);
   }
-  const askBox = activeView.stream.currentAiBubble.querySelector('.option-box');
-  if (askBox) askBox.remove();
-  const cursor = '<span class="cursor"></span>';
-  activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '') + cursor;
-  if (askBox) activeView.stream.currentAiBubble.appendChild(askBox);
-  smartScroll();
+  // Preserve any option box across re-renders: keep it OUT of the bubble while
+  // streaming so innerHTML replacement can't destroy its event listeners.
+  const askBox = view.stream.currentAiBubble.querySelector('.option-box');
+  if (askBox) { askBox.remove(); view.stream.aiStreamAskBox = askBox; }
+  // rAF-throttled render — accumulate on every delta, render at most once per
+  // frame. The full accumulated text lives on the bubble node so the rAF never
+  // depends on which view is active at fire time.
+  const bubble = view.stream.currentAiBubble;
+  bubble._nfText = view.stream.aiText || '';
+  scheduleStreamRender(view, 'ai',
+    { bubble, chat, snapped: view.stream.scrollSnapped },
+    (target) => {
+      if (!target.bubble.isConnected) return;
+      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
+      const box = view.stream.aiStreamAskBox;
+      if (box) target.bubble.appendChild(box);
+      rafScrollChat(target);
+    });
 }
 
 export function finishAi(durationMs, model) {
+  // Cancel any pending throttled render — this final render supersedes it.
+  cancelStreamRender(activeView, 'ai');
   if (activeView.stream.currentAiBubble) {
     if (!activeView.stream.aiText || !activeView.stream.aiText.trim()) {
       const row = activeView.stream.currentAiBubble.closest('.row');
       if (row) row.remove();
       activeView.stream.currentAiBubble = null;
       activeView.stream.aiText = '';
+      activeView.stream.aiStreamAskBox = null;
       return null;
     }
-    const askBox = activeView.stream.currentAiBubble.querySelector('.option-box');
+    const askBox = activeView.stream.aiStreamAskBox || activeView.stream.currentAiBubble.querySelector('.option-box');
     if (askBox) askBox.remove();
     const bubble = activeView.stream.currentAiBubble;
     bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
     if (askBox) bubble.appendChild(askBox);
+    activeView.stream.aiStreamAskBox = null;
     const ts = Date.now();
     let hasBadge = false;
     if (durationMs != null && durationMs > 0) {
@@ -517,8 +603,9 @@ export function renderDurationBadge(bubble, durationMs, model, seed, timestamp, 
 
 // ---------- Multi-agent rendering ----------
 export function appendAgentText(agentId, text) {
-  const chat = activeView.dom.chat;
-  if (!activeView.stream.agentBubbles[agentId]) {
+  const view = activeView;
+  const chat = view.dom.chat;
+  if (!view.stream.agentBubbles[agentId]) {
     const row = document.createElement('div');
     row.className = 'row ai agent-row';
     const bubble = document.createElement('div');
@@ -535,16 +622,23 @@ export function appendAgentText(agentId, text) {
     }
     row.appendChild(bubble);
     chat.appendChild(row);
-    activeView.stream.agentBubbles[agentId] = { bubble, text: '', row, badge };
+    view.stream.agentBubbles[agentId] = { bubble, text: '', row, badge };
   }
-  const a = activeView.stream.agentBubbles[agentId];
+  const a = view.stream.agentBubbles[agentId];
   a.text += text;
-  const cursor = '<span class="cursor"></span>';
-  a.bubble.innerHTML = renderMarkdownWithMath(a.text) + cursor;
-  smartScroll();
+  // rAF-throttled render (same scheduler as appendAiText)
+  a.bubble._nfText = a.text;
+  scheduleStreamRender(view, 'agent:' + agentId,
+    { bubble: a.bubble, chat, snapped: view.stream.scrollSnapped },
+    (target) => {
+      if (!target.bubble.isConnected) return;
+      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
+      rafScrollChat(target);
+    });
 }
 
 export function finishAgent(agentId) {
+  cancelStreamRender(activeView, 'agent:' + agentId);
   const a = activeView.stream.agentBubbles[agentId];
   if (a) {
     if (!a.text || a.text.trim() === '') {
@@ -1537,31 +1631,40 @@ export function renderSkillBubble(skillName, text) {
 }
 
 export function appendAskAnswer(delta) {
-  const chat = activeView.dom.chat;
-  activeView.stream.askAnswerText += delta;
-  if (!activeView.stream.currentAskBubble) {
+  const view = activeView;
+  const chat = view.dom.chat;
+  view.stream.askAnswerText += delta;
+  if (!view.stream.currentAskBubble) {
     const row = document.createElement('div');
     row.className = 'row ai';
-    activeView.stream.currentAskBubble = document.createElement('div');
-    activeView.stream.currentAskBubble.className = 'bubble ai';
+    view.stream.currentAskBubble = document.createElement('div');
+    view.stream.currentAskBubble.className = 'bubble ai';
     const label = document.createElement('div');
     label.className = 'ask-label';
     label.textContent = t('chat.askLabel');
     const content = document.createElement('div');
-    activeView.stream.currentAskBubble.appendChild(label);
-    activeView.stream.currentAskBubble.appendChild(content);
-    row.appendChild(activeView.stream.currentAskBubble);
+    view.stream.currentAskBubble.appendChild(label);
+    view.stream.currentAskBubble.appendChild(content);
+    row.appendChild(view.stream.currentAskBubble);
     chat.appendChild(row);
   }
-  const contentEl = activeView.stream.currentAskBubble.querySelector('div:not(.ask-label)');
-  if (contentEl) {
-    const cursor = '<span class="cursor"></span>';
-    contentEl.innerHTML = renderMarkdownWithMath(activeView.stream.askAnswerText || '') + cursor;
-  }
-  smartScroll();
+  // rAF-throttled render (same scheduler as appendAiText)
+  const bubble = view.stream.currentAskBubble;
+  bubble._nfText = view.stream.askAnswerText || '';
+  scheduleStreamRender(view, 'ask',
+    { bubble, chat, snapped: view.stream.scrollSnapped },
+    (target) => {
+      if (!target.bubble.isConnected) return;
+      const contentEl = target.bubble.querySelector('div:not(.ask-label)');
+      if (contentEl) {
+        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
+      }
+      rafScrollChat(target);
+    });
 }
 
 export function finishAskAnswer(durationMs, model) {
+  cancelStreamRender(activeView, 'ask');
   if (activeView.stream.currentAskBubble) {
     const contentEl = activeView.stream.currentAskBubble.querySelector('div:not(.ask-label)');
     if (contentEl) {
@@ -1577,6 +1680,7 @@ export function finishAskAnswer(durationMs, model) {
 }
 
 export function renderAskError(msg) {
+  cancelStreamRender(activeView, 'ask');
   // Clean up any in-progress ask bubble
   if (activeView.stream.currentAskBubble) {
     const row = activeView.stream.currentAskBubble.closest('.row');

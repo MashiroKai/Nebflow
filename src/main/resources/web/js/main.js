@@ -751,6 +751,9 @@ onMessage('error', (msg, view) => {
   if (sid) delete state.pendingRestore[sid];
   if (sid) delete state.sessionPendingAiMessages[sid];
   if (sid) delete state.turnExpecting[sid];
+  // Drop accumulated stream buffers — the turn is over (aligned with done path)
+  if (sid) delete state.sessionTexts[sid];
+  if (sid) delete state.sessionThinkingBuffers[sid];
   // Defensive: clear attention on error
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) state.answeredPermissions.delete(sid);
@@ -781,6 +784,9 @@ onMessage('interrupted', (msg, view) => {
   if (sid) delete state.pendingRestore[sid];
   if (sid) delete state.sessionPendingAiMessages[sid];
   if (sid) delete state.turnExpecting[sid];
+  // Drop accumulated stream buffers — the turn is over (aligned with done path)
+  if (sid) delete state.sessionTexts[sid];
+  if (sid) delete state.sessionThinkingBuffers[sid];
   // Defensive: clear attention on interrupt
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) state.answeredPermissions.delete(sid);
@@ -800,6 +806,9 @@ onMessage('timeout', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) delete state.sessionPendingAiMessages[sid];
+  // Drop accumulated stream buffers — the turn is over (aligned with done path)
+  if (sid) delete state.sessionTexts[sid];
+  if (sid) delete state.sessionThinkingBuffers[sid];
   if (sid) state.answeredPermissions.delete(sid);
   if (view) {
     finishThinking();
@@ -818,6 +827,9 @@ onMessage('maxTokens', (msg, view) => {
   if (sid) delete state.pendingRestore[sid];
   if (sid) delete state.sessionPendingAiMessages[sid];
   if (sid) delete state.turnExpecting[sid];
+  // Drop accumulated stream buffers — the turn is over (aligned with done path)
+  if (sid) delete state.sessionTexts[sid];
+  if (sid) delete state.sessionThinkingBuffers[sid];
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) state.answeredPermissions.delete(sid);
   if (view) {
