@@ -1611,9 +1611,9 @@ onMessage('user', (msg, view) => {
   const sid = msg.sessionId;
   if (!sid) return;
   state.turnExpecting[sid] = true;
-  saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null }, sid);
+  saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null }, sid);
   if (sid === state.activeSessionId && view) {
-    renderInjectedBubble(msg.text, msg.source, msg.timestamp);
+    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType);
     smartScroll();
   }
 });
