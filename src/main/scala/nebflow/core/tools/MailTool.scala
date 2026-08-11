@@ -647,14 +647,21 @@ Message type (optional, default "INFO"):
             // protocol.scala stamps every subagent event with nodeSessionId =
             // sessionId, so the old "if nodeSessionId absent" guard was always
             // true and the "team-" prefix never applied. Overwrite explicitly,
-            // except for "delegate-..." ids stamped by DelegateTool.routeWsSend
-            // (sub-agents the team agent spawned via Delegate must keep their
-            // own prefix so their events route to the delegate popup, not here).
+            // except for ids already stamped by an inner wrapper:
+            //  - "delegate-..." stamped by DelegateTool.routeWsSend (sub-agents
+            //    the team agent spawned via Delegate keep their own prefix so
+            //    their events route to the delegate popup, not here)
+            //  - "team-..." stamped by an INNER MailTool wrapper — in nested
+            //    Mail activation (Nebula→Manager→Frontend) the innermost
+            //    wrapper stamps the true source; outer wrappers must preserve
+            //    it, otherwise the frontend strips the outer team- prefix and
+            //    marks the wrong agent (Manager) running while the real
+            //    sub-agent (Frontend) stays idle
             val teamWsSend: Json => IO[Unit] = (json: Json) =>
               val underlying = ctx.wsSend.getOrElse((_: Json) => IO.unit)
               val nsidOpt = json.hcursor.downField("nodeSessionId").as[String].toOption
               val stamped = nsidOpt match
-                case Some(nsid) if nsid.startsWith("delegate-") => json
+                case Some(nsid) if nsid.startsWith("delegate-") || nsid.startsWith("team-") => json
                 case _ =>
                   json.asObject
                     .map(obj => Json.fromJsonObject(obj.add("nodeSessionId", s"team-${session.id}".asJson)))
