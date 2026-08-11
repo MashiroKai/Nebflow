@@ -152,6 +152,7 @@ export default {
   updateBypassToggle: null,
   updateSafetyToggle: null,
   COMPACT_THRESHOLD: 0.90,
+  updateHeaderModelInfo: null,
 
   // Card design prompt
   cardDesignPrompt: '',

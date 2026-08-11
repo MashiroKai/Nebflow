@@ -101,6 +101,7 @@ function switchToSession(sessionId) {
 
   renderSessionSidebar(state.sessions, sessionId);
   // Sync header indicators
+  if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
   if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
   if (typeof state.updateDelegateIndicator === 'function') state.updateDelegateIndicator();
   if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(chatViews.primary);
@@ -1856,6 +1857,13 @@ window.addEventListener('session-compacting', (e) => {
   updateSessionStatus(e.detail.sessionId);
   computeAgentStates();
 });
+
+/** Refresh header model-info bar for the active session. */
+export function initHeaderModelInfo() {
+  if (typeof state.updateHeaderModelInfo === 'function') {
+    state.updateHeaderModelInfo();
+  }
+}
 
 
 /** Determine which agent a new session/folder should belong to, based on context.

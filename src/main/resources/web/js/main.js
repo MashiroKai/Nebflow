@@ -17,6 +17,7 @@ import {
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
+  initHeaderModelInfo,
   persistUnread, createNewFolder, getCurrentFolderId,
   resetChatForActiveSession
 } from './sidebar.js';
@@ -144,6 +145,7 @@ state.dom = {
   bgDropdownEl: document.getElementById('bg-dropdown'),
   bgDropdownListEl: document.getElementById('bg-dropdown')?.querySelector('.bg-dropdown-list'),
   // Header status indicators — surfaced on state.dom for ws.js indicator updates.
+  headerModelInfoEl: document.getElementById('header-model-info'),
   bypassToggleEl: document.getElementById('bypass-toggle'),
   delegateIndicatorEl: document.getElementById('delegate-indicator'),
   delegateDropdownEl: document.getElementById('delegate-dropdown'),
@@ -170,6 +172,7 @@ initChatView(
     voiceBtn: document.getElementById('voice-btn'),
     voiceOverlay: document.getElementById('voice-overlay'),
     voiceText: document.getElementById('voice-text'),
+    headerModelInfoEl: document.getElementById('header-model-info'),
     bgIndicatorEl: document.getElementById('bg-indicator'),
     bgCountEl: document.getElementById('bg-indicator')?.querySelector('.bg-count'),
     bgDropdownEl: document.getElementById('bg-dropdown'),
@@ -507,6 +510,94 @@ onMessage('toolArgDelta', (msg, view) => {
 // Header model info display
 if (!state.sessionModelInfo) state.sessionModelInfo = {};
 
+function formatTokens(n) {
+  if (n == null) return '';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return Math.round(n / 1000) + 'k';
+  return String(n);
+}
+
+function updateHeaderModelInfo() {
+  if (!activeView) return;
+  const el = activeView.dom.headerModelInfoEl;
+  if (!el) return;
+  const sid = activeView?.sessionId;
+  const info = sid ? state.sessionModelInfo[sid] : null;
+  if (!info || !info.contextWindow) {
+    el.textContent = '';
+    el.style.display = 'none';
+    return;
+  }
+  const ratio = info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
+  const pct = Math.min(Math.round(ratio * 100), 100);
+  let barColor = '#4caf50';
+  if (ratio > 0.5) barColor = '#d4a030';
+  if (ratio > 0.75) barColor = '#e53935';
+
+  const thresholdPct = Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
+  const tooltip = info.inputTokens != null
+    ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%) · threshold ${thresholdPct}%`
+    : `${formatTokens(info.contextWindow)} context window`;
+
+  const R = 15;
+  const CIRC = 2 * Math.PI * R;
+  const dashLen = CIRC * pct / 100;
+  const thresholdAngle = thresholdPct * 3.6;
+
+  el.style.display = 'inline-flex';
+
+  const existingBar = el.querySelector('.ctx-bar-wrap');
+  const existingRing = el.querySelector('.ctx-ring-wrap');
+
+  if (existingBar && existingRing) {
+    existingBar.title = tooltip;
+    const fill = existingBar.querySelector('.ctx-bar-fill');
+    if (fill) { fill.style.width = pct + '%'; fill.style.background = barColor; }
+    const threshold = existingBar.querySelector('.ctx-bar-threshold');
+    if (threshold) threshold.style.left = thresholdPct + '%';
+    const thresholdLabel = existingBar.querySelector('.ctx-bar-threshold-label');
+    if (thresholdLabel) { thresholdLabel.style.left = thresholdPct + '%'; thresholdLabel.textContent = thresholdPct + '%'; }
+    const label = existingBar.querySelector('.ctx-bar-label');
+    if (label) label.textContent = `${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}`;
+    existingRing.title = tooltip;
+    const ringFill = existingRing.querySelector('circle:nth-child(2)');
+    if (ringFill) {
+      ringFill.setAttribute('stroke', barColor);
+      ringFill.setAttribute('stroke-dasharray', `${dashLen} ${CIRC}`);
+    }
+    const ringLine = existingRing.querySelector('.ctx-ring-threshold');
+    if (ringLine) ringLine.setAttribute('transform', `rotate(${thresholdAngle} 18 18)`);
+    const ringPct = existingRing.querySelector('.ctx-ring-pct');
+    if (ringPct) ringPct.textContent = pct;
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="ctx-bar-wrap ctx-full" title="${tooltip}">
+      <div class="ctx-bar-track">
+        <div class="ctx-bar-fill" style="width:${pct}%;background:${barColor};"></div>
+        <div class="ctx-bar-threshold" style="left:${thresholdPct}%;"></div>
+        <div class="ctx-bar-threshold-label" style="left:${thresholdPct}%;">${thresholdPct}%</div>
+      </div>
+      <span class="ctx-bar-label">${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}</span>
+    </div>
+    <div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
+      <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
+        <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
+        <circle cx="18" cy="18" r="${R}" fill="none" stroke="${barColor}" stroke-width="3.5"
+                stroke-dasharray="${dashLen} ${CIRC}"
+                stroke-linecap="round"
+                transform="rotate(-90 18 18)"
+                style="transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"/>
+        <line x1="18" y1="1.5" x2="18" y2="5" stroke="rgba(200,80,80,0.7)" stroke-width="1.5"
+              transform="rotate(${thresholdAngle} 18 18)"
+              class="ctx-ring-threshold"/>
+      </svg>
+      <span class="ctx-ring-pct">${pct}</span>
+    </div>
+  `;
+}
+state.updateHeaderModelInfo = updateHeaderModelInfo;
 
 // Real-time usage update after each LLM round (multi-round tool calling)
 onMessage('usageUpdate', (msg, view) => {
@@ -519,6 +610,7 @@ onMessage('usageUpdate', (msg, view) => {
       compactThreshold: msg.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
+    if (view) updateHeaderModelInfo();
   }
 });
 
@@ -542,6 +634,7 @@ onMessage('done', (msg, view) => {
       compactThreshold: msg.compactThreshold != null ? msg.compactThreshold : state.sessionModelInfo[sid]?.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
+    if (view) updateHeaderModelInfo();
   }
   // Flush any remaining buffered text/thinking for this session
   if (msg.sessionId) {
@@ -838,6 +931,7 @@ onMessage('sessionList', (msg, view) => {
   const activeId = msg.activeId;
 
   renderSessionSidebar(allSessions, activeId);
+  initHeaderModelInfo();
   // Mark the initial session as restored — getHistory is already sent by
   // resetChatForActiveSession (called inside renderSessionSidebar when activeId changes).
   if (!restoredSessionId && activeId) {
@@ -1423,6 +1517,7 @@ onMessage('agentSessionList', (msg, view) => {
 
   // Render sidebar — active highlight shows the current active session
   renderSessionSidebar(sessions, state.activeSessionId);
+  initHeaderModelInfo();
 });
 
 onMessage('agentSystemPrompt', (msg, view) => showAgentModal(msg.name, msg.systemMd || ''));

@@ -100,6 +100,66 @@
 
 /* Context window indicator — always compact ring */
 
+#header #header-model-info {
+  display: none;
+  color: var(--color-frame-text-muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+.ctx-bar-wrap {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  user-select: none;
+}
+.ctx-bar-track {
+  position: relative;
+  width: 72px;
+  height: 4px;
+  background: rgba(128,128,128,0.15);
+  border-radius: 2px;
+  overflow: visible;
+  user-select: none;
+}
+.ctx-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease, background 0.4s ease;
+}
+.ctx-bar-threshold {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 12px;
+  background: rgba(128,128,128,0.5);
+  border-radius: 1px;
+  transition: background 0.15s ease, height 0.15s ease, top 0.15s ease;
+  z-index: 2;
+}
+.ctx-bar-threshold-label {
+  position: absolute;
+  top: -18px;
+  font-size: 9px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: rgba(200,80,80,0.9);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+.ctx-bar-threshold-label.visible { opacity: 1; }
+.ctx-bar-label {
+  font-size: 10px;
+  color: var(--color-frame-text-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  letter-spacing: 0.2px;
+}
+
 /* Compact ring — always shown (read-only threshold marker) */
 .ctx-ring-wrap {
   display: inline-flex;
