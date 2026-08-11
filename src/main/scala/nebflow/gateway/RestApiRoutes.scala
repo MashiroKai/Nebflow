@@ -1535,9 +1535,10 @@ class RestApiRoutes(
       teams <- EntityLoader.listTeams()
       teamsList <- teamsMap.toList.sortBy(_._1).traverse { (instanceName, agents) =>
         val teamDefOpt = teams.get(instanceName)
-        // Only render agents declared in team.json (lead + members). Ephemeral
-        // sessions (delegate-* sub-agents) are registered for Mail routing but
-        // must not appear as team tiles. Fall back to all agents when the team
+        // Only render agents declared in team.json (lead + members). Delegate /
+        // SubTask sub-agents are no longer registered in TeamSessionRegistry
+        // (no Mail identity), so no ghost tiles can appear here; the filter
+        // remains as defense-in-depth. Fall back to all agents when the team
         // definition is missing (legacy behavior).
         val memberNames = teamDefOpt.map(td => (td.lead :: td.members).toSet)
         agents

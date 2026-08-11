@@ -686,6 +686,8 @@ Message type (optional, default "INFO"):
             //  - "delegate-..." stamped by DelegateTool.routeWsSend (sub-agents
             //    the team agent spawned via Delegate keep their own prefix so
             //    their events route to the delegate popup, not here)
+            //  - "subtask-..." stamped by SubTaskTool.routeWsSend (same for
+            //    SubTask workers spawned by team members)
             //  - "team-..." stamped by an INNER MailTool wrapper — in nested
             //    Mail activation (Nebula→Manager→Frontend) the innermost
             //    wrapper stamps the true source; outer wrappers must preserve
@@ -696,7 +698,9 @@ Message type (optional, default "INFO"):
               val underlying = ctx.wsSend.getOrElse((_: Json) => IO.unit)
               val nsidOpt = json.hcursor.downField("nodeSessionId").as[String].toOption
               val stamped = nsidOpt match
-                case Some(nsid) if nsid.startsWith("delegate-") || nsid.startsWith("team-") => json
+                case Some(nsid)
+                    if nsid.startsWith("delegate-") || nsid.startsWith("subtask-") || nsid.startsWith("team-") =>
+                  json
                 case _ =>
                   json.asObject
                     .map(obj => Json.fromJsonObject(obj.add("nodeSessionId", s"team-${session.id}".asJson)))

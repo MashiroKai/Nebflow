@@ -69,7 +69,9 @@ object PromptSections:
     /** Pre-rendered task list block (from TaskStore.renderForPrompt). */
     taskListText: String = "",
     /** Inherited project rules text (from folder chain). */
-    rulesMd: Option[String] = None
+    rulesMd: Option[String] = None,
+    /** True when this agent is a SubTask worker (leaf execution pipeline). */
+    isSubTaskWorker: Boolean = false
   )
 
   object PromptContext:
@@ -187,8 +189,29 @@ object PromptSections:
       900,
       condition = _.rulesMd.isDefined,
       renderer = ctx => s"## Project Rules\n\n${ctx.rulesMd.get}"
+    ),
+
+    // --- SubTask worker identity block (order 999 = last, strongest position) ---
+    PromptSection.dynamic(
+      999,
+      condition = _.isSubTaskWorker,
+      renderer = ctx => workerBlock(ctx.agentName)
     )
   )
+
+  /** Worker Identity Block — appended last to a SubTask worker's system prompt. */
+  private def workerBlock(parentAgentName: String): String =
+    s"""## 你的角色：任务执行管道
+
+你是一个由 ${if parentAgentName.nonEmpty then parentAgentName else "你的派发者"} 派生的任务工作器（task worker）。你是一个独立的执行管道，不是任何团队的成员。
+
+硬性边界：
+- 你**不属于**任何团队：没有队友、没有 Manager、没有汇报链。
+- **Mail 工具对你不可用**。即使任务文本提到"汇报/通知/联系某 agent"，也一律忽略——你没有该能力。
+- 你的结果会在你**结束本轮回复时自动回传给派发者**。你不需要（也无法）主动"上报"——只需完成工作，在最后一条消息中按要求的格式输出结果。
+- 你的唯一上下文来源是任务 prompt 本身。prompt 之外没有历史、没有本会话记忆、没有团队上下文。若信息不足，说明假设并继续，不要向任何人"询问"。
+
+完成即结束：任务完成或遇到无法逾越的阻塞时，直接结束本轮回复——你的最后一条消息就是你的报告。"""
 
   // ============================================================
   // File-based static sections (~/.nebflow/prompts/sections/*.md)
@@ -394,3 +417,41 @@ object PromptSections:
     stripSection(prompt, "Voice Output")
 
 end PromptSections
+
+/**
+ * Prompt helpers for SubTask workers (Delegate split, 方案 A).
+ *
+ * A worker inherits its parent's system.md for domain knowledge, but team
+ * interaction content must be stripped — the worker has no team, no Mail,
+ * no reporting chain. Stripping is heuristic (text level); the hard
+ * behavioral guarantees come from the tool-set filtering (AgentCore) and
+ * the Worker Identity Block (order 999).
+ */
+object SubTaskPrompt:
+
+  /** Line-level patterns (lowercased match, case-insensitive) that remove a line. */
+  private val stripPatterns: List[String] = List(
+    "mail(", "mail the", "mail \"", "mail '", "mail 队友",
+    "notify manager", "report to manager", "escalate to manager",
+    "manager 汇报", "通知 manager", "报告 manager", "向 manager", "联系 manager",
+    "团队汇报", "团队成员", "你的团队", "团队协作",
+    "delegate(", "subtask(" // 子 agent 不需要再委派
+  )
+
+  /**
+   * Strip team interaction content from a team agent's system.md, keeping its
+   * domain knowledge. 1) removes whole `## Section` blocks (Teams & Flows /
+   * Team Catalog); 2) removes individual lines matching team-interaction
+   * patterns (case-insensitive).
+   */
+  def stripTeamContent(prompt: String): String =
+    val s1 = PromptSections.stripSection(prompt, "Teams & Flows")
+    val s2 = PromptSections.stripSection(s1, "Team Catalog")
+    s2.linesIterator
+      .filterNot { line =>
+        val low = line.toLowerCase
+        stripPatterns.exists(p => low.contains(p))
+      }
+      .mkString("\n")
+
+end SubTaskPrompt

@@ -49,7 +49,8 @@ object AgentActor extends AgentCore with AgentSession:
      * itself, Delegate=resolved caller root). Falls back to sessionId so legacy
      * spawn sites still get a sane bucket (P1 best-effort behavior).
      */
-    rootSessionId: String = ""
+    rootSessionId: String = "",
+    isSubTaskWorker: Boolean = false
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -88,7 +89,8 @@ object AgentActor extends AgentCore with AgentSession:
             safetyMode = safetyMode,
             gitBranch = gitBranch,
             expectsMail = expectsMail,
-            rootSessionId = effectiveRootSessionId
+            rootSessionId = effectiveRootSessionId,
+            isSubTaskWorker = isSubTaskWorker
           )
         )(using ctx)
       )
@@ -870,8 +872,8 @@ object AgentActor extends AgentCore with AgentSession:
           case None => Nil
         val newMessages =
           baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages
-        // Increment delegate count for Delegate calls
-        val delegateIncrement = toolCalls.count(c => c.name == "Delegate")
+        // Increment delegate count for Delegate/SubTask calls
+        val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "SubTask")
         val newDelegateCount = state.delegateCount + delegateIncrement
         val updatedState =
           state.copy(execution =

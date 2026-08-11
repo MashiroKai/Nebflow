@@ -39,8 +39,10 @@ object ToolRegistry:
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Unified agent communication (message + ask modes)
       "Mail" -> MailTool,
-      // Sub-agent delegation (background + persistent modes)
+      // Sub-agent delegation (background + persistent modes) — Nebula/调度器专用
       "Delegate" -> DelegateTool,
+      // Team-member task delegation (self-clone + ephemeral worker, no Mail identity)
+      "SubTask" -> SubTaskTool,
       // Cross-device file transfer
       "TransferFile" -> TransferFileTool,
       // Load Team/Flow from disk (validate + mount)
