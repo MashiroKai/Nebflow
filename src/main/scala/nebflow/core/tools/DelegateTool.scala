@@ -398,6 +398,7 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
             )
           case None => IO.unit
         (notify *> resources.agentRegistry.update(_ - subagentId) *>
+          unregisterTeamMembership(subagentId) *>
           (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
           IO.pure(Behaviors.stopped[AgentEvent]))
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
@@ -553,6 +554,7 @@ You will be notified when the initial task completes."""
               case SystemSignal.Terminated(_) =>
                 // Persistent session died — unregister, notify parent, adapter stops
                 resources.agentRegistry.update(_ - subagentId) *>
+                  unregisterTeamMembership(subagentId) *>
                   notifyParentAndStop(
                     "failed",
                     s"[Session crashed] \"$description\": persistent session terminated unexpectedly",
@@ -569,5 +571,16 @@ You will be notified when the initial task completes."""
       }
       .filter(_.nonEmpty)
       .getOrElse("")
+
+  /**
+   * Remove the delegate's inherited team-membership entry from the session
+   * registry once the sub-agent is done. Keeps Mail routing intact while the
+   * delegate is alive; prevents ghost `delegate-*` entries after it dies.
+   */
+  private def unregisterTeamMembership(subagentId: String): IO[Unit] =
+    TeamSessionRegistry.teamOfSession(subagentId).flatMap {
+      case Some(teamName) => TeamSessionRegistry.unregisterAgent(teamName, subagentId, subagentId)
+      case None => IO.unit
+    }
 
 end DelegateTool
