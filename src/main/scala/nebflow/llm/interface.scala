@@ -230,7 +230,13 @@ object LlmInterface:
                                 // Probe Down candidates immediately instead of waiting for the
                                 // next background cycle — cuts worst-case recovery from ~2min to ~15s.
                                 fs2.Stream
-                                  .eval(notifyDown *> healthMonitor.probeNow(down) *> healthMonitor.waitForAnyUp())
+                                  .eval(
+                                    notifyDown *> healthMonitor.probeNow(down) *> healthMonitor
+                                      .waitForAnyUp()
+                                      // All candidates Down and none recovered within one probe
+                                      // cycle — surface the failure instead of blocking forever.
+                                      .timeout(ProviderHealthMonitor.ProbeIntervalSec.seconds)
+                                  )
                                   .flatMap { _ =>
                                     val notifyUp = onAttempt.traverse_(
                                       _.apply(
@@ -491,14 +497,24 @@ object LlmInterface:
                                                 val skipMsg =
                                                   if isTimeout then "inactivity timeout, skipping to next provider"
                                                   else "retries exhausted"
+                                                // Align with the Rust locked-stream guard (handle.rs):
+                                                // if partial content was already streamed (locked), a timeout
+                                                // mid-stream must NOT mark the provider Down — that would
+                                                // trigger DOWN→probe→UP→timeout→DOWN loops for slow models.
+                                                // A timeout with zero output (locked=false) still marks Down:
+                                                // the provider produced nothing, so the next request should
+                                                // try another candidate before blocking on recovery.
+                                                val markDown =
+                                                  if isTimeout && locked then IO.unit
+                                                  else healthMonitor
+                                                      .markDown(candidate.providerId, candidate.model, downReason)
                                                 fs2.Stream.eval(
                                                   resetLock *> logger.warn(
                                                     s"Stream fallback: ${candidate.providerId}/${candidate.model} $skipMsg"
                                                   )
                                                     *> failureRef.update(_ :+ attempt)
                                                     *> notify
-                                                    *> healthMonitor
-                                                      .markDown(candidate.providerId, candidate.model, downReason)
+                                                    *> markDown
                                                 ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                                               end if
                                           end match

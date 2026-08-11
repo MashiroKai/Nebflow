@@ -585,7 +585,8 @@ object FlowTreeActor:
           _ <- entryOpt.traverse_ { entry =>
             val agentDef = AgentDef(
               name = entry.name, description = entry.description, tools = entry.tools,
-              systemPrompt = entry.systemPrompt, category = entry.category,
+              systemPrompt = entry.systemPrompt, voiceEnabled = entry.voice,
+              category = entry.category,
               mcpServers = entry.mcpServers, model = entry.model
             )
             val rootSid = cfg.sessionId.getOrElse(session.id)
