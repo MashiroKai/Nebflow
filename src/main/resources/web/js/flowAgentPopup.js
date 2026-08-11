@@ -228,9 +228,12 @@ function ensureStepView(sessionId) {
   const view = new ChatView('flow-' + sessionId, fakeDom);
   view.mounted = true;
   view.sessionId = sessionId;
+  // Hidden until the popup opens — ws.js gates DOM rendering while false.
+  view.visible = false;
 
   const entry = { view, container, meta: { agentName: '', task: '', status: '' }, historyLoaded: false };
   stepViews.set(sessionId, entry);
+  enforceStepViewCap();
   return entry;
 }
 
@@ -248,6 +251,20 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
 
   // Ensure view exists (in case no events arrived yet)
   const entry = ensureStepView(currentStepId);
+  entry.view.visible = true;
+
+  // Events were skipped while hidden → DOM is stale or empty. Force a full
+  // refresh from backend history (same pipeline as first open) and seed
+  // in-flight stream text so the current turn's tail renders live.
+  if (entry.view.dirtyWhileHidden) {
+    entry.view.dirtyWhileHidden = false;
+    entry.view.resetStream();
+    entry.container.innerHTML = '';
+    entry.historyLoaded = false;
+    const sid = entry.view.sessionId;
+    if (state.sessionTexts[sid]) entry.view.stream.aiText = state.sessionTexts[sid];
+    if (state.sessionThinkingBuffers[sid]) entry.view.stream.thinkingText = state.sessionThinkingBuffers[sid];
+  }
 
   popupOverlay = document.createElement('div');
   popupOverlay.className = 'flow-agent-overlay';
@@ -439,8 +456,11 @@ export function closeStepPopup() {
   if (currentStepId) {
     const entry = stepViews.get(currentStepId);
     if (entry) {
+      entry.view.visible = false; // hidden — ws.js gates DOM rendering again
       getHiddenRoot().appendChild(entry.container);
       entry.footerEl = null;
+      // Finished agents don't need their DOM kept around — schedule cleanup.
+      if (entry.meta.status === 'done') scheduleStepViewRemoval(currentStepId);
     }
   }
   if (popupResizeObs) {
@@ -450,6 +470,53 @@ export function closeStepPopup() {
   popupOverlay.remove();
   popupOverlay = null;
   currentStepId = null;
+}
+
+// ── View cleanup (memory) ────────────────────────────────
+// Without this, every flow agent's hidden container lived forever — 10
+// finished agents ≈ 50-500MB of detached DOM. Views are destroyed a few
+// seconds after the agent finishes (user can still reopen from history),
+// and a simple LRU cap prevents long-session accumulation.
+const STEP_VIEW_TTL_MS = 8000;
+const STEP_VIEW_LRU_CAP = 20;
+const removalTimers = new Map();
+
+export function removeStepView(sessionId) {
+  const entry = stepViews.get(sessionId);
+  if (entry) {
+    if (removalTimers.has(sessionId)) {
+      clearTimeout(removalTimers.get(sessionId));
+      removalTimers.delete(sessionId);
+    }
+    entry.container.remove();
+    stepViews.delete(sessionId);
+  }
+}
+
+function scheduleStepViewRemoval(sessionId) {
+  if (removalTimers.has(sessionId)) return;
+  removalTimers.set(sessionId, setTimeout(() => {
+    removalTimers.delete(sessionId);
+    // Never destroy the view while the user is looking at it — the LRU cap
+    // reclaims it after the popup is closed.
+    if (currentStepId === sessionId && popupOverlay) return;
+    removeStepView(sessionId);
+  }, STEP_VIEW_TTL_MS));
+}
+
+/** Evict oldest views (Map insertion order) beyond the cap. Never evicts
+ *  the currently open view. */
+function enforceStepViewCap() {
+  while (stepViews.size > STEP_VIEW_LRU_CAP) {
+    let evicted = false;
+    for (const key of stepViews.keys()) {
+      if (key === currentStepId && popupOverlay) continue;
+      removeStepView(key);
+      evicted = true;
+      break;
+    }
+    if (!evicted) break;
+  }
 }
 
 // ── WS event interception ────────────────────────────────
@@ -469,6 +536,7 @@ export function interceptFlowStep(msg) {
     entry.meta.status = 'running';
   } else if (msg.type === 'agentDone' || msg.type === 'agentEnd') {
     entry.meta.status = 'done';
+    scheduleStepViewRemoval(msg.nodeSessionId);
   }
 
   // Set activeView so chat.js rendering functions target this view's container.
