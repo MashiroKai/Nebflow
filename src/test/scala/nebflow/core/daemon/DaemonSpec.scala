@@ -7,6 +7,8 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.FunSuite
 
+import scala.jdk.StreamConverters.*
+
 class DaemonSpec extends FunSuite:
 
   private def dispatcherResource: Resource[IO, Dispatcher[IO]] =
@@ -189,6 +191,39 @@ class DaemonSpec extends FunSuite:
       Thread.sleep(200)
       val state = svc.getState("sleeper").unsafeRunSync().get
       assertEquals(state.status, DaemonStatus.Stopped)
+    }
+  }
+
+  test("DaemonService: stop kills the whole process tree (parent + descendants)") {
+    assume(!sys.props.getOrElse("os.name", "").toLowerCase.contains("win"), "requires POSIX sh")
+    withDispatcher { disp =>
+      val svc = new DaemonService(disp)
+      // `sh -c` with backgrounded sleeps mimics the npm → node astro dev tree.
+      // The trailing `wait` keeps the parent shell alive so the children remain
+      // its descendants at snapshot time (a bare `&` shell exits immediately).
+      val cfg = DaemonConfig("tree-test", "Tree Test", List("sh", "-c", "sleep 30 & sleep 30 & wait"))
+      val state = svc.start(cfg).unsafeRunSync()
+      assertEquals(state.status, DaemonStatus.Running)
+      val parentPid = state.pid.getOrElse(fail("expected a pid"))
+
+      // Wait for children to spawn, then snapshot the tree BEFORE stopping.
+      Thread.sleep(600)
+      val children =
+        Option(ProcessHandle.of(parentPid).orElse(null))
+          .map(_.descendants().toScala(List))
+          .getOrElse(Nil)
+      assert(children.nonEmpty, "expected sh to have spawned sleep children")
+
+      svc.stop("tree-test").unsafeRunSync()
+      Thread.sleep(400)
+
+      assert(!ProcessHandle.of(parentPid).isPresent, s"parent pid $parentPid still alive")
+      val survivors = children.filter(ph => ProcessHandle.of(ph.pid).isPresent)
+      assertEquals(
+        survivors.map(_.pid),
+        Nil,
+        s"descendant processes still alive after stop: ${survivors.map(_.pid).mkString(", ")}"
+      )
     }
   }
 

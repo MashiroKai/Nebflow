@@ -429,6 +429,19 @@ object GatewayMain extends IOApp.Simple:
                                               val sharedResourcesWithDaemon = sharedResourcesFinal.copy(
                                                 daemonService = Some(daemonService)
                                               )
+                                              // JVM shutdown hook: daemons must die with Nebflow even when the JVM
+                                              // is killed by SIGINT/SIGTERM (Ctrl+C) — cats-effect `.guarantee`
+                                              // finalizers are not guaranteed to run on abrupt termination. The
+                                              // shutdown hook always runs on JVM exit. Idempotent: stopAll on an
+                                              // already-stopped set is a no-op, so it is safe alongside the
+                                              // graceful path in `.guarantee` below.
+                                              Runtime.getRuntime.addShutdownHook(
+                                                new Thread(
+                                                  () =>
+                                                    try daemonService.stopAll().unsafeRunSync()
+                                                    catch case _: Throwable => ()
+                                                )
+                                              )
                                               // Auto-start daemons configured with autoStart=true
                                               dispatcher.unsafeRunAndForget(
                                                 IO.sleep(2.seconds) *> daemonService

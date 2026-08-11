@@ -9,6 +9,7 @@ import java.io.{BufferedReader, InputStreamReader}
 
 import scala.collection.mutable
 import scala.concurrent.duration.*
+import scala.jdk.StreamConverters.*
 
 /**
  * Manages lifecycle of external long-running processes (development servers, etc.)
@@ -171,8 +172,17 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
     IO.blocking {
       entry.process.foreach { p =>
         try
+          // Kill the whole process tree, not just the direct parent.
+          // `p.destroy()` only signals the parent (e.g. `npm run dev`), leaving
+          // grandchildren (`node astro dev`) orphaned — still alive and holding
+          // the port. Snapshot descendants BEFORE destroying anything, since a
+          // dead parent's children get reparented and vanish from the live view.
+          val descendants = p.descendants().toScala(List)
+          descendants.foreach(_.destroy()) // SIGTERM to children
           p.destroy() // SIGTERM
-          if !p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) then p.destroyForcibly() // SIGKILL
+          if !p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) then
+            descendants.foreach(_.destroyForcibly()) // SIGKILL children
+            p.destroyForcibly() // SIGKILL parent
         catch case _: Exception => ()
       }
     } *> entry.readFiber.traverse_(_.cancel) *>
