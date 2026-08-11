@@ -26,14 +26,19 @@ object EntityLoader:
   /** Load a team definition by name from `teams/<name>/team.json`. */
   def loadTeam(name: String): IO[Option[TeamDef]] =
     IO.blocking {
-      val jsonPath = teamsDir / name / "team.json"
-      if os.exists(jsonPath) then
-        parseTeamJson(os.read(jsonPath)) match
-          case Right(td) => Some(td)
-          case Left(e) =>
-            logger.warnSync(s"Failed to parse team '$name': $e")
-            None
-      else None
+      // Guard against os-lib PathError$InvalidSegment: `teamsDir / name` requires
+      // name to be a single path segment, so a scoped "team/agent" address must
+      // never reach here — return None and let routing fall through.
+      if name.isEmpty || name.contains("/") || name.contains("\\") || name == "." || name == ".." then None
+      else
+        val jsonPath = teamsDir / name / "team.json"
+        if os.exists(jsonPath) then
+          parseTeamJson(os.read(jsonPath)) match
+            case Right(td) => Some(td)
+            case Left(e) =>
+              logger.warnSync(s"Failed to parse team '$name': $e")
+              None
+        else None
     }
 
   /** List all teams from `teams/<name>/team.json`. */

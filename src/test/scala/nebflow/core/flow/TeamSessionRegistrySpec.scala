@@ -106,4 +106,15 @@ class TeamSessionRegistrySpec extends CatsEffectSuite:
     yield res match
       case Left(msg) => assert(msg.contains("nosuchteam"), s"should name the unknown team: $msg")
       case Right(_)  => fail("expected a team-not-found error")
+
+  test("team/Nebula scoped route returns None (caller routes to Nebula root)"):
+    for
+      _ <- TeamSessionRegistry.clear
+      _ <- TeamSessionRegistry.registerSession("nebflow-project", "Backend", "sid-proj-backend")
+      _ <- TeamSessionRegistry.registerSession("nebflow-project", "Manager", "sid-proj-manager")
+      res <- TeamSessionRegistry.resolveSessionId("sid-proj-manager", "nebflow-project/Nebula", dummyStore)
+    yield assert(
+      res == Right(None),
+      s"Nebula is the root agent, never a team session — scoped team/Nebula should resolve to None: $res"
+    )
 end TeamSessionRegistrySpec

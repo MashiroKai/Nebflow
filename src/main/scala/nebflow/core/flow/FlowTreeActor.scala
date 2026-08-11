@@ -122,7 +122,10 @@ object TeamSessionRegistry:
         m.get((team, agent)) match
           case Some(sid) => Right(Some(sid))
           case None =>
-            if m.keys.exists(_._1 == team) then Right(None)
+            // "team/Nebula" — Nebula is the top-level root agent, never a team
+            // session; Right(None) lets the caller route it to Nebula directly.
+            if agent == "Nebula" then Right(None)
+            else if m.keys.exists(_._1 == team) then Right(None)
             else Left(s"Team '$team' not found or not mounted. Use Load(type: \"team\", name: \"$team\") first.")
       }
     else
