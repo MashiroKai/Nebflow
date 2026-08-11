@@ -263,19 +263,19 @@ Do NOT duplicate this worker's work — avoid working with the same files or top
             val (eventType, payload) = event match
               case AgentEvent.Completed(_, messages) =>
                 val text = extractLastAssistantText(messages)
-                if text.nonEmpty then ("completed", s"""[Sub-task completed] "$description":
+                if text.nonEmpty then ("completed", s""""$description":
 $text""")
-                else ("completed", s"""[Sub-task completed] "$description" (no text output)""")
+                else ("completed", s""""$description" (no text output)""")
               case AgentEvent.Failed(sessionId, error) =>
                 val sessionInfo =
                   if sessionId.nonEmpty then s" [session=$sessionId]" else ""
-                ("failed", s"""[Sub-task failed] "$description": ${error.message}$sessionInfo""")
+                ("failed", s""""$description": ${error.message}$sessionInfo""")
             notifyParentAndStop(eventType, payload)
 
           override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
             signal match
               case SystemSignal.Terminated(_) =>
-                notifyParentAndStop("failed", s"""[Sub-task crashed] "$description": terminated unexpectedly""")
+                notifyParentAndStop("failed", s""""$description": terminated unexpectedly""")
       )
     }
 

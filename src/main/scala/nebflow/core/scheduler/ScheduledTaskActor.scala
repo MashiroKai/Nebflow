@@ -74,7 +74,7 @@ class ScheduledTaskService(
     val refNote = task.referencePath match
       case Some(path) => s"\n（参考文档: $path）"
       case None => ""
-    val payload = s"[定时任务触发] ${task.content}$refNote\n（实际触发 $actualTime，预定 $formattedTime）"
+    val payload = s"${task.content}$refNote\n（实际触发 $actualTime，预定 $formattedTime）"
 
     val event = AgentCommand.ExternalEvent(
       source = "scheduled-task",

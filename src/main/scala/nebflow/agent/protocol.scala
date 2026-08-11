@@ -33,7 +33,9 @@ object AgentCommand:
     text: String,
     blocks: Option[List[ContentBlock]] = None,
     /** Injection source marker (任务 P), e.g. "mail" for Mail delivery. */
-    source: Option[String] = None
+    source: Option[String] = None,
+    /** Structured event type (e.g. mail type, completion status) for the UI source label. */
+    eventType: Option[String] = None
   ) extends AgentCommand
   case class Interrupt() extends AgentCommand
 
@@ -153,9 +155,9 @@ object AgentCommand:
       payload = status match
         case "completed" =>
           val exitInfo = exitCode.filter(_ != 0).map(c => s" (exit code $c)").getOrElse("")
-          s"[Background task completed] \"$description\"$exitInfo:\n$output"
-        case "failed" => s"[Background task failed] \"$description\":\n$output"
-        case _ => s"[Background task stopped] \"$description\"",
+          s"\"$description\"$exitInfo:\n$output"
+        case "failed" => s"\"$description\":\n$output"
+        case _ => s"\"$description\"",
       metadata = JsonObject(
         "taskId" -> taskId.asJson,
         "description" -> description.asJson,

@@ -76,19 +76,20 @@ object AgentActor extends AgentCore with AgentSession:
     wsSend: Json => IO[Unit],
     sessionId: Option[String],
     text: String,
-    source: String
+    source: String,
+    eventType: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
+      val base = Json.obj(
+        "type" -> "user".asJson,
+        "text" -> text.asJson,
+        "injected" -> true.asJson,
+        "source" -> source.asJson,
+        "sessionId" -> sid.asJson
+      )
+      val withEt = eventType.fold(base)(et => base.deepMerge(Json.obj("eventType" -> et.asJson)))
       ctx.forkTurn(
-        wsSend(
-          Json.obj(
-            "type" -> "user".asJson,
-            "text" -> text.asJson,
-            "injected" -> true.asJson,
-            "source" -> source.asJson,
-            "sessionId" -> sid.asJson
-          )
-        ).handleErrorWith(e =>
+        wsSend(withEt).handleErrorWith(e =>
           IO(logger.warn(s"injected user event failed: ${e.getMessage}"))
         )
       )
@@ -310,7 +311,7 @@ object AgentActor extends AgentCore with AgentSession:
           else IO.unit
         for
           _ <- sessionBusyIO2
-          _ <- emitInjectedUserEvent(state.wsSend, state.sessionId, input, "skill")
+          _ <- emitInjectedUserEvent(state.wsSend, state.sessionId, input, "skill", None)
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None)
         yield result
 
@@ -410,7 +411,7 @@ object AgentActor extends AgentCore with AgentSession:
             state.sessionId
           )
           _ <- visSource match
-            case Some(s) => emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s)
+            case Some(s) => emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s, Some(eventType))
             case None => IO.unit
           result <- pipeLlmCall(
             agentDef,
@@ -509,7 +510,7 @@ object AgentActor extends AgentCore with AgentSession:
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
-      case AgentCommand.ImmediateInput(text, blocks, source) =>
+      case AgentCommand.ImmediateInput(text, blocks, source, _) =>
         for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source)
         yield idle(agentDef, resources, depth, parentRef, state)
 
@@ -973,7 +974,7 @@ object AgentActor extends AgentCore with AgentSession:
           case None => Nil
         val immEventIO = immInputOpt match
           case Some(imm) if imm.source.isDefined =>
-            emitInjectedUserEvent(state.wsSend, state.sessionId, imm.text, imm.source.get)
+            emitInjectedUserEvent(state.wsSend, state.sessionId, imm.text, imm.source.get, imm.eventType)
           case _ => IO.unit
         val newMessages =
           baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages
@@ -1232,7 +1233,7 @@ object AgentActor extends AgentCore with AgentSession:
                       )
                       for
                         _ <- imm.source match
-                          case Some(src) => emitInjectedUserEvent(state.wsSend, state.sessionId, imm.text, src)
+                          case Some(src) => emitInjectedUserEvent(state.wsSend, state.sessionId, imm.text, src, imm.eventType)
                           case None => IO.unit
                         res <- pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
                       yield res
@@ -1306,7 +1307,7 @@ object AgentActor extends AgentCore with AgentSession:
         // <system-reminder> injected later at finishTurn is for the LLM).
         val visSource = visibleExternalEventSource(source, eventType)
         val bubbleIO = visSource match
-          case Some(s) => emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s)
+          case Some(s) => emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s, Some(eventType))
           case None => IO.unit
         bubbleIO *>
           emitStream(
@@ -1750,7 +1751,7 @@ object AgentActor extends AgentCore with AgentSession:
         _ <- roundCompleteIO
         _ <- if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true)) else IO.unit
         _ <- immInput.source match
-          case Some(src) => emitInjectedUserEvent(state.wsSend, state.sessionId, immInput.text, src)
+          case Some(src) => emitInjectedUserEvent(state.wsSend, state.sessionId, immInput.text, src, immInput.eventType)
           case None => IO.unit
         _ <- state.sessionId.fold(IO.unit)(sid =>
           ctx.forkTurn(

@@ -242,7 +242,7 @@ sealed trait UiMessage:
 object UiMessage:
 
   case class User(text: String, attachments: List[Json] = Nil, injected: Boolean = false, timestamp: Long = 0L,
-                  source: Option[String] = None)
+                  source: Option[String] = None, eventType: Option[String] = None)
       extends UiMessage:
     val typeName = "user"
 
@@ -286,7 +286,8 @@ object UiMessage:
       val base = Json.obj("type" -> "user".asJson, "text" -> m.text.asJson, "attachments" -> m.attachments.asJson)
       val withTs = if m.timestamp > 0 then base.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else base
       val withInj = if m.injected then withTs.deepMerge(Json.obj("injected" -> true.asJson)) else withTs
-      m.source.fold(withInj)(s => withInj.deepMerge(Json.obj("source" -> s.asJson)))
+      val withSrc = m.source.fold(withInj)(s => withInj.deepMerge(Json.obj("source" -> s.asJson)))
+      m.eventType.fold(withSrc)(et => withSrc.deepMerge(Json.obj("eventType" -> et.asJson)))
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -332,7 +333,8 @@ object UiMessage:
           injected <- cursor.downField("injected").as[Option[Boolean]]
           timestamp <- cursor.downField("timestamp").as[Option[Long]]
           source <- cursor.downField("source").as[Option[String]]
-        yield User(text, atts.getOrElse(Nil), injected.getOrElse(false), timestamp.getOrElse(0L), source)
+          eventType <- cursor.downField("eventType").as[Option[String]]
+        yield User(text, atts.getOrElse(Nil), injected.getOrElse(false), timestamp.getOrElse(0L), source, eventType)
       case "ai" =>
         for
           text <- cursor.downField("text").as[String]
