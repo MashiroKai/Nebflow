@@ -499,16 +499,16 @@ body.canvas-open #canvas-panel {
   cursor: pointer;
   border-radius: 4px;
   padding: 0;
-  opacity: 0;
+  opacity: 0.45;
   transition: opacity 0.15s, background 0.15s;
   flex-shrink: 0;
 }
-/* Close button appears on hover */
+/* Close button always visible, deepens on hover */
 .canvas-tab:hover .canvas-tab-close {
-  opacity: 0.5;
+  opacity: 0.8;
 }
 .canvas-tab-close:hover {
-  opacity: 0.9 !important;
+  opacity: 1 !important;
   background: rgba(128, 128, 128, 0.18);
   color: var(--color-text);
 }
