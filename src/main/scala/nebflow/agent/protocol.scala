@@ -231,10 +231,11 @@ enum AgentStreamEvent:
     // For subagent events, inject nodeSessionId so the frontend can persist
     // messages to the correct flow agent session's ui.json.
     val withNodeSession: Json => Json =
-      if isSubagent then
-        sessionId match
-          case Some(sid) => _.deepMerge(Json.obj("nodeSessionId" -> sid.asJson))
-          case None => identity
+      if isSubagent then sessionId match
+        case Some(sid) => json => json.asObject match
+          case Some(obj) => Json.fromJsonObject(obj.add("nodeSessionId", sid.asJson))
+          case None => json
+        case None => identity
       else identity
     withNodeSession(this match
       case TextDelta(text) =>

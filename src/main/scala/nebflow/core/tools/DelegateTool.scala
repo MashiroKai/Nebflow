@@ -41,7 +41,6 @@ object DelegateTool extends Tool:
     subagentId: String
   ): io.circe.Json => IO[Unit] =
     val base = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
-    val routeJson = Json.obj("nodeSessionId" -> subagentId.asJson)
     parentSessionId match
       case Some(sid) => json =>
         // Carry the original parent sessionId as rootSessionId so nested
@@ -49,16 +48,22 @@ object DelegateTool extends Tool:
         // main session on the frontend. routeWsSend wrappers compose such that
         // the wrapper created first (closest to the root session) executes
         // last, so overwriting here always yields the true root session id.
-        val withRoot = json.deepMerge(Json.obj("rootSessionId" -> sid.asJson))
-        val withSession = withRoot.deepMerge(Json.obj("sessionId" -> sid.asJson))
-        // Preserve an existing nodeSessionId: for nested delegates, toJson
-        // already stamped the grandchild's own nodeSessionId — overwriting it
-        // would route grandchild events into the child's popup.
-        val withNode =
-          if json.hcursor.downField("nodeSessionId").as[String].isRight then withSession
-          else withSession.deepMerge(routeJson)
-        base(withNode)
-      case None => json => base(json.deepMerge(routeJson))
+        // JsonObject.add is O(1) per field, replacing the O(n) deepMerge chain.
+        json.asObject match
+          case Some(obj) =>
+            val builder = obj.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
+            // Preserve an existing nodeSessionId: for nested delegates, toJson
+            // already stamped the grandchild's own nodeSessionId — overwriting it
+            // would route grandchild events into the child's popup.
+            val finalObj =
+              if obj.contains("nodeSessionId") then builder
+              else builder.add("nodeSessionId", subagentId.asJson)
+            base(Json.fromJsonObject(finalObj))
+          case None => base(json)
+      case None => json =>
+        json.asObject match
+          case Some(obj) => base(Json.fromJsonObject(obj.add("nodeSessionId", subagentId.asJson)))
+          case None => base(json)
 
   /** Maximum sub-agent depth (matches AgentCore.MaxDepth). */
   val MaxDepth: Int = 5

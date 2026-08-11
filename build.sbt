@@ -70,6 +70,12 @@ lazy val root = (project in file("."))
     // Java options
     javaOptions ++= Seq(
       "--add-opens", "java.base/java.lang=ALL-UNNAMED",
+      "-XX:+UseZGC",
+      "-XX:+ZGenerational",
+      "-Xms512m",
+      "-Xmx2g",
+      "-XX:+UseStringDeduplication",
+      "-XX:+AlwaysPreTouch",
     ),
 
     // Assembly settings (fat JAR fallback)
