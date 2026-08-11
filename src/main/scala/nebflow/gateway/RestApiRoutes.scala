@@ -1445,6 +1445,7 @@ class RestApiRoutes(
               val env = body.hcursor.downField("env").as[Map[String, String]].getOrElse(Map.empty)
               val autoStart = body.hcursor.downField("autoStart").as[Boolean].getOrElse(false)
               val restartOnExit = body.hcursor.downField("restartOnExit").as[Boolean].getOrElse(false)
+              val port = body.hcursor.downField("port").as[Option[Int]].toOption.flatten
 
               if id.isEmpty || name.isEmpty || command.isEmpty then
                 BadRequest(Json.obj("error" -> "Missing required fields: id, name, command".asJson))
@@ -1456,7 +1457,8 @@ class RestApiRoutes(
                   cwd = cwd,
                   env = env,
                   autoStart = autoStart,
-                  restartOnExit = restartOnExit
+                  restartOnExit = restartOnExit,
+                  port = port
                 )
                 val store = new DaemonStore()
                 store.add(config).flatMap { _ =>
