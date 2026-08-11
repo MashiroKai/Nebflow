@@ -49,8 +49,27 @@ object TeamSessionRegistry:
   def registerActor(sid: String, ref: ActorRef[AgentCommand]): IO[Unit] =
     actorMap.update(_ + (sid -> ref))
 
+  /**
+   * P1: dual-write into the unified AgentRegistry so interaction answers
+   * (permissionAnswer/askUserAnswer) route to Mail-activated team agents.
+   * rootSessionId anchors the permission-policy bucket (P2 inheritance chain).
+   * P3 removes this overload and the actorMap itself.
+   */
+  def registerActor(
+    sid: String,
+    ref: ActorRef[AgentCommand],
+    resources: SharedResources,
+    rootSessionId: String
+  ): IO[Unit] =
+    actorMap.update(_ + (sid -> ref)) *>
+      resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Team, rootSessionId)))
+
   def unregisterActor(sid: String): IO[Unit] =
     actorMap.update(_ - sid)
+
+  /** P1: also remove from the unified AgentRegistry. */
+  def unregisterActor(sid: String, resources: SharedResources): IO[Unit] =
+    actorMap.update(_ - sid) *> resources.agentRegistry.update(_ - sid)
 
   def getRunningActor(sid: String): IO[Option[ActorRef[AgentCommand]]] =
     actorMap.get.map(_.get(sid))
@@ -224,7 +243,7 @@ object FlowTreeActor:
               sidOpt = watched.find(_._2 == deadRef).map(_._1)
               _ <- sidOpt.traverse_ { sid =>
                 for
-                  _ <- TeamSessionRegistry.unregisterActor(sid)
+                  _ <- TeamSessionRegistry.unregisterActor(sid, cfg.resources)
                   _ <- watchedAgentsRef.update(_ - sid)
                   turnStateOpt <- TurnStateStore.load(sid)
                   _ <- turnStateOpt.filter(_.inProgress).traverse_ { ts =>
@@ -413,7 +432,7 @@ object FlowTreeActor:
       _ <- sessionIds.traverse_ { sid =>
         TeamSessionRegistry.getRunningActor(sid).flatMap {
           case Some(ref) =>
-            cfg.resources.actorSystem.stop(ref) *> TeamSessionRegistry.unregisterActor(sid)
+            cfg.resources.actorSystem.stop(ref) *> TeamSessionRegistry.unregisterActor(sid, cfg.resources)
           case None => IO.unit
         }
       }
@@ -584,7 +603,7 @@ object FlowTreeActor:
                 ),
                 s"resume-${session.id.take(8)}"
               )
-              _ <- TeamSessionRegistry.registerActor(session.id, ref)
+              _ <- TeamSessionRegistry.registerActor(session.id, ref, cfg.resources, cfg.sessionId.getOrElse(session.id))
               _ <- (ref ! AgentCommand.ResumeTurn(turnStartMessageCount, turnIdx)).void
               _ <- emit(cfg, "flowResumed", "sessionId" -> session.id.asJson)
             yield ()

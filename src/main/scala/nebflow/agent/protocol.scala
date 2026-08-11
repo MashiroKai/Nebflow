@@ -205,6 +205,30 @@ object AgentCommand:
 end AgentCommand
 
 /**
+ * Display/routing kind of an agent (P1 统一注册表). Replaces the nodeSessionId
+ * string-prefix conventions (team-/dag-/delegate-/ephemeral-) as the *identity*
+ * discriminator; P3 drops the prefixes entirely and routes by this field.
+ */
+enum AgentKind:
+  case Root, Team, Flow, Delegate, Ephemeral, Plan
+
+/**
+ * Unified registry entry — one identity per agent (P1 统一注册表).
+ *
+ * sessionId is the single identity: execution key + persistence key + display key.
+ * ref is the runtime reply target; kind is the display type; rootSessionId anchors
+ * the permission-policy bucket (P2) and the inheritance chain; parentRef is kept
+ * only for Mail semantics / upward diagnostics, NOT for interaction forwarding.
+ */
+case class AgentRecord(
+  sessionId: String,
+  ref: ActorRef[AgentCommand],
+  kind: AgentKind,
+  rootSessionId: String,
+  parentRef: Option[ActorRef[AgentCommand]] = None
+)
+
+/**
  * Tool/compaction pipeline error — distinct from LLM failures.
  * Carried via LlmFailed but pattern-matched to show correct message to user.
  */
