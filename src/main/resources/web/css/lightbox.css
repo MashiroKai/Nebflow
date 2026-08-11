@@ -1,0 +1,82 @@
+/* lightbox.css — full-screen image preview overlay */
+
+:root {
+  --nf-lightbox-backdrop: rgba(27, 30, 38, 0.55); /* #1b1e26 ink @ 55% */
+}
+@media (prefers-color-scheme: dark) {
+  :root { --nf-lightbox-backdrop: rgba(0, 0, 0, 0.72); }
+}
+
+.nf-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 400;              /* above modal-overlay (300/310) */
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: var(--nf-lightbox-backdrop);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: zoom-out;
+}
+.nf-lightbox.on { display: flex; }
+
+/* Prevent background scroll while open */
+body.nf-lightbox-open { overflow: hidden; }
+
+.nf-lightbox-img {
+  max-width: 92vw;
+  max-height: 88vh;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.16);
+  cursor: default;
+  opacity: 0;
+  transform: scale(0.96);
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+.nf-lightbox-img.loaded {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.nf-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+.nf-lightbox-close:hover { opacity: 1; transform: scale(1.05); }
+.nf-lightbox-close:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
+}
+
+.nf-lightbox-status {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  pointer-events: none;
+}
+.nf-lightbox-status.error { color: var(--color-error, #c94040); }
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-lightbox-img, .nf-lightbox-close { transition: none; }
+}

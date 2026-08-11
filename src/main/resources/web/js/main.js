@@ -46,6 +46,7 @@ import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
 import * as planMode from './planMode.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
+import { initLightbox } from './lightbox.js';
 import * as flowCanvas from './flowCanvas.js';
 import { initColResizers } from './colResizer.js';
 import { initActivityBar } from './activityBar.js';
@@ -154,6 +155,7 @@ state.dom = {
 };
 
 // ── Initialize ChatView ───────────────────────────────────────────────
+initLightbox();
 // Single view instance for the main panel. The chatViews registry supports
 // future multi-view expansion — additional views can register via
 // chatViews.<id> = new ChatView(...).

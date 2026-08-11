@@ -113,6 +113,9 @@ function _renderMarkdownInternal(protected_, voiceBlocks) {
     const vtext = voiceBlocks[i] || '';
     return '<span class="voice-block" data-voice-index="' + i + '">' + escapeHtml(vtext) + '</span>';
   });
+  // Tag images for lightbox zoom (click → full preview). Skip imgs that
+  // already carry a class (raw HTML in markdown) to avoid duplicate attrs.
+  html = html.replace(/<img\b(?![^>]*\bclass=)/g, '<img class="nf-zoom-img"');
   return html;
 }
 

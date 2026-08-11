@@ -333,4 +333,9 @@ export default {
   'daemons.stop': 'Stop',
   'daemons.restart': 'Restart',
   'daemons.restartFirst': 'Start first',
+  // === Lightbox (image preview) ===
+  'lightbox.ariaLabel': 'Image preview',
+  'lightbox.close': 'Close preview',
+  'lightbox.loading': 'Loading…',
+  'lightbox.loadError': 'Failed to load image',
 };
