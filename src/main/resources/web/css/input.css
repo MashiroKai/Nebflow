@@ -142,9 +142,18 @@ body.drag-over #input-bar {
   50%      { transform: scale(1.12); box-shadow: 0 0 0 10px rgba(7,193,96,0); }
 }
 #send-btn {
-  background: var(--color-primary);
+  /* Light-green glass: semi-transparent tint over frosted backdrop */
+  background: rgba(7, 193, 96, 0.42);
+  -webkit-backdrop-filter: blur(8px) saturate(1.3);
+  backdrop-filter: blur(8px) saturate(1.3);
   color: #fff;
-  border: none;
+  /* Crisp glass edges: visible border + inset top highlight + soft glow */
+  border: 1px solid rgba(7, 193, 96, 0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
+    0 1px 4px rgba(7, 193, 96, 0.2),
+    0 2px 8px rgba(0, 0, 0, 0.06);
   border-radius: 50%;
   width: 36px; height: 36px;
   cursor: pointer;
@@ -152,19 +161,39 @@ body.drag-over #input-bar {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background 0.2s, box-shadow 0.2s;
+  transition: background 0.2s, box-shadow 0.2s, border-color 0.2s;
 }
-#send-btn:hover { background: var(--color-primary-hover); }
-#send-btn:disabled { background: #ccc; cursor: default; }
+#send-btn:hover {
+  background: rgba(7, 193, 96, 0.55);
+  border-color: rgba(7, 193, 96, 0.6);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
+    0 2px 8px rgba(7, 193, 96, 0.28),
+    0 2px 12px rgba(0, 0, 0, 0.08);
+}
+#send-btn:active {
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.12),
+    0 1px 2px rgba(7, 193, 96, 0.12);
+}
+#send-btn:disabled {
+  background: rgba(170, 170, 170, 0.3);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  cursor: default;
+}
 #send-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
 /* Disconnected state — doubles as the connection indicator: the send button
    goes grey (disabled-looking) so users see they can't send until the link is
    back. Grey, not red — red reads as an error, grey reads as "unavailable". */
 #send-btn.disconnected {
-  background: #ccc;
+  background: rgba(170, 170, 170, 0.3);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
   cursor: not-allowed;
 }
-#send-btn.disconnected:hover { background: #ccc; }
+#send-btn.disconnected:hover { background: rgba(170, 170, 170, 0.3); }
 
 #stop-btn {
   background: var(--color-error);
