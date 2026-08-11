@@ -351,20 +351,32 @@ object AgentActor extends AgentCore with AgentSession:
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       case AgentCommand.ForwardPermission(deferred, permJson, sourceAgent, sourceSession) =>
-        // Sub-agent forwarded a permission request — override sessionId to ours,
-        // preserve source info, then send to frontend.
-        if state.pendingPermission.isDefined then
-          deferred.complete(false).void.handleErrorWith(_ => IO.unit) *>
-            IO.pure(idle(agentDef, resources, depth, parentRef, state))
-        else
-          val modifiedJson = permJson
-            .deepMerge(Json.obj(
-              "sessionId" -> state.sessionId.asJson,
-              "sourceAgent" -> sourceAgent.asJson,
-              "sourceSession" -> sourceSession.asJson
-            ))
-          state.wsSend(modifiedJson).handleErrorWith(_ => IO.unit) *>
-            IO.pure(idle(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred))))
+        // Sub-agent forwarded a permission request. If we are also a sub-agent,
+        // relay it up the chain (aligned with ForwardAskUser) so the request
+        // reaches the root (Nebula) window; the root overrides sessionId,
+        // preserves source info and sends to frontend.
+        parentRef match
+          case Some(grandParent) =>
+            (grandParent ! AgentCommand.ForwardPermission(deferred, permJson, sourceAgent, sourceSession)) *>
+              IO.pure(idle(agentDef, resources, depth, parentRef, state))
+          case None =>
+            if state.pendingPermission.isDefined then
+              // D4 (P1 mitigation): single-slot conflict — log explicitly instead
+              // of silently rejecting; full queueing lands with InteractionHub (P2).
+              logger.warn(
+                s"ForwardPermission conflict: dropping permission from sourceAgent=$sourceAgent while another is pending"
+              ) *>
+                deferred.complete(false).void.handleErrorWith(_ => IO.unit) *>
+                IO.pure(idle(agentDef, resources, depth, parentRef, state))
+            else
+              val modifiedJson = permJson
+                .deepMerge(Json.obj(
+                  "sessionId" -> state.sessionId.asJson,
+                  "sourceAgent" -> sourceAgent.asJson,
+                  "sourceSession" -> sourceSession.asJson
+                ))
+              state.wsSend(modifiedJson).handleErrorWith(_ => IO.unit) *>
+                IO.pure(idle(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred))))
 
       case AgentCommand.ForwardAskUser(replyTo, items, sourceAgent, sourceSession) =>
         // Sub-agent forwarded an AskUser question. If we are also a sub-agent,
@@ -849,7 +861,12 @@ object AgentActor extends AgentCore with AgentSession:
             state.execution
               .copy(
                 messages = newMessages,
-                interaction = None,
+                // D3: keep a pending permission across the turn boundary — the
+                // root holds the sub-agent's Deferred while waiting for the user
+                // answer; clearing it here would strand the sub-agent until the
+                // 5-minute timeout. Only pendingPermission survives (bounded by
+                // PermissionTimeout), pendingAskUserReplyTo still resets.
+                interaction = state.execution.interaction.filter(_.pendingPermission.isDefined),
                 pendingEvents = Nil,
                 pendingImmediateInputs = remainingImmInputs,
                 delegateCount = newDelegateCount,
@@ -1204,20 +1221,30 @@ object AgentActor extends AgentCore with AgentSession:
 
       // --- Sub-agent forwarded a permission request while processing ---
       case AgentCommand.ForwardPermission(deferred, permJson, sourceAgent, sourceSession) =>
-        if state.pendingPermission.isDefined then
-          deferred.complete(false).void.handleErrorWith(_ => IO.unit) *>
-            IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-        else
-          val modifiedJson = permJson
-            .deepMerge(Json.obj(
-              "sessionId" -> state.sessionId.asJson,
-              "sourceAgent" -> sourceAgent.asJson,
-              "sourceSession" -> sourceSession.asJson
-            ))
-          state.wsSend(modifiedJson).handleErrorWith(_ => IO.unit) *>
-            IO.pure(
-              processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending)
-            )
+        // If we are also a sub-agent, relay the request up the chain (aligned
+        // with ForwardAskUser) so it reaches the root (Nebula) window.
+        parentRef match
+          case Some(grandParent) =>
+            (grandParent ! AgentCommand.ForwardPermission(deferred, permJson, sourceAgent, sourceSession)) *>
+              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+          case None =>
+            if state.pendingPermission.isDefined then
+              logger.warn(
+                s"ForwardPermission conflict: dropping permission from sourceAgent=$sourceAgent while another is pending"
+              ) *>
+                deferred.complete(false).void.handleErrorWith(_ => IO.unit) *>
+                IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+            else
+              val modifiedJson = permJson
+                .deepMerge(Json.obj(
+                  "sessionId" -> state.sessionId.asJson,
+                  "sourceAgent" -> sourceAgent.asJson,
+                  "sourceSession" -> sourceSession.asJson
+                ))
+              state.wsSend(modifiedJson).handleErrorWith(_ => IO.unit) *>
+                IO.pure(
+                  processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending)
+                )
 
       // --- Sub-agent forwarded an AskUser question while processing ---
       case AgentCommand.ForwardAskUser(replyTo, items, sourceAgent, sourceSession) =>
@@ -1701,8 +1728,11 @@ object AgentActor extends AgentCore with AgentSession:
         )
         _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), newMessages))
       yield
+        val keptInteraction = state.execution.interaction.filter(_.pendingPermission.isDefined)
         val updatedState = state
-          .copy(execution = ExecutionContext.idle(newMessages, state.execution.turnIdx))
+          .copy(execution =
+            ExecutionContext.idle(newMessages, state.execution.turnIdx).copy(interaction = keptInteraction)
+          )
           .withMailTurnCount(state.mailTurnCount + 1)
         idle(agentDef, resources, depth, parentRef, updatedState)
       end for

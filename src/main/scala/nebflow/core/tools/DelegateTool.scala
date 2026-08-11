@@ -328,7 +328,9 @@ $prompt"""
         s"$subagentId-adapter"
       )
       _ = logger.info(s"Spawned background sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
-      _ <- resources.subAgentRegistry.update(_ + (subagentId -> subagentRef))
+      _ <- resources.agentRegistry.update(_ + (
+        subagentId -> AgentRecord(subagentId, subagentRef, AgentKind.Delegate, parentSessionId.getOrElse(subagentId), parentRef)
+      ))
       // Inherit parent's team membership so team scope checks apply to sub-agent Mail
       _ <- parentSessionId match
         case Some(psid) =>
@@ -370,7 +372,7 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
               correlationId = Some(subagentId)
             )
           case None => IO.unit
-        (notify *> resources.subAgentRegistry.update(_ - subagentId) *>
+        (notify *> resources.agentRegistry.update(_ - subagentId) *>
           (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
           IO.pure(Behaviors.stopped[AgentEvent]))
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
@@ -444,7 +446,9 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
         s"$subagentId-adapter"
       )
       _ = logger.info(s"Spawned persistent sub-agent: $subagentId (depth=$childDepth, agent=$agentName, addr=$address)")
-      _ <- resources.subAgentRegistry.update(_ + (subagentId -> subagentRef))
+      _ <- resources.agentRegistry.update(_ + (
+        subagentId -> AgentRecord(subagentId, subagentRef, AgentKind.Delegate, parentSessionId.getOrElse(subagentId), parentRef)
+      ))
       // Inherit parent's team membership so team scope checks apply to sub-agent Mail
       _ <- parentSessionId match
         case Some(psid) =>
@@ -513,7 +517,7 @@ You will be notified when the initial task completes."""
             signal match
               case SystemSignal.Terminated(_) =>
                 // Persistent session died — unregister, notify parent, adapter stops
-                resources.subAgentRegistry.update(_ - subagentId) *>
+                resources.agentRegistry.update(_ - subagentId) *>
                   notifyParentAndStop(
                     "failed",
                     s"[Session crashed] \"$description\": persistent session terminated unexpectedly",

@@ -55,5 +55,12 @@ case class SharedResources(
   voiceMutedRef: Ref[IO, Boolean],
   lastWsActivity: Ref[IO, Long] = Ref.unsafe[IO, Long](System.currentTimeMillis()),
   runtimeModels: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty),
-  subAgentRegistry: Ref[IO, Map[String, ActorRef[AgentCommand]]] = Ref.unsafe[IO, Map[String, ActorRef[AgentCommand]]](Map.empty)
+  /**
+   * P1 统一注册表: the single registry for ALL running agents
+   * (Root/Team/Flow/Delegate/Ephemeral). Replaces `subAgentRegistry`; during P1
+   * `rootAgents` and `TeamSessionRegistry.actorMap` remain as dual-written
+   * caches (P3 removes them). Interaction answers route through this map only —
+   * a lookup miss never spawns a ghost agent.
+   */
+  agentRegistry: Ref[IO, Map[String, AgentRecord]] = Ref.unsafe[IO, Map[String, AgentRecord]](Map.empty)
 )

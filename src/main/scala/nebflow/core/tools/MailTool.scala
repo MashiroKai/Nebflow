@@ -461,11 +461,24 @@ Message type (optional, default "INFO"):
                   sessionId = Some(session.id),
                   sessionName = Some(session.name),
                   projectRoot = Some(ctx.projectRoot),
-                  safetyMode = "confirm-edits"
+                  safetyMode = session.safetyMode
                 ),
                 s"mail-${session.id.take(8)}"
               )
+              // P1: resolve the Nebula root session (permission-policy anchor) and
+              // dual-write into the unified AgentRegistry so interaction answers
+              // (permissionAnswer/askUserAnswer) route to this team agent.
+              parentSidOpt <- TeamSessionRegistry.parentSessionOf(session.flowName.getOrElse(""))
               _ <- TeamSessionRegistry.registerActor(session.id, ref)
+              _ <- resources.agentRegistry.update(_ + (
+                session.id -> AgentRecord(
+                  sessionId = session.id,
+                  ref = ref,
+                  kind = AgentKind.Team,
+                  rootSessionId = parentSidOpt.getOrElse(session.id),
+                  parentRef = ctx.agentActorRef
+                )
+              ))
             yield ref
           }
         yield ()

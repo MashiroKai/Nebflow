@@ -382,6 +382,12 @@ object FlowDagExecutor:
         ),
         s"dagnode-${nodeId.take(10)}-${sessionId.take(8)}"
       )
+      // P1: register flow node agents in the unified AgentRegistry — this was
+      // previously missing entirely, so permission answers routed to a ghost
+      // root agent and were silently dropped (D2 for dag-* sessions).
+      _ <- resources.agentRegistry.update(_ + (
+        sessionId -> AgentRecord(sessionId, ref, AgentKind.Flow, sessionId, parentAgentRef)
+      ))
       // Send input with the bridge actor as replyTo
       _ <- (ref ! AgentCommand.UserInput(
         text = inputText,
@@ -389,6 +395,7 @@ object FlowDagExecutor:
       )).void
       // Wait for completion — no timeout, event-driven
       eventResult <- resultDeferred.get
+      _ <- resources.agentRegistry.update(_ - sessionId)
       _ <- actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
       _ <- actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
       // Read FlowReport if the agent called FlowReport, then clean up
