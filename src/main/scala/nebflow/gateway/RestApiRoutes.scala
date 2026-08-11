@@ -1533,7 +1533,13 @@ class RestApiRoutes(
       teams <- EntityLoader.listTeams()
       teamsList <- teamsMap.toList.sortBy(_._1).traverse { (instanceName, agents) =>
         val teamDefOpt = teams.get(instanceName)
+        // Only render agents declared in team.json (lead + members). Ephemeral
+        // sessions (delegate-* sub-agents) are registered for Mail routing but
+        // must not appear as team tiles. Fall back to all agents when the team
+        // definition is missing (legacy behavior).
+        val memberNames = teamDefOpt.map(td => (td.lead :: td.members).toSet)
         agents
+          .filter((name, _) => memberNames.forall(_.contains(name)))
           .traverse { (agentName, sid) =>
             nebflow.core.flow.TeamSessionRegistry.isBusy(sid).map { busy =>
               Json.obj(
