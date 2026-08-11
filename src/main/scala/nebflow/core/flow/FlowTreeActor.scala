@@ -122,13 +122,18 @@ object TeamSessionRegistry:
 
   /** Remove all sessions for an instance. */
   def unregisterInstance(instance: String): IO[Unit] =
-    sessionMap.update(_.filterNot { case ((inst, _), _) => inst == instance }) *>
-      managerMap.update(_ - instance) *>
-      parentSessionMap.update(_ - instance)
+    for
+      sids <- sessionIdsOf(instance)
+      _ <- sessionMap.update(_.filterNot { case ((inst, _), _) => inst == instance })
+      _ <- managerMap.update(_ - instance)
+      _ <- parentSessionMap.update(_ - instance)
+      _ <- parentActorMap.update(_ -- sids)
+    yield ()
 
   /** Remove a specific agent from an instance. */
   def unregisterAgent(instance: String, agent: String, sid: String): IO[Unit] =
-    sessionMap.update(_ - ((instance, agent)))
+    sessionMap.update(_ - ((instance, agent))) *>
+      parentActorMap.update(_ - sid)
 
   def markBusy(sid: String): IO[Unit] = busyMap.update(_ + sid)
   def markIdle(sid: String): IO[Unit] = busyMap.update(_ - sid)
@@ -376,6 +381,7 @@ object FlowTreeActor:
             safetyMode = cfg.safetyMode
           )
       _ <- TeamSessionRegistry.registerSession(instanceName, agentName, sessionMeta.id)
+      _ <- TeamSessionRegistry.registerParentActor(sessionMeta.id, cfg.parentAgentRef)
       _ <- if isManager then TeamSessionRegistry.registerManager(instanceName, sessionMeta.id) else IO.unit
     yield ()
     end for
