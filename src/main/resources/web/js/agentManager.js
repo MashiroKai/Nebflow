@@ -101,7 +101,8 @@ function renderAgentCard(a) {
   const desc = esc(a.description || '');
   const initial = esc((a.displayName || a.name || '?').charAt(0).toUpperCase());
   const isGlobalStandalone = (a.layer === 'global' || !a.layer) && (a.category || 'standalone') === 'standalone';
-  const badge = isGlobalStandalone
+  const showBadge = isGlobalStandalone && a.name !== 'Nebula';
+  const badge = showBadge
     ? '<span class="agent-mgr-standalone-badge">可直接委派</span>'
     : '';
   return `<div class="agent-mgr-card" data-agent="${name}">
