@@ -10,7 +10,7 @@ import nebflow.core.*
 import nebflow.core.ask.AskService
 import nebflow.core.compact.*
 import nebflow.core.tools.AskUserQuestionTool
-import nebflow.llm.FallbackExhaustedError
+import nebflow.llm.{Fallback, FallbackExhaustedError}
 import nebflow.shared.*
 import nebflow.shared.given
 
@@ -19,6 +19,9 @@ import scala.concurrent.duration.*
 object AgentActor extends AgentCore with AgentSession:
 
   private val MaxEmptyResponseRetries = 5
+  /** Transient LLM failures (bad_record_mac, connection resets, timeouts) are
+    * auto-retried this many times before the agent fails (initial + retries). */
+  private val LlmFailRetryMax = 2
   private val logger = NebflowLogger.forName("nebflow.agent")
 
   def apply(
@@ -656,6 +659,7 @@ object AgentActor extends AgentCore with AgentSession:
           val updatedState = state
             .withLatestUsage(result.usage.orElse(state.latestUsage))
             .withLastModel(result.model.orElse(state.lastModel))
+            .withLlmFailRetries(0)
             .updateContextWindowIfNeeded(result.contextWindow)
           val isSubagent = depth > 0
           // Emit usageUpdate: use provider-reported tokens if available, otherwise
@@ -723,47 +727,86 @@ object AgentActor extends AgentCore with AgentSession:
             "llm-fail",
             s"err=${error.getMessage.take(80)}"
           )
-          val agentError =
-            AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
-          val errMsg = error match
+          // Auto-retry transient LLM failures (bad_record_mac, connection
+          // resets, timeouts, empty streams): re-dispatch from the last
+          // checkpoint up to LlmFailRetryMax times. A transient blip must not
+          // kill a sub-agent mid-task (observed: bad_record_mac killed
+          // Explorer 3× in a row, losing the task each time). Permanent/fatal
+          // errors fail immediately — retrying won't heal auth/model errors.
+          val retryable = error match
             case e: FallbackExhaustedError =>
-              val attemptSummaries =
-                e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
-              NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
-            case e: ToolPipelineError =>
-              e.message
-            case _ =>
-              NebflowError.toUserMessage(
-                NebflowError.Internal(Option(error.getMessage).getOrElse("internalError"))
-              )
-          for
+              // Retry only if every attempt was transient/unknown — any
+              // permanent failure anywhere means retry is pointless.
+              e.attempts.forall(a => a.permanence.forall(_ == ErrorPermanence.Transient))
+            case _: ToolPipelineError => false
+            case _ => Fallback.classifyError(error).permanence == ErrorPermanence.Transient
+          if retryable && state.llmFailRetries < LlmFailRetryMax then
+            val retryState = state.withLlmFailRetries(state.llmFailRetries + 1)
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "llm-fail-retry",
+              s"err=${error.getMessage.take(80)} retry=${retryState.llmFailRetries}/$LlmFailRetryMax"
+            )
+            // The failed LLM call produced no content — re-dispatch with the
+            // same messages from the last checkpoint.
+            pipeLlmCall(agentDef, resources, depth, parentRef, retryState, replyTo)
+          else
+            val agentError =
+              AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
+            val errMsg = error match
+              case e: FallbackExhaustedError =>
+                val attemptSummaries =
+                  e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
+                NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
+              case e: ToolPipelineError =>
+                e.message
+              case _ =>
+                NebflowError.toUserMessage(
+                  NebflowError.Internal(Option(error.getMessage).getOrElse("internalError"))
+                )
+            for
 
-            _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
-              val doneEvent = AgentStreamEvent.Done(None)
-              val doneJson = doneEvent.toJson(ctx.self.path.name, false, cleanedState.sessionId)
-              ctx.forkTurn(
-                (cleanedState
-                  .wsSend(
-                    Json.obj(
-                      "type" -> "error".asJson,
-                      "sessionId" -> cleanedState.sessionId.asJson,
-                      "message" -> errMsg.asJson
+              _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
+                val doneEvent = AgentStreamEvent.Done(None)
+                val doneJson = doneEvent.toJson(ctx.self.path.name, false, cleanedState.sessionId)
+                ctx.forkTurn(
+                  (cleanedState
+                    .wsSend(
+                      Json.obj(
+                        "type" -> "error".asJson,
+                        "sessionId" -> cleanedState.sessionId.asJson,
+                        "message" -> errMsg.asJson
+                      )
                     )
-                  )
-                  .handleErrorWith(_ => IO.unit)) *>
-                  cleanedState.wsSend(doneJson).handleErrorWith(_ => IO.unit) *>
-                  emitSessionBusy(cleanedState.wsSend, sid, busy = false)
-              )
-            }
-            _ <- replyTo.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
-          yield idle(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            cleanedState.withStatus(AgentStatus.Error(error.getMessage))
-          )
-          end for
+                    .handleErrorWith(_ => IO.unit)) *>
+                    cleanedState.wsSend(doneJson).handleErrorWith(_ => IO.unit) *>
+                    emitSessionBusy(cleanedState.wsSend, sid, busy = false)
+                )
+              }
+              _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
+                // Persist the conversation before failing so the parent can
+                // resume from saved history (re-dispatch / fork on this session).
+                ctx.forkTurn(
+                  (resources.sessionStore.saveMessagesForSession(sid, cleanedState.messages) *>
+                    resources.sessionStore.flushIndex)
+                    .handleErrorWith(e =>
+                      IO(NebflowLogger.forName("nebflow.agent").warn(s"Save failed session: ${e.getMessage}"))
+                    )
+                )
+              }
+              _ <- replyTo.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
+            yield idle(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              cleanedState.withStatus(AgentStatus.Error(error.getMessage))
+            )
+            end for
+          end if
         end if
 
       // --- Tools completed ---
