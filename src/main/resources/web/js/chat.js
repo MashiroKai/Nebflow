@@ -354,7 +354,7 @@ export function buildInjectedRow(text, source, timestamp) {
   label.className = 'ask-label injected-source-label';
   label.textContent = injectedSourceLabel(source);
   const content = document.createElement('div');
-  content.textContent = text;
+  content.innerHTML = renderMarkdownWithMath(text || '', false);
   bubble.appendChild(label);
   bubble.appendChild(content);
   row.appendChild(bubble);
