@@ -197,8 +197,10 @@
   align-items: center;
   gap: 5px;
   background: rgba(7,193,96,0.15);
-  border-radius: 10px;
-  padding: 3px 9px;
+  /* Capsule + thin ring — the "oval ring" around the count */
+  border-radius: 999px;
+  border: 1px solid rgba(7,193,96,0.35);
+  padding: 2px 9px;
   font-size: 12px;
   color: var(--color-primary);
   cursor: pointer;
@@ -225,9 +227,14 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  background: rgba(var(--sapphire), 0.15);
-  border-radius: 10px;
-  padding: 3px 9px;
+  /* NOTE: --sapphire is a space-separated RGB triplet — must use the modern
+     rgb(... / alpha) syntax; rgba(var(--sapphire), a) is INVALID and silently
+     dropped (this is why the capsule looked "gone"). */
+  background: rgb(var(--sapphire) / 0.15);
+  /* Capsule + thin ring — the "oval ring" around the count */
+  border-radius: 999px;
+  border: 1px solid rgb(var(--sapphire) / 0.35);
+  padding: 2px 9px;
   font-size: 12px;
   color: rgb(var(--sapphire));
   cursor: pointer;
@@ -241,7 +248,7 @@
   animation: bg-pulse 1.5s ease-in-out infinite;
 }
 .bgagent-count { font-weight: 600; }
-#bgagent-indicator:hover { background: rgba(var(--sapphire), 0.25); }
+#bgagent-indicator:hover { background: rgb(var(--sapphire) / 0.25); }
 
 /* Background sub-agent dropdown — sapphire glass.
    Positioned relative to #main (not .header-right) so backdrop-filter
