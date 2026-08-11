@@ -50,6 +50,23 @@ object AgentActor extends AgentCore with AgentSession:
     else Some("tool")
 
   /**
+   * ExternalEvent sources whose result-notification payload should render as a
+   * visible injected-user bubble (任务 Q, report §3 🔴). Low-value internal
+   * sources (mail-ask, schedule, filewatch, bridge-already-visible, etc.) stay
+   * hidden — only the high-value result notifications get a bubble.
+   *
+   *   delegate / subtask  → A6/A9 sub-agent completion
+   *   background-task      → B1 background command completion
+   *   eventType=="inject"  → B4 API inject (source is user-controlled)
+   */
+  private def visibleExternalEventSource(source: String, eventType: String): Option[String] =
+    if eventType == "inject" then Some(source)
+    else if source == "delegate" then Some("delegate")
+    else if source == "subtask" then Some("subtask")
+    else if source == "background-task" then Some("background")
+    else None
+
+  /**
    * Emit a `user` WS event so the frontend renders an injected-task bubble
    * (浅蓝, source-labeled) instead of leaving the task prompt invisible.
    * Mirrors the `user` event shape the frontend already handles for normal
@@ -380,6 +397,10 @@ object AgentActor extends AgentCore with AgentSession:
         val sessionBusyIO =
           if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit
+        // 任务 Q: high-value result notifications (sub-agent/flow/background/api
+        // completion) render as a visible injected-user bubble so the user can
+        // see "what result arrived" in the chat stream, not just the LLM history.
+        val visSource = visibleExternalEventSource(source, eventType)
         for
           _ <- sessionBusyIO
           _ <- emitStream(
@@ -388,12 +409,17 @@ object AgentActor extends AgentCore with AgentSession:
             isSubagent = depth > 0,
             state.sessionId
           )
+          _ <- visSource match
+            case Some(s) => emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s)
+            case None => IO.unit
           result <- pipeLlmCall(
             agentDef,
             resources,
             depth,
             parentRef,
-            state.withMessages(state.messages :+ Message(MessageRole.User, Left(payload))),
+            state.withMessages(
+              state.messages :+ Message(MessageRole.User, Left(payload), source = visSource)
+            ),
             None
           )
         yield result
@@ -1269,12 +1295,19 @@ object AgentActor extends AgentCore with AgentSession:
         )
         val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
         val updatedExec = state.execution.copy(pendingEvents = state.execution.pendingEvents :+ event)
-        emitStream(
-          state.wsSend,
-          AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
-          isSubagent = depth > 0,
-          state.sessionId
-        ) *> IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
+        // 任务 Q: emit the visible bubble at receive time (the combined
+        // <system-reminder> injected later at finishTurn is for the LLM).
+        val visSource = visibleExternalEventSource(source, eventType)
+        val bubbleIO = visSource match
+          case Some(s) => emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s)
+          case None => IO.unit
+        bubbleIO *>
+          emitStream(
+            state.wsSend,
+            AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
+            isSubagent = depth > 0,
+            state.sessionId
+          ) *> IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
 
       // --- AskUser from tool ---
       case AgentCommand.AskUser(requestId, items, replyToOpt) =>

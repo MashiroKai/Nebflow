@@ -43,11 +43,13 @@ object FlowDagRunner:
           _ <- result match
             case Right(output) =>
               (replyTo ! AgentCommand.ImmediateInput(
-                s"[Flow '${flowDef.name}' completed]\n$output"
+                s"[Flow '${flowDef.name}' completed]\n$output",
+                source = Some("flow")
               )).void
             case Left(err) =>
               (replyTo ! AgentCommand.ImmediateInput(
-                s"[Flow '${flowDef.name}' failed]\n$err"
+                s"[Flow '${flowDef.name}' failed]\n$err",
+                source = Some("flow")
               )).void
         yield Behaviors.stopped
         end for
