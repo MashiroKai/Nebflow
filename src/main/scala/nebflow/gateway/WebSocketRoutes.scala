@@ -1944,6 +1944,38 @@ class WebSocketRoutes(
               )
             }
 
+          case "getActiveAgents" =>
+            // Snapshot restore for the bg-agent indicator: the frontend builds
+            // sessionBgAgents incrementally from realtime agentStart/agentDone
+            // events, which are not replayed after a browser refresh. Read the
+            // unified AgentRegistry (sessionId -> AgentRecord) and filter to
+            // active sub-agents (Delegate/Ephemeral/Flow — root agents excluded).
+            // agentId == sessionId (nodeSessionId) so restored entries match
+            // subsequent realtime events (agentToolStart/agentDone key on it).
+            sharedResources.agentRegistry.get.flatMap { registry =>
+              val active = registry.values.toList.filter(r =>
+                r.kind == AgentKind.Delegate || r.kind == AgentKind.Ephemeral || r.kind == AgentKind.Flow
+              )
+              active.traverse { rec =>
+                sessionStore.getSessionMeta(rec.sessionId).map { meta =>
+                  io.circe.Json.obj(
+                    "sessionId" -> rec.sessionId.asJson,
+                    "agentId" -> rec.sessionId.asJson,
+                    "agentName" -> meta.flatMap(_.agentName).getOrElse(rec.sessionId).asJson,
+                    "rootSessionId" -> rec.rootSessionId.asJson,
+                    "kind" -> rec.kind.toString.asJson
+                  )
+                }
+              }.flatMap { agents =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "activeAgents".asJson,
+                    "agents" -> agents.asJson
+                  )
+                )
+              }
+            }
+
           case "cancelBackgroundJob" =>
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val cancelSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
