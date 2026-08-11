@@ -168,6 +168,19 @@ private[agent] trait AgentCore:
 
       end if
 
+  /**
+   * Whether this agent gets a save-memory turn before compaction.
+   * Precisely mirrors ContextRefresher's memory-injection condition:
+   * Nebula (depth 0) and team agents (Manager/Worker) get memory; standalone
+   * and flow agents don't — so no save turn for them (behavior unchanged).
+   */
+  protected def shouldInjectSaveReminder(agentDef: AgentDef, state: AgentState): IO[Boolean] =
+    if agentDef.name == "Nebula" then IO.pure(true)
+    else
+      state.sessionId match
+        case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid).map(_.isDefined)
+        case None => IO.pure(false)
+
   protected def startDirectCompaction(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -188,13 +201,21 @@ private[agent] trait AgentCore:
       .run(state.messages, agentDef.name, state.sessionId, None, resources)
       .handleErrorWith(e => IO(lifecycleLog.warn(s"Pre-compaction hook failed for ${agentDef.name}: ${e.getMessage}")).void)
 
-    // ── 2. Inject compact reminder (existing logic retained) ──
+    // ── 2. Two-stage compaction ──
+    //    Stage 1 (Save): memory-bearing agents (Nebula + team) get a save turn
+    //    with tools available to write memory/skills; ending the turn transitions
+    //    to stage 2. Other agents go straight to stage 2 (compact) — unchanged.
     val jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
-    val pending = CompactionJob(jobId, mode, None, replyTo, resumeAfterCompact, postCompactInstruction)
-    val compactState = state
-      .withPendingCompaction(Some(pending))
-      .withMessages(state.messages :+ CompactService.buildCompactReminder(depth))
     for
+      saveTurn <- shouldInjectSaveReminder(agentDef, state)
+      phase = if saveTurn then CompactionPhase.Save else CompactionPhase.Compact
+      reminder =
+        if saveTurn then CompactService.buildSaveMemoryReminder(depth)
+        else CompactService.buildCompactReminder(depth)
+      pending = CompactionJob(jobId, mode, None, replyTo, resumeAfterCompact, postCompactInstruction, phase)
+      firstState = state
+        .withPendingCompaction(Some(pending))
+        .withMessages(state.messages :+ reminder)
       _ <- ctx.forkTurn(preHookIO)
       _ <- ctx.forkTurn(
         emitStreamIO(
@@ -208,7 +229,7 @@ private[agent] trait AgentCore:
           state.sessionId
         ).handleErrorWith(_ => IO.unit)
       )
-      result <- pipeLlmCall(agentDef, resources, depth, parentRef, compactState, replyTo, processing)
+      result <- pipeLlmCall(agentDef, resources, depth, parentRef, firstState, replyTo, processing)
     yield result
 
     end for
@@ -227,7 +248,10 @@ private[agent] trait AgentCore:
     maybeAutoCompact(agentDef, resources, depth, parentRef, state, replyTo, processing) match
       case Some(ioBehavior) => ioBehavior
       case None =>
-        val isCompactTurn = state.pendingCompaction.isDefined
+        // Phase-aware compaction: Save turn keeps tools available (memory write),
+        // Compact turn disables tools (existing behavior).
+        val isCompactTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Compact)
+        val isSaveTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Save)
         val isAskTurn = state.askMode.isDefined
         val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth)
         val isSubagent = depth > 0
@@ -244,7 +268,9 @@ private[agent] trait AgentCore:
             state.wsSend(AgentStreamEvent.RetryStatus(msg).toJson(ctx.self.path.name, isSubagent, sessionIdOpt))
           }
         val turnId = state.currentTurnId + 1
-        val microResult = if isCompactTurn || isAskTurn then None else FastMicroCompact(state.messages)
+        // Save turn also skips FastMicroCompact: the agent needs the full history
+        // (including old tool results) to extract durable memory entries.
+        val microResult = if isCompactTurn || isSaveTurn || isAskTurn then None else FastMicroCompact(state.messages)
         val stateForLlm = microResult match
           case Some(compacted) =>
             logAgentEvent(

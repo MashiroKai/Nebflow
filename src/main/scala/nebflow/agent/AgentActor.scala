@@ -744,6 +744,21 @@ object AgentActor extends AgentCore with AgentSession:
             s"turnId=$turnId current=${state.currentTurnId}"
           )
           IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        else if state.pendingCompaction.exists(_.phase == CompactionPhase.Save) then
+          // Save turn LLM call failed → skip the save phase and go straight to
+          // the compact turn. Not counted in compactionFailures (save is best-effort).
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "save-phase-fallback",
+            s"err=${error.getMessage.take(80)}"
+          )
+          val compactState = state
+            .withPendingCompaction(state.pendingCompaction.map(_.copy(phase = CompactionPhase.Compact)))
+            .withMessages(state.messages :+ CompactService.buildCompactReminder(depth))
+          pipeLlmCall(agentDef, resources, depth, parentRef, compactState, replyTo)
         else
           val cleanedState = state
           logAgentEvent(
@@ -1469,7 +1484,15 @@ object AgentActor extends AgentCore with AgentSession:
     result: ConsumeResult,
     pending: List[AgentCommand]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    if state.pendingCompaction.isDefined && result.toolCalls.isEmpty && result.text.nonEmpty then
+    // Two-stage compaction:
+    //  - Save turn, agent stopped calling tools → save phase complete → compact turn
+    //  - Save turn, agent still calling tools → continue the tool loop
+    // Completion signal = system-native turn complete (toolCalls.isEmpty), zero text parsing.
+    if state.pendingCompaction.exists(_.phase == CompactionPhase.Save) && result.toolCalls.isEmpty then
+      handleSavePhaseComplete(agentDef, resources, depth, parentRef, state, replyTo, pending)
+    else if state.pendingCompaction.exists(_.phase == CompactionPhase.Save) && result.toolCalls.nonEmpty then
+      pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
+    else if state.pendingCompaction.isDefined && result.toolCalls.isEmpty && result.text.nonEmpty then
       handleCompactResponse(agentDef, resources, depth, parentRef, state, result.text)
     else if state.pendingCompaction.isDefined && result.toolCalls.nonEmpty then
       handleCompactFailure(agentDef, resources, depth, parentRef, state, "Compact model unexpectedly called tools")
@@ -1780,6 +1803,30 @@ object AgentActor extends AgentCore with AgentSession:
       replyTo,
       (ad, r, d, p, s) => processing(ad, r, d, p, s)
     )
+
+  // ============================================================
+  // Save phase (stage 1) completion — transitions to compact turn
+  // ============================================================
+
+  /**
+   * Save turn ended naturally (agent stopped calling tools, toolCalls.isEmpty).
+   * Switch the pending compaction to Compact phase, inject the compact
+   * reminder, and run the existing single-turn summary compaction.
+   */
+  private def handleSavePhaseComplete(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    pending: List[AgentCommand]
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "save-phase-complete")
+    val compactState = state
+      .withPendingCompaction(state.pendingCompaction.map(_.copy(phase = CompactionPhase.Compact)))
+      .withMessages(state.messages :+ CompactService.buildCompactReminder(depth))
+    pipeLlmCall(agentDef, resources, depth, parentRef, compactState, replyTo)
 
   // ============================================================
   // Compact response handlers
