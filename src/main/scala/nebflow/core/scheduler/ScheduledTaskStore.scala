@@ -75,6 +75,9 @@ class ScheduledTaskStore(baseDir: os.Path):
             case Right(list) => list.filter(t => !t.triggered && t.triggerAt <= now && t.enabled)
             case Left(_) => Nil
         }
+        // FIFO: fire in scheduled-time order so simultaneously-due tasks are
+        // processed one by one in a deterministic sequence.
+        .sortBy(_.triggerAt)
     end if
   }
 

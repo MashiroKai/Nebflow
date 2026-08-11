@@ -9,23 +9,29 @@ object ScheduleTool extends Tool:
   val name = "Schedule"
 
   val description =
-    """Schedule a task to fire at a specified time, optionally recurring.
+    """Schedule a task to fire at a specified time, optionally recurring. At the scheduled
+time the content is injected into your conversation as an instruction — you then execute it.
 
 ## When to Use
 
-- Schedule a reminder or follow-up for a future time
-- Set up a recurring task (hourly, daily, weekly checks)
-- Automate periodic actions without manual prompting
+- 定时汇报 — schedule a progress report for a specific time ("at 17:00, summarize today's work")
+- 定时维护 — periodic maintenance ("every Monday morning, review and clean up memory")
+- 闲时执行 — defer a non-urgent task to an idle window ("at 23:00 when the user is idle, consolidate memory")
+- 高峰规避 — avoid peak LLM pricing hours ("at 09:00 tomorrow, run the batch analysis")
+- 用户提醒 — remind the user about something at a future time
 
 ## Fields
 
-- **content** (required): Task content/description — what should happen when the task fires.
+- **content** (required): Task content — a natural-language instruction describing what you
+  should do when the task fires. Write it as a direct command you would execute ("汇报 XX 进度",
+  "整理记忆", "review the latest commits"). Include any necessary context (which project, what scope).
 - **triggerAt** (required): Epoch milliseconds (UTC) when the task should fire. Must be in the future.
 - **repeat** (optional): Recurrence pattern. One of "hourly", "daily", "weekly". Omit for a one-shot task.
 
 ## Notes
 
-- The task fires as an ExternalEvent in the current session.
+- The task fires as an ExternalEvent in the current session; the injected content is the
+  instruction you receive.
 - For recurring tasks, the next fire time is computed from the previous triggerAt (not wall clock), maintaining consistent intervals."""
 
   private val validRepeat = Set("hourly", "daily", "weekly")
