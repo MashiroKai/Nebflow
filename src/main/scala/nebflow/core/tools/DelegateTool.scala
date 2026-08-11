@@ -410,8 +410,10 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
                 val text = extractLastAssistantText(messages)
                 if text.nonEmpty then ("completed", s"[Sub-agent completed] \"$description\":\n$text")
                 else ("completed", s"[Sub-agent completed] \"$description\" (no text output)")
-              case AgentEvent.Failed(_, error) =>
-                ("failed", s"[Sub-agent failed] \"$description\": ${error.message}")
+              case AgentEvent.Failed(sessionId, error) =>
+                val sessionInfo =
+                  if sessionId.nonEmpty then s" [session=$sessionId]" else ""
+                ("failed", s"[Sub-agent failed] \"$description\": ${error.message}$sessionInfo")
             notifyParentAndStop(eventType, payload)
 
           override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =

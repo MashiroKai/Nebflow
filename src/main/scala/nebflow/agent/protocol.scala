@@ -609,7 +609,10 @@ case class ExecutionContext(
   // without the agent subsequently calling Mail. Bounded by MaxMailReminders so
   // a flow agent that keeps producing text-without-Mail cannot loop forever —
   // after the cap it is allowed to finishTurn (emit agentDone, release busy).
-  mailReminders: Int = 0
+  mailReminders: Int = 0,
+  // Consecutive transient LLM failures auto-retried this turn (bounded by
+  // AgentActor.LlmFailRetryMax). Reset on any successful LLM completion.
+  llmFailRetries: Int = 0
 )
 
 object ExecutionContext:
@@ -821,6 +824,9 @@ extension (s: AgentState)
 
   def withEmptyResponseRetries(count: Int): AgentState =
     s.copy(execution = s.execution.copy(emptyResponseRetries = count))
+  def llmFailRetries: Int = s.execution.llmFailRetries
+  def withLlmFailRetries(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(llmFailRetries = count))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
 
   def withSafetyMode(mode: String): AgentState =
