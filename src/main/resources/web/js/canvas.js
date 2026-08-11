@@ -276,7 +276,7 @@ export function openTab(id, title, opts = {}) {
 
   tabBar.appendChild(tab);
   // Auto-scroll the tab bar to show the newly added tab.
-  tabBar.scrollLeft = tabBar.scrollWidth;
+  tabBar.scrollTo({ left: tabBar.scrollWidth, behavior: 'smooth' });
 
   const entry = { id, title, type, paneEl: pane, tabEl: tab, closable, pinned, absPath: opts.absPath || null };
   tabs.set(id, entry);

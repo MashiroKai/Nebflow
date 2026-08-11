@@ -345,6 +345,7 @@ body.canvas-open #canvas-panel {
   flex: 1;
   min-width: 0;
   overflow-x: auto;
+  scroll-behavior: smooth;
   scrollbar-width: thin;
   scrollbar-color: var(--color-border, rgba(128,128,128,0.35)) transparent;
   background: rgba(128, 128, 128, 0.08);
