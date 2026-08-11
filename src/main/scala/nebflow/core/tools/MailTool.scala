@@ -41,9 +41,15 @@ object MailTool extends Tool:
 
 Required: address, message
 
-The address can be:
-- A team name (e.g. "nebflow-project") — forwards the message to the team's lead agent.
-- A team lead or member name (e.g. "nebflow-manager", "backend") — sends a message to that agent.
+The address depends on your team context:
+- OUTSIDE any team (Nebula root / standalone agents): use a TEAM name
+  (e.g. "nebflow-project") — the message goes to the team's lead agent
+  (Manager), who dispatches to members. Bare member short names are not
+  routable from outside a team.
+- INSIDE a team: use a member short name (e.g. "backend") — resolved within
+  your team first (same-team priority).
+- "team/agent" (e.g. "nebflow-project/Backend") — explicit scoped route to a
+  specific member from anywhere.
 
 For triggering flows or spawning standalone agents, use the Delegate tool instead.
 
@@ -77,7 +83,7 @@ Message type (optional, default "INFO"):
       "properties" -> Json.obj(
         "address" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Recipient: a team name (e.g. \"nebflow-project\") or agent name (e.g. \"backend\").".asJson
+          "description" -> "Outside a team: a team name (e.g. \"nebflow-project\") routed to its Manager. Inside a team: a member short name (e.g. \"backend\"). Or explicit \"team/agent\" (e.g. \"nebflow-project/Backend\").".asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
@@ -130,6 +136,10 @@ Message type (optional, default "INFO"):
   // Fork mode: load target's history, spawn temp agent, return response
   // ============================================================
 
+  /** Routing rule: senders without a team context mail TEAM names only. */
+  private val TeamOnlyRoutingError =
+    "Agents outside a team mail TEAM names only (e.g. \"nebflow-project\") — the team Manager dispatches to members. Team members use short names internally. Or use explicit \"team/agent\" (e.g. \"nebflow-project/Backend\")."
+
   private def forkAndAsk(
     address: String,
     question: String,
@@ -138,39 +148,74 @@ Message type (optional, default "INFO"):
     (ctx.actorSystem, ctx.sharedResources, ctx.sessionId) match
       case (Some(system), Some(resources), Some(senderSid)) =>
         for
-          targetRes <- TeamSessionRegistry.resolveSessionId(senderSid, address, resources.sessionStore)
-          result <- targetRes match
-            case Left(ambErr) =>
-              IO.pure(Left(ToolError(ambErr)))
-            case Right(None) =>
-              IO.pure(
-                Left(
-                  ToolError(
-                    s"Agent '$address' not found. Use the agent names from your Team context."
-                  )
-                )
-              )
-            case Right(Some(targetSid)) =>
-              TeamSessionRegistry.instanceAndAgentOfSession(targetSid).flatMap {
-                case Some((instance, agentName)) =>
-                  EntityLoader.loadTeamAgent(instance, agentName).flatMap {
-                    case Some(entry) =>
-                      val agentDef = AgentDef(
-                        name = entry.name, description = entry.description, tools = entry.tools,
-                        systemPrompt = entry.systemPrompt, voiceEnabled = entry.voice,
-                        category = entry.category,
-                        mcpServers = entry.mcpServers, model = entry.model
-                      )
-                      doFork(system, resources, agentDef, Some(targetSid), question, address, ctx)
-                    case None =>
-                      IO.pure(Left(ToolError(s"Agent '$address' definition not found.")))
-                  }
+          teamOpt <- EntityLoader.loadTeam(address)
+          result <- teamOpt match
+            case Some(team) =>
+              // Team name — fork the team's lead (Manager).
+              TeamSessionRegistry.findTeamAgent(address, team.lead).flatMap {
+                case Some(leadSid) => forkToSession(system, resources, leadSid, address, question, ctx)
                 case None =>
-                  IO.pure(Left(ToolError(s"Agent '$address' has no team association.")))
+                  IO.pure(
+                    Left(
+                      ToolError(s"Team '$address' is not mounted. Use Load(type: \"team\", name: \"$address\") first.")
+                    )
+                  )
+              }
+            case None =>
+              // Not a team name — short agent name. Routable only for senders
+              // with a team context (same-team priority); outside a team, only
+              // team names, "Nebula", and explicit team/agent are valid.
+              TeamSessionRegistry.teamOfSession(senderSid).flatMap {
+                case None if address != "Nebula" && !address.contains("/") =>
+                  IO.pure(Left(ToolError(TeamOnlyRoutingError)))
+                case _ =>
+                  for
+                    targetRes <- TeamSessionRegistry.resolveSessionId(senderSid, address, resources.sessionStore)
+                    result <- targetRes match
+                      case Left(ambErr) =>
+                        IO.pure(Left(ToolError(ambErr)))
+                      case Right(None) =>
+                        IO.pure(
+                          Left(
+                            ToolError(
+                              s"Agent '$address' not found. Use the agent names from your Team context."
+                            )
+                          )
+                        )
+                      case Right(Some(targetSid)) =>
+                        forkToSession(system, resources, targetSid, address, question, ctx)
+                  yield result
               }
         yield result
       case _ =>
         IO.pure(Left(ToolError("Fork mode requires actor system, shared resources, and session context.")))
+
+  /** Fork an already-resolved session: load its def, spawn a temp agent, ask. */
+  private def forkToSession(
+    system: ActorSystem,
+    resources: SharedResources,
+    targetSid: String,
+    address: String,
+    question: String,
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    TeamSessionRegistry.instanceAndAgentOfSession(targetSid).flatMap {
+      case Some((instance, agentName)) =>
+        EntityLoader.loadTeamAgent(instance, agentName).flatMap {
+          case Some(entry) =>
+            val agentDef = AgentDef(
+              name = entry.name, description = entry.description, tools = entry.tools,
+              systemPrompt = entry.systemPrompt, voiceEnabled = entry.voice,
+              category = entry.category,
+              mcpServers = entry.mcpServers, model = entry.model
+            )
+            doFork(system, resources, agentDef, Some(targetSid), question, address, ctx)
+          case None =>
+            IO.pure(Left(ToolError(s"Agent '$address' definition not found.")))
+        }
+      case None =>
+        IO.pure(Left(ToolError(s"Agent '$address' has no team association.")))
+    }
 
   private def doFork(
     system: ActorSystem,
@@ -482,28 +527,38 @@ Message type (optional, default "INFO"):
           yield r
 
         case None =>
+          // Not a team name — short agent name. Routable only for senders
+          // with a team context (same-team priority); outside a team, only
+          // team names, "Nebula", and explicit team/agent are valid.
           for
-            targetRes <- ctx.sharedResources match
-              case Some(res) => TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
-              case None => IO.pure(Right(None))
-            sr <- targetRes match
-              case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
-              case Right(Some(targetSid)) =>
+            senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
+            sr <- senderTeamOpt match
+              case None if address != "Nebula" && !address.contains("/") =>
+                IO.pure(Left(ToolError(TeamOnlyRoutingError)))
+              case _ =>
                 for
-                  res <- deliverToSession(targetSid, address, message, mailType, ctx, system)
-                  _ <- res match
-                    case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
-                    case Left(_) => IO.unit
-                yield res
-              case Right(None) =>
-                if address == "Nebula" then
-                  for
-                    parentActorOpt <- TeamSessionRegistry.getParentActor(senderSessionId)
-                    res <- parentActorOpt match
-                      case Some(ref) => sendMail(ref, "Nebula", message, mailType, ctx, system)
-                      case None => mailNotFound(address)
-                  yield res
-                else mailNotFound(address)
+                  targetRes <- ctx.sharedResources match
+                    case Some(res) => TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
+                    case None => IO.pure(Right(None))
+                  sr2 <- targetRes match
+                    case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
+                    case Right(Some(targetSid)) =>
+                      for
+                        res <- deliverToSession(targetSid, address, message, mailType, ctx, system)
+                        _ <- res match
+                          case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
+                          case Left(_) => IO.unit
+                      yield res
+                    case Right(None) =>
+                      if address == "Nebula" then
+                        for
+                          parentActorOpt <- TeamSessionRegistry.getParentActor(senderSessionId)
+                          res <- parentActorOpt match
+                            case Some(ref) => sendMail(ref, "Nebula", message, mailType, ctx, system)
+                            case None => mailNotFound(address)
+                        yield res
+                      else mailNotFound(address)
+                yield sr2
           yield sr
     yield result
 

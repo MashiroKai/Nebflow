@@ -139,9 +139,18 @@ object TeamSessionRegistry:
                 // with ambiguity detection.
                 IO.pure(resolveGlobal(m, address))
           case None =>
-            // Sender isn't in any team — global exact match only, with
-            // ambiguity detection.
-            IO.pure(resolveGlobal(m, address))
+            // Sender isn't in any team (Nebula root / standalone). Per the
+            // routing rule, bare short names are NOT routable from outside a
+            // team — a global pick is non-deterministic. Only team names
+            // (handled by callers before reaching here), "Nebula", and
+            // explicit "team/agent" are valid from outside.
+            if address == "Nebula" then IO.pure(Right(None))
+            else
+              IO.pure(
+                Left(
+                  s"Agent '$address' cannot be mailed from outside a team. Mail a TEAM name (e.g. \"nebflow-project\") — the Manager dispatches to members. Team members use short names internally."
+                )
+              )
       }
 
   /** Global short-name lookup with ambiguity detection. */
