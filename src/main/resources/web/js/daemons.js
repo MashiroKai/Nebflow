@@ -381,9 +381,9 @@ function buildRow(d, animate = false) {
   row.className = 'daemon-row' + (animate ? ' anim' : '');
   row.dataset.id = d.id;
   const status = d.status || 'stopped';
-  // Clickable only when running (a port alone isn't enough — a stopped
-  // daemon would open a dead localhost URL)
-  const canOpen = status === 'running' && !!d.port;
+  // Clickable based on TCP port probe (portOpen), not process state — an
+  // externally-started dev server has a live port but Stopped process state.
+  const canOpen = !!d.portOpen && !!d.port;
   const canRestart = status === 'running' || status === 'starting';
 
   row.innerHTML = `
@@ -412,7 +412,7 @@ function buildRow(d, animate = false) {
       </button>
     </div>`;
 
-  // Click daemon name to open URL in new tab (running daemons only)
+  // Click daemon name to open URL in new tab (when port probe is open)
   if (canOpen) {
     const nameEl = row.querySelector('.daemon-name.clickable');
     nameEl?.addEventListener('click', (e) => {
