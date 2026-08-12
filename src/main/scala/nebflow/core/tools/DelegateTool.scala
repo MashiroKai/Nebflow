@@ -346,11 +346,40 @@ $prompt"""
         ),
         subagentId
       )
+      // P2: BackoffSupervisor replaces backgroundAdapter — auto-restarts on crash
       adapterRef <- system.spawn(
-        backgroundAdapter(subagentRef, parentRef, description, agentName, subagentId, resources),
+        BackoffSupervisor(
+          childRef = subagentRef,
+          childSpawnFn = (sys: ActorSystem) => sys.spawn(
+            AgentActor(
+              agentDef = agentDef,
+              resources = resources,
+              wsSend = childWsSend,
+              depth = childDepth,
+              parentRef = parentRef,
+              sessionId = Some(subagentId),
+              sessionName = Some(description),
+              initialMessages = initialMessages,
+              contextWindow = resources.contextWindow,
+              projectRoot = Some(projectRoot),
+              safetyMode = safetyMode,
+              rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
+            ),
+            subagentId
+          ),
+          childName = subagentId,
+          parentRef = parentRef,
+          description = description,
+          agentName = agentName,
+          subagentId = subagentId,
+          resources = resources,
+          initialPrompt = prompt,
+          source = "delegate",
+          wsSend = Some(childWsSend)
+        ),
         s"$subagentId-adapter"
       )
-      _ = logger.info(s"Spawned background sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
+      _ = logger.info(s"Spawned supervised background sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
       _ <- resources.agentRegistry.update(_ + (
         subagentId -> AgentRecord(
           subagentId,
@@ -360,6 +389,22 @@ $prompt"""
           parentRef
         )
       ))
+      // P3.1: persist task metadata for crash recovery
+      _ <- resources.subAgentTaskStore.recordTask(
+        SubAgentTask(
+          taskId = subagentId,
+          parentSessionId = parentSessionId.getOrElse(""),
+          agentName = agentName,
+          prompt = prompt,
+          description = description,
+          status = "running",
+          retryCount = 0,
+          spawnedAt = System.currentTimeMillis(),
+          completedAt = None,
+          lastError = None,
+          source = "delegate"
+        )
+      ).handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}")))
       _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
       s"""Sub-agent '$agentName' started in background for: $description.
@@ -382,14 +427,21 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
     Behaviors.setup { ctx =>
       ctx.watch(subagentRef)
 
-      def notifyParentAndStop(eventType: String, payload: String): IO[Behavior[AgentEvent]] =
+      def notifyParentAndStop(
+        eventType: String,
+        payload: String,
+        extraMetadata: JsonObject = JsonObject.empty
+      ): IO[Behavior[AgentEvent]] =
         val notify = parentRef match
           case Some(ref) =>
             ref ! AgentCommand.ExternalEvent(
               source = "delegate",
               eventType = eventType,
               payload = payload,
-              metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson),
+              metadata = JsonObject(
+                "description" -> description.asJson,
+                "agentName" -> agentName.asJson
+              ).deepMerge(extraMetadata),
               correlationId = Some(subagentId)
             )
           case None => IO.unit
@@ -401,21 +453,40 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
       IO.pure(
         new Behavior[AgentEvent]:
           def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
-            val (eventType, payload) = event match
+            event match
               case AgentEvent.Completed(_, messages) =>
                 val text = extractLastAssistantText(messages)
-                if text.nonEmpty then ("completed", s"\"$description\":\n$text")
-                else ("completed", s"\"$description\" (no text output)")
+                if text.nonEmpty then notifyParentAndStop("completed", s"\"$description\":\n$text")
+                else notifyParentAndStop("completed", s"\"$description\" (no text output)")
               case AgentEvent.Failed(sessionId, error) =>
                 val sessionInfo =
                   if sessionId.nonEmpty then s" [session=$sessionId]" else ""
-                ("failed", s"\"$description\": ${error.message}$sessionInfo")
-            notifyParentAndStop(eventType, payload)
+                val retryable = error.errorType match
+                  case AgentErrorType.LlmFailed => true
+                  case AgentErrorType.Timeout => true
+                  case _ => false
+                notifyParentAndStop(
+                  "failed",
+                  s"\"$description\": ${error.message}$sessionInfo",
+                  JsonObject(
+                    "failedSessionId" -> subagentId.asJson,
+                    "retryable" -> retryable.asJson,
+                    "failureType" -> error.errorType.toString.asJson
+                  )
+                )
 
           override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
             signal match
               case SystemSignal.Terminated(_) =>
-                notifyParentAndStop("failed", s"\"$description\": terminated unexpectedly")
+                notifyParentAndStop(
+                  "failed",
+                  s"\"$description\": terminated unexpectedly",
+                  JsonObject(
+                    "failedSessionId" -> subagentId.asJson,
+                    "retryable" -> true.asJson,
+                    "failureType" -> "crashed".asJson
+                  )
+                )
       )
     }
 

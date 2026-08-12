@@ -22,7 +22,11 @@ object AgentActor extends AgentCore with AgentSession:
   private val MaxEmptyResponseRetries = 5
   /** Transient LLM failures (bad_record_mac, connection resets, timeouts) are
     * auto-retried this many times before the agent fails (initial + retries). */
-  private val LlmFailRetryMax = 2
+  private val LlmFailRetryMax = 3
+  /** Exponential backoff base for LLM fail retries (ms). 2s → 4s → 8s. */
+  private val LlmFailBackoffBaseMs = 2000L
+  /** Cap for LLM fail backoff (ms). */
+  private val LlmFailBackoffMaxMs = 10000L
   private val logger = NebflowLogger.forName("nebflow.agent")
 
   /**
@@ -405,6 +409,22 @@ object AgentActor extends AgentCore with AgentSession:
         // completion) render as a visible injected-user bubble so the user can
         // see "what result arrived" in the chat stream, not just the LLM history.
         val visSource = visibleExternalEventSource(source, eventType)
+        // P1.4: When a retryable sub-agent failure arrives, add a structured
+        // system-reminder guiding the LLM to re-delegate — this is more
+        // effective than relying on the LLM noticing the failure text alone.
+        val retryableHint = eventType == "failed" &&
+          metadata("retryable").exists(_.asBoolean.getOrElse(false))
+        val reminderText =
+          if retryableHint then
+            val failureType = metadata("failureType").flatMap(_.asString).getOrElse("unknown")
+            val failedSession = metadata("failedSessionId").flatMap(_.asString).getOrElse("")
+            val agentName = metadata("agentName").flatMap(_.asString).getOrElse("")
+            s"\n<system-reminder>\nA sub-agent task${if agentName.nonEmpty then s" ($agentName)" else ""}" +
+              s"${if failedSession.nonEmpty then s" [session=$failedSession]" else ""} failed" +
+              s" (failure type: $failureType). This is a retryable error — consider re-delegating" +
+              s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
+          else ""
+        val injectionText = payload + reminderText
         for
           _ <- sessionBusyIO
           _ <- emitStream(
@@ -422,7 +442,7 @@ object AgentActor extends AgentCore with AgentSession:
             depth,
             parentRef,
             state.withMessages(
-              state.messages :+ Message(MessageRole.User, Left(payload), source = visSource)
+              state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource)
             ),
             None
           )
@@ -845,17 +865,24 @@ object AgentActor extends AgentCore with AgentSession:
             case _ => Fallback.classifyError(error).permanence == ErrorPermanence.Transient
           if retryable && state.llmFailRetries < LlmFailRetryMax then
             val retryState = state.withLlmFailRetries(state.llmFailRetries + 1)
+            val backoffMs = math.min(
+              LlmFailBackoffBaseMs * (1L << (retryState.llmFailRetries - 1)),
+              LlmFailBackoffMaxMs
+            )
+            val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 500)
+            val delayMs = backoffMs + jitter
             logAgentEvent(
               agentDef,
               depth,
               state.sessionId,
               state.sessionName,
               "llm-fail-retry",
-              s"err=${error.getMessage.take(80)} retry=${retryState.llmFailRetries}/$LlmFailRetryMax"
+              s"err=${error.getMessage.take(80)} retry=${retryState.llmFailRetries}/$LlmFailRetryMax backoff=${delayMs}ms"
             )
             // The failed LLM call produced no content — re-dispatch with the
-            // same messages from the last checkpoint.
-            pipeLlmCall(agentDef, resources, depth, parentRef, retryState, replyTo)
+            // same messages from the last checkpoint, after a backoff delay.
+            ctx.forkTurn(IO.sleep(delayMs.millis)) *>
+              pipeLlmCall(agentDef, resources, depth, parentRef, retryState, replyTo)
           else
             val agentError =
               AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
