@@ -346,20 +346,25 @@ const EVENT_TYPE_LABELS = {
   follow_up: 'Follow-up', parallel: 'Parallel',
 };
 
-/** Build the source label text, optionally combining with eventType.
- *  e.g. source='delegate', eventType='completed' → 'Delegate · Completed' */
-export function injectedSourceLabel(source, eventType) {
+/** Build the source label text, optionally combining with sender and eventType.
+ *  e.g. source='mail', sender='Manager', eventType='result' → 'Mail · Manager · Result'
+ *  sender is optional (backward compatible): absent → 'SOURCE · EventType'. */
+export function injectedSourceLabel(source, eventType, sender) {
   if (!source) return '';
   const base = INJECTED_SOURCE_LABELS[source] || source.charAt(0).toUpperCase() + source.slice(1);
-  if (!eventType) return base;
-  const et = EVENT_TYPE_LABELS[eventType] || eventType.charAt(0).toUpperCase() + eventType.slice(1);
-  return `${base} · ${et}`;
+  const parts = [base];
+  if (sender) parts.push(sender);
+  if (eventType) {
+    const et = EVENT_TYPE_LABELS[eventType] || eventType.charAt(0).toUpperCase() + eventType.slice(1);
+    parts.push(et);
+  }
+  return parts.join(' · ');
 }
 
 /** Build a row element for an injected message (pure builder — no DOM append,
  *  no scroll). Shared by live render (renderInjectedBubble) and history
  *  restore (persistence.js) so both paths render identically. */
-export function buildInjectedRow(text, source, timestamp, eventType) {
+export function buildInjectedRow(text, source, timestamp, eventType, sender) {
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -367,7 +372,7 @@ export function buildInjectedRow(text, source, timestamp, eventType) {
   bubble.className = 'bubble injected';
   const label = document.createElement('div');
   label.className = 'ask-label injected-source-label';
-  label.textContent = injectedSourceLabel(source, eventType);
+  label.textContent = injectedSourceLabel(source, eventType, sender);
   const content = document.createElement('div');
   content.innerHTML = renderMarkdownWithMath(text || '', false);
   bubble.appendChild(label);
@@ -398,9 +403,9 @@ export function buildInjectedRow(text, source, timestamp, eventType) {
 }
 
 /** Live-render an injected message into the active view. */
-export function renderInjectedBubble(text, source, timestamp, eventType) {
+export function renderInjectedBubble(text, source, timestamp, eventType, sender) {
   const chat = activeView.dom.chat;
-  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType);
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender);
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
 }

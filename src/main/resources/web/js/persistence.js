@@ -170,7 +170,7 @@ export function restoreFromStorage() {
       // Injected messages (task P+Q): render as light-blue bubble via the
       // shared builder — same visual as the live WS path.
       if (m.injected && m.source) {
-        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType));
+        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -505,7 +505,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     if (m.type === 'user') {
       // Injected messages (task P+Q): light-blue bubble via shared builder.
       if (m.injected && m.source) {
-        fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType));
+        fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
