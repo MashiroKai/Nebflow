@@ -258,11 +258,15 @@ function openFile(path, fileName, pinned = false) {
 
 // Track pinned requests keyed by file path
 const pendingPinned = new Map();
+// Track background-refresh requests (canvas.js scheduleFileRefresh) keyed by
+// file path — their fileContent responses must not steal tab activation.
+const pendingRefresh = new Set();
 
 // Listen for canvas tab restore requests — set pinned state before readFile
 window.addEventListener('explorer-preload-pinned', (e) => {
   if (e.detail && e.detail.path) {
     pendingPinned.set(e.detail.path, e.detail.pinned !== false);
+    if (e.detail.refresh) pendingRefresh.add(e.detail.path);
   }
 });
 
@@ -317,6 +321,9 @@ onMessage('fileContent', (msg) => {
   const tabId = `file:${msg.path}`;
   const pinned = pendingPinned.get(msg.path) || false;
   pendingPinned.delete(msg.path);
+  // Background refresh responses (activation-triggered) re-render in place but
+  // must not yank the user back to that tab.
+  const background = pendingRefresh.delete(msg.path);
   const item = {
     id: tabId,
     title: msg.fileName || msg.path,
@@ -327,6 +334,7 @@ onMessage('fileContent', (msg) => {
     path: msg.path,
     rootPath: explorerRoot,
     pinned,
+    background,
   };
   window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: item }));
 });
