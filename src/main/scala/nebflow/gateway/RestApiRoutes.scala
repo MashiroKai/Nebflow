@@ -11,7 +11,9 @@ import nebflow.core.PathUtil
 import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
+import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
 import nebflow.core.skill.SkillService
+import cats.effect.unsafe.implicits.global
 import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.*
 import nebflow.service.ConfigService
@@ -1169,6 +1171,10 @@ class RestApiRoutes(
             case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
             case Some(defn) =>
               val modelConfig = defn.model.getOrElse(nebflow.shared.AgentModelConfig.empty)
+              // Determine resolvedFrom: check the raw AgentEntry for preset/legacy.
+              // AgentDef.preset tells us the explicit preset (if any). If absent,
+              // check whether the original agent.json had a non-empty legacy model.
+              val resolvedFrom = computeResolvedFrom(defn.preset, agentName)
               // Resolve the model this agent would actually use: candidates =
               // [preferred, ...fallbacks] (or the global chain), filtered by
               // provider health. Previously this read runtimeModels.values.headOption —
@@ -1184,7 +1190,9 @@ class RestApiRoutes(
                     "current" -> current.asJson,
                     "preferred" -> modelConfig.preferred.asJson,
                     "fallbacks" -> modelConfig.fallbacks.asJson,
-                    "default" -> modelConfig.preferred.asJson
+                    "default" -> modelConfig.preferred.asJson,
+                    "preset" -> defn.preset.asJson,
+                    "resolvedFrom" -> resolvedFrom.asJson
                   )
                 )
               yield result
@@ -1222,6 +1230,46 @@ class RestApiRoutes(
               yield result
             case Left(err) =>
               BadRequest(Json.obj("error" -> s"Invalid model config: ${err.getMessage}".asJson))
+        }
+
+    // PUT /agents/:name/preset — set or remove the agent's preset reference.
+    // Body: {"preset": "vision"} or {"preset": null} (removes the field, falls
+    // back to default preset). Uses EntityLoader.findAgentDir to locate the
+    // agent.json across all three layers.
+    case req @ PUT -> Root / "agents" / agentName / "preset" =>
+      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      else
+        req.as[Json].flatMap { body =>
+          val presetOpt = body.hcursor.downField("preset").as[Option[String]].toOption.flatten
+          for
+            dirOpt <- EntityLoader.findAgentDir(agentName)
+            result <- dirOpt match
+              case Some(dir) =>
+                IO.blocking {
+                  val jsonPath = dir / "agent.json"
+                  val json = os.read(jsonPath)
+                  parser.parse(json) match
+                    case Right(parsed) =>
+                      val updated = presetOpt match
+                        case Some(name) =>
+                          parsed.deepMerge(Json.obj("preset" -> name.asJson))
+                        case None =>
+                          // Remove the preset field entirely
+                          parsed.asObject
+                            .map(obj => Json.fromFields(obj.toMap.removed("preset")))
+                            .getOrElse(parsed)
+                      os.write.over(jsonPath, updated.noSpaces)
+                      true
+                    case Left(_) => false
+                }.flatMap {
+                  case true =>
+                    Ok(Json.obj("updated" -> true.asJson, "preset" -> presetOpt.asJson))
+                  case false =>
+                    InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
+                }
+              case None =>
+                NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+          yield result
         }
 
     // ===== Entity API (Team/Flow/Agent management) =====
@@ -1379,6 +1427,114 @@ class RestApiRoutes(
         result <- Ok(Json.obj("agents" -> entries.asJson))
       yield result
 
+    // ===== Model Presets =====
+
+    // GET /presets — list all presets + default name + agent references
+    case GET -> Root / "presets" =>
+      val store = new PresetStore()
+      for
+        file <- IO.blocking(store.load())
+        // Build agent → preset mapping by scanning all agent.json files
+        agentPresets <- IO.blocking(scanAgentPresets())
+        result <- Ok(
+          Json.obj(
+            "defaultPreset" -> file.defaultPreset.asJson,
+            "presets" -> file.presets.values.toList.asJson,
+            "agents" -> agentPresets.asJson
+          )
+        )
+      yield result
+
+    // POST /presets — create a new preset (409 on duplicate name)
+    case req @ POST -> Root / "presets" =>
+      req.as[Json].flatMap { body =>
+        val name = body.hcursor.downField("name").as[String].getOrElse("")
+        if name.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: name".asJson))
+        else
+          val store = new PresetStore()
+          IO.blocking(store.load()).flatMap { file =>
+            if file.presets.contains(name) then
+              Conflict(Json.obj("error" -> s"Preset '$name' already exists".asJson))
+            else
+              val displayName = body.hcursor.downField("displayName").as[String].getOrElse(name)
+              val description = body.hcursor.downField("description").as[String].getOrElse("")
+              val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
+              val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(Nil)
+              val preset = ModelPreset(name, displayName, description, preferred, fallbacks)
+              val updated = file.copy(presets = file.presets + (name -> preset))
+              IO.blocking(store.save(updated)) *>
+                Created(preset.asJson)
+          }
+      }
+
+    // PUT /presets/default — set the default preset (must exist)
+    case req @ PUT -> Root / "presets" / "default" =>
+      req.as[Json].flatMap { body =>
+        val name = body.hcursor.downField("name").as[String].getOrElse("")
+        if name.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: name".asJson))
+        else
+          val store = new PresetStore()
+          IO.blocking(store.load()).flatMap { file =>
+            if !file.presets.contains(name) then
+              NotFound(Json.obj("error" -> s"Preset '$name' not found".asJson))
+            else
+              val updated = file.copy(defaultPreset = name)
+              IO.blocking(store.save(updated)) *>
+                Ok(Json.obj("defaultPreset" -> name.asJson))
+          }
+      }
+
+    // PUT /presets/:name — update an existing preset (name immutable)
+    case req @ PUT -> Root / "presets" / presetName =>
+      req.as[Json].flatMap { body =>
+        val store = new PresetStore()
+        IO.blocking(store.load()).flatMap { file =>
+          file.presets.get(presetName) match
+            case None =>
+              NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
+            case Some(existing) =>
+              val displayName = body.hcursor.downField("displayName").as[String].getOrElse(existing.displayName)
+              val description = body.hcursor.downField("description").as[String].getOrElse(existing.description)
+              val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
+              val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(existing.fallbacks)
+              val updated = existing.copy(displayName = displayName, description = description,
+                preferred = preferred, fallbacks = fallbacks)
+              val newFile = file.copy(presets = file.presets + (presetName -> updated))
+              IO.blocking(store.save(newFile)) *>
+                Ok(updated.asJson)
+        }
+      }
+
+    // DELETE /presets/:name — delete a preset (409 if default; scrub agent refs)
+    case DELETE -> Root / "presets" / presetName =>
+      val store = new PresetStore()
+      IO.blocking(store.load()).flatMap { file =>
+        if file.defaultPreset == presetName then
+          Conflict(Json.obj("error" -> "Cannot delete the default preset; set another as default first".asJson))
+        else if !file.presets.contains(presetName) then
+          NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
+        else
+          // 1. Delete preset from file
+          val newFile = file.copy(presets = file.presets - presetName)
+          // 2. Scrub all agent.json files that reference this preset
+          for
+            _ <- IO.blocking(store.save(newFile))
+            _ <- scrubPresetRefs(presetName)
+            result <- Ok(Json.obj("deleted" -> true.asJson))
+          yield result
+      }
+
+    // POST /presets/migrate-legacy — migrate per-agent model configs to presets
+    // Body: {"agentNames": ["Coder", "qa-frontend", ...]}
+    case req @ POST -> Root / "presets" / "migrate-legacy" =>
+      req.as[Json].flatMap { body =>
+        val agentNames = body.hcursor.downField("agentNames").as[List[String]].getOrElse(Nil)
+        if agentNames.isEmpty then
+          BadRequest(Json.obj("error" -> "Missing or empty agentNames".asJson))
+        else
+          migrateLegacyModels(agentNames)
+      }
+
     // ===== Daemon Management =====
 
     // GET /daemons — list all daemons with runtime state
@@ -1530,6 +1686,184 @@ class RestApiRoutes(
             }
       }
   }
+
+  // ── Preset helpers ──────────────────────────────────────
+
+  /** All agent.json paths across the three layers. */
+  private def allAgentJsonFiles(): List[os.Path] =
+    val root = PathUtil.dataRoot
+    def agentJsons(parent: os.Path): List[os.Path] =
+      if !os.exists(parent) then Nil
+      else os.list(parent).filter(os.isDir).map(_ / "agent.json").filter(os.exists).toList
+    val standalone = agentJsons(root / "agents")
+    val teamAgents =
+      if !os.exists(root / "teams") then Nil
+      else os.list(root / "teams").filter(os.isDir).flatMap(t => agentJsons(t / "agents")).toList
+    val flowAgents =
+      if !os.exists(root / "flows") then Nil
+      else os.list(root / "flows").filter(os.isDir).flatMap(f => agentJsons(f / "agents")).toList
+    standalone ++ teamAgents ++ flowAgents
+
+  /**
+   * Scan all agent.json files and build a map of agentName → presetName (or null
+   * if no preset field). Used by GET /presets to show which agents reference
+   * which presets.
+   */
+  private def scanAgentPresets(): Map[String, Option[String]] =
+    allAgentJsonFiles().flatMap { path =>
+      parser.parse(os.read(path)).toOption.flatMap { json =>
+        val name = json.hcursor.downField("name").as[String].toOption
+          .getOrElse((path / os.up).last) // fall back to directory name
+        val preset = json.hcursor.downField("preset").as[Option[String]].toOption.flatten
+        Some(name -> preset)
+      }
+    }.toMap
+
+  /**
+   * Determine the resolvedFrom value for an agent by reading the raw agent.json.
+   * Returns "preset" | "legacy-model" | "default-preset" | "global".
+   */
+  private def computeResolvedFrom(preset: Option[String], agentName: String): String =
+    val store = new PresetStore()
+    // If AgentDef has a preset, it was resolved from preset (or dangling → fallback)
+    if preset.isDefined then
+      val file = store.load()
+      if file.presets.contains(preset.get) then "preset"
+      else
+        // Dangling preset — check if there's a legacy model
+        EntityLoader.findAgentDir(agentName).unsafeRunSync() match
+          case Some(dir) =>
+            val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
+            val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
+            if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
+            else if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then "default-preset"
+            else "global"
+          case None => "global"
+    else
+      // No preset — check legacy model
+      EntityLoader.findAgentDir(agentName).unsafeRunSync() match
+        case Some(dir) =>
+          val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
+          val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
+          if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
+          else
+            val file = store.load()
+            if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then "default-preset"
+            else "global"
+        case None => "global"
+
+  /**
+   * Remove the `preset` field from all agent.json files that reference the given
+   * preset name. Called when a preset is deleted so agents fall back to the
+   * default preset instead of holding a dangling reference.
+   */
+  private def scrubPresetRefs(presetName: String): IO[Unit] =
+    IO.blocking {
+      allAgentJsonFiles().foreach { path =>
+        val content = os.read(path)
+        parser.parse(content) match
+          case Right(json) =>
+            json.hcursor.downField("preset").as[Option[String]].toOption.flatten match
+              case Some(p) if p == presetName =>
+                val updated = json.asObject
+                  .map(obj => Json.fromFields(obj.toMap.removed("preset")))
+                  .getOrElse(json)
+                if updated != json then os.write.over(path, updated.noSpaces)
+              case _ => ()
+          case Left(_) => () // skip unparseable file
+      }
+    }
+
+  /**
+   * Migrate per-agent legacy model configs to named presets.
+   * Groups agents by model-config fingerprint, creates a preset per group
+   * (mig-<n>), writes the preset reference, and removes the legacy model field.
+   * Agents with empty model configs ({preferred: null, fallbacks: []}) are
+   * skipped (treated as "no config" — they already use the default preset).
+   */
+  private def migrateLegacyModels(agentNames: List[String]): IO[Response[IO]] =
+    IO.blocking {
+      val store = new PresetStore()
+      val file = store.load()
+      // Load each agent's raw model config
+      val agentsWithConfig = agentNames.flatMap { name =>
+        EntityLoader.findAgentDir(name).unsafeRunSync() match
+          case None => None
+          case Some(dir) =>
+            parser.parse(os.read(dir / "agent.json")).toOption.flatMap { json =>
+              val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
+              // Only migrate non-empty configs
+              if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then
+                Some((name, dir, model.get))
+              else None
+            }
+      }
+      // Group by fingerprint (preferred + fallbacks)
+      def fingerprint(m: nebflow.shared.AgentModelConfig): String =
+        s"${m.preferred.getOrElse("")}|${m.fallbacks.mkString(",")}"
+      val groups = agentsWithConfig.groupBy { case (_, _, m) => fingerprint(m) }
+      // Generate preset names (mig-<n>, avoiding collisions with existing)
+      var migN = 1
+      val existingNames = file.presets.keySet
+      val newPresets = scala.collection.mutable.Map.empty[String, ModelPreset]
+      val agentToPreset = scala.collection.mutable.Map.empty[String, String]
+      groups.toList.sortBy(_._1).foreach { (fp, agents) =>
+        val model = agents.head._3
+        // Skip if this fingerprint already matches an existing preset
+        val existingMatch = file.presets.values.find(p =>
+          p.preferred == model.preferred && p.fallbacks == model.fallbacks
+        )
+        val presetName = existingMatch match
+          case Some(p) => p.name
+          case None =>
+            var name = s"mig-$migN"
+            while existingNames.contains(name) || newPresets.contains(name) do
+              migN += 1
+              name = s"mig-$migN"
+            migN += 1
+            val agentList = agents.map(_._1).mkString(", ")
+            val preset = ModelPreset(
+              name = name,
+              displayName = name,
+              description = s"Auto-migrated from: $agentList",
+              preferred = model.preferred,
+              fallbacks = model.fallbacks
+            )
+            newPresets += (name -> preset)
+            name
+        agents.foreach { (name, _, _) => agentToPreset += (name -> presetName) }
+      }
+      // Write: update presets file + update each agent.json
+      val updatedFile = file.copy(presets = file.presets ++ newPresets)
+      store.save(updatedFile)
+      agentToPreset.toList.foreach { (name, presetName) =>
+        EntityLoader.findAgentDir(name).unsafeRunSync() match
+          case Some(dir) =>
+            val jsonPath = dir / "agent.json"
+            parser.parse(os.read(jsonPath)) match
+              case Right(json) =>
+                // Remove model, add preset
+                val withoutModel = json.asObject
+                  .map(obj => Json.fromFields(obj.toMap.removed("model")))
+                  .getOrElse(json)
+                val updated = withoutModel.deepMerge(Json.obj("preset" -> presetName.asJson))
+                os.write.over(jsonPath, updated.noSpaces)
+              case Left(_) => ()
+          case None => ()
+      }
+      // Build response data (plain values, not IO)
+      (agentToPreset.toList, newPresets.values.toList)
+    }.flatMap { (migrated, createdPresets) =>
+      val migratedAgents = migrated.map { (name, preset) =>
+        Json.obj("agent" -> name.asJson, "preset" -> preset.asJson)
+      }
+      Ok(Json.obj(
+        "migratedAgents" -> migratedAgents.asJson,
+        "createdPresets" -> createdPresets.map(_.asJson).asJson
+      ))
+    }.handleErrorWith(e =>
+      InternalServerError(Json.obj("error" -> s"Migration failed: ${e.getMessage}".asJson))
+    )
 
   /**
    * Build mounted teams JSON for the frontend (GET /api/teams/mounted).
