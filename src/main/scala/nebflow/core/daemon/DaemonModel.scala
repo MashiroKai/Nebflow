@@ -13,7 +13,21 @@ case class DaemonConfig(
   env: Map[String, String] = Map.empty,
   autoStart: Boolean = false,
   restartOnExit: Boolean = false,
-  port: Option[Int] = None
+  port: Option[Int] = None,
+  // --- Crash detection & auto-restart (all optional, backward compatible) ---
+  /** Base delay (seconds) for the first auto-restart; doubles per attempt
+      (exponential backoff), capped at 60s. */
+  restartBackoffSec: Int = 2,
+  /** Give up after this many consecutive crash restarts (crash-loop protection). */
+  restartMaxAttempts: Int = 5,
+  /** A run longer than this (seconds) resets the consecutive-crash counter,
+      so a daemon that crashes once a day is never falsely exhausted. */
+  restartStableWindowSec: Int = 60,
+  /** Active health-check interval (seconds): periodically TCP-probes `port`
+      and treats the daemon as crashed when it stays closed while the process
+      is alive. 0 disables the active health check (only process-exit
+      detection remains). */
+  healthCheckSec: Int = 15
 )
 
 object DaemonConfig:
@@ -32,6 +46,10 @@ object DaemonConfig:
       autoStart <- c.downField("autoStart").as[Option[Boolean]]
       restartOnExit <- c.downField("restartOnExit").as[Option[Boolean]]
       port <- c.downField("port").as[Option[Int]]
+      restartBackoffSec <- c.downField("restartBackoffSec").as[Option[Int]]
+      restartMaxAttempts <- c.downField("restartMaxAttempts").as[Option[Int]]
+      restartStableWindowSec <- c.downField("restartStableWindowSec").as[Option[Int]]
+      healthCheckSec <- c.downField("healthCheckSec").as[Option[Int]]
     yield DaemonConfig(
       id,
       name,
@@ -40,7 +58,11 @@ object DaemonConfig:
       env.getOrElse(Map.empty),
       autoStart.getOrElse(false),
       restartOnExit.getOrElse(false),
-      port
+      port,
+      restartBackoffSec.getOrElse(2),
+      restartMaxAttempts.getOrElse(5),
+      restartStableWindowSec.getOrElse(60),
+      healthCheckSec.getOrElse(15)
     )
   }
 
