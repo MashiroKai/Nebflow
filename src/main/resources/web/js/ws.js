@@ -290,16 +290,21 @@ export function connect() {
         const converted = convertAgentEvent(msg);
         if (converted) {
           const convList = handlers[converted.type];
-          // Hidden popup → view=null: accumulate state buffers only, no DOM.
-          const convView = streamDispatchView(activeView);
+          // Gating EXEMPT (regression fix): Delegate/SubTask sessions are
+          // ephemeral — the backend only persists their ui.json at completion,
+          // so getHistory returns empty while the sub-agent is still running.
+          // Before hidden-view gating, live events rendered into the hidden
+          // popup container and masked that gap; gating made the popup blank.
+          // Render live (pre-gating behavior). Memory stays bounded via
+          // cleanupBgAgentView's post-done TTL + the stepViews LRU cap.
+          const convView = activeView;
           if (convList) for (const h of convList) {
             try { h(converted, convView); }
             catch (e) { console.error('[ws] bg-agent handler error for', converted.type, ':', e.message); }
           }
         }
         // Also dispatch the original event (for bg-agent indicator status, etc.)
-        // Interactive events keep the real view (render into hidden container).
-        const origView = (msg.type === 'askUser' || msg.type === 'askPermission') ? activeView : streamDispatchView(activeView);
+        const origView = activeView;
         const list = handlers[msg.type];
         if (list) for (const h of list) {
           try { h(msg, origView); }
