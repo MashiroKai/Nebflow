@@ -148,6 +148,32 @@ export function saveMsg(entry, sessionId) {
   }
 }
 
+// ---------- Injected-bubble direction filter ----------
+// The blue injected bubble is for content RECEIVED by this session's agent
+// (Mail from others, Delegate/SubTask completion notifications, ExternalEvent
+// results). The backend currently records EVERY injected user event flowing
+// through the root WS connection into the ROOT session's ui.json
+// (makeRecordingWsSend's "user" case ignores the event's own session id), so a
+// restored history can contain injections that were actually delivered
+// elsewhere — including this agent's own OUTGOING sends. Those are not
+// received content: never render them as injected bubbles.
+//   - sender === own agent name  → a Mail this agent SENT (the bubble belongs
+//     to the recipient's session)
+//   - source delegate/subtask without eventType → a task prompt this agent
+//     DISPATCHED (completion notifications always carry an eventType)
+function ownAgentName() {
+  const sid = state.activeSessionId;
+  if (!sid) return null;
+  const s = (state.sessions || []).find(x => x && x.id === sid);
+  return s ? (s.agentName || s.name || null) : null;
+}
+function isOutgoingInjection(m) {
+  const own = ownAgentName();
+  if (m.sender && own && m.sender === own) return true;
+  if ((m.source === 'delegate' || m.source === 'subtask') && !m.eventType) return true;
+  return false;
+}
+
 // ---------- Load messages for the active session from localStorage ----------
 export function loadMsgs() {
   if (state.activeSessionId) {
@@ -168,8 +194,11 @@ export function restoreFromStorage() {
   msgs.forEach((m, i) => {
     if (m.type === 'user') {
       // Injected messages (task P+Q): render as light-blue bubble via the
-      // shared builder — same visual as the live WS path.
+      // shared builder — same visual as the live WS path. Outgoing sends
+      // (misrecorded into this session by the backend) are not received
+      // content — skip them.
       if (m.injected && m.source) {
+        if (isOutgoingInjection(m)) return;
         chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender));
         return;
       }
@@ -504,7 +533,10 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     if (skipMsg) { skipMsg = false; return; }
     if (m.type === 'user') {
       // Injected messages (task P+Q): light-blue bubble via shared builder.
+      // Skip outgoing sends misrecorded into this session (see
+      // isOutgoingInjection) — the bubble is for received content only.
       if (m.injected && m.source) {
+        if (isOutgoingInjection(m)) return;
         // deferMd with parseVoice=false (same as the live path): injected
         // messages join the rAF markdown batch — no synchronous render storm
         // on hard-refresh (P0-2).
