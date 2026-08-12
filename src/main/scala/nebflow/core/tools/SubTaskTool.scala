@@ -200,11 +200,42 @@ Multiple SubTask calls in one response run concurrently — use this to parallel
         ),
         subtaskId
       )
+      // P2: BackoffSupervisor replaces subtaskAdapter — auto-restarts on crash
       adapterRef <- system.spawn(
-        subtaskAdapter(workerRef, parentRef, description, agentDef.name, subtaskId, resources),
+        BackoffSupervisor(
+          childRef = workerRef,
+          childSpawnFn = (sys: ActorSystem) => sys.spawn(
+            AgentActor(
+              agentDef = agentDef,
+              resources = resources,
+              wsSend = childWsSend,
+              depth = childDepth,
+              parentRef = parentRef,
+              sessionId = Some(subtaskId),
+              sessionName = Some(description),
+              initialMessages = Nil,
+              contextWindow = resources.contextWindow,
+              projectRoot = Some(projectRoot),
+              safetyMode = safetyMode,
+              rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subtaskId),
+              isSubTaskWorker = true
+            ),
+            subtaskId
+          ),
+          childName = subtaskId,
+          parentRef = parentRef,
+          description = description,
+          agentName = agentDef.name,
+          subagentId = subtaskId,
+          resources = resources,
+          initialPrompt = prompt,
+          source = "subtask",
+          extraMetadata = JsonObject("kind" -> "SubTask".asJson),
+          wsSend = Some(childWsSend)
+        ),
         s"$subtaskId-adapter"
       )
-      _ = logger.info(s"Spawned sub-task worker: $subtaskId (depth=$childDepth, agent=${agentDef.name})")
+      _ = logger.info(s"Spawned supervised sub-task worker: $subtaskId (depth=$childDepth, agent=${agentDef.name})")
       // Registered in agentRegistry (active snapshot + kind) but NOT in
       // TeamSessionRegistry/sessionMap — the worker has no Mail identity.
       _ <- resources.agentRegistry.update(_ + (
@@ -216,6 +247,22 @@ Multiple SubTask calls in one response run concurrently — use this to parallel
           parentRef
         )
       ))
+      // P3.1: persist task metadata for crash recovery
+      _ <- resources.subAgentTaskStore.recordTask(
+        SubAgentTask(
+          taskId = subtaskId,
+          parentSessionId = parentSessionId.getOrElse(""),
+          agentName = agentDef.name,
+          prompt = prompt,
+          description = description,
+          status = "running",
+          retryCount = 0,
+          spawnedAt = System.currentTimeMillis(),
+          completedAt = None,
+          lastError = None,
+          source = "subtask"
+        )
+      ).handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}")))
       _ <- workerRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
       s"""Sub-task worker started for: $description.
@@ -240,14 +287,22 @@ Do NOT duplicate this worker's work — avoid working with the same files or top
     Behaviors.setup { ctx =>
       ctx.watch(workerRef)
 
-      def notifyParentAndStop(eventType: String, payload: String): IO[Behavior[AgentEvent]] =
+      def notifyParentAndStop(
+        eventType: String,
+        payload: String,
+        extraMetadata: JsonObject = JsonObject.empty
+      ): IO[Behavior[AgentEvent]] =
         val notify = parentRef match
           case Some(ref) =>
             ref ! AgentCommand.ExternalEvent(
               source = "subtask",
               eventType = eventType,
               payload = payload,
-              metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson, "kind" -> "SubTask".asJson),
+              metadata = JsonObject(
+                "description" -> description.asJson,
+                "agentName" -> agentName.asJson,
+                "kind" -> "SubTask".asJson
+              ).deepMerge(extraMetadata),
               correlationId = Some(subtaskId)
             )
           case None => IO.unit
@@ -260,22 +315,43 @@ Do NOT duplicate this worker's work — avoid working with the same files or top
       IO.pure(
         new Behavior[AgentEvent]:
           def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
-            val (eventType, payload) = event match
+            event match
               case AgentEvent.Completed(_, messages) =>
                 val text = extractLastAssistantText(messages)
-                if text.nonEmpty then ("completed", s""""$description":
+                if text.nonEmpty then
+                  notifyParentAndStop("completed", s""""$description":
 $text""")
-                else ("completed", s""""$description" (no text output)""")
+                else
+                  notifyParentAndStop("completed", s""""$description" (no text output)""")
               case AgentEvent.Failed(sessionId, error) =>
                 val sessionInfo =
                   if sessionId.nonEmpty then s" [session=$sessionId]" else ""
-                ("failed", s""""$description": ${error.message}$sessionInfo""")
-            notifyParentAndStop(eventType, payload)
+                val retryable = error.errorType match
+                  case AgentErrorType.LlmFailed => true
+                  case AgentErrorType.Timeout => true
+                  case _ => false
+                notifyParentAndStop(
+                  "failed",
+                  s""""$description": ${error.message}$sessionInfo""",
+                  JsonObject(
+                    "failedSessionId" -> subtaskId.asJson,
+                    "retryable" -> retryable.asJson,
+                    "failureType" -> error.errorType.toString.asJson
+                  )
+                )
 
           override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
             signal match
               case SystemSignal.Terminated(_) =>
-                notifyParentAndStop("failed", s""""$description": terminated unexpectedly""")
+                notifyParentAndStop(
+                  "failed",
+                  s""""$description": terminated unexpectedly""",
+                  JsonObject(
+                    "failedSessionId" -> subtaskId.asJson,
+                    "retryable" -> true.asJson,
+                    "failureType" -> "crashed".asJson
+                  )
+                )
       )
     }
 

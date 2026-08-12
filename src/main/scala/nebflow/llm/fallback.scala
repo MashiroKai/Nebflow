@@ -62,7 +62,8 @@ object Fallback:
         if msg.contains("connection reset") || msg.contains("econnreset") || msg.contains("econnrefused") || msg
             .contains(
               "epipe"
-            ) || msg.contains("broken pipe")
+            ) || msg.contains("broken pipe") || msg.contains("chunked") || msg.contains("invalid chunk") || msg
+            .contains("transfer encoding") || msg.contains("reading_length")
         then
           ErrorClassification(
             FailoverReason.ConnectionReset,
