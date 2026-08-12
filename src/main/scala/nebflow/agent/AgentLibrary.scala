@@ -4,6 +4,7 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
 import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.presets.PresetStore
 import nebflow.llm.{Config, NebflowServiceConfig}
 import nebflow.shared.{AgentModelConfig, Defaults}
 
@@ -143,6 +144,9 @@ class AgentLibrary(
       parseAgentJson(jsonPath) match
         case Some(j) =>
           val prompt = readSystemMd(dir / "system.md")
+          // Resolve preset/legacy model into the final AgentModelConfig.
+          // Priority: explicit preset > legacy model > default preset > global chain.
+          val (resolvedModel, _) = PresetStore().resolve(j.preset, j.model)
           Some(
             AgentDef(
               name = j.name,
@@ -152,7 +156,8 @@ class AgentLibrary(
               avatar = j.avatar,
               displayName = j.displayName,
               voiceEnabled = j.voice.getOrElse(false),
-              model = j.model,
+              model = Some(resolvedModel),
+              preset = j.preset,
               category = j.category.getOrElse("standalone"),
               mcpServers = j.mcpServers.getOrElse(Nil)
             )
@@ -211,6 +216,7 @@ private case class AgentJson(
   avatar: Option[String] = None,
   voice: Option[Boolean] = None,
   model: Option[AgentModelConfig] = None,
+  preset: Option[String] = None,
   category: Option[String] = None
 )
 
@@ -235,6 +241,7 @@ private object AgentJson:
       avatar,
       voice = c.downField("voice").as[Option[Boolean]].toOption.flatten,
       model = c.downField("model").as[Option[AgentModelConfig]].toOption.flatten,
+      preset = c.downField("preset").as[Option[String]].toOption.flatten,
       category = c.downField("category").as[Option[String]].toOption.flatten
     )
   }
@@ -252,6 +259,7 @@ private object AgentJson:
       .deepMerge(j.avatar.map(a => Json.obj("avatar" -> a.asJson)).getOrElse(Json.obj()))
       .deepMerge(j.voice.map(v => Json.obj("voice" -> v.asJson)).getOrElse(Json.obj()))
       .deepMerge(j.model.map(m => Json.obj("model" -> m.asJson)).getOrElse(Json.obj()))
+      .deepMerge(j.preset.map(p => Json.obj("preset" -> p.asJson)).getOrElse(Json.obj()))
       .deepMerge(j.category.map(c => Json.obj("category" -> c.asJson)).getOrElse(Json.obj()))
   }
 end AgentJson

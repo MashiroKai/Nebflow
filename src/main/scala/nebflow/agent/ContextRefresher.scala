@@ -3,6 +3,7 @@ package nebflow.agent
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.entity.{EntityLoader, TeamCatalog}
+import nebflow.core.presets.PresetStore
 import nebflow.core.skill.SkillService
 import nebflow.core.{PathUtil, SystemReminder, SystemReminders}
 import nebflow.service.{MemoryStore, RulesStore}
@@ -306,6 +307,7 @@ object ContextRefresher:
         case Some(teamName) =>
           EntityLoader.loadTeamAgent(teamName, agentDef.name).map { entryOpt =>
             entryOpt.map { entry =>
+              val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
               AgentDef(
                 name = entry.name,
                 description = entry.description,
@@ -313,7 +315,8 @@ object ContextRefresher:
                 systemPrompt = entry.systemPrompt,
                 category = entry.category,
                 mcpServers = entry.mcpServers,
-                model = entry.model,
+                model = Some(resolvedModel),
+                preset = entry.preset,
                 skills = entry.skills,
                 flows = entry.flows,
                 avatar = agentDef.avatar,

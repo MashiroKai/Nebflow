@@ -20,6 +20,7 @@ case class AgentEntry(
   category: String = "standalone", // computed by EntityLoader from path, NOT read from JSON
   mcpServers: List[String] = Nil,
   model: Option[AgentModelConfig] = None,
+  preset: Option[String] = None, // references a named preset in model-presets.json
   skills: List[String] = Nil,   // skill names this agent can see (frontmatter injection)
   flows: List[String] = Nil     // flow names this agent can trigger via Delegate(flow=...)
 )
@@ -35,6 +36,7 @@ object AgentEntry:
       voice <- c.downField("voice").as[Option[Boolean]]
       mcpServers <- c.downField("mcpServers").as[Option[List[String]]]
       model <- c.downField("model").as[Option[AgentModelConfig]]
+      preset <- c.downField("preset").as[Option[String]]
       skills <- c.downField("skills").as[Option[List[String]]]
       flows <- c.downField("flows").as[Option[List[String]]]
     yield AgentEntry(
@@ -47,6 +49,7 @@ object AgentEntry:
       "standalone", // category computed by EntityLoader from path
       mcpServers.getOrElse(Nil),
       model,
+      preset,
       skills.getOrElse(Nil),
       flows.getOrElse(Nil)
     )
@@ -61,6 +64,7 @@ object AgentEntry:
       "voice" -> a.voice.asJson,
       "mcpServers" -> a.mcpServers.asJson,
       "model" -> a.model.asJson,
+      "preset" -> a.preset.asJson,
       "skills" -> a.skills.asJson,
       "flows" -> a.flows.asJson
     )

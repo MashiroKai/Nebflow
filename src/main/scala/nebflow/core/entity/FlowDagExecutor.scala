@@ -8,6 +8,7 @@ import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.flow.{NodeStatus, VerdictFamily}
+import nebflow.core.presets.PresetStore
 import nebflow.core.tools.{FileHistory, FlowReportStore, ReadTracker}
 import nebflow.shared.{Message, MessageRole}
 
@@ -95,16 +96,20 @@ object FlowDagExecutor:
                   NodeResult(nodeId, "", false, Some(s"Agent '${node.agent}' not found in flow or global library"))
                 )
               case Some(entry) =>
-                val agentDef = AgentDef(
-                  name = entry.name,
-                  description = entry.description,
-                  tools = entry.tools,
-                  systemPrompt = entry.systemPrompt,
-                  voiceEnabled = entry.voice,
-                  category = entry.category,
-                  mcpServers = entry.mcpServers,
-                  model = entry.model
-                )
+                val agentDef = {
+                  val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
+                  AgentDef(
+                    name = entry.name,
+                    description = entry.description,
+                    tools = entry.tools,
+                    systemPrompt = entry.systemPrompt,
+                    voiceEnabled = entry.voice,
+                    category = entry.category,
+                    mcpServers = entry.mcpServers,
+                    model = Some(resolvedModel),
+                    preset = entry.preset
+                  )
+                }
                 executeAgent(nodeId, node.agent, agentDef, inputText, resources, actorSystem, wsSend, flow.name, parentAgentRef, rootSessionId)
             updatedCtx = ctx.copy(nodeOutputs = ctx.nodeOutputs + (nodeId -> result.output))
           yield (result, updatedCtx)

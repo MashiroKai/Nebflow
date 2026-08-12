@@ -8,6 +8,7 @@ import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.entity.{EntityLoader, TeamDef}
+import nebflow.core.presets.PresetStore
 import nebflow.shared.{Message, MessageRole}
 
 // ============================================================
@@ -644,12 +645,16 @@ object FlowTreeActor:
             case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
             case None => EntityLoader.loadAgent(agentName)
           _ <- entryOpt.traverse_ { entry =>
-            val agentDef = AgentDef(
-              name = entry.name, description = entry.description, tools = entry.tools,
-              systemPrompt = entry.systemPrompt, voiceEnabled = entry.voice,
-              category = entry.category,
-              mcpServers = entry.mcpServers, model = entry.model
-            )
+            val agentDef = {
+              val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
+              AgentDef(
+                name = entry.name, description = entry.description, tools = entry.tools,
+                systemPrompt = entry.systemPrompt, voiceEnabled = entry.voice,
+                category = entry.category,
+                mcpServers = entry.mcpServers, model = Some(resolvedModel),
+                preset = entry.preset
+              )
+            }
             val rootSid = cfg.sessionId.getOrElse(session.id)
             for
               policyOpt <- cfg.resources.permissionPolicies.get.map(_.get(rootSid))
