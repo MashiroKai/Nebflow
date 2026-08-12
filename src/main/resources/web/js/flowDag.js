@@ -14,11 +14,11 @@
 import { openStepPopup } from './flowAgentPopup.js';
 import { esc } from './flowHelpers.js';
 
-const NODE_W = 130;   // orbit square width
-const NODE_H = 150;   // node card height (orbit + label)
-const V_SPACING = 175;
-const H_SPACING = 195;
-const PAD = 80;       // canvas padding around nodes
+const NODE_W = 110;   // glass card width
+const NODE_H = 80;    // glass card height (compact 36px orbit + labels)
+const V_SPACING = 120;
+const H_SPACING = 160;
+const PAD = 60;       // canvas padding around nodes
 
 /** Topological sort of DAG nodes following edges from entry.
  *  Returns ordered array of { node, edgeLabel }. Exported for reuse. */
@@ -112,26 +112,6 @@ export function layoutDagNodes(rf) {
 
 // ── Solar-system node ──────────────────────────────────────
 
-/** One dot per ring, angularly offset so the three orbit points are
- *  distributed around the circle — clean "three rings, three dots" look. */
-const DOT_ANGLES = {
-  outer: [0],      // outer ring dot at 0°
-  middle: [180],   // middle ring dot at 180°
-  inner: [90],     // inner ring dot at 90°
-};
-const RING_RADII = { outer: 48, middle: 35, inner: 23 };
-
-function ringHtml(ringName, status) {
-  const radius = RING_RADII[ringName];
-  const angles = DOT_ANGLES[ringName];
-  // Pending/completed: dots stay static at scattered angles (no spin).
-  const spinClass = status === 'running' ? ` spin-${ringName}` : '';
-  const dots = angles.map((deg, i) =>
-    `<span class="flow-dot" style="transform: rotate(${deg + i * 7}deg) translateY(-${radius}px)"></span>`
-  ).join('');
-  return `<div class="flow-ring ${ringName}${spinClass}">${dots}</div>`;
-}
-
 function solarNodeHtml(n, flowName, pos, statusOf) {
   const nodeId = n.nodeId || '';
   const agent = n.agent || '';
@@ -143,14 +123,13 @@ function solarNodeHtml(n, flowName, pos, statusOf) {
   return `
     <div class="solar-node ${st}" data-flow="${esc(flowName)}" data-agent="${esc(agent)}" data-node="${esc(nodeId)}"
          style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
-      <div class="solar-rings">
-        ${ringHtml('outer', st)}
-        ${ringHtml('middle', st)}
-        ${ringHtml('inner', st)}
-        ${statusIcon}
+      <div class="solar-orbit">
+        <div class="solar-ring ring-1"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
+        <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
+        <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
       </div>
       <div class="solar-node-label" title="${esc(agent)}">${esc(agent)}</div>
-      <div class="solar-node-sub">${esc(nodeId)}</div>
+      <div class="solar-node-sub">${esc(nodeId)}${statusIcon}</div>
     </div>`;
 }
 
@@ -173,7 +152,7 @@ function solarEdgesSvg(rf, positions, statusOf) {
       ? `<text class="solar-edge-label" x="${midX.toFixed(1)}" y="${(midY - 8).toFixed(1)}">${esc(e.condition)}</text>`
       : '';
     return `
-      <path class="flow-edge${active ? ' active' : ''}" d="M ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)}"/>
+      <path class="flow-edge${active ? ' active' : ''}" d="M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${x1.toFixed(1)} ${midY.toFixed(1)} ${x2.toFixed(1)} ${midY.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}"/>
       <circle class="flow-edge-arrow" cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="3"/>
       ${cond}`;
   }).join('');

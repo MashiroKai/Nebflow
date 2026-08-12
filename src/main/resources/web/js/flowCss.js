@@ -363,73 +363,77 @@ export const FLOW_CSS = `
 /* Canvas: absolute-positioned nodes + SVG edges */
 .solar-canvas { position: relative; margin: 0 auto; }
 
-/* SVG edges */
+/* SVG edges — vertical bezier connectors (V4) */
 .solar-edges { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
-.flow-edge { stroke: var(--color-border); stroke-width: 1.5; fill: none; opacity: 0.5; }
-.flow-edge.active { stroke: var(--color-accent, rgb(91,127,191)); stroke-dasharray: 6 4; opacity: 1; animation: dash-flow 1s linear infinite; }
+.flow-edge { fill: none; stroke: var(--color-border); stroke-width: 1.5; }
+.flow-edge.active {
+  stroke: var(--color-text-muted);
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+  animation: flow-dash 1s linear infinite;
+}
+@keyframes flow-dash { to { stroke-dashoffset: -9; } }
 .flow-edge-arrow { fill: var(--color-border); opacity: 0.5; }
 .solar-edge-label { font: 500 9px -apple-system, sans-serif; fill: var(--color-text-muted); opacity: 0.7; }
 .flow-edge-label { font: 400 9px ui-monospace; fill: var(--color-text-muted); }
-@keyframes dash-flow { to { stroke-dashoffset: -10; } }
 
-/* Node card */
+/* Node card — glass material (V4) */
 .solar-node {
-  position: absolute; width: 130px; height: 150px;
-  display: flex; flex-direction: column; align-items: center;
+  position: absolute; width: 110px; height: 80px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: var(--glass-bg, rgba(255,255,255,0.08));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
+  border: 1px solid var(--glass-border, rgba(255,255,255,0.12));
+  border-radius: 14px;
+  padding: 8px 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+  text-align: center;
   cursor: pointer; user-select: none;
-  border-radius: 14px; border: 1px solid transparent;
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  transition: opacity 0.4s ease;
 }
-.solar-node:hover { border-color: var(--glass-border); background: var(--glass-bg); box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-.solar-node.running { border-color: rgba(91,127,191,0.25); }
 
-/* Orbit area */
-.solar-rings { position: relative; width: 100px; height: 100px; margin-top: 2px; flex-shrink: 0; }
-
-/* Three concentric rings — scoped to solar-rings (margin-based centering) */
-.solar-rings .flow-ring {
+/* Orbit — compact 36px, three counter-spinning rings (V4) */
+.solar-orbit { position: relative; width: 36px; height: 36px; margin: 0 auto 4px; flex-shrink: 0; }
+.solar-ring {
   position: absolute; top: 50%; left: 50%;
-  margin: -50px 0 0 -50px;
-  border-radius: 50%;
-  border: 1.5px solid var(--color-border);
+  border: 1px solid var(--color-border);
+  border-radius: 50%; transform: translate(-50%, -50%);
   box-sizing: border-box;
 }
-.solar-rings .flow-ring.outer  { width: 100px; height: 100px; }
-.solar-rings .flow-ring.middle { width: 74px;  height: 74px;  margin: -37px 0 0 -37px; }
-.solar-rings .flow-ring.inner  { width: 48px;  height: 48px;  margin: -24px 0 0 -24px; }
-
-/* Orbit dots — scoped to solar-rings */
-.solar-rings .flow-dot {
-  position: absolute; top: 50%; left: 50%;
-  width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px;
-  border-radius: 50%; background: var(--color-accent, rgb(91,127,191));
-  opacity: 0.85;
+.ring-1 { width: 8px; height: 8px; }
+.ring-2 { width: 18px; height: 18px; }
+.ring-3 { width: 28px; height: 28px; }
+.solar-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; }
+.solar-dot {
+  position: absolute; width: 3px; height: 3px;
+  background: var(--color-text); border-radius: 50%; top: -1.5px;
 }
+.ring-1 .solar-dot { left: 3px; }
+.ring-2 .solar-dot { left: 8px; }
+.ring-3 .solar-dot { left: 13px; }
 
-/* Running: rings spin at different speeds */
-.solar-node.running .flow-ring.outer.spin-outer  { animation: spin-cw  6s  linear infinite; }
-.solar-node.running .flow-ring.middle.spin-middle{ animation: spin-ccw 4.5s linear infinite; }
-.solar-node.running .flow-ring.inner.spin-inner  { animation: spin-cw  3s  linear infinite; }
-@keyframes spin-cw  { from { transform: rotate(0deg); }   to { transform: rotate(360deg); } }
-@keyframes spin-ccw { from { transform: rotate(0deg); }   to { transform: rotate(-360deg); } }
+/* Initial angles — three dots spread around the orbit */
+.ring-1 .solar-dot-wrap { transform: rotate(0deg); }
+.ring-2 .solar-dot-wrap { transform: rotate(120deg); }
+.ring-3 .solar-dot-wrap { transform: rotate(240deg); }
 
-/* Pending: dashed, dim */
-.solar-node.pending .flow-ring { border-style: dashed; opacity: 0.4; }
-.solar-node.pending .flow-dot { opacity: 0.3; }
+/* Running: rings spin at different speeds, middle reversed (V4 core) */
+.solar-node.running .ring-1 .solar-dot-wrap { animation: solar-spin 3s linear infinite; }
+.solar-node.running .ring-2 .solar-dot-wrap { animation: solar-spin 4.5s linear infinite reverse; animation-delay: -3s; }
+.solar-node.running .ring-3 .solar-dot-wrap { animation: solar-spin 6s linear infinite; animation-delay: -4s; }
+@keyframes solar-spin { to { transform: rotate(360deg); } }
 
-/* Completed: green solid rings */
-.solar-node.completed .flow-ring { border-color: rgba(76,175,80,0.55); }
-.solar-node.completed .flow-dot { background: #4caf50; }
+/* Status variants */
+.solar-node.pending .solar-ring { border-style: dashed; opacity: 0.4; }
+.solar-node.pending .solar-dot { opacity: 0.3; }
+.solar-node.pending .solar-node-label { opacity: 0.4; }
+.solar-node.completed .solar-dot-wrap { animation: none; }
+.solar-node.completed .solar-node-label { opacity: 0.6; }
+.solar-node.failed .solar-ring { border-color: var(--color-error, #e5484d); opacity: 0.5; }
 
-/* Failed: red */
-.solar-node.failed .flow-ring { border-color: rgba(244,67,54,0.6); }
-.solar-node.failed .flow-dot { background: #f44336; }
-
-/* Status icon (✓ / ✗) centered over rings */
-.solar-node-status {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  font: 700 20px -apple-system, sans-serif; pointer-events: none;
-}
+/* Status icon (✓ / ✗) — inline in the sub line */
+.solar-node-status { font: 700 10px -apple-system, sans-serif; margin-left: 4px; }
 .solar-node-status.ok { color: #4caf50; }
 .solar-node-status.err { color: #f44336; }
 
