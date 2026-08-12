@@ -118,7 +118,7 @@ body.drag-over #input-bar {
 /* Voice dictation uses the global green caret — no override needed */
 .icon-btn {
   background: none;
-  border: none;
+  border: 1px solid transparent; /* reserves edge space for glass hover — no layout shift */
   color: var(--color-frame-text-muted);
   cursor: pointer;
   padding: 6px;
@@ -127,9 +127,18 @@ body.drag-over #input-bar {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
-.icon-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text); }
+.icon-btn:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  color: var(--color-frame-text);
+}
 .icon-btn:active { background: var(--color-frame-active); transform: scale(0.96); }
 .icon-btn.recording {
   background: #07c160;
@@ -147,8 +156,8 @@ body.drag-over #input-bar {
   -webkit-backdrop-filter: blur(8px) saturate(1.3);
   backdrop-filter: blur(8px) saturate(1.3);
   color: #fff;
-  /* Crisp glass edges: visible border + inset top highlight + soft glow */
-  border: 1px solid rgba(7, 193, 96, 0.45);
+  /* Faint glass edges: whisper border + inset top highlight + soft glow */
+  border: 1px solid rgba(7, 193, 96, 0.15);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.35),
     inset 0 -1px 0 rgba(0, 0, 0, 0.08),
@@ -165,7 +174,7 @@ body.drag-over #input-bar {
 }
 #send-btn:hover {
   background: rgba(7, 193, 96, 0.55);
-  border-color: rgba(7, 193, 96, 0.6);
+  border-color: rgba(7, 193, 96, 0.25);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.4),
     inset 0 -1px 0 rgba(0, 0, 0, 0.08),
@@ -198,7 +207,14 @@ body.drag-over #input-bar {
 #stop-btn {
   background: var(--color-error);
   color: #fff;
-  border: none;
+  /* Same glass material as #send-btn: blur + inset edges + whisper border */
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.3);
+  backdrop-filter: blur(8px) saturate(1.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.12),
+    0 1px 4px rgba(0, 0, 0, 0.12);
   border-radius: 50%;
   width: 36px; height: 36px;
   cursor: pointer;
@@ -206,7 +222,7 @@ body.drag-over #input-bar {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background 0.15s;
+  transition: background 0.15s, box-shadow 0.15s;
 }
 #stop-btn:hover { background: #d32f2f; }
 #stop-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
@@ -612,7 +628,6 @@ body.drag-over #input-bar {
   }
   #input::placeholder { color: #555860; }
   .icon-btn { color: #7b7e88; }
-  .icon-btn:hover { background: rgba(255,255,255,0.06); }
   .icon-btn:active { background: rgba(255,255,255,0.10); transform: scale(0.96); }
   .icon-btn.recording { background: #07c160; }
 

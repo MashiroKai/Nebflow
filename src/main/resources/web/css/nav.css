@@ -29,6 +29,7 @@
   width: 44px;
   padding: 4px 0;
   border-radius: 12px;
+  border: 1px solid transparent; /* reserves edge space for glass hover */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -36,11 +37,19 @@
   cursor: pointer;
   margin-bottom: 2px;
   background: transparent;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
   position: relative;
   gap: 2px;
 }
-.nav-agent:hover { background: var(--color-frame-hover); }
+.nav-agent:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+}
 .nav-agent:focus { outline: none; }
 .nav-agent { -webkit-tap-highlight-color: transparent; }
 .nav-agent.active { background: var(--color-frame-active); }
@@ -112,6 +121,8 @@
   width: 40px;
   height: 40px;
   border-radius: 12px;
+  border: 1px solid transparent; /* reserves edge space for glass hover */
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -120,9 +131,18 @@
   margin-bottom: 4px;
   position: relative;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
-.nav-item:hover { color: var(--color-frame-text); background: var(--color-frame-hover); }
+.nav-item:hover {
+  color: var(--color-frame-text);
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+}
 .nav-item.active { color: var(--color-frame-text-bright); background: var(--color-frame-active); }
 .nav-item svg { width: 20px; height: 20px; }
 
@@ -235,7 +255,7 @@ body.sidebar-collapsed #activity-bar {
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  border: none;
+  border: 1px solid transparent; /* reserves edge space for glass hover */
   background: transparent;
   color: var(--color-frame-text-muted);
   cursor: pointer;
@@ -244,12 +264,18 @@ body.sidebar-collapsed #activity-bar {
   justify-content: center;
   position: relative;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
   padding: 0;
 }
 .activity-btn:hover {
   color: var(--color-frame-text-bright);
-  background: var(--color-frame-hover);
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
 }
 .activity-btn:focus { outline: none; }
 .activity-btn { -webkit-tap-highlight-color: transparent; }
