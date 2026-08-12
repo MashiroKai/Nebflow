@@ -17,13 +17,22 @@ const DAEMON_CSS = `
 <style id="daemon-css">
 /* ── Header Trigger Button ── */
 #daemon-btn {
-  background: none; border: none; cursor: pointer; padding: 0;
+  background: none; border: 1px solid transparent; cursor: pointer; padding: 0;
   width: 28px; height: 28px; display: flex; align-items: center;
   justify-content: center; border-radius: 6px;
   color: var(--color-frame-text-muted); position: relative;
-  flex-shrink: 0; transition: background 0.15s, color 0.15s;
+  flex-shrink: 0; transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
-#daemon-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text); }
+#daemon-btn:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  color: var(--color-frame-text);
+}
 #daemon-btn svg { width: 16px; height: 16px; stroke-width: 2; opacity: 0.7; }
 #daemon-btn.active svg { opacity: 1; color: rgb(91, 127, 191); }
 @media (prefers-color-scheme: dark) { #daemon-btn svg { opacity: 0.5; } }
@@ -86,13 +95,21 @@ const DAEMON_CSS = `
 /* ── Add / Close Buttons ── */
 .daemon-add-btn, .daemon-close-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border: none; border-radius: 6px;
+  width: 22px; height: 22px; border: 1px solid transparent; border-radius: 6px;
   background: transparent; cursor: pointer; transition: all 0.15s; opacity: 0.7;
 }
 .daemon-add-btn { color: rgb(91, 127, 191); }
-.daemon-add-btn:hover { opacity: 1; background: rgba(91, 127, 191, 0.08); }
 .daemon-close-btn { color: var(--color-text-muted); }
-.daemon-close-btn:hover { opacity: 1; background: var(--color-frame-hover, rgba(0,0,0,0.06)); }
+.daemon-add-btn:hover, .daemon-close-btn:hover {
+  opacity: 1;
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+}
 .daemon-add-btn svg, .daemon-close-btn svg { width: 14px; height: 14px; stroke-width: 2; }
 
 /* ── Panel Body ── */
@@ -204,7 +221,13 @@ const DAEMON_CSS = `
 .daemon-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .daemon-btn {
   font: 500 11px -apple-system, sans-serif; padding: 4px 10px;
-  border-radius: 7px; border: 1px solid transparent; background: transparent;
+  border-radius: 7px; border: 1px solid transparent;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
   cursor: pointer; transition: all 0.15s; white-space: nowrap;
 }
 .daemon-btn.start { color: var(--color-primary, #07c160); border-color: rgba(7, 193, 96, 0.25); }
@@ -217,9 +240,18 @@ const DAEMON_CSS = `
   border: 1px solid transparent; background: transparent; cursor: pointer;
   color: var(--color-text-muted); transition: all 0.15s;
 }
-.daemon-btn-icon:hover { background: var(--color-frame-hover, rgba(0,0,0,0.06)); color: var(--color-text); }
-.daemon-btn-icon.restart:hover { color: #ff9800; background: rgba(255, 152, 0, 0.08); }
-.daemon-btn-icon.delete:hover { color: #f44336; background: rgba(244, 67, 54, 0.06); }
+.daemon-btn-icon:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  color: var(--color-text);
+}
+.daemon-btn-icon.restart:hover { color: #ff9800; }
+.daemon-btn-icon.delete:hover { color: #f44336; }
 .daemon-btn-icon svg { width: 13px; height: 13px; stroke-width: 2; }
 .daemon-btn:disabled, .daemon-btn-icon:disabled { opacity: 0.4; cursor: default; }
 
@@ -262,10 +294,16 @@ const DAEMON_CSS = `
 .daemon-add-save:disabled { opacity: 0.5; cursor: default; }
 .daemon-add-cancel {
   font: 500 12px -apple-system, sans-serif; color: var(--color-text-muted);
-  background: transparent; border: 1px solid var(--glass-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
   border-radius: 7px; padding: 4px 12px; cursor: pointer; transition: all 0.15s;
 }
-.daemon-add-cancel:hover { background: var(--color-frame-hover, rgba(0,0,0,0.06)); color: var(--color-text); }
+.daemon-add-cancel:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
 @media (prefers-color-scheme: dark) {
   .daemon-add-form { background: rgba(91, 127, 191, 0.04); border-color: rgba(91, 127, 191, 0.10); }
   .daemon-add-input { background: rgba(255, 255, 255, 0.04); border-color: rgba(91, 127, 191, 0.08); color: #e0e0e0; }

@@ -45,13 +45,23 @@ export const FLOW_CSS = `
 .team-card-title[data-act="def"]:hover { color: var(--color-primary, #07c160); }
 .team-card-actions { display: flex; gap: 4px; flex-shrink: 0; }
 .team-act-btn {
-  width: 26px; height: 26px; border: none; background: transparent;
+  width: 26px; height: 26px; border: 1px solid transparent; background: transparent;
   border-radius: 7px; color: var(--color-text-muted); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  font: 600 13px -apple-system, sans-serif; transition: background 0.15s, color 0.15s;
+  font: 600 13px -apple-system, sans-serif;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .team-act-btn svg { width: 15px; height: 15px; }
-.team-act-btn:hover { background: var(--color-frame-hover, rgba(0,0,0,0.06)); color: var(--color-text); }
+.team-act-btn:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  color: var(--color-text);
+}
 .team-card-summary {
   font: 500 11px -apple-system, sans-serif; color: var(--color-text-muted);
   flex-shrink: 0; margin-left: auto; display: flex; align-items: center; gap: 5px;

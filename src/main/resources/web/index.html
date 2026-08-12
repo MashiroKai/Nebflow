@@ -20,11 +20,14 @@
   <link rel="stylesheet" href="css/reminder.css">
   <link rel="stylesheet" href="css/neblink.css">
   <link rel="stylesheet" href="css/dropbox.css">
-  <link rel="stylesheet" href="css/sapphire.css">
   <link rel="stylesheet" href="css/split.css">
   <link rel="stylesheet" href="css/voice.css">
   <link rel="stylesheet" href="css/planMode.css">
   <link rel="stylesheet" href="css/lightbox.css">
+  <!-- sapphire.css loads LAST: it is the design-system standard layer.
+       Its grouped glass-control rules must win equal-specificity ties
+       against feature CSS hover/base states. -->
+  <link rel="stylesheet" href="css/sapphire.css">
 </head>
 <body>
   <script>document.documentElement.classList.add('ui-init');</script>
