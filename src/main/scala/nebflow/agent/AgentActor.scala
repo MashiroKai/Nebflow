@@ -434,7 +434,9 @@ object AgentActor extends AgentCore with AgentSession:
             state.sessionId
           )
           _ <- visSource match
-            case Some(s) => emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s, Some(eventType))
+            case Some(s) =>
+              val agentName = metadata("agentName").flatMap(_.asString)
+              emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s, Some(eventType), agentName)
             case None => IO.unit
           result <- pipeLlmCall(
             agentDef,
@@ -1344,7 +1346,9 @@ object AgentActor extends AgentCore with AgentSession:
         // <system-reminder> injected later at finishTurn is for the LLM).
         val visSource = visibleExternalEventSource(source, eventType)
         val bubbleIO = visSource match
-          case Some(s) => emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s, Some(eventType))
+          case Some(s) =>
+            val agentName = metadata("agentName").flatMap(_.asString)
+            emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s, Some(eventType), agentName)
           case None => IO.unit
         bubbleIO *>
           emitStream(
