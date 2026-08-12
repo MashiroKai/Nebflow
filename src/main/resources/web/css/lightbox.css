@@ -82,3 +82,6 @@ body.nf-lightbox-open { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .nf-lightbox-img, .nf-lightbox-close { transition: none; }
 }
+
+/* Visual hint: images tagged .nf-zoom-img are clickable (open lightbox) */
+img.nf-zoom-img { cursor: pointer; }
