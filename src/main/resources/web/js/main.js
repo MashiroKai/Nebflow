@@ -1482,6 +1482,13 @@ onMessage('compactComplete', (msg, view) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
+  // Compaction completes outside the normal done chain — finish any
+  // streaming agent bubbles so their cursors don't linger.
+  if (view) {
+    Object.keys(view.stream.agentBubbles).forEach(id => finishAgent(id));
+    view.stream.agentBubbles = {};
+    view.stream.activeAgentId = null;
+  }
   if (view) {
     const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
     renderSystemBubble(t('chat.compacted', { before: msg.before, after: msg.after, detail }));
@@ -1497,6 +1504,12 @@ onMessage('compactFailed', (msg, view) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
+  // A failed compact turn also ends the agent turn — clear cursors.
+  if (view) {
+    Object.keys(view.stream.agentBubbles).forEach(id => finishAgent(id));
+    view.stream.agentBubbles = {};
+    view.stream.activeAgentId = null;
+  }
   if (view) {
     renderSystemBubble(t('chat.compactFailed', { attempt: msg.attempt, maxAttempts: msg.maxAttempts }));
   }
