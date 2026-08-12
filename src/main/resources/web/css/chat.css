@@ -560,13 +560,14 @@
 }
 /* Injected bubble (task P+Q): tool-injected prompts & result notifications.
    Light sapphire blue — distinct from user green and AI default.
+   Same silhouette as .bubble.user (no border) — only the color differs,
+   so injected messages read as ordinary bubbles, not framed cards.
    NOTE: --sapphire is a space-separated RGB triplet, so the alpha form must
    use the modern rgb(... / alpha) syntax; rgba(var(--sapphire), a) is
    INVALID and silently dropped by the browser. */
 .bubble.injected {
   background: rgb(var(--sapphire) / 0.12);
   color: var(--color-text);
-  border: 1px solid rgb(var(--sapphire) / 0.25);
   border-bottom-right-radius: 4px;
 }
 .bubble.injected .injected-source-label {
@@ -1103,7 +1104,6 @@
   .bubble.user { color: #111; }
   .bubble.injected {
     background: rgb(var(--sapphire) / 0.20);
-    border-color: rgb(var(--sapphire) / 0.35);
   }
   .bubble.user.att-bubble { background: rgba(255,255,255,0.08); color: #7b7e88; }
   .bubble.ai .file-tag { background: rgba(255,255,255,0.08); }
