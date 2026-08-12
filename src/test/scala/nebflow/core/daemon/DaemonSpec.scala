@@ -253,4 +253,79 @@ class DaemonSpec extends FunSuite:
     }
   }
 
+  // ── Crash detection & auto-restart ─────────────────────
+
+  private def await(pred: => Boolean, timeoutMs: Long = 15000, intervalMs: Long = 100): Boolean =
+    val deadline = System.currentTimeMillis() + timeoutMs
+    var ok = false
+    while System.currentTimeMillis() < deadline && !ok do
+      if pred then ok = true
+      else Thread.sleep(intervalMs)
+    ok
+
+  test("DaemonService: autoStart daemon auto-restarts on crash, gives up after restartMaxAttempts (crash loop protection)") {
+    withDispatcher { disp =>
+      val svc = new DaemonService(disp)
+      val cfg = DaemonConfig(
+        "crashloop", "Crash Loop", List("sh", "-c", "exit 7"),
+        autoStart = true,
+        restartBackoffSec = 1,
+        restartMaxAttempts = 2
+      )
+      assertEquals(svc.start(cfg).unsafeRunSync().status, DaemonStatus.Running)
+
+      // Chain: crash(0s) -> backoff 1s -> restart#1 -> crash -> backoff 2s -> restart#2 -> crash -> give up.
+      assert(
+        await(svc.getState("crashloop").unsafeRunSync().exists(_.status == DaemonStatus.Crashed)),
+        "daemon should crash after start"
+      )
+      // After the final give-up (~3s) no further restarts are scheduled: the
+      // state must be Crashed continuously for a window longer than the chain.
+      val deadline = System.currentTimeMillis() + 5000
+      var stayedCrashed = true
+      while System.currentTimeMillis() < deadline && stayedCrashed do
+        stayedCrashed = svc.getState("crashloop").unsafeRunSync().exists(_.status == DaemonStatus.Crashed)
+        Thread.sleep(200)
+      assert(stayedCrashed, "daemon must not restart after exhausting restartMaxAttempts (crash loop)")
+    }
+  }
+
+  test("DaemonService: explicit stop does not trigger auto-restart (JVM shutdown coordination)") {
+    withDispatcher { disp =>
+      val svc = new DaemonService(disp)
+      val cfg = DaemonConfig("stopper", "Stopper", List("sleep", "30"), autoStart = true, restartBackoffSec = 1)
+      assertEquals(svc.start(cfg).unsafeRunSync().status, DaemonStatus.Running)
+      svc.stop("stopper").unsafeRunSync()
+
+      // backoff is 1s: a wrongly-scheduled restart would fire within this window.
+      Thread.sleep(1500)
+      assertEquals(svc.getState("stopper").unsafeRunSync().map(_.status), Some(DaemonStatus.Stopped))
+      Thread.sleep(1200) // extra margin — still must not come back
+      assertEquals(svc.getState("stopper").unsafeRunSync().map(_.status), Some(DaemonStatus.Stopped))
+    }
+  }
+
+  test("DaemonService: active health check kills a live-but-port-closed process (zombie detection)") {
+    withDispatcher { disp =>
+      val svc = new DaemonService(disp)
+      val freePort =
+        val ss = new java.net.ServerSocket(0)
+        try ss.getLocalPort
+        finally ss.close()
+      // Process stays alive (sleep 60) but never opens the port → zombie case.
+      val cfg = DaemonConfig("zombie", "Zombie", List("sleep", "60"), port = Some(freePort), healthCheckSec = 1)
+      val state = svc.start(cfg).unsafeRunSync()
+      assertEquals(state.status, DaemonStatus.Running)
+
+      // Threshold is 4 consecutive probe failures × 1s interval → killed ~4-5s,
+      // then monitorExit marks it Crashed (no auto-restart: autoStart=false).
+      assert(
+        await(svc.getState("zombie").unsafeRunSync().exists(_.status == DaemonStatus.Crashed), timeoutMs = 20000),
+        "zombie daemon should be declared crashed by the active health check"
+      )
+      val pid = state.pid.getOrElse(fail("expected a pid"))
+      assert(!ProcessHandle.of(pid).isPresent, s"wedged process $pid should have been killed")
+    }
+  }
+
 end DaemonSpec
