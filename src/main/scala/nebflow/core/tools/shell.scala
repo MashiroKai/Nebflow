@@ -126,7 +126,7 @@ final class ShellSession private (
         hbFiber <- on_heartbeat match
           case Some(cb) => startHeartbeat(jobId, deferred, health, cb)
           case None => IO.pure(None)
-        hcFiber <- startJobHealthCheck(jobId, deferred, health)
+        hcFiber <- startJobHealthCheck(jobId, deferred, health, command = command)
         job = BackgroundJob(
           fiber,
           hbFiber,
@@ -208,7 +208,7 @@ final class ShellSession private (
         _ <- (fiber.joinWithNever.attempt.flatMap { result =>
           deferred.complete(result.map(_ => ProcessResult("", "", 0, ""))).void
         }).start
-        hcFiber <- startJobHealthCheck(jobId, deferred, health, isRegisteredJob = true)
+        hcFiber <- startJobHealthCheck(jobId, deferred, health, isRegisteredJob = true, command = command)
         job = BackgroundJob(
           fiber = fiber,
           heartbeatFiber = None,
@@ -560,25 +560,30 @@ final class ShellSession private (
     health: JobHealth,
     on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None
   ): IO[Unit] =
-    // Background jobs have no timeout — they run until completion or cancellation
+    // Background jobs have no timeout — they run until completion or cancellation.
+    // The idle-timeout health check may kill the process and complete the deferred
+    // with a TimeoutException before execute() returns; in that case the on_complete
+    // callback must receive the TimeoutException (not the raw exit-137 result) so
+    // the agent gets a descriptive timeout message.
     execute(command, 365.days, Some(health), isBackground = true).attempt.flatMap { result =>
-      deferred.complete(result).void *>
-        on_complete.fold(IO.unit) { cb =>
-          // IO.delay catches exceptions thrown during IO construction
-          // (e.g. if cb(result) throws while preparing the payload).
-          // Without this, a construction-time throw bypasses handleErrorWith
-          // and silently kills the fiber — the deferred is already completed
-          // so the job looks done, but the notification is never sent.
-          IO.delay(cb(result))
-            .flatten
-            .handleErrorWith(e =>
-              IO.delay(
-                NebflowLogger
-                  .forName("nebflow.shell")
-                  .warn(s"Background job callback failed: ${e.getMessage}")
+      deferred.tryGet.flatMap {
+        case Some(existing) if existing.isLeft =>
+          // Deferred already completed with an error (idle timeout, process death, etc.)
+          // — use that error for the callback instead of the raw execute result.
+          deferred.complete(result).void *>
+            on_complete.fold(IO.unit) { cb =>
+              IO.delay(cb(existing)).flatten.handleErrorWith(e =>
+                IO.delay(NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}"))
               )
-            )
-        }
+            }
+        case _ =>
+          deferred.complete(result).void *>
+            on_complete.fold(IO.unit) { cb =>
+              IO.delay(cb(result)).flatten.handleErrorWith(e =>
+                IO.delay(NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}"))
+              )
+            }
+      }
     }
 
   /**
@@ -625,18 +630,22 @@ final class ShellSession private (
    *   task fiber is stuck on a blocking op. If the process dies, we must complete
    *   the deferred here to unblock cleanup.
    *
-   * This fiber does NOT auto-kill processes that are idle — long-running servers
-   * (web servers, sleep commands, etc.) produce no output by design and should
-   * not be killed. Only the agent/LLM can decide to cancel a stuck job via the
-   * existing heartbeat stuck notification (10 min idle).
+   * Idle timeout: if the process has been alive but produced no output for
+   * BgIdleTimeoutSec, it is forcibly killed and the deferred is completed with
+   * a TimeoutException. The backgroundExecute fiber's on_complete callback then
+   * notifies the agent, which can retry or continue — this is the primary
+   * recovery path for delegate/subtask agents that would otherwise be blocked
+   * forever by a stuck background command.
    */
   private def startJobHealthCheck(
     jobId: String,
     deferred: Deferred[IO, Either[Throwable, ProcessResult]],
     health: JobHealth,
-    isRegisteredJob: Boolean = false
+    isRegisteredJob: Boolean = false,
+    command: String = ""
   ): IO[Option[Fiber[IO, Throwable, Unit]]] =
     val intervalSec = Defaults.BgHealthCheckIntervalSec
+    val idleTimeoutMs = Defaults.BgIdleTimeoutSec.toLong * 1000L
     def loop: IO[Unit] =
       IO.sleep(intervalSec.seconds) *>
         deferred.tryGet.flatMap {
@@ -648,9 +657,8 @@ final class ShellSession private (
               if isRegisteredJob && health.deadNotified.compareAndSet(false, true) then
                 // Only complete deferred for registered (auto-backgrounded) jobs,
                 // where the watcher fiber may not detect the death
-                IO.println(
-                  s"[ShellSession] Job $jobId process died unexpectedly (exit: ${proc.exitValue()}) — completing deferred"
-                ) *>
+                NebflowLogger.forName("nebflow.shell")
+                  .info(s"Job $jobId process died unexpectedly (exit: ${proc.exitValue()}) — completing deferred") *>
                   deferred
                     .complete(
                       Left(new RuntimeException("Process died unexpectedly (exit code: " + proc.exitValue() + ")"))
@@ -660,7 +668,36 @@ final class ShellSession private (
               else
                 // Normal job: backgroundExecute will handle completion via waitFor()
                 IO.unit
-            else loop // process still alive, keep checking
+            else
+              // Process still alive — check idle timeout
+              val isSleepLike = SleepCommandRe.findFirstIn(command).isDefined
+              val idleMs = System.currentTimeMillis() - health.lastActivityMs.get()
+              if !isSleepLike && idleMs > idleTimeoutMs && health.deadNotified.compareAndSet(false, true) then
+                // Idle timeout: kill the process and complete deferred with error.
+                // The on_complete callback (in backgroundExecute) will notify the
+                // agent with the timeout message, unblocking delegate/subtask agents.
+                val logger = NebflowLogger.forName("nebflow.shell")
+                logger.warn(
+                  s"Background job $jobId idle for ${idleMs / 1000}s (timeout ${Defaults.BgIdleTimeoutSec}s) — auto-cancelling"
+                ) *>
+                  IO.blocking {
+                    proc.destroyForcibly()
+                    try proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+                    catch case _: InterruptedException => ()
+                    ()
+                  } *>
+                  deferred
+                    .complete(
+                      Left(new TimeoutException(
+                        s"Background command was idle (no output) for ${idleMs / 1000}s " +
+                          s"and was automatically cancelled. The command may be stuck " +
+                          s"or waiting for interactive input. Consider using a non-interactive " +
+                          s"alternative or running it manually."
+                      ))
+                    )
+                    .attempt
+                    .void
+              else loop
             end if
         }
     loop.start.map(Some(_))

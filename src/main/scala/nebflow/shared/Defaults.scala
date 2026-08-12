@@ -61,6 +61,19 @@ object Defaults:
   /** Background job idle threshold (no output) before flagging as stuck, in seconds. */
   val BgStuckThresholdSec: Int = 600
 
+  /**
+   * Background job idle timeout — if a background command produces no output
+   * for this many seconds, it is automatically cancelled and the agent is
+   * notified with a timeout error. This prevents delegate/subtask agents from
+   * being permanently blocked by a stuck background command (e.g. a grep that
+   * hangs on a FUSE mount, an SSH prompt waiting for input, etc.).
+   *
+   * 5 minutes is long enough for legitimate slow commands (npm install, sbt
+   * compile) that produce no output for a while, but short enough to recover
+   * a stuck agent within a reasonable timeframe.
+   */
+  val BgIdleTimeoutSec: Int = 300
+
   // ---- Tool Result Guard ----
 
   /**
