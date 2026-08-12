@@ -74,3 +74,37 @@
   pointer-events: none;
   z-index: 1;
 }
+
+/* ── Glass Control — standard interactive control texture ────────────────
+   One material for buttons/inputs sitting on glass surfaces: semi-
+   transparent tint, backdrop blur, 3D edges (top highlight + bottom
+   under-edge), whisper border. Feature CSS hover states should reuse
+   these variables so every control shares the same material. */
+:root {
+  --glass-control-bg: rgba(255, 255, 255, 0.45);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.65);
+  --glass-control-border: rgba(255, 255, 255, 0.40);
+  --glass-control-highlight: rgba(255, 255, 255, 0.50);
+  --glass-control-underedge: rgba(0, 0, 0, 0.05);
+  --glass-control-blur: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --glass-control-bg: rgba(255, 255, 255, 0.05);
+    --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+    --glass-control-border: rgba(255, 255, 255, 0.08);
+    --glass-control-highlight: rgba(255, 255, 255, 0.08);
+    --glass-control-underedge: rgba(0, 0, 0, 0.25);
+  }
+}
+
+.glass-control {
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+}

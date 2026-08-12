@@ -936,15 +936,18 @@
 }
 .cfg-select {
   width: 100%;
-  background: var(--color-frame-input-bg);
+  /* Etched glass — same material as .cfg-input */
+  background: var(--glass-etched-bg);
   color: var(--color-frame-input-text);
-  border: 1px solid var(--color-frame-input-border);
-  border-radius: 5px;
-  padding: 5px 8px;
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 8px;
+  padding: 6px 8px;
   font-size: 12px;
   font-family: inherit;
   outline: none;
   cursor: pointer;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .cfg-select:focus {
   border-color: var(--color-frame-text-muted);
