@@ -776,6 +776,7 @@ body.canvas-open #canvas-panel {
   height: auto;
   border-radius: 8px;
   object-fit: contain;
+  -webkit-user-drag: none; /* Safari: no native drag ghost (see draggable=false in viewImage) */
 }
 
 /* ── PDF viewer ── */

@@ -468,12 +468,18 @@ function viewImage(pane, { absPath, fileName, size }) {
   const url = `/api/nf-file?path=${encodeURIComponent(absPath)}&token=${encodeURIComponent(tok)}`;
   const img = new Image();
   img.alt = fileName || 'image';
+  // Prevent native image drag. <img> is draggable by default — an accidental
+  // drag on the image starts a native DnD session, and a wedged session
+  // (e.g. drop outside the window, Safari quirks) suppresses click events
+  // page-wide, which presents as "canvas tabs stop responding".
+  img.draggable = false;
   img.onerror = () => {
     let reason = 'File may be corrupted or not a valid image format.';
     if (size && size < 500) reason += ` (File is only ${size} bytes — likely an error page or placeholder, not a real image.)`;
     pane.innerHTML = `<div class="canvas-error">${reason}<br>Path: ${escapeHtml(absPath)}</div>`;
   };
   img.onload = () => {
+    if (!pane.isConnected) return;  // tab closed while the image was loading
     pane.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'canvas-image-viewer';
