@@ -40,8 +40,8 @@ function renderAgentModelSection(el, agentName, cfg, presetData) {
   el.innerHTML = `
     <div class="flow-agent-model-row">
       <select class="flow-agent-model-select" data-agent="${esc(agentName)}">
-        <option value=""${!presetName ? ' selected' : ''}>${t('preset.useDefault')}${defaultPreset ? `（${esc(defaultPreset.displayName || defaultPreset.name)}）` : ''}</option>
-        ${presetList.map(p => `<option value="${esc(p.name)}"${p.name === presetName ? ' selected' : ''}>${esc(p.displayName || p.name)}</option>`).join('')}
+        <option value=""${!presetName ? ' selected' : ''}>${t('preset.useDefault')}${defaultPreset ? `（${esc(defaultPreset.name)}）` : ''}</option>
+        ${presetList.map(p => `<option value="${esc(p.name)}"${p.name === presetName ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
       </select>
       ${currentHtml}
     </div>
