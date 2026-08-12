@@ -3477,14 +3477,28 @@ class WebSocketRoutes(
         // Injected user events (from emitInjectedUserEvent) — persist so the
         // blue injection bubble survives page refresh. Regular user messages
         // are persisted separately in the WS message handler (not here).
+        //
+        // CRITICAL: the record target must be the event's own nodeSessionId
+        // (normalized), NOT the root WS sessionId. Sub-agent injected events
+        // (Mail delivery, Delegate/SubTask prompts) flow through the root
+        // wsSend — recording them to sessionId would accumulate every
+        // cross-agent injection into Nebula's ui.json. Matching the
+        // agentTextDelta / agentToolEnd cases above.
         val text = hc.downField("text").as[String].getOrElse("")
         val injected = hc.downField("injected").as[Boolean].getOrElse(false)
         val source = hc.downField("source").as[Option[String]].getOrElse(None)
         val evtType = hc.downField("eventType").as[Option[String]].getOrElse(None)
         val sender = hc.downField("sender").as[Option[String]].getOrElse(None)
+        val targetSession = hc
+          .downField("nodeSessionId")
+          .as[String]
+          .toOption
+          .filter(_.nonEmpty)
+          .map(normalizeNodeSessionId)
+          .getOrElse(sessionId)
         if text.nonEmpty && injected then
           sharedResources.sessionStore.appendUiMessages(
-            sessionId,
+            targetSession,
             List(UiMessage.User(text, Nil, injected = true, timestamp = System.currentTimeMillis(), source = source, eventType = evtType, sender = sender))
           )
         else IO.unit
