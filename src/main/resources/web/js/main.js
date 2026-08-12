@@ -1612,7 +1612,15 @@ onMessage('user', (msg, view) => {
   const sid = msg.sessionId;
   if (!sid) return;
   state.turnExpecting[sid] = true;
-  saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null }, sid);
+  // Sub-agent events (nodeSessionId present — delegate-/subtask-/team-) belong
+  // to the sub-agent's own session. DelegateTool.routeWsSend stamps the PARENT
+  // sessionId for display routing, so caching under sid would pollute the
+  // parent's localStorage history — the bubble would reappear in the parent
+  // window on restore ("outgoing Delegate prompt shows as blue bubble").
+  // Sub-agent streams restore from their own backend history instead.
+  if (!msg.nodeSessionId) {
+    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null }, sid);
+  }
   if (sid === state.activeSessionId && view) {
     renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender);
     smartScroll();
