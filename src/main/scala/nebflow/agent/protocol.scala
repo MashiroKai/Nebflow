@@ -26,7 +26,9 @@ object AgentCommand:
      * by a tool (Mail/Delegate/SubTask/skill/ask) rather than typed by the
      * user. User WS inputs always carry clientMessageId and source=None.
      */
-    source: Option[String] = None
+    source: Option[String] = None,
+    /** Sender agent name for Mail-delivered messages (shown as attribution label). */
+    sender: Option[String] = None
   ) extends AgentCommand
 
   case class ImmediateInput(
@@ -35,7 +37,9 @@ object AgentCommand:
     /** Injection source marker (任务 P), e.g. "mail" for Mail delivery. */
     source: Option[String] = None,
     /** Structured event type (e.g. mail type, completion status) for the UI source label. */
-    eventType: Option[String] = None
+    eventType: Option[String] = None,
+    /** Sender agent name for Mail-delivered messages (shown as attribution label). */
+    sender: Option[String] = None
   ) extends AgentCommand
   case class Interrupt() extends AgentCommand
 
