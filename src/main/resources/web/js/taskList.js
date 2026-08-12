@@ -1,4 +1,5 @@
 import { t } from './i18n.js';
+import { createIconsIn } from './utils.js';
 
 const MAX_VISIBLE = 20;
 const COLLAPSED_KEY = 'nebflow-task-collapsed';
@@ -153,7 +154,7 @@ function doRender(container, allTasks, active, sessionId, prevSnapshot, newSnaps
   html += '</div>';
   container.innerHTML = html;
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(container);
 
   // Toggle handler
   const toggleBtn = container.querySelector('.task-toggle');
@@ -166,7 +167,7 @@ function doRender(container, allTasks, active, sessionId, prevSnapshot, newSnaps
       setCollapsed(nowCollapsed);
       toggleBtn.title = nowCollapsed ? t('task.expand') : t('task.collapse');
       toggleBtn.innerHTML = `<i data-lucide="${nowCollapsed ? 'chevron-down' : 'chevron-up'}"></i>`;
-      if (typeof lucide !== 'undefined') lucide.createIcons();
+      if (typeof lucide !== 'undefined') createIconsIn(toggleBtn);
     });
   }
 }

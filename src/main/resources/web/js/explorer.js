@@ -8,6 +8,7 @@
 import state from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { openPathPickerCallback } from './sidebar.js';
+import { createIconsIn } from './utils.js';
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -304,7 +305,7 @@ onMessage('dirListing', (msg) => {
     pending.container.innerHTML = '<div class="explorer-empty">Empty</div>';
   }
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(pending.container);
 });
 
 onMessage('fileContent', (msg) => {

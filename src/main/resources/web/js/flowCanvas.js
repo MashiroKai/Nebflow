@@ -11,6 +11,7 @@ import { renderFlowRunInto, renderFlowsPanel, bindDagNodeClicks, dagCardHtml, re
 import { renderFlowList } from './flowList.js';
 import { closeViewer, openMailbox, openRules, openDefinition } from './flowViewers.js';
 import { onReconnect } from './ws.js';
+import { createIconsIn } from './utils.js';
 
 // ── State ──────────────────────────────────────────────────
 let teams = [];           // Team definitions from /api/teams (disk)
@@ -51,7 +52,7 @@ function renderTeamsTab() {
   bindTileClicks();
   bindCardActions(openMailbox, openRules, openDefinition);
   bindFlowRowClicks(runningFlows, () => renderTeamsTab());
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(scroll);
   populateTileModels(teams);
 }
 
@@ -119,7 +120,7 @@ function renderFlowsTab() {
       }
     });
   });
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(scroll);
 }
 
 function renderStaticDag(pane, dag) {
@@ -155,7 +156,7 @@ function renderStaticDag(pane, dag) {
   };
   scroll.innerHTML = dagCardHtml(pseudoRf);
   bindDagNodeClicks();
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(scroll);
 }
 
 // Render whichever tab(s) are open.
@@ -203,7 +204,7 @@ function renderFlowRunTab(instanceId) {
   renderFlowRunInto(scroll, flow);
   overlayRoot();
   bindDagNodeClicks();
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(scroll);
 }
 
 // ── Auto-open flow-run tabs when flows start (P5) ──────────

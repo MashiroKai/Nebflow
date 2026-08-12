@@ -1,6 +1,6 @@
 import state from './state.js';
 import { activeView } from './chatView.js';
-import { t } from './i18n.js';
+import { t, getLocale } from './i18n.js';
 
 // === Lottie spinner JSON (rotating ring) ===
 export const spinnerJson = {
@@ -56,8 +56,36 @@ export function initMarkdown() {
 }
 
 // === KaTeX math rendering — protect math blocks from Markdown processing ===
+// Bounded LRU cache for rendered markdown HTML. History restore and session
+// switching re-render identical content; caching avoids repeated
+// marked.parse + KaTeX.renderToString work.
+// - Key: `${parseVoice}${markedLoaded}${katexLoaded}${locale}|${text}` —
+//   captures every factor that changes the output (voice parsing, library
+//   load state, i18n locale used by the copy button, and the raw text).
+// - Capacity: 200 entries. Map preserves insertion order; on get we
+//   delete+set to move the entry to the end (most recent); on set we evict
+//   the first (least recently used) key when over capacity.
+const MD_CACHE_CAP = 200;
+const _mdCache = new Map();
+
 export function renderMarkdownWithMath(text, parseVoice = true) {
   if (!text) return '';
+  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${text}`;
+  const hit = _mdCache.get(key);
+  if (hit !== undefined) {
+    _mdCache.delete(key);
+    _mdCache.set(key, hit);
+    return hit;
+  }
+  const html = _renderMarkdownWithMath(text, parseVoice);
+  _mdCache.set(key, html);
+  if (_mdCache.size > MD_CACHE_CAP) {
+    _mdCache.delete(_mdCache.keys().next().value);
+  }
+  return html;
+}
+
+function _renderMarkdownWithMath(text, parseVoice) {
   if (typeof marked === 'undefined') return escapeHtml(text);
   // Extract <voice>...</voice> blocks before any markdown processing (only for AI output, not thinking)
   const voiceBlocks = [];
@@ -124,6 +152,39 @@ export function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// === Lucide icons — subtree-scoped replacement ===
+// lucide.createIcons() always scans document.querySelectorAll('[data-lucide]')
+// (full-DOM walk, 50-200ms per call on large pages). Hot paths (message
+// render, list refresh) should call createIconsIn(container) instead, which
+// only walks the container subtree. Mimics lucide's own replaceElement:
+// kebab name → PascalCase lookup, merges element attrs, applies
+// "lucide lucide-<name>" classes. Falls back to global createIcons() when
+// called without a root.
+export function createIconsIn(root) {
+  if (typeof lucide === 'undefined' || !lucide.icons || !lucide.createElement) return;
+  if (!root) { lucide.createIcons(); return; }
+  const els = [];
+  if (root.matches && root.matches('[data-lucide]')) els.push(root);
+  els.push(...root.querySelectorAll('[data-lucide]'));
+  for (const el of els) {
+    const name = el.getAttribute('data-lucide');
+    if (!name) continue;
+    // Same conversion lucide uses: kebab-case → PascalCase
+    const pascal = name.replace(/(\w)(\w*)(_|-|\s*)/g, (m, c, p) => c.toUpperCase() + p.toLowerCase());
+    const icon = lucide.icons[pascal];
+    if (!icon) continue;
+    const [tag, iconAttrs, children] = icon;
+    const elAttrs = {};
+    for (const a of el.attributes) elAttrs[a.name] = a.value;
+    const attrs = { ...iconAttrs, 'data-lucide': name, ...elAttrs };
+    const classes = ['lucide', `lucide-${name}`, ...(elAttrs.class ? elAttrs.class.split(' ') : [])]
+      .map(c => c.trim()).filter(Boolean);
+    attrs.class = [...new Set(classes)].join(' ');
+    const svg = lucide.createElement([tag, attrs, children]);
+    el.replaceWith(svg);
+  }
 }
 
 // Shorthand alias for escapeHtml

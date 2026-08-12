@@ -6,7 +6,7 @@ import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from '.
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
-import { renderWithRegistry } from './cardRegistry.js';
+import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow } from './chat.js';
 
 // ---------- AI message badge (no duration) ----------
@@ -496,16 +496,20 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   // Defer expensive markdown+KaTeX rendering into post-append batches.
   // DOM elements are created synchronously with plain text; innerHTML is upgraded via rAF.
   const pendingRenders = [];
-  const deferMd = (el, text) => {
+  const deferMd = (el, text, parseVoice = true) => {
     el.textContent = text;
-    pendingRenders.push({ el, text });
+    pendingRenders.push({ el, text, parseVoice });
   };
   msgs.forEach((m, i) => {
     if (skipMsg) { skipMsg = false; return; }
     if (m.type === 'user') {
       // Injected messages (task P+Q): light-blue bubble via shared builder.
       if (m.injected && m.source) {
-        fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender));
+        // deferMd with parseVoice=false (same as the live path): injected
+        // messages join the rAF markdown batch — no synchronous render storm
+        // on hard-refresh (P0-2).
+        fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender,
+          (el, text) => deferMd(el, text, false)));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -865,8 +869,8 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   function upgradeBatch() {
     const end = Math.min(ri + BATCH_SIZE, pendingRenders.length);
     for (; ri < end; ri++) {
-      const { el, text } = pendingRenders[ri];
-      el.innerHTML = renderMarkdownWithMath(text);
+      const { el, text, parseVoice } = pendingRenders[ri];
+      el.innerHTML = renderMarkdownWithMath(text, parseVoice);
     }
     if (ri < pendingRenders.length) {
       requestAnimationFrame(upgradeBatch);
@@ -895,7 +899,10 @@ export function migrateLegacyIfNeeded() {
         pruneAndRetrySetSessions(all, state.activeSessionId);
       }
       // Re-render chat with the migrated data
-      if (activeView?.dom?.chat) activeView.dom.chat.innerHTML = '';
+      if (activeView?.dom?.chat) {
+        cleanupCardIframes(activeView.dom.chat);
+        activeView.dom.chat.innerHTML = '';
+      }
       restoreFromStorage();
     }
   } catch(e) {}

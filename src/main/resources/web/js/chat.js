@@ -3,7 +3,7 @@
 
 import state, { AGENT_PALETTE } from './state.js';
 import { activeView, setActiveView } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs } from './ws.js';
@@ -363,8 +363,11 @@ export function injectedSourceLabel(source, eventType, sender) {
 
 /** Build a row element for an injected message (pure builder — no DOM append,
  *  no scroll). Shared by live render (renderInjectedBubble) and history
- *  restore (persistence.js) so both paths render identically. */
-export function buildInjectedRow(text, source, timestamp, eventType, sender) {
+ *  restore (persistence.js) so both paths render identically.
+ *  deferFn (optional): batch-restore path passes persistence.js's deferMd to
+ *  defer markdown rendering into post-append rAF batches — prevents a
+ *  synchronous markdown storm when restoring long histories (P0-2). */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, deferFn) {
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -374,7 +377,8 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender) {
   label.className = 'ask-label injected-source-label';
   label.textContent = injectedSourceLabel(source, eventType, sender);
   const content = document.createElement('div');
-  content.innerHTML = renderMarkdownWithMath(text || '', false);
+  if (deferFn) deferFn(content, text || '');
+  else content.innerHTML = renderMarkdownWithMath(text || '', false);
   bubble.appendChild(label);
   bubble.appendChild(content);
   row.appendChild(bubble);
@@ -1470,7 +1474,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   btnRow.appendChild(confirmBtn);
   box.appendChild(btnRow);
   container.appendChild(box);
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  createIconsIn(box);
   smartScroll();
 
   function checkAllAnswered() {

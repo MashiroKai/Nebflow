@@ -29,7 +29,7 @@ import {
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup } from './persistence.js';
 import { renderTaskList } from './taskList.js';
-import { renderWithRegistry } from './cardRegistry.js';
+import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
 import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
@@ -1003,6 +1003,7 @@ onMessage('historyPage', (msg, view) => {
   if (isInitialLoad) {
     view.pagination.pendingInitialLoad = false;
     // Initial load or full refresh — replace
+    cleanupCardIframes(activeView.dom.chat);
     activeView.dom.chat.innerHTML = '';
     // Reset sessionToolCards — innerHTML clear above removes all tool pending
     // card DOM nodes, but renderToolPending uses sessionToolCards[sid] as an
@@ -1640,7 +1641,10 @@ onMessage('messageRecalled', (msg) => {
     const sid = msg.sessionId;
     if (sid && sid === state.activeSessionId) {
       import('./persistence.js').then(({ restoreFromStorage }) => {
-        if (activeView?.dom?.chat) activeView.dom.chat.innerHTML = '';
+        if (activeView?.dom?.chat) {
+          cleanupCardIframes(activeView.dom.chat);
+          activeView.dom.chat.innerHTML = '';
+        }
         restoreFromStorage();
       });
     }
