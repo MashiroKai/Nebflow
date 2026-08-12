@@ -5,6 +5,7 @@ import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import nebflow.agent.AgentDef
 import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.presets.PresetStore
 
 /**
  * Loads Team/Flow/Agent definitions from disk.
@@ -259,6 +260,9 @@ object EntityLoader:
                 .headOption
           }
     yield globalOpt.orElse(teamOpt).orElse(flowOpt).map { entry =>
+      // Resolve preset/legacy model into the final AgentModelConfig.
+      // Priority: explicit preset > legacy model > default preset > global chain.
+      val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
       AgentDef(
         name = entry.name,
         description = entry.description,
@@ -267,7 +271,8 @@ object EntityLoader:
         voiceEnabled = entry.voice,
         category = entry.category,
         mcpServers = entry.mcpServers,
-        model = entry.model,
+        model = Some(resolvedModel),
+        preset = entry.preset,
         skills = entry.skills,
         flows = entry.flows
       )
