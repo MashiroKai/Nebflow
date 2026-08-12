@@ -184,7 +184,7 @@ async function populateModelTag(name) {
   const presetName = model.preset || '';
   const preset = presetName ? (presetData?.presets || []).find(p => p.name === presetName) : null;
   const label = preset
-    ? `${t('preset.pillPrefix')}${preset.displayName || preset.name} · ${shortModel(current)}`
+    ? `${t('preset.pillPrefix')}${preset.name} · ${shortModel(current)}`
     : shortModel(current);
   const isFallback = model.preferred && current !== model.preferred;
   // resolvedFrom arrives with backend P2; fall back to legacy heuristic without it
@@ -272,8 +272,8 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
       <div class="agent-detail-section">
         <div class="agent-detail-label">Model${showDefaultBadge ? `<span class="agent-detail-default-badge">${t('preset.defaultBadge')}</span>` : ''}</div>
         <select class="agent-detail-preset-select" id="agent-detail-preset-select">
-          <option value="">${t('preset.useDefault')}${defaultPreset ? `（${esc(defaultPreset.displayName || defaultPreset.name)}）` : ''}</option>
-          ${presetList.map(p => `<option value="${esc(p.name)}"${p.name === presetName ? ' selected' : ''}>${esc(p.displayName || p.name)}</option>`).join('')}
+          <option value="">${t('preset.useDefault')}${defaultPreset ? `（${esc(defaultPreset.name)}）` : ''}</option>
+          ${presetList.map(p => `<option value="${esc(p.name)}"${p.name === presetName ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
         </select>
         <div class="agent-detail-preset-chain" id="agent-detail-preset-chain"></div>
         <div class="agent-detail-model-current" id="agent-detail-model-current"></div>

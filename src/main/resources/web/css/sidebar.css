@@ -975,6 +975,11 @@
 }
 /* Chain editor inside the preset modal */
 .preset-chain-editor .agent-detail-model-row { margin-bottom: 6px; }
+.preset-drag-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin: -2px 0 6px;
+}
 /* Legacy migration banner */
 .preset-migrate-inner {
   display: flex;
@@ -1484,6 +1489,7 @@
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: rgba(0,0,0,0.02);
+  cursor: grab;
 }
 .agent-detail-model-row.playing {
   border-color: var(--color-primary, #07c160);
@@ -1500,9 +1506,11 @@
   color: var(--color-text);
   flex: 1;
 }
+.agent-detail-model-row:active { cursor: grabbing; }
 .agent-detail-grip {
-  opacity: 0.4; font-size: 12px; flex-shrink: 0;
+  opacity: 0.6; font-size: 14px; flex-shrink: 0;
 }
+.agent-detail-model-row:hover .agent-detail-grip { opacity: 0.85; }
 .agent-detail-model-pos {
   font: 600 10px -apple-system, sans-serif;
   color: var(--color-primary, #07c160);
@@ -1511,6 +1519,7 @@
 .agent-detail-model-row.dragging { opacity: 0.4; }
 .agent-detail-model-row.drag-over {
   border-color: var(--color-primary, #07c160);
+  border-top: 2px solid var(--color-primary, #07c160);
   box-shadow: 0 0 0 2px rgba(7,193,96,0.15);
 }
 .agent-detail-model-add { margin-top: 8px; }

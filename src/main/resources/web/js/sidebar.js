@@ -457,9 +457,8 @@ function renderPresetCard(p, defaultPreset, agentsMap) {
   return `
     <div class="cfg-card preset-card" data-preset="${escapeHtml(p.name)}">
       <div class="cfg-card-header">
-        <span class="cfg-card-title">${escapeHtml(p.displayName || p.name)}</span>
+        <span class="cfg-card-title">${escapeHtml(p.name)}</span>
         ${isDefault ? `<span class="preset-default-badge">${t('preset.default')}</span>` : ''}
-        ${p.displayName && p.displayName !== p.name ? `<span class="preset-card-key">${escapeHtml(p.name)}</span>` : ''}
       </div>
       <div class="preset-card-body">
         ${p.description ? `<div class="preset-card-desc">${escapeHtml(p.description)}</div>` : ''}
@@ -515,8 +514,8 @@ async function loadPresetsSection() {
     } else if (btn.dataset.action === 'delete') {
       const usedBy = presetUsedBy(agentsMap, name);
       const msg = usedBy.length > 0
-        ? t('preset.deleteConfirm', { name: preset.displayName || name, n: usedBy.length })
-        : t('preset.deleteConfirmNone', { name: preset.displayName || name });
+        ? t('preset.deleteConfirm', { name, n: usedBy.length })
+        : t('preset.deleteConfirmNone', { name });
       window.__showConfirm?.(t('preset.deleteTitle'), msg, async () => {
         try {
           await presets.deletePreset(name);
@@ -633,15 +632,11 @@ function showPresetModal(existing, onSaved) {
   overlay.className = 'cfg-modal-overlay';
   overlay.innerHTML = `
     <div class="cfg-modal">
-      <div class="cfg-modal-title">${isEdit ? t('preset.editTitle', { name: existing.displayName || existing.name }) : t('preset.addTitle')}</div>
+      <div class="cfg-modal-title">${isEdit ? t('preset.editTitle', { name: existing.name }) : t('preset.addTitle')}</div>
       <div class="cfg-modal-body">
         <div class="cfg-form-group">
           <label class="cfg-label">${t('preset.fieldName')}</label>
           <input class="cfg-input" data-field="name" type="text" value="${escapeHtml(existing?.name || '')}" placeholder="vision" ${isEdit ? 'disabled' : ''} autocomplete="off">
-        </div>
-        <div class="cfg-form-group">
-          <label class="cfg-label">${t('preset.fieldDisplayName')}</label>
-          <input class="cfg-input" data-field="displayName" type="text" value="${escapeHtml(existing?.displayName || '')}" placeholder="${escapeHtml(t('preset.fieldDisplayName'))}" autocomplete="off">
         </div>
         <div class="cfg-form-group">
           <label class="cfg-label">${t('preset.fieldDescription')}</label>
@@ -649,6 +644,7 @@ function showPresetModal(existing, onSaved) {
         </div>
         <div class="cfg-form-group">
           <label class="cfg-label">${t('preset.fieldChain')}</label>
+          <div class="preset-drag-hint">${t('preset.dragHint')}</div>
           <div class="preset-chain-editor" id="preset-chain-editor"></div>
         </div>
       </div>
@@ -672,7 +668,6 @@ function showPresetModal(existing, onSaved) {
 
   overlay.querySelector('#cfg-modal-save').addEventListener('click', async () => {
     const name = overlay.querySelector('[data-field="name"]').value.trim();
-    const displayName = overlay.querySelector('[data-field="displayName"]').value.trim();
     const description = overlay.querySelector('[data-field="description"]').value.trim();
     if (!isEdit) {
       if (!name) { window.__showToast?.(t('preset.nameRequired'), 'error'); return; }
@@ -681,7 +676,6 @@ function showPresetModal(existing, onSaved) {
     const chain = editor.getChain();
     const body = {
       name: isEdit ? existing.name : name,
-      displayName: displayName || (isEdit ? existing.name : name),
       description,
       preferred: chain[0] || null,
       fallbacks: chain.slice(1),
