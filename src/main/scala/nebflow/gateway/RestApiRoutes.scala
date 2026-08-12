@@ -1456,11 +1456,10 @@ class RestApiRoutes(
             if file.presets.contains(name) then
               Conflict(Json.obj("error" -> s"Preset '$name' already exists".asJson))
             else
-              val displayName = body.hcursor.downField("displayName").as[String].getOrElse(name)
               val description = body.hcursor.downField("description").as[String].getOrElse("")
               val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
               val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(Nil)
-              val preset = ModelPreset(name, displayName, description, preferred, fallbacks)
+              val preset = ModelPreset(name, description, preferred, fallbacks)
               val updated = file.copy(presets = file.presets + (name -> preset))
               IO.blocking(store.save(updated)) *>
                 Created(preset.asJson)
@@ -1493,11 +1492,10 @@ class RestApiRoutes(
             case None =>
               NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
             case Some(existing) =>
-              val displayName = body.hcursor.downField("displayName").as[String].getOrElse(existing.displayName)
               val description = body.hcursor.downField("description").as[String].getOrElse(existing.description)
               val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
               val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(existing.fallbacks)
-              val updated = existing.copy(displayName = displayName, description = description,
+              val updated = existing.copy(description = description,
                 preferred = preferred, fallbacks = fallbacks)
               val newFile = file.copy(presets = file.presets + (presetName -> updated))
               IO.blocking(store.save(newFile)) *>
@@ -1824,7 +1822,6 @@ class RestApiRoutes(
             val agentList = agents.map(_._1).mkString(", ")
             val preset = ModelPreset(
               name = name,
-              displayName = name,
               description = s"Auto-migrated from: $agentList",
               preferred = model.preferred,
               fallbacks = model.fallbacks
