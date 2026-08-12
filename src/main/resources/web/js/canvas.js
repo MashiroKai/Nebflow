@@ -453,8 +453,23 @@ export function hasTab(id) {
  *  @param {object} item — { id, itemType, title, content, absPath, size }
  */
 export async function openWorkspaceItem(item) {
-  const { id, itemType, title, content, absPath, size, pinned } = item;
+  // id is let (not const): the absPath dedupe below may rewrite it to the
+  // existing tab's id for the same file.
+  let { id } = item;
+  const { itemType, title, content, absPath, size, pinned } = item;
   if (!id) return;
+
+  // Dedupe by absPath: a refresh/readFile response always arrives with the
+  // canonical id `file:<path>`, but the same file may already be open under a
+  // different id (Pop cards, agent-provided ids). Without this check every
+  // activation-refresh of such a tab spawns a duplicate tab that steals
+  // activation — the user perceives tab switching as broken. Rewrite the id
+  // to the existing tab's so the existing-tab refresh path below handles it.
+  if (!tabs.has(id) && absPath) {
+    for (const [existingId, existing] of tabs) {
+      if (existing.absPath === absPath) { id = existingId; break; }
+    }
+  }
 
   // If tab already exists: switch to it — and when this dispatch carries new
   // content (e.g. a refresh readFile response), re-render the existing pane.
