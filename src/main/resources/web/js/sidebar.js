@@ -13,6 +13,7 @@ import { cleanupCardIframes } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
 import { preloadModelCapabilities, renderVisionBadge, getVision, updateVision } from './modelCapabilities.js';
+import * as presets from './presets.js';
 
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
@@ -326,6 +327,12 @@ export function renderSettings() {
       <button class="cfg-btn cfg-btn-add" id="btn-add-provider">${t('settings.addProvider')}</button>
     </div>
     <div class="settings-section">
+      <div class="settings-section-title">${t('settings.presets')}</div>
+      <div id="preset-migrate-banner" style="display:none"></div>
+      <div id="preset-list"><div class="cfg-empty">Loading…</div></div>
+      <button class="cfg-btn cfg-btn-add" id="btn-add-preset">${t('settings.addPreset')}</button>
+    </div>
+    <div class="settings-section">
       <div class="settings-section-title">${t('settings.mcpServers')}</div>
       <div id="mcp-server-list">
         ${mcpServers.map(s => renderMcpServerCard(s.id, s.enabled)).join('')}
@@ -363,6 +370,9 @@ export function renderSettings() {
 
   bindSettingsEvents(content, cfg);
   bindNeblinkEvents(() => renderSettings());
+
+  // Async-load the preset management section (non-blocking)
+  loadPresetsSection();
 
   // Pre-fetch model capabilities, then refresh badges on provider cards
   preloadModelCapabilities(() => {
@@ -426,6 +436,194 @@ function renderMcpServerCard(name, enabled) {
       </div>
     </div>`;
 }
+
+// ---------- Preset management section (P3) ----------
+
+/** Reverse-lookup: which agents reference a given preset name. */
+function presetUsedBy(agentsMap, presetName) {
+  return Object.entries(agentsMap || {})
+    .filter(([, v]) => v === presetName)
+    .map(([k]) => k)
+    .sort();
+}
+
+function renderPresetCard(p, defaultPreset, agentsMap) {
+  const isDefault = p.name === defaultPreset;
+  const usedBy = presetUsedBy(agentsMap, p.name);
+  const chain = [p.preferred, ...(p.fallbacks || [])].filter(Boolean);
+  const usedByHtml = usedBy.length > 0
+    ? `<span class="preset-card-agents" title="${escapeHtml(usedBy.join(', '))}">${t('preset.usedBy', { n: usedBy.length })}</span>`
+    : `<span class="preset-card-agents">${t('preset.usedByNone')}</span>`;
+  return `
+    <div class="cfg-card preset-card" data-preset="${escapeHtml(p.name)}">
+      <div class="cfg-card-header">
+        <span class="cfg-card-title">${escapeHtml(p.displayName || p.name)}</span>
+        ${isDefault ? `<span class="preset-default-badge">${t('preset.default')}</span>` : ''}
+        ${p.displayName && p.displayName !== p.name ? `<span class="preset-card-key">${escapeHtml(p.name)}</span>` : ''}
+      </div>
+      <div class="preset-card-body">
+        ${p.description ? `<div class="preset-card-desc">${escapeHtml(p.description)}</div>` : ''}
+        ${presets.presetChainHtml(chain, '')}
+        <div class="preset-card-footer">
+          ${usedByHtml}
+          <span class="preset-card-actions">
+            <button class="cfg-btn cfg-btn-sm" data-action="default" ${isDefault ? 'disabled' : ''}>${t('preset.setDefault')}</button>
+            <button class="cfg-btn cfg-btn-sm" data-action="edit">${t('preset.edit')}</button>
+            <button class="cfg-btn cfg-btn-sm" data-action="delete" ${isDefault ? 'disabled' : ''}>${t('preset.delete')}</button>
+          </span>
+        </div>
+      </div>
+    </div>`;
+}
+
+/** Load presets + agent mapping, render cards, bind section events. */
+async function loadPresetsSection() {
+  const listEl = document.getElementById('preset-list');
+  if (!listEl) return; // settings panel not open
+
+  const data = await presets.fetchPresets();
+  if (!document.getElementById('preset-list')) return; // panel closed while fetching
+  if (!data) {
+    listEl.innerHTML = `<div class="cfg-empty">${t('preset.loadFailed')}</div>`;
+    return;
+  }
+
+  const presetList = data.presets || [];
+  const defaultPreset = data.defaultPreset || '';
+  const agentsMap = data.agents || {};
+
+  listEl.innerHTML = presetList.length > 0
+    ? presetList.map(p => renderPresetCard(p, defaultPreset, agentsMap)).join('')
+    : `<div class="cfg-empty">${t('preset.empty')}</div>`;
+
+  // Card action buttons (delegation on the list container)
+  listEl.onclick = async (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn || btn.disabled) return;
+    const card = btn.closest('.preset-card');
+    const name = card?.dataset.preset;
+    const preset = presetList.find(p => p.name === name);
+    if (!preset) return;
+
+    if (btn.dataset.action === 'default') {
+      try {
+        await presets.setDefaultPreset(name);
+        loadPresetsSection();
+      } catch (err) { window.__showToast?.(err.message, 'error'); }
+    } else if (btn.dataset.action === 'edit') {
+      showPresetModal(preset, () => loadPresetsSection());
+    } else if (btn.dataset.action === 'delete') {
+      const usedBy = presetUsedBy(agentsMap, name);
+      const msg = usedBy.length > 0
+        ? t('preset.deleteConfirm', { name: preset.displayName || name, n: usedBy.length })
+        : t('preset.deleteConfirmNone', { name: preset.displayName || name });
+      window.__showConfirm?.(t('preset.deleteTitle'), msg, async () => {
+        try {
+          await presets.deletePreset(name);
+          loadPresetsSection();
+        } catch (err) { window.__showToast?.(err.message, 'error'); }
+      });
+    }
+  };
+
+  // Add-preset button (recreated each renderSettings — bind here)
+  const addBtn = document.getElementById('btn-add-preset');
+  if (addBtn) addBtn.onclick = () => showPresetModal(null, () => loadPresetsSection());
+
+  // Legacy migration banner (P3: banner UI only — dialog lands in P5)
+  presets.detectLegacyAgents().then(legacy => {
+    const banner = document.getElementById('preset-migrate-banner');
+    if (!banner) return;
+    if (legacy.length === 0) { banner.style.display = 'none'; return; }
+    banner.style.display = '';
+    banner.innerHTML = `
+      <div class="preset-migrate-inner">
+        <span class="preset-migrate-text">⚠ ${t('preset.migrateBanner', { n: legacy.length })}</span>
+        <button class="cfg-btn cfg-btn-sm" id="btn-migrate-legacy">${t('preset.migrateAction')}</button>
+      </div>`;
+    banner.querySelector('#btn-migrate-legacy')?.addEventListener('click', () => {
+      window.__showToast?.(t('preset.migratePending'), 'info');
+    });
+  });
+}
+
+/**
+ * Preset create/edit modal. Reuses the cfg-modal skeleton; the model chain
+ * editor is the shared drag-to-reorder component from presets.js.
+ */
+function showPresetModal(existing, onSaved) {
+  const isEdit = !!existing;
+  document.getElementById('cfg-modal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'cfg-modal';
+  overlay.className = 'cfg-modal-overlay';
+  overlay.innerHTML = `
+    <div class="cfg-modal">
+      <div class="cfg-modal-title">${isEdit ? t('preset.editTitle', { name: existing.displayName || existing.name }) : t('preset.addTitle')}</div>
+      <div class="cfg-modal-body">
+        <div class="cfg-form-group">
+          <label class="cfg-label">${t('preset.fieldName')}</label>
+          <input class="cfg-input" data-field="name" type="text" value="${escapeHtml(existing?.name || '')}" placeholder="vision" ${isEdit ? 'disabled' : ''} autocomplete="off">
+        </div>
+        <div class="cfg-form-group">
+          <label class="cfg-label">${t('preset.fieldDisplayName')}</label>
+          <input class="cfg-input" data-field="displayName" type="text" value="${escapeHtml(existing?.displayName || '')}" placeholder="${escapeHtml(t('preset.fieldDisplayName'))}" autocomplete="off">
+        </div>
+        <div class="cfg-form-group">
+          <label class="cfg-label">${t('preset.fieldDescription')}</label>
+          <input class="cfg-input" data-field="description" type="text" value="${escapeHtml(existing?.description || '')}" autocomplete="off">
+        </div>
+        <div class="cfg-form-group">
+          <label class="cfg-label">${t('preset.fieldChain')}</label>
+          <div class="preset-chain-editor" id="preset-chain-editor"></div>
+        </div>
+      </div>
+      <div class="cfg-modal-actions">
+        <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">${t('modal.cancel')}</button>
+        <button class="cfg-btn cfg-btn-save" id="cfg-modal-save">${t('settings.save')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const initialChain = existing ? [existing.preferred, ...(existing.fallbacks || [])].filter(Boolean) : [];
+  const editor = presets.renderChainEditor(
+    overlay.querySelector('#preset-chain-editor'),
+    initialChain,
+    presets.getAllModelRefs(),
+  );
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#cfg-modal-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  overlay.querySelector('#cfg-modal-save').addEventListener('click', async () => {
+    const name = overlay.querySelector('[data-field="name"]').value.trim();
+    const displayName = overlay.querySelector('[data-field="displayName"]').value.trim();
+    const description = overlay.querySelector('[data-field="description"]').value.trim();
+    if (!isEdit) {
+      if (!name) { window.__showToast?.(t('preset.nameRequired'), 'error'); return; }
+      if (/\s/.test(name)) { window.__showToast?.(t('preset.noSpaces'), 'error'); return; }
+    }
+    const chain = editor.getChain();
+    const body = {
+      name: isEdit ? existing.name : name,
+      displayName: displayName || (isEdit ? existing.name : name),
+      description,
+      preferred: chain[0] || null,
+      fallbacks: chain.slice(1),
+    };
+    try {
+      if (isEdit) await presets.updatePreset(existing.name, body);
+      else await presets.createPreset(body);
+      close();
+      onSaved?.();
+    } catch (err) {
+      window.__showToast?.(err.message, 'error');
+    }
+  });
+}
+
 
 function bindSettingsEvents(content, cfg) {
   // Thinking toggle
