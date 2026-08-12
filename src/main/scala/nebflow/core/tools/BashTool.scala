@@ -300,7 +300,7 @@ Git safety:
   // detector sees zero output lines even though the real command is printing.
   // We strip the trailing `| tail -N` and apply truncation in Java instead.
 
-  private val TrailingTailRe = """\|\s*tail\s+(?:-n\s+)?(\d+)\s*$""".r
+  private val TrailingTailRe = """\|\s*tail\s+(?:-n\s+)?-?(\d+)\s*$""".r
 
   /** Extract trailing `| tail -N`, returning (command without pipe, N). */
   private def extractTailTruncation(command: String): (String, Option[Int]) =
