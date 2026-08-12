@@ -4,6 +4,7 @@ import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.util.ProcessTree
 
 import java.io.{BufferedReader, InputStreamReader}
 
@@ -192,7 +193,7 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
     // also covers the JVM shutdown path (stopAll -> doStop) — daemons must die
     // with Nebflow, not be resurrected by the shutdown hook's own kill.
     entries.update(map => map.updated(id, entry.copy(stopRequested = true))) *>
-      killProcessTree(entry.process.getOrElse(throw new IllegalStateException(s"Daemon '$id' has no process"))) *>
+      ProcessTree.killProcessTree(entry.process.getOrElse(throw new IllegalStateException(s"Daemon '$id' has no process"))) *>
       entry.readFiber.traverse_(_.cancel) *>
       entries.update { map =>
         map.updated(
@@ -210,24 +211,6 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
           case Some(e) => toStateIO(id, e).map(Some(_))
           case None => IO.pure(Some(toState(id, entry)))
       }
-
-  /** Kill a process tree (descendants first, then parent): SIGTERM, SIGKILL after 5s. */
-  private def killProcessTree(p: Process): IO[Unit] =
-    IO.blocking {
-      try
-        // Kill the whole process tree, not just the direct parent.
-        // `p.destroy()` only signals the parent (e.g. `npm run dev`), leaving
-        // grandchildren (`node astro dev`) orphaned — still alive and holding
-        // the port. Snapshot descendants BEFORE destroying anything, since a
-        // dead parent's children get reparented and vanish from the live view.
-        val descendants = p.descendants().toScala(List)
-        descendants.foreach(_.destroy()) // SIGTERM to children
-        p.destroy() // SIGTERM
-        if !p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) then
-          descendants.foreach(_.destroyForcibly()) // SIGKILL children
-          p.destroyForcibly() // SIGKILL parent
-      catch case _: Exception => ()
-    }
 
   /** Background fiber: read stdout+stderr lines into ring buffer. */
   private def readOutput(id: String, process: Process): IO[Unit] =
@@ -385,7 +368,7 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
                     logger.warn(
                       s"[daemon] '${config.name}' port $port closed for $next consecutive probes while process alive; " +
                         "treating as crashed — killing process tree"
-                    ) *> killProcessTree(process) *> IO.unit // monitorExit takes over from here
+                    ) *> ProcessTree.killProcessTree(process) *> IO.unit // monitorExit takes over from here
                   else loop(next)
               }
             case _ => IO.unit // daemon stopped / replaced / stop in flight — stop probing

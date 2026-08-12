@@ -4,6 +4,7 @@ import cats.effect.*
 import cats.effect.std.Mutex
 import cats.syntax.all.*
 import nebflow.core.NebflowLogger
+import nebflow.core.util.ProcessTree
 import nebflow.shared.Defaults
 
 import java.io.File
@@ -237,13 +238,10 @@ final class ShellSession private (
               case true => IO.pure(false)
               case false =>
                 // 1) Kill the underlying OS process directly (not relying on fiber cancellation)
-                val killProcess = IO {
+                val killProcess = {
                   val proc = job.health.processRef.get()
-                  if proc != null && proc.isAlive then
-                    proc.destroyForcibly()
-                    try proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
-                    catch case _: InterruptedException => ()
-                  ()
+                  if proc != null && proc.isAlive then ProcessTree.killProcessTree(proc)
+                  else IO.unit
                 }
                 // 2) Complete the deferred so any waiters get the cancellation signal
                 val completeDeferred =
@@ -506,13 +504,7 @@ final class ShellSession private (
                       if !cpuActive then
                         IO(proc.isAlive()).flatMap { stillAlive =>
                           if stillAlive then
-                            stuckFlag.set(true) *>
-                              IO.blocking {
-                                proc.destroyForcibly()
-                                try proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
-                                catch case _: InterruptedException => ()
-                                ()
-                              }
+                            stuckFlag.set(true) *> ProcessTree.killProcessTree(proc)
                           else IO.unit
                         }
                       else IO.unit
@@ -547,11 +539,7 @@ final class ShellSession private (
       yield finalResult
       end for
     } { proc =>
-      IO.blocking {
-        proc.destroyForcibly()
-        proc.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)
-        ()
-      }
+      ProcessTree.killProcessTree(proc)
     }
 
   private def backgroundExecute(
@@ -680,12 +668,7 @@ final class ShellSession private (
                 logger.warn(
                   s"Background job $jobId idle for ${idleMs / 1000}s (timeout ${Defaults.BgIdleTimeoutSec}s) — auto-cancelling"
                 ) *>
-                  IO.blocking {
-                    proc.destroyForcibly()
-                    try proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
-                    catch case _: InterruptedException => ()
-                    ()
-                  } *>
+                  ProcessTree.killProcessTree(proc) *>
                   deferred
                     .complete(
                       Left(new TimeoutException(
