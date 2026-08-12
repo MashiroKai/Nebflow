@@ -4,6 +4,8 @@
 import state from './state.js';
 import { sendWs } from './ws.js';
 import { openTab, getTabPane } from './canvas.js';
+import { t } from './i18n.js';
+import * as presets from './presets.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function getToken() { return localStorage.getItem('nebflow_token') || ''; }
@@ -23,18 +25,6 @@ function shortModel(ref) {
   if (!ref) return '';
   const idx = ref.lastIndexOf('/');
   return idx >= 0 ? ref.slice(idx + 1) : ref;
-}
-
-/** Build model refs from config if state.allModelRefs is empty. */
-function getAllModelRefs() {
-  let refs = state.allModelRefs || [];
-  if (refs.length === 0 && state.parsedConfig?.llm?.providers) {
-    refs = [];
-    for (const [name, p] of Object.entries(state.parsedConfig.llm.providers)) {
-      (p.models || []).forEach(m => refs.push(`${name}/${m.id}`));
-    }
-  }
-  return refs;
 }
 
 // ── API ────────────────────────────────────────────────────
@@ -179,9 +169,11 @@ export function renderAgentManager() {
   });
 }
 
-/** Fetch model info and inject a short tag into the card. */
+/** Fetch model info and inject a short tag into the card.
+ *  Shows `方案: <displayName> · <model>` when the agent references a preset;
+ *  a "默认方案" badge when resolving via the default preset. */
 async function populateModelTag(name) {
-  const model = await fetchAgentModel(name);
+  const [model, presetData] = await Promise.all([fetchAgentModel(name), presets.fetchPresets()]);
   if (!model) return;
   // preferred is the configured model — trust it over `current`
   // (current is only a reference from the backend resolution).
@@ -189,9 +181,17 @@ async function populateModelTag(name) {
   if (!current) return;
   const tag = document.querySelector(`.agent-mgr-model-tag[data-agent="${esc(name)}"]`);
   if (!tag) return;
+  const presetName = model.preset || '';
+  const preset = presetName ? (presetData?.presets || []).find(p => p.name === presetName) : null;
+  const label = preset
+    ? `${t('preset.pillPrefix')}${preset.displayName || preset.name} · ${shortModel(current)}`
+    : shortModel(current);
   const isFallback = model.preferred && current !== model.preferred;
-  const isDefault = !model.preferred;
-  tag.innerHTML = `<span class="agent-mgr-model-pill${isFallback ? ' fallback' : ''}">${esc(shortModel(current))}</span>${isDefault ? '<span class="agent-mgr-default-badge">默认</span>' : ''}`;
+  // resolvedFrom arrives with backend P2; fall back to legacy heuristic without it
+  const showDefaultBadge = model.resolvedFrom
+    ? (model.resolvedFrom === 'default-preset' || model.resolvedFrom === 'global')
+    : !model.preferred;
+  tag.innerHTML = `<span class="agent-mgr-model-pill${isFallback ? ' fallback' : ''}">${esc(label)}</span>${showDefaultBadge ? `<span class="agent-mgr-default-badge">${t('preset.defaultBadge')}</span>` : ''}`;
 }
 
 // ── Canvas detail tab ──────────────────────────────────────
@@ -206,126 +206,47 @@ async function openAgentDetail(name, pin = false) {
   // Loading state
   pane.innerHTML = `<div class="agent-detail-loading">Loading...</div>`;
 
-  // Fetch detail + model in parallel
-  const [detail, model] = await Promise.all([
+  // Fetch detail + model + presets in parallel
+  const [detail, model, presetData] = await Promise.all([
     fetchAgentDetail(name),
     fetchAgentModel(name),
+    presets.fetchPresets(),
   ]);
 
-  renderAgentDetail(pane, name, detail, model);
+  renderAgentDetail(pane, name, detail, model, presetData);
 }
 
-/** PUT agent model config (preferred + fallbacks). */
-async function setAgentModel(name, ordered) {
-  const [preferred, ...fallbacks] = ordered;
-  try {
-    await fetch(`/api/agents/${encodeURIComponent(name)}/model`, {
-      method: 'PUT',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ preferred: preferred || null, fallbacks }),
-    });
-  } catch (e) { /* non-critical */ }
-}
-
-/** Render a reusable drag-to-reorder model list into a container.
- *  Returns { destroy } for cleanup (though Canvas tabs don't need it). */
-function renderModelDragList(container, name, models, currentModel, allRefs) {
-  const playing = currentModel || (models[0] || '');
-
-  const rowsHtml = models.map((ref, i) => {
-    const isPlaying = ref === playing;
-    return `
-    <div class="agent-detail-model-row${isPlaying ? ' playing' : ''}" draggable="true" data-idx="${i}">
-      ${isPlaying ? '<span class="agent-detail-playing-dot"></span>' : '<span class="agent-detail-grip">⠿</span>'}
-      <span class="agent-detail-model-name">${esc(ref)}</span>
-      <span class="agent-detail-model-pos">${i === 0 ? '★' : i}</span>
-      <span class="agent-detail-model-remove" data-idx="${i}" title="Remove">×</span>
-    </div>`;
-  }).join('');
-
-  const available = allRefs.filter(r => !models.includes(r));
-  const addHtml = available.length
-    ? `<div class="agent-detail-model-add"><select><option value="">+ add model…</option>${available.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}</select></div>`
-    : '';
-
-  container.innerHTML = `${rowsHtml}<div class="agent-detail-empty-spacer"></div>${addHtml}`;
-
-  // Drag reorder
-  let dragIdx = null;
-  container.querySelectorAll('.agent-detail-model-row').forEach(row => {
-    row.addEventListener('dragstart', (e) => {
-      dragIdx = Number(row.dataset.idx);
-      row.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-    });
-    row.addEventListener('dragend', () => {
-      row.classList.remove('dragging');
-      dragIdx = null;
-      container.querySelectorAll('.agent-detail-model-row').forEach(r => r.classList.remove('drag-over'));
-    });
-    row.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      container.querySelectorAll('.agent-detail-model-row').forEach(r => r.classList.remove('drag-over'));
-      row.classList.add('drag-over');
-    });
-    row.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      const overIdx = Number(row.dataset.idx);
-      if (dragIdx === null || dragIdx === overIdx) return;
-      const next = models.slice();
-      const [moved] = next.splice(dragIdx, 1);
-      next.splice(overIdx, 0, moved);
-      // Persist: send entire ordered list
-      await setAgentModel(name, next);
-      // Re-render
-      renderModelDragList(container, name, next, currentModel, allRefs);
-    });
-  });
-
-  // Add select
-  const addSel = container.querySelector('select');
-  if (addSel) {
-    addSel.addEventListener('change', async () => {
-      const ref = addSel.value;
-      if (!ref) return;
-      const next = [...models, ref];
-      await setAgentModel(name, next);
-      renderModelDragList(container, name, next, currentModel, allRefs);
-    });
+/** Re-render the read-only model chain + current-run line after a preset change. */
+function renderResolvedModel(pane, model) {
+  const chainEl = pane.querySelector('#agent-detail-preset-chain');
+  if (chainEl) chainEl.innerHTML = presets.resolvedChainHtml(model || {});
+  const currentEl = pane.querySelector('#agent-detail-model-current');
+  if (currentEl) {
+    const current = model?.current || model?.preferred || model?.default || '';
+    const isFallback = model?.preferred && current && current !== model.preferred;
+    currentEl.innerHTML = current
+      ? `${t('preset.current')}: <span class="agent-detail-current-ref">${esc(current)}</span>${isFallback ? `<span class="agent-detail-fallback-dot" title="fallback"></span>` : ''}`
+      : '';
   }
-
-  // Remove buttons
-  container.querySelectorAll('.agent-detail-model-remove').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const idx = Number(btn.dataset.idx);
-      const next = models.slice();
-      next.splice(idx, 1);
-      await setAgentModel(name, next);
-      renderModelDragList(container, name, next, currentModel, allRefs);
-    });
-  });
 }
 
-function renderAgentDetail(pane, name, detail, model) {
+function renderAgentDetail(pane, name, detail, model, presetData) {
   const displayName = detail?.displayName || detail?.name || name;
   const description = detail?.description || '';
   const extends_ = detail?.extends || '';
-  const preferred = model?.preferred || model?.default || '';
-  const current = model?.current || preferred;
   const tools = detail?.tools || [];
 
   // System prompt
   const prompt = detail?.systemPrompt || '';
 
-  // Model list for drag component — [preferred, ...fallbacks]
-  const preferredRaw = model?.preferred || model?.default || '';
-  const fallbacksRaw = model?.fallbacks || model?.model?.fallbacks || [];
-  const modelList = [preferredRaw, ...fallbacksRaw].filter(Boolean);
-  const allRefs = getAllModelRefs();
-
-  // Whether the agent has its own model config (vs using global default)
-  const hasOwnConfig = preferredRaw || (fallbacksRaw && fallbacksRaw.length > 0);
+  // Preset (P4): agent references a named preset; chain is read-only.
+  const presetName = model?.preset || '';
+  const resolvedFrom = model?.resolvedFrom || '';
+  const presetList = presetData?.presets || [];
+  const defaultPreset = presetList.find(p => p.name === presetData?.defaultPreset);
+  const showDefaultBadge = resolvedFrom
+    ? (resolvedFrom === 'default-preset' || resolvedFrom === 'global')
+    : !presetName;
 
   const allTools = (state.availableTools || []).map(t => typeof t === 'string' ? t : t.name);
   const isAll = tools.includes('*');
@@ -349,8 +270,13 @@ function renderAgentDetail(pane, name, detail, model) {
       </div>
 
       <div class="agent-detail-section">
-        <div class="agent-detail-label">Model${hasOwnConfig ? '' : '<span class="agent-detail-default-badge">默认</span>'}</div>
-        <div id="agent-detail-model-list"></div>
+        <div class="agent-detail-label">Model${showDefaultBadge ? `<span class="agent-detail-default-badge">${t('preset.defaultBadge')}</span>` : ''}</div>
+        <select class="agent-detail-preset-select" id="agent-detail-preset-select">
+          <option value="">${t('preset.useDefault')}${defaultPreset ? `（${esc(defaultPreset.displayName || defaultPreset.name)}）` : ''}</option>
+          ${presetList.map(p => `<option value="${esc(p.name)}"${p.name === presetName ? ' selected' : ''}>${esc(p.displayName || p.name)}</option>`).join('')}
+        </select>
+        <div class="agent-detail-preset-chain" id="agent-detail-preset-chain"></div>
+        <div class="agent-detail-model-current" id="agent-detail-model-current"></div>
       </div>
 
       <div class="agent-detail-section">
@@ -381,19 +307,15 @@ function renderAgentDetail(pane, name, detail, model) {
       </div>
     </div>`;
 
-  // Model section: always render editable drag list.
-  // When agent has no own config, pre-fill with global default chain.
-  // hasOwnConfig declared above (before template literal) to avoid TDZ.
-  const modelListEl = pane.querySelector('#agent-detail-model-list');
-  if (modelListEl) {
-    let effectiveList = modelList;
-    if (!hasOwnConfig) {
-      const globalDefault = state.parsedConfig?.llm?.model?.default || '';
-      const globalFallbacks = state.parsedConfig?.llm?.model?.fallbacks || [];
-      effectiveList = [globalDefault, ...globalFallbacks].filter(Boolean);
-    }
-    renderModelDragList(modelListEl, name, effectiveList, current, allRefs);
-  }
+  // Model section (P4): preset dropdown + read-only resolved chain.
+  renderResolvedModel(pane, model);
+  const presetSel = pane.querySelector('#agent-detail-preset-select');
+  presetSel?.addEventListener('change', async () => {
+    await presets.setAgentPreset(name, presetSel.value || null);
+    const fresh = await fetchAgentModel(name);
+    if (pane.isConnected) renderResolvedModel(pane, fresh);
+    populateModelTag(name); // keep the sidebar card pill in sync
+  });
 
   // System prompt: rendered markdown view ↔ source textarea toggle.
   // Rendered mode is default; Save only shows in source mode.
