@@ -1226,11 +1226,19 @@ onMessage('historyPage', (msg, view) => {
 // card (spinner → result) is the only chat-level feedback.
 // Click the indicator to see a dropdown with per-agent status.
 
-function updateBgAgentIndicator() {
-  if (!activeView) return;
-  const el = activeView.dom.bgagentIndicatorEl;
+function updateBgAgentIndicator(targetSid) {
+  // Update the indicator of the view that DISPLAYS the session owning these
+  // sub-agents — not blindly activeView. Sub-agent events are routed through
+  // the popup's ChatView (activeView temporarily points there; popup views
+  // have no indicator element), which previously left the primary badge stale
+  // while the dropdown re-rendered from live data on click — showing e.g.
+  // count=2 on the badge but 3 rows inside (a stuck sub-agent that emits no
+  // further events never triggered another badge refresh).
+  const view = targetSid ? findViewBySessionId(targetSid) : activeView;
+  if (!view) return;
+  const el = view.dom.bgagentIndicatorEl;
   if (!el) return;
-  const sid = activeView?.sessionId;
+  const sid = view.sessionId;
   const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
   const count = Object.keys(bgAgents).length;
   if (count > 0) {
@@ -1238,10 +1246,10 @@ function updateBgAgentIndicator() {
     el.querySelector('.bgagent-count').textContent = count;
   } else {
     el.classList.add('hidden');
-    const dropdown = activeView.dom.bgagentDropdownEl;
+    const dropdown = view.dom.bgagentDropdownEl;
     if (dropdown) dropdown.classList.add('hidden');
   }
-  renderBgAgentDropdown();
+  if (view === activeView) renderBgAgentDropdown();
 }
 state.updateBgAgentIndicator = updateBgAgentIndicator;
 
@@ -1333,7 +1341,10 @@ onMessage('agentStart', (msg, view) => {
     currentTool: null,
     done: false,
   };
-  if (view) updateBgAgentIndicator();
+  // Always refresh the badge of the view displaying the OWNING session (sid),
+  // regardless of which view this event was routed through (popup views have
+  // no indicator; activeView-based updates silently no-op'd).
+  updateBgAgentIndicator(sid);
 });
 
 onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); });
