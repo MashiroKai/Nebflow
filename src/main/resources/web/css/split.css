@@ -565,10 +565,13 @@ body.canvas-open #canvas-panel {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  border: 1px solid var(--color-border);
-  background: rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -579,7 +582,7 @@ body.canvas-open #canvas-panel {
   opacity: 0.6;
 }
 .canvas-source-toggle:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--glass-control-bg-hover);
   opacity: 1;
   transform: scale(1.05);
 }
