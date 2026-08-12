@@ -395,7 +395,10 @@ function scheduleFileRefresh(entry) {
     import('./ws.js').then(({ sendWs }) => {
       if (!sendWs) { entry._refreshing = false; return; }
       window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
-        detail: { path: entry.absPath, pinned: entry.pinned !== false }
+        // refresh: true marks the readFile response as a background refresh —
+        // openWorkspaceItem must not steal activation for it (and must not
+        // reopen the tab if it was closed while the request was in flight).
+        detail: { path: entry.absPath, pinned: entry.pinned !== false, refresh: true }
       }));
       sendWs({ type: 'pop.readFile', path: entry.absPath, sessionId: undefined });
     });
@@ -471,6 +474,10 @@ export async function openWorkspaceItem(item) {
     }
   }
 
+  // Stale background refresh for a tab that was closed while the request was
+  // in flight — drop it instead of reopening the tab.
+  if (item.background && !tabs.has(id)) return;
+
   // If tab already exists: switch to it — and when this dispatch carries new
   // content (e.g. a refresh readFile response), re-render the existing pane.
   // Never re-render over unsaved edits or a mounted source-mode editor.
@@ -478,6 +485,12 @@ export async function openWorkspaceItem(item) {
     if (pinned) pinTab(id);
     const entry = tabs.get(id);
     entry._refreshing = false;  // response arrived (or user-initiated open)
+    // A response arrived = the file was freshly checked. Update unconditionally
+    // — binary viewers (image/pdf/...) receive no content and never re-render,
+    // so without this their _lastRefreshAt stays stale, the cooldown never
+    // engages, and refresh→setActiveTab loops forever (each cycle stealing
+    // activation back to the binary tab — "can't switch away from an image").
+    entry._lastRefreshAt = Date.now();
     if (content && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
       if (entry.paneEl._editorHandle) {
         entry.paneEl._editorHandle.dispose();
@@ -485,9 +498,10 @@ export async function openWorkspaceItem(item) {
       }
       const { renderFile } = await import('./fileViewers.js');
       await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
-      entry._lastRefreshAt = Date.now();
     }
-    setActiveTab(id);
+    // Background refresh responses must not steal activation — the user may
+    // have clicked another tab while the request was in flight.
+    if (!item.background) setActiveTab(id);
     return;
   }
 
