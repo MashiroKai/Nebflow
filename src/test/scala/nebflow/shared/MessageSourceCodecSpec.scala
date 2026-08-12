@@ -50,4 +50,22 @@ class MessageSourceCodecSpec extends FunSuite:
       case u: UiMessage.User => assertEquals(u.source, None)
       case other => fail(s"expected User, got $other")
 
+  test("UiMessage.User with sender round-trips through JSON"):
+    val ui: UiMessage = UiMessage.User("task from Manager", injected = true, timestamp = 1700000000000L, source = Some("mail"), sender = Some("Manager"))
+    val json = ui.asJson.noSpaces
+    assert(json.contains("\"sender\":\"Manager\""), s"json contains sender: $json")
+    val decoded = decode[UiMessage](json).toOption
+    assert(decoded.isDefined, "UiMessage with sender decodes")
+    decoded.get match
+      case u: UiMessage.User => assertEquals(u.sender, Some("Manager"))
+      case other => fail(s"expected User, got $other")
+
+  test("UiMessage.User without sender decodes to sender=None (legacy)"):
+    val legacyJson = """{"type":"user","text":"hi","attachments":[],"injected":true,"source":"mail"}"""
+    val decoded = decode[UiMessage](legacyJson).toOption
+    assert(decoded.isDefined, "legacy UiMessage without sender decodes")
+    decoded.get match
+      case u: UiMessage.User => assertEquals(u.sender, None)
+      case other => fail(s"expected User, got $other")
+
 end MessageSourceCodecSpec

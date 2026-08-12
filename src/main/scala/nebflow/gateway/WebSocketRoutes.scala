@@ -3469,6 +3469,22 @@ class WebSocketRoutes(
           )
         else IO.unit
 
+      case "user" =>
+        // Injected user events (from emitInjectedUserEvent) — persist so the
+        // blue injection bubble survives page refresh. Regular user messages
+        // are persisted separately in the WS message handler (not here).
+        val text = hc.downField("text").as[String].getOrElse("")
+        val injected = hc.downField("injected").as[Boolean].getOrElse(false)
+        val source = hc.downField("source").as[Option[String]].getOrElse(None)
+        val evtType = hc.downField("eventType").as[Option[String]].getOrElse(None)
+        val sender = hc.downField("sender").as[Option[String]].getOrElse(None)
+        if text.nonEmpty && injected then
+          sharedResources.sessionStore.appendUiMessages(
+            sessionId,
+            List(UiMessage.User(text, Nil, injected = true, timestamp = System.currentTimeMillis(), source = source, eventType = evtType, sender = sender))
+          )
+        else IO.unit
+
       case "system" =>
         val content = hc.downField("content").as[String].getOrElse("")
         if content.nonEmpty then
