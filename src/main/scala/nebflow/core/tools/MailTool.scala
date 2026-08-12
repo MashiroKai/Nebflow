@@ -748,9 +748,8 @@ Message type (optional, default "INFO"):
     system: ActorSystem
   ): IO[Either[ToolError, String]] =
     val senderName = ctx.agentDef.map(_.name).getOrElse("Nebula")
-    val taggedMessage = s"$senderName [$mailType]\n$message"
     for
-      _ <- ref ! AgentCommand.ImmediateInput(taggedMessage, source = Some("mail"), eventType = Some(mailType.toLowerCase))
+      _ <- ref ! AgentCommand.ImmediateInput(message, source = Some("mail"), eventType = Some(mailType.toLowerCase), sender = Some(senderName))
       _ <- nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse(""))
     yield Right(s"Message sent to $label. The agent will process it.")
 
