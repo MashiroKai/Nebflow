@@ -15,8 +15,7 @@ import nebflow.llm.{Config, NebflowServiceConfig}
  * [[AgentModelConfig]] at agent-load time so the LLM layer is unchanged.
  */
 case class ModelPreset(
-  name: String,           // key in the presets map
-  displayName: String,    // human-readable label (may be Chinese)
+  name: String,           // key in the presets map, also the display label
   description: String = "",
   preferred: Option[String] = None,
   fallbacks: List[String] = Nil
@@ -26,20 +25,19 @@ object ModelPreset:
   given Encoder[ModelPreset] = Encoder.instance { p =>
     Json.obj(
       "name" -> p.name.asJson,
-      "displayName" -> p.displayName.asJson,
       "description" -> p.description.asJson,
       "preferred" -> p.preferred.asJson,
       "fallbacks" -> p.fallbacks.asJson
     )
   }
+  // Backward-compatible: ignores a legacy "displayName" field if present in old JSON.
   given Decoder[ModelPreset] = Decoder.instance { c =>
     for
       name <- c.downField("name").as[String]
-      displayName <- c.downField("displayName").as[Option[String]].map(_.getOrElse(name))
       description <- c.downField("description").as[Option[String]].map(_.getOrElse(""))
       preferred <- c.downField("preferred").as[Option[String]]
       fallbacks <- c.downField("fallbacks").as[Option[List[String]]].map(_.getOrElse(Nil))
-    yield ModelPreset(name, displayName, description, preferred, fallbacks)
+    yield ModelPreset(name, description, preferred, fallbacks)
   }
 
 /** Root structure of `model-presets.json`. */
@@ -151,7 +149,6 @@ class PresetStore(
     val globalChain = readGlobalChain()
     val general = ModelPreset(
       name = "general",
-      displayName = "通用",
       description = "默认方案：跟随全局模型链",
       preferred = globalChain.headOption,
       fallbacks = globalChain.drop(1)

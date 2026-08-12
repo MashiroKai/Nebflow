@@ -17,12 +17,12 @@ class PresetStoreSpec extends FunSuite:
   // ── Model codec ──────────────────────────────────────────
 
   test("ModelPreset encode/decode round-trip"):
-    val p = ModelPreset("vision", "视觉", "视觉模型优先", Some("kimi/k3-256k"), List("zhipu/GLM-5V-Turbo"))
+    val p = ModelPreset("vision", "视觉模型优先", Some("kimi/k3-256k"), List("zhipu/GLM-5V-Turbo"))
     val json = p.asJson.noSpaces
     assertEquals(decode[ModelPreset](json), Right(p))
 
   test("ModelPreset decode tolerates missing description/preferred"):
-    val json = """{"name":"basic","displayName":"Basic"}"""
+    val json = """{"name":"basic"}"""
     val decoded = decode[ModelPreset](json)
     assert(decoded.isRight)
     assertEquals(decoded.toOption.get.name, "basic")
@@ -32,8 +32,8 @@ class PresetStoreSpec extends FunSuite:
 
   test("PresetFile encode/decode round-trip"):
     val f = PresetFile("general", Map(
-      "general" -> ModelPreset("general", "通用", "默认", Some("107/glm-5.2-107"), List("deepseek/deepseek-v4-flash")),
-      "vision" -> ModelPreset("vision", "视觉", "视觉优先", Some("kimi/k3-256k"), Nil)
+      "general" -> ModelPreset("general", "默认", Some("107/glm-5.2-107"), List("deepseek/deepseek-v4-flash")),
+      "vision" -> ModelPreset("vision", "视觉优先", Some("kimi/k3-256k"), Nil)
     ))
     val json = f.asJson.noSpaces
     assertEquals(decode[PresetFile](json), Right(f))
@@ -43,8 +43,8 @@ class PresetStoreSpec extends FunSuite:
   test("resolve: explicit preset wins over legacy model"):
     val (store, _) = tempStore("explicit")
     store.save(PresetFile("general", Map(
-      "general" -> ModelPreset("general", "通用", "", Some("default/model"), Nil),
-      "vision" -> ModelPreset("vision", "视觉", "", Some("kimi/k3-256k"), List("zhipu/GLM-5V-Turbo"))
+      "general" -> ModelPreset("general", "", Some("default/model"), Nil),
+      "vision" -> ModelPreset("vision", "", Some("kimi/k3-256k"), List("zhipu/GLM-5V-Turbo"))
     )))
     val legacy = AgentModelConfig(Some("legacy/model"), Nil)
     val (cfg, from) = store.resolve(Some("vision"), Some(legacy))
@@ -55,7 +55,7 @@ class PresetStoreSpec extends FunSuite:
   test("resolve: legacy model wins over default preset"):
     val (store, _) = tempStore("legacy")
     store.save(PresetFile("general", Map(
-      "general" -> ModelPreset("general", "通用", "", Some("default/model"), Nil)
+      "general" -> ModelPreset("general", "", Some("default/model"), Nil)
     )))
     val legacy = AgentModelConfig(Some("legacy/model"), List("legacy/fallback"))
     val (cfg, from) = store.resolve(None, Some(legacy))
@@ -66,7 +66,7 @@ class PresetStoreSpec extends FunSuite:
   test("resolve: default preset when no explicit preset and no legacy"):
     val (store, _) = tempStore("default")
     store.save(PresetFile("general", Map(
-      "general" -> ModelPreset("general", "通用", "", Some("default/model"), List("default/fallback"))
+      "general" -> ModelPreset("general", "", Some("default/model"), List("default/fallback"))
     )))
     val (cfg, from) = store.resolve(None, None)
     assertEquals(cfg.preferred, Some("default/model"))
@@ -76,7 +76,7 @@ class PresetStoreSpec extends FunSuite:
   test("resolve: empty legacy model (None preferred + Nil fallbacks) falls through to default preset"):
     val (store, _) = tempStore("empty-legacy")
     store.save(PresetFile("general", Map(
-      "general" -> ModelPreset("general", "通用", "", Some("default/model"), Nil)
+      "general" -> ModelPreset("general", "", Some("default/model"), Nil)
     )))
     val (cfg, from) = store.resolve(None, Some(AgentModelConfig(None, Nil)))
     assertEquals(cfg.preferred, Some("default/model"))
@@ -85,7 +85,7 @@ class PresetStoreSpec extends FunSuite:
   test("resolve: global chain when no preset, no legacy, and default preset is empty"):
     val (store, _) = tempStore("global")
     store.save(PresetFile("general", Map(
-      "general" -> ModelPreset("general", "通用", "", None, Nil)
+      "general" -> ModelPreset("general", "", None, Nil)
     )))
     val (cfg, from) = store.resolve(None, None)
     assertEquals(cfg, AgentModelConfig.empty)
@@ -94,7 +94,7 @@ class PresetStoreSpec extends FunSuite:
   test("resolve: dangling preset name falls back to legacy, then default"):
     val (store, _) = tempStore("dangling")
     store.save(PresetFile("general", Map(
-      "general" -> ModelPreset("general", "通用", "", Some("default/model"), Nil)
+      "general" -> ModelPreset("general", "", Some("default/model"), Nil)
     )))
     val legacy = AgentModelConfig(Some("legacy/model"), Nil)
     val (cfg, from) = store.resolve(Some("nonexistent"), Some(legacy))
@@ -104,7 +104,7 @@ class PresetStoreSpec extends FunSuite:
   test("resolve: dangling preset with no legacy falls back to default preset"):
     val (store, _) = tempStore("dangling-no-legacy")
     store.save(PresetFile("general", Map(
-      "general" -> ModelPreset("general", "通用", "", Some("default/model"), Nil)
+      "general" -> ModelPreset("general", "", Some("default/model"), Nil)
     )))
     val (cfg, from) = store.resolve(Some("nonexistent"), None)
     assertEquals(cfg.preferred, Some("default/model"))
@@ -129,7 +129,7 @@ class PresetStoreSpec extends FunSuite:
   test("load: re-reading the file returns saved content"):
     val (store, path) = tempStore("reread")
     val saved = PresetFile("custom", Map(
-      "custom" -> ModelPreset("custom", "自定义", "test", Some("p/m"), List("f1/m"))
+      "custom" -> ModelPreset("custom", "test", Some("p/m"), List("f1/m"))
     ))
     store.save(saved)
     val loaded = store.load()
@@ -146,8 +146,8 @@ class PresetStoreSpec extends FunSuite:
   test("load: dangling defaultPreset gets repaired"):
     val (store, path) = tempStore("repair")
     store.save(PresetFile("gone", Map(
-      "general" -> ModelPreset("general", "通用", "", Some("m/a"), Nil),
-      "vision" -> ModelPreset("vision", "视觉", "", Some("k/m"), Nil)
+      "general" -> ModelPreset("general", "", Some("m/a"), Nil),
+      "vision" -> ModelPreset("vision", "", Some("k/m"), Nil)
     )))
     // defaultPreset "gone" doesn't exist in presets → repair should pick an existing one
     val f = store.load()
