@@ -111,7 +111,8 @@ export async function setAgentPreset(agentName, preset) {
 /**
  * Detect agents still using legacy per-agent model config
  * (GET /agents list + per-agent /model resolvedFrom === 'legacy-model').
- * Returns an array of agent names. Used by the settings migrate banner.
+ * Returns detailed entries [{name, preferred, fallbacks}] for the
+ * migration preview (P5).
  */
 export async function detectLegacyAgents() {
   try {
@@ -124,11 +125,69 @@ export async function detectLegacyAgents() {
         const r = await fetch(`/api/agents/${encodeURIComponent(a.name)}/model`, { headers: authHeaders() });
         if (!r.ok) return null;
         const m = await r.json();
-        return m.resolvedFrom === 'legacy-model' ? a.name : null;
+        if (m.resolvedFrom !== 'legacy-model') return null;
+        return { name: a.name, preferred: m.preferred || null, fallbacks: m.fallbacks || [] };
       } catch (e) { return null; }
     }));
     return flags.filter(Boolean);
   } catch (e) { return []; }
+}
+
+/** POST /api/presets/migrate-legacy — batch-migrate legacy configs to presets. */
+export async function migrateLegacy(agentNames) {
+  const resp = await fetch('/api/presets/migrate-legacy', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agentNames }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${resp.status}`);
+  }
+  return resp.json(); // { migratedAgents: [{agent, preset}], createdPresets: [...] }
+}
+
+/**
+ * Local migration preview (P5 stage 1) — mirrors the backend grouping:
+ * group legacy agents by config fingerprint (preferred + fallbacks), reuse
+ * an existing preset when its chain matches, otherwise allocate mig-<n>
+ * names avoiding collisions. Pure function (unit-testable).
+ * Returns [{presetName, reused, preferred, fallbacks, agents: [...]}].
+ */
+export function previewMigration(legacyAgents, presetData) {
+  const existing = presetData?.presets || [];
+  const fpOf = (preferred, fallbacks) => `${preferred || ''}|${(fallbacks || []).join(',')}`;
+
+  // Group by fingerprint
+  const groups = new Map();
+  for (const a of legacyAgents || []) {
+    const fp = fpOf(a.preferred, a.fallbacks);
+    if (!groups.has(fp)) groups.set(fp, { fp, preferred: a.preferred || null, fallbacks: a.fallbacks || [], agents: [] });
+    groups.get(fp).agents.push(a.name);
+  }
+  const sorted = [...groups.values()].sort((x, y) => x.fp.localeCompare(y.fp));
+
+  const existingNames = new Set(existing.map(p => p.name));
+  const taken = new Set();
+  let migN = 1;
+  return sorted.map(g => {
+    // Reuse an existing preset with the identical chain
+    const match = existing.find(p =>
+      (p.preferred || null) === g.preferred &&
+      JSON.stringify(p.fallbacks || []) === JSON.stringify(g.fallbacks));
+    let presetName;
+    let reused = false;
+    if (match) {
+      presetName = match.name;
+      reused = true;
+    } else {
+      presetName = `mig-${migN}`;
+      while (existingNames.has(presetName) || taken.has(presetName)) { migN++; presetName = `mig-${migN}`; }
+      migN++;
+      taken.add(presetName);
+    }
+    return { presetName, reused, preferred: g.preferred, fallbacks: g.fallbacks, agents: g.agents.sort() };
+  });
 }
 
 // ── Read-only chain chips ──────────────────────────────────

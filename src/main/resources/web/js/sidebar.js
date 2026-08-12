@@ -530,7 +530,7 @@ async function loadPresetsSection() {
   const addBtn = document.getElementById('btn-add-preset');
   if (addBtn) addBtn.onclick = () => showPresetModal(null, () => loadPresetsSection());
 
-  // Legacy migration banner (P3: banner UI only — dialog lands in P5)
+  // Legacy migration banner → P5 migration dialog
   presets.detectLegacyAgents().then(legacy => {
     const banner = document.getElementById('preset-migrate-banner');
     if (!banner) return;
@@ -542,8 +542,81 @@ async function loadPresetsSection() {
         <button class="cfg-btn cfg-btn-sm" id="btn-migrate-legacy">${t('preset.migrateAction')}</button>
       </div>`;
     banner.querySelector('#btn-migrate-legacy')?.addEventListener('click', () => {
-      window.__showToast?.(t('preset.migratePending'), 'info');
+      showMigrationDialog(legacy, () => loadPresetsSection());
     });
+  });
+}
+
+/**
+ * Legacy migration dialog (P5). Stage 1: local preview grouped by config
+ * fingerprint. Stage 2: POST /api/presets/migrate-legacy, then refresh.
+ */
+async function showMigrationDialog(legacyAgents, onDone) {
+  document.getElementById('cfg-modal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'cfg-modal';
+  overlay.className = 'cfg-modal-overlay';
+  overlay.innerHTML = `
+    <div class="cfg-modal">
+      <div class="cfg-modal-title">${t('preset.migrateTitle')}</div>
+      <div class="cfg-modal-body" id="preset-migrate-body">
+        <div class="cfg-empty">Loading…</div>
+      </div>
+      <div class="cfg-modal-actions">
+        <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">${t('modal.cancel')}</button>
+        <button class="cfg-btn cfg-btn-save" id="preset-migrate-run">${t('preset.migrateExecute')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#cfg-modal-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  // Stage 1 — preview (local computation; existing names needed for mig-<n>)
+  const body = overlay.querySelector('#preset-migrate-body');
+  const presetData = await presets.fetchPresets();
+  if (!overlay.isConnected) return;
+  const groups = presets.previewMigration(legacyAgents, presetData);
+  const newCount = groups.filter(g => !g.reused).length;
+
+  body.innerHTML = `
+    <div class="preset-migrate-summary">${t('preset.migrateSummary', { agents: legacyAgents.length, presets: newCount })}</div>
+    ${groups.map(g => `
+      <div class="preset-migrate-group">
+        <div class="preset-migrate-group-head">
+          <span class="preset-migrate-group-name">「${escapeHtml(g.presetName)}」</span>
+          ${g.reused ? `<span class="preset-migrate-reuse">${t('preset.migrateReuse')}</span>` : ''}
+          <span class="preset-migrate-group-arrow">←</span>
+          <span class="preset-migrate-group-agents">${escapeHtml(g.agents.join(', '))}</span>
+        </div>
+        ${presets.presetChainHtml([g.preferred, ...g.fallbacks].filter(Boolean), '')}
+      </div>`).join('')}
+    <div class="preset-migrate-note">${t('preset.migrateNote')}</div>
+    <div class="preset-migrate-error" id="preset-migrate-error" style="display:none"></div>`;
+
+  // Stage 2 — execute
+  const runBtn = overlay.querySelector('#preset-migrate-run');
+  runBtn.addEventListener('click', async () => {
+    runBtn.disabled = true;
+    overlay.querySelector('#cfg-modal-cancel').disabled = true;
+    runBtn.textContent = t('preset.migrateRunning');
+    const errEl = overlay.querySelector('#preset-migrate-error');
+    errEl.style.display = 'none';
+    try {
+      const result = await presets.migrateLegacy(legacyAgents.map(a => a.name));
+      const migrated = result?.migratedAgents?.length ?? legacyAgents.length;
+      close();
+      window.__showToast?.(t('preset.migrateDone', { n: migrated }), 'success');
+      onDone?.();
+    } catch (err) {
+      errEl.textContent = `${t('preset.migrateFailed')}: ${err.message}`;
+      errEl.style.display = '';
+      runBtn.disabled = false;
+      overlay.querySelector('#cfg-modal-cancel').disabled = false;
+      runBtn.textContent = t('preset.migrateExecute');
+    }
   });
 }
 
