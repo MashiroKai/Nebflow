@@ -3,6 +3,7 @@ import state from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
 import { addNotification } from './notificationBanner.js';
+import { createIconsIn } from './utils.js';
 
 // Inline locale getter to avoid caching issues with module imports
 function getLocale() {
@@ -140,7 +141,7 @@ function renderList() {
     body.appendChild(buildInlineCreate());
   }
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(body);
 
   // Focus inline input if creating
   if (isCreating) {
@@ -287,7 +288,7 @@ function openPanel() {
   panel.classList.add('open');
   savePanelOpen(true);
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(panel);
 
   if (state.activeSessionId) {
     sendWs({ type: 'listScheduledTasks', sessionId: state.activeSessionId });
@@ -452,7 +453,7 @@ onMessage('scheduledTaskTriggered', (msg) => {
         row.className = 'row system';
         row.appendChild(bubble);
         chat.appendChild(row);
-        if (typeof lucide !== 'undefined') lucide.createIcons();
+        if (typeof lucide !== 'undefined') createIconsIn(bubble);
         chat.scrollTop = chat.scrollHeight;
       }
     }

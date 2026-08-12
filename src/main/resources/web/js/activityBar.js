@@ -18,6 +18,7 @@
 import { openSettingsPanel, isSettingsPanelActive, showPanel } from './sidebar.js';
 import { fetchNeblinkStatus, getNeblinkState } from './neblink.js';
 import { renderAgentManager, isAgentsPanelActive } from './agentManager.js';
+import { createIconsIn } from './utils.js';
 
 let initialized = false;
 let statusPollTimer = null;
@@ -38,7 +39,7 @@ export function initActivityBar() {
   observeSettingsPanel();
   observeAgentsPanel();
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(document.getElementById('activity-bar'));
 }
 
 // ── Settings ─────────────────────────────────────────────

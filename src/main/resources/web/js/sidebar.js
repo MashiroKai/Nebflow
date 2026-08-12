@@ -3,12 +3,13 @@
 import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { showAgentModal, showBatchDeleteModal } from './modal.js';
-import { renderMarkdownWithMath, smartScroll, stopSpinner } from './utils.js';
+import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn } from './utils.js';
 import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
+import { cleanupCardIframes } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
 import { preloadModelCapabilities, renderVisionBadge, getVision, updateVision } from './modelCapabilities.js';
@@ -154,7 +155,7 @@ export function renderAgentList() {
     });
     list.appendChild(el);
   });
-  lucide.createIcons();
+  createIconsIn(list);
   computeAgentStates();
 }
 
@@ -1144,7 +1145,7 @@ export function renderSessionSidebar(sessionData, activeId) {
       }
     });
   });
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(sessionList);
   updateHeaderSessionName();
   computeAgentStates();
 }
@@ -1276,6 +1277,7 @@ export function resetChatForActiveSession() {
     pv.dom.queueBar.classList.remove('visible');
   }
   window.dispatchEvent(new CustomEvent('queuebar-refresh', { detail: { sessionId: state.activeSessionId } }));
+  cleanupCardIframes(pv.dom.chat);
   pv.dom.chat.innerHTML = '';
   pv.dom.chat.querySelectorAll('.history-loader, .history-end').forEach(el => el.remove());
 
@@ -1360,10 +1362,36 @@ export function resetChatForActiveSession() {
 }
 
 export function deleteSession(sessionId) {
+  // Release any live card iframe observers/browsing contexts for this
+  // session's messages before the DOM is dropped (P0-1/P1-5).
+  if (activeView?.dom?.chat && state.activeSessionId === sessionId) {
+    cleanupCardIframes(activeView.dom.chat);
+  }
   delete state.sessionInputDrafts[sessionId];
   state.unreadSessions.delete(sessionId);
   state.markedUnreadSessions.delete(sessionId);
   state.pinnedSessions.delete(sessionId);
+  // Session-keyed runtime state — purge so deleted sessions don't accumulate
+  // stale buffers/DOM refs over the app's lifetime (P1-5).
+  state.attentionSessions.delete(sessionId);
+  state.busySessionIds.delete(sessionId);
+  state.compactingSessionIds.delete(sessionId);
+  state.selectedSessionIds.delete(sessionId);
+  if (state.lastSelectedSessionId === sessionId) state.lastSelectedSessionId = null;
+  delete state.sessionBusyTimeouts[sessionId];
+  delete state.sessionTexts[sessionId];
+  delete state.sessionAskBuffers[sessionId];
+  delete state.sessionToolCards[sessionId];
+  delete state.sessionPendingTools[sessionId];
+  delete state.sessionPendingAiMessages[sessionId];
+  delete state.sessionTasks[sessionId];
+  delete state.sessionThinkingBuffers[sessionId];
+  delete state.sessionBgTasks[sessionId];
+  delete state.sessionBgAgents[sessionId];
+  delete state.sessionAgentMap[sessionId];
+  delete state.sessionModelInfo[sessionId];
+  // Hidden bg-agent popup views hold full DOM containers keyed by sessionId.
+  import('./bgAgentPopup.js').then(({ removeStepView }) => removeStepView(sessionId)).catch(() => {});
   persistUnread();
   persistMarkedUnread();
   persistPinned();
@@ -1924,7 +1952,7 @@ export function createNewFolder(parentFolderId) {
   container.insertBefore(row, container.firstChild);
 
   const input = row.querySelector('.folder-new-input');
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(row);
   input.focus();
 
   const cancel = () => row.remove();

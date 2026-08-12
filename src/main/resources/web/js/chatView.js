@@ -11,6 +11,7 @@
 // mechanism — state lives on the view object, never copied to globals.
 
 import state from './state.js';
+import { cleanupCardIframes } from './cardRegistry.js';
 
 // ── Active view (set by ws.js before handler dispatch) ──────────────────
 // Module-level mutable binding. ES module imports are live: when
@@ -169,8 +170,9 @@ export class ChatView {
     }
     this.sessionId = sessionId;
     this.resetAll();
-    // Clear chat area
+    // Clear chat area — release card iframe observers/browsing contexts first
     if (this.dom.chat) {
+      cleanupCardIframes(this.dom.chat);
       this.dom.chat.innerHTML = '';
     }
     // Clear queue bar — will be re-rendered by the event listener in input.js

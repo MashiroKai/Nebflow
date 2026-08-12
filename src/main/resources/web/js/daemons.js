@@ -10,6 +10,7 @@
 
 import { onMessage } from './ws.js';
 import { t } from './i18n.js';
+import { createIconsIn } from './utils.js';
 
 // ── Inline CSS ─────────────────────────────────────────────
 const DAEMON_CSS = `
@@ -347,7 +348,7 @@ function renderList(animate = false) {
     for (const d of daemons) body.appendChild(buildRow(d, animate));
   }
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(body);
 }
 
 /** Update only the status-dependent parts of an existing row (no rebuild). */
@@ -504,7 +505,7 @@ function openPanel() {
   panelOpen = true;
   panel.classList.add('open');
   document.getElementById('daemon-btn')?.classList.add('active');
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(panel);
   fetchDaemons({ rerender: false }).then(() => renderList(true));
   // Poll every 5 seconds while open — only re-renders when something changed
   if (pollTimer) clearInterval(pollTimer);
