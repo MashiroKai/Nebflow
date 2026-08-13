@@ -24,7 +24,7 @@ import org.http4s.dsl.io.*
 import org.http4s.headers.{Authorization, `Content-Type`}
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
-import org.typelevel.ci.CIStringSyntax
+import org.typelevel.ci.{CIString, CIStringSyntax}
 
 import scala.concurrent.duration.*
 
@@ -327,17 +327,23 @@ class RestApiRoutes(
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-          if !ms.isTrustedPeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
-          else
-            req.as[Json].flatMap { body =>
-              io.circe.parser.decode[nebflow.neblink.DeviceDiscoveryInfo](body.noSpaces) match
-                case Right(info) =>
-                  val port = body.hcursor.downField("port").as[Int].getOrElse(8080)
-                  ms.handleAnnounce(info, remoteIp, port) *>
-                    Ok(Json.obj("ok" -> true.asJson))
-                case Left(err) =>
-                  BadRequest(Json.obj("error" -> s"Invalid device info: ${err.getMessage}".asJson))
-            }
+          // Parse first so we can read the claimed deviceId for the device-ID
+          // trust fallback. Malformed bodies from untrusted callers are still
+          // rejected as "not a trusted peer" rather than leaking a 400.
+          req.as[Json].flatMap { body =>
+            io.circe.parser.decode[nebflow.neblink.DeviceDiscoveryInfo](body.noSpaces) match
+              case Right(info) =>
+                val port = body.hcursor.downField("port").as[Int].getOrElse(8080)
+                isKnownNetworkDevice(ms, info.deviceId, remoteIp).flatMap { known =>
+                  if ms.isTrustedPeer(remoteIp) || known then
+                    ms.handleAnnounce(info, remoteIp, port) *>
+                      Ok(Json.obj("ok" -> true.asJson))
+                  else Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
+                }
+              case Left(_) =>
+                if ms.isTrustedPeer(remoteIp) then BadRequest(Json.obj("error" -> "Invalid device info".asJson))
+                else Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
+          }
 
     // ===== NebLink API (gateway auth required — for frontend) =====
 
@@ -405,33 +411,35 @@ class RestApiRoutes(
       }
 
     // Handshake — called by a discovered peer to establish trust and exchange device secrets.
-    // Guarded by peer IP check (same as /neblink/announce) — only network members can reach this.
+    // Trust check: peer IP list (primary) or device-ID network membership (fallback).
     case req @ POST -> Root / "neblink" / "handshake" =>
       neblinkService match
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val callerIp = req.remoteAddr.fold("")(a => a.toString)
-          if !ms.isTrustedPeer(callerIp) then Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
+          // Bearer format: deviceId:callerDeviceSecret (header-only, no body needed)
+          val bearer = req.headers
+            .get[Authorization]
+            .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
+              t
+            }
+            .getOrElse("")
+          val parts = bearer.split(":", 2)
+          if parts.length != 2 || parts(0).isEmpty then
+            Forbidden(Json.obj("error" -> "Invalid peer auth format".asJson))
           else
-            // Bearer format: deviceId:callerDeviceSecret
-            val bearer = req.headers
-              .get[Authorization]
-              .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
-                t
-              }
-              .getOrElse("")
-            val parts = bearer.split(":", 2)
-            if parts.length != 2 || parts(0).isEmpty then
-              Forbidden(Json.obj("error" -> "Invalid peer auth format".asJson))
-            else
-              val callerSecret = parts(1)
-              req.as[Json].flatMap { body =>
-                val hc = body.hcursor
-                val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-                val deviceName = hc.downField("deviceName").as[String].getOrElse("Unknown")
-                val platform = hc.downField("platform").as[String].getOrElse("")
-                val port = hc.downField("port").as[Int].getOrElse(8080)
+            val callerSecret = parts(1)
+            req.as[Json].flatMap { body =>
+              val hc = body.hcursor
+              val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+              val deviceName = hc.downField("deviceName").as[String].getOrElse("Unknown")
+              val platform = hc.downField("platform").as[String].getOrElse("")
+              val port = hc.downField("port").as[Int].getOrElse(8080)
+              // Trust: IP list (primary) or device-ID network membership (fallback).
+              isKnownNetworkDevice(ms, deviceId, callerIp).flatMap { known =>
                 if deviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
+                else if !ms.isTrustedPeer(callerIp) && !known then
+                  Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
                 else
                   ms.handleHandshake(deviceId, deviceName, platform, callerIp, port, callerSecret)
                     .flatMap { _ =>
@@ -449,9 +457,8 @@ class RestApiRoutes(
                     .handleErrorWith { e =>
                       Forbidden(Json.obj("error" -> e.getMessage.asJson))
                     }
-                end if
               }
-            end if
+            }
           end if
 
     // Update neblink config (e.g. syncIntervalSec)
@@ -870,60 +877,64 @@ class RestApiRoutes(
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-          if !ms.isTrustedPeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
-          else
-            val peerDeviceId = req.params.getOrElse("deviceId", "")
-            if peerDeviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
-            else
-              val peerDeviceName = req.params.getOrElse("deviceName", "Unknown")
-              val peerPlatform = req.params.getOrElse("platform", "")
-              val peerPort = req.params.getOrElse("port", "8080").toIntOption.getOrElse(8080)
-              val capsStr = req.params.getOrElse("capabilities", "{}")
-              val capabilities = parser.decode[Map[String, String]](capsStr).getOrElse(Map.empty)
-              val info = nebflow.neblink.DeviceDiscoveryInfo(
-                peerDeviceId,
-                peerDeviceName,
-                peerPlatform,
-                capabilities
-              )
-              // Silent upsert — the HTTP /neblink/announce endpoint already handles logging.
-              // Calling handleAnnounce here too produces duplicate "Peer announced" logs.
-              val peer = nebflow.neblink.PeerInfo(
-                peerDeviceId,
-                peerDeviceName,
-                peerPlatform,
-                s"http://$remoteIp:$peerPort",
-                capabilities = capabilities
-              )
-              ms.upsertPeer(peer).flatMap { _ =>
-                Queue.unbounded[IO, WebSocketFrame].flatMap { sendQueue =>
-                  val heartbeat = Stream
-                    .awakeEvery[IO](10.seconds)
-                    .map(_ => WebSocketFrame.Text("""{"type":"ping"}"""))
-                  val queued = Stream.fromQueueUnterminated(sendQueue)
-                  val send = queued.merge(heartbeat)
-                  val receive: Pipe[IO, WebSocketFrame, Unit] =
-                    _.evalMap {
-                      case WebSocketFrame.Text(text, _) =>
-                        parser.parse(text).toOption match
-                          case Some(json) =>
-                            json.hcursor.downField("type").as[String].getOrElse("") match
-                              case "ping" =>
-                                sendQueue.offer(WebSocketFrame.Text("""{"type":"pong"}"""))
-                              case "data" =>
-                                val payload = json.hcursor.downField("payload").focus.getOrElse(Json.Null)
-                                ms.handleDataMessage(payload)
-                              case _ => IO.unit
-                          case None => IO.unit
-                      case _ => IO.unit
-                    }.onFinalize(
-                      ms.removePeer(peerDeviceId).handleErrorWith(_ => IO.unit)
-                    )
-                  wsb.build(send, receive)
+          val peerDeviceId = req.params.getOrElse("deviceId", "")
+          // Trust: IP list (primary) or device-ID network membership (fallback).
+          // peerDeviceId is already a query param on the WS upgrade, so the
+          // fallback needs no extra header here.
+          (if ms.isTrustedPeer(remoteIp) then IO.pure(true)
+           else isKnownNetworkDevice(ms, peerDeviceId, remoteIp)).flatMap {
+            case false => Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
+            case true =>
+              if peerDeviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
+              else
+                val peerDeviceName = req.params.getOrElse("deviceName", "Unknown")
+                val peerPlatform = req.params.getOrElse("platform", "")
+                val peerPort = req.params.getOrElse("port", "8080").toIntOption.getOrElse(8080)
+                val capsStr = req.params.getOrElse("capabilities", "{}")
+                val capabilities = parser.decode[Map[String, String]](capsStr).getOrElse(Map.empty)
+                val info = nebflow.neblink.DeviceDiscoveryInfo(
+                  peerDeviceId,
+                  peerDeviceName,
+                  peerPlatform,
+                  capabilities
+                )
+                // Silent upsert — the HTTP /neblink/announce endpoint already handles logging.
+                // Calling handleAnnounce here too produces duplicate "Peer announced" logs.
+                val peer = nebflow.neblink.PeerInfo(
+                  peerDeviceId,
+                  peerDeviceName,
+                  peerPlatform,
+                  s"http://$remoteIp:$peerPort",
+                  capabilities = capabilities
+                )
+                ms.upsertPeer(peer).flatMap { _ =>
+                  Queue.unbounded[IO, WebSocketFrame].flatMap { sendQueue =>
+                    val heartbeat = Stream
+                      .awakeEvery[IO](10.seconds)
+                      .map(_ => WebSocketFrame.Text("""{"type":"ping"}"""))
+                    val queued = Stream.fromQueueUnterminated(sendQueue)
+                    val send = queued.merge(heartbeat)
+                    val receive: Pipe[IO, WebSocketFrame, Unit] =
+                      _.evalMap {
+                        case WebSocketFrame.Text(text, _) =>
+                          parser.parse(text).toOption match
+                            case Some(json) =>
+                              json.hcursor.downField("type").as[String].getOrElse("") match
+                                case "ping" =>
+                                  sendQueue.offer(WebSocketFrame.Text("""{"type":"pong"}"""))
+                                case "data" =>
+                                  val payload = json.hcursor.downField("payload").focus.getOrElse(Json.Null)
+                                  ms.handleDataMessage(payload)
+                                case _ => IO.unit
+                            case None => IO.unit
+                        case _ => IO.unit
+                      }.onFinalize(
+                        ms.removePeer(peerDeviceId).handleErrorWith(_ => IO.unit)
+                      )
+                    wsb.build(send, receive)
+                  }
                 }
-              }
-            end if
-          end if
+          }
 
     // POST /api/flow/event — Source scripts inject external events (no auth, local only)
     case req @ POST -> Root / "flow" / "event" =>
@@ -1942,9 +1953,22 @@ class RestApiRoutes(
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
 
   /**
-   * Verify peer-to-peer access via peer IP check.
-   * Only requests from trusted peer IPs (discovered via NebLink Server) are accepted.
-   * NebLink Server is the trust boundary — devices must be on the same network.
+   * Verify peer-to-peer access.
+   *
+   * Primary check: is the caller IP in the trusted-peer list (populated from
+   * NebLink Server discovery)? The NebLink Server is the trust boundary — only
+   * devices on the same network can reach each other.
+   *
+   * Fallback: trust by device-ID network membership. The trusted IP list can be
+   * stale or wrong (a peer's advertised endpoints didn't match its actual
+   * source IP — NIC filtering, DHCP rotation, multi-homed host). When a caller
+   * presents a deviceId we discovered via the NebLink Server (i.e. a confirmed
+   * member of the same networkId), we accept it regardless of the IP list. The
+   * relay path authenticates the same way with a server-issued token, so this
+   * keeps the P2P-direct path on par with relay.
+   *
+   * The fallback is gated on a private/LAN source IP: a claimed deviceId alone
+   * never grants access to internet-sourced requests (P2P-direct is LAN-only).
    */
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], NeblinkService]] =
     neblinkService match
@@ -1954,12 +1978,47 @@ class RestApiRoutes(
         val remoteIp = req.remoteAddr.fold("")(a => a.toString)
         if ms.isTrustedPeer(remoteIp) then IO.pure(Right(ms))
         else
-          IO.pure(
-            Left(
-              Response[IO](Status.Forbidden)
-                .withEntity(Json.obj("error" -> s"Not a trusted peer (from $remoteIp)".asJson))
-            )
-          )
+          val callerDeviceId =
+            req.headers.get(CIString("x-neblink-device")).map(_.head.value).getOrElse("")
+          isKnownNetworkDevice(ms, callerDeviceId, remoteIp).flatMap {
+            case true =>
+              logger.info(
+                s"Peer $callerDeviceId trusted by device-ID membership (IP $remoteIp not in trusted list)"
+              ) *> IO.pure(Right(ms))
+            case false =>
+              IO.pure(
+                Left(
+                  Response[IO](Status.Forbidden)
+                    .withEntity(Json.obj("error" -> s"Not a trusted peer (from $remoteIp)".asJson))
+                )
+              )
+          }
+
+  /**
+   * Network-membership check by device ID. True when the caller claims a
+   * deviceId we discovered via the NebLink Server (a member of our networkId)
+   * AND the request originates from a private/LAN address.
+   */
+  private def isKnownNetworkDevice(
+    ms: NeblinkService,
+    claimedDeviceId: String,
+    remoteIp: String
+  ): IO[Boolean] =
+    if claimedDeviceId.isEmpty || !isPrivateLanIp(remoteIp) then IO.pure(false)
+    else ms.peers.map(_.exists(_.deviceId == claimedDeviceId))
+
+  /** RFC1918 private ranges + loopback + link-local. P2P-direct is LAN-only. */
+  private def isPrivateLanIp(rawIp: String): Boolean =
+    val ip = rawIp.stripPrefix("::ffff:")
+    ip == "127.0.0.1" || ip == "::1" ||
+    ip.startsWith("10.") ||
+    ip.startsWith("192.168.") ||
+    ip.startsWith("169.254.") ||
+    ip.startsWith("fe80:") ||
+    ip.startsWith("172.") && {
+      val octet = ip.split('.').lift(1).flatMap(_.toIntOption).getOrElse(-1)
+      octet >= 16 && octet <= 31
+    }
 
   private def checkAuth(req: Request[IO]): Boolean =
     req.headers.get[Authorization].collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
