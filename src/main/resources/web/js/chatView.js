@@ -11,6 +11,7 @@
 // mechanism — state lives on the view object, never copied to globals.
 
 import state from './state.js';
+import { cleanupCardIframes } from './cardRegistry.js';
 
 // ── Active view (set by ws.js before handler dispatch) ──────────────────
 // Module-level mutable binding. ES module imports are live: when
@@ -18,7 +19,6 @@ import state from './state.js';
 export let activeView = null;
 
 export function setActiveView(v) { activeView = v; }
-export function getActiveView() { return activeView; }
 
 // ── ChatView class ──────────────────────────────────────────────────────
 
@@ -33,6 +33,16 @@ export class ChatView {
     this.sessionId = null;
     this.mounted = true;
 
+    // ── Visibility gating ──
+    // The primary view is always visible. Popup views (flow / bg-agent) start
+    // hidden: while visible === false, ws.js dispatches their streaming events
+    // with view=null so chat.js skips DOM rendering entirely (global state
+    // buffers in state.js still accumulate — nothing is lost).
+    this.visible = true;
+    // Set when events were skipped while hidden. openStepPopup checks this to
+    // force a full history refresh instead of showing stale/partial DOM.
+    this.dirtyWhileHidden = false;
+
     // ── Streaming state ──
     this.stream = {
       aiText: '',
@@ -44,7 +54,7 @@ export class ChatView {
       askMode: false,
       agentBubbles: {},
       activeAgentId: null,
-      // activeSubAgents moved to state.sessionDelegates (global, keyed by sessionId)
+      // activeSubAgents moved to state.sessionBgAgents (global, keyed by sessionId)
       // so agentDone events are processed even when the session isn't displayed.
       scrollSnapped: true,
       toolStreamText: '',
@@ -160,8 +170,9 @@ export class ChatView {
     }
     this.sessionId = sessionId;
     this.resetAll();
-    // Clear chat area
+    // Clear chat area — release card iframe observers/browsing contexts first
     if (this.dom.chat) {
+      cleanupCardIframes(this.dom.chat);
       this.dom.chat.innerHTML = '';
     }
     // Clear queue bar — will be re-rendered by the event listener in input.js

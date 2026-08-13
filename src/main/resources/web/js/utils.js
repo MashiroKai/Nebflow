@@ -1,6 +1,6 @@
 import state from './state.js';
 import { activeView } from './chatView.js';
-import { t } from './i18n.js';
+import { t, getLocale } from './i18n.js';
 
 // === Lottie spinner JSON (rotating ring) ===
 export const spinnerJson = {
@@ -56,8 +56,36 @@ export function initMarkdown() {
 }
 
 // === KaTeX math rendering — protect math blocks from Markdown processing ===
+// Bounded LRU cache for rendered markdown HTML. History restore and session
+// switching re-render identical content; caching avoids repeated
+// marked.parse + KaTeX.renderToString work.
+// - Key: `${parseVoice}${markedLoaded}${katexLoaded}${locale}|${text}` —
+//   captures every factor that changes the output (voice parsing, library
+//   load state, i18n locale used by the copy button, and the raw text).
+// - Capacity: 200 entries. Map preserves insertion order; on get we
+//   delete+set to move the entry to the end (most recent); on set we evict
+//   the first (least recently used) key when over capacity.
+const MD_CACHE_CAP = 200;
+const _mdCache = new Map();
+
 export function renderMarkdownWithMath(text, parseVoice = true) {
   if (!text) return '';
+  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${text}`;
+  const hit = _mdCache.get(key);
+  if (hit !== undefined) {
+    _mdCache.delete(key);
+    _mdCache.set(key, hit);
+    return hit;
+  }
+  const html = _renderMarkdownWithMath(text, parseVoice);
+  _mdCache.set(key, html);
+  if (_mdCache.size > MD_CACHE_CAP) {
+    _mdCache.delete(_mdCache.keys().next().value);
+  }
+  return html;
+}
+
+function _renderMarkdownWithMath(text, parseVoice) {
   if (typeof marked === 'undefined') return escapeHtml(text);
   // Extract <voice>...</voice> blocks before any markdown processing (only for AI output, not thinking)
   const voiceBlocks = [];
@@ -113,6 +141,9 @@ function _renderMarkdownInternal(protected_, voiceBlocks) {
     const vtext = voiceBlocks[i] || '';
     return '<span class="voice-block" data-voice-index="' + i + '">' + escapeHtml(vtext) + '</span>';
   });
+  // Tag images for lightbox zoom (click → full preview). Skip imgs that
+  // already carry a class (raw HTML in markdown) to avoid duplicate attrs.
+  html = html.replace(/<img\b(?![^>]*\bclass=)/g, '<img class="nf-zoom-img"');
   return html;
 }
 
@@ -121,6 +152,39 @@ export function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// === Lucide icons — subtree-scoped replacement ===
+// lucide.createIcons() always scans document.querySelectorAll('[data-lucide]')
+// (full-DOM walk, 50-200ms per call on large pages). Hot paths (message
+// render, list refresh) should call createIconsIn(container) instead, which
+// only walks the container subtree. Mimics lucide's own replaceElement:
+// kebab name → PascalCase lookup, merges element attrs, applies
+// "lucide lucide-<name>" classes. Falls back to global createIcons() when
+// called without a root.
+export function createIconsIn(root) {
+  if (typeof lucide === 'undefined' || !lucide.icons || !lucide.createElement) return;
+  if (!root) { lucide.createIcons(); return; }
+  const els = [];
+  if (root.matches && root.matches('[data-lucide]')) els.push(root);
+  els.push(...root.querySelectorAll('[data-lucide]'));
+  for (const el of els) {
+    const name = el.getAttribute('data-lucide');
+    if (!name) continue;
+    // Same conversion lucide uses: kebab-case → PascalCase
+    const pascal = name.replace(/(\w)(\w*)(_|-|\s*)/g, (m, c, p) => c.toUpperCase() + p.toLowerCase());
+    const icon = lucide.icons[pascal];
+    if (!icon) continue;
+    const [tag, iconAttrs, children] = icon;
+    const elAttrs = {};
+    for (const a of el.attributes) elAttrs[a.name] = a.value;
+    const attrs = { ...iconAttrs, 'data-lucide': name, ...elAttrs };
+    const classes = ['lucide', `lucide-${name}`, ...(elAttrs.class ? elAttrs.class.split(' ') : [])]
+      .map(c => c.trim()).filter(Boolean);
+    attrs.class = [...new Set(classes)].join(' ');
+    const svg = lucide.createElement([tag, attrs, children]);
+    el.replaceWith(svg);
+  }
 }
 
 // Shorthand alias for escapeHtml
@@ -327,13 +391,6 @@ export function attachToolClick(card) {
 }
 
 // === Scroll helpers ===
-export function shouldAutoScroll() {
-  if (!activeView) return false;
-  const chat = activeView.dom.chat;
-  const threshold = 60;
-  return chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold;
-}
-
 export function smartScroll() {
   if (!activeView) return;
   const chat = activeView.dom.chat;
@@ -493,34 +550,11 @@ export function createMsgCopyButton(text) {
   return btn;
 }
 
-const RECALL_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>';
 
-export function createMsgRecallButton(text) {
-  const btn = document.createElement('button');
-  btn.className = 'msg-copy msg-recall';
-  btn.title = t('chat.recall') || 'Recall';
-  btn.innerHTML = RECALL_SVG;
-  btn.onclick = (e) => {
-    e.stopPropagation();
-    recallUserMessage(text, btn);
-  };
-  return btn;
-}
-
-async function recallUserMessage(text, btn) {
-  const { activeView } = await import('./chatView.js');
-  const { sendWs } = await import('./ws.js');
-  const v = activeView;
-  if (!v || !v.sessionId) return;
-  // Put the text back into the input box
-  if (v.dom.input) {
-    v.dom.input.value = text;
-    v.dom.input.style.height = 'auto';
-    v.dom.input.focus();
-  }
-  // Send the recall request to the backend
-  sendWs({ type: 'recallMessage', sessionId: v.sessionId });
-  // Optimistically remove the message row from the DOM
-  const row = btn.closest('.row.user');
-  if (row) row.remove();
+/** Check whether a session/agent ID belongs to a background sub-agent
+ *  (Delegate sub-agent: "delegate-<agent>-<uuid8>"; SubTask worker:
+ *  "subtask-<uuid8>" — backend naming protocol). Single point of truth so
+ *  future prefixes only need one change. Used for bg-agent popup routing. */
+export function isBgAgentId(id) {
+  return typeof id === 'string' && (id.startsWith('delegate-') || id.startsWith('subtask-'));
 }

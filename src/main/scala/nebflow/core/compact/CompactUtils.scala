@@ -11,7 +11,7 @@ object CompactUtils:
   /** Replace Image blocks with placeholder text to avoid sending base64 to SubAgent. */
   def stripImages(messages: List[Message]): List[Message] =
     messages.map {
-      case msg @ Message(_, Right(blocks), _) =>
+      case msg @ Message(_, Right(blocks), _, _) =>
         val stripped = blocks.map {
           case ContentBlock.Image(_, mediaType) => ContentBlock.Text(s"[image: $mediaType]")
           case other => other
@@ -81,7 +81,7 @@ object CompactUtils:
   /** Replace all ToolResult block content with a short placeholder. */
   private def stripToolResults(messages: List[Message]): List[Message] =
     messages.map {
-      case msg @ Message(_, Right(blocks), _) =>
+      case msg @ Message(_, Right(blocks), _, _) =>
         val stripped = blocks.map {
           case tr: ContentBlock.ToolResult =>
             tr.copy(content = ToolResultPlaceholder)

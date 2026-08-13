@@ -130,6 +130,47 @@ docs/
 - **RunningFlowRegistry**: Tracks running DAG instances for frontend progress visualization. `cleanupStale` removes completed flows after 5 minutes.
 - **FlowDagRunner**: One-shot actor spawned by MailTool for flow name dispatch. Executes DAG nodes synchronously, Mails result back to caller.
 
+### 2026-08-13: Beta 1.4.1-beta.39 — 11 changes
+
+**Bug fixes:**
+1. `fix/high-cpu-killtree` — High CPU fix: killProcessTree replaces destroyForcibly for reliable child-process cleanup + tail log regex fix (P0/P1)
+2. `fix/bubble-cursor-compaction` — Clear agent bubble cursor after compaction completes (green cursor linger)
+3. `fix/neblink-config` — NebLink config fix: correct server address resolution + Device Flow auth migration
+4. `fix/tool-panel-fixed-split` — Agent tool config panel: distinguish fixed tools vs configurable tools; fix tool injection logic (Mail for team-only, base tools auto-injected)
+5. `fix/preset-panel-overflow` — Model preset panel layout overflow fix
+
+**Features:**
+6. `feat/injected-bubble-sender` — Blue (injected) bubbles show source Agent Name (Delegate/SubTask) — structured Mail sender field
+7. `feat/model-preset` — Model Preset system: drop displayName (name is sole identifier) + chain drag-to-reorder; full pipeline (Store → API → Settings UI → Agent page binding → legacy migration dialog)
+8. `feat/pop-url` — Pop tool supports HTTP/HTTPS URLs in Canvas (sandboxed iframe + X-Frame-Options fallback)
+9. `feat/expectsMail-safety-net` — Teams communication contract fix: expectsMail safety net for team members + report contract prompt
+10. `feat/flow-dag-v4` — Flow DAG V4 style: compact 3-ring reverse spin + glass nodes + bezier edges
+
+**Style:**
+11. `style/glass-control-glow` — Glass texture enhancement: glow + drop-shadow layers on .glass-control for unified interactive control surface
+
+Version bumped to 1.4.1-beta.39.
+
+### 2026-08-06: Beta 1.4.1-beta.38 — 10 changes
+
+**Bug fixes:**
+1. `fix/dismissed-transition` — TaskStore Dismissed state transitions are no-ops, not errors
+2. `fix/neblink-heartbeat` — NebLink heartbeat stops spamming "Not logged in"; auto-relogin + exponential backoff on consecutive failures
+3. `fix/pop-unlock` — Pop removed from NebulaExclusiveTools; available to all agents
+4. `fix/find-agent-by-name` — EntityLoader.findAgentByName scans team/flow dirs by agent.json `name` field, not directory name (404 when they differ)
+5. `fix/memory-trim` — Removed fragile memory trim logic; worker agents see full prefix
+
+**Features:**
+6. `feat/delegate-cross-agent` — Delegate tool supports cross-type parallel dispatch (agent parameter for any agent type)
+7. `feat/pop-visual-reporting` — Pop visual reporting guidance injected via PromptSections when Pop tool is available
+8. `feat/tools-subdir` — ToolLoader supports subdirectory layout (`tools/<name>/tool.json`)
+
+**Refactors:**
+9. `refactor/prefix-three-layer` — System prefix split into three-layer injection: `systemPrefixForAll` / `systemPrefixForTeams` / `systemPrefixForFlows`
+10. `refactor/memory-cleanup` — Memory architecture cleanup: removed StrengthStore + Folder/Session memory levels; NEBFLOW.md → User.md; simplified to 3-level (User/Agent/Session)
+
+Version bumped to 1.4.1-beta.38.
+
 ### 2026-07-19: Proactive learning instructions in system-prefix.md
 
 **Problem:** Nebflow stores all user input in session files, but this data was never used to learn user preferences. The 4-level memory system existed but relied entirely on the agent's own initiative to write — without explicit guidance on what signals to capture.

@@ -3,8 +3,12 @@
 
 export const FLOW_CSS = `
 <style id="team-canvas-style">
-/* Tab pane: establish positioning context so overlays center within it */
-.canvas-tab-pane[data-type="flow"] {
+/* Tab pane: establish positioning context so overlays center within it.
+   Covers all flow-panel types: Teams list, Flows list, per-instance run. */
+.canvas-tab-pane[data-type="flow"],
+.canvas-tab-pane[data-type="teams"],
+.canvas-tab-pane[data-type="flow-run"],
+.canvas-tab-pane[data-type="flow-def"] {
   position: relative;
   overflow: hidden;
 }
@@ -41,13 +45,23 @@ export const FLOW_CSS = `
 .team-card-title[data-act="def"]:hover { color: var(--color-primary, #07c160); }
 .team-card-actions { display: flex; gap: 4px; flex-shrink: 0; }
 .team-act-btn {
-  width: 26px; height: 26px; border: none; background: transparent;
+  width: 26px; height: 26px; border: 1px solid transparent; background: transparent;
   border-radius: 7px; color: var(--color-text-muted); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  font: 600 13px -apple-system, sans-serif; transition: background 0.15s, color 0.15s;
+  font: 600 13px -apple-system, sans-serif;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .team-act-btn svg { width: 15px; height: 15px; }
-.team-act-btn:hover { background: var(--color-frame-hover, rgba(0,0,0,0.06)); color: var(--color-text); }
+.team-act-btn:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  color: var(--color-text);
+}
 .team-card-summary {
   font: 500 11px -apple-system, sans-serif; color: var(--color-text-muted);
   flex-shrink: 0; margin-left: auto; display: flex; align-items: center; gap: 5px;
@@ -99,6 +113,16 @@ export const FLOW_CSS = `
 .dag-card-status.running .dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
 .dag-card-status.completed .dot { background: #4caf50; opacity: 1; }
 .dag-card-status.failed .dot { background: #f44336; opacity: 1; }
+.dag-card-status.cancelled .dot { background: #ff9800; opacity: 1; }
+.dag-card-cancel {
+  margin: 0 14px 14px; align-self: flex-start;
+  font: 600 11px -apple-system, sans-serif; color: #f44336;
+  background: transparent; border: 1px solid rgba(244,67,54,0.4);
+  border-radius: 8px; padding: 5px 14px; cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.dag-card-cancel:hover { background: rgba(244,67,54,0.08); }
+.dag-card-cancel:disabled { opacity: 0.5; cursor: default; }
 .dag-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: 10px 14px 0; }
 .dag-nodes { padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 0; }
 .dag-node { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 12px; border: 1.5px solid var(--glass-border); background: var(--color-surface); cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; min-width: 180px; position: relative; }
@@ -300,5 +324,271 @@ export const FLOW_CSS = `
 
 /* ── Agent popup header model badge ── */
 .flow-agent-model-badge { font: 500 10px -apple-system, sans-serif; color: rgb(91, 127, 191); background: rgba(91,127,191,0.08); padding: 2px 8px; border-radius: 6px; margin-left: 4px; }
+
+/* ══ Solar-system flow visualization (P5) ══ */
+.solar-card {
+  flex: 1 1 100%; min-width: 300px;
+  border-radius: 16px; background: var(--color-surface);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.03);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.solar-card-header {
+  display: flex; align-items: center; gap: 8px; padding: 12px 14px;
+  border-bottom: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  flex-shrink: 0;
+}
+.solar-card-title { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
+.solar-card-status { font: 500 11px -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; display: flex; align-items: center; gap: 5px; }
+.solar-card-status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; }
+.solar-card-status.running .dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
+.solar-card-status.completed .dot { background: #4caf50; opacity: 1; }
+.solar-card-status.failed .dot { background: #f44336; opacity: 1; }
+.solar-card-status.cancelled .dot { background: #ff9800; opacity: 1; }
+.solar-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: 10px 14px 0; flex-shrink: 0; }
+.solar-card-footer { display: flex; align-items: center; padding: 0 14px 14px; flex-shrink: 0; }
+.solar-card-footer:empty { display: none; }
+
+/* Scrollable canvas wrapper */
+.solar-scroll {
+  overflow: auto; padding: 6px 14px 4px; flex: 1;
+  scrollbar-color: var(--color-frame-border) transparent;
+}
+.solar-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.solar-scroll::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+
+/* Canvas: absolute-positioned nodes + SVG edges */
+.solar-canvas { position: relative; margin: 0 auto; }
+
+/* SVG edges — vertical bezier connectors (V4) */
+.solar-edges { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
+.flow-edge { fill: none; stroke: var(--color-border); stroke-width: 1.5; }
+.flow-edge.active {
+  stroke: var(--color-text-muted);
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+  animation: flow-dash 1s linear infinite;
+}
+@keyframes flow-dash { to { stroke-dashoffset: -9; } }
+.flow-edge-arrow { fill: var(--color-border); opacity: 0.5; }
+.solar-edge-label { font: 500 9px -apple-system, sans-serif; fill: var(--color-text-muted); opacity: 0.7; }
+.flow-edge-label { font: 400 9px ui-monospace; fill: var(--color-text-muted); }
+
+/* Node card — glass material (V4) */
+.solar-node {
+  position: absolute; width: 110px; height: 80px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: var(--glass-bg, rgba(255,255,255,0.08));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
+  border: 1px solid var(--glass-border, rgba(255,255,255,0.12));
+  border-radius: 14px;
+  padding: 8px 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+  text-align: center;
+  cursor: pointer; user-select: none;
+  transition: opacity 0.4s ease;
+}
+
+/* Orbit — compact 36px, three counter-spinning rings (V4) */
+.solar-orbit { position: relative; width: 36px; height: 36px; margin: 0 auto 4px; flex-shrink: 0; }
+.solar-ring {
+  position: absolute; top: 50%; left: 50%;
+  border: 1px solid var(--color-border);
+  border-radius: 50%; transform: translate(-50%, -50%);
+  box-sizing: border-box;
+}
+.ring-1 { width: 8px; height: 8px; }
+.ring-2 { width: 18px; height: 18px; }
+.ring-3 { width: 28px; height: 28px; }
+.solar-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; }
+.solar-dot {
+  position: absolute; width: 3px; height: 3px;
+  background: var(--color-text); border-radius: 50%; top: -1.5px;
+}
+.ring-1 .solar-dot { left: 3px; }
+.ring-2 .solar-dot { left: 8px; }
+.ring-3 .solar-dot { left: 13px; }
+
+/* Initial angles — three dots spread around the orbit */
+.ring-1 .solar-dot-wrap { transform: rotate(0deg); }
+.ring-2 .solar-dot-wrap { transform: rotate(120deg); }
+.ring-3 .solar-dot-wrap { transform: rotate(240deg); }
+
+/* Running: rings spin at different speeds, middle reversed (V4 core) */
+.solar-node.running .ring-1 .solar-dot-wrap { animation: solar-spin 3s linear infinite; }
+.solar-node.running .ring-2 .solar-dot-wrap { animation: solar-spin 4.5s linear infinite reverse; animation-delay: -3s; }
+.solar-node.running .ring-3 .solar-dot-wrap { animation: solar-spin 6s linear infinite; animation-delay: -4s; }
+@keyframes solar-spin { to { transform: rotate(360deg); } }
+
+/* Status variants */
+.solar-node.pending .solar-ring { border-style: dashed; opacity: 0.4; }
+.solar-node.pending .solar-dot { opacity: 0.3; }
+.solar-node.pending .solar-node-label { opacity: 0.4; }
+.solar-node.completed .solar-dot-wrap { animation: none; }
+.solar-node.completed .solar-node-label { opacity: 0.6; }
+.solar-node.failed .solar-ring { border-color: var(--color-error, #e5484d); opacity: 0.5; }
+
+/* Status icon (✓ / ✗) — inline in the sub line */
+.solar-node-status { font: 700 10px -apple-system, sans-serif; margin-left: 4px; }
+.solar-node-status.ok { color: #4caf50; }
+.solar-node-status.err { color: #f44336; }
+
+/* Node label */
+.solar-node-label {
+  font: 600 12px -apple-system, sans-serif; color: var(--color-text);
+  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-top: 3px;
+}
+.solar-node-sub {
+  font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted);
+  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  opacity: 0.7;
+}
+
+/* ══ Flow list page (P6) ══ */
+.flow-list-header {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 4px 2px;
+}
+.flow-list-title { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
+.flow-list-count { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; }
+.flow-def-card {
+  flex: 1 1 300px; min-width: 280px; max-width: 480px;
+  border-radius: 14px; background: var(--color-surface);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.03);
+  overflow: hidden; display: flex; flex-direction: column;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.flow-def-card:hover { border-color: rgba(91,127,191,0.3); box-shadow: 0 3px 12px rgba(0,0,0,0.07); }
+.flow-def-card-header {
+  display: flex; align-items: center; gap: 8px; padding: 12px 14px;
+  border-bottom: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+}
+.flow-def-card-icon {
+  width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(91,127,191,0.10); color: rgb(91,127,191);
+  font: 600 11px -apple-system, sans-serif;
+}
+.flow-def-card-name { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
+.flow-def-card-meta { font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; display: flex; gap: 8px; flex-shrink: 0; }
+.flow-def-card-desc {
+  font: 400 11.5px -apple-system, sans-serif; color: var(--color-text-muted);
+  line-height: 1.5; padding: 10px 14px 4px; flex: 1;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.flow-def-card-footer { display: flex; align-items: center; gap: 8px; padding: 10px 14px 12px; }
+.flow-def-view-btn {
+  font: 600 11px -apple-system, sans-serif; color: rgb(91,127,191);
+  border: 1px solid rgba(91,127,191,0.35); border-radius: 7px;
+  background: transparent; padding: 5px 12px; cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.flow-def-view-btn:hover { background: rgba(91,127,191,0.08); }
+.flow-def-entry-tag {
+  font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted);
+  border: 1px solid var(--color-border); border-radius: 5px; padding: 2px 7px; opacity: 0.75;
+}
+
+/* ===== Stellar System Visualization (flow-orbit-node, 3-point) ===== */
+.stellar-container {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  overflow-y: auto; padding: 14px;
+}
+.stellar-container::-webkit-scrollbar { width: 8px; }
+.stellar-container::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+
+.stellar-card {
+  max-width: 700px; margin: 0 auto 20px;
+  border-radius: 16px; background: var(--color-surface);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.03);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.stellar-header {
+  padding: 14px 18px; display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--color-border);
+}
+.stellar-title { font: 600 15px -apple-system; color: var(--color-text); }
+.stellar-status { font: 500 11px ui-monospace; padding: 2px 8px; border-radius: 6px; text-transform: uppercase; }
+.stellar-status.running { color: var(--color-primary); background: rgba(91,127,191,0.1); }
+.stellar-status.completed { color: #34c759; background: rgba(52,199,89,0.1); }
+.stellar-status.failed { color: #ff3b30; background: rgba(255,59,48,0.1); }
+.stellar-desc { padding: 8px 18px; font: 400 12px -apple-system; color: var(--color-text-muted); }
+.stellar-stage {
+  position: relative; width: 100%; min-height: 300px;
+  padding: 20px 0;
+}
+
+/* Orbit node — centered horizontally in stage */
+.flow-orbit-node {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  width: 120px; height: 110px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; z-index: 2;
+}
+.flow-orbit-content { position: relative; z-index: 3; text-align: center; pointer-events: none; }
+.flow-orbit-agent { font: 600 11px -apple-system; color: var(--color-text); }
+.flow-orbit-nodeid { font: 400 9px ui-monospace; color: var(--color-text-muted); margin-top: 2px; }
+.flow-orbit-status { font: 600 16px -apple-system; margin-top: 2px; }
+
+/* Three orbit rings — scoped to flow-orbit-node (transform-based centering) */
+.flow-orbit-node .flow-ring {
+  position: absolute; border-radius: 50%; top: 50%; left: 50%;
+  border: 1.5px solid var(--color-border);
+}
+.flow-orbit-node .flow-ring.outer  { width: 100px; height: 100px; transform: translate(-50%, -50%); }
+.flow-orbit-node .flow-ring.middle { width: 75px; height: 75px; transform: translate(-50%, -50%); }
+.flow-orbit-node .flow-ring.inner  { width: 50px; height: 50px; transform: translate(-50%, -50%); }
+
+/* Running: animated rotation (renamed keyframes to avoid clash with solar-node) */
+.flow-orbit-node.running .flow-ring.outer  { border-color: rgba(91,127,191,0.4); animation: orbit-spin-cw 6s linear infinite; }
+.flow-orbit-node.running .flow-ring.middle { border-color: rgba(91,127,191,0.3); animation: orbit-spin-ccw 4.5s linear infinite; }
+.flow-orbit-node.running .flow-ring.inner  { border-color: rgba(91,127,191,0.2); animation: orbit-spin-cw 3s linear infinite; }
+
+.flow-orbit-node.pending .flow-ring { border-style: dashed; opacity: 0.35; }
+.flow-orbit-node.completed .flow-ring { border-color: #34c759; opacity: 0.6; }
+.flow-orbit-node.completed .flow-orbit-status { color: #34c759; }
+.flow-orbit-node.failed .flow-ring { border-color: #ff3b30; opacity: 0.6; }
+.flow-orbit-node.failed .flow-orbit-status { color: #ff3b30; }
+
+/* Orbit dots — scoped to flow-orbit-node */
+.flow-orbit-node .flow-dot {
+  position: absolute; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--color-primary, #5b7fbf); top: -2px; left: 50%; transform: translateX(-50%);
+}
+.flow-orbit-node.running .flow-dot { box-shadow: 0 0 6px rgba(91,127,191,0.6); }
+
+@keyframes orbit-spin-cw  { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
+@keyframes orbit-spin-ccw { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(-360deg); } }
+
+/* Flow definition cards (P6) — p5p6-v2 Flows tab */
+.flow-defs-section, .flow-running-section { width: 100%; margin-bottom: 16px; }
+.flow-defs-header { font: 600 11px -apple-system; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 0 10px; }
+.flow-defs-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+.flow-def-card {
+  flex: 1 1 240px; min-width: 220px; max-width: 360px;
+  border-radius: 12px; background: var(--color-surface);
+  border: 1px solid var(--glass-border);
+  padding: 14px; display: flex; flex-direction: column; gap: 6px;
+}
+.flow-def-name { font: 600 13px -apple-system; color: var(--color-text); }
+.flow-def-desc { font: 400 11px -apple-system; color: var(--color-text-muted); line-height: 1.4; }
+.flow-def-meta { font: 400 10px ui-monospace; color: var(--color-text-muted); opacity: 0.7; }
+.flow-def-view-btn {
+  align-self: flex-start; font: 500 11px -apple-system;
+  color: var(--color-primary, #5b7fbf); background: none;
+  border: 1px solid rgba(91,127,191,0.3); border-radius: 6px;
+  padding: 4px 10px; cursor: pointer; transition: all 0.15s;
+}
+.flow-def-view-btn:hover { background: rgba(91,127,191,0.08); }
 </style>
 `;

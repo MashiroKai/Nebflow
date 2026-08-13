@@ -20,10 +20,6 @@ let currentStepId = null;
 let popupOverlay = null;
 let popupResizeObs = null;
 
-export function getStepView(sessionId) {
-  return stepViews.get(sessionId) || null;
-}
-
 // ── CSS ───────────────────────────────────────────────────
 const POPUP_CSS = `<style id="flow-agent-popup-css">
 /* Overlay fills the flow card (position:absolute inside .team-card).
@@ -174,6 +170,22 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   opacity: 0; pointer-events: none;
   left: -9999px;
 }
+
+/* Fullscreen variant — mounted on document.body (Delegate popup) */
+.flow-agent-overlay.fullscreen {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 1000;
+  background: rgba(0,0,0,0.15);
+  animation: fa-fade-in 0.2s ease;
+}
+.flow-agent-overlay.fullscreen .flow-agent-modal {
+  position: relative;
+  left: auto; top: auto;
+  transform: none;
+  width: 90%; max-width: 720px;
+  height: 80vh; max-height: 85vh;
+  margin: 6vh auto;
+}
 </style>`;
 
 if (!document.getElementById('flow-agent-popup-css')) {
@@ -206,20 +218,22 @@ function ensureStepView(sessionId) {
   const fakeDom = {
     chat: container,
     input: null, sendBtn: null, stopBtn: null, attachBtn: null,
-    statusWrap: null, statusText: null, lottieSpinnerEl: null,
     attPreview: null, slashDropdown: null, queueBar: null,
     voiceBtn: null, voiceOverlay: null, voiceText: null,
     headerModelInfoEl: null, bgIndicatorEl: null, bgCountEl: null,
     bgDropdownEl: null, bgDropdownListEl: null,
-    delegateIndicatorEl: null, delegateDropdownEl: null, delegateDropdownListEl: null,
+    bgagentIndicatorEl: null, bgagentDropdownEl: null, bgagentDropdownListEl: null,
     sessionNameEl: null,
   };
   const view = new ChatView('flow-' + sessionId, fakeDom);
   view.mounted = true;
   view.sessionId = sessionId;
+  // Hidden until the popup opens — ws.js gates DOM rendering while false.
+  view.visible = false;
 
   const entry = { view, container, meta: { agentName: '', task: '', status: '' }, historyLoaded: false };
   stepViews.set(sessionId, entry);
+  enforceStepViewCap();
   return entry;
 }
 
@@ -237,6 +251,20 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
 
   // Ensure view exists (in case no events arrived yet)
   const entry = ensureStepView(currentStepId);
+  entry.view.visible = true;
+
+  // Events were skipped while hidden → DOM is stale or empty. Force a full
+  // refresh from backend history (same pipeline as first open) and seed
+  // in-flight stream text so the current turn's tail renders live.
+  if (entry.view.dirtyWhileHidden) {
+    entry.view.dirtyWhileHidden = false;
+    entry.view.resetStream();
+    entry.container.innerHTML = '';
+    entry.historyLoaded = false;
+    const sid = entry.view.sessionId;
+    if (state.sessionTexts[sid]) entry.view.stream.aiText = state.sessionTexts[sid];
+    if (state.sessionThinkingBuffers[sid]) entry.view.stream.thinkingText = state.sessionThinkingBuffers[sid];
+  }
 
   popupOverlay = document.createElement('div');
   popupOverlay.className = 'flow-agent-overlay';
@@ -350,10 +378,6 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   }
 }
 
-export function isPopupOpen() {
-  return popupOverlay !== null;
-}
-
 // ── Context usage ring ───────────────────────────────────
 
 function fmtTokens(n) {
@@ -372,7 +396,9 @@ async function fetchAgentModelBadge(agentName) {
     const cfg = await resp.json();
     const el = popupOverlay?.querySelector('#flow-agent-model');
     if (!el) return;
-    const current = cfg.current || cfg.preferred || cfg.default || '';
+    // preferred is the configured model — trust it over `current`
+    // (current is only a reference from the backend resolution).
+    const current = cfg.preferred || cfg.current || cfg.default || '';
     if (!current) { el.innerHTML = ''; return; }
     const isFallback = cfg.preferred && current !== cfg.preferred;
     el.innerHTML = isFallback
@@ -430,8 +456,11 @@ export function closeStepPopup() {
   if (currentStepId) {
     const entry = stepViews.get(currentStepId);
     if (entry) {
+      entry.view.visible = false; // hidden — ws.js gates DOM rendering again
       getHiddenRoot().appendChild(entry.container);
       entry.footerEl = null;
+      // Finished agents don't need their DOM kept around — schedule cleanup.
+      if (entry.meta.status === 'done') scheduleStepViewRemoval(currentStepId);
     }
   }
   if (popupResizeObs) {
@@ -443,11 +472,50 @@ export function closeStepPopup() {
   currentStepId = null;
 }
 
+// ── View cleanup (memory) ────────────────────────────────
+// Without this, every flow agent's hidden container lived forever — 10
+// finished agents ≈ 50-500MB of detached DOM. Views are destroyed a few
+// seconds after the agent finishes (user can still reopen from history),
+// and a simple LRU cap prevents long-session accumulation.
+const STEP_VIEW_TTL_MS = 8000;
+const STEP_VIEW_LRU_CAP = 20;
+const removalTimers = new Map();
+
 export function removeStepView(sessionId) {
   const entry = stepViews.get(sessionId);
   if (entry) {
+    if (removalTimers.has(sessionId)) {
+      clearTimeout(removalTimers.get(sessionId));
+      removalTimers.delete(sessionId);
+    }
     entry.container.remove();
     stepViews.delete(sessionId);
+  }
+}
+
+function scheduleStepViewRemoval(sessionId) {
+  if (removalTimers.has(sessionId)) return;
+  removalTimers.set(sessionId, setTimeout(() => {
+    removalTimers.delete(sessionId);
+    // Never destroy the view while the user is looking at it — the LRU cap
+    // reclaims it after the popup is closed.
+    if (currentStepId === sessionId && popupOverlay) return;
+    removeStepView(sessionId);
+  }, STEP_VIEW_TTL_MS));
+}
+
+/** Evict oldest views (Map insertion order) beyond the cap. Never evicts
+ *  the currently open view. */
+function enforceStepViewCap() {
+  while (stepViews.size > STEP_VIEW_LRU_CAP) {
+    let evicted = false;
+    for (const key of stepViews.keys()) {
+      if (key === currentStepId && popupOverlay) continue;
+      removeStepView(key);
+      evicted = true;
+      break;
+    }
+    if (!evicted) break;
   }
 }
 
@@ -468,6 +536,7 @@ export function interceptFlowStep(msg) {
     entry.meta.status = 'running';
   } else if (msg.type === 'agentDone' || msg.type === 'agentEnd') {
     entry.meta.status = 'done';
+    scheduleStepViewRemoval(msg.nodeSessionId);
   }
 
   // Set activeView so chat.js rendering functions target this view's container.

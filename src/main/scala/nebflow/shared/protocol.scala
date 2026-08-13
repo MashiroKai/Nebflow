@@ -47,13 +47,22 @@ object MessageRole:
 case class Message(
   role: MessageRole,
   content: Either[String, List[ContentBlock]],
-  timestamp: Long = System.currentTimeMillis()
+  timestamp: Long = System.currentTimeMillis(),
+  /**
+   * Injection source marker (任务 P): when a message was injected by a tool
+   * rather than typed by the user, this records where it came from —
+   * "mail" / "delegate" / "subtask" / "flow" / "ask" / "skill" / "tool".
+   * None = normal user-typed message (backward compatible: old persisted
+   * messages decode with source=None).
+   */
+  source: Option[String] = None
 ):
 
   def textContent: String = content match
     case Left(text) => text
     case Right(blocks) =>
       blocks.collect { case ContentBlock.Text(t) => t }.mkString("\n")
+end Message
 
 // ===== Tool Definition =====
 
@@ -207,7 +216,8 @@ given Encoder[Message] = Encoder.instance { msg =>
   val base = msg.content match
     case Left(text) => Json.obj("role" -> msg.role.name.asJson, "content" -> text.asJson)
     case Right(blocks) => Json.obj("role" -> msg.role.name.asJson, "content" -> blocks.asJson, "blocks" -> true.asJson)
-  if msg.timestamp > 0 then base.deepMerge(Json.obj("timestamp" -> msg.timestamp.asJson)) else base
+  val withTs = if msg.timestamp > 0 then base.deepMerge(Json.obj("timestamp" -> msg.timestamp.asJson)) else base
+  msg.source.fold(withTs)(s => withTs.deepMerge(Json.obj("source" -> s.asJson)))
 }
 
 given Decoder[Message] = Decoder.instance { cursor =>
@@ -221,7 +231,8 @@ given Decoder[Message] = Decoder.instance { cursor =>
       case Some(true) => cursor.downField("content").as[List[ContentBlock]].map(Right(_))
       case _ => cursor.downField("content").as[String].map(Left(_))
     ts <- cursor.downField("timestamp").as[Option[Long]]
-  yield Message(role, content, ts.getOrElse(0L))
+    source <- cursor.downField("source").as[Option[String]]
+  yield Message(role, content, ts.getOrElse(0L), source)
 }
 
 // ===== UI Messages (for frontend rendering) =====
@@ -231,8 +242,15 @@ sealed trait UiMessage:
 
 object UiMessage:
 
-  case class User(text: String, attachments: List[Json] = Nil, injected: Boolean = false, timestamp: Long = 0L)
-      extends UiMessage:
+  case class User(
+    text: String,
+    attachments: List[Json] = Nil,
+    injected: Boolean = false,
+    timestamp: Long = 0L,
+    source: Option[String] = None,
+    eventType: Option[String] = None,
+    sender: Option[String] = None
+  ) extends UiMessage:
     val typeName = "user"
 
   case class Ai(
@@ -263,7 +281,13 @@ object UiMessage:
       extends UiMessage:
     val typeName = "ask"
 
-  case class AskPermission(toolName: String, summary: String, input: String) extends UiMessage:
+  case class AskPermission(
+    toolName: String,
+    summary: String,
+    input: String,
+    sourceAgent: Option[String] = None,
+    sourceSession: Option[String] = None
+  ) extends UiMessage:
     val typeName = "askPermission"
 
   case class System(content: String, i18nKey: Option[String] = None, params: Option[Json] = None) extends UiMessage:
@@ -273,7 +297,10 @@ object UiMessage:
     case m: User =>
       val base = Json.obj("type" -> "user".asJson, "text" -> m.text.asJson, "attachments" -> m.attachments.asJson)
       val withTs = if m.timestamp > 0 then base.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else base
-      if m.injected then withTs.deepMerge(Json.obj("injected" -> true.asJson)) else withTs
+      val withInj = if m.injected then withTs.deepMerge(Json.obj("injected" -> true.asJson)) else withTs
+      val withSrc = m.source.fold(withInj)(s => withInj.deepMerge(Json.obj("source" -> s.asJson)))
+      val withEt = m.eventType.fold(withSrc)(et => withSrc.deepMerge(Json.obj("eventType" -> et.asJson)))
+      m.sender.fold(withEt)(s => withEt.deepMerge(Json.obj("sender" -> s.asJson)))
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -296,12 +323,14 @@ object UiMessage:
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
       m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
     case m: AskPermission =>
-      Json.obj(
+      val base = Json.obj(
         "type" -> "askPermission".asJson,
         "toolName" -> m.toolName.asJson,
         "summary" -> m.summary.asJson,
         "input" -> m.input.asJson
       )
+      val withSource = m.sourceAgent.fold(base)(sa => base.deepMerge(Json.obj("sourceAgent" -> sa.asJson)))
+      m.sourceSession.fold(withSource)(ss => withSource.deepMerge(Json.obj("sourceSession" -> ss.asJson)))
     case m: System =>
       val base = Json.obj("type" -> "system".asJson, "content" -> m.content.asJson)
       val withKey = m.i18nKey.fold(base)(k => base.deepMerge(Json.obj("i18nKey" -> k.asJson)))
@@ -316,7 +345,18 @@ object UiMessage:
           atts <- cursor.downField("attachments").as[Option[List[Json]]]
           injected <- cursor.downField("injected").as[Option[Boolean]]
           timestamp <- cursor.downField("timestamp").as[Option[Long]]
-        yield User(text, atts.getOrElse(Nil), injected.getOrElse(false), timestamp.getOrElse(0L))
+          source <- cursor.downField("source").as[Option[String]]
+          eventType <- cursor.downField("eventType").as[Option[String]]
+          sender <- cursor.downField("sender").as[Option[String]]
+        yield User(
+          text,
+          atts.getOrElse(Nil),
+          injected.getOrElse(false),
+          timestamp.getOrElse(0L),
+          source,
+          eventType,
+          sender
+        )
       case "ai" =>
         for
           text <- cursor.downField("text").as[String]
@@ -358,7 +398,9 @@ object UiMessage:
           toolName <- cursor.downField("toolName").as[String]
           summary <- cursor.downField("summary").as[String]
           input <- cursor.downField("input").as[String]
-        yield AskPermission(toolName, summary, input)
+          sourceAgent <- cursor.downField("sourceAgent").as[Option[String]]
+          sourceSession <- cursor.downField("sourceSession").as[Option[String]]
+        yield AskPermission(toolName, summary, input, sourceAgent, sourceSession)
       case "system" =>
         for
           content <- cursor.downField("content").as[String]

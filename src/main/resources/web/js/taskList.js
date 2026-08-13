@@ -1,5 +1,5 @@
 import { t } from './i18n.js';
-import { sendWs } from './ws.js';
+import { createIconsIn } from './utils.js';
 
 const MAX_VISIBLE = 20;
 const COLLAPSED_KEY = 'nebflow-task-collapsed';
@@ -12,9 +12,6 @@ const iconMap = {
 };
 
 const activeStatuses = new Set(['pending', 'in_progress']);
-const visibleStatuses = new Set(['pending', 'in_progress', 'completed']);
-
-let currentSessionId = null;
 
 function isCollapsed() {
   try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
@@ -25,46 +22,76 @@ function setCollapsed(v) {
 }
 
 export function renderTaskList(tasks, container, sessionId) {
-  if (sessionId) currentSessionId = sessionId;
   container = container || document.getElementById('task-list');
   if (!container) return;
 
-  if (!tasks || tasks.length === 0) {
-    container.classList.remove('has-tasks');
-    container.innerHTML = '';
+  // Build previous snapshot: taskId → status
+  const prevSnapshot = container._taskSnapshot || {};
+
+  const isEmpty = !tasks || tasks.length === 0;
+  const active = isEmpty ? [] : tasks.filter(t => activeStatuses.has(t.status));
+
+  if (active.length === 0) {
+    // Fade out existing card before clearing
+    const card = container.querySelector('.task-card');
+    if (card && Object.keys(prevSnapshot).length > 0) {
+      card.classList.add('task-card-leaving');
+      setTimeout(() => {
+        container.innerHTML = '';
+        container.classList.remove('has-tasks');
+      }, 300);
+    } else {
+      container.innerHTML = '';
+      container.classList.remove('has-tasks');
+    }
+    container._taskSnapshot = {};
     return;
   }
 
-  // Show active + completed tasks; failed/dismissed are hidden
-  const visible = tasks.filter(t => visibleStatuses.has(t.status));
+  // Build new snapshot
+  const newSnapshot = {};
+  active.forEach(t => { newSnapshot[t.id] = t.status; });
 
-  if (visible.length === 0) {
-    container.classList.remove('has-tasks');
-    container.innerHTML = '';
-    return;
+  // Detect items to animate out (existed before, now completed/gone)
+  const leavingIds = Object.keys(prevSnapshot).filter(id => !newSnapshot[id]);
+
+  // If there are leaving items, animate them out first, then re-render after 350ms
+  if (leavingIds.length > 0) {
+    let pendingLeave = leavingIds.length;
+    leavingIds.forEach(id => {
+      const el = container.querySelector(`[data-task-id="${id}"]`);
+      if (el) {
+        el.classList.add('task-leaving');
+      }
+      pendingLeave--;
+    });
+
+    // Delay the re-render to let leave animation play
+    setTimeout(() => doRender(container, tasks, active, sessionId, prevSnapshot, newSnapshot), 350);
+  } else {
+    doRender(container, tasks, active, sessionId, prevSnapshot, newSnapshot);
   }
 
+  container._taskSnapshot = newSnapshot;
+}
+
+function doRender(container, allTasks, active, sessionId, prevSnapshot, newSnapshot) {
   container.classList.add('has-tasks');
-
   const collapsed = isCollapsed();
 
   // Build parent → children map
   const byParent = new Map();
-  visible.forEach(t => {
+  active.forEach(t => {
     const pid = t.parentId || null;
     if (!byParent.has(pid)) byParent.set(pid, []);
     byParent.get(pid).push(t);
   });
-
-  // Sort within each parent by ID
   byParent.forEach(arr => arr.sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0)));
 
-  // Roots are tasks with no parent or whose parent is not visible
-  const visibleIds = new Set(visible.map(t => t.id));
-  const roots = visible
-    .filter(t => !t.parentId || !visibleIds.has(t.parentId))
+  const activeIds = new Set(active.map(t => t.id));
+  const roots = active
+    .filter(t => !t.parentId || !activeIds.has(t.parentId))
     .sort((a, b) => {
-      // in_progress first, then pending, then completed
       if (a.status !== b.status) {
         const order = { in_progress: 0, pending: 1, completed: 2 };
         return (order[a.status] ?? 3) - (order[b.status] ?? 3);
@@ -72,9 +99,8 @@ export function renderTaskList(tasks, container, sessionId) {
       return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
     });
 
-  // Stats — only show active counts, no completed
   const counts = { pending: 0, in_progress: 0 };
-  visible.forEach(t => { if (activeStatuses.has(t.status)) counts[t.status]++; });
+  active.forEach(t => { counts[t.status]++; });
 
   let html = `<div class="task-card${collapsed ? ' collapsed' : ''}">`;
   html += '<div class="task-header">';
@@ -84,7 +110,6 @@ export function renderTaskList(tasks, container, sessionId) {
   if (counts.pending > 0) parts.push(t('task.open', { count: counts.pending }));
   if (parts.length > 0) html += `<span class="task-stats">${parts.join(', ')}</span>`;
   html += '</div>';
-
   html += `<div class="task-body"><div class="task-body-inner">`;
 
   let visibleCount = 0;
@@ -93,52 +118,43 @@ export function renderTaskList(tasks, container, sessionId) {
     visibleCount++;
 
     const isActive = task.status === 'in_progress';
-    const isCompleted = task.status === 'completed';
     let cls = 'task-item';
-    cls += isActive ? ' task-active' : isCompleted ? ' task-completed' : ' task-pending';
+    cls += isActive ? ' task-active' : ' task-pending';
     if (depth > 0) cls += ' task-child';
+
+    // Transition class: flip if status changed, entering if new
+    const prevStatus = prevSnapshot[task.id];
+    if (prevStatus && prevStatus !== task.status) {
+      cls += ' task-flipping';
+    } else if (!prevStatus) {
+      cls += ' task-entering';
+    }
 
     const indent = depth * 16;
     const label = (isActive && task.activeForm) ? task.activeForm : task.subject;
 
     html += `<div class="${cls}" data-task-id="${task.id}" style="margin-left:${indent}px">`;
-    if (isCompleted) {
-      html += `<button class="task-circle" data-task-id="${task.id}" title="${t('task.dismiss')}"></button>`;
-    } else {
-      const iconName = iconMap[task.status] || 'square';
-      html += `<span class="task-icon"><i data-lucide="${iconName}"></i></span>`;
-    }
+    const iconName = iconMap[task.status] || 'square';
+    html += `<span class="task-icon"><i data-lucide="${iconName}"></i></span>`;
     html += `<span class="task-label">${escapeHtml(label)}</span>`;
     html += '</div>';
 
-    // Render children
     const children = byParent.get(task.id) || [];
     children.forEach(c => renderTaskItem(c, depth + 1));
   }
 
   roots.forEach(task => renderTaskItem(task, 0));
 
-  const totalShown = visible.length;
+  const totalShown = active.length;
   if (totalShown > MAX_VISIBLE) {
     html += `<div class="task-more">${t('task.more', { count: totalShown - MAX_VISIBLE })}</div>`;
   }
 
-  html += '</div></div>'; // .task-body-inner / .task-body
-  html += '</div>'; // .task-card
+  html += '</div></div>';
+  html += '</div>';
   container.innerHTML = html;
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
-
-  // Circle dismiss handlers — click circle → fill animation → dismiss
-  container.querySelectorAll('.task-circle').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (btn.classList.contains('filled')) return; // already dismissing
-      btn.classList.add('filled');
-      const taskId = btn.dataset.taskId;
-      if (taskId) sendWs({ type: 'dismissTask', sessionId: currentSessionId || '', taskId });
-    });
-  });
+  if (typeof lucide !== 'undefined') createIconsIn(container);
 
   // Toggle handler
   const toggleBtn = container.querySelector('.task-toggle');
@@ -151,7 +167,7 @@ export function renderTaskList(tasks, container, sessionId) {
       setCollapsed(nowCollapsed);
       toggleBtn.title = nowCollapsed ? t('task.expand') : t('task.collapse');
       toggleBtn.innerHTML = `<i data-lucide="${nowCollapsed ? 'chevron-down' : 'chevron-up'}"></i>`;
-      if (typeof lucide !== 'undefined') lucide.createIcons();
+      if (typeof lucide !== 'undefined') createIconsIn(toggleBtn);
     });
   }
 }

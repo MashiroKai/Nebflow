@@ -1,5 +1,6 @@
 import state from './state.js';
 import { findViewBySessionId, setActiveView, activeView, chatViews } from './chatView.js';
+import { isBgAgentId } from './utils.js';
 
 // ── Flow-step interceptor (registered by flowAgentPopup.js) ─────────────
 // ws.js must NOT import flowAgentPopup.js directly: that creates a circular
@@ -9,6 +10,31 @@ import { findViewBySessionId, setActiveView, activeView, chatViews } from './cha
 // flowAgentPopup.js registers its interceptor here instead.
 let flowStepInterceptor = null;
 export function setFlowStepInterceptor(fn) { flowStepInterceptor = fn; }
+
+// ── Background-agent step interceptor (registered by bgAgentPopup.js) ────
+// Same pattern as flowStepInterceptor. Checked FIRST so background sub-agent
+// events (nodeSessionId starts with "delegate-"/"subtask-" — backend protocol) don't get
+// swallowed by the flowStepInterceptor which claims all nodeSessionId events.
+let bgAgentStepInterceptor = null;
+export function setBgAgentStepInterceptor(fn) { bgAgentStepInterceptor = fn; }
+
+// ── Hidden-view render gating ─────────────────────────────────────────────
+// Popup ChatViews (flow / bg-agent / team) have visible === false while their
+// popup is closed. Streaming events for hidden views are dispatched with
+// view=null so chat.js handlers skip DOM rendering entirely — the global
+// per-session buffers in state.js (sessionTexts/sessionThinkingBuffers/...)
+// still accumulate, so nothing is lost; the popup re-renders from backend
+// history when opened (dirtyWhileHidden forces the refresh).
+// Interactive events (askUser/askPermission) are exempt: they keep the real
+// view and render into the hidden container immediately — low frequency,
+// negligible cost, and the prompt must exist when the popup opens.
+function streamDispatchView(view) {
+  if (view && view.visible === false) {
+    view.dirtyWhileHidden = true;
+    return null;
+  }
+  return view;
+}
 
 /**
  * Convert agent* events (agentTextDelta, agentToolStart, etc.) to standard
@@ -66,12 +92,11 @@ const GLOBAL_MSG_TYPES = new Set([
   'agentSystemPrompt', 'agentSystemPromptSaved',
   'mcpServersUpdate', 'configData', 'configUpdated', 'modelOptions',
   'memoryData', 'memorySaved', 'memoryStatus', 'memoryChanged',
-  'cardDesignData', 'cardDesignSaved',
   'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
   'browseResult',
   'updateCheckResult', 'updateStarted', 'updateCompleted',
   'remoteUpdateResult', 'peerListChanged',
-  'activeBgTasks',
+  'activeBgTasks', 'activeAgents',
   'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-history', 'dropboxError'
 ]);
 const TERMINAL_MSG_TYPES = new Set([
@@ -90,7 +115,7 @@ const STREAM_MSG_TYPES = new Set([
   'agentToolStart', 'agentToolEnd', 'agentEnd',
   'agentThinking', 'agentRetryStatus', 'agentDone',
   'treeBranchMounted', 'treeBranchUnmounted', 'treeBranchUpdated',
-  'flowMail', 'flowProgress', 'flowCompleted', 'teamList'
+  'flowMail', 'flowStarted', 'flowProgress', 'flowCompleted', 'teamList'
 ]);
 
 export function onMessage(type, handler) {
@@ -160,7 +185,13 @@ export function connect() {
     localStorage.setItem('nebflow_token', token);
   }
   const storedToken = localStorage.getItem('nebflow_token') || token;
-  const wsUrl = `${proto}//${location.host}/ws${storedToken ? '?token=' + encodeURIComponent(storedToken) : ''}`;
+  // Set auth cookie so the WebSocket connection authenticates via cookie
+  // instead of exposing the token in the URL (history/logs/Referer leakage).
+  if (storedToken) {
+    document.cookie = `nebflow_token=${encodeURIComponent(storedToken)}; path=/; SameSite=Strict`;
+  }
+  // Connect without token in URL — relies on cookie auth.
+  const wsUrl = `${proto}//${location.host}/ws`;
   try {
     state.ws = new WebSocket(wsUrl);
   } catch (e) {
@@ -220,6 +251,14 @@ export function connect() {
       // Pong reply — clear pending flag (used by heartbeat + wake detection)
       if (msg.type === 'pong') { state.pendingPong = false; return; }
 
+      // ── BUG 6 fix: save/restore activeView ────────────────────────────
+      // activeView is a module-global (chatView.js). The bg-agent/flow
+      // interceptors below call setActiveView() to render into popup ChatViews,
+      // which would otherwise leak into subsequent rendering within the same
+      // event-loop tick. Snapshot here and restore after each interceptor
+      // branch so popup rendering never disturbs the user's current view.
+      const savedView = activeView;
+
       // ── Message filtering ────────────────────────────────────────────
       // GLOBAL/TERMINAL/STREAM sets are module-level (see top of file) for O(1)
       // lookup and to avoid per-message allocation.
@@ -241,6 +280,74 @@ export function connect() {
       }
       setActiveView(view || null);
 
+      // ── Background-agent popup: intercept events with nodeSessionId ─────
+      // Delegate sub-agent events carry nodeSessionId (injected by DelegateTool's
+      // routeWsSend — the "delegate-" prefix is backend protocol). Route them
+      // to the bg-agent popup's ChatView.
+      // Checked BEFORE flowStepInterceptor because both use nodeSessionId —
+      // bg-agent IDs start with "delegate-"/"subtask-" so we can distinguish.
+      if (msg.nodeSessionId && isBgAgentId(msg.nodeSessionId) && bgAgentStepInterceptor && bgAgentStepInterceptor(msg)) {
+        const converted = convertAgentEvent(msg);
+        if (converted) {
+          const convList = handlers[converted.type];
+          // Gating EXEMPT (regression fix): Delegate/SubTask sessions are
+          // ephemeral — the backend only persists their ui.json at completion,
+          // so getHistory returns empty while the sub-agent is still running.
+          // Before hidden-view gating, live events rendered into the hidden
+          // popup container and masked that gap; gating made the popup blank.
+          // Render live (pre-gating behavior). Memory stays bounded via
+          // cleanupBgAgentView's post-done TTL + the stepViews LRU cap.
+          const convView = activeView;
+          if (convList) for (const h of convList) {
+            try { h(converted, convView); }
+            catch (e) { console.error('[ws] bg-agent handler error for', converted.type, ':', e.message); }
+          }
+        }
+        // Also dispatch the original event (for bg-agent indicator status, etc.)
+        const origView = activeView;
+        const list = handlers[msg.type];
+        if (list) for (const h of list) {
+          try { h(msg, origView); }
+          catch (e) { console.error('[ws] bg-agent handler error for', msg.type, ':', e.message); }
+        }
+        setActiveView(savedView); // restore pre-message view (BUG 6)
+        return;
+      }
+
+      // ── Team agent events: convert + route to the agent's popup ──
+      // MailTool.activateAgent stamps Mail-activated team agent events with
+      // nodeSessionId = "team-<sessionId>". Convert them to standard chat
+      // events (agentTextDelta → textDelta, etc. — same as the flow/delegate
+      // branches below) and route them to the popup ChatView. The popup is
+      // registered under the BARE sessionId (openStepPopup keys team popups
+      // with the unprefixed sid from /api/teams/mounted), so strip the
+      // prefix before converting/looking up. Must NOT fall through to the
+      // flow interceptor below — its ensureStepView would key on the
+      // prefixed id and never match the popup.
+      if (msg.nodeSessionId && msg.nodeSessionId.startsWith('team-')) {
+        const bareSid = msg.nodeSessionId.replace(/^team-/, '');
+        const teamView = findViewBySessionId(bareSid) || null;
+        setActiveView(teamView);
+        const converted = convertAgentEvent({ ...msg, nodeSessionId: bareSid });
+        if (converted) {
+          const convList = handlers[converted.type];
+          const convView = streamDispatchView(teamView);
+          if (convList) for (const h of convList) {
+            try { h(converted, convView); }
+            catch (e) { console.error('[ws] team handler error for', converted.type, ':', e.message); }
+          }
+        }
+        // Also dispatch the original event (status tracking, delegate
+        // indicator, stream timeouts) with the pre-routed view.
+        const teamList = handlers[msg.type];
+        if (teamList) for (const h of teamList) {
+          try { h(msg, view); }
+          catch (e) { console.error('[ws] team handler error for', msg.type, ':', e.message); }
+        }
+        setActiveView(savedView); // restore pre-message view (BUG 6)
+        return;
+      }
+
       // ── Flow agent popup: intercept events with nodeSessionId ────
       // Flow agent events carry nodeSessionId (injected by FlowAgentActivator).
       // Route them to the agent's hidden ChatView for the popup.
@@ -253,17 +360,22 @@ export function connect() {
         const converted = convertAgentEvent(msg);
         if (converted) {
           const convList = handlers[converted.type];
+          // Hidden popup → view=null: accumulate state buffers only, no DOM.
+          const convView = streamDispatchView(activeView);
           if (convList) for (const h of convList) {
-            try { h(converted, activeView); }
+            try { h(converted, convView); }
             catch (e) { console.error('[ws] handler error for', converted.type, ':', e.message); }
           }
         }
         // Also dispatch the original event (for status tracking, etc.)
+        // Interactive events keep the real view (render into hidden container).
+        const origView = (msg.type === 'askUser' || msg.type === 'askPermission') ? activeView : streamDispatchView(activeView);
         const list = handlers[msg.type];
         if (list) for (const h of list) {
-          try { h(msg, activeView); }
+          try { h(msg, origView); }
           catch (e) { console.error('[ws] handler error for', msg.type, ':', e.message); }
         }
+        setActiveView(savedView); // restore pre-message view (BUG 6)
         return;
       }
 
@@ -271,7 +383,7 @@ export function connect() {
       // We accumulate plan text for the card, but let all other plan agent
       // events (agentStart, agentToolStart, agentDone, etc.) flow through
       // normal dispatch so the plan agent shows as a sub-agent with its
-      // delegate indicator and tool activity.
+      // bg-agent indicator and tool activity.
       if (msg.agentId && state.planAgentId === msg.agentId && msg.type === 'agentTextDelta') {
         const planList = handlers['_planAgent'];
         if (planList) for (const h of planList) {

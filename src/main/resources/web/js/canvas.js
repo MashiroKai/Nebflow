@@ -26,7 +26,13 @@ let closeTimeout = null;
 // Map of tabId -> { id, title, type, paneEl, tabEl, closable }
 const tabs = new Map();
 let activeTabId = null;
-let previewTabId = null;  // current temporary (preview) tab
+// Preview (temporary) tabs, one per preview group — VS Code behavior, but
+// scoped: tabs only replace a preview tab within their own group. File tabs
+// (with absPath) share the 'file' group so opening a .md still replaces a
+// previewed .js; panel tabs ('teams', 'flows', 'flow-run', ...) each get
+// their own group so different panel types never replace each other.
+const previewTabs = new Map();  // previewKey -> tabId
+const previewKeyOf = (type, absPath) => absPath ? 'file' : (type || 'generic');
 
 // ── Drag-to-reorder ────────────────────────────────────────
 let draggedTabId = null;
@@ -106,14 +112,6 @@ function moveTab(dragId, targetId, after) {
   newOrder.forEach(([k, v]) => tabs.set(k, v));
 }
 
-/** Read a previously persisted canvas width (px) from storage. */
-function getPersistedCanvasWidth() {
-  try {
-    const data = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-    return typeof data.canvas === 'number' ? data.canvas : null;
-  } catch (_) { return null; }
-}
-
 /** Compute the target open width so Canvas matches Chat panel width.
  *  Both panels share the remaining space 50/50 after fixed elements
  *  (sidebar, activity bar) and margins are accounted for. */
@@ -149,10 +147,10 @@ export function openCanvas(title = '') {
   document.body.classList.add('canvas-open');
 }
 
-/** Close the canvas panel and clear all tabs.
+/** Close the canvas panel (hide visually — tabs are preserved).
  *
  *  Mirrors the sidebar pattern: remove body class, CSS animates back to 0.
- *  After the transition, all tabs are removed. */
+ *  Tabs remain in memory and localStorage so they can be restored on reopen. */
 export function closeCanvas() {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
@@ -173,9 +171,8 @@ export function closeCanvas() {
   // Remove body class — CSS animates flex-basis + opacity back to 0.
   document.body.classList.remove('canvas-open');
 
-  // Cleanup after the CSS transition completes.
+  // Tabs are preserved — closing Canvas just hides the panel visually.
   closeTimeout = setTimeout(() => {
-    clearAllTabs();
     closeTimeout = null;
   }, 350);
 }
@@ -187,6 +184,21 @@ export function isCanvasOpen() {
 }
 
 // ── Tab management ─────────────────────────────────────────
+
+/** Dispose a closing tab's Monaco editor, freeing the shared model once no
+ *  other live editor references it (models are never auto-freed — without
+ *  this every file ever opened stays in memory). Tabs in rendered mode
+ *  (markdown source toggle) have no mounted handle; their cached model is
+ *  released by path instead. Safe for panes that never had an editor. */
+function disposeTabEditor(entry) {
+  const handle = entry.paneEl?._editorHandle;
+  if (handle) {
+    handle.dispose({ disposeModel: true });
+    entry.paneEl._editorHandle = null;
+  } else if (entry.absPath) {
+    import('./monacoEditor.js').then((m) => m.releaseModelIfUnused(entry.absPath));
+  }
+}
 
 /** Open a tab — create it if it doesn't exist, then switch to it.
  *  Opens the canvas panel if it's not already open.
@@ -210,20 +222,22 @@ export function openTab(id, title, opts = {}) {
   }
 
   // VS Code preview behavior: opening a new preview tab replaces the
-  // existing preview tab (if any). Pinned tabs are not affected.
-  if (!pinned && previewTabId && previewTabId !== id) {
-    const oldEntry = tabs.get(previewTabId);
-    if (oldEntry) {
-      if (oldEntry.paneEl._editorHandle) {
-        oldEntry.paneEl._editorHandle.dispose();
-        oldEntry.paneEl._editorHandle = null;
+  // existing preview tab in the same group (if any). Pinned tabs are not
+  // affected. Groups: all file tabs share 'file'; panel tabs are per-type.
+  const previewKey = previewKeyOf(type, opts.absPath);
+  if (!pinned) {
+    const oldPreviewId = previewTabs.get(previewKey);
+    if (oldPreviewId && oldPreviewId !== id) {
+      const oldEntry = tabs.get(oldPreviewId);
+      if (oldEntry) {
+        disposeTabEditor(oldEntry);
+        document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: oldPreviewId } }));
+        oldEntry.paneEl.remove();
+        oldEntry.tabEl.remove();
+        tabs.delete(oldPreviewId);
+        previewTabs.delete(previewKey);
+        persistTabs();
       }
-      document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: previewTabId } }));
-      oldEntry.paneEl.remove();
-      oldEntry.tabEl.remove();
-      tabs.delete(previewTabId);
-      previewTabId = null;
-      persistTabs();
     }
   }
 
@@ -248,40 +262,21 @@ export function openTab(id, title, opts = {}) {
     : '';
   tab.innerHTML = `<span class="canvas-tab-label">${title}</span>${closeHtml}`;
 
-  // Click tab (not close button) → switch to it.
-  tab.addEventListener('click', (e) => {
-    if (e.target.closest('.canvas-tab-close')) return;
-    setActiveTab(id);
-  });
-
-  // Double-click tab → promote to pinned (VS Code behavior)
-  tab.addEventListener('dblclick', (e) => {
-    e.stopPropagation();
-    pinTab(id);
-  });
-
-  // Click close button → close tab.
-  const closeBtn = tab.querySelector('.canvas-tab-close');
-  if (closeBtn) {
-    closeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      closeTab(id);
-    });
-  }
-
-  // Drag-to-reorder
+  // Drag-to-reorder (per-tab; click/dblclick/close are delegated to #canvas-tab-bar
+  // in initCanvas — immune to listener loss on rebuilt/restored tabs).
   attachDragHandlers(tab, id);
 
   tabBar.appendChild(tab);
   // Auto-scroll the tab bar to show the newly added tab.
-  tabBar.scrollLeft = tabBar.scrollWidth;
+  tabBar.scrollTo({ left: tabBar.scrollWidth, behavior: 'smooth' });
 
   const entry = { id, title, type, paneEl: pane, tabEl: tab, closable, pinned, absPath: opts.absPath || null };
   tabs.set(id, entry);
 
-  // Track preview tab — will be replaced when a new file is opened
+  // Track preview tab — will be replaced when a new tab in the same
+  // preview group is opened
   if (!pinned) {
-    previewTabId = id;
+    previewTabs.set(previewKey, id);
   }
 
   setActiveTab(id);
@@ -299,10 +294,7 @@ export function closeTab(id) {
   if (!entry) return;
 
   // Dispose Monaco editor if present
-  if (entry.paneEl._editorHandle) {
-    entry.paneEl._editorHandle.dispose();
-    entry.paneEl._editorHandle = null;
-  }
+  disposeTabEditor(entry);
 
   document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id } }));
 
@@ -324,14 +316,16 @@ export function closeTab(id) {
   }
 
   const finalize = () => {
-    if (entry.paneEl._editorHandle) {
-      entry.paneEl._editorHandle.dispose();
-      entry.paneEl._editorHandle = null;
-    }
+    disposeTabEditor(entry);
     entry.paneEl.remove();
     entry.tabEl.remove();
     tabs.delete(id);
-    if (previewTabId === id) previewTabId = null;
+    for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
+    if (tabs.size === 0) {
+      // User closed the last tab — clear saved data so it doesn't restore
+      localStorage.removeItem(LS_TABS_KEY);
+      console.log('[closeTab] last tab closed — cleared localStorage');
+    }
     persistTabs();
 
     if (activeTabId === id) {
@@ -360,7 +354,55 @@ export function pinTab(id) {
   if (!entry || entry.pinned) return;
   entry.pinned = true;
   entry.tabEl.classList.remove('preview');
-  if (previewTabId === id) previewTabId = null;
+  for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
+}
+
+/** Check whether a tab has unsaved edits — refresh must never clobber them.
+ *  Three sources (OR): the Monaco handle's getDirty() (viewMonaco and MD/HTML
+ *  source mode), the forwarded pane._dirty flag, and the 'dirty' class on the
+ *  tab label (canonical UI indicator from the editor-dirty-change listener). */
+function isTabDirty(entry) {
+  if (!entry) return false;
+  if (entry.paneEl?._editorHandle?.getDirty?.()) return true;
+  if (entry.paneEl?._dirty) return true;
+  return !!entry.tabEl?.querySelector('.canvas-tab-label')?.classList.contains('dirty');
+}
+
+/** Schedule a debounced readFile refresh for a file tab — another agent may
+ *  have modified the file since the tab was rendered. The response flows back
+ *  through fileContent → workspace-open-item → openWorkspaceItem, which
+ *  re-renders the existing pane.
+ *  Guards: panel tabs (no absPath), unsaved edits, MD/HTML source mode (an
+ *  editor is mounted — re-render would destroy it), a refresh already in
+ *  flight, and a cooldown window (also breaks the setActiveTab → readFile →
+ *  re-render → setActiveTab loop). */
+const FILE_REFRESH_DEBOUNCE = 300;
+const FILE_REFRESH_COOLDOWN = 2000;
+function scheduleFileRefresh(entry) {
+  if (!entry.absPath) return;
+  if (isTabDirty(entry)) return;
+  if (entry.paneEl?.dataset.sourceMode === '1') return;
+  if (entry._refreshing) return;
+  if (Date.now() - (entry._lastRefreshAt || 0) < FILE_REFRESH_COOLDOWN) return;
+  clearTimeout(entry._refreshTimer);
+  entry._refreshTimer = setTimeout(() => {
+    entry._refreshTimer = null;
+    if (!tabs.has(entry.id)) return;  // tab closed while debouncing — don't reopen it
+    if (isTabDirty(entry) || entry._refreshing) return;
+    entry._refreshing = true;
+    // Safety: never wedge the tab if the response never arrives
+    setTimeout(() => { entry._refreshing = false; }, 10000);
+    import('./ws.js').then(({ sendWs }) => {
+      if (!sendWs) { entry._refreshing = false; return; }
+      window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
+        // refresh: true marks the readFile response as a background refresh —
+        // openWorkspaceItem must not steal activation for it (and must not
+        // reopen the tab if it was closed while the request was in flight).
+        detail: { path: entry.absPath, pinned: entry.pinned !== false, refresh: true }
+      }));
+      sendWs({ type: 'pop.readFile', path: entry.absPath, sessionId: undefined });
+    });
+  }, FILE_REFRESH_DEBOUNCE);
 }
 
 /** Switch the active tab — shows its pane, hides all others.
@@ -377,8 +419,18 @@ export function setActiveTab(id) {
       t.paneEl.dispatchEvent(new CustomEvent('canvas-tab-activated'));
     }
   });
+  // Scroll the activated tab into view — with many tabs the active one can
+  // be clipped out of the horizontal tab bar.
+  const activated = tabs.get(id);
+  if (activated?.tabEl) {
+    activated.tabEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }
   document.dispatchEvent(new CustomEvent('canvas-tab-switched', { detail: { id } }));
   persistTabs();
+
+  // Live-refresh file tabs on activation (debounced, dirty-safe).
+  const entry = tabs.get(id);
+  if (entry) scheduleFileRefresh(entry);
 }
 
 /** Get the content pane element for a tab.
@@ -389,12 +441,6 @@ export function getTabPane(id) {
   return tabs.get(id)?.paneEl || null;
 }
 
-/** Get the currently active tab's id.
- *  @returns {string|null} */
-export function getActiveTabId() {
-  return activeTabId;
-}
-
 /** Check if a tab with the given id exists.
  *  @param {string} id — Tab identifier.
  *  @returns {boolean} */
@@ -402,43 +448,92 @@ export function hasTab(id) {
   return tabs.has(id);
 }
 
-/** Remove all tabs and reset state. Called during canvas close.
- *  Dispatches 'canvas-tab-closed' for each tab so external code can clean up. */
-function clearAllTabs() {
-  tabs.forEach(t => {
-    // Dispose Monaco editor if present
-    if (t.paneEl._editorHandle) {
-      t.paneEl._editorHandle.dispose();
-      t.paneEl._editorHandle = null;
-    }
-    document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: t.id } }));
-    t.paneEl.remove();
-    t.tabEl.remove();
-  });
-  tabs.clear();
-  activeTabId = null;
-  previewTabId = null;
-}
-
-// ── Content injection ──────────────────────────────────────
-
-/** Set content for a specific tab (or the active tab if no id given).
- *  Replaces the pane's innerHTML entirely.
- *  @param {string} html   — HTML string.
- *  @param {string} tabId  — Target tab id (defaults to active tab). */
-export function setCanvasContent(html, tabId = null) {
-  const targetId = tabId || activeTabId;
-  const pane = targetId ? getTabPane(targetId) : document.getElementById('canvas-content');
-  if (pane) pane.innerHTML = html;
-}
-
 // ── File viewers ───────────────────────────────────────────
 
-/** Escape HTML special characters for safe text display. */
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str ?? '';
-  return div.innerHTML;
+/** Render a web URL into a tab pane: slim toolbar (hostname + "open in new
+ *  window"), the sandboxed iframe (flex:1), and a permanent low-key hint
+ *  strip below. X-Frame-Options blocking cannot be detected reliably — the
+ *  iframe's load event fires even when the page refuses to embed — so the
+ *  hint is always visible rather than conditional. All text goes through
+ *  textContent (never innerHTML) since url/title are agent-controlled.
+ *  @param {HTMLElement} pane — The tab content pane.
+ *  @param {string} url      — The http(s) URL to embed. */
+function renderUrlPane(pane, url) {
+  // Only http(s) pages belong in an iframe — reject anything else
+  // (javascript:, data:, file:) so the sandbox stays meaningful.
+  if (!/^https?:\/\//i.test(url)) {
+    const err = document.createElement('div');
+    err.style.cssText = 'padding:24px;font-size:13px;color:var(--color-text-muted)';
+    err.textContent = '无法显示该链接：仅支持 http/https 网页。';
+    pane.appendChild(err);
+    return;
+  }
+
+  // ── Top toolbar: hostname + "open in new window" fallback ──
+  const bar = document.createElement('div');
+  bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:12px;' +
+    'height:32px;padding:0 12px;min-width:0;' +
+    'border-bottom:1px solid var(--color-border);' +
+    'font-size:12px;color:var(--color-text-muted);user-select:none';
+
+  const host = document.createElement('span');
+  let hostText = url;
+  try { hostText = new URL(url).hostname || url; } catch (_) { /* keep raw url */ }
+  host.textContent = hostText;
+  host.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+
+  const openLink = document.createElement('a');
+  openLink.href = url;
+  openLink.target = '_blank';
+  openLink.rel = 'noopener noreferrer';
+  openLink.textContent = '在新窗口打开';
+  openLink.style.cssText = 'flex:none;color:var(--color-text-muted);text-decoration:none;cursor:pointer';
+  openLink.addEventListener('mouseenter', () => { openLink.style.color = 'var(--color-text)'; });
+  openLink.addEventListener('mouseleave', () => { openLink.style.color = 'var(--color-text-muted)'; });
+
+  bar.append(host, openLink);
+
+  // ── The embedded page ──
+  const iframe = document.createElement('iframe');
+  iframe.src = url;
+  iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-forms');
+  iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+  iframe.setAttribute('allow', 'clipboard-read; clipboard-write');
+  iframe.style.cssText = 'flex:1;min-height:0;width:100%;border:none;background:var(--color-surface)';
+
+  // ── Bottom hint strip — always visible (embedding refusal is undetectable) ──
+  const hint = document.createElement('div');
+  hint.style.cssText = 'flex:none;display:flex;align-items:center;justify-content:center;gap:6px;' +
+    'padding:4px 12px;font-size:11px;color:var(--color-text-muted);opacity:.7;user-select:none';
+  const hintText = document.createElement('span');
+  hintText.textContent = '如果页面没有显示，可能是该网站不允许嵌入';
+  const hintLink = document.createElement('a');
+  hintLink.href = url;
+  hintLink.target = '_blank';
+  hintLink.rel = 'noopener noreferrer';
+  hintLink.textContent = '点击在新窗口打开';
+  hintLink.style.cssText = 'flex:none;color:inherit;text-decoration:underline;cursor:pointer';
+  hint.append(hintText, hintLink);
+
+  // Best-effort blocked detection: a refused embed still fires load, and a
+  // cross-origin frame legitimately has null contentDocument — so neither
+  // can diagnose XFO. The only certain signal is no contentWindow at all;
+  // on that (or onerror, which some embed failures do trigger) the hint is
+  // emphasized. Everything else stays ambiguous and relies on the hint.
+  const emphasizeHint = () => {
+    hint.style.opacity = '1';
+    hintText.textContent = '该网站似乎不允许嵌入显示';
+  };
+  iframe.addEventListener('error', emphasizeHint);
+  iframe.addEventListener('load', () => {
+    setTimeout(() => {
+      try {
+        if (!iframe.contentWindow) emphasizeHint();
+      } catch (_) { /* cross-origin access may throw — expected, ignore */ }
+    }, 3000);
+  });
+
+  pane.append(bar, iframe, hint);
 }
 
 /** Open a file or workspace item in a Canvas tab.
@@ -447,13 +542,71 @@ function escapeHtml(str) {
  *  @param {object} item — { id, itemType, title, content, absPath, size }
  */
 export async function openWorkspaceItem(item) {
-  const { id, itemType, title, content, absPath, size, pinned } = item;
+  // id is let (not const): the absPath dedupe below may rewrite it to the
+  // existing tab's id for the same file.
+  let { id } = item;
+  const { itemType, title, content, absPath, size, pinned } = item;
   if (!id) return;
 
-  // If tab already exists, just switch to it (and promote if pinned).
+  // URL type — render the page in a sandboxed iframe. Handled before all
+  // file logic: URL tabs have no absPath (scheduleFileRefresh skips them)
+  // and are excluded from persistTabs (a restored URL tab would be a dead
+  // pane — nothing re-renders it).
+  if (itemType === 'url') {
+    if (!item.url) return;
+    if (tabs.has(id)) {
+      if (pinned) pinTab(id);
+      tabs.get(id)._lastRefreshAt = Date.now();
+      if (!item.background) setActiveTab(id);
+      return;
+    }
+    const urlEntry = openTab(id, title || item.url, { type: 'url', pinned: !!pinned });
+    if (!urlEntry) return;
+    renderUrlPane(urlEntry.paneEl, item.url);
+    urlEntry._lastRefreshAt = Date.now();
+    return;
+  }
+
+  // Dedupe by absPath: a refresh/readFile response always arrives with the
+  // canonical id `file:<path>`, but the same file may already be open under a
+  // different id (Pop cards, agent-provided ids). Without this check every
+  // activation-refresh of such a tab spawns a duplicate tab that steals
+  // activation — the user perceives tab switching as broken. Rewrite the id
+  // to the existing tab's so the existing-tab refresh path below handles it.
+  if (!tabs.has(id) && absPath) {
+    for (const [existingId, existing] of tabs) {
+      if (existing.absPath === absPath) { id = existingId; break; }
+    }
+  }
+
+  // Stale background refresh for a tab that was closed while the request was
+  // in flight — drop it instead of reopening the tab.
+  if (item.background && !tabs.has(id)) return;
+
+  // If tab already exists: switch to it — and when this dispatch carries new
+  // content (e.g. a refresh readFile response), re-render the existing pane.
+  // Never re-render over unsaved edits or a mounted source-mode editor.
   if (tabs.has(id)) {
     if (pinned) pinTab(id);
-    setActiveTab(id);
+    const entry = tabs.get(id);
+    entry._refreshing = false;  // response arrived (or user-initiated open)
+    // A response arrived = the file was freshly checked. Update unconditionally
+    // — binary viewers (image/pdf/...) receive no content and never re-render,
+    // so without this their _lastRefreshAt stays stale, the cooldown never
+    // engages, and refresh→setActiveTab loops forever (each cycle stealing
+    // activation back to the binary tab — "can't switch away from an image").
+    entry._lastRefreshAt = Date.now();
+    if (content && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
+      if (entry.paneEl._editorHandle) {
+        entry.paneEl._editorHandle.dispose();
+        entry.paneEl._editorHandle = null;
+      }
+      const { renderFile } = await import('./fileViewers.js');
+      await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
+    }
+    // Background refresh responses must not steal activation — the user may
+    // have clicked another tab while the request was in flight.
+    if (!item.background) setActiveTab(id);
     return;
   }
 
@@ -477,23 +630,23 @@ export async function openWorkspaceItem(item) {
     return;
   }
 
-  // VS Code preview behavior: if opening a preview file and the current
-  // preview tab is a different file, close it first (replace, not accumulate).
+  // VS Code preview behavior: if opening a preview tab and the current
+  // preview tab in the same group is a different tab, close it first
+  // (replace, not accumulate).
   // Use instant removal (no exit animation) so the new tab appears in the right
   // position immediately — animating the old tab's removal would leave the new
   // tab in the wrong position until the animation finishes.
-  if (!pinned && previewTabId && previewTabId !== id) {
-    const oldEntry = tabs.get(previewTabId);
+  const itemPreviewKey = previewKeyOf(itemType, absPath);
+  const oldPreviewId = previewTabs.get(itemPreviewKey);
+  if (!pinned && oldPreviewId && oldPreviewId !== id) {
+    const oldEntry = tabs.get(oldPreviewId);
     if (oldEntry) {
-      if (oldEntry.paneEl._editorHandle) {
-        oldEntry.paneEl._editorHandle.dispose();
-        oldEntry.paneEl._editorHandle = null;
-      }
-      document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: previewTabId } }));
+      disposeTabEditor(oldEntry);
+      document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: oldPreviewId } }));
       oldEntry.paneEl.remove();
       oldEntry.tabEl.remove();
-      tabs.delete(previewTabId);
-      previewTabId = null;
+      tabs.delete(oldPreviewId);
+      previewTabs.delete(itemPreviewKey);
       persistTabs();
     }
   }
@@ -519,6 +672,7 @@ export async function openWorkspaceItem(item) {
 
   const { renderFile } = await import('./fileViewers.js');
   await renderFile(pane, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
+  entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
 }
 
 // ── Initialization ─────────────────────────────────────────
@@ -528,6 +682,39 @@ export function initCanvas() {
   const closeBtn = document.getElementById('canvas-close-btn');
   if (closeBtn) {
     closeBtn.addEventListener('click', closeCanvas);
+  }
+
+  // Event delegation on the tab bar (defensive fix for task L: per-tab listeners
+  // could silently stop firing after long sessions — e.g. listener loss on tabs
+  // rebuilt during restore/reorder). One delegated listener on the stable
+  // #canvas-tab-bar container covers all tabs, present and future.
+  const tabBar = document.getElementById('canvas-tab-bar');
+  if (tabBar && !tabBar._delegated) {
+    tabBar._delegated = true;
+
+    // Click: close button → close tab; anywhere else on a tab → activate it.
+    tabBar.addEventListener('click', (e) => {
+      const tabEl = e.target.closest('.canvas-tab');
+      if (!tabEl || !tabBar.contains(tabEl)) return;
+      const id = tabEl.dataset.tabId;
+      if (!id) return;
+      if (e.target.closest('.canvas-tab-close')) {
+        e.stopPropagation();
+        closeTab(id);
+      } else {
+        setActiveTab(id);
+      }
+    });
+
+    // Double-click tab → promote to pinned (VS Code behavior).
+    tabBar.addEventListener('dblclick', (e) => {
+      const tabEl = e.target.closest('.canvas-tab');
+      if (!tabEl || !tabBar.contains(tabEl)) return;
+      const id = tabEl.dataset.tabId;
+      if (!id) return;
+      e.stopPropagation();
+      pinTab(id);
+    });
   }
 
   // Listen for workspace-open-item events (dispatched on window by explorer.js).
@@ -553,79 +740,154 @@ export function initCanvas() {
   });
 }
 
-/** Show or hide the canvas header bar.
- *  In the tab model, the header (containing the tab bar) is always visible.
- *  This function is kept for backward compatibility but is effectively a no-op.
- *  @param {boolean} visible */
-export function showCanvasHeader(visible) {
-  // No-op: tab bar must remain visible for tab switching.
-  // Individual tabs manage their own content area.
-}
-
 // ── Tab persistence ─────────────────────────────────────────
 
 /** Save open tabs (metadata only) to localStorage so they survive refresh.
- *  Stores: id, title, type, absPath, pinned. Content is re-fetched on restore. */
+ *  Stores: id, title, type, absPath (nullable), pinned, closable.
+ *  Tabs without absPath (Teams/Flows panels) are restored synchronously
+ *  and re-render from live state; file tabs re-fetch content on restore. */
 function persistTabs() {
+  // Don't overwrite saved tabs with an empty list — transient states can
+  // empty the in-memory Map, but saved data should survive for restoration.
+  if (tabs.size === 0) {
+    console.log('[persistTabs] tabs empty — skipping save to preserve existing data');
+    return;
+  }
   try {
     const serializable = [];
     for (const [, t] of tabs) {
-      // Skip tabs without absPath — they can't be restored from disk
-      // (e.g. flow visualization, workspace items without file paths)
-      if (!t.absPath) continue;
+      // Skip runtime flow-run tabs — their instanceId is invalid after a
+      // restart, so restoring them would leave dead tabs.
+      if (t.type === 'flow-run') continue;
+      // Skip URL tabs — they have no absPath and restoreTabs' panel-tab
+      // branch would re-open them as empty dead panes (canvas-tab-restore
+      // has no renderer for type 'url'). Losing URL tabs across a reload is
+      // acceptable per spec.
+      if (t.type === 'url') continue;
       serializable.push({
         id: t.id,
         title: t.title,
         type: t.type,
-        absPath: t.absPath,
+        absPath: t.absPath || null,   // null for panel tabs (Teams/Flows)
         pinned: t.pinned,
+        closable: t.closable !== false,  // default true
       });
     }
     localStorage.setItem(LS_TABS_KEY, JSON.stringify({
+      v: 2,  // schema version — v1 (pre-unified-persistence) lacked closable
+             // and skipped no-absPath tabs; restoreTabs discards non-v2 data
       tabs: serializable,
       activeTabId: activeTabId,
     }));
+    console.log('[persistTabs] saved', serializable.length, 'tabs', serializable.map(t => t.id));
   } catch (e) { /* storage full — non-critical */ }
 }
 
 /** Restore tabs from localStorage on page load.
- *  Re-opens each tab by sending a readFile WS message for its absPath.
- *  The existing fileContent → workspace-open-item pipeline handles rendering. */
+ *  Two-phase restore:
+ *  1. Panel tabs without absPath (Teams/Flows) are re-opened synchronously —
+ *     they re-render from live state via the 'canvas-tab-restore' event.
+ *  2. File tabs are re-opened asynchronously by sending a readFile WS message
+ *     for each absPath. The existing fileContent → workspace-open-item
+ *     pipeline handles rendering.
+ *  Finally the last active tab is re-activated. */
 export function restoreTabs() {
   try {
     const raw = localStorage.getItem(LS_TABS_KEY);
-    if (!raw) return false;
+    console.log('[restoreTabs] localStorage:', raw);
+    if (!raw) {
+      console.log('[restoreTabs] no saved tabs — nothing to restore');
+      return false;
+    }
     const data = JSON.parse(raw);
-    if (!data.tabs || data.tabs.length === 0) return false;
+    // Schema guard: discard pre-v2 leftovers (saved by the old version that
+    // skipped no-absPath tabs, often an empty/incomplete list). The next
+    // persistTabs call re-saves in the current format.
+    if (data.v !== 2) {
+      console.log('[restoreTabs] legacy/incomplete schema (v=' + data.v + ') — discarding');
+      localStorage.removeItem(LS_TABS_KEY);
+      return false;
+    }
+    if (!data.tabs || data.tabs.length === 0) {
+      console.log('[restoreTabs] saved tab list is empty — nothing to restore');
+      return false;
+    }
 
-    // Defer WS import to avoid circular dependency
-    import('./ws.js').then(({ sendWs }) => {
-      data.tabs.forEach((tab, i) => {
-        // Dispatch workspace-open-item for each persisted tab.
-        // For binary files (images, PDFs), content will be empty, frontend fetches via /api/nf-file
-        const item = {
-          id: tab.id,
-          title: tab.title,
-          itemType: tab.type || 'code',
-          content: '',
-          absPath: tab.absPath,
-          pinned: tab.pinned !== false,
+    // flow-run tabs are runtime instances — never restore them (defensive;
+    // persistTabs already excludes them, but old saved data may not).
+    const panelTabs = data.tabs.filter(t => !t.absPath && t.type !== 'flow-run');
+    const fileTabs = data.tabs.filter(t => t.absPath);
+    console.log('[restoreTabs] restoring', panelTabs.length, 'panel tabs,', fileTabs.length, 'file tabs');
+
+    // Phase 1 — panel tabs, synchronous.
+    // openTab replaces the current preview tab when opening a new unpinned
+    // tab, so open everything as pinned first, then revert the unpinned
+    // ones to preview state afterwards.
+    const unpinnedRestored = [];
+    for (const tab of panelTabs) {
+      const entry = openTab(tab.id, tab.title, {
+        type: tab.type || 'generic',
+        // All tabs are closable in the current design. Ignore any stale
+        // closable:false saved by older versions (e.g. the Teams tab before
+        // it became closeable) — otherwise the restored tab silently loses
+        // its close button and openTeams() won't rebuild it.
+        closable: true,
+        pinned: true,
+      });
+      if (!entry) continue;
+      if (tab.pinned === false) unpinnedRestored.push(entry);
+      // Let flowCanvas render the pane content for this panel tab.
+      window.dispatchEvent(new CustomEvent('canvas-tab-restore', {
+        detail: { id: tab.id, type: tab.type }
+      }));
+    }
+    for (const entry of unpinnedRestored) {
+      entry.pinned = false;
+      entry.tabEl.classList.add('preview');
+      // last unpinned tab in each group becomes that group's preview tab
+      previewTabs.set(previewKeyOf(entry.type, entry.absPath), entry.id);
+    }
+    if (unpinnedRestored.length > 0) persistTabs();
+
+    // Phase 2 — file tabs, async via readFile WS.
+    // Defer WS import to avoid circular dependency.
+    if (fileTabs.length > 0) {
+      Promise.all([import('./ws.js'), import('./state.js')]).then(([{ sendWs, onReconnect }, stateMod]) => {
+        const state = stateMod.default;
+        const sendFileRequests = () => {
+          fileTabs.forEach((tab) => {
+            // Send readFile to get content — the response triggers the
+            // explorer's fileContent handler which opens the tab.
+            // For binary files (images, PDFs) the viewer fetches via /api/nf-file.
+            // Mark this path as pinned so explorer's fileContent handler picks it up
+            window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
+              detail: { path: tab.absPath, pinned: tab.pinned !== false }
+            }));
+            sendWs({ type: 'pop.readFile', path: tab.absPath, sessionId: undefined });
+          });
+          console.log('[restoreTabs] sent readFile for', fileTabs.length, 'file tabs');
+          // Re-activate the last active tab if it already exists (panel tab).
+          // File tabs activate themselves as their readFile responses arrive.
+          if (data.activeTabId) setActiveTab(data.activeTabId);
         };
-
-        // Send readFile to get content, but also set up a fallback:
-        // dispatch workspace-open-item with empty content — for binary files
-        // the viewer will fetch via /api/nf-file; for text files we need content.
-        // Use sendWs to request file content — the response will trigger
-        // the explorer's fileContent handler which opens the tab.
-        if (sendWs) {
-          // Mark this path as pinned so explorer's fileContent handler picks it up
-          window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
-            detail: { path: tab.absPath, pinned: tab.pinned !== false }
-          }));
-          sendWs({ type: 'pop.readFile', path: tab.absPath, sessionId: undefined });
+        // Page-load race: restoreTabs runs before the first WS connect, and
+        // sendWs silently drops messages when the socket isn't OPEN. If not
+        // connected yet, defer to the first onopen via onReconnect.
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+          sendFileRequests();
+        } else {
+          console.log('[restoreTabs] WS not open — deferring file tab restore to onopen');
+          let sent = false;
+          onReconnect(() => {
+            if (sent) return;
+            sent = true;
+            sendFileRequests();
+          });
         }
       });
-    });
+    } else if (data.activeTabId) {
+      setActiveTab(data.activeTabId);
+    }
     return true;
   } catch (e) { /* corrupt data — ignore */ }
   return false;

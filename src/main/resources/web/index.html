@@ -20,10 +20,14 @@
   <link rel="stylesheet" href="css/reminder.css">
   <link rel="stylesheet" href="css/neblink.css">
   <link rel="stylesheet" href="css/dropbox.css">
-  <link rel="stylesheet" href="css/sapphire.css">
   <link rel="stylesheet" href="css/split.css">
   <link rel="stylesheet" href="css/voice.css">
   <link rel="stylesheet" href="css/planMode.css">
+  <link rel="stylesheet" href="css/lightbox.css">
+  <!-- sapphire.css loads LAST: it is the design-system standard layer.
+       Its grouped glass-control rules must win equal-specificity ties
+       against feature CSS hover/base states. -->
+  <link rel="stylesheet" href="css/sapphire.css">
 </head>
 <body>
   <script>document.documentElement.classList.add('ui-init');</script>
@@ -38,6 +42,8 @@
       <span class="activity-avatar-letter" hidden>N</span>
     </button>
     <div class="activity-spacer"></div>
+    <button id="teams-btn" class="activity-btn" title="Teams"><i data-lucide="network"></i></button>
+    <button id="flows-btn" class="activity-btn" title="Flows"><i data-lucide="git-branch"></i></button>
     <button id="agents-btn" class="activity-btn" title="Agents"><i data-lucide="users"></i></button>
     <button id="settings-btn" class="activity-btn" title="Settings"><i data-lucide="settings"></i></button>
   </div>
@@ -46,7 +52,7 @@
   <div id="sidebar">
     <div id="sidebar-panel">
       <div id="panel-sessions" class="panel active">
-        <!-- Sidebar top bar — empty drag handle for panel reordering -->
+        <!-- Sidebar top bar -->
         <div class="sidebar-topbar"></div>
 
         <!-- Explorer Section -->
@@ -98,8 +104,8 @@
   <div id="main">
     <div id="header">
       <div class="header-left">
-        <button id="sidebar-toggle" class="sidebar-toggle">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+        <button id="sidebar-toggle" class="panel-toggle-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
         </button>
         <span id="header-model-info"></span>
       </div>
@@ -117,17 +123,17 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
         </button>
         <button id="reminder-btn" title="Scheduled Tasks"><i data-lucide="clock"></i></button>
-        <button id="daemon-btn" title="Dev Servers"><i data-lucide="server"></i></button>
+        <button id="daemon-btn" title="开发服务器"><i data-lucide="server"></i></button>
         <div id="bg-indicator" class="hidden">
           <span class="bg-dot"></span>
           <span class="bg-count">0</span>
         </div>
-        <div id="delegate-indicator" class="hidden" title="Sub-agents running">
-          <span class="delegate-dot"></span>
-          <span class="delegate-count">0</span>
+        <div id="bgagent-indicator" class="hidden" title="Sub-agents running">
+          <span class="bgagent-dot"></span>
+          <span class="bgagent-count">0</span>
         </div>
-        <button id="team-toggle-btn" class="team-toggle-btn" title="Toggle team visualization">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><path d="M6 7v2a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7"/><path d="M12 11v6"/></svg>
+        <button id="canvas-toggle-btn" class="panel-toggle-btn" title="Canvas">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
         </button>
       </div>
     </div>
@@ -139,7 +145,7 @@
       <button data-mode="auto-edits">编辑放行</button>
       <button data-mode="auto-all">全部放行</button>
     </div>
-    <div id="delegate-dropdown" class="hidden">
+    <div id="bgagent-dropdown" class="hidden">
       <div class="bg-dropdown-header">Sub-agents</div>
       <div class="bg-dropdown-list"></div>
     </div>
@@ -164,7 +170,7 @@
     <!-- Daemon Panel — floating dropdown from header button -->
     <div id="daemon-panel">
       <div class="daemon-panel-header">
-        <div class="daemon-panel-title">Dev Servers</div>
+        <div class="daemon-panel-title" data-i18n="daemons.title">Dev Servers</div>
         <div class="daemon-panel-header-right">
           <button class="daemon-close-btn" id="daemon-close-btn" title="Close">
             <i data-lucide="x"></i>
@@ -179,10 +185,6 @@
       <div id="notification-banner"></div>
     </div>
     <div id="chat"></div>
-    <div id="status-wrap">
-      <div id="lottie-spinner"></div>
-      <span id="status-text"></span>
-    </div>
     <div id="input-area">
       <div class="voice-overlay" id="voice-overlay">
         <div class="voice-wave"><i data-lucide="mic"></i></div>
@@ -277,20 +279,6 @@
       <div id="memory-modal-actions">
         <button id="memory-modal-cancel">Cancel</button>
         <button id="memory-modal-save">Save</button>
-      </div>
-    </div>
-  </div>
-  <!-- Card Design Editor Modal -->
-  <div id="card-design-overlay">
-    <div id="card-design-modal">
-      <div id="card-design-modal-title">Card Design</div>
-      <div id="card-design-modal-body">
-        <textarea id="card-design-input" placeholder="Card visual design guidelines (Markdown)" rows="20" spellcheck="false"></textarea>
-      </div>
-      <div id="card-design-modal-actions">
-        <button id="card-design-modal-reset">Reset to Default</button>
-        <button id="card-design-modal-cancel">Cancel</button>
-        <button id="card-design-modal-save">Save</button>
       </div>
     </div>
   </div>

@@ -15,7 +15,7 @@ object RunningFlowRegistry:
   case class NodeState(
     nodeId: String,
     agent: String,
-    status: String, // "pending" | "running" | "completed" | "failed"
+    status: NodeStatus, // lifecycle status — wire value via .wire (pending/running/completed/failed/cancelled)
     output: String = "",
     error: String = "",
     startedAt: Option[Long] = None,
@@ -29,13 +29,27 @@ object RunningFlowRegistry:
     entry: String,
     nodes: Map[String, NodeState],
     edges: List[(String, String, Option[String])], // (from, to, condition)
-    status: String, // "running" | "completed" | "failed"
+    status: NodeStatus, // running | completed | failed | cancelled
     startedAt: Long,
     completedAt: Option[Long] = None,
     sessionId: Option[String] = None // parent session for WS routing
   )
 
   private val flows: Ref[IO, Map[String, RunningFlow]] = Ref.unsafe(Map.empty)
+  private val cancelledFlows: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
+
+  /** Mark a flow as cancelled. The DAG executor checks this between nodes. */
+  def cancel(instanceId: String): IO[Unit] =
+    cancelledFlows.update(_ + instanceId) *>
+      update(instanceId)(_.copy(status = NodeStatus.Cancelled))
+
+  /** Check if a flow has been cancelled. */
+  def isCancelled(instanceId: String): IO[Boolean] =
+    cancelledFlows.get.map(_.contains(instanceId))
+
+  /** Clear the cancel flag (called after flow execution ends). */
+  def clearCancelled(instanceId: String): IO[Unit] =
+    cancelledFlows.update(_ - instanceId)
 
   def register(flow: RunningFlow): IO[Unit] =
     flows.update(_ + (flow.instanceId -> flow))
@@ -46,7 +60,7 @@ object RunningFlowRegistry:
   def setNodeStatus(
     instanceId: String,
     nodeId: String,
-    status: String,
+    status: NodeStatus,
     output: String = "",
     error: String = ""
   ): IO[Unit] =
@@ -58,18 +72,20 @@ object RunningFlowRegistry:
             status = status,
             output = if output.nonEmpty then output else ns.output,
             error = if error.nonEmpty then error else ns.error,
-            startedAt = if status == "running" then Some(now) else ns.startedAt,
-            completedAt = if status == "completed" || status == "failed" then Some(now) else ns.completedAt
+            startedAt = if status == NodeStatus.Running then Some(now) else ns.startedAt,
+            completedAt =
+              if status == NodeStatus.Completed || status == NodeStatus.Failed then Some(now) else ns.completedAt
           ))
         case None => rf.nodes
       val newStatus = status match
-        case "failed" => "failed"
-        case _ if nodeId == rf.entry && status == "completed" => "completed"
+        case NodeStatus.Failed => NodeStatus.Failed
+        case NodeStatus.Completed if nodeId == rf.entry => NodeStatus.Completed
         case _ => rf.status
       rf.copy(
         nodes = updatedNodes,
         status = newStatus,
-        completedAt = if newStatus == "completed" || newStatus == "failed" then Some(now) else rf.completedAt
+        completedAt =
+          if newStatus == NodeStatus.Completed || newStatus == NodeStatus.Failed then Some(now) else rf.completedAt
       )
     }
 
@@ -88,7 +104,7 @@ object RunningFlowRegistry:
     flows.update { m =>
       val now = System.currentTimeMillis()
       m.filterNot { (_, rf) =>
-        (rf.status == "completed" || rf.status == "failed") &&
+        (rf.status == NodeStatus.Completed || rf.status == NodeStatus.Failed) &&
         rf.completedAt.exists(now - _ > retentionMs)
       }
     }
@@ -99,7 +115,7 @@ object RunningFlowRegistry:
       "flowName" -> flow.flowName.asJson,
       "description" -> flow.description.asJson,
       "entry" -> flow.entry.asJson,
-      "status" -> flow.status.asJson,
+      "status" -> flow.status.wire.asJson,
       "startedAt" -> flow.startedAt.asJson,
       "completedAt" -> flow.completedAt.asJson,
       "nodes" -> flow.nodes.values.toList.map { ns =>
@@ -108,7 +124,7 @@ object RunningFlowRegistry:
             List(
               "nodeId" -> ns.nodeId.asJson,
               "agent" -> ns.agent.asJson,
-              "status" -> ns.status.asJson,
+              "status" -> ns.status.wire.asJson,
               "output" -> (if ns.output.length > 200 then ns.output.take(197) + "..." else ns.output).asJson,
               "error" -> ns.error.asJson,
               "startedAt" -> ns.startedAt.asJson,

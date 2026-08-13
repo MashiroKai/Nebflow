@@ -78,18 +78,21 @@ class CompactionPolicySpec extends CatsEffectSuite:
 
   // ---------- CompactConfig 字段有效性 ----------
 
-  test("CompactConfig retains bufferTokens and circuitBreakerMax") {
+  test("CompactConfig retains circuitBreakerMax and emergencyKeepMessages") {
     val cfg = CompactConfig()
-    assertEquals(cfg.bufferTokens, 13000)
     assertEquals(cfg.circuitBreakerMax, 3)
+    assertEquals(cfg.emergencyKeepMessages, 20)
   }
 
-  test("CompactConfig dead fields removed") {
-    // Compile-time check: if autoCompactThreshold / contextWindow / forContextWindow
-    // still existed, this would not compile. We verify only live fields remain.
-    val cfg = CompactConfig(bufferTokens = 5000, circuitBreakerMax = 5)
-    assertEquals(cfg.bufferTokens, 5000)
+  test("CompactConfig configurable fields still settable") {
+    val cfg = CompactConfig(circuitBreakerMax = 5, emergencyKeepMessages = 30)
     assertEquals(cfg.circuitBreakerMax, 5)
+    assertEquals(cfg.emergencyKeepMessages, 30)
+  }
+
+  test("CompactThreshold provides unified threshold (replaces bufferForWindow)") {
+    assertEquals(CompactThreshold.threshold(128000), 102400)
+    assertEquals(CompactThreshold.threshold(500000), 256000)
   }
 
   test("circuitBreakerMax default prevents runaway compaction") {

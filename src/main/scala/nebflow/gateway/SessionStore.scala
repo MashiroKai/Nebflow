@@ -117,6 +117,19 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     Ref.unsafe[IO, Set[String]](Set.empty)
   private val flushDelayMs: Long = 500L
 
+  // Debounced LLM message write tracking. Same pattern as dirtyUiSessions but
+  // for saveMessagesForSession — coalesces rapid tool-complete persists into a
+  // single disk write per session per 2-second window.
+  private val dirtyMsgSessions: Ref[IO, Set[String]] =
+    Ref.unsafe[IO, Set[String]](Set.empty)
+
+  private val pendingMsgs: Ref[IO, Map[String, List[Message]]] =
+    Ref.unsafe[IO, Map[String, List[Message]]](Map.empty)
+  private val msgFlushDelayMs: Long = 2000L
+
+  private val msgFlushFiber: Ref[IO, Option[cats.effect.kernel.Fiber[IO, Throwable, Unit]]] =
+    Ref.unsafe[IO, Option[cats.effect.kernel.Fiber[IO, Throwable, Unit]]](None)
+
   /** Optional hook — called with sessionId after any session data change. */
   private var sessionChangedHook: Option[String => IO[Unit]] = None
 
@@ -373,20 +386,29 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     else None
 
   private def loadSessionMessages(id: String): IO[List[Message]] =
-    IO.blocking {
-      val f = sessionFile(id)
-      if !os.exists(f) then Nil
-      else
-        decode[List[Message]](os.read(f)) match
-          case Right(msgs) => msgs
-          case Left(err) =>
-            // Corruption detected (e.g. power loss mid-write). Back up the
-            // corrupt file rather than silently returning Nil, so history is
-            // recoverable and the problem is visible.
-            val backup = sessionsDir / s"$id.json.corrupted.${System.currentTimeMillis()}"
-            os.move.over(f, backup, replaceExisting = true)
-            logger.warn(s"Session messages corrupted for $id, backed up to ${backup.last}: ${err.getMessage}")
-            Nil
+    // Check pending (debounced, most recent) writes first — mirrors the UI
+    // message cache pattern. Falls back to disk read if nothing is pending.
+    pendingMsgs.get.flatMap { pending =>
+      pending.get(id) match
+        case Some(msgs) => IO.pure(msgs)
+        case None =>
+          IO.blocking {
+            val f = sessionFile(id)
+            if !os.exists(f) then Nil
+            else
+              decode[List[Message]](os.read(f)) match
+                case Right(msgs) => msgs
+                case Left(err) =>
+                  // Corruption detected (e.g. power loss mid-write). Back up the
+                  // corrupt file rather than silently returning Nil, so history is
+                  // recoverable and the problem is visible.
+                  val backup = sessionsDir / s"$id.json.corrupted.${System.currentTimeMillis()}"
+                  os.move.over(f, backup, replaceExisting = true)
+                  logger.warn(
+                    s"Session messages corrupted for $id, backed up to ${backup.last}: ${err.getMessage}"
+                  )
+                  Nil
+          }
     }
 
   /**
@@ -403,12 +425,16 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     }
 
   private def saveSessionMessages(id: String, msgs: List[Message]): IO[Unit] =
-    IO.blocking {
-      val f = sessionFile(id)
-      val tmp = sessionsDir / s"$id.json.tmp.${java.util.UUID.randomUUID()}"
-      os.write.over(tmp, msgs.asJson.spaces2, createFolders = true)
-      os.move.over(tmp, f, replaceExisting = true)
-    }
+    // Invalidate pending debounce entry so loadSessionMessages reads the fresh disk state.
+    dirtyMsgSessions.update(_ - id) *> pendingMsgs.update(_ - id) *>
+      IO.delay(msgs.asJson.noSpaces).flatMap { jsonStr =>
+        IO.blocking {
+          val f = sessionFile(id)
+          val tmp = sessionsDir / s"$id.json.tmp.${java.util.UUID.randomUUID()}"
+          os.write.over(tmp, jsonStr, createFolders = true)
+          os.move.over(tmp, f, replaceExisting = true)
+        }
+      }
 
   private def saveIndex: IO[Unit] =
     indexRef.get.flatMap { case (activeId, sessions, folders) =>
@@ -448,6 +474,11 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   /**
    * Save messages to a specific session (not necessarily the active one).
    *  Updates the active ref only if the target is still the active session.
+   *
+   * Disk write is debounced (2s window): rapid calls within the window coalesce
+   * into a single write. The in-memory index and activeMessagesRef are updated
+   * immediately so reads stay coherent. Call `flushPendingMessages` at durability
+   * points (session switch, shutdown) to force any buffered writes.
    */
   def saveMessagesForSession(targetId: String, msgs: List[Message]): IO[Unit] =
     val now = System.currentTimeMillis()
@@ -458,8 +489,13 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       }
       .flatMap { activeId =>
         val updateRef = if targetId == activeId then activeMessagesRef.set(msgs) else IO.unit
-        updateRef *> saveSessionMessages(targetId, msgs) *> notifySessionChanged(targetId)
+        updateRef *>
+          pendingMsgs.update(_.updated(targetId, msgs)) *>
+          dirtyMsgSessions.update(_ + targetId) *>
+          notifySessionChanged(targetId) *>
+          scheduleMsgFlush
       }
+  end saveMessagesForSession
 
   def flushIndex: IO[Unit] = saveIndex
 
@@ -564,9 +600,10 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         case Left(Some(err)) => IO.raiseError(new RuntimeException(err))
         case Right(oldId) =>
           activeMessagesRef.get.flatMap { currentMsgs =>
-            // Flush any debounced UI writes before switching, so the outgoing
-            // session's .ui.json is durable on disk.
+            // Flush any debounced UI + message writes before switching, so the outgoing
+            // session's files are durable on disk.
             flushPendingUiWrites *>
+              flushPendingMessages *>
               saveSessionMessages(oldId, currentMsgs) *> loadSessionMessages(id).flatMap { newMsgs =>
                 activeMessagesRef.set(newMsgs) *> saveIndex *> newMsgs.pure[IO]
               }
@@ -757,24 +794,26 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         ((newActiveId, updated, folders), (id == activeId, newActiveId))
       }
       .flatMap { case (wasActive, newActiveId) =>
-        IO.blocking {
-          // Remove session data files
-          val f = sessionFile(id)
-          if os.exists(f) then os.remove(f)
-          // Remove meta sidecar
-          val mf = metaSidecarFile(id)
-          if os.exists(mf) then os.remove(mf)
-          // Remove task directory
-          val td = tasksDir / id
-          if os.exists(td) then os.remove.all(td)
-          // Remove uploaded attachments directory
-          val ud = PathUtil.dataRoot / "uploads" / id
-          if os.exists(ud) then os.remove.all(ud)
-        } *> deleteUiMessages(id) *> appendSemaphores.update(
-          _ - id
-        ) *> (if wasActive && newActiveId.nonEmpty then
-                loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
-              else IO.unit) *> saveIndex
+        // Cancel any pending debounced writes for this session (no point writing then deleting)
+        dirtyMsgSessions.update(_ - id) *> pendingMsgs.update(_ - id) *>
+          IO.blocking {
+            // Remove session data files
+            val f = sessionFile(id)
+            if os.exists(f) then os.remove(f)
+            // Remove meta sidecar
+            val mf = metaSidecarFile(id)
+            if os.exists(mf) then os.remove(mf)
+            // Remove task directory
+            val td = tasksDir / id
+            if os.exists(td) then os.remove.all(td)
+            // Remove uploaded attachments directory
+            val ud = PathUtil.dataRoot / "uploads" / id
+            if os.exists(ud) then os.remove.all(ud)
+          } *> deleteUiMessages(id) *> appendSemaphores.update(
+            _ - id
+          ) *> (if wasActive && newActiveId.nonEmpty then
+                  loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
+                else IO.unit) *> saveIndex
       }
 
   def markUnread(id: String): IO[Unit] =
@@ -1290,6 +1329,50 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
    * switch, delete, shutdown). Synchronous: returns after disk write.
    */
   def flushPendingUiWrites: IO[Unit] = drainDirty
+
+  // ============================================================
+  // Debounced LLM message flush (mirrors the UI flush pattern)
+  // ============================================================
+
+  private def scheduleMsgFlush: IO[Unit] =
+    msgFlushFiber.get.flatMap {
+      case Some(prev) => prev.cancel *> startMsgTimer
+      case None => startMsgTimer
+    }
+
+  private def startMsgTimer: IO[Unit] =
+    (IO.sleep(msgFlushDelayMs.millis) *> runMsgFlush()).start.flatMap(fiber => msgFlushFiber.set(Some(fiber)))
+
+  private def flushOneDirtyMsg: IO[Option[String]] =
+    dirtyMsgSessions
+      .modify { set =>
+        set.headOption match
+          case Some(sid) => (set - sid, Some(sid))
+          case None => (set, None)
+      }
+      .flatMap {
+        case Some(sid) =>
+          pendingMsgs.get.flatMap { msgs =>
+            pendingMsgs.update(_ - sid) *> saveSessionMessages(sid, msgs.getOrElse(sid, Nil)).as(Some(sid))
+          }
+        case None => IO.pure(None)
+      }
+
+  private def drainDirtyMsgs: IO[Unit] =
+    flushOneDirtyMsg
+      .flatMap {
+        case Some(_) => drainDirtyMsgs
+        case None => IO.unit
+      }
+      .handleErrorWith(e => IO(logger.warn(s"Message flush failed: ${e.getMessage}")))
+
+  private def runMsgFlush(): IO[Unit] =
+    msgFlushFiber.set(None) *> drainDirtyMsgs *> dirtyMsgSessions.get.flatMap { remaining =>
+      if remaining.nonEmpty then scheduleMsgFlush else IO.unit
+    }
+
+  /** Flush all pending message writes to disk. Call at durability points (session switch, shutdown). */
+  def flushPendingMessages: IO[Unit] = drainDirtyMsgs
 
   /**
    * Get a page of UI messages for a session.

@@ -3,6 +3,7 @@ package nebflow.core.entity
 import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
+import nebflow.shared.AgentModelConfig
 
 // ============================================================
 // Agent (global Agent library entry — corresponds to agent.json)
@@ -16,8 +17,12 @@ case class AgentEntry(
   tools: List[String] = List("*"),
   voice: Boolean = false,
   systemPrompt: String = "", // loaded from system.md, not in agent.json
-  category: String = "standalone",
-  mcpServers: List[String] = Nil
+  category: String = "standalone", // computed by EntityLoader from path, NOT read from JSON
+  mcpServers: List[String] = Nil,
+  model: Option[AgentModelConfig] = None,
+  preset: Option[String] = None, // references a named preset in model-presets.json
+  skills: List[String] = Nil, // skill names this agent can see (frontmatter injection)
+  flows: List[String] = Nil // flow names this agent can trigger via Delegate(flow=...)
 )
 
 object AgentEntry:
@@ -29,8 +34,11 @@ object AgentEntry:
       useWhen <- c.downField("useWhen").as[Option[String]].map(_.getOrElse(""))
       tools <- c.downField("tools").as[Option[List[String]]]
       voice <- c.downField("voice").as[Option[Boolean]]
-      category <- c.downField("category").as[Option[String]].map(_.getOrElse("standalone"))
       mcpServers <- c.downField("mcpServers").as[Option[List[String]]]
+      model <- c.downField("model").as[Option[AgentModelConfig]]
+      preset <- c.downField("preset").as[Option[String]]
+      skills <- c.downField("skills").as[Option[List[String]]]
+      flows <- c.downField("flows").as[Option[List[String]]]
     yield AgentEntry(
       name.getOrElse(""),
       description,
@@ -38,8 +46,12 @@ object AgentEntry:
       tools.getOrElse(List("*")),
       voice.getOrElse(false),
       "",
-      category,
-      mcpServers.getOrElse(Nil)
+      "standalone", // category computed by EntityLoader from path
+      mcpServers.getOrElse(Nil),
+      model,
+      preset,
+      skills.getOrElse(Nil),
+      flows.getOrElse(Nil)
     )
   }
 
@@ -50,8 +62,11 @@ object AgentEntry:
       "useWhen" -> a.useWhen.asJson,
       "tools" -> a.tools.asJson,
       "voice" -> a.voice.asJson,
-      "category" -> a.category.asJson,
-      "mcpServers" -> a.mcpServers.asJson
+      "mcpServers" -> a.mcpServers.asJson,
+      "model" -> a.model.asJson,
+      "preset" -> a.preset.asJson,
+      "skills" -> a.skills.asJson,
+      "flows" -> a.flows.asJson
     )
   }
 end AgentEntry
@@ -65,8 +80,7 @@ case class TeamDef(
   name: String,
   description: String,
   lead: String, // Agent name (in global Agent library)
-  members: List[String] = Nil, // Agent names
-  flows: List[String] = Nil // Flow names
+  members: List[String] = Nil // Agent names
 )
 
 object TeamDef:
@@ -77,8 +91,7 @@ object TeamDef:
       description <- c.downField("description").as[String]
       lead <- c.downField("lead").as[String]
       members <- c.downField("members").as[Option[List[String]]]
-      flows <- c.downField("flows").as[Option[List[String]]]
-    yield TeamDef(name, description, lead, members.getOrElse(Nil), flows.getOrElse(Nil))
+    yield TeamDef(name, description, lead, members.getOrElse(Nil))
   }
 
   given Encoder[TeamDef] = Encoder.instance { t =>
@@ -86,8 +99,7 @@ object TeamDef:
       "name" -> t.name.asJson,
       "description" -> t.description.asJson,
       "lead" -> t.lead.asJson,
-      "members" -> t.members.asJson,
-      "flows" -> t.flows.asJson
+      "members" -> t.members.asJson
     )
   }
 end TeamDef
@@ -104,7 +116,11 @@ object NodeRoute:
   case class Goto(nodeId: String) extends NodeRoute
 
   /** Conditional branch: match switch expression against cases. */
-  case class Switch(switchExpr: String, cases: Map[String, NodeRoute]) extends NodeRoute
+  case class Switch(
+    switchExpr: String,
+    cases: Map[String, NodeRoute],
+    default: Option[NodeRoute] = None // conservative route when no case matches (e.g. $return)
+  ) extends NodeRoute
 
   /** Terminate the flow, return result. */
   case object Return extends NodeRoute
@@ -124,16 +140,18 @@ object NodeRoute:
           switchExpr <- c.downField("switch").as[String]
           casesRaw <- c.downField("cases").as[Map[String, Json]]
           cases <- casesRaw.toList.traverse { (k, v) => v.as[NodeRoute].map(k -> _) }
-        yield Switch(switchExpr, cases.toMap)
+          default <- c.downField("default").as[Option[NodeRoute]]
+        yield Switch(switchExpr, cases.toMap, default)
   }
 
   given Encoder[NodeRoute] = Encoder.instance {
     case Goto(id) => Json.fromString(id)
     case Return => Json.fromString("$return")
-    case Switch(expr, cases) =>
+    case Switch(expr, cases, default) =>
       Json.obj(
         "switch" -> Json.fromString(expr),
-        "cases" -> cases.asJson
+        "cases" -> cases.asJson,
+        "default" -> default.asJson
       )
   }
 end NodeRoute
@@ -231,13 +249,23 @@ end FlowDagDef
 // Runtime state (internal to DAG executor)
 // ============================================================
 
-/** Execution result of a single node. */
+/**
+ * Execution result of a single node.
+ *
+ * Contract:
+ *  - `success` drives the LIFECYCLE status (NodeStatus via
+ *    NodeStatus.toNodeResult) — completed on true, failed on false.
+ *  - `verdict` is a ROUTING value for switch nodes, decoupled from lifecycle:
+ *    it feeds VerdictFamily.matchCase to select the next edge. When absent,
+ *    the executor extracts a value from `output` (JSON field / text regex).
+ */
 case class NodeResult(
   nodeId: String,
   output: String,
   success: Boolean,
   error: Option[String] = None,
-  attemptCount: Int = 1
+  attemptCount: Int = 1,
+  verdict: Option[String] = None
 )
 
 /** Runtime context for a flow execution. */

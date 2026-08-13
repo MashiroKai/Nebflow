@@ -16,6 +16,11 @@ object FastMicroCompact:
 
   private val Placeholder = "[Output removed to free context space]"
 
+  // Hardcoded: only fire when cache is cold (2h TTL)
+  private val CacheTtlMs: Long = 2 * 60 * 60 * 1000L
+  // Hardcoded: keep the most recent 5 tool results untouched
+  private val KeepRecent: Int = 5
+
   private val CompactableTools = Set(
     "Read",
     "Bash",
@@ -33,11 +38,7 @@ object FastMicroCompact:
    *
    * @return Some(compacted) if compaction fired, None if skipped (cache still hot or nothing to compact)
    */
-  def apply(
-    messages: List[Message],
-    cacheTtlMinutes: Int = CompactConfig().microCacheTtlMinutes,
-    keepRecent: Int = CompactConfig().microKeepRecent
-  ): Option[List[Message]] =
+  def apply(messages: List[Message]): Option[List[Message]] =
     if messages.isEmpty then None
     else
       // Check cache TTL: find last assistant message timestamp
@@ -48,30 +49,30 @@ object FastMicroCompact:
       // Skip if cache is still hot (last assistant within TTL)
       // timestamp == 0 (old messages without ts) → treat as cold, compress directly
       lastAssistantTs match
-        case Some(ts) if (System.currentTimeMillis() - ts) < cacheTtlMinutes * 60_000L =>
+        case Some(ts) if (System.currentTimeMillis() - ts) < CacheTtlMs =>
           None // cache is hot, skip
         case _ =>
-          doCompact(messages, keepRecent)
+          doCompact(messages)
 
-  private def doCompact(messages: List[Message], keepRecent: Int): Option[List[Message]] =
+  private def doCompact(messages: List[Message]): Option[List[Message]] =
     // Collect compactable tool_use IDs in order of appearance
     val allToolUseIds = messages.flatMap {
-      case Message(MessageRole.Assistant, Right(blocks), _) =>
+      case Message(MessageRole.Assistant, Right(blocks), _, _) =>
         blocks.collect {
           case ContentBlock.ToolUse(id, name, _) if CompactableTools.contains(name) => id
         }
       case _ => Nil
     }
 
-    if allToolUseIds.size <= keepRecent then None
+    if allToolUseIds.size <= KeepRecent then None
     else
-      val keepSet = allToolUseIds.takeRight(keepRecent).toSet
+      val keepSet = allToolUseIds.takeRight(KeepRecent).toSet
       val clearSet = allToolUseIds.filterNot(keepSet.contains).toSet
 
       if clearSet.isEmpty then None
       else
         val result = messages.map {
-          case msg @ Message(MessageRole.User, Right(blocks), _) =>
+          case msg @ Message(MessageRole.User, Right(blocks), _, _) =>
             val newBlocks = blocks.map {
               case tr: ContentBlock.ToolResult if clearSet.contains(tr.toolUseId) && tr.content != Placeholder =>
                 tr.copy(content = Placeholder)

@@ -5,6 +5,7 @@ import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import nebflow.agent.AgentDef
 import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.presets.PresetStore
 
 /**
  * Loads Team/Flow/Agent definitions from disk.
@@ -26,14 +27,19 @@ object EntityLoader:
   /** Load a team definition by name from `teams/<name>/team.json`. */
   def loadTeam(name: String): IO[Option[TeamDef]] =
     IO.blocking {
-      val jsonPath = teamsDir / name / "team.json"
-      if os.exists(jsonPath) then
-        parseTeamJson(os.read(jsonPath)) match
-          case Right(td) => Some(td)
-          case Left(e) =>
-            logger.warnSync(s"Failed to parse team '$name': $e")
-            None
-      else None
+      // Guard against os-lib PathError$InvalidSegment: `teamsDir / name` requires
+      // name to be a single path segment, so a scoped "team/agent" address must
+      // never reach here — return None and let routing fall through.
+      if name.isEmpty || name.contains("/") || name.contains("\\") || name == "." || name == ".." then None
+      else
+        val jsonPath = teamsDir / name / "team.json"
+        if os.exists(jsonPath) then
+          parseTeamJson(os.read(jsonPath)) match
+            case Right(td) => Some(td)
+            case Left(e) =>
+              logger.warnSync(s"Failed to parse team '$name': $e")
+              None
+        else None
     }
 
   /** List all teams from `teams/<name>/team.json`. */
@@ -132,10 +138,17 @@ object EntityLoader:
       parseAgentJson(os.read(jsonPath)).toOption.flatMap { entry =>
         val sysMd = dir / "system.md"
         val prompt = if os.exists(sysMd) then os.read(sysMd) else ""
-        // Fall back to directory name if agent.json has no "name" field
         val resolvedName = if entry.name.nonEmpty then entry.name else dir.last
-        Some(entry.copy(name = resolvedName, systemPrompt = prompt))
+        // Infer category from directory path (not from JSON field)
+        val dirStr = dir.toString()
+        val inferredCategory =
+          if dirStr.contains("/teams/") then "team"
+          else if dirStr.contains("/flows/") then "flow"
+          else "standalone"
+        Some(entry.copy(name = resolvedName, systemPrompt = prompt, category = inferredCategory))
       }
+
+  end loadAgentFromDir
 
   /** Load agent entry from `agents/<name>/agent.json` + `system.md`. */
   def loadAgent(name: String): IO[Option[AgentEntry]] =
@@ -249,15 +262,76 @@ object EntityLoader:
                 .headOption
           }
     yield globalOpt.orElse(teamOpt).orElse(flowOpt).map { entry =>
+      // Resolve preset/legacy model into the final AgentModelConfig.
+      // Priority: explicit preset > legacy model > default preset > global chain.
+      val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
       AgentDef(
         name = entry.name,
         description = entry.description,
         tools = entry.tools,
         systemPrompt = entry.systemPrompt,
+        voiceEnabled = entry.voice,
         category = entry.category,
-        mcpServers = entry.mcpServers
+        mcpServers = entry.mcpServers,
+        model = Some(resolvedModel),
+        preset = entry.preset,
+        skills = entry.skills,
+        flows = entry.flows
       )
     }
+
+  /**
+   * Find the directory path of an agent by name across all three layers.
+   * Same search order as [[findAgentByName]] but returns the directory path
+   * instead of an AgentDef. Used by PUT /api/agents/:name/model to locate
+   * the agent.json to update.
+   */
+  def findAgentDir(name: String): IO[Option[os.Path]] =
+    for
+      // 1. Global agents — name == dir name, fast path
+      globalOpt <- IO.blocking {
+        val dir = agentsDir / name
+        if os.exists(dir / "agent.json") then Some(dir) else None
+      }
+      // 2. Team agents
+      teamOpt <- globalOpt match
+        case Some(_) => IO.pure(None)
+        case None =>
+          IO.blocking {
+            if !os.exists(teamsDir) then None
+            else
+              os.list(teamsDir)
+                .filter(os.isDir)
+                .flatMap { teamDir =>
+                  val agentsSubDir = teamDir / "agents"
+                  if os.exists(agentsSubDir) then
+                    os.list(agentsSubDir).filter(os.isDir).flatMap { agentDir =>
+                      loadAgentFromDir(agentDir).filter(_.name == name).map(_ => agentDir)
+                    }
+                  else None
+                }
+                .headOption
+          }
+      // 3. Flow agents
+      flowOpt <- (globalOpt, teamOpt) match
+        case (Some(_), _) | (_, Some(_)) => IO.pure(None)
+        case (None, None) =>
+          IO.blocking {
+            if !os.exists(flowsDir) then None
+            else
+              os.list(flowsDir)
+                .filter(os.isDir)
+                .flatMap { flowDir =>
+                  val agentsSubDir = flowDir / "agents"
+                  if os.exists(agentsSubDir) then
+                    os.list(agentsSubDir).filter(os.isDir).flatMap { agentDir =>
+                      loadAgentFromDir(agentDir).filter(_.name == name).map(_ => agentDir)
+                    }
+                  else None
+                }
+                .headOption
+          }
+    yield globalOpt.orElse(teamOpt).orElse(flowOpt)
 
   // ==========================================================
   // Write operations (atomic: temp file + rename)
@@ -310,10 +384,7 @@ object EntityLoader:
   def validateTeam(team: TeamDef, agents: Set[String]): List[String] =
     val missingLead = if !agents.contains(team.lead) then List(s"lead agent '${team.lead}' not found") else Nil
     val missingMembers = team.members.filterNot(agents.contains).map(m => s"member agent '$m' not found")
-    val missingFlows = team.flows
-      .filterNot(f => os.exists(flowsDir / s"$f.json"))
-      .map(f => s"flow '$f' not found")
-    missingLead ++ missingMembers ++ missingFlows
+    missingLead ++ missingMembers
 
   /** Validate a FlowDagDef: check all node agents exist, entry is valid, routes are valid. */
   def validateFlow(flow: FlowDagDef, agents: Set[String]): List[String] =
@@ -328,7 +399,7 @@ object EntityLoader:
       node.onComplete match
         case NodeRoute.Goto(target) if !flow.nodes.contains(target) =>
           List(s"node '$id' routes to unknown node '$target'")
-        case NodeRoute.Switch(_, cases) =>
+        case NodeRoute.Switch(_, cases, _) =>
           cases.toList.flatMap {
             case (_, NodeRoute.Goto(target)) if !flow.nodes.contains(target) =>
               List(s"node '$id' switch case routes to unknown node '$target'")

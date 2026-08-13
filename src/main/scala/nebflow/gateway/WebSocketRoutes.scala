@@ -10,6 +10,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorSystem as NebulaActorSystem
 import nebflow.agent.*
 import nebflow.core.entity.EntityLoader
+import nebflow.core.presets.PresetStore
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.skill.SkillService
@@ -63,8 +64,22 @@ class WebSocketRoutes(
           case None =>
             metaOpt.flatMap(_.flowName) match
               case Some(fn) =>
-                nebflow.core.flow.FlowAgentActivator.resolveAgentFromDisk(fn, agentName, sharedResources).flatMap {
-                  case Some(defn) => IO.pure(defn)
+                nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
+                  case Some(entry) =>
+                    val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
+                    IO.pure(
+                      AgentDef(
+                        name = entry.name,
+                        description = entry.description,
+                        tools = entry.tools,
+                        systemPrompt = entry.systemPrompt,
+                        voiceEnabled = entry.voice,
+                        category = entry.category,
+                        mcpServers = entry.mcpServers,
+                        model = Some(resolvedModel),
+                        preset = entry.preset
+                      )
+                    )
                   case None => nebulaFallback(agentName)
                 }
               case None => nebulaFallback(agentName)
@@ -133,7 +148,8 @@ class WebSocketRoutes(
                 rulesMd = resolvedRules,
                 folderId = folderId,
                 safetyMode = metaOpt.map(_.safetyMode).getOrElse("confirm-edits"),
-                gitBranch = metaOpt.flatMap(_.gitBranch)
+                gitBranch = metaOpt.flatMap(_.gitBranch),
+                rootSessionId = sessionId
               ),
               s"agent-$sessionId"
             )
@@ -156,12 +172,51 @@ class WebSocketRoutes(
               }
               .void *>
               rootAgents.update(_ + (sessionId -> ref)) *>
+              sharedResources.agentRegistry.update(
+                _ + (
+                  sessionId -> AgentRecord(
+                    sessionId = sessionId,
+                    ref = ref,
+                    kind = AgentKind.Root,
+                    rootSessionId = sessionId,
+                    parentRef = None
+                  )
+                )
+              ) *>
+              // P2: register this root session as the InteractionHub render
+              // target (cards/questions appear in the Nebula window) and seed
+              // its permission-policy bucket from persisted session meta
+              // (backward compatible with per-session safetyMode).
+              registerRootInteraction(sessionId, recordingWsSend) *>
+              seedPermissionPolicy(sessionId, safetyMode) *>
               initFlowTree(sessionId, ref, pr, safetyMode)
                 .handleErrorWith(e => logger.error(s"initFlowTree failed for session $sessionId: ${e.getMessage}"))
                 .start
                 .as(ref)
           }
     }
+
+  /**
+   * P2: register a root session's recording wsSend with the InteractionHub so
+   * permission/AskUser cards render in the Nebula window and persist to the
+   * root session's ui.json.
+   */
+  private def registerRootInteraction(sessionId: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
+    sharedResources.interactionHubRef.get.flatMap {
+      case Some(hub) => (hub ! nebflow.agent.InteractionHubCommand.RegisterRoot(sessionId, wsSend)).void
+      case None => IO.unit
+    }
+
+  private def unregisterRootInteraction(sessionId: String): IO[Unit] =
+    sharedResources.interactionHubRef.get.flatMap {
+      case Some(hub) => (hub ! nebflow.agent.InteractionHubCommand.UnregisterRoot(sessionId)).void
+      case None => IO.unit
+    }
+
+  /** P2: seed the root session's permission-policy bucket from persisted meta. */
+  private def seedPermissionPolicy(sessionId: String, safetyMode: String): IO[Unit] =
+    val mode = nebflow.core.SafetyMode.fromString(safetyMode)
+    sharedResources.permissionPolicies.update(_ + (sessionId -> nebflow.agent.PermissionPolicy(safetyMode = mode)))
 
   /** Create and register a FlowTreeActor for a session. Fire-and-forget via .start. */
   private def initFlowTree(
@@ -189,6 +244,8 @@ class WebSocketRoutes(
   /** Stop and remove the root AgentActor for a session. */
   private def removeRootAgent(sessionId: String): IO[Unit] =
     FlowTreeRegistry.unregister(sessionId) *>
+      sharedResources.agentRegistry.update(_ - sessionId) *>
+      unregisterRootInteraction(sessionId) *>
       rootAgents.modify { agents =>
         agents.get(sessionId) match
           case Some(ref) =>
@@ -199,11 +256,76 @@ class WebSocketRoutes(
           case None => (agents, IO.unit)
       }.flatten
 
-  /** Route a message to the root agent of a specific session. Discards if sessionId is empty. */
+  /**
+   * P2: translate a frontend interaction answer (permissionAnswer/askUserAnswer)
+   * into an InteractionAnswered for the hub. New frontends attach requestId →
+   * the hub matches exactly (multi-slot). Old frontends omit requestId → the
+   * hub falls back to the oldest pending request for the resolved root session
+   * (incremental compatibility; the card is always rendered at sessionId =
+   * rootSessionId). Answers never touch routeToAgent, so no ghost agent can
+   * ever be created by an answer (D2).
+   */
+  private def forwardInteractionAnswer(requestId: String, sessionId: String, payload: io.circe.Json): IO[Unit] =
+    if sessionId.nonEmpty then
+      sharedResources.interactionHubRef.get.flatMap {
+        case Some(hub) =>
+          for
+            rootSid <- resolveRootSessionId(sessionId)
+            _ <- (hub ! nebflow.agent.InteractionHubCommand.Answered(
+              nebflow.agent.InteractionAnswered(requestId, rootSid, payload)
+            )).void
+          yield ()
+        case None =>
+          logger.warn("Interaction answer dropped: InteractionHub not spawned") *> IO.unit
+      }
+    else logger.warn("Dropping interaction answer: no sessionId provided") *> IO.unit
+
+  /** Resolve the permission-policy bucket (root session) of a sessionId. */
+  private def resolveRootSessionId(sessionId: String): IO[String] =
+    sharedResources.agentRegistry.get
+      .map(_.get(sessionId).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sessionId))
+
+  /**
+   * Route a message to a registered agent — **lookup only, never spawns**.
+   * Interaction answers (permissionAnswer / askUserAnswer) must use this so an
+   * unregistered sessionId cannot create a ghost agent (D2). If the session is
+   * not in the unified AgentRegistry the message is logged and dropped.
+   */
   private def routeToAgent(sessionId: String)(f: nebflow.actor.ActorRef[AgentCommand] => IO[Unit]): IO[Unit] =
     if sessionId.nonEmpty then
-      ensureRootAgent(sessionId).flatMap(f).handleErrorWith { e =>
-        logger.warn(s"Failed to route message to agent for session $sessionId: ${e.getMessage}")
+      sharedResources.agentRegistry.get.flatMap { registry =>
+        registry.get(sessionId) match
+          case Some(record) =>
+            f(record.ref).handleErrorWith { e =>
+              logger.warn(s"Failed to route message to agent $sessionId: ${e.getMessage}")
+            }
+          case None =>
+            logger.warn(s"Dropping message to unregistered agent session $sessionId (no ghost spawn)") *> IO.unit
+      }
+    else logger.warn("Dropping message: no sessionId provided") *> IO.unit
+
+  /**
+   * Route a message to an agent, activating the root agent when the session is a
+   * real persisted root session (user messages / plan / interrupt). Never spawns
+   * a ghost for unknown sessionIds — such messages are logged and dropped.
+   */
+  private def ensureAgent(sessionId: String)(f: nebflow.actor.ActorRef[AgentCommand] => IO[Unit]): IO[Unit] =
+    if sessionId.nonEmpty then
+      sharedResources.agentRegistry.get.flatMap { registry =>
+        registry.get(sessionId) match
+          case Some(record) =>
+            f(record.ref).handleErrorWith { e =>
+              logger.warn(s"Failed to route message to agent $sessionId: ${e.getMessage}")
+            }
+          case None =>
+            sessionStore.getSessionMeta(sessionId).flatMap {
+              case Some(_) =>
+                ensureRootAgent(sessionId).flatMap(f).handleErrorWith { e =>
+                  logger.warn(s"Failed to route message to agent for session $sessionId: ${e.getMessage}")
+                }
+              case None =>
+                logger.warn(s"Dropping message to unknown session $sessionId (not a real session)") *> IO.unit
+            }
       }
     else logger.warn("Dropping message: no sessionId provided") *> IO.unit
 
@@ -235,7 +357,7 @@ class WebSocketRoutes(
             // Use ExternalEvent instead of UserInput so the message is queued in
             // pendingEvents and can be injected at the next ToolsComplete gap —
             // avoids being stashed until the entire turn finishes.
-            routeToAgent(sessionId)(ref =>
+            ensureAgent(sessionId)(ref =>
               ref ! AgentCommand.ExternalEvent(
                 source = "bridge",
                 eventType = "user-message",
@@ -248,18 +370,19 @@ class WebSocketRoutes(
 
   /**
    * Public API for bridge card-action callbacks to send specific AgentCommands
-   * (e.g. PermissionAnswered, UserAnswered) to a session's agent.
+   * (e.g. Interrupt, PlanApproved) to a session's agent.
    */
   def handleBridgeAgentCommand(sessionId: String, command: AgentCommand): IO[Unit] =
     if sessionId.isEmpty then IO.unit
-    else routeToAgent(sessionId)(ref => ref ! command)
+    else ensureAgent(sessionId)(ref => ref ! command)
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
-      // Query param takes priority (from localStorage), cookie as fallback
-      val paramToken = req.params.get("token").getOrElse("")
+      // Cookie takes priority to avoid token leakage in browser history/logs/Referer.
+      // Query param kept as fallback for cross-origin or first-load scenarios.
       val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
-      val provided = if paramToken.nonEmpty then paramToken else cookieToken
+      val paramToken = req.params.get("token").getOrElse("")
+      val provided = if cookieToken.nonEmpty then cookieToken else paramToken
       if Auth.validateToken(provided, token) then
         for
           outbound <- Queue.unbounded[IO, WebSocketFrame]
@@ -663,23 +786,26 @@ class WebSocketRoutes(
             (hc.downField("answers").as[List[String]], hc.downField("sessionId").as[String]) match
               case (Right(answers), Right(askSessionId)) =>
                 val answerText = answers.mkString("\n")
+                val requestId = hc.downField("requestId").as[String].toOption.getOrElse("")
                 sessionStore.appendUiMessages(
                   askSessionId,
                   List(UiMessage.User(answerText, timestamp = System.currentTimeMillis()))
                 ) *>
-                  routeToAgent(askSessionId)(ref => ref ! AgentCommand.UserAnswered(answers))
+                  forwardInteractionAnswer(requestId, askSessionId, io.circe.Json.obj("answers" -> answers.asJson))
               case _ => IO.unit
 
           case "permissionAnswer" =>
-            val approved = parse(text).flatMap(_.hcursor.downField("approved").as[Boolean]).getOrElse(false)
-            val permSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val approved = json.hcursor.downField("approved").as[Boolean].getOrElse(false)
+            val permSessionId = json.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
+            val requestId = json.hcursor.downField("requestId").as[String].toOption.getOrElse("")
             logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
-              routeToAgent(permSessionId)(ref => ref ! AgentCommand.PermissionAnswered(approved))
+              forwardInteractionAnswer(requestId, permSessionId, io.circe.Json.obj("approved" -> approved.asJson))
 
           case "planApprove" =>
             val planSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
             logger.info(s"Plan approved for session $planSessionId") *>
-              routeToAgent(planSessionId)(ref => ref ! AgentCommand.PlanApproved)
+              ensureAgent(planSessionId)(ref => ref ! AgentCommand.PlanApproved)
 
           case "planFeedback" =>
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -687,18 +813,18 @@ class WebSocketRoutes(
             val fbText = json.hcursor.downField("text").as[String].getOrElse("")
             if fbSessionId.nonEmpty && fbText.nonEmpty then
               logger.info(s"Plan feedback for session $fbSessionId: ${fbText.take(60)}") *>
-                routeToAgent(fbSessionId)(ref => ref ! AgentCommand.PlanFeedback(fbText))
+                ensureAgent(fbSessionId)(ref => ref ! AgentCommand.PlanFeedback(fbText))
             else IO.unit
 
           case "planCancel" =>
             val cancelSessionId =
               parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
             logger.info(s"Plan cancelled for session $cancelSessionId") *>
-              routeToAgent(cancelSessionId)(ref => ref ! AgentCommand.PlanCancelled)
+              ensureAgent(cancelSessionId)(ref => ref ! AgentCommand.PlanCancelled)
 
           case "interrupt" =>
             val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-            logger.info("User interrupted") *> routeToAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
+            logger.info("User interrupted") *> ensureAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
 
           case "restartAgent" =>
             val rJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -710,7 +836,7 @@ class WebSocketRoutes(
               case _ => nebflow.agent.RestartLevel.Soft
             if rSessionId.nonEmpty then
               logger.info(s"Restart agent (level=$rLevel) for session $rSessionId") *>
-                routeToAgent(rSessionId)(ref => ref ! nebflow.agent.AgentCommand.RestartAgent(rLevel))
+                ensureAgent(rSessionId)(ref => ref ! nebflow.agent.AgentCommand.RestartAgent(rLevel))
             else IO.unit
 
           case "immediateInput" =>
@@ -723,7 +849,7 @@ class WebSocketRoutes(
                   immSessionId,
                   List(UiMessage.User(immContent, Nil, timestamp = System.currentTimeMillis()))
                 ) *>
-                routeToAgent(immSessionId)(ref => ref ! AgentCommand.ImmediateInput(immContent))
+                ensureAgent(immSessionId)(ref => ref ! AgentCommand.ImmediateInput(immContent))
             else IO.unit
 
           case "command" =>
@@ -746,14 +872,14 @@ class WebSocketRoutes(
                       "sessionId" -> clearSessionId.asJson
                     )
                   ) *>
-                  routeToAgent(clearSessionId)(ref => ref ! AgentCommand.ResetSession)
+                  ensureAgent(clearSessionId)(ref => ref ! AgentCommand.ResetSession)
               case "compact" =>
                 val compactSessionId =
                   parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
                 val instruction =
                   parse(text).flatMap(_.hcursor.downField("instruction").as[String]).toOption.filter(_.nonEmpty)
                 logger.info("Manual compaction triggered") *>
-                  routeToAgent(compactSessionId)(ref =>
+                  ensureAgent(compactSessionId)(ref =>
                     ref ! AgentCommand.TriggerCompaction("full", postCompactInstruction = instruction)
                   )
               case "plan" =>
@@ -762,7 +888,7 @@ class WebSocketRoutes(
                 val planTask = parse(text).flatMap(_.hcursor.downField("task").as[String]).toOption.getOrElse("")
                 if planSessionId.nonEmpty && planTask.nonEmpty then
                   logger.info(s"Plan mode started: ${planTask.take(60)}") *>
-                    routeToAgent(planSessionId)(ref => ref ! AgentCommand.StartPlan(planTask))
+                    ensureAgent(planSessionId)(ref => ref ! AgentCommand.StartPlan(planTask))
                 else IO.unit
               case "fork" =>
                 val forkSessionId =
@@ -893,7 +1019,7 @@ class WebSocketRoutes(
                   val notifyAgent = sharedResources.sessionModelOverrides.get.flatMap { overrides =>
                     overrides.get(sessionId) match
                       case Some(candidate) =>
-                        routeToAgent(sessionId)(ref => ref ! AgentCommand.UpdateContextWindow(candidate.contextWindow))
+                        ensureAgent(sessionId)(ref => ref ! AgentCommand.UpdateContextWindow(candidate.contextWindow))
                       case None => IO.unit
                   }
                   notifyAgent *> wsSend(io.circe.Json.obj("type" -> "sessionModelSet".asJson, "modelRef" -> ref.asJson))
@@ -1023,9 +1149,7 @@ class WebSocketRoutes(
               sessionStore
                 .setSafetyMode(sid, mode)
                 .flatMap { _ =>
-                  routeToAgent(sid)(ref =>
-                    ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))
-                  ) *>
+                  ensureAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
                     sendAgentSessionList(wsSend, sid)
                 }
                 .handleErrorWith { e =>
@@ -1043,9 +1167,7 @@ class WebSocketRoutes(
               sessionStore
                 .setSafetyMode(sid, mode)
                 .flatMap { _ =>
-                  routeToAgent(sid)(ref =>
-                    ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))
-                  ) *>
+                  ensureAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
                     sendAgentSessionList(wsSend, sid)
                 }
                 .handleErrorWith { e =>
@@ -1830,6 +1952,40 @@ class WebSocketRoutes(
               )
             }
 
+          case "getActiveAgents" =>
+            // Snapshot restore for the bg-agent indicator: the frontend builds
+            // sessionBgAgents incrementally from realtime agentStart/agentDone
+            // events, which are not replayed after a browser refresh. Read the
+            // unified AgentRegistry (sessionId -> AgentRecord) and filter to
+            // active sub-agents (Delegate/Ephemeral/Flow — root agents excluded).
+            // agentId == sessionId (nodeSessionId) so restored entries match
+            // subsequent realtime events (agentToolStart/agentDone key on it).
+            sharedResources.agentRegistry.get.flatMap { registry =>
+              val active = registry.values.toList.filter(r =>
+                r.kind == AgentKind.Delegate || r.kind == AgentKind.Ephemeral || r.kind == AgentKind.Flow || r.kind == AgentKind.SubTask
+              )
+              active
+                .traverse { rec =>
+                  sessionStore.getSessionMeta(rec.sessionId).map { meta =>
+                    io.circe.Json.obj(
+                      "sessionId" -> rec.sessionId.asJson,
+                      "agentId" -> rec.sessionId.asJson,
+                      "agentName" -> meta.flatMap(_.agentName).getOrElse(rec.sessionId).asJson,
+                      "rootSessionId" -> rec.rootSessionId.asJson,
+                      "kind" -> rec.kind.toString.asJson
+                    )
+                  }
+                }
+                .flatMap { agents =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "activeAgents".asJson,
+                      "agents" -> agents.asJson
+                    )
+                  )
+                }
+            }
+
           case "cancelBackgroundJob" =>
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val cancelSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
@@ -1844,7 +2000,7 @@ class WebSocketRoutes(
                       else s"Background job $jobId not found or already completed"
                     logger.info(logMsg, "sessionId" -> cancelSessionId, "jobId" -> jobId) *>
                       // Notify agent so it can process cancellation
-                      routeToAgent(cancelSessionId) { ref =>
+                      ensureAgent(cancelSessionId) { ref =>
                         ref ! AgentCommand.ExternalEvent(
                           source = "background-task",
                           eventType = "cancelled",
@@ -1887,7 +2043,13 @@ class WebSocketRoutes(
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val flowName = json.hcursor.downField("name").as[String].getOrElse("")
             val cfSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            if flowName.nonEmpty && cfSessionId.nonEmpty then
+            val instanceId = json.hcursor.downField("instanceId").as[String].getOrElse("")
+            if instanceId.nonEmpty then
+              // Cancel a DAG flow instance directly
+              nebflow.core.flow.RunningFlowRegistry.cancel(instanceId) *>
+                logger.info(s"Cancel DAG flow '$instanceId' requested by user via WS")
+            else if flowName.nonEmpty && cfSessionId.nonEmpty then
+              // Cancel a team pipeline flow via FlowTreeActor
               nebflow.core.flow.FlowTreeRegistry.get(cfSessionId).flatMap {
                 case Some(treeRef) =>
                   treeRef ! nebflow.core.flow.TreeCommand.CancelPipeline(flowName)
@@ -2220,9 +2382,13 @@ class WebSocketRoutes(
             (metaIO
               .flatMap { metaOpt =>
                 val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                val teamName = metaOpt.flatMap(_.flowName)
                 val content = scope match
                   case "user" => MemoryStore.loadUserMemory.getOrElse("")
-                  case "agent" => MemoryStore.loadAgentMemory(agentName).getOrElse("")
+                  case "agent" =>
+                    teamName match
+                      case Some(tn) => MemoryStore.loadTeamAgentMemory(tn, agentName).getOrElse("")
+                      case None => MemoryStore.loadAgentMemory(agentName).getOrElse("")
                   case _ => ""
                 wsSend(
                   io.circe.Json.obj(
@@ -2250,9 +2416,13 @@ class WebSocketRoutes(
             (metaIO
               .flatMap { metaOpt =>
                 val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                val teamName = metaOpt.flatMap(_.flowName)
                 val save = scope match
                   case "user" => MemoryStore.saveUserMemory(content)
-                  case "agent" => MemoryStore.saveAgentMemory(agentName, content)
+                  case "agent" =>
+                    teamName match
+                      case Some(tn) => MemoryStore.saveTeamAgentMemory(tn, agentName, content)
+                      case None => MemoryStore.saveAgentMemory(agentName, content)
                   case _ => IO.unit
                 save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
               })
@@ -2266,6 +2436,11 @@ class WebSocketRoutes(
           case "memoryStatus" =>
             sessionStore.getActiveMeta.flatMap { metaOpt =>
               val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+              val teamName = metaOpt.flatMap(_.flowName)
+              val (agentExists, agentPreview) = teamName match
+                case Some(tn) =>
+                  (MemoryStore.teamAgentExists(tn, agentName), MemoryStore.teamAgentPreview(tn, agentName))
+                case None => (MemoryStore.agentExists(agentName), MemoryStore.agentPreview(agentName))
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "memoryStatus".asJson,
@@ -2274,40 +2449,10 @@ class WebSocketRoutes(
                     "preview" -> MemoryStore.userPreview.asJson
                   ),
                   "agent" -> io.circe.Json.obj(
-                    "exists" -> MemoryStore.agentExists(agentName).asJson,
-                    "preview" -> MemoryStore.agentPreview(agentName).asJson
+                    "exists" -> agentExists.asJson,
+                    "preview" -> agentPreview.asJson
                   )
                 )
-              )
-            }
-
-          case "getCardDesign" =>
-            val path = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "card-design-prompt.md")
-            IO.blocking {
-              if java.nio.file.Files.exists(path) then
-                new String(java.nio.file.Files.readAllBytes(path), java.nio.charset.StandardCharsets.UTF_8)
-              else ""
-            }.flatMap { content =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "cardDesignData".asJson,
-                  "content" -> content.asJson
-                )
-              )
-            }
-
-          case "saveCardDesign" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val content = json.hcursor.downField("content").as[String].getOrElse("")
-            val path = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "card-design-prompt.md")
-            IO.blocking {
-              java.nio.file.Files.write(path, content.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            }.flatMap { _ =>
-              wsSend(io.circe.Json.obj("type" -> "cardDesignSaved".asJson, "ok" -> true.asJson))
-            }.handleErrorWith { e =>
-              wsSend(
-                io.circe.Json
-                  .obj("type" -> "error".asJson, "message" -> s"Failed to save card design: ${e.getMessage}".asJson)
               )
             }
 
@@ -2767,7 +2912,7 @@ class WebSocketRoutes(
                               ).handleErrorWith(_ => IO.unit)
                             ) *> {
                               val blocksList = blocks.toList
-                              routeToAgent(msgSessionId)(ref =>
+                              ensureAgent(msgSessionId)(ref =>
                                 ref ! AgentCommand
                                   .UserInput(
                                     content,
@@ -3051,6 +3196,12 @@ class WebSocketRoutes(
   ): io.circe.Json => IO[Unit] = json =>
     val hc = json.hcursor
     val eventType = hc.downField("type").as[String].getOrElse("")
+    // "team-" is a frontend routing marker injected by MailTool.activateAgent,
+    // not a real session id. Strip it so Mail-activated team agent streams
+    // persist to the team session's own ui.json instead of a phantom
+    // "team-<id>" session.
+    def normalizeNodeSessionId(nsid: String): String =
+      if nsid.startsWith("team-") then nsid.drop(5) else nsid
     val record = eventType match
       case "thinkingDelta" =>
         val delta = hc.downField("delta").as[String].getOrElse("")
@@ -3224,7 +3375,8 @@ class WebSocketRoutes(
       // Accumulate/flush them into that session's .ui.json
       // so the agent popup shows full history on reopen.
       case "agentTextDelta" =>
-        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
+        val nodeSessionId =
+          hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
         val delta = hc.downField("delta").as[String].getOrElse("")
         nodeSessionId match
           case Some(nsid) if delta.nonEmpty =>
@@ -3238,14 +3390,15 @@ class WebSocketRoutes(
       case "agentThinking" =>
         // Mark turn start on the first thinking token too (some turns emit
         // thinking before any text).
-        hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty) match
+        hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId) match
           case Some(nsid) =>
             sessionTurnStarts
               .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis()))
           case None => IO.unit
 
       case "agentToolEnd" =>
-        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
+        val nodeSessionId =
+          hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
         val label = hc.downField("label").as[String].getOrElse("")
         nodeSessionId match
           case Some(nsid) if label.nonEmpty =>
@@ -3274,7 +3427,8 @@ class WebSocketRoutes(
         end match
 
       case "agentDone" =>
-        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
+        val nodeSessionId =
+          hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
         nodeSessionId match
           case Some(nsid) =>
             // Flush any remaining accumulated text as a final AI bubble, with
@@ -3293,16 +3447,21 @@ class WebSocketRoutes(
                         nsid,
                         List(UiMessage.Ai(text, durationMs, model, None, System.currentTimeMillis()))
                       )
-                    else if durationMs.isDefined then
-                      // No text (flushed earlier) — backfill duration/model onto
-                      // the last saved AI message for this flow agent.
+                    else
+                      // No text (flushed earlier by agentToolEnd) — backfill
+                      // model + timestamp onto the last saved AI message. We no
+                      // longer gate on durationMs.isDefined: when sessionTurnStarts
+                      // was never set (startTime=0 → durationMs=None), team agent
+                      // AI messages still need model and timestamp so the popup
+                      // renders the badge (model name + time). durationMs stays
+                      // None when unknown; the frontend falls back to a simpler
+                      // badge (model + timestamp, no thinking phrase).
                       sharedResources.sessionStore.updateLastAiMeta(
                         nsid,
                         durationMs,
                         model,
                         System.currentTimeMillis()
                       )
-                    else IO.unit
                   }
               }
           case _ => IO.unit
@@ -3322,6 +3481,47 @@ class WebSocketRoutes(
             List(UiMessage.AskPermission(toolName, summary, permInput))
           )
         else IO.unit
+
+      case "user" =>
+        // Injected user events (from emitInjectedUserEvent) — persist so the
+        // blue injection bubble survives page refresh. Regular user messages
+        // are persisted separately in the WS message handler (not here).
+        //
+        // CRITICAL: the record target must be the event's own nodeSessionId
+        // (normalized), NOT the root WS sessionId. Sub-agent injected events
+        // (Mail delivery, Delegate/SubTask prompts) flow through the root
+        // wsSend — recording them to sessionId would accumulate every
+        // cross-agent injection into Nebula's ui.json. Matching the
+        // agentTextDelta / agentToolEnd cases above.
+        val text = hc.downField("text").as[String].getOrElse("")
+        val injected = hc.downField("injected").as[Boolean].getOrElse(false)
+        val source = hc.downField("source").as[Option[String]].getOrElse(None)
+        val evtType = hc.downField("eventType").as[Option[String]].getOrElse(None)
+        val sender = hc.downField("sender").as[Option[String]].getOrElse(None)
+        val targetSession = hc
+          .downField("nodeSessionId")
+          .as[String]
+          .toOption
+          .filter(_.nonEmpty)
+          .map(normalizeNodeSessionId)
+          .getOrElse(sessionId)
+        if text.nonEmpty && injected then
+          sharedResources.sessionStore.appendUiMessages(
+            targetSession,
+            List(
+              UiMessage.User(
+                text,
+                Nil,
+                injected = true,
+                timestamp = System.currentTimeMillis(),
+                source = source,
+                eventType = evtType,
+                sender = sender
+              )
+            )
+          )
+        else IO.unit
+        end if
 
       case "system" =>
         val content = hc.downField("content").as[String].getOrElse("")
@@ -3384,7 +3584,7 @@ class WebSocketRoutes(
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
     // Route /ask to the agent actor — it handles inline via pipeLlmCall with askMode
-    routeToAgent(sessionId)(ref => ref ! AgentCommand.AskQuestion(question, sessionId))
+    ensureAgent(sessionId)(ref => ref ! AgentCommand.AskQuestion(question, sessionId))
 
   private def executeSkill(
     skillName: String,
@@ -3396,7 +3596,7 @@ class WebSocketRoutes(
     EntityLoader.loadFlow(skillName).flatMap {
       case Some(_) =>
         val safeInput = input.replace("\"", "\\\"").replace("\n", " ")
-        routeToAgent(sessionId) { ref =>
+        ensureAgent(sessionId) { ref =>
           ref ! AgentCommand.SkillActivate(
             skillName,
             input,
@@ -3414,7 +3614,7 @@ class WebSocketRoutes(
             case Some(skillInfo) =>
               SkillService.loadSkill(skillInfo.filePath).flatMap {
                 case Some(content) =>
-                  routeToAgent(sessionId) { ref =>
+                  ensureAgent(sessionId) { ref =>
                     ref ! AgentCommand.SkillActivate(
                       skillName,
                       input,

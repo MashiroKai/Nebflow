@@ -139,12 +139,6 @@ object ExperienceExtractor:
 
   end writeSkillProposal
 
-  private def appendToAgentMemory(exp: Experience, agentName: String): Unit =
-    val memPath = PathUtil.dataRoot / "agents" / agentName / "memory.md"
-    val existing = if os.exists(memPath) then os.read(memPath) else ""
-    val entry = s"\n- ${exp.pattern} (evidence: ${exp.evidence.take(150)})"
-    os.write.over(memPath, existing + entry, createFolders = true)
-
   private def extractField(text: String, field: String): Option[String] =
     text.linesIterator
       .map(_.trim)

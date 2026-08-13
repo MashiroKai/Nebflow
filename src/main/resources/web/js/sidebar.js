@@ -3,96 +3,20 @@
 import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { showAgentModal, showBatchDeleteModal } from './modal.js';
-import { renderMarkdownWithMath, smartScroll, stopSpinner } from './utils.js';
+import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn } from './utils.js';
 import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
+import { cleanupCardIframes } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
 import { preloadModelCapabilities, renderVisionBadge, getVision, updateVision } from './modelCapabilities.js';
+import * as presets from './presets.js';
 
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
-
-// ---------- Fallback drag state (module level, survives re-renders) ----------
-let _fallbackDrag = null;
-
-document.addEventListener('mousemove', (e) => {
-  const d = _fallbackDrag;
-  if (!d) return;
-
-  if (!d.active) {
-    const dx = e.clientX - d.startX;
-    const dy = e.clientY - d.startY;
-    if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
-    d.active = true;
-    d.tag.classList.add('dragging');
-    // Create floating clone of the dragged tag
-    const rect = d.tag.getBoundingClientRect();
-    const clone = d.tag.cloneNode(true);
-    clone.style.position = 'fixed';
-    clone.style.left = rect.left + 'px';
-    clone.style.top = rect.top + 'px';
-    clone.style.width = rect.width + 'px';
-    clone.style.pointerEvents = 'none';
-    clone.style.opacity = '0.85';
-    clone.style.zIndex = '10000';
-    clone.style.transform = 'rotate(1.5deg) scale(1.05)';
-    clone.style.boxShadow = '0 4px 16px rgba(0,0,0,0.18)';
-    clone.style.transition = 'none';
-    document.body.appendChild(clone);
-    d.clone = clone;
-  } else {
-    // Move floating clone with cursor
-    const clone = d.clone;
-    clone.style.left = (e.clientX - 20) + 'px';
-    clone.style.top = (e.clientY - 12) + 'px';
-
-    // Detect element under cursor (hide clone temporarily)
-    clone.style.display = 'none';
-    const elemBelow = document.elementFromPoint(e.clientX, e.clientY);
-    clone.style.display = '';
-
-    const target = elemBelow?.closest('.cfg-tag');
-    if (target && target !== d.tag && target.closest('#cfg-fallback-list')) {
-      if (d.targetTag && d.targetTag !== target) d.targetTag.classList.remove('drag-over');
-      target.classList.add('drag-over');
-      d.targetTag = target;
-    } else if (d.targetTag) {
-      d.targetTag.classList.remove('drag-over');
-      d.targetTag = null;
-    }
-  }
-});
-
-document.addEventListener('mouseup', () => {
-  const d = _fallbackDrag;
-  if (!d) return;
-
-  // Clean up floating clone
-  if (d.clone) d.clone.remove();
-  d.tag?.classList.remove('dragging');
-
-  if (d.active && d.targetTag) {
-    const dstIdx = parseInt(d.targetTag.dataset.idx);
-    d.targetTag.classList.remove('drag-over');
-    if (dstIdx !== d.idx) {
-      const fallbacks = state.parsedConfig.llm.model.fallbacks;
-      const [moved] = fallbacks.splice(d.idx, 1);
-      const insertIdx = dstIdx <= d.idx ? dstIdx : dstIdx - 1;
-      fallbacks.splice(insertIdx, 0, moved);
-      state.configDirty = true;
-      flushConfigToServer();
-      renderSettings();
-    }
-  } else if (d.targetTag) {
-    d.targetTag.classList.remove('drag-over');
-  }
-
-  _fallbackDrag = null;
-});
 
 // ---------- Active Folder (VSCode-style) ----------
 export function setActiveFolder(folderId) {
@@ -181,7 +105,7 @@ function switchToSession(sessionId) {
   // Sync header indicators
   if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
   if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
-  if (typeof state.updateDelegateIndicator === 'function') state.updateDelegateIndicator();
+  if (typeof state.updateBgAgentIndicator === 'function') state.updateBgAgentIndicator();
   if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(chatViews.primary);
   // Close plan canvas if bound to a different session
   if (typeof state.onPlanSessionChange === 'function') state.onPlanSessionChange(sessionId);
@@ -232,7 +156,7 @@ export function renderAgentList() {
     });
     list.appendChild(el);
   });
-  lucide.createIcons();
+  createIconsIn(list);
   computeAgentStates();
 }
 
@@ -354,43 +278,14 @@ export function selectAgent(agentName) {
   sendWs({type: 'listAgentSessions', name: agentName});
 }
 
-/** Update header brand to show agent display name. */
-export function updateHeaderBrand(agentName) {
-  const brandEl = document.querySelector('.header-brand');
-  if (!brandEl) return;
-  const agent = state.agentsData.find(a => a.name === agentName);
-  if (agent) {
-    brandEl.textContent = agent.displayName || agent.name;
-  } else {
-    brandEl.textContent = 'nebflow';
-  }
-}
-
 // ---------- Settings Panel ----------
 export function renderSettings() {
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
   const llm = cfg.llm || {};
   const providers = llm.providers || {};
-  const model = llm.model || {};
   const mcpServers = state.mcpServers || [];
-  const compact = cfg.compact || {};
   const providerNames = Object.keys(providers);
-
-  // Build model options from all providers
-  const allModels = [];
-  providerNames.forEach(pName => {
-    const p = providers[pName];
-    (p.models || []).forEach(m => {
-      allModels.push({ ref: `${pName}/${m.id}`, label: `${pName}/${m.id}` });
-    });
-  });
-
-  const defaultModel = model.default || '';
-  const fallbacks = model.fallbacks || [];
-
-  // Load card design prompt
-  sendWs({type: 'getCardDesign'});
 
   // Build language selector options
   const locales = getAvailableLocales();
@@ -425,19 +320,6 @@ export function renderSettings() {
       </div>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">${t('settings.compaction')}</div>
-      <div class="cfg-form-group">
-        <label class="cfg-label">${t('settings.compactTtl')} <span class="cfg-hint">(${t('settings.compactTtlUnit')})</span></label>
-        <input class="cfg-input" id="cfg-compact-ttl" type="number" min="1" max="1440" value="${compact.microCacheTtlMinutes ?? 120}" autocomplete="off">
-        <div class="cfg-hint">${t('settings.compactTtlHint')}</div>
-      </div>
-      <div class="cfg-form-group">
-        <label class="cfg-label">${t('settings.keepRecent')}</label>
-        <input class="cfg-input" id="cfg-compact-keep" type="number" min="0" max="50" value="${compact.microKeepRecent ?? 5}" autocomplete="off">
-        <div class="cfg-hint">${t('settings.keepRecentHint')}</div>
-      </div>
-    </div>
-    <div class="settings-section">
       <div class="settings-section-title">${t('settings.providers')}</div>
       <div id="provider-list">
         ${providerNames.map(name => renderProviderCard(name, providers[name])).join('')}
@@ -445,16 +327,17 @@ export function renderSettings() {
       <button class="cfg-btn cfg-btn-add" id="btn-add-provider">${t('settings.addProvider')}</button>
     </div>
     <div class="settings-section">
+      <div class="settings-section-title">${t('settings.presets')}</div>
+      <div id="preset-migrate-banner" style="display:none"></div>
+      <div id="preset-list"><div class="cfg-empty">Loading…</div></div>
+      <button class="cfg-btn cfg-btn-add" id="btn-add-preset">${t('settings.addPreset')}</button>
+    </div>
+    <div class="settings-section">
       <div class="settings-section-title">${t('settings.mcpServers')}</div>
       <div id="mcp-server-list">
         ${mcpServers.map(s => renderMcpServerCard(s.id, s.enabled)).join('')}
         ${mcpServers.length === 0 ? `<div class="cfg-empty">${t('settings.noMcp')}</div>` : ''}
       </div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.cardDesign')}</div>
-      <div class="cfg-hint" style="margin-bottom:8px">${t('settings.cardDesignHint')}</div>
-      <button class="cfg-btn" id="btn-edit-card-design">${t('settings.cardDesignEdit')}</button>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
@@ -485,8 +368,11 @@ export function renderSettings() {
       </div>
     </div>`;
 
-  bindSettingsEvents(content, cfg, allModels);
+  bindSettingsEvents(content, cfg);
   bindNeblinkEvents(() => renderSettings());
+
+  // Async-load the preset management section (non-blocking)
+  loadPresetsSection();
 
   // Pre-fetch model capabilities, then refresh badges on provider cards
   preloadModelCapabilities(() => {
@@ -551,7 +437,262 @@ function renderMcpServerCard(name, enabled) {
     </div>`;
 }
 
-function bindSettingsEvents(content, cfg, allModels) {
+// ---------- Preset management section (P3) ----------
+
+/** Reverse-lookup: which agents reference a given preset name. */
+function presetUsedBy(agentsMap, presetName) {
+  return Object.entries(agentsMap || {})
+    .filter(([, v]) => v === presetName)
+    .map(([k]) => k)
+    .sort();
+}
+
+function renderPresetCard(p, defaultPreset, agentsMap) {
+  const isDefault = p.name === defaultPreset;
+  const usedBy = presetUsedBy(agentsMap, p.name);
+  const chain = [p.preferred, ...(p.fallbacks || [])].filter(Boolean);
+  const usedByHtml = usedBy.length > 0
+    ? `<span class="preset-card-agents" title="${escapeHtml(usedBy.join(', '))}">${t('preset.usedBy', { n: usedBy.length })}</span>`
+    : `<span class="preset-card-agents">${t('preset.usedByNone')}</span>`;
+  return `
+    <div class="cfg-card preset-card" data-preset="${escapeHtml(p.name)}">
+      <div class="cfg-card-header">
+        <span class="cfg-card-title">${escapeHtml(p.name)}</span>
+        ${isDefault ? `<span class="preset-default-badge">${t('preset.default')}</span>` : ''}
+      </div>
+      <div class="preset-card-body">
+        ${p.description ? `<div class="preset-card-desc">${escapeHtml(p.description)}</div>` : ''}
+        ${presets.presetChainHtml(chain, '')}
+        <div class="preset-card-footer">
+          ${usedByHtml}
+          <span class="preset-card-actions">
+            <button class="cfg-btn cfg-btn-sm" data-action="default" ${isDefault ? 'disabled' : ''}>${t('preset.setDefault')}</button>
+            <button class="cfg-btn cfg-btn-sm" data-action="edit">${t('preset.edit')}</button>
+            <button class="cfg-btn cfg-btn-sm" data-action="delete" ${isDefault ? 'disabled' : ''}>${t('preset.delete')}</button>
+          </span>
+        </div>
+      </div>
+    </div>`;
+}
+
+/** Load presets + agent mapping, render cards, bind section events. */
+async function loadPresetsSection() {
+  const listEl = document.getElementById('preset-list');
+  if (!listEl) return; // settings panel not open
+
+  const data = await presets.fetchPresets();
+  if (!document.getElementById('preset-list')) return; // panel closed while fetching
+  if (!data) {
+    listEl.innerHTML = `<div class="cfg-empty">${t('preset.loadFailed')}</div>`;
+    return;
+  }
+
+  const presetList = data.presets || [];
+  const defaultPreset = data.defaultPreset || '';
+  const agentsMap = data.agents || {};
+
+  listEl.innerHTML = presetList.length > 0
+    ? presetList.map(p => renderPresetCard(p, defaultPreset, agentsMap)).join('')
+    : `<div class="cfg-empty">${t('preset.empty')}</div>`;
+
+  // Card action buttons (delegation on the list container)
+  listEl.onclick = async (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn || btn.disabled) return;
+    const card = btn.closest('.preset-card');
+    const name = card?.dataset.preset;
+    const preset = presetList.find(p => p.name === name);
+    if (!preset) return;
+
+    if (btn.dataset.action === 'default') {
+      try {
+        await presets.setDefaultPreset(name);
+        loadPresetsSection();
+      } catch (err) { window.__showToast?.(err.message, 'error'); }
+    } else if (btn.dataset.action === 'edit') {
+      showPresetModal(preset, () => loadPresetsSection());
+    } else if (btn.dataset.action === 'delete') {
+      const usedBy = presetUsedBy(agentsMap, name);
+      const msg = usedBy.length > 0
+        ? t('preset.deleteConfirm', { name, n: usedBy.length })
+        : t('preset.deleteConfirmNone', { name });
+      window.__showConfirm?.(t('preset.deleteTitle'), msg, async () => {
+        try {
+          await presets.deletePreset(name);
+          loadPresetsSection();
+        } catch (err) { window.__showToast?.(err.message, 'error'); }
+      });
+    }
+  };
+
+  // Add-preset button (recreated each renderSettings — bind here)
+  const addBtn = document.getElementById('btn-add-preset');
+  if (addBtn) addBtn.onclick = () => showPresetModal(null, () => loadPresetsSection());
+
+  // Legacy migration banner → P5 migration dialog
+  presets.detectLegacyAgents().then(legacy => {
+    const banner = document.getElementById('preset-migrate-banner');
+    if (!banner) return;
+    if (legacy.length === 0) { banner.style.display = 'none'; return; }
+    banner.style.display = '';
+    banner.innerHTML = `
+      <div class="preset-migrate-inner">
+        <span class="preset-migrate-text">⚠ ${t('preset.migrateBanner', { n: legacy.length })}</span>
+        <button class="cfg-btn cfg-btn-sm" id="btn-migrate-legacy">${t('preset.migrateAction')}</button>
+      </div>`;
+    banner.querySelector('#btn-migrate-legacy')?.addEventListener('click', () => {
+      showMigrationDialog(legacy, () => loadPresetsSection());
+    });
+  });
+}
+
+/**
+ * Legacy migration dialog (P5). Stage 1: local preview grouped by config
+ * fingerprint. Stage 2: POST /api/presets/migrate-legacy, then refresh.
+ */
+async function showMigrationDialog(legacyAgents, onDone) {
+  document.getElementById('cfg-modal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'cfg-modal';
+  overlay.className = 'cfg-modal-overlay';
+  overlay.innerHTML = `
+    <div class="cfg-modal">
+      <div class="cfg-modal-title">${t('preset.migrateTitle')}</div>
+      <div class="cfg-modal-body" id="preset-migrate-body">
+        <div class="cfg-empty">Loading…</div>
+      </div>
+      <div class="cfg-modal-actions">
+        <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">${t('modal.cancel')}</button>
+        <button class="cfg-btn cfg-btn-save" id="preset-migrate-run">${t('preset.migrateExecute')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#cfg-modal-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  // Stage 1 — preview (local computation; existing names needed for mig-<n>)
+  const body = overlay.querySelector('#preset-migrate-body');
+  const presetData = await presets.fetchPresets();
+  if (!overlay.isConnected) return;
+  const groups = presets.previewMigration(legacyAgents, presetData);
+  const newCount = groups.filter(g => !g.reused).length;
+
+  body.innerHTML = `
+    <div class="preset-migrate-summary">${t('preset.migrateSummary', { agents: legacyAgents.length, presets: newCount })}</div>
+    ${groups.map(g => `
+      <div class="preset-migrate-group">
+        <div class="preset-migrate-group-head">
+          <span class="preset-migrate-group-name">「${escapeHtml(g.presetName)}」</span>
+          ${g.reused ? `<span class="preset-migrate-reuse">${t('preset.migrateReuse')}</span>` : ''}
+          <span class="preset-migrate-group-arrow">←</span>
+          <span class="preset-migrate-group-agents">${escapeHtml(g.agents.join(', '))}</span>
+        </div>
+        ${presets.presetChainHtml([g.preferred, ...g.fallbacks].filter(Boolean), '')}
+      </div>`).join('')}
+    <div class="preset-migrate-note">${t('preset.migrateNote')}</div>
+    <div class="preset-migrate-error" id="preset-migrate-error" style="display:none"></div>`;
+
+  // Stage 2 — execute
+  const runBtn = overlay.querySelector('#preset-migrate-run');
+  runBtn.addEventListener('click', async () => {
+    runBtn.disabled = true;
+    overlay.querySelector('#cfg-modal-cancel').disabled = true;
+    runBtn.textContent = t('preset.migrateRunning');
+    const errEl = overlay.querySelector('#preset-migrate-error');
+    errEl.style.display = 'none';
+    try {
+      const result = await presets.migrateLegacy(legacyAgents.map(a => a.name));
+      const migrated = result?.migratedAgents?.length ?? legacyAgents.length;
+      close();
+      window.__showToast?.(t('preset.migrateDone', { n: migrated }), 'success');
+      onDone?.();
+    } catch (err) {
+      errEl.textContent = `${t('preset.migrateFailed')}: ${err.message}`;
+      errEl.style.display = '';
+      runBtn.disabled = false;
+      overlay.querySelector('#cfg-modal-cancel').disabled = false;
+      runBtn.textContent = t('preset.migrateExecute');
+    }
+  });
+}
+
+/**
+ * Preset create/edit modal. Reuses the cfg-modal skeleton; the model chain
+ * editor is the shared drag-to-reorder component from presets.js.
+ */
+function showPresetModal(existing, onSaved) {
+  const isEdit = !!existing;
+  document.getElementById('cfg-modal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'cfg-modal';
+  overlay.className = 'cfg-modal-overlay';
+  overlay.innerHTML = `
+    <div class="cfg-modal">
+      <div class="cfg-modal-title">${isEdit ? t('preset.editTitle', { name: existing.name }) : t('preset.addTitle')}</div>
+      <div class="cfg-modal-body">
+        <div class="cfg-form-group">
+          <label class="cfg-label">${t('preset.fieldName')}</label>
+          <input class="cfg-input" data-field="name" type="text" value="${escapeHtml(existing?.name || '')}" placeholder="vision" ${isEdit ? 'disabled' : ''} autocomplete="off">
+        </div>
+        <div class="cfg-form-group">
+          <label class="cfg-label">${t('preset.fieldDescription')}</label>
+          <input class="cfg-input" data-field="description" type="text" value="${escapeHtml(existing?.description || '')}" autocomplete="off">
+        </div>
+        <div class="cfg-form-group">
+          <label class="cfg-label">${t('preset.fieldChain')}</label>
+          <div class="preset-drag-hint">${t('preset.dragHint')}</div>
+          <div class="preset-chain-editor" id="preset-chain-editor"></div>
+        </div>
+      </div>
+      <div class="cfg-modal-actions">
+        <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">${t('modal.cancel')}</button>
+        <button class="cfg-btn cfg-btn-save" id="cfg-modal-save">${t('settings.save')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const initialChain = existing ? [existing.preferred, ...(existing.fallbacks || [])].filter(Boolean) : [];
+  const editor = presets.renderChainEditor(
+    overlay.querySelector('#preset-chain-editor'),
+    initialChain,
+    presets.getAllModelRefs(),
+  );
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#cfg-modal-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  overlay.querySelector('#cfg-modal-save').addEventListener('click', async () => {
+    const name = overlay.querySelector('[data-field="name"]').value.trim();
+    const description = overlay.querySelector('[data-field="description"]').value.trim();
+    if (!isEdit) {
+      if (!name) { window.__showToast?.(t('preset.nameRequired'), 'error'); return; }
+      if (/\s/.test(name)) { window.__showToast?.(t('preset.noSpaces'), 'error'); return; }
+    }
+    const chain = editor.getChain();
+    const body = {
+      name: isEdit ? existing.name : name,
+      description,
+      preferred: chain[0] || null,
+      fallbacks: chain.slice(1),
+    };
+    try {
+      if (isEdit) await presets.updatePreset(existing.name, body);
+      else await presets.createPreset(body);
+      close();
+      onSaved?.();
+    } catch (err) {
+      window.__showToast?.(err.message, 'error');
+    }
+  });
+}
+
+
+function bindSettingsEvents(content, cfg) {
   // Thinking toggle
   document.getElementById('toggle-thinking')?.addEventListener('click', function() {
     this.classList.toggle('on');
@@ -584,23 +725,6 @@ function bindSettingsEvents(content, cfg, allModels) {
   document.getElementById('cfg-language')?.addEventListener('change', function() {
     setLocale(this.value);
     renderSettings();
-  });
-
-  // --- Compact config ---
-  const compactInputs = ['cfg-compact-ttl', 'cfg-compact-keep'];
-  compactInputs.forEach(id => {
-    document.getElementById(id)?.addEventListener('change', () => {
-      if (!state.parsedConfig) state.parsedConfig = {};
-      const ttl = parseInt(document.getElementById('cfg-compact-ttl')?.value) ?? 120;
-      const keep = parseInt(document.getElementById('cfg-compact-keep')?.value) ?? 5;
-      state.parsedConfig.compact = {
-        ...(state.parsedConfig.compact || {}),
-        microCacheTtlMinutes: ttl,
-        microKeepRecent: keep
-      };
-      state.configDirty = true;
-      flushConfigToServer();
-    });
   });
 
   // --- Provider add/edit/remove ---
@@ -654,8 +778,6 @@ function bindSettingsEvents(content, cfg, allModels) {
     });
   });
 
-  // Model chain is now edited via the input-bar model picker (modelPicker.js).
-
   // --- MCP Servers toggle ---
   content.querySelectorAll('.cfg-toggle[data-mcp]').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -688,11 +810,6 @@ function bindSettingsEvents(content, cfg, allModels) {
 
   document.getElementById('btn-reload-config')?.addEventListener('click', () => {
     sendWs({type: 'getConfig'});
-  });
-
-  // --- Card design prompt ---
-  document.getElementById('btn-edit-card-design')?.addEventListener('click', () => {
-    import('./modal.js').then(m => m.showCardDesignModal());
   });
 
   // --- Check for updates ---
@@ -1293,7 +1410,7 @@ export function renderSessionSidebar(sessionData, activeId) {
       }
     });
   });
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(sessionList);
   updateHeaderSessionName();
   computeAgentStates();
 }
@@ -1425,6 +1542,7 @@ export function resetChatForActiveSession() {
     pv.dom.queueBar.classList.remove('visible');
   }
   window.dispatchEvent(new CustomEvent('queuebar-refresh', { detail: { sessionId: state.activeSessionId } }));
+  cleanupCardIframes(pv.dom.chat);
   pv.dom.chat.innerHTML = '';
   pv.dom.chat.querySelectorAll('.history-loader, .history-end').forEach(el => el.remove());
 
@@ -1498,22 +1616,47 @@ export function resetChatForActiveSession() {
   pv.dom.sendBtn.style.display = isBusy ? 'none' : 'flex';
   pv.dom.stopBtn.style.display = isBusy ? 'flex' : 'none';
 
-  pv.dom.statusWrap.classList.remove('on');
   stopSpinner();
 
   if (!isBusy) pv.dom.input.focus();
 
   renderTaskList(state.sessionTasks[sid] || [], undefined, sid);
   if (state.updateBgTasksUI) state.updateBgTasksUI();
-  if (state.updateDelegateIndicator) state.updateDelegateIndicator();
+  if (state.updateBgAgentIndicator) state.updateBgAgentIndicator();
   if (state.updateBypassToggle) state.updateBypassToggle(pv);
 }
 
 export function deleteSession(sessionId) {
+  // Release any live card iframe observers/browsing contexts for this
+  // session's messages before the DOM is dropped (P0-1/P1-5).
+  if (activeView?.dom?.chat && state.activeSessionId === sessionId) {
+    cleanupCardIframes(activeView.dom.chat);
+  }
   delete state.sessionInputDrafts[sessionId];
   state.unreadSessions.delete(sessionId);
   state.markedUnreadSessions.delete(sessionId);
   state.pinnedSessions.delete(sessionId);
+  // Session-keyed runtime state — purge so deleted sessions don't accumulate
+  // stale buffers/DOM refs over the app's lifetime (P1-5).
+  state.attentionSessions.delete(sessionId);
+  state.busySessionIds.delete(sessionId);
+  state.compactingSessionIds.delete(sessionId);
+  state.selectedSessionIds.delete(sessionId);
+  if (state.lastSelectedSessionId === sessionId) state.lastSelectedSessionId = null;
+  delete state.sessionBusyTimeouts[sessionId];
+  delete state.sessionTexts[sessionId];
+  delete state.sessionAskBuffers[sessionId];
+  delete state.sessionToolCards[sessionId];
+  delete state.sessionPendingTools[sessionId];
+  delete state.sessionPendingAiMessages[sessionId];
+  delete state.sessionTasks[sessionId];
+  delete state.sessionThinkingBuffers[sessionId];
+  delete state.sessionBgTasks[sessionId];
+  delete state.sessionBgAgents[sessionId];
+  delete state.sessionAgentMap[sessionId];
+  delete state.sessionModelInfo[sessionId];
+  // Hidden bg-agent popup views hold full DOM containers keyed by sessionId.
+  import('./bgAgentPopup.js').then(({ removeStepView }) => removeStepView(sessionId)).catch(() => {});
   persistUnread();
   persistMarkedUnread();
   persistPinned();
@@ -2002,6 +2145,7 @@ export function initHeaderModelInfo() {
   }
 }
 
+
 /** Determine which agent a new session/folder should belong to, based on context.
  *  Mirrors the folder-id resolution logic: active folder → active session → fallback. */
 export function getTargetAgent() {
@@ -2073,7 +2217,7 @@ export function createNewFolder(parentFolderId) {
   container.insertBefore(row, container.firstChild);
 
   const input = row.querySelector('.folder-new-input');
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(row);
   input.focus();
 
   const cancel = () => row.remove();

@@ -6,8 +6,8 @@ import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from '.
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
-import { renderWithRegistry } from './cardRegistry.js';
-import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard } from './chat.js';
+import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
+import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow } from './chat.js';
 
 // ---------- AI message badge (no duration) ----------
 // Builds a duration-badge pill with timestamp + copy button, matching
@@ -30,18 +30,6 @@ function createAiCopyBadge(timestamp, text) {
   if (text) badge.appendChild(createMsgCopyButton(text));
   return badge;
 }
-
-// ---------- Duration formatting (mirrors chat.js formatDuration) ----------
-function formatDurationPersisted(ms) {
-  const totalSeconds = ms / 1000;
-  if (totalSeconds < 1) return '< 1s';
-  const rounded = Math.round(totalSeconds);
-  if (rounded < 60) return rounded + 's';
-  const minutes = Math.floor(rounded / 60);
-  const seconds = rounded % 60;
-  return minutes + 'm ' + seconds + 's';
-}
-
 
 // ---------- Safe localStorage write with quota handling ----------
 function safeSetItem(key, value) {
@@ -160,6 +148,32 @@ export function saveMsg(entry, sessionId) {
   }
 }
 
+// ---------- Injected-bubble direction filter ----------
+// The blue injected bubble is for content RECEIVED by this session's agent
+// (Mail from others, Delegate/SubTask completion notifications, ExternalEvent
+// results). The backend currently records EVERY injected user event flowing
+// through the root WS connection into the ROOT session's ui.json
+// (makeRecordingWsSend's "user" case ignores the event's own session id), so a
+// restored history can contain injections that were actually delivered
+// elsewhere — including this agent's own OUTGOING sends. Those are not
+// received content: never render them as injected bubbles.
+//   - sender === own agent name  → a Mail this agent SENT (the bubble belongs
+//     to the recipient's session)
+//   - source delegate/subtask without eventType → a task prompt this agent
+//     DISPATCHED (completion notifications always carry an eventType)
+function ownAgentName() {
+  const sid = state.activeSessionId;
+  if (!sid) return null;
+  const s = (state.sessions || []).find(x => x && x.id === sid);
+  return s ? (s.agentName || s.name || null) : null;
+}
+function isOutgoingInjection(m) {
+  const own = ownAgentName();
+  if (m.sender && own && m.sender === own) return true;
+  if ((m.source === 'delegate' || m.source === 'subtask') && !m.eventType) return true;
+  return false;
+}
+
 // ---------- Load messages for the active session from localStorage ----------
 export function loadMsgs() {
   if (state.activeSessionId) {
@@ -179,6 +193,15 @@ export function restoreFromStorage() {
   const msgs = loadMsgs();
   msgs.forEach((m, i) => {
     if (m.type === 'user') {
+      // Injected messages (task P+Q): render as light-blue bubble via the
+      // shared builder — same visual as the live WS path. Outgoing sends
+      // (misrecorded into this session by the backend) are not received
+      // content — skip them.
+      if (m.injected && m.source) {
+        if (isOutgoingInjection(m)) return;
+        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender));
+        return;
+      }
       // Look ahead: if next message is a skill-activated system message,
       // render as a skill bubble (with label) instead of a plain user bubble.
       const next = msgs[i + 1];
@@ -502,13 +525,25 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   // Defer expensive markdown+KaTeX rendering into post-append batches.
   // DOM elements are created synchronously with plain text; innerHTML is upgraded via rAF.
   const pendingRenders = [];
-  const deferMd = (el, text) => {
+  const deferMd = (el, text, parseVoice = true) => {
     el.textContent = text;
-    pendingRenders.push({ el, text });
+    pendingRenders.push({ el, text, parseVoice });
   };
   msgs.forEach((m, i) => {
     if (skipMsg) { skipMsg = false; return; }
     if (m.type === 'user') {
+      // Injected messages (task P+Q): light-blue bubble via shared builder.
+      // Skip outgoing sends misrecorded into this session (see
+      // isOutgoingInjection) — the bubble is for received content only.
+      if (m.injected && m.source) {
+        if (isOutgoingInjection(m)) return;
+        // deferMd with parseVoice=false (same as the live path): injected
+        // messages join the rAF markdown batch — no synchronous render storm
+        // on hard-refresh (P0-2).
+        fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender,
+          (el, text) => deferMd(el, text, false)));
+        return;
+      }
       // Look ahead: if next message is a skill-activated system message,
       // render as a skill bubble (with label) instead of a plain user bubble.
       const next = msgs[i + 1];
@@ -653,6 +688,32 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           row.appendChild(card);
           fragment.appendChild(row);
         } else {
+        // RemoveUnnecessary tool: dedicated rendering (shared with live renderTool)
+        const _tn = m.label ? m.label.split('(')[0].split('\n')[0].trim() : '';
+        if (_tn === 'RemoveUnnecessary' && m.input) {
+          const icon2 = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                               : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+          const ruLabel = localizeToolLabel(m.label);
+          const ruLabelParts = ruLabel.split('\n', 2);
+          const ruLabelHtml = esc(ruLabelParts[0])
+            + (ruLabelParts.length > 1 ? '<br><span class="tool-detail">' + esc(ruLabelParts[1]) + '</span>' : '');
+          let ruSummaryBody = '';
+          try {
+            const ruInp = typeof m.input === 'string' ? JSON.parse(m.input) : m.input;
+            const userSummary = ruInp.summary || '';
+            if (userSummary) {
+              ruSummaryBody = '<div class="tool-removeunnecessary-summary">' + renderMarkdownWithMath(userSummary) + '</div>';
+            }
+          } catch {}
+          const ruResultText = m.content ? m.content.replace(/Summary:.*$/s, '').trim() : '';
+          card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon2 + '</span>' +
+            '<div class="content"><div class="label">' + ruLabelHtml + '</div>' +
+            (ruResultText ? '<div class="tool-result-badge">' + esc(ruResultText) + '</div>' : '') +
+            (ruSummaryBody ? '<div class="body">' + ruSummaryBody + '</div>' : '') + '</div>';
+          row.appendChild(card);
+          fragment.appendChild(row);
+          if (ruSummaryBody) attachToolClick(card);
+        } else {
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const detailHtml = buildToolDetail(m.input, m.label);
@@ -673,6 +734,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         row.appendChild(card);
         fragment.appendChild(row);
         if (hasBody) attachToolClick(card);
+        }
         }
       }
     } else if (m.type === 'askUser') {
@@ -839,8 +901,8 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   function upgradeBatch() {
     const end = Math.min(ri + BATCH_SIZE, pendingRenders.length);
     for (; ri < end; ri++) {
-      const { el, text } = pendingRenders[ri];
-      el.innerHTML = renderMarkdownWithMath(text);
+      const { el, text, parseVoice } = pendingRenders[ri];
+      el.innerHTML = renderMarkdownWithMath(text, parseVoice);
     }
     if (ri < pendingRenders.length) {
       requestAnimationFrame(upgradeBatch);
@@ -869,7 +931,10 @@ export function migrateLegacyIfNeeded() {
         pruneAndRetrySetSessions(all, state.activeSessionId);
       }
       // Re-render chat with the migrated data
-      if (activeView?.dom?.chat) activeView.dom.chat.innerHTML = '';
+      if (activeView?.dom?.chat) {
+        cleanupCardIframes(activeView.dom.chat);
+        activeView.dom.chat.innerHTML = '';
+      }
       restoreFromStorage();
     }
   } catch(e) {}

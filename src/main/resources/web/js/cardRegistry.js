@@ -286,12 +286,32 @@ function renderHtmlCard(container, html, title) {
       }
     }, { rootMargin: '300px' });
     io.observe(iframe);
+    // Register cleanup so mass DOM removal (session switch, history
+    // reload) can release the observer + iframe browsing context instead
+    // of leaking them (each leaked iframe keeps its own DOM+JS engine).
+    iframe._nfCleanup = () => {
+      io.disconnect();
+      _firstHeightDone.delete(id);
+      iframe.removeAttribute('srcdoc');
+    };
     // Safety timeout: load after 3s even if observer never fires
     // (e.g. display:none ancestor, or already in viewport before observer attaches).
     setTimeout(applySrcdoc, 3000);
   } else {
     applySrcdoc();
   }
+}
+
+/** Release all card iframes under root: disconnect their IntersectionObservers,
+ *  clear first-height tracking, and drop srcdoc so the browsing contexts can
+ *  be GC'd. MUST be called before mass-removing chat DOM (innerHTML = '') —
+ *  otherwise observers keep the iframes (and their independent browsing
+ *  contexts, 2-10MB each) alive forever. */
+export function cleanupCardIframes(root) {
+  if (!root || !root.querySelectorAll) return;
+  root.querySelectorAll('iframe[data-nf-card-id]').forEach(f => {
+    try { if (f._nfCleanup) f._nfCleanup(); } catch (e) { /* non-critical */ }
+  });
 }
 
 /**
@@ -342,12 +362,6 @@ export function renderWithRegistry(container, text, toolName) {
 
   return false;
 }
-
-/** No-op for backward compatibility. */
-export function registerCardRenderer() {}
-
-/** No-op for backward compatibility. */
-export function clearRenderers() {}
 
 /**
  * Watch for system theme changes (light/dark) and propagate the new CSS

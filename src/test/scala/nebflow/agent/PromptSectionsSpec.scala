@@ -1,6 +1,7 @@
 package nebflow.agent
 
 import nebflow.agent.PromptSections.*
+import nebflow.core.PathUtil
 
 class PromptSectionsSpec extends munit.FunSuite:
 
@@ -55,12 +56,12 @@ class PromptSectionsSpec extends munit.FunSuite:
   // ============================================================
 
   test("Voice section included when voiceEnabled"):
-    val ctx = PromptContext(voiceEnabled = true, envInfo = "## Environment\n\ntest")
+    val ctx = PromptContext(voiceEnabled = true)
     val blocks = buildConditionalBlocks(ctx)
     assert(blocks.contains("## Voice Output"))
 
   test("Voice section excluded when voice muted"):
-    val ctx = PromptContext(voiceEnabled = false, envInfo = "## Environment\n\ntest")
+    val ctx = PromptContext(voiceEnabled = false)
     val blocks = buildConditionalBlocks(ctx)
     assert(!blocks.contains("## Voice Output"))
 
@@ -130,7 +131,6 @@ class PromptSectionsSpec extends munit.FunSuite:
     val ctx = PromptContext(
       availableTools = Set("AskUserQuestion", "Read", "Pop"),
       voiceEnabled = true,
-      envInfo = "## Environment",
       deviceInfo = "device-list",
       hasDevices = true,
       agentSessionsText = "# Active Sessions",
@@ -140,7 +140,6 @@ class PromptSectionsSpec extends munit.FunSuite:
       rulesMd = Some("rule1")
     )
     val blocks = buildConditionalBlocks(ctx)
-    val envIdx = blocks.indexOf("## Environment")
     val askIdx = blocks.indexOf("## Asking the User")
     val readIdx = blocks.indexOf("## Read Tool")
     val popIdx = blocks.indexOf("## Visual Reporting")
@@ -151,7 +150,7 @@ class PromptSectionsSpec extends munit.FunSuite:
     val skillsIdx = blocks.indexOf("# Skills")
     val rulesIdx = blocks.indexOf("## Project Rules")
 
-    assert(envIdx < askIdx, "Environment should come before AskUser")
+    assert(askIdx >= 0, "AskUser section should be present")
     assert(askIdx < readIdx, "AskUser should come before Read")
     assert(readIdx < popIdx, "Read should come before Visual Reporting")
     assert(popIdx < voiceIdx, "Visual Reporting should come before Voice")
@@ -165,10 +164,10 @@ class PromptSectionsSpec extends munit.FunSuite:
   // Empty context
   // ============================================================
 
-  test("minimal context with voice disabled produces empty output"):
+  test("minimal context with voice disabled excludes voice section"):
     val ctx = PromptContext(voiceEnabled = false)
     val blocks = buildConditionalBlocks(ctx)
-    assert(blocks.isEmpty)
+    assert(!blocks.contains("## Voice Output"))
 
   // ============================================================
   // stripSection / stripAllMigrated
@@ -215,5 +214,37 @@ class PromptSectionsSpec extends munit.FunSuite:
     assert(cond(PromptContext(availableTools = Set("Read", "Write", "Grep"))))
     assert(!cond(PromptContext(availableTools = Set("Read")))) // missing Write
     assert(!cond(PromptContext(availableTools = Set.empty)))
+
+  // ============================================================
+  // Cache v2 (2026-08-11): task list moved out of systemStable
+  // ============================================================
+
+  test("Task list excluded from system prompt (cache v2 — moves to user-turn reminder)"):
+    val ctx = PromptContext(taskListText = "## Current Tasks\n\n#1 [pending] Fix the cache bug")
+    val blocks = buildConditionalBlocks(ctx)
+    assert(!blocks.contains("## Current Tasks"), "task list must not be part of systemStable")
+    assert(!blocks.contains("Fix the cache bug"))
+
+  test("envInfoSection renders the file-based Environment block for change detection"):
+    // Self-contained: build a temp environment section so the test does not
+    // depend on ~/.nebflow existing or on test-class ordering (other suites
+    // set a global dataRoot). The previous dataRoot is restored afterwards;
+    // loadFileSectionsCached is mtime-keyed, so the next call re-reads from
+    // the restored root automatically.
+    val prevRoot = PathUtil.dataRoot
+    val tempRoot = os.pwd / "target" / "test-env-info"
+    val envDir = tempRoot / "prompts" / "sections" / "environment"
+    try
+      os.remove.all(tempRoot)
+      os.makeDir.all(envDir)
+      os.write.over(envDir / "condition.json", """{"order": 100, "condition": "always"}""")
+      os.write.over(envDir / "prompt.md", "## Environment\n\n| Chat width | ~{{chat_width}}px |")
+      PathUtil.setDataRoot(tempRoot)
+      val env = envInfoSection(PromptContext(chatWidth = 1200))
+      assert(env.contains("## Environment"), "environment section should be rendered")
+      assert(env.contains("Chat width"), env)
+    finally
+      PathUtil.setDataRoot(prevRoot)
+      os.remove.all(tempRoot)
 
 end PromptSectionsSpec

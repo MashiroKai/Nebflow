@@ -4,7 +4,7 @@ import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath } from '
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
   setBusy, clearBusy, clearStatus,
-  renderUserBubble, appendAiText, finishAi,
+  renderUserBubble, renderInjectedBubble, appendAiText, finishAi,
   appendAgentText, finishAgent, getAgentColor,
   renderTool, renderToolPending, renderError, renderTimeoutNotice,
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
@@ -29,8 +29,8 @@ import {
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup } from './persistence.js';
 import { renderTaskList } from './taskList.js';
-import { renderWithRegistry } from './cardRegistry.js';
-import { escapeHtml } from './utils.js';
+import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
+import { escapeHtml, isBgAgentId } from './utils.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
 import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
@@ -40,26 +40,16 @@ import { initDaemons } from './daemons.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { handleFlowAgentHistory } from './flowAgentPopup.js';
+import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
 import { initNeblink, checkPairingRedirect } from './neblink.js';
 import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
 import * as planMode from './planMode.js';
-import { initCanvas, restoreTabs } from './canvas.js';
+import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
+import { initLightbox } from './lightbox.js';
 import * as flowCanvas from './flowCanvas.js';
 import { initColResizers } from './colResizer.js';
-import { initPanelDragger } from './panelDragger.js';
 import { initActivityBar } from './activityBar.js';
-import { initModelPicker, refreshModelPicker } from './modelPicker.js';
-
-// Randomized cosmic thinking bubble text
-const THINKING_VARIANTS = 6; // chat.thinking.0 through .5
-let _lastThinkingIdx = -1;
-function randomThinkingText() {
-  let idx;
-  do { idx = Math.floor(Math.random() * THINKING_VARIANTS); } while (idx === _lastThinkingIdx && THINKING_VARIANTS > 1);
-  _lastThinkingIdx = idx;
-  return t('chat.thinking.' + idx);
-}
 
 // ---------- Live thinking timer ----------
 let _thinkingTimerInterval = null;
@@ -131,11 +121,8 @@ state.dom = {
   voiceBtn: document.getElementById('voice-btn'),
   attachBtn: document.getElementById('attach-btn'),
   attPreview: document.getElementById('attachment-preview'),
-  statusWrap: document.getElementById('status-wrap'),
-  statusText: document.getElementById('status-text'),
   voiceOverlay: document.getElementById('voice-overlay'),
   voiceText: document.getElementById('voice-text'),
-  lottieSpinnerEl: document.getElementById('lottie-spinner'),
   sessionList: document.getElementById('session-list'),
   sessionNameEl: document.getElementById('session-name'),
   slashDropdown: document.getElementById('slash-dropdown'),
@@ -161,13 +148,14 @@ state.dom = {
   // Header status indicators — surfaced on state.dom for ws.js indicator updates.
   headerModelInfoEl: document.getElementById('header-model-info'),
   bypassToggleEl: document.getElementById('bypass-toggle'),
-  delegateIndicatorEl: document.getElementById('delegate-indicator'),
-  delegateDropdownEl: document.getElementById('delegate-dropdown'),
-  delegateDropdownListEl: document.getElementById('delegate-dropdown')?.querySelector('.bg-dropdown-list'),
+  bgagentIndicatorEl: document.getElementById('bgagent-indicator'),
+  bgagentDropdownEl: document.getElementById('bgagent-dropdown'),
+  bgagentDropdownListEl: document.getElementById('bgagent-dropdown')?.querySelector('.bg-dropdown-list'),
   memoryBtnEl: document.getElementById('memory-btn'),
 };
 
 // ── Initialize ChatView ───────────────────────────────────────────────
+initLightbox();
 // Single view instance for the main panel. The chatViews registry supports
 // future multi-view expansion — additional views can register via
 // chatViews.<id> = new ChatView(...).
@@ -180,9 +168,6 @@ initChatView(
     sendBtn: document.getElementById('send-btn'),
     stopBtn: document.getElementById('stop-btn'),
     attachBtn: document.getElementById('attach-btn'),
-    statusWrap: document.getElementById('status-wrap'),
-    statusText: document.getElementById('status-text'),
-    lottieSpinnerEl: document.getElementById('lottie-spinner'),
     attPreview: document.getElementById('attachment-preview'),
     slashDropdown: document.getElementById('slash-dropdown'),
     queueBar: document.getElementById('queue-bar'),
@@ -194,9 +179,9 @@ initChatView(
     bgCountEl: document.getElementById('bg-indicator')?.querySelector('.bg-count'),
     bgDropdownEl: document.getElementById('bg-dropdown'),
     bgDropdownListEl: document.getElementById('bg-dropdown')?.querySelector('.bg-dropdown-list'),
-    delegateIndicatorEl: document.getElementById('delegate-indicator'),
-    delegateDropdownEl: document.getElementById('delegate-dropdown'),
-    delegateDropdownListEl: document.getElementById('delegate-dropdown')?.querySelector('.bg-dropdown-list'),
+    bgagentIndicatorEl: document.getElementById('bgagent-indicator'),
+    bgagentDropdownEl: document.getElementById('bgagent-dropdown'),
+    bgagentDropdownListEl: document.getElementById('bgagent-dropdown')?.querySelector('.bg-dropdown-list'),
     sessionNameEl: document.getElementById('session-name'),
   }
 );
@@ -255,21 +240,6 @@ function updateAgentNotificationDot(agentName) {
     }
   } else if (dot) {
     dot.remove();
-  }
-}
-
-/** Render into a specific session's window from an async callback (outside
- *  the normal ws.js dispatch). Sets activeView to the target view so
- *  rendering functions write to the correct DOM, then restores. */
-function renderToSession(sessionId, fn) {
-  const view = findViewBySessionId(sessionId);
-  if (view) {
-    const saved = activeView;
-    setActiveView(view);
-    try { fn(); }
-    finally { setActiveView(saved); }
-  } else {
-    fn();
   }
 }
 
@@ -562,16 +532,15 @@ function updateHeaderModelInfo() {
   }
   const ratio = info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
   const pct = Math.min(Math.round(ratio * 100), 100);
-  let barColor = '#4caf50'; // green
-  if (ratio > 0.5) barColor = '#d4a030'; // amber
-  if (ratio > 0.75) barColor = '#e53935'; // red
+  let barColor = '#4caf50';
+  if (ratio > 0.5) barColor = '#d4a030';
+  if (ratio > 0.75) barColor = '#e53935';
 
   const thresholdPct = Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
   const tooltip = info.inputTokens != null
     ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%) · threshold ${thresholdPct}%`
     : `${formatTokens(info.contextWindow)} context window`;
 
-  // Circular ring geometry (used in compact mode)
   const R = 15;
   const CIRC = 2 * Math.PI * R;
   const dashLen = CIRC * pct / 100;
@@ -579,13 +548,10 @@ function updateHeaderModelInfo() {
 
   el.style.display = 'inline-flex';
 
-  // Incremental update: if structure already exists, patch values in-place
-  // to avoid innerHTML rebuild triggering ResizeObserver → compact toggle loop.
   const existingBar = el.querySelector('.ctx-bar-wrap');
   const existingRing = el.querySelector('.ctx-ring-wrap');
 
   if (existingBar && existingRing) {
-    // Patch bar
     existingBar.title = tooltip;
     const fill = existingBar.querySelector('.ctx-bar-fill');
     if (fill) { fill.style.width = pct + '%'; fill.style.background = barColor; }
@@ -595,8 +561,6 @@ function updateHeaderModelInfo() {
     if (thresholdLabel) { thresholdLabel.style.left = thresholdPct + '%'; thresholdLabel.textContent = thresholdPct + '%'; }
     const label = existingBar.querySelector('.ctx-bar-label');
     if (label) label.textContent = `${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}`;
-
-    // Patch ring
     existingRing.title = tooltip;
     const ringFill = existingRing.querySelector('circle:nth-child(2)');
     if (ringFill) {
@@ -610,7 +574,6 @@ function updateHeaderModelInfo() {
     return;
   }
 
-  // First render — build full structure
   el.innerHTML = `
     <div class="ctx-bar-wrap ctx-full" title="${tooltip}">
       <div class="ctx-bar-track">
@@ -635,129 +598,8 @@ function updateHeaderModelInfo() {
       <span class="ctx-ring-pct">${pct}</span>
     </div>
   `;
-
-  // Attach drag handlers for both modes
-  const barWrap = el.querySelector('.ctx-bar-wrap');
-  const ringWrap = el.querySelector('.ctx-ring-wrap');
-  if (barWrap) setupBarThresholdDrag(barWrap, info, sid);
-  if (ringWrap) setupRingThresholdDrag(ringWrap, info, sid);
 }
 state.updateHeaderModelInfo = updateHeaderModelInfo;
-
-/** Shared threshold save logic */
-function commitThreshold(finalPct, sid) {
-  const newBufferRatio = Math.round((1.0 - finalPct / 100) * 100) / 100;
-  const clampedRatio = Math.max(0.01, Math.min(0.50, newBufferRatio));
-  if (state.sessionModelInfo[sid]) {
-    state.sessionModelInfo[sid].compactThreshold = 1.0 - clampedRatio;
-  }
-  clearTimeout(state._thresholdSaveTimer);
-  state._thresholdSaveTimer = setTimeout(() => {
-    const freshConfig = state._freshConfigText || state.configText;
-    try {
-      const parsed = JSON.parse(freshConfig);
-      if (!parsed.compact) parsed.compact = {};
-      parsed.compact.bufferRatio = clampedRatio;
-      const json = JSON.stringify(parsed, null, 2);
-      state.parsedConfig = parsed;
-      state.configText = json;
-      sendWs({type: 'updateConfig', config: json});
-    } catch {
-      if (!state.parsedConfig) state.parsedConfig = {};
-      if (!state.parsedConfig.compact) state.parsedConfig.compact = {};
-      state.parsedConfig.compact.bufferRatio = clampedRatio;
-      const json = JSON.stringify(state.parsedConfig, null, 2);
-      state.configText = json;
-      sendWs({type: 'updateConfig', config: json});
-    }
-  }, 300);
-  sendWs({type: 'getConfig'});
-}
-
-/** Bar (full mode) threshold drag — horizontal track */
-function setupBarThresholdDrag(wrap, info, sid) {
-  const track = wrap.querySelector('.ctx-bar-track');
-  const thresholdEl = track?.querySelector('.ctx-bar-threshold');
-  const labelEl = track?.querySelector('.ctx-bar-threshold-label');
-  if (!track || !thresholdEl) return;
-
-  const onStart = (e) => {
-    e.preventDefault();
-    const rect = track.getBoundingClientRect();
-    track.classList.add('dragging');
-
-    const movePct = (ev) => {
-      const pct = Math.max(5, Math.min(95, ((ev.clientX - rect.left) / rect.width) * 100));
-      thresholdEl.style.left = pct + '%';
-      if (labelEl) {
-        labelEl.style.left = pct + '%';
-        labelEl.textContent = Math.round(pct) + '%';
-        labelEl.classList.add('visible');
-      }
-    };
-    movePct(e);
-
-    const onMove = (ev) => movePct(ev);
-    const onUp = (ev) => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      track.classList.remove('dragging');
-      if (labelEl) labelEl.classList.remove('visible');
-      const finalPct = Math.max(5, Math.min(95, ((ev.clientX - rect.left) / rect.width) * 100));
-      commitThreshold(finalPct, sid);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  };
-  wrap.addEventListener('mousedown', onStart);
-}
-
-/** Set up drag-to-adjust on the threshold, mapped to circular geometry. */
-function setupRingThresholdDrag(wrap, info, sid) {
-  const svg = wrap.querySelector('.ctx-ring-svg');
-  if (!svg) return;
-
-  const onStart = (e) => {
-    e.preventDefault();
-    const rect = svg.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-
-    const movePct = (ev) => {
-      const dx = ev.clientX - cx;
-      const dy = ev.clientY - cy;
-      // Angle from top (12 o'clock), clockwise
-      let angle = Math.atan2(dx, -dy) * 180 / Math.PI;
-      if (angle < 0) angle += 360;
-      const pct = Math.max(5, Math.min(95, Math.round(angle / 3.6)));
-      // Update threshold line visually
-      const line = svg.querySelector('.ctx-ring-threshold');
-      if (line) line.setAttribute('transform', `rotate(${pct * 3.6} 18 18)`);
-      // Update tooltip
-      const t = state.sessionModelInfo[sid];
-      if (t) {
-        wrap.title = `${formatTokens(t.inputTokens)} / ${formatTokens(t.contextWindow)} tokens · threshold ${pct}%`;
-      }
-      wrap._dragPct = pct;
-    };
-
-    movePct(e);
-
-    const onMove = (ev) => movePct(ev);
-
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      const finalPct = wrap._dragPct || 50;
-      commitThreshold(finalPct, sid);
-    };
-
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  };
-
-  wrap.addEventListener('mousedown', onStart);
-}
 
 // Real-time usage update after each LLM round (multi-round tool calling)
 onMessage('usageUpdate', (msg, view) => {
@@ -882,6 +724,23 @@ onMessage('roundComplete', (msg, view) => {
       prevData.thinking = tThinking || undefined;
       saveMsg(prevData, msg.sessionId);
     }
+    // Show thinking placeholder for the upcoming round — backend sent sessionBusy(true)
+    // after roundComplete, so the agent is still working.
+    if (sid && state.busySessionIds.has(sid)) {
+      if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
+      const { chat } = activeView.dom;
+      const existing = chat.querySelector('.thinking-placeholder');
+      if (!activeView.stream.currentAiBubble && !existing) {
+        const row = document.createElement('div');
+        row.className = 'row ai';
+        activeView.stream.currentAiBubble = document.createElement('div');
+        activeView.stream.currentAiBubble.className = 'bubble ai thinking-placeholder';
+        row.appendChild(activeView.stream.currentAiBubble);
+        chat.appendChild(row);
+        smartScroll();
+        requestAnimationFrame(() => startThinkingTimer());
+      }
+    }
   }
 });
 
@@ -892,6 +751,9 @@ onMessage('error', (msg, view) => {
   if (sid) delete state.pendingRestore[sid];
   if (sid) delete state.sessionPendingAiMessages[sid];
   if (sid) delete state.turnExpecting[sid];
+  // Drop accumulated stream buffers — the turn is over (aligned with done path)
+  if (sid) delete state.sessionTexts[sid];
+  if (sid) delete state.sessionThinkingBuffers[sid];
   // Defensive: clear attention on error
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) state.answeredPermissions.delete(sid);
@@ -922,6 +784,9 @@ onMessage('interrupted', (msg, view) => {
   if (sid) delete state.pendingRestore[sid];
   if (sid) delete state.sessionPendingAiMessages[sid];
   if (sid) delete state.turnExpecting[sid];
+  // Drop accumulated stream buffers — the turn is over (aligned with done path)
+  if (sid) delete state.sessionTexts[sid];
+  if (sid) delete state.sessionThinkingBuffers[sid];
   // Defensive: clear attention on interrupt
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) state.answeredPermissions.delete(sid);
@@ -941,6 +806,9 @@ onMessage('timeout', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) delete state.sessionPendingAiMessages[sid];
+  // Drop accumulated stream buffers — the turn is over (aligned with done path)
+  if (sid) delete state.sessionTexts[sid];
+  if (sid) delete state.sessionThinkingBuffers[sid];
   if (sid) state.answeredPermissions.delete(sid);
   if (view) {
     finishThinking();
@@ -959,6 +827,9 @@ onMessage('maxTokens', (msg, view) => {
   if (sid) delete state.pendingRestore[sid];
   if (sid) delete state.sessionPendingAiMessages[sid];
   if (sid) delete state.turnExpecting[sid];
+  // Drop accumulated stream buffers — the turn is over (aligned with done path)
+  if (sid) delete state.sessionTexts[sid];
+  if (sid) delete state.sessionThinkingBuffers[sid];
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) state.answeredPermissions.delete(sid);
   if (view) {
@@ -992,11 +863,11 @@ onMessage('askUser', (msg, view) => {
       const prevData = finishAi();
       if (prevData) saveMsg(prevData, sid);
     }
-    const data = renderAskUser(msg.items, msg.sessionId);
+    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName);
     if (data) saveMsg(data, msg.sessionId);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askUser', items: msg.items }, sid);
+    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName }, sid);
   }
 });
 
@@ -1010,13 +881,13 @@ onMessage('askPermission', (msg, view) => {
     if (view) {
       // Active session: renderPermissionPrompt detects bypass, sends approval,
       // and shows the "auto-approved" badge. Let it handle everything.
-      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel);
+      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession);
     } else {
       // Non-active session: auto-approve directly (renderPermissionPrompt is never called).
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved: true }));
       }
-      saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, autoApproved: true }, sid);
+      saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, autoApproved: true, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession }, sid);
     }
     return;
   }
@@ -1032,10 +903,10 @@ onMessage('askPermission', (msg, view) => {
   // disabled because answeredPermissions still holds this sid.
   if (sid) state.answeredPermissions.delete(sid);
   if (view) {
-    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel);
+    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel }, sid);
+    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession }, sid);
   }
 });
 
@@ -1117,6 +988,8 @@ function clearHistoryIndicators() {
 // For initial load: replaces chat content.
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg, view) => {
+  // Background sub-agent sessions are handled by the bg-agent popup viewer.
+  if (handleBgAgentHistory(msg)) return;
   // Flow agent sessions are handled by the popup viewer, not the primary chat.
   if (handleFlowAgentHistory(msg)) return;
 
@@ -1130,6 +1003,7 @@ onMessage('historyPage', (msg, view) => {
   if (isInitialLoad) {
     view.pagination.pendingInitialLoad = false;
     // Initial load or full refresh — replace
+    cleanupCardIframes(activeView.dom.chat);
     activeView.dom.chat.innerHTML = '';
     // Reset sessionToolCards — innerHTML clear above removes all tool pending
     // card DOM nodes, but renderToolPending uses sessionToolCards[sid] as an
@@ -1281,7 +1155,7 @@ onMessage('historyPage', (msg, view) => {
       activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.option-box')) row.remove();
       });
-      renderAskUser(lastHistMsg.items, sid);
+      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName);
     }
 
     // Re-create interactive AskPermission if the last history message is an unanswered askPermission.
@@ -1293,7 +1167,7 @@ onMessage('historyPage', (msg, view) => {
       activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.permission-pending-box')) row.remove();
       });
-      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel);
+      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel, lastHistMsg.sourceAgent, lastHistMsg.sourceSession);
     }
 
     // Final scroll-to-bottom: after all rendering (history + streaming bubbles + pending tools)
@@ -1347,66 +1221,92 @@ onMessage('historyPage', (msg, view) => {
 });
 
 // --- Multi-agent events ---
-// Sub-agent activity shows a header indicator (like Bash background tasks).
+// Background sub-agent activity shows a header indicator (like Bash background tasks).
 // No tool cards or text rendered in the chat — the parent's Delegate tool
 // card (spinner → result) is the only chat-level feedback.
 // Click the indicator to see a dropdown with per-agent status.
 
-function updateDelegateIndicator() {
-  if (!activeView) return;
-  const el = activeView.dom.delegateIndicatorEl;
+function updateBgAgentIndicator(targetSid) {
+  // Update the indicator of the view that DISPLAYS the session owning these
+  // sub-agents — not blindly activeView. Sub-agent events are routed through
+  // the popup's ChatView (activeView temporarily points there; popup views
+  // have no indicator element), which previously left the primary badge stale
+  // while the dropdown re-rendered from live data on click — showing e.g.
+  // count=2 on the badge but 3 rows inside (a stuck sub-agent that emits no
+  // further events never triggered another badge refresh).
+  const view = targetSid ? findViewBySessionId(targetSid) : activeView;
+  if (!view) return;
+  const el = view.dom.bgagentIndicatorEl;
   if (!el) return;
-  const sid = activeView?.sessionId;
-  const delegates = (sid && state.sessionDelegates[sid]) || {};
-  const count = Object.keys(delegates).length;
+  const sid = view.sessionId;
+  const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
+  const count = Object.keys(bgAgents).length;
   if (count > 0) {
     el.classList.remove('hidden');
-    el.querySelector('.delegate-count').textContent = count;
+    el.querySelector('.bgagent-count').textContent = count;
   } else {
     el.classList.add('hidden');
-    const dropdown = activeView.dom.delegateDropdownEl;
+    const dropdown = view.dom.bgagentDropdownEl;
     if (dropdown) dropdown.classList.add('hidden');
   }
-  renderDelegateDropdown();
+  if (view === activeView) renderBgAgentDropdown();
 }
-state.updateDelegateIndicator = updateDelegateIndicator;
+state.updateBgAgentIndicator = updateBgAgentIndicator;
 
-function renderDelegateDropdown() {
+function renderBgAgentDropdown() {
   if (!activeView) return;
-  const listEl = activeView.dom.delegateDropdownListEl;
+  const listEl = activeView.dom.bgagentDropdownListEl;
   if (!listEl) return;
   const sid = activeView?.sessionId;
-  const delegates = (sid && state.sessionDelegates[sid]) || {};
-  const entries = Object.entries(delegates);
+  const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
+  const entries = Object.entries(bgAgents);
   if (entries.length === 0) {
     listEl.innerHTML = '';
     return;
   }
   listEl.innerHTML = entries.map(([id, info]) => {
     const toolLabel = info.currentTool || '';
-    const toolPart = toolLabel ? '<span class="delegate-tool">' + escapeHtml(toolLabel) + '</span>' : '';
-    const status = info.done ? '<span class="delegate-done">done</span>' : '<span class="delegate-running">running</span>';
+    const toolPart = toolLabel ? '<span class="bgagent-tool">' + escapeHtml(toolLabel) + '</span>' : '';
+    const status = info.done ? '<span class="bgagent-done">done</span>' : '<span class="bgagent-running">running</span>';
     const displayName = info.name || id;
     const label = info.task ? displayName + ' · ' + escapeHtml(info.task) : displayName;
-    return '<div class="bg-task-row">' +
+    // nodeSessionId for Delegate/SubTask sub-agents starts with "delegate-"/"subtask-" (backend protocol)
+    const nodeSessionId = isBgAgentId(id) ? id : null;
+    const clickAttr = nodeSessionId ? `data-node-session-id="${escapeHtml(nodeSessionId)}" style="cursor:pointer"` : '';
+    return '<div class="bg-task-row" ' + clickAttr + '>' +
       '<div class="bg-task-info">' +
         '<span class="bg-task-name">' + status + ' ' + label + '</span>' +
         toolPart +
       '</div>' +
     '</div>';
   }).join('');
+
+  // Wire click handlers for sub-agent rows
+  listEl.querySelectorAll('[data-node-session-id]').forEach(row => {
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const nodeSessionId = row.getAttribute('data-node-session-id');
+      const info = bgAgents[nodeSessionId];
+      if (info) {
+        openBgAgentPopup(nodeSessionId, info.name, info.task);
+        // Close the dropdown
+        const dropdown = activeView.dom.bgagentDropdownEl;
+        if (dropdown) dropdown.classList.add('hidden');
+      }
+    });
+  });
 }
 
 // Toggle dropdown on indicator click — register for ALL views
 Object.values(chatViews).forEach(v => {
-  const indicator = v.dom.delegateIndicatorEl;
-  const dropdown = v.dom.delegateDropdownEl;
+  const indicator = v.dom.bgagentIndicatorEl;
+  const dropdown = v.dom.bgagentDropdownEl;
   if (!indicator || !dropdown) return;
   indicator.addEventListener('click', (e) => {
     e.stopPropagation();
     setActiveView(v);
     if (dropdown.classList.contains('hidden')) {
-      renderDelegateDropdown();
+      renderBgAgentDropdown();
       dropdown.classList.remove('hidden');
     } else {
       dropdown.classList.add('hidden');
@@ -1417,8 +1317,8 @@ Object.values(chatViews).forEach(v => {
 // Close dropdown on outside click
 document.addEventListener('click', (e) => {
   Object.values(chatViews).forEach(v => {
-    const dropdown = v.dom.delegateDropdownEl;
-    const indicator = v.dom.delegateIndicatorEl;
+    const dropdown = v.dom.bgagentDropdownEl;
+    const indicator = v.dom.bgagentIndicatorEl;
     if (dropdown && !dropdown.contains(e.target) && indicator && !indicator.contains(e.target)) {
       dropdown.classList.add('hidden');
     }
@@ -1427,18 +1327,24 @@ document.addEventListener('click', (e) => {
 
 onMessage('agentStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  const sid = msg.sessionId || state.activeSessionId;
+  // rootSessionId points at the top-level main session even for nested
+  // sub-agents (child → grandchild), so sessionBgAgents stays keyed by the
+  // session the user is actually viewing.
+  const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || msg.name;
   if (view) view.stream.activeAgentId = aid;
-  if (!state.sessionDelegates[sid]) state.sessionDelegates[sid] = {};
-  state.sessionDelegates[sid][aid] = {
+  if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
+  state.sessionBgAgents[sid][aid] = {
     name: msg.name || aid,
     task: msg.taskDescription || '',
     currentTool: null,
     done: false,
   };
-  if (view) updateDelegateIndicator();
+  // Always refresh the badge of the view displaying the OWNING session (sid),
+  // regardless of which view this event was routed through (popup views have
+  // no indicator; activeView-based updates silently no-op'd).
+  updateBgAgentIndicator(sid);
 });
 
 onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); });
@@ -1446,12 +1352,12 @@ onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessi
 
 onMessage('agentToolStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  const sid = msg.sessionId || state.activeSessionId;
+  const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
-  if (aid && state.sessionDelegates[sid] && state.sessionDelegates[sid][aid]) {
-    state.sessionDelegates[sid][aid].currentTool = msg.label;
-    if (view) renderDelegateDropdown();
+  if (aid && state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
+    state.sessionBgAgents[sid][aid].currentTool = msg.label;
+    if (view) renderBgAgentDropdown();
   }
 });
 
@@ -1463,26 +1369,28 @@ onMessage('agentRetryStatus', (msg, view) => { resetStreamTimeout(msg.sessionId)
 
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  const sid = msg.sessionId || state.activeSessionId;
+  const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
-  if (aid && state.sessionDelegates[sid]) {
-    if (state.sessionDelegates[sid][aid]) state.sessionDelegates[sid][aid].done = true;
-    if (view) renderDelegateDropdown();
+  if (aid && state.sessionBgAgents[sid]) {
+    if (state.sessionBgAgents[sid][aid]) state.sessionBgAgents[sid][aid].done = true;
+    if (view) renderBgAgentDropdown();
+    // Clean up bg-agent popup view after a delay
+    if (isBgAgentId(aid)) cleanupBgAgentView(aid);
     // Remove after 2s — always runs, even if the parent session isn't displayed
     setTimeout(() => {
-      if (state.sessionDelegates[sid] && state.sessionDelegates[sid][aid]) {
-        delete state.sessionDelegates[sid][aid];
+      if (state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
+        delete state.sessionBgAgents[sid][aid];
         // Clean up empty session entries
-        if (Object.keys(state.sessionDelegates[sid]).length === 0) {
-          delete state.sessionDelegates[sid];
+        if (Object.keys(state.sessionBgAgents[sid]).length === 0) {
+          delete state.sessionBgAgents[sid];
         }
         // Update indicator if the affected view is currently displayed
         const targetView = findViewBySessionId(sid);
         if (targetView) {
           const saved = activeView;
           setActiveView(targetView);
-          updateDelegateIndicator();
+          updateBgAgentIndicator();
           setActiveView(saved);
         }
       }
@@ -1517,15 +1425,28 @@ onMessage('flowMail', (msg) => {
 // agentStart/agentDone carry nodeSessionId (set by FlowAgentActivator's wsSend wrapper).
 // ws.js intercepts them into the popup ChatView, but we also need to update
 // the flow canvas status pills.
+// Team agent events carry nodeSessionId = "team-<sessionId>"; strip the prefix
+// so agentStatus keys match the bare sessionId from /api/teams/mounted
+// (flowTeams.statusOf / flowCanvas.autoRestore look up by bare sid).
 onMessage('agentStart', (msg) => {
-  if (msg.nodeSessionId) flowCanvas.onAgentStart(msg.nodeSessionId);
+  const sid = msg.nodeSessionId ? msg.nodeSessionId.replace(/^team-/, '') : null;
+  if (sid) flowCanvas.onAgentStart(sid);
 });
 onMessage('agentDone', (msg) => {
-  if (msg.nodeSessionId) flowCanvas.onAgentDone(msg.nodeSessionId);
+  const sid = msg.nodeSessionId ? msg.nodeSessionId.replace(/^team-/, '') : null;
+  if (sid) flowCanvas.onAgentDone(sid);
+});
+
+onMessage('flowStarted', (msg) => {
+  flowCanvas.onFlowStarted(msg);
 });
 
 onMessage('flowProgress', (msg) => {
   flowCanvas.onFlowProgress(msg);
+});
+
+onMessage('flowStarted', (msg) => {
+  flowCanvas.onFlowStarted(msg);
 });
 
 onMessage('flowCompleted', (msg) => {
@@ -1561,6 +1482,13 @@ onMessage('compactComplete', (msg, view) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
+  // Compaction completes outside the normal done chain — finish any
+  // streaming agent bubbles so their cursors don't linger.
+  if (view) {
+    Object.keys(view.stream.agentBubbles).forEach(id => finishAgent(id));
+    view.stream.agentBubbles = {};
+    view.stream.activeAgentId = null;
+  }
   if (view) {
     const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
     renderSystemBubble(t('chat.compacted', { before: msg.before, after: msg.after, detail }));
@@ -1576,6 +1504,12 @@ onMessage('compactFailed', (msg, view) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
+  // A failed compact turn also ends the agent turn — clear cursors.
+  if (view) {
+    Object.keys(view.stream.agentBubbles).forEach(id => finishAgent(id));
+    view.stream.agentBubbles = {};
+    view.stream.activeAgentId = null;
+  }
   if (view) {
     renderSystemBubble(t('chat.compactFailed', { attempt: msg.attempt, maxAttempts: msg.maxAttempts }));
   }
@@ -1661,8 +1595,6 @@ onMessage('configData', (msg, view) => {
   if (settingsPanel && settingsPanel.classList.contains('active')) {
     renderSettings();
   }
-  // Refresh the input-bar model picker with the latest chain.
-  refreshModelPicker();
 });
 
 onMessage('configUpdated', (msg, view) => {
@@ -1677,7 +1609,6 @@ onMessage('configUpdated', (msg, view) => {
 onMessage('modelOptions', (msg, view) => {
   const models = msg.models || [];
   state.allModelRefs = models.map(m => m.ref).filter(Boolean);
-  refreshModelPicker();
 });
 
 onMessage('sessionModelSet', (msg, view) => {
@@ -1687,7 +1618,6 @@ onMessage('sessionModelSet', (msg, view) => {
 onMessage('modelChanged', (msg, view) => {
   if (msg.newModel) {
     state.currentModel = msg.newModel;
-    refreshModelPicker();
   }
 });
 
@@ -1695,6 +1625,30 @@ onMessage('modelChanged', (msg, view) => {
 onMessage('retryStatus', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   if (view) renderRetryStatus(msg.message);
+});
+
+// --- Injected user message (task P+Q: Mail/Delegate/SubTask/Skill/Flow injections
+// and ExternalEvent result notifications). Backend emits {type:"user",
+// injected:true, source, text, sessionId}. Render as a light-blue bubble so
+// tool-originated prompts are visible and distinct from the user's own input.
+onMessage('user', (msg, view) => {
+  if (!msg.injected) return; // non-injected user events are not emitted; guard anyway
+  const sid = msg.sessionId;
+  if (!sid) return;
+  state.turnExpecting[sid] = true;
+  // Sub-agent events (nodeSessionId present — delegate-/subtask-/team-) belong
+  // to the sub-agent's own session. DelegateTool.routeWsSend stamps the PARENT
+  // sessionId for display routing, so caching under sid would pollute the
+  // parent's localStorage history — the bubble would reappear in the parent
+  // window on restore ("outgoing Delegate prompt shows as blue bubble").
+  // Sub-agent streams restore from their own backend history instead.
+  if (!msg.nodeSessionId) {
+    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null }, sid);
+  }
+  if (sid === state.activeSessionId && view) {
+    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender);
+    smartScroll();
+  }
 });
 
 // --- Bridge user message (e.g. from external platform) ---
@@ -1719,7 +1673,10 @@ onMessage('messageRecalled', (msg) => {
     const sid = msg.sessionId;
     if (sid && sid === state.activeSessionId) {
       import('./persistence.js').then(({ restoreFromStorage }) => {
-        if (activeView?.dom?.chat) activeView.dom.chat.innerHTML = '';
+        if (activeView?.dom?.chat) {
+          cleanupCardIframes(activeView.dom.chat);
+          activeView.dom.chat.innerHTML = '';
+        }
         restoreFromStorage();
       });
     }
@@ -1869,44 +1826,6 @@ function renderBgDropdown() {
     row.appendChild(cancelBtn);
     listEl.appendChild(row);
   });
-
-  // Flow entries
-  const flows = flowCanvas.getRunningFlows();
-  flows.forEach(flow => {
-    const row = document.createElement('div');
-    row.className = 'bg-task-row';
-    const info = document.createElement('div');
-    info.className = 'bg-task-info';
-    const desc = document.createElement('span');
-    desc.className = 'bg-task-desc';
-    desc.textContent = flow.flowName || flow.name;
-    const meta = document.createElement('div');
-    meta.className = 'bg-task-meta';
-    const progress = document.createElement('span');
-    progress.className = 'bg-task-id';
-    progress.textContent = `${flow.done}/${flow.total} steps`;
-    if (flow.running > 0) {
-      const runningTag = document.createElement('span');
-      runningTag.className = 'bg-task-status bg-status-active';
-      runningTag.textContent = `${flow.running} running`;
-      meta.appendChild(runningTag);
-    }
-    meta.appendChild(progress);
-    info.appendChild(desc);
-    info.appendChild(meta);
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'bg-task-cancel';
-    cancelBtn.textContent = t('bg.cancel');
-    cancelBtn.onclick = (e) => {
-      e.stopPropagation();
-      cancelBtn.disabled = true;
-      cancelBtn.textContent = '...';
-      sendWs({ type: 'cancelFlow', name: flow.name, sessionId: state.activeSessionId });
-    };
-    row.appendChild(info);
-    row.appendChild(cancelBtn);
-    listEl.appendChild(row);
-  });
 }
 
 function startBgTimer() {
@@ -1930,14 +1849,15 @@ function stopBgTimer() {
 }
 
 function updateBgTasksUI() {
+  // Background tasks only — running flows are tracked separately on the
+  // flow canvas (getRunningFlows), not in this indicator.
   const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
   const now = Date.now();
   const active = tasks.filter(task =>
     task.status === 'running' || task.status === 'cancelling' ||
     (task.finishedAt && (now - task.finishedAt < 3000))
   );
-  const flows = flowCanvas.getRunningFlows();
-  const totalCount = active.length + flows.length;
+  const totalCount = active.length;
   const el = activeView.dom.bgIndicatorEl;
   const countEl = activeView.dom.bgCountEl;
   const dropdown = activeView.dom.bgDropdownEl;
@@ -2112,10 +2032,6 @@ onMessage('rulesDeleted', (msg, view) => handleRulesDeleted(msg));
 // --- Browse Result (path picker) ---
 onMessage('browseResult', (msg, view) => handleBrowseResult(msg));
 
-// --- Card design prompt ---
-onMessage('cardDesignData', (msg, view) => { state.cardDesignPrompt = msg.content || ''; });
-onMessage('cardDesignSaved', () => { /* saved confirmation */ });
-
 // --- Update check ---
 onMessage('updateCheckResult', (msg, view) => {
   const statusEl = document.getElementById('update-status');
@@ -2163,15 +2079,6 @@ onMessage('forkComplete', (msg, view) => {
   renderSessionSidebar(state.sessions, msg.sessionId);
 });
 
-// ---------- 4b. Responsive header: full bar ↔ compact ring ----------
-// The context indicator (#header-model-info) lives in header-left, next to
-// the sidebar toggle. The session name (.header-center) is absolutely
-// positioned at the header's midpoint. When the header narrows, the session
-// name's left edge approaches the indicator's right edge.
-//
-// Trigger: gap between indicator's right edge and session name's left edge.
-//   gap < 8px  → switch to compact ring (saves ~92px)
-//   gap > 120px → switch back to full bar (hysteresis covers the 92px diff)
 // ── Global ESC handler: close any visible modal/overlay/dropdown ──────
 (function initGlobalEscHandler() {
   document.addEventListener('keydown', (e) => {
@@ -2179,7 +2086,7 @@ onMessage('forkComplete', (msg, view) => {
 
     // Full-screen overlay modals — click the overlay to trigger its close handler
     const overlays = [
-      '#memory-overlay', '#card-design-overlay', '#rules-overlay',
+      '#memory-overlay', '#rules-overlay',
       '#path-picker-overlay', '#modal-overlay', '#agent-overlay',
     ];
     for (const sel of overlays) {
@@ -2200,9 +2107,9 @@ onMessage('forkComplete', (msg, view) => {
       return;
     }
 
-    const delegate = document.getElementById('delegate-dropdown');
-    if (delegate && !delegate.classList.contains('hidden')) {
-      delegate.classList.add('hidden');
+    const bgAgentDropdown = document.getElementById('bgagent-dropdown');
+    if (bgAgentDropdown && !bgAgentDropdown.classList.contains('hidden')) {
+      bgAgentDropdown.classList.add('hidden');
       e.preventDefault();
       return;
     }
@@ -2265,11 +2172,39 @@ initModals();
 initRulesModal();
 initPathPicker();
 initInput(chatViews.primary);
+
+// Keep the last chat message visible above the floating #input-area.
+// #input-area (position:absolute; bottom:0) overlays #chat and has variable
+// height (multi-line input, message queue, voice panel). All scroll code uses
+// scrollTop = scrollHeight, so we grow #chat's padding-bottom to match the
+// input area's height — then scrolling to the bottom lands the last message
+// above the input bar instead of behind it.
+(() => {
+  const inputArea = document.getElementById('input-area');
+  const chat = document.getElementById('chat');
+  if (!inputArea || !chat || !window.ResizeObserver) return;
+  const updateChatPadding = () => {
+    // offsetHeight covers all in-flow children (queue-bar + input-bar + the
+    // area's own 10px bottom padding). Absolutely-positioned children
+    // (voice-overlay, slash-dropdown) are excluded — they overlay the chat
+    // transiently above the bar, so they must not inflate the padding.
+    const inputHeight = inputArea.offsetHeight;
+    // +2px: minimal breathing room so the last message sits flush above the
+    // input bar without touching the glass edge.
+    chat.style.setProperty('padding-bottom', `${inputHeight + 2}px`, 'important');
+    // Only re-scroll if the user is already near the bottom — don't yank
+    // them away from history they're reading.
+    const nearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 100;
+    if (nearBottom) chat.scrollTop = chat.scrollHeight;
+  };
+  const ro = new ResizeObserver(updateChatPadding);
+  ro.observe(inputArea);
+  updateChatPadding();
+})();
 initMemory();
 initExplorer();
 initCanvas();
 initColResizers();
-initPanelDragger();
 
 // Remove UI initialization lock — all layout setup is done.
 // Double-rAF ensures the browser has painted at least one frame with
@@ -2281,14 +2216,22 @@ requestAnimationFrame(() => {
 });
 
 initActivityBar();
-initModelPicker();
-document.getElementById('team-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
+document.getElementById('canvas-toggle-btn')?.addEventListener('click', () => {
+  // Toggle Canvas open/close — closing does NOT clear tabs.
+  if (document.body.classList.contains('canvas-open')) {
+    closeCanvas();
+  } else {
+    openCanvas();
+  }
+});
+document.getElementById('teams-btn')?.addEventListener('click', () => flowCanvas.openTeams());
+document.getElementById('flows-btn')?.addEventListener('click', () => flowCanvas.openFlows());
 // Restore queued messages from localStorage (survives browser refresh)
 restoreQueue();
 // Restore Canvas tabs from localStorage (survives browser refresh).
 // If no saved tabs (e.g. cache cleared), auto-open Teams panel.
 if (!restoreTabs()) {
-  flowCanvas.toggleCanvas();
+  flowCanvas.openTeams();
 }
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
@@ -2302,15 +2245,6 @@ planMode.init();
 // Monaco (~2MB from CDN) is the main cause of first-open lag.
 const _idleCb = window.requestIdleCallback || ((fn) => setTimeout(fn, 2000));
 _idleCb(() => import('./monacoEditor.js').then(({ preloadMonaco }) => preloadMonaco().catch(() => {})));
-
-// ---------- Click agent name in header → open agent config modal ----------
-document.getElementById('session-name')?.addEventListener('click', () => {
-  const active = state.sessions.find(s => s.id === state.activeSessionId);
-  const agentName = active?.agentName || 'Nebula';
-  // Show modal immediately with cached data, then fetch fresh system prompt
-  showAgentModal(agentName, '');
-  sendWs({ type: 'getAgentSystemPrompt', name: agentName });
-});
 
 // ---------- Plan mode event handlers ----------
 onMessage('planStart', (msg, view) => planMode.onPlanStart(msg, view));
@@ -2453,6 +2387,9 @@ onReconnect(() => {
   }
   // Sync background task state — completion events may have been missed
   sendWs({ type: 'getActiveBgTasks' });
+  // Sync background sub-agent state — agentStart events are not replayed
+  // after a page refresh, so the indicator count would be lost without this
+  sendWs({ type: 'getActiveAgents' });
 });
 
 // ---------- Reconnect: sync background tasks ----------
@@ -2477,12 +2414,35 @@ onMessage('activeBgTasks', (msg) => {
       delete state.sessionBgTasks[sid];
     }
   }
-  // Also clean stale delegate indicators — any session that has delegates
+  // Also clean stale sub-agent indicators — any session that has sub-agents
   // tracked locally but no longer has an active agent on the backend
-  // can't be reliably detected here (delegates use actor system, not BgTaskRegistry).
-  // The agentDone fix (global sessionDelegates) already handles missed events.
+  // can't be reliably detected here (sub-agents use actor system, not BgTaskRegistry).
+  // The agentDone fix (global sessionBgAgents) already handles missed events.
   // Refresh the UI for the active view
   if (activeView) updateBgTasksUI();
+});
+
+// ---------- Reconnect: sync background sub-agents ----------
+// Backend responds to getActiveAgents with currently-running sub-agents:
+//   { type: "activeAgents", agents: [{ sessionId, agentId, agentName, rootSessionId, kind }] }
+// Rebuild sessionBgAgents from backend truth — real-time agentStart events
+// are not replayed after a page refresh (F5), and anything not listed has
+// finished (the backend registry no longer tracks it).
+onMessage('activeAgents', (msg) => {
+  const agents = msg.agents || [];
+  state.sessionBgAgents = {};
+  for (const a of agents) {
+    const sid = a.rootSessionId || a.sessionId;
+    if (!sid || !a.agentId) continue;
+    if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
+    state.sessionBgAgents[sid][a.agentId] = {
+      name: a.agentName || a.agentId,
+      task: '',
+      currentTool: null,
+      done: false,
+    };
+  }
+  if (activeView) updateBgAgentIndicator();
 });
 
 // Scroll listener (primary window)

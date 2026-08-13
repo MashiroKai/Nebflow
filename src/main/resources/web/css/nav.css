@@ -29,6 +29,7 @@
   width: 44px;
   padding: 4px 0;
   border-radius: 12px;
+  border: 1px solid transparent; /* reserves edge space for glass hover */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -36,21 +37,24 @@
   cursor: pointer;
   margin-bottom: 2px;
   background: transparent;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
   position: relative;
   gap: 2px;
 }
-.nav-agent:hover { background: var(--color-frame-hover); }
-.nav-agent.active { background: var(--color-frame-active); }
-.nav-agent.active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 6px;
-  bottom: 6px;
-  width: 3px;
-  border-radius: 0 2px 2px 0;
-  background: var(--color-primary);
+.nav-agent:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+}
+.nav-agent:focus { outline: none; }
+.nav-agent { -webkit-tap-highlight-color: transparent; }
+.nav-agent.active {
+  background: var(--color-frame-active);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 .nav-agent-icon {
   font-size: 18px;
@@ -58,7 +62,7 @@
   color: var(--color-frame-text-muted, #888);
 }
 .nav-agent.active .nav-agent-icon {
-  color: var(--color-primary);
+  color: var(--color-frame-text-bright);
   filter: drop-shadow(0 0 2px rgba(0,0,0,0.18)) brightness(1.1);
 }
 .nav-agent-icon svg {
@@ -88,7 +92,7 @@
   line-height: 1;
 }
 .nav-agent.active .nav-agent-label {
-  color: var(--color-primary);
+  color: var(--color-frame-text-bright);
 }
 
 /* Notification dot on agent avatar */
@@ -104,66 +108,14 @@
   z-index: 2;
 }
 
-/* ---------- Agent State Animations ---------- */
-
-/* Base: hide all animation frames, show only f0 (idle) */
-.nav-agent-icon svg.agent-pixels g { opacity: 0; }
-.nav-agent-icon svg.agent-pixels g.f0 { opacity: 1; }
-
-/* ===== All agents — pixel frame animation ===== */
-/* Any active state triggers the same expand/contract cycle (f0→f1→f2) */
-.nav-agent.state-working .nav-agent-icon svg.agent-pixels g,
-.nav-agent.state-waiting .nav-agent-icon svg.agent-pixels g,
-.nav-agent.state-compressing .nav-agent-icon svg.agent-pixels g {
-  animation-duration: 0.9s;
-  animation-timing-function: linear;
-  animation-iteration-count: infinite;
-}
-.nav-agent.state-working .nav-agent-icon svg.agent-pixels g.f0,
-.nav-agent.state-waiting .nav-agent-icon svg.agent-pixels g.f0,
-.nav-agent.state-compressing .nav-agent-icon svg.agent-pixels g.f0 { animation-name: af0; }
-.nav-agent.state-working .nav-agent-icon svg.agent-pixels g.f1,
-.nav-agent.state-waiting .nav-agent-icon svg.agent-pixels g.f1,
-.nav-agent.state-compressing .nav-agent-icon svg.agent-pixels g.f1 { animation-name: af1; }
-.nav-agent.state-working .nav-agent-icon svg.agent-pixels g.f2,
-.nav-agent.state-waiting .nav-agent-icon svg.agent-pixels g.f2,
-.nav-agent.state-compressing .nav-agent-icon svg.agent-pixels g.f2 { animation-name: af2; }
-
-/* 3-frame cycle keyframes (33.33% each) */
-@keyframes af0 { 0%,33.33%{opacity:1} 33.34%,100%{opacity:0} }
-@keyframes af1 { 0%,33.33%{opacity:0} 33.34%,66.66%{opacity:1} 66.67%,100%{opacity:0} }
-@keyframes af2 { 0%,66.66%{opacity:0} 66.67%,100%{opacity:1} }
-
-/* Reduced motion */
-@media (prefers-reduced-motion: reduce) {
-  .nav-agent-icon svg.agent-pixels g { animation: none !important; opacity: 0; }
-  .nav-agent-icon svg.agent-pixels g.f0 { opacity: 1 !important; }
-}
-
 /* + button for new agent */
-.nav-add-btn {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 18px;
-  background: transparent;
-  border: 1px dashed var(--color-frame-border);
-  color: var(--color-frame-text-dim);
-  margin-bottom: 4px;
-  transition: all 0.15s;
-  font-family: inherit;
-}
-.nav-add-btn:hover { border-color: var(--color-frame-text-muted); color: var(--color-frame-text); background: var(--color-frame-hover); }
-
 .nav-spacer { flex-shrink: 0; height: 8px; }
 .nav-item {
   width: 40px;
   height: 40px;
   border-radius: 12px;
+  border: 1px solid transparent; /* reserves edge space for glass hover */
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -172,9 +124,18 @@
   margin-bottom: 4px;
   position: relative;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
-.nav-item:hover { color: var(--color-frame-text); background: var(--color-frame-hover); }
+.nav-item:hover {
+  color: var(--color-frame-text);
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+}
 .nav-item.active { color: var(--color-frame-text-bright); background: var(--color-frame-active); }
 .nav-item svg { width: 20px; height: 20px; }
 
@@ -182,7 +143,7 @@
    Activity Bar — vertical icon strip (independent glass card)
    Lives to the left of #sidebar. WeChat-style: avatar at top,
    device list expands below it after login, settings at bottom.
-   order:-1 keeps it leftmost regardless of panelDragger reorder.
+   order:-1 keeps it leftmost of the fixed 3-column layout.
    ============================================================ */
 #activity-bar {
   order: -1;
@@ -212,6 +173,10 @@
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 2px 8px rgba(0, 0, 0, 0.20),
       0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  .nav-agent.active,
+  .activity-btn.active {
+    box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.06);
   }
 }
 /* Keep the activity bar visible even when the sidebar is collapsed. */
@@ -287,7 +252,7 @@ body.sidebar-collapsed #activity-bar {
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  border: none;
+  border: 1px solid transparent; /* reserves edge space for glass hover */
   background: transparent;
   color: var(--color-frame-text-muted);
   cursor: pointer;
@@ -296,28 +261,25 @@ body.sidebar-collapsed #activity-bar {
   justify-content: center;
   position: relative;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
   padding: 0;
 }
 .activity-btn:hover {
   color: var(--color-frame-text-bright);
-  background: var(--color-frame-hover);
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
 }
+.activity-btn:focus { outline: none; }
+.activity-btn { -webkit-tap-highlight-color: transparent; }
 .activity-btn.active {
   color: var(--color-frame-text-bright);
   background: var(--color-frame-active);
-}
-/* Active indicator: 3px primary-color bar on the left edge,
-   mirroring .nav-agent.active::before. */
-.activity-btn.active::before {
-  content: '';
-  position: absolute;
-  left: -6px;
-  top: 6px;
-  bottom: 6px;
-  width: 3px;
-  border-radius: 0 2px 2px 0;
-  background: var(--color-primary);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 .activity-btn svg {
   width: 19px;
@@ -358,7 +320,7 @@ body.sidebar-collapsed #activity-bar {
   padding: 6px 0; font-size: 13px;
 }
 .profile-item .label { color: var(--color-text-muted); }
-.profile-item .value { color: var(--color-text); font-weight: 500; }
+.profile-item .value { color: var(--color-text); font-weight: 400; }
 .profile-peers {
   margin-top: 12px; padding-top: 12px;
   border-top: 1px solid var(--glass-border, rgba(255,255,255,0.05));

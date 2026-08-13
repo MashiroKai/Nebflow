@@ -20,14 +20,6 @@ object TeamCatalog:
       }
       .mkString("\n")
 
-    val flowLines = team.flows
-      .flatMap { name =>
-        flows.get(name).map { f =>
-          s"- ${f.name}: ${f.description}"
-        }
-      }
-      .mkString("\n")
-
     s"""=== Team: ${team.name} ===
        |
        |${team.description}
@@ -37,9 +29,6 @@ object TeamCatalog:
        |
        |Team Members (Mail by name):
        |$memberLines
-       |
-       |Available Flows (Mail by name to trigger):
-       |$flowLines
        |
        |=== End Team ===""".stripMargin
 

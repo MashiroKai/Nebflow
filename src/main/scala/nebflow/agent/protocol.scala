@@ -20,12 +20,26 @@ object AgentCommand:
     replyTo: Option[ActorRef[AgentEvent]] = None,
     clientMessageId: Option[String] = None,
     blocks: Option[List[ContentBlock]] = None,
-    chatWidth: Int = 0
+    chatWidth: Int = 0,
+    /**
+     * Injection source marker (任务 P): Some(...) when this input was injected
+     * by a tool (Mail/Delegate/SubTask/skill/ask) rather than typed by the
+     * user. User WS inputs always carry clientMessageId and source=None.
+     */
+    source: Option[String] = None,
+    /** Sender agent name for Mail-delivered messages (shown as attribution label). */
+    sender: Option[String] = None
   ) extends AgentCommand
 
   case class ImmediateInput(
     text: String,
-    blocks: Option[List[ContentBlock]] = None
+    blocks: Option[List[ContentBlock]] = None,
+    /** Injection source marker (任务 P), e.g. "mail" for Mail delivery. */
+    source: Option[String] = None,
+    /** Structured event type (e.g. mail type, completion status) for the UI source label. */
+    eventType: Option[String] = None,
+    /** Sender agent name for Mail-delivered messages (shown as attribution label). */
+    sender: Option[String] = None
   ) extends AgentCommand
   case class Interrupt() extends AgentCommand
 
@@ -86,15 +100,6 @@ object AgentCommand:
     replyTo: cats.effect.Deferred[IO, Either[String, Int]]
   ) extends AgentCommand
 
-  case class UserAnswered(answers: List[String]) extends AgentCommand
-  case class PermissionAnswered(approved: Boolean) extends AgentCommand
-
-  /**
-   * Sub-agent → parent: forward a permission request so the parent can track
-   * the Deferred and route the frontend answer back to the sub-agent.
-   */
-  case class ForwardPermission(deferred: cats.effect.Deferred[IO, Boolean], permJson: Json) extends AgentCommand
-
   /** Frontend → agent: update safety mode for this session. */
   case class SetSafetyMode(mode: nebflow.core.SafetyMode) extends AgentCommand
 
@@ -128,8 +133,6 @@ object AgentCommand:
   case class Stop(reason: String) extends AgentCommand
   case object ClearReadTracker extends AgentCommand
   case object ResetSession extends AgentCommand
-  case object CheckDream extends AgentCommand
-  case class DreamComplete(facts: List[String], messageCountAtDream: Int) extends AgentCommand
 
   case class UpdateGitBranch(branch: Option[String]) extends AgentCommand
 
@@ -156,9 +159,9 @@ object AgentCommand:
       payload = status match
         case "completed" =>
           val exitInfo = exitCode.filter(_ != 0).map(c => s" (exit code $c)").getOrElse("")
-          s"[Background task completed] \"$description\"$exitInfo:\n$output"
-        case "failed" => s"[Background task failed] \"$description\":\n$output"
-        case _ => s"[Background task stopped] \"$description\"",
+          s"\"$description\"$exitInfo:\n$output"
+        case "failed" => s"\"$description\":\n$output"
+        case _ => s"\"$description\"",
       metadata = JsonObject(
         "taskId" -> taskId.asJson,
         "description" -> description.asJson,
@@ -187,6 +190,106 @@ object AgentCommand:
   case class SessionClosed(address: String) extends AgentCommand
   case class SessionUpdate(address: String, status: String) extends AgentCommand
 end AgentCommand
+
+/**
+ * Display/routing kind of an agent (P1 统一注册表). Replaces the nodeSessionId
+ * string-prefix conventions (team-/dag-/delegate-/ephemeral-) as the *identity*
+ * discriminator; P3 drops the prefixes entirely and routes by this field.
+ */
+enum AgentKind:
+  case Root, Team, Flow, Delegate, Ephemeral, Plan, SubTask
+
+/**
+ * Unified registry entry — one identity per agent (P1 统一注册表).
+ *
+ * sessionId is the single identity: execution key + persistence key + display key.
+ * ref is the runtime reply target; kind is the display type; rootSessionId anchors
+ * the permission-policy bucket (P2) and the inheritance chain; parentRef is kept
+ * only for Mail semantics / upward diagnostics, NOT for interaction forwarding.
+ */
+case class AgentRecord(
+  sessionId: String,
+  ref: ActorRef[AgentCommand],
+  kind: AgentKind,
+  rootSessionId: String,
+  parentRef: Option[ActorRef[AgentCommand]] = None
+)
+
+// ============================================================
+// P2 — Permission policy (per root session) + InteractionHub protocol
+// ============================================================
+
+/**
+ * One permission policy per Nebula root session (P2). All agents in a root
+ * session's tree (Team/Flow/Delegate/Ephemeral/itself) *dynamically inherit*
+ * the bucket — the decision point reads it at request time, never copies it.
+ *
+ * `allow`/`deny` are model-reserved tool-name sets (UI exposes them later);
+ * while empty the behavior is identical to the old per-session safetyMode.
+ */
+case class PermissionPolicy(
+  safetyMode: nebflow.core.SafetyMode = nebflow.core.SafetyMode.ConfirmEdits,
+  allow: Set[String] = Set.empty,
+  deny: Set[String] = Set.empty
+)
+
+object PermissionPolicy:
+  val default: PermissionPolicy = PermissionPolicy()
+
+/** Interaction kind — what the user is being asked (P2). */
+enum InteractionKind:
+  case Permission, AskUser
+
+/**
+ * Reply target for an interaction request (P2). Held by the InteractionHub —
+ * NOT by the requesting agent — so it survives the requesting agent's turn
+ * lifecycle (D3) and supports multiple concurrent requests (D4, multi-slot
+ * queueing keyed by requestId).
+ */
+sealed trait InteractionReply
+
+object InteractionReply:
+  final case class PermissionReply(deferred: cats.effect.Deferred[IO, Boolean]) extends InteractionReply
+  final case class AskUserReply(replyTo: Option[ActorRef[List[String]]]) extends InteractionReply
+
+/**
+ * Unified interaction request (P2). ForwardPermission/ForwardAskUser are gone:
+ * every agent (root or sub-agent) sends this directly to the InteractionHub,
+ * which renders the card/question in the Nebula (root) window and routes the
+ * answer back by requestId.
+ *
+ * @param requestId     unique id used to route the answer (multi-slot queue)
+ * @param kind          Permission | AskUser
+ * @param payload       card/question JSON (type/summary/items/…); the hub
+ *                      overrides sessionId=rootSessionId and adds requestId
+ * @param reply         PermissionReply(deferred) | AskUserReply(replyTo)
+ * @param rootSessionId permission-policy bucket + wsSend routing key
+ * @param sourceAgent   originating agent name (UI attribution badge)
+ * @param sourceSession originating agent session id (UI attribution badge)
+ */
+final case class InteractionRequest(
+  requestId: String,
+  kind: InteractionKind,
+  payload: Json,
+  reply: InteractionReply,
+  rootSessionId: String,
+  sourceAgent: String,
+  sourceSession: String
+)
+
+/**
+ * Unified interaction answer (P2). Frontend answers (permissionAnswer /
+ * askUserAnswer) are translated by the gateway into this and sent to the hub.
+ * When `requestId` is empty (old frontend, no requestId support) the hub falls
+ * back to matching the oldest pending request for `rootSessionId`.
+ *
+ * payload: Permission → {"approved": Boolean}; AskUser → {"answers": [...]}
+ */
+final case class InteractionAnswered(
+  requestId: String,
+  rootSessionId: String,
+  payload: Json
+)
 
 /**
  * Tool/compaction pipeline error — distinct from LLM failures.
@@ -230,7 +333,11 @@ enum AgentStreamEvent:
     val withNodeSession: Json => Json =
       if isSubagent then
         sessionId match
-          case Some(sid) => _.deepMerge(Json.obj("nodeSessionId" -> sid.asJson))
+          case Some(sid) =>
+            json =>
+              json.asObject match
+                case Some(obj) => Json.fromJsonObject(obj.add("nodeSessionId", sid.asJson))
+                case None => json
           case None => identity
       else identity
     withNodeSession(this match
@@ -410,13 +517,23 @@ enum AgentStatus:
 
 case class CompactionResult(before: Int, after: Int)
 
+/**
+ * Compaction execution phase. Two-stage model:
+ *  - Save:    tools available, agent writes durable memory/skills with Write/Edit,
+ *             ends the turn (toolCalls.isEmpty) → transitions to Compact.
+ *  - Compact: tools disabled, single text-only summary turn (existing behavior).
+ */
+enum CompactionPhase:
+  case Save, Compact
+
 case class CompactionJob(
   subagentId: String,
   mode: String,
   replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None,
   replyTo: Option[ActorRef[AgentEvent]] = None,
   resumeAfterCompact: Boolean = true,
-  postCompactInstruction: Option[String] = None
+  postCompactInstruction: Option[String] = None,
+  phase: CompactionPhase = CompactionPhase.Compact // default Compact → existing call sites unchanged
 )
 
 case class TurnContext(
@@ -429,6 +546,7 @@ case class TurnContext(
   currentBranch: Option[String] = None,
   skillCatalog: String = "",
   teamCatalog: String = "",
+  flowCatalog: String = "",
   memoryBlock: String = ""
 )
 
@@ -449,6 +567,13 @@ case class SessionContext(
   chatWidth: Int = 0,
   gitBranch: Option[String] = None,
   safetyMode: String = "confirm-edits",
+  /**
+   * P2: permission-policy bucket + interaction routing anchor. Passed as a
+   * constructor parameter at every spawn site (Root=itself, Team=parent root
+   * session, Flow/Ephemeral=itself, Delegate=resolved caller root). Falls back
+   * to sessionId so legacy spawn sites still get a sane bucket.
+   */
+  rootSessionId: String = "",
   pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
   pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
   pendingAskUserReplyTo: Option[ActorRef[List[String]]] = None,
@@ -457,16 +582,17 @@ case class SessionContext(
    *  Used by flow agents to enforce structured result reporting.
    */
   expectsMail: Boolean = false,
-  /** Message index where the current mail turn started (for progress extraction). */
-  mailTurnStart: Option[Int] = None,
   /** Total mail turns completed in this session. */
   mailTurnCount: Int = 0,
-  /** Last dream mode timestamp (epoch millis). */
-  lastDreamAt: Option[Long] = None,
-  /** Message count at last dream (to track new material). */
-  lastDreamMessageCount: Int = 0,
   /** Last experience extraction timestamp. */
-  lastExperienceAt: Option[Long] = None
+  lastExperienceAt: Option[Long] = None,
+  /**
+   * True when this agent is a SubTask worker (spawned via SubTaskTool).
+   * Workers are leaf agents: no Mail/SubTask/Delegate tools, no team
+   * context injection (categoryPrefix/managerPrefix/memoryBlock/teamCatalog/
+   * flowCatalog stripped), and a fixed Worker Block appended to the prompt.
+   */
+  isSubTaskWorker: Boolean = false
 )
 
 case class InteractionState(
@@ -508,7 +634,10 @@ case class ExecutionContext(
   // without the agent subsequently calling Mail. Bounded by MaxMailReminders so
   // a flow agent that keeps producing text-without-Mail cannot loop forever —
   // after the cap it is allowed to finishTurn (emit agentDone, release busy).
-  mailReminders: Int = 0
+  mailReminders: Int = 0,
+  // Consecutive transient LLM failures auto-retried this turn (bounded by
+  // AgentActor.LlmFailRetryMax). Reset on any successful LLM completion.
+  llmFailRetries: Int = 0
 )
 
 object ExecutionContext:
@@ -562,12 +691,29 @@ case class PlanModeState(
   taskDescription: String = ""
 )
 
+/**
+ * Snapshot of the dynamic values injected into systemStable at its last build
+ * (cache-optimization v2). systemStable is rebuilt only at lifecycle nodes
+ * (new session / compaction complete / restart); mid-session changes to these
+ * values are reported via change reminders instead of invalidating the cache.
+ */
+case class SystemStableSnapshot(
+  devices: String = "",
+  sessions: String = "",
+  language: Option[String] = None,
+  envInfo: String = ""
+)
+
 case class AgentState(
   session: SessionContext,
   execution: ExecutionContext,
   compaction: CompactionState,
   agentSessions: List[AgentSessionInfo],
-  planMode: Option[PlanModeState]
+  planMode: Option[PlanModeState],
+  /** Last built systemStable string — reused on non-lifecycle turns. */
+  cachedSystemStable: Option[String],
+  /** Dynamic values at the time systemStable was last built (change detection). */
+  stableSnapshot: Option[SystemStableSnapshot]
 )
 
 object AgentState:
@@ -594,7 +740,9 @@ object AgentState:
     folderId: Option[String] = None,
     safetyMode: String = "confirm-edits",
     gitBranch: Option[String] = None,
-    expectsMail: Boolean = false
+    expectsMail: Boolean = false,
+    rootSessionId: String = "",
+    isSubTaskWorker: Boolean = false
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -614,11 +762,15 @@ object AgentState:
         rulesMd = rulesMd,
         gitBranch = gitBranch,
         safetyMode = safetyMode,
-        expectsMail = expectsMail
+        expectsMail = expectsMail,
+        rootSessionId = rootSessionId,
+        isSubTaskWorker = isSubTaskWorker
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
       Nil,
+      None,
+      None,
       None
     )
   end apply
@@ -656,7 +808,9 @@ extension (s: AgentState)
   def folderId: Option[String] = s.session.folderId
   def gitBranch: Option[String] = s.session.gitBranch
   def safetyMode: String = s.session.safetyMode
+  def rootSessionId: String = s.session.rootSessionId
   def expectsMail: Boolean = s.session.expectsMail
+  def isSubTaskWorker: Boolean = s.session.isSubTaskWorker
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)
@@ -701,16 +855,8 @@ extension (s: AgentState)
   def withContextWindow(window: Int): AgentState = s.copy(session = s.session.copy(contextWindow = window))
   def withAskMode(mode: Option[String]): AgentState = s.copy(session = s.session.copy(askMode = mode))
   def withLanguage(lang: Option[String]): AgentState = s.copy(session = s.session.copy(language = lang))
-  def mailTurnStart: Option[Int] = s.session.mailTurnStart
   def mailTurnCount: Int = s.session.mailTurnCount
-  def withMailTurnStart(idx: Option[Int]): AgentState = s.copy(session = s.session.copy(mailTurnStart = idx))
   def withMailTurnCount(count: Int): AgentState = s.copy(session = s.session.copy(mailTurnCount = count))
-  def lastDreamAt: Option[Long] = s.session.lastDreamAt
-  def lastDreamMessageCount: Int = s.session.lastDreamMessageCount
-  def withLastDreamAt(ts: Long): AgentState = s.copy(session = s.session.copy(lastDreamAt = Some(ts)))
-
-  def withLastDreamMessageCount(count: Int): AgentState =
-    s.copy(session = s.session.copy(lastDreamMessageCount = count))
   def lastExperienceAt: Option[Long] = s.session.lastExperienceAt
   def withLastExperienceAt(ts: Long): AgentState = s.copy(session = s.session.copy(lastExperienceAt = Some(ts)))
 
@@ -725,12 +871,26 @@ extension (s: AgentState)
 
   def withEmptyResponseRetries(count: Int): AgentState =
     s.copy(execution = s.execution.copy(emptyResponseRetries = count))
+  def llmFailRetries: Int = s.execution.llmFailRetries
+
+  def withLlmFailRetries(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(llmFailRetries = count))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
 
   def withSafetyMode(mode: String): AgentState =
     s.copy(session = s.session.copy(safetyMode = mode))
 
   def withPlanMode(pm: Option[PlanModeState]): AgentState = s.copy(planMode = pm)
+
+  // --- Cache v2: systemStable + dynamic snapshot (lifecycle-node updates) ---
+
+  /** Store the rebuilt systemStable and the dynamic snapshot it was built from. */
+  def withSystemStableCache(stable: String, snapshot: SystemStableSnapshot): AgentState =
+    s.copy(cachedSystemStable = Some(stable), stableSnapshot = Some(snapshot))
+
+  /** Mark the cache for rebuild (called at compaction complete / session reset). */
+  def invalidateSystemStableCache: AgentState =
+    s.copy(cachedSystemStable = None, stableSnapshot = None)
 
   def delegateCount: Int = s.execution.delegateCount
   def lastMaintenanceDelegateCount: Int = s.execution.lastMaintenanceDelegateCount

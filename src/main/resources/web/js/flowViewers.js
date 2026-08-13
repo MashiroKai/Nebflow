@@ -5,28 +5,33 @@
 import { renderMarkdownWithMath } from './utils.js';
 import state from './state.js';
 import { esc, authHeaders, fmtTime, overlayRoot } from './flowHelpers.js';
+import { t } from './i18n.js';
+import { fetchPresets, setAgentPreset, resolvedChainHtml } from './presets.js';
 
 /** Fetch and render per-agent model config into a placeholder element.
  *  Called after agent blocks are rendered in openDefinition. */
 async function populateAgentModel(el, agentName) {
   try {
-    const resp = await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers: authHeaders() });
+    const [resp, presetData] = await Promise.all([
+      fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers: authHeaders() }),
+      fetchPresets(),
+    ]);
     if (!resp.ok) { el.innerHTML = '<span class="flow-agent-block-empty">无法加载</span>'; return; }
     const cfg = await resp.json();
-    renderAgentModelSection(el, agentName, cfg);
+    renderAgentModelSection(el, agentName, cfg, presetData);
   } catch (e) {
     el.innerHTML = '<span class="flow-agent-block-empty">无法加载</span>';
   }
 }
 
-/** Render model config section with preferred dropdown + current indicator. */
-function renderAgentModelSection(el, agentName, cfg) {
+/** Render model section: preset dropdown + read-only resolved chain + current indicator. */
+function renderAgentModelSection(el, agentName, cfg, presetData) {
+  const presetName = cfg.preset || '';
+  const current = cfg.current || cfg.preferred || cfg.default || '';
   const preferred = cfg.preferred || cfg.default || '';
-  const current = cfg.current || preferred;
   const isFallback = current && preferred && current !== preferred;
-
-  // Build model dropdown options from global model refs
-  const allRefs = state.allModelRefs || [];
+  const presetList = presetData?.presets || [];
+  const defaultPreset = presetList.find(p => p.name === presetData?.defaultPreset);
 
   const currentHtml = isFallback
     ? `<span class="flow-agent-model-current fallback">运行: ${esc(current)}</span>`
@@ -35,25 +40,18 @@ function renderAgentModelSection(el, agentName, cfg) {
   el.innerHTML = `
     <div class="flow-agent-model-row">
       <select class="flow-agent-model-select" data-agent="${esc(agentName)}">
-        ${preferred
-          ? `<option value="${esc(preferred)}" selected>${esc(preferred)}</option>`
-          : `<option value="" selected>使用全局默认</option>`}
-        ${allRefs.filter(r => r !== preferred).map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}
+        <option value=""${!presetName ? ' selected' : ''}>${t('preset.useDefault')}${defaultPreset ? `（${esc(defaultPreset.name)}）` : ''}</option>
+        ${presetList.map(p => `<option value="${esc(p.name)}"${p.name === presetName ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
       </select>
       ${currentHtml}
-    </div>`;
+    </div>
+    ${resolvedChainHtml(cfg)}`;
 
-  // Bind dropdown change → PUT /api/agents/:name/model
+  // Bind dropdown change → PUT /api/agents/:name/preset
   const sel = el.querySelector('.flow-agent-model-select');
   sel?.addEventListener('change', async () => {
-    try {
-      await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, {
-        method: 'PUT',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preferred: sel.value }),
-      });
-      populateAgentModel(el, agentName);
-    } catch (e) { /* non-critical */ }
+    await setAgentPreset(agentName, sel.value || null);
+    populateAgentModel(el, agentName);
   });
 }
 

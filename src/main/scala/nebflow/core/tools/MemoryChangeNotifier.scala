@@ -9,8 +9,9 @@ import io.circe.syntax.*
  * `memoryChanged` WebSocket event so the frontend can refresh its memory panel.
  *
  * Memory files are:
- *   - ~/.nebflow/User.md                         (User)
- *   - ~/.nebflow/agents/<name>/memory.md           (Agent)
+ *   - ~/.nebflow/User.md                                    (User)
+ *   - ~/.nebflow/agents/<name>/memory.md                      (Nebula agent)
+ *   - ~/.nebflow/teams/<team>/agents/<name>/memory.md         (Team agent)
  */
 object MemoryChangeNotifier:
 
@@ -19,7 +20,10 @@ object MemoryChangeNotifier:
     val home = sys.props("user.home")
     val normalized = filePath.replace("\\", "/")
     normalized.startsWith(s"$home/.nebflow/User.md") ||
-    normalized.contains(s"$home/.nebflow/agents/") && normalized.endsWith("memory.md")
+    normalized.endsWith("memory.md") && (
+      normalized.contains(s"$home/.nebflow/agents/") ||
+        normalized.contains(s"/.nebflow/teams/") && normalized.contains("/agents/")
+    )
 
   /**
    * If the path is a memory file, push `memoryChanged` via wsSend.

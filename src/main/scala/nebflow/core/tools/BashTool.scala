@@ -139,7 +139,15 @@ Git safety:
     """git\s+merge\b""".r,
     // Fork bomb
     """:\(\)\{\s*:\|:&\s*\}""".r,
-    """fork\s+bomb""".r
+    """fork\s+bomb""".r,
+    // Obfuscation: encoded payload piped to shell interpreter
+    """(?i)(base64|base32|xxd|openssl\s+enc).*\|\s*(sh|bash|/bin/sh|/bin/bash|zsh)\b""".r,
+    // Obfuscation: interpreter relay with system/exec/eval calls
+    """(?i)(python[23]?|perl|ruby|node)\s+-[ec]\b.*((os\.)?system|exec|eval|subprocess|popen)""".r,
+    // Obfuscation: variable assignment then immediate $ reference to execute
+    """(?i)\b\w+\s*=\s*['"]?[rm]m?['"]?\s*;?\s*\$""".r,
+    // Obfuscation: env/env -i used to inject commands bypassing direct detection
+    """(?i)\benv\s+(-i\s+)?\w+=.*\$\w+""".r
   )
 
   // Interactive command patterns: commands that require terminal interaction.
@@ -292,7 +300,7 @@ Git safety:
   // detector sees zero output lines even though the real command is printing.
   // We strip the trailing `| tail -N` and apply truncation in Java instead.
 
-  private val TrailingTailRe = """\|\s*tail\s+(?:-n\s+)?(\d+)\s*$""".r
+  private val TrailingTailRe = """\|\s*tail\s+(?:-n\s+)?-?(\d+)\s*$""".r
 
   /** Extract trailing `| tail -N`, returning (command without pipe, N). */
   private def extractTailTruncation(command: String): (String, Option[Int]) =

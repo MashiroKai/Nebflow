@@ -41,7 +41,7 @@ object FlowMailStore:
   }
 
   private def mailboxDir(sessionId: String): os.Path =
-    require(sessionId.matches("^[a-fA-F0-9-]{1,64}$"), s"Invalid sessionId: $sessionId")
+    require(sessionId.matches("^[a-zA-Z0-9._-]{1,64}$"), s"Invalid sessionId: $sessionId")
     PathUtil.dataRoot / "sessions" / sessionId / "flow-mailbox"
 
   /** Sanitize flow name for use as a filename (project/pipeline names contain /). */
@@ -57,22 +57,23 @@ object FlowMailStore:
   def append(sessionId: String, flowName: String, record: MailRecord): IO[Unit] =
     if sessionId.isEmpty then IO.unit
     else
-      val file = mailboxFile(sessionId, flowName)
-      IO.blocking {
-        val dir = file / os.up
-        if !os.exists(dir) then os.makeDir.all(dir)
-        val existing: List[MailRecord] =
-          if os.exists(file) then
-            decode[List[MailRecord]](os.read(file)) match
-              case Right(records) => records
-              case Left(_) => Nil
-          else Nil
-        val updated = (existing :+ record).takeRight(200) // cap at 200 entries
-        val tmp = dir / s".${file.last}.tmp"
-        os.write.over(tmp, updated.asJson.noSpaces)
-        os.move.over(tmp, file, replaceExisting = true)
-      }.void
-        .handleErrorWith(e => logger.warn(s"FlowMailStore.append failed: ${e.getMessage}").void)
+      IO.defer {
+        val file = mailboxFile(sessionId, flowName)
+        IO.blocking {
+          val dir = file / os.up
+          if !os.exists(dir) then os.makeDir.all(dir)
+          val existing: List[MailRecord] =
+            if os.exists(file) then
+              decode[List[MailRecord]](os.read(file)) match
+                case Right(records) => records
+                case Left(_) => Nil
+            else Nil
+          val updated = (existing :+ record).takeRight(200) // cap at 200 entries
+          val tmp = dir / s".${file.last}.tmp"
+          os.write.over(tmp, updated.asJson.noSpaces)
+          os.move.over(tmp, file, replaceExisting = true)
+        }.void
+      }.handleErrorWith(e => logger.warn(s"FlowMailStore.append failed: ${e.getMessage}").void)
 
   /** Load all mail records for a flow instance. */
   def load(sessionId: String, flowName: String): IO[List[MailRecord]] =

@@ -7,7 +7,7 @@
 //   const ed = await createEditor(paneEl, { path, content, fileName });
 //   ed.onDirty(callback);       // called when content changes
 //   await ed.save();            // sends writeFile WS + marks clean
-//   ed.dispose();               // cleanup when tab closes
+//   ed.dispose({ disposeModel: true });  // cleanup when tab closes
 
 import state from './state.js';
 import { sendWs, onMessage } from './ws.js';
@@ -145,6 +145,60 @@ function getLanguage(fileName) {
   return LANG_MAP[ext] || 'plaintext';
 }
 
+// ── Model lifecycle ────────────────────────────────────────────────────
+// Models are shared by URI (the same file in two tabs = one model) and are
+// never freed automatically — without explicit disposal every file ever
+// opened stays in memory. Track live editors per model so the model can be
+// disposed safely once its last editor is gone.
+
+// model URI string -> Set of live editor instances using that model
+const modelRefs = new Map();
+
+/** Normalize a path to the URI used for model lookup. Leading slashes are
+ *  stripped to avoid file://// (double-slash in the URI path component). */
+function modelUriForPath(monaco, path) {
+  const cleanPath = (path || 'untitled').replace(/\\/g, '/').replace(/^\/+/, '');
+  return monaco.Uri.parse(`file:///${cleanPath}`);
+}
+
+function trackModelRef(model, editor) {
+  const key = model.uri.toString();
+  let refs = modelRefs.get(key);
+  if (!refs) { refs = new Set(); modelRefs.set(key, refs); }
+  refs.add(editor);
+}
+
+/** Remove an editor reference. Returns the number of live editors still
+ *  using the model (0 = safe to dispose). */
+function untrackModelRef(model, editor) {
+  const key = model.uri.toString();
+  const refs = modelRefs.get(key);
+  if (!refs) return 0;
+  refs.delete(editor);
+  if (refs.size === 0) modelRefs.delete(key);
+  return refs.size;
+}
+
+/** Dispose the cached model for a path when no live editor references it.
+ *  Covers tabs closed with no editor mounted (e.g. a markdown tab back in
+ *  rendered mode after a source-mode session). The model URI is matched
+ *  exactly or as a path suffix — the model path may be root-relative or a
+ *  bare file name while the tab only knows the absolute path. Releasing an
+ *  unreferenced model is always safe: the next createEditor recreates it. */
+export function releaseModelIfUnused(path) {
+  const monaco = window.monaco;
+  if (!monaco || !path) return;
+  const absPath = ('/' + path.replace(/\\/g, '/')).replace(/^\/+/, '/');
+  for (const model of monaco.editor.getModels()) {
+    if (model.isDisposed()) continue;
+    if (modelRefs.get(model.uri.toString())?.size) continue;
+    const modelPath = model.uri.path;  // always starts with '/'
+    if (modelPath === absPath || (modelPath.length > 1 && absPath.endsWith(modelPath))) {
+      model.dispose();
+    }
+  }
+}
+
 // ── Editor factory ─────────────────────────────────────────────────────
 
 /**
@@ -157,7 +211,7 @@ export async function createEditor(container, opts) {
   const monaco = await loadMonaco();
 
   const language = getLanguage(opts.fileName);
-  const uri = monaco.Uri.parse(`file:///${(opts.path || opts.fileName || 'untitled').replace(/\\/g, '/')}`);
+  const uri = modelUriForPath(monaco, opts.path || opts.fileName);
   let model = monaco.editor.getModel(uri);
 
   if (!model) {
@@ -196,6 +250,8 @@ export async function createEditor(container, opts) {
     suggestOnTriggerCharacters: true,
     quickSuggestions: { other: true, comments: false, strings: false },
   });
+
+  trackModelRef(model, editor);
 
   // ── Dirty tracking ──
   let dirty = false;
@@ -243,9 +299,16 @@ export async function createEditor(container, opts) {
   }
 
   // ── Dispose ──
-  function dispose() {
+  // Always destroys the editor view. Pass { disposeModel: true } when the
+  // owning tab is gone for good — the shared model is freed once no other
+  // live editor references it. Default keeps the model cached for reuse
+  // (e.g. markdown rendered↔source toggle recreates the editor in place).
+  function dispose(opts) {
     editor.dispose();
-    // Don't dispose model — Monaco caches them for reuse
+    const remaining = untrackModelRef(model, editor);
+    if (opts?.disposeModel && remaining === 0 && !model.isDisposed()) {
+      model.dispose();
+    }
   }
 
   return {

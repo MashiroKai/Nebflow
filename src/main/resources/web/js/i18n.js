@@ -134,9 +134,15 @@ export function applyLocaleToHtml() {
     tab.textContent = t(key);
   });
 
-  // BG dropdown header
-  const bgHeader = document.querySelector('.bg-dropdown-header');
+  // BG dropdown header — scoped to #bg-dropdown: the class-first match would
+  // hit #bgagent-dropdown's "Sub-agents" header (it comes first in the DOM)
+  // and wrongly overwrite it with the background-tasks label.
+  const bgHeader = document.querySelector('#bg-dropdown .bg-dropdown-header');
   if (bgHeader) bgHeader.textContent = t('header.bgTasks');
+
+  // Daemon panel title (single element — precise selector, not class-first match)
+  const daemonPanelTitle = document.querySelector('#daemon-panel .daemon-panel-title');
+  if (daemonPanelTitle) daemonPanelTitle.textContent = t('daemons.title');
 
   // Settings nav item title
   const settingsNavItem = document.querySelector('.nav-item[data-tab="settings"]');

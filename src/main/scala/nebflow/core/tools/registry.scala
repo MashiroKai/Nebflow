@@ -37,14 +37,18 @@ object ToolRegistry:
       "SaveWorkspaceItem" -> SaveWorkspaceItemTool,
       // Agent lifecycle — always available, no tool whitelist filtering
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
-      // Unified agent communication (message + fork modes)
+      // Unified agent communication (message + ask modes)
       "Mail" -> MailTool,
-      // Sub-agent delegation (background + persistent modes)
+      // Sub-agent delegation (background + persistent modes) — Nebula/调度器专用
       "Delegate" -> DelegateTool,
+      // Team-member task delegation (self-clone + ephemeral worker, no Mail identity)
+      "SubTask" -> SubTaskTool,
       // Cross-device file transfer
       "TransferFile" -> TransferFileTool,
       // Load Team/Flow from disk (validate + mount)
-      "Load" -> LoadTool
+      "Load" -> LoadTool,
+      // Flow agent result reporting (verdict + output for DAG switch routing)
+      "FlowReport" -> FlowReportTool
     )
     tools.putAll(builtins.asJava)
   }

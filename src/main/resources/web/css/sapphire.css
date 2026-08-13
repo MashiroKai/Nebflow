@@ -75,147 +75,153 @@
   z-index: 1;
 }
 
-/* ── Sapphire Shadow Stack ─────────────────────────────────────────────── */
-.sapphire-shadow {
-  box-shadow:
-    inset 0 -1px 0 0 rgba(var(--sapphire), 0.025),
-    inset 1px 0 0 0 rgba(var(--sapphire), 0.02),
-    inset -1px 0 0 0 rgba(var(--sapphire), 0.02),
-    0px 0px 0px 1px rgba(0, 0, 0, 0.03),
-    0px 4px 16px rgba(0, 0, 0, 0.05),
-    0px 8px 36px rgba(0, 0, 0, 0.06);
+/* ── Glass Control — standard interactive control texture ────────────────
+   One material for buttons/inputs sitting on glass surfaces: semi-
+   transparent tint, backdrop blur, 3D edges (top highlight + bottom
+   under-edge), whisper border. Feature CSS hover states should reuse
+   these variables so every control shares the same material. */
+:root {
+  --glass-control-bg: rgba(255, 255, 255, 0.45);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.65);
+  --glass-control-border: rgba(255, 255, 255, 0.40);
+  --glass-control-highlight: rgba(255, 255, 255, 0.50);
+  --glass-control-highlight-hover: rgba(255, 255, 255, 0.62);
+  --glass-control-underedge: rgba(0, 0, 0, 0.08);
+  --glass-control-glow: rgba(0, 0, 0, 0.06);
+  --glass-control-glow-hover: rgba(0, 0, 0, 0.09);
+  --glass-control-shadow: rgba(0, 0, 0, 0.04);
+  --glass-control-shadow-hover: rgba(0, 0, 0, 0.06);
+  --glass-control-blur: 10px;
 }
+
 @media (prefers-color-scheme: dark) {
-  .sapphire-shadow {
-    box-shadow:
-      inset 0 -1px 0 0 rgba(var(--sapphire), 0.035),
-      inset 1px 0 0 0 rgba(var(--sapphire), 0.025),
-      inset -1px 0 0 0 rgba(var(--sapphire), 0.025),
-      0px 0px 0px 1px rgba(255, 255, 255, 0.035),
-      0px 4px 16px rgba(0, 0, 0, 0.22),
-      0px 8px 36px rgba(0, 0, 0, 0.35);
+  :root {
+    --glass-control-bg: rgba(255, 255, 255, 0.05);
+    --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+    --glass-control-border: rgba(255, 255, 255, 0.08);
+    --glass-control-highlight: rgba(255, 255, 255, 0.08);
+    --glass-control-highlight-hover: rgba(255, 255, 255, 0.13);
+    --glass-control-underedge: rgba(0, 0, 0, 0.25);
+    --glass-control-glow: rgba(0, 0, 0, 0.20);
+    --glass-control-glow-hover: rgba(0, 0, 0, 0.28);
+    --glass-control-shadow: rgba(0, 0, 0, 0.15);
+    --glass-control-shadow-hover: rgba(0, 0, 0, 0.20);
   }
 }
 
-/* ── Border Glow on Hover ──────────────────────────────────────────────── */
-.glow-border {
-  position: relative;
-  transition: box-shadow 0.3s ease, border-color 0.3s ease;
-}
-.glow-border::after {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
-  z-index: -1;
+.glass-control {
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
   box-shadow:
-    0 0 var(--glow-radius) var(--glow-spread) rgba(var(--sapphire-glow), calc(var(--glow-opacity) * 0.3)),
-    0 0 calc(var(--glow-radius) * 2) calc(var(--glow-spread) * 1.5) rgba(var(--sapphire-glow), calc(var(--glow-opacity) * 0.15));
-}
-.glow-border:hover::after,
-.glow-border:focus-visible::after { opacity: 1; }
-.glow-border:hover,
-.glow-border:focus-visible { border-color: var(--sapphire-edge-strong); }
-
-/* ── Rotating Gradient Border ──────────────────────────────────────────── */
-@property --sapphire-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-@keyframes sapphireRotate {
-  to { --sapphire-angle: 360deg; }
-}
-.sapphire-ring {
-  position: relative;
-  isolation: isolate;
-}
-.sapphire-ring::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  padding: 1px;
-  background: conic-gradient(
-    from var(--sapphire-angle),
-    rgba(var(--sapphire), 0.0),
-    rgba(var(--sapphire-glow), 0.4),
-    rgba(var(--sapphire), 0.0),
-    rgba(var(--sapphire-glow), 0.3),
-    rgba(var(--sapphire), 0.0)
-  );
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  opacity: 0;
-  transition: opacity 0.4s ease;
-  pointer-events: none;
-  z-index: -1;
-  animation: sapphireRotate 4s linear infinite paused;
-}
-.sapphire-ring:hover::before,
-.sapphire-ring:focus-within::before {
-  opacity: 1;
-  animation-play-state: running;
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
 }
 
-/* ── Button Styles ─────────────────────────────────────────────────────── */
-.btn-sapphire {
-  position: relative;
-  border: 1px solid rgba(var(--sapphire), 0.3);
-  color: rgb(var(--sapphire));
-  background: rgba(var(--sapphire), 0.05);
-  transition: all 0.25s ease;
+/* ── Glass Control standard — applied to ALL interactive controls ────────
+   This file loads last (see index.html), so these grouped rules win
+   equal-specificity ties against feature CSS. Two patterns:
+
+   A) Icon/ghost controls — transparent at rest (1px transparent border
+      reserves edge space, no layout shift), full glass on hover.
+      Same pattern as .icon-btn / .nav-item / .activity-btn (227bede2).
+
+   B) Labeled / content buttons — glass material at rest, background
+      raises on hover. Same material as #send-btn / .glass-control.
+
+   Excluded on purpose: solid primary/accent buttons (.cfg-btn-primary,
+   .option-btn.picked, #modal-confirm, *-modal-save/danger — their accent
+   or !important declarations win anyway), switches, menu/list rows. */
+
+/* Pattern A — base */
+.panel-btn,
+.activity-avatar,
+.session-delete,
+.folder-delete,
+.explorer-folder-btn,
+.explorer-action-btn,
+.canvas-close-btn,
+.reminder-create-btn,
+.cfg-eye-btn,
+.agent-detail-prompt-toggle {
+  border: 1px solid transparent;
+  transition: background 0.15s, color 0.15s, border-color 0.15s,
+              box-shadow 0.15s, opacity 0.15s, transform 0.1s;
 }
-.btn-sapphire:hover {
-  background: rgba(var(--sapphire), 0.10);
-  border-color: rgba(var(--sapphire), 0.5);
+/* Pattern A — hover */
+.panel-btn:hover,
+.activity-avatar:hover,
+.session-delete:hover,
+.folder-delete:hover,
+.explorer-folder-btn:hover,
+.explorer-action-btn:hover,
+.canvas-close-btn:hover,
+.reminder-create-btn:hover,
+.cfg-eye-btn:hover,
+.agent-detail-prompt-toggle:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
   box-shadow:
-    0 0 12px rgba(var(--sapphire-glow), 0.12),
-    0 0 24px rgba(var(--sapphire-glow), 0.06);
-}
-.btn-sapphire:active {
-  background: rgba(var(--sapphire), 0.16);
-  transform: scale(0.98);
+    inset 0 1px 0 var(--glass-control-highlight-hover),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 2px 8px var(--glass-control-glow-hover),
+    0 4px 12px var(--glass-control-shadow-hover);
 }
 
-.btn-glass {
-  position: relative;
-  border: 1px solid var(--sapphire-edge);
-  background: rgba(var(--sapphire), 0.02);
-  color: var(--color-frame-text-muted);
-  transition: all 0.25s ease;
-}
-.btn-glass:hover {
-  background: rgba(var(--sapphire), 0.06);
-  border-color: var(--sapphire-edge-strong);
-  color: var(--color-frame-text-bright);
+/* Pattern B — base (border-color only, no shorthand: preserves dashed
+   add-buttons and per-variant border styles) */
+.cfg-btn:not(.cfg-btn-primary),
+.config-actions button,
+.agent-detail-save-btn,
+.option-btn,
+.queue-item-btn,
+.neblink-peer-update-btn,
+.neblink-ch-btn,
+.epub-nav-btn,
+.code-copy-btn,
+#modal-cancel,
+#delete-cancel,
+#agent-modal-actions button,
+#memory-modal-actions button,
+#rules-modal-actions button,
+#path-picker-actions button {
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
   box-shadow:
-    0 0 8px rgba(var(--sapphire-glow), 0.06),
-    0 0 20px rgba(var(--sapphire-glow), 0.03);
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
+  transition: background 0.15s, color 0.15s, border-color 0.15s,
+              box-shadow 0.15s, opacity 0.15s;
 }
-
-.btn-destructive {
-  border-color: rgba(220, 60, 60, 0.25);
-  color: rgba(220, 60, 60, 0.8);
-  background: rgba(220, 60, 60, 0.03);
-  transition: all 0.25s ease;
-}
-.btn-destructive:hover {
-  background: rgba(220, 60, 60, 0.07);
-  border-color: rgba(220, 60, 60, 0.45);
+/* Pattern B — hover (picked/copied states excluded: accent must survive) */
+.cfg-btn:not(.cfg-btn-primary):hover,
+.config-actions button:hover,
+.agent-detail-save-btn:hover,
+.option-btn:not(.picked):hover,
+.queue-item-btn:hover,
+.neblink-peer-update-btn:hover,
+.neblink-ch-btn:hover,
+.epub-nav-btn:hover,
+.code-copy-btn:not(.copied):hover,
+#modal-cancel:hover,
+#delete-cancel:hover,
+#agent-modal-actions button:hover,
+#memory-modal-actions button:hover,
+#rules-modal-actions button:hover,
+#path-picker-actions button:hover {
+  background: var(--glass-control-bg-hover);
   box-shadow:
-    0 0 12px rgba(220, 60, 60, 0.08),
-    0 0 24px rgba(220, 60, 60, 0.04);
-  color: #e55;
-}
-
-/* ── Reduced Motion ────────────────────────────────────────────────────── */
-@media (prefers-reduced-motion: reduce) {
-  .sapphire-ring::before { animation: none; }
-  .glow-border::after { transition: opacity 0s; }
+    inset 0 1px 0 var(--glass-control-highlight-hover),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 2px 8px var(--glass-control-glow-hover),
+    0 4px 12px var(--glass-control-shadow-hover);
 }

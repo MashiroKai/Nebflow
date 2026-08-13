@@ -307,7 +307,15 @@ object GatewayMain extends IOApp.Simple:
                                   val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>
                                     logger.warn(s"Telemetry init failed: ${e.getMessage}").as(None)
                                   }
-                                  telemetryIO.flatMap { telemetry =>
+                                  // P2: spawn the global InteractionHub and publish its ref.
+                                  // Every agent's permission/AskUser requests and every frontend
+                                  // interaction answer route through this single actor.
+                                  val hubSetup: IO[Unit] =
+                                    actorSystem.spawn(nebflow.agent.InteractionHub(), "interaction-hub").flatMap {
+                                      hubRef =>
+                                        sharedResources.interactionHubRef.set(Some(hubRef))
+                                    }
+                                  hubSetup *> telemetryIO.flatMap { telemetry =>
                                     val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
                                     val sessionService = new SessionService(sessionStore)
                                     val agentService = new AgentService(agentLibrary)
@@ -421,6 +429,18 @@ object GatewayMain extends IOApp.Simple:
                                               val daemonService = new DaemonService(dispatcher)
                                               val sharedResourcesWithDaemon = sharedResourcesFinal.copy(
                                                 daemonService = Some(daemonService)
+                                              )
+                                              // JVM shutdown hook: daemons must die with Nebflow even when the JVM
+                                              // is killed by SIGINT/SIGTERM (Ctrl+C) — cats-effect `.guarantee`
+                                              // finalizers are not guaranteed to run on abrupt termination. The
+                                              // shutdown hook always runs on JVM exit. Idempotent: stopAll on an
+                                              // already-stopped set is a no-op, so it is safe alongside the
+                                              // graceful path in `.guarantee` below.
+                                              Runtime.getRuntime.addShutdownHook(
+                                                new Thread(() =>
+                                                  try daemonService.stopAll().unsafeRunSync()
+                                                  catch case _: Throwable => ()
+                                                )
                                               )
                                               // Auto-start daemons configured with autoStart=true
                                               dispatcher.unsafeRunAndForget(

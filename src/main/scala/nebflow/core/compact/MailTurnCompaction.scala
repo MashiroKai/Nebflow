@@ -75,7 +75,7 @@ object MailTurnCompaction:
    * - Actions: count of tool calls by name
    * - Result: last Assistant message text
    */
-  private def buildProgressSummary(messages: List[Message]): String =
+  def buildProgressSummary(messages: List[Message]): String =
     val firstUserText = messages
       .find(_.role == MessageRole.User)
       .map(extractText)
@@ -112,33 +112,6 @@ object MailTurnCompaction:
        |""".stripMargin
 
   end buildProgressSummary
-
-  /**
-   * Compress message history by replacing old mail-turn messages with a summary.
-   * Keeps the current turn's messages intact, replaces everything before it
-   * with a single system summary message.
-   *
-   * @param allMessages  Full message history
-   * @param turnStartIdx Index where the CURRENT mail turn started
-   * @return Compressed message list: [summary of old turns] + [current turn messages]
-   */
-  def compressTurnMessages(
-    allMessages: List[Message],
-    turnStartIdx: Int
-  ): List[Message] =
-    if turnStartIdx <= 0 || turnStartIdx >= allMessages.size then allMessages
-    else
-      val oldMessages = allMessages.take(turnStartIdx)
-      val currentTurn = allMessages.drop(turnStartIdx)
-      // Build a summary of the old messages
-      val summary = buildProgressSummary(oldMessages)
-      val summaryMsg = Message(
-        role = MessageRole.User,
-        content = Left(
-          s"<context-compact mode=\"mail-turn\">\nPrevious mail turns compressed.\n\n$summary\n</context-compact>"
-        )
-      )
-      List(summaryMsg) ++ currentTurn
 
   private def extractText(msg: Message): String =
     msg.content match

@@ -42,6 +42,165 @@ object CompactService:
     Message(MessageRole.User, Left(prompt))
 
   // ------------------------------------------------------------------
+  // Save-memory reminder — stage 1 of the two-stage compaction model
+  // ------------------------------------------------------------------
+
+  /**
+   * Build the save-memory reminder injected BEFORE the compact reminder
+   * (two-stage model). Tools stay available so the agent can Write/Edit
+   * durable memory and skills; ending the turn (toolCalls.isEmpty) is the
+   * completion signal that transitions to the compact stage.
+   *
+   * Only agents that receive a memory block (Nebula + team agents, mirroring
+   * ContextRefresher's injection condition) get a save turn; others go
+   * straight to compact (behavior unchanged).
+   */
+  def buildSaveMemoryReminder(depth: Int): Message =
+    val profile = CompactionProfile.fromDepth(depth)
+    val prompt = profile match
+      case CompactionProfile.Worker => WorkerSaveMemoryReminder
+      case CompactionProfile.Manager => ManagerSaveMemoryReminder
+      case _ => RootSaveMemoryReminder
+    Message(MessageRole.User, Left(prompt))
+
+  /** Shared preamble for all save-memory profiles. */
+  private val SaveMemoryPreamble =
+    """<system-reminder>
+      |Context compaction is approaching — the conversation is about to be compressed.
+      |BEFORE compression, run the MEMORY MAINTENANCE CYCLE on your persistent memory
+      |and skills.
+      |
+      |Tools ARE AVAILABLE this turn. Use the Write or Edit tool on the memory files
+      |directly (paths and entry format are in the Memory section of your system prompt).
+      |
+      |MEMORY MAINTENANCE CYCLE — do all four steps, in order:
+      |
+      |1. RECORD — save new facts that meet the quality standard below (exactly what
+      |   to record is per your profile below).
+      |2. ORGANIZE — sort entries into the right sections, merge duplicates, fold
+      |   related entries together. Memory is a living document, not an append log.
+      |3. VERIFY — spot-check existing entries against current reality. When an entry
+      |   matters, confirm it still holds by reading the code/file/config — never
+      |   trust old memory blindly.
+      |4. CLEAR — delete entries that are outdated, wrong, readable from code, or of
+      |   no reuse value (criteria below).
+      |
+      |MEMORY QUALITY STANDARD — keep an entry ONLY if it meets ALL THREE criteria:
+      |- HARD TO OBTAIN: not recoverable with one Read/Grep/git command. Line numbers,
+      |  API signatures and implementation details are readable from code — recording
+      |  them clutters memory and goes stale. Record decision REASONS and lessons
+      |  instead: the "why" that code comments and git history hide.
+      |- REUSABLE: will matter for future similar tasks. One-off task details belong
+      |  in the compaction summary, not in memory.
+      |- CURRENT-STATE-FIRST: memory is NOT authoritative. When an entry contradicts
+      |  the code or current reality, reality wins — update or delete the entry.
+      |
+      |LANGUAGE RULE — write your memory entries in the SAME language as the user's messages.
+      |
+      |Your ONLY task this turn is to run this cycle with the Write/Edit tools.
+      |When the cycle is done, END THIS TURN directly — do not output any extra text.
+      |Ending the turn is the completion signal; the system will proceed to compaction
+      |automatically.
+      |
+      |Already-saved information does not need to be repeated in the compaction
+      |summary afterwards.
+      |""".stripMargin
+
+  /**
+   * Root agent (Nebula, depth 0) — the orchestrator.
+   *  Focus: user dynamic facts, orchestration knowledge, long-term project state.
+   */
+  private val RootSaveMemoryReminder = SaveMemoryPreamble +
+    """You are the ROOT agent (Nebula). Your profile focus is the USER and ORCHESTRATION:
+      |
+      |RECORD → ~/.nebflow/User.md (user-level, applies to all agents):
+      |- Corrections of your output or approach — record what they wanted instead
+      |- Direct instructions that skip your questions — record their default preference
+      |- Repeated working style (naming, workflow, tool choices — after 2-3 consistent observations)
+      |- Workflow preferences and environment facts (paths, ports, proxies, devices)
+      |
+      |RECORD → ~/.nebflow/agents/Nebula/memory.md:
+      |- Team/flow selection decisions and routing rules that proved effective
+      |- Cross-project patterns, division of labor between agents
+      |- Which agent handles which task type (observed capabilities)
+      |- Long-term project state that outlives this session (active branches,
+      |  pending merges, design decisions still in force)
+      |
+      |VERIFY & CLEAR — root profile:
+      |- User facts: confirm paths, ports, devices and tool configs still exist and
+      |  still match reality before keeping them — stale environment facts mislead
+      |  every agent downstream
+      |- Orchestration: confirm routing entries reference teams/flows/agents that
+      |  still exist; delete entries whose entities were removed
+      |- Project state: drop branches merged, worktrees removed, merges completed
+      |- Purge code-readable facts (line numbers, API details) you can Read anytime
+      |
+      |Skip one-off task details — they belong to the compaction summary, not memory.
+      |""".stripMargin
+
+  /**
+   * Flow Manager (depth 1) — coordinator within a project/team.
+   *  Focus: coordination state and dispatch experience so routing can resume.
+   */
+  private val ManagerSaveMemoryReminder = SaveMemoryPreamble +
+    """You are a FLOW/TEAM MANAGER. Your profile focus is COORDINATION:
+      |write to ~/.nebflow/teams/<team>/agents/<name>/memory.md (your own memory file).
+      |
+      |RECORD:
+      |1. PENDING DISPATCHES — what you still await or must send next (the resume
+      |   point after compaction)
+      |2. KEY DECISIONS & TRADE-OFFS — coordination decisions WITH their reasoning,
+      |   so you don't re-litigate them after compaction
+      |3. DISPATCH EXPERIENCE — which agents/approaches proved effective for which
+      |   task types; routing lessons reusable across flows (not one-off status reports)
+      |4. ARTIFACT LOCATIONS — files agents produced (path + what it is), so you can
+      |   point users/agents at results without re-searching
+      |
+      |VERIFY & CLEAR — manager profile:
+      |- Statuses: verify done/failed claims against actual artifacts before keeping
+      |  them — an unverified "done" (agent claimed it, nothing written) is a trap
+      |  for the next session
+      |- Artifacts: confirm recorded paths still exist before keeping them
+      |- Pending: drop dispatches already resolved; keep only what is truly still awaited
+      |- Purge routine tool chatter and transient waiting states — noise, not memory
+      |
+      |Keep entries durable enough that a fresh session can resume routing without
+      |re-reading the whole log.
+      |""".stripMargin
+
+  /**
+   * Flow Worker (depth 2+) — implementation agent within a flow.
+   *  Focus: technical experience (pitfalls, effective practices, tool behavior).
+   */
+  private val WorkerSaveMemoryReminder = SaveMemoryPreamble +
+    """You are a FLOW WORKER. Your profile focus is TECHNICAL EXPERIENCE:
+      |write to ~/.nebflow/teams/<team>/agents/<name>/memory.md (your own memory file).
+      |
+      |RECORD:
+      |1. PITFALLS & FIXES — bugs you hit and how you fixed them; root cause matters
+      |   more than the exact patch. Include the decision REASON when it is not visible
+      |   in code (e.g. why a classification or default was chosen — the kind of fact
+      |   you'd only recover from git history)
+      |2. EFFECTIVE PRACTICES — approaches that worked in this domain (tests, build, layout)
+      |3. TOOL BEHAVIOR — non-obvious tool semantics you discovered (output formats,
+      |   gotchas, failure modes) that cost you time
+      |4. REUSABLE CAPABILITIES — if this conversation produced a repeatable procedure
+      |   (seen 2+ times or clearly generalizable), organize it as a skill following the
+      |   skill-creator spec: ~/.nebflow/skills/<kebab-case-name>/SKILL.md with frontmatter
+      |   (name + description: what AND when). One skill = one purpose; no one-off skills.
+      |
+      |VERIFY & CLEAR — worker profile:
+      |- Pitfalls: confirm the fix is still in the code before keeping the entry — a
+      |  stale "fixed" claim actively misleads (an outdated fallback classification
+      |  once led another agent to "fix" code that was already correct)
+      |- Code facts: delete entries now readable from code — line numbers, signatures,
+      |  mechanics you can Read/Grep in seconds
+      |- One-offs: drop findings that won't recur
+      |
+      |Be concise: keep only what is reusable, not full history.
+      |""".stripMargin
+
+  // ------------------------------------------------------------------
   // Profile-specific compact prompts
   // ------------------------------------------------------------------
 

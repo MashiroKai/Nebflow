@@ -6,11 +6,15 @@ import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
+import nebflow.agent.AgentCore
 import nebflow.agent.SharedResources
 import nebflow.core.PathUtil
 import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
-import nebflow.core.entity.EntityLoader
+import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
+import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
+import nebflow.core.skill.SkillService
+import cats.effect.unsafe.implicits.global
 import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.*
 import nebflow.service.ConfigService
@@ -224,7 +228,7 @@ class RestApiRoutes(
               else Nil
             }
           }
-          globalList = globalAgents.values.filter(_.name != "Nebula").toList.map { a =>
+          globalList = globalAgents.values.toList.map { a =>
             Json.obj(
               "name" -> a.name.asJson,
               "description" -> a.description.asJson,
@@ -960,7 +964,7 @@ class RestApiRoutes(
               val route: Json = node.onComplete match
                 case nebflow.core.entity.NodeRoute.Goto(t) => Json.fromString(t)
                 case nebflow.core.entity.NodeRoute.Return => Json.fromString("$return")
-                case nebflow.core.entity.NodeRoute.Switch(expr, cases) =>
+                case nebflow.core.entity.NodeRoute.Switch(expr, cases, _) =>
                   val casesObj = io.circe.JsonObject.fromIterable(cases.map { (k, v) =>
                     val target: String = v match
                       case nebflow.core.entity.NodeRoute.Goto(t) => t
@@ -999,8 +1003,7 @@ class RestApiRoutes(
             "name" -> t.name.asJson,
             "description" -> t.description.asJson,
             "lead" -> t.lead.asJson,
-            "members" -> t.members.asJson,
-            "flows" -> t.flows.asJson
+            "members" -> t.members.asJson
           )
         }
         result <- Ok(io.circe.Json.obj("teams" -> teamsJson.asJson))
@@ -1009,8 +1012,9 @@ class RestApiRoutes(
     // GET /teams/status/:sessionId — return mounted teams and agent status for frontend
     // NOTE: Router mounts this under /api prefix, so full path is /api/teams/status/:sessionId
     case GET -> Root / "teams" / "status" / sessionId =>
-      // Validate sessionId: only UUID format (hex + dashes), no path traversal
-      if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
+      // Validate sessionId: alphanumerics, dot, underscore, hyphen (covers UUID
+      // and flow-node ids like dag-git-merge-scanner-405090), no path traversal
+      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
         BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
       else
         for
@@ -1020,7 +1024,7 @@ class RestApiRoutes(
 
     // GET /teams/mailbox/:sessionId/:teamName — mail history for a team
     case GET -> Root / "teams" / "mailbox" / sessionId / flowName =>
-      if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
+      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
         BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
       else
         for
@@ -1030,7 +1034,7 @@ class RestApiRoutes(
 
     // DELETE /teams/mailbox/:sessionId/:teamName — clear mail history
     case DELETE -> Root / "teams" / "mailbox" / sessionId / flowName =>
-      if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
+      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
         BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
       else
         for
@@ -1101,7 +1105,7 @@ class RestApiRoutes(
             else Nil
           }
         }
-        globalList = globalAgents.values.filter(_.name != "Nebula").map { a =>
+        globalList = globalAgents.values.map { a =>
           Json.obj(
             "name" -> a.name.asJson,
             "description" -> a.description.asJson,
@@ -1149,8 +1153,13 @@ class RestApiRoutes(
                   "name" -> defn.name.asJson,
                   "description" -> defn.description.asJson,
                   "tools" -> defn.tools.asJson,
+                  "category" -> defn.category.asJson,
+                  "fixedTools" -> AgentCore.fixedToolsFor(defn).toList.asJson,
                   "systemPrompt" -> defn.systemPrompt.asJson,
-                  "displayName" -> defn.displayName.getOrElse(defn.name).asJson
+                  "displayName" -> defn.displayName.getOrElse(defn.name).asJson,
+                  "model" -> defn.model.asJson,
+                  "skills" -> defn.skills.asJson,
+                  "flows" -> defn.flows.asJson
                 )
               )
         yield result
@@ -1165,18 +1174,32 @@ class RestApiRoutes(
             case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
             case Some(defn) =>
               val modelConfig = defn.model.getOrElse(nebflow.shared.AgentModelConfig.empty)
-              sharedResources.runtimeModels.get.flatMap { runtimeModels =>
-                val current = runtimeModels.values.headOption
-                Ok(
+              // Determine resolvedFrom: check the raw AgentEntry for preset/legacy.
+              // AgentDef.preset tells us the explicit preset (if any). If absent,
+              // check whether the original agent.json had a non-empty legacy model.
+              val resolvedFrom = computeResolvedFrom(defn.preset, agentName)
+              // Resolve the model this agent would actually use: candidates =
+              // [preferred, ...fallbacks] (or the global chain), filtered by
+              // provider health. Previously this read runtimeModels.values.headOption —
+              // an arbitrary session from a GLOBAL session→model map — which
+              // showed the wrong model for every agent except the first LLM caller.
+              for
+                candidates <- sharedResources.providerRegistry.getCandidatesForAgent(Some(modelConfig))
+                (healthy, _) <- sharedResources.healthMonitor.filterCandidates(candidates)
+                current = healthy.headOption.map(c => s"${c.providerId}/${c.model}")
+                result <- Ok(
                   Json.obj(
                     "model" -> modelConfig.asJson,
                     "current" -> current.asJson,
                     "preferred" -> modelConfig.preferred.asJson,
                     "fallbacks" -> modelConfig.fallbacks.asJson,
-                    "default" -> modelConfig.preferred.asJson
+                    "default" -> modelConfig.preferred.asJson,
+                    "preset" -> defn.preset.asJson,
+                    "resolvedFrom" -> resolvedFrom.asJson
                   )
                 )
-              }
+              yield result
+              end for
         yield result
 
     // PUT /agents/:name/model — update agent's model configuration
@@ -1187,23 +1210,162 @@ class RestApiRoutes(
           // Parse the model config from request body
           io.circe.parser.decode[nebflow.shared.AgentModelConfig](body.noSpaces) match
             case Right(modelConfig) =>
-              sharedResources.agentLibrary
-                .updateModel(agentName, modelConfig)
-                .flatMap {
-                  case true =>
-                    Ok(Json.obj("updated" -> true.asJson, "model" -> modelConfig.asJson))
-                  case false =>
-                    NotFound(Json.obj("error" -> s"Agent '$agentName' config not found".asJson))
-                }
-                .handleErrorWith { err =>
-                  // Corrupt JSON or IO failure
-                  InternalServerError(Json.obj("error" -> err.getMessage.asJson))
-                }
+              for
+                dirOpt <- EntityLoader.findAgentDir(agentName)
+                result <- dirOpt match
+                  case Some(dir) =>
+                    IO.blocking {
+                      val jsonPath = dir / "agent.json"
+                      val json = os.read(jsonPath)
+                      io.circe.parser.parse(json) match
+                        case Right(parsed) =>
+                          val updated = parsed.deepMerge(Json.obj("model" -> modelConfig.asJson))
+                          os.write.over(jsonPath, updated.noSpaces)
+                          true
+                        case Left(_) => false
+                    }.flatMap {
+                      case true =>
+                        Ok(Json.obj("updated" -> true.asJson, "model" -> modelConfig.asJson))
+                      case false =>
+                        InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
+                    }
+                  case None =>
+                    NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+              yield result
             case Left(err) =>
               BadRequest(Json.obj("error" -> s"Invalid model config: ${err.getMessage}".asJson))
         }
 
+    // PUT /agents/:name/preset — set or remove the agent's preset reference.
+    // Body: {"preset": "vision"} or {"preset": null} (removes the field, falls
+    // back to default preset). Uses EntityLoader.findAgentDir to locate the
+    // agent.json across all three layers.
+    case req @ PUT -> Root / "agents" / agentName / "preset" =>
+      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      else
+        req.as[Json].flatMap { body =>
+          val presetOpt = body.hcursor.downField("preset").as[Option[String]].toOption.flatten
+          for
+            dirOpt <- EntityLoader.findAgentDir(agentName)
+            result <- dirOpt match
+              case Some(dir) =>
+                IO.blocking {
+                  val jsonPath = dir / "agent.json"
+                  val json = os.read(jsonPath)
+                  parser.parse(json) match
+                    case Right(parsed) =>
+                      val updated = presetOpt match
+                        case Some(name) =>
+                          parsed.deepMerge(Json.obj("preset" -> name.asJson))
+                        case None =>
+                          // Remove the preset field entirely
+                          parsed.asObject
+                            .map(obj => Json.fromFields(obj.toMap.removed("preset")))
+                            .getOrElse(parsed)
+                      os.write.over(jsonPath, updated.noSpaces)
+                      true
+                    case Left(_) => false
+                }.flatMap {
+                  case true =>
+                    Ok(Json.obj("updated" -> true.asJson, "preset" -> presetOpt.asJson))
+                  case false =>
+                    InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
+                }
+              case None =>
+                NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+          yield result
+          end for
+        }
+
     // ===== Entity API (Team/Flow/Agent management) =====
+
+    // PUT /agents/:name — update agent's skills/flows
+    case req @ PUT -> Root / "agents" / agentName =>
+      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      else
+        req.as[Json].flatMap { body =>
+          for
+            dirOpt <- EntityLoader.findAgentDir(agentName)
+            result <- dirOpt match
+              case Some(dir) =>
+                IO.blocking {
+                  val jsonPath = dir / "agent.json"
+                  val json = os.read(jsonPath)
+                  io.circe.parser.parse(json) match
+                    case Right(parsed) =>
+                      // Extract skills/flows from request body
+                      val skillsOpt = body.hcursor.downField("skills").as[Option[List[String]]]
+                      val flowsOpt = body.hcursor.downField("flows").as[Option[List[String]]]
+                      val merged = parsed
+                        .deepMerge(skillsOpt.toOption.map(s => Json.obj("skills" -> s.asJson)).getOrElse(Json.obj()))
+                        .deepMerge(flowsOpt.toOption.map(f => Json.obj("flows" -> f.asJson)).getOrElse(Json.obj()))
+                      os.write.over(jsonPath, merged.noSpaces)
+                      true
+                    case Left(_) => false
+                }.flatMap {
+                  case true =>
+                    Ok(Json.obj("updated" -> true.asJson))
+                  case false =>
+                    InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
+                }
+              case None =>
+                NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+          yield result
+        }
+
+    // GET /skills — list all available skills (name + description) for the Agent panel
+    case GET -> Root / "skills" =>
+      for
+        skills <- SkillService.listSkills()
+        entries = skills.sortBy(_.name).map { s =>
+          Json.obj(
+            "name" -> s.name.asJson,
+            "description" -> s.description.asJson
+          )
+        }
+        result <- Ok(Json.obj("skills" -> entries.asJson))
+      yield result
+
+    // GET /flows/list — list all flow definitions (name, description, node count, maxLoop)
+    case GET -> Root / "flows" / "list" =>
+      for
+        flows <- EntityLoader.listFlows()
+        entries = flows.values.toList.sortBy(_.name).map { f =>
+          val edges = f.nodes.toList.flatMap { (nodeId, node) =>
+            node.onComplete match
+              case NodeRoute.Goto(target) => List((nodeId, target, None))
+              case NodeRoute.Return => List((nodeId, "$return", None))
+              case NodeRoute.Switch(_, cases, _) =>
+                cases.toList.map { (cond, route) =>
+                  val target = route match
+                    case NodeRoute.Goto(t) => t
+                    case NodeRoute.Return => "$return"
+                    case _ => "?"
+                  (nodeId, target, Some(cond))
+                }
+          }
+          Json.obj(
+            "name" -> f.name.asJson,
+            "description" -> f.description.asJson,
+            "entry" -> f.entry.asJson,
+            "maxLoop" -> f.maxLoop.asJson,
+            "nodeCount" -> f.nodes.size.asJson,
+            "nodes" -> f.nodes.toList
+              .sortBy(_._1)
+              .map { (nodeId, node) =>
+                Json.obj(
+                  "nodeId" -> nodeId.asJson,
+                  "agent" -> node.agent.asJson
+                )
+              }
+              .asJson,
+            "edges" -> edges.map { (from, to, cond) =>
+              Json.obj("from" -> from.asJson, "to" -> to.asJson, "condition" -> cond.asJson)
+            }.asJson
+          )
+        }
+        result <- Ok(Json.obj("flows" -> entries.asJson))
+      yield result
 
     // GET /teams/:name — team detail
     case GET -> Root / "teams" / teamName =>
@@ -1219,8 +1381,7 @@ class RestApiRoutes(
                   "name" -> team.name.asJson,
                   "description" -> team.description.asJson,
                   "lead" -> team.lead.asJson,
-                  "members" -> team.members.asJson,
-                  "flows" -> team.flows.asJson
+                  "members" -> team.members.asJson
                 )
               )
         yield result
@@ -1274,6 +1435,107 @@ class RestApiRoutes(
         result <- Ok(Json.obj("agents" -> entries.asJson))
       yield result
 
+    // ===== Model Presets =====
+
+    // GET /presets — list all presets + default name + agent references
+    case GET -> Root / "presets" =>
+      val store = new PresetStore()
+      for
+        file <- IO.blocking(store.load())
+        // Build agent → preset mapping by scanning all agent.json files
+        agentPresets <- IO.blocking(scanAgentPresets())
+        result <- Ok(
+          Json.obj(
+            "defaultPreset" -> file.defaultPreset.asJson,
+            "presets" -> file.presets.values.toList.asJson,
+            "agents" -> agentPresets.asJson
+          )
+        )
+      yield result
+
+    // POST /presets — create a new preset (409 on duplicate name)
+    case req @ POST -> Root / "presets" =>
+      req.as[Json].flatMap { body =>
+        val name = body.hcursor.downField("name").as[String].getOrElse("")
+        if name.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: name".asJson))
+        else
+          val store = new PresetStore()
+          IO.blocking(store.load()).flatMap { file =>
+            if file.presets.contains(name) then Conflict(Json.obj("error" -> s"Preset '$name' already exists".asJson))
+            else
+              val description = body.hcursor.downField("description").as[String].getOrElse("")
+              val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
+              val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(Nil)
+              val preset = ModelPreset(name, description, preferred, fallbacks)
+              val updated = file.copy(presets = file.presets + (name -> preset))
+              IO.blocking(store.save(updated)) *>
+                Created(preset.asJson)
+          }
+      }
+
+    // PUT /presets/default — set the default preset (must exist)
+    case req @ PUT -> Root / "presets" / "default" =>
+      req.as[Json].flatMap { body =>
+        val name = body.hcursor.downField("name").as[String].getOrElse("")
+        if name.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: name".asJson))
+        else
+          val store = new PresetStore()
+          IO.blocking(store.load()).flatMap { file =>
+            if !file.presets.contains(name) then NotFound(Json.obj("error" -> s"Preset '$name' not found".asJson))
+            else
+              val updated = file.copy(defaultPreset = name)
+              IO.blocking(store.save(updated)) *>
+                Ok(Json.obj("defaultPreset" -> name.asJson))
+          }
+      }
+
+    // PUT /presets/:name — update an existing preset (name immutable)
+    case req @ PUT -> Root / "presets" / presetName =>
+      req.as[Json].flatMap { body =>
+        val store = new PresetStore()
+        IO.blocking(store.load()).flatMap { file =>
+          file.presets.get(presetName) match
+            case None =>
+              NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
+            case Some(existing) =>
+              val description = body.hcursor.downField("description").as[String].getOrElse(existing.description)
+              val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
+              val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(existing.fallbacks)
+              val updated = existing.copy(description = description, preferred = preferred, fallbacks = fallbacks)
+              val newFile = file.copy(presets = file.presets + (presetName -> updated))
+              IO.blocking(store.save(newFile)) *>
+                Ok(updated.asJson)
+        }
+      }
+
+    // DELETE /presets/:name — delete a preset (409 if default; scrub agent refs)
+    case DELETE -> Root / "presets" / presetName =>
+      val store = new PresetStore()
+      IO.blocking(store.load()).flatMap { file =>
+        if file.defaultPreset == presetName then
+          Conflict(Json.obj("error" -> "Cannot delete the default preset; set another as default first".asJson))
+        else if !file.presets.contains(presetName) then
+          NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
+        else
+          // 1. Delete preset from file
+          val newFile = file.copy(presets = file.presets - presetName)
+          // 2. Scrub all agent.json files that reference this preset
+          for
+            _ <- IO.blocking(store.save(newFile))
+            _ <- scrubPresetRefs(presetName)
+            result <- Ok(Json.obj("deleted" -> true.asJson))
+          yield result
+      }
+
+    // POST /presets/migrate-legacy — migrate per-agent model configs to presets
+    // Body: {"agentNames": ["Coder", "qa-frontend", ...]}
+    case req @ POST -> Root / "presets" / "migrate-legacy" =>
+      req.as[Json].flatMap { body =>
+        val agentNames = body.hcursor.downField("agentNames").as[List[String]].getOrElse(Nil)
+        if agentNames.isEmpty then BadRequest(Json.obj("error" -> "Missing or empty agentNames".asJson))
+        else migrateLegacyModels(agentNames)
+      }
+
     // ===== Daemon Management =====
 
     // GET /daemons — list all daemons with runtime state
@@ -1285,8 +1547,49 @@ class RestApiRoutes(
             val store = new DaemonStore()
             store.load().flatMap { configs =>
               svc.getStates(configs).flatMap { states =>
-                Ok(Json.obj("daemons" -> states.asJson))
+                val cfgById = configs.map(c => c.id -> c).toMap
+                val statesJson = states.map { st =>
+                  st.asJson.deepMerge(
+                    Json.obj(
+                      "autoStart" -> cfgById.get(st.id).exists(_.autoStart).asJson,
+                      "restartOnExit" -> cfgById.get(st.id).exists(_.restartOnExit).asJson
+                    )
+                  )
+                }
+                Ok(Json.obj("daemons" -> statesJson.asJson))
               }
+            }
+      }
+
+    // PUT /daemons/:id — update daemon config (autoStart / restartOnExit)
+    case req @ PUT -> Root / "daemons" / daemonId =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
+          case Some(_) =>
+            req.as[Json].flatMap { body =>
+              val autoStartOpt = body.hcursor.downField("autoStart").as[Option[Boolean]].toOption.flatten
+              val restartOnExitOpt = body.hcursor.downField("restartOnExit").as[Option[Boolean]].toOption.flatten
+              if autoStartOpt.isEmpty && restartOnExitOpt.isEmpty then
+                BadRequest(
+                  Json.obj("error" -> "No updatable fields provided (expected autoStart or restartOnExit)".asJson)
+                )
+              else
+                val store = new DaemonStore()
+                store
+                  .update(
+                    daemonId,
+                    cfg =>
+                      cfg.copy(
+                        autoStart = autoStartOpt.getOrElse(cfg.autoStart),
+                        restartOnExit = restartOnExitOpt.getOrElse(cfg.restartOnExit)
+                      )
+                  )
+                  .flatMap {
+                    case None => NotFound(Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))
+                    case Some(updated) => Ok(updated.asJson)
+                  }
+              end if
             }
       }
 
@@ -1304,6 +1607,7 @@ class RestApiRoutes(
               val env = body.hcursor.downField("env").as[Map[String, String]].getOrElse(Map.empty)
               val autoStart = body.hcursor.downField("autoStart").as[Boolean].getOrElse(false)
               val restartOnExit = body.hcursor.downField("restartOnExit").as[Boolean].getOrElse(false)
+              val port = body.hcursor.downField("port").as[Option[Int]].toOption.flatten
 
               if id.isEmpty || name.isEmpty || command.isEmpty then
                 BadRequest(Json.obj("error" -> "Missing required fields: id, name, command".asJson))
@@ -1315,7 +1619,8 @@ class RestApiRoutes(
                   cwd = cwd,
                   env = env,
                   autoStart = autoStart,
-                  restartOnExit = restartOnExit
+                  restartOnExit = restartOnExit,
+                  port = port
                 )
                 val store = new DaemonStore()
                 store.add(config).flatMap { _ =>
@@ -1336,10 +1641,19 @@ class RestApiRoutes(
         sharedResources.daemonService match
           case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
           case Some(svc) =>
-            svc.stop(daemonId).flatMap { _ =>
-              val store = new DaemonStore()
-              store.remove(daemonId) *> Ok(Json.obj("deleted" -> true.asJson))
-            }
+            // Decouple stop from remove: a failure OR hang while stopping the
+            // process must NOT block removal of the config entry. doStop can
+            // raise (fiber-cancel / kill edge case) or hang (readFiber blocked
+            // on a stdout pipe held open by an orphaned grandchild process), so
+            // we bound it with a timeout and recover any error. The user asked
+            // to delete the daemon, so daemons.json is updated regardless —
+            // otherwise the entry reappears on the next GET /daemons.
+            val store = new DaemonStore()
+            svc.stop(daemonId).timeout(15.seconds).handleErrorWith { e =>
+              logger.warn(
+                s"Stop failed/timed out for daemon '$daemonId' during delete; removing config anyway: ${e.getMessage}"
+              )
+            } *> store.remove(daemonId) *> Ok(Json.obj("deleted" -> true.asJson))
       }
 
     // POST /daemons/:id/start — start a daemon
@@ -1381,20 +1695,211 @@ class RestApiRoutes(
       }
   }
 
+  // ── Preset helpers ──────────────────────────────────────
+
+  /** All agent.json paths across the three layers. */
+  private def allAgentJsonFiles(): List[os.Path] =
+    val root = PathUtil.dataRoot
+    def agentJsons(parent: os.Path): List[os.Path] =
+      if !os.exists(parent) then Nil
+      else os.list(parent).filter(os.isDir).map(_ / "agent.json").filter(os.exists).toList
+    val standalone = agentJsons(root / "agents")
+    val teamAgents =
+      if !os.exists(root / "teams") then Nil
+      else os.list(root / "teams").filter(os.isDir).flatMap(t => agentJsons(t / "agents")).toList
+    val flowAgents =
+      if !os.exists(root / "flows") then Nil
+      else os.list(root / "flows").filter(os.isDir).flatMap(f => agentJsons(f / "agents")).toList
+    standalone ++ teamAgents ++ flowAgents
+
+  /**
+   * Scan all agent.json files and build a map of agentName → presetName (or null
+   * if no preset field). Used by GET /presets to show which agents reference
+   * which presets.
+   */
+  private def scanAgentPresets(): Map[String, Option[String]] =
+    allAgentJsonFiles().flatMap { path =>
+      parser.parse(os.read(path)).toOption.flatMap { json =>
+        val name = json.hcursor
+          .downField("name")
+          .as[String]
+          .toOption
+          .getOrElse((path / os.up).last) // fall back to directory name
+        val preset = json.hcursor.downField("preset").as[Option[String]].toOption.flatten
+        Some(name -> preset)
+      }
+    }.toMap
+
+  /**
+   * Determine the resolvedFrom value for an agent by reading the raw agent.json.
+   * Returns "preset" | "legacy-model" | "default-preset" | "global".
+   */
+  private def computeResolvedFrom(preset: Option[String], agentName: String): String =
+    val store = new PresetStore()
+    // If AgentDef has a preset, it was resolved from preset (or dangling → fallback)
+    if preset.isDefined then
+      val file = store.load()
+      if file.presets.contains(preset.get) then "preset"
+      else
+        // Dangling preset — check if there's a legacy model
+        EntityLoader.findAgentDir(agentName).unsafeRunSync() match
+          case Some(dir) =>
+            val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
+            val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
+            if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
+            else if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then
+              "default-preset"
+            else "global"
+          case None => "global"
+    else
+      // No preset — check legacy model
+      EntityLoader.findAgentDir(agentName).unsafeRunSync() match
+        case Some(dir) =>
+          val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
+          val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
+          if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
+          else
+            val file = store.load()
+            if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then
+              "default-preset"
+            else "global"
+        case None => "global"
+
+    end if
+
+  end computeResolvedFrom
+
+  /**
+   * Remove the `preset` field from all agent.json files that reference the given
+   * preset name. Called when a preset is deleted so agents fall back to the
+   * default preset instead of holding a dangling reference.
+   */
+  private def scrubPresetRefs(presetName: String): IO[Unit] =
+    IO.blocking {
+      allAgentJsonFiles().foreach { path =>
+        val content = os.read(path)
+        parser.parse(content) match
+          case Right(json) =>
+            json.hcursor.downField("preset").as[Option[String]].toOption.flatten match
+              case Some(p) if p == presetName =>
+                val updated = json.asObject
+                  .map(obj => Json.fromFields(obj.toMap.removed("preset")))
+                  .getOrElse(json)
+                if updated != json then os.write.over(path, updated.noSpaces)
+              case _ => ()
+          case Left(_) => () // skip unparseable file
+      }
+    }
+
+  /**
+   * Migrate per-agent legacy model configs to named presets.
+   * Groups agents by model-config fingerprint, creates a preset per group
+   * (mig-<n>), writes the preset reference, and removes the legacy model field.
+   * Agents with empty model configs ({preferred: null, fallbacks: []}) are
+   * skipped (treated as "no config" — they already use the default preset).
+   */
+  private def migrateLegacyModels(agentNames: List[String]): IO[Response[IO]] =
+    IO.blocking {
+      val store = new PresetStore()
+      val file = store.load()
+      // Load each agent's raw model config
+      val agentsWithConfig = agentNames.flatMap { name =>
+        EntityLoader.findAgentDir(name).unsafeRunSync() match
+          case None => None
+          case Some(dir) =>
+            parser.parse(os.read(dir / "agent.json")).toOption.flatMap { json =>
+              val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
+              // Only migrate non-empty configs
+              if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then Some((name, dir, model.get))
+              else None
+            }
+      }
+      // Group by fingerprint (preferred + fallbacks)
+      def fingerprint(m: nebflow.shared.AgentModelConfig): String =
+        s"${m.preferred.getOrElse("")}|${m.fallbacks.mkString(",")}"
+      val groups = agentsWithConfig.groupBy { case (_, _, m) => fingerprint(m) }
+      // Generate preset names (mig-<n>, avoiding collisions with existing)
+      var migN = 1
+      val existingNames = file.presets.keySet
+      val newPresets = scala.collection.mutable.Map.empty[String, ModelPreset]
+      val agentToPreset = scala.collection.mutable.Map.empty[String, String]
+      groups.toList.sortBy(_._1).foreach { (fp, agents) =>
+        val model = agents.head._3
+        // Skip if this fingerprint already matches an existing preset
+        val existingMatch =
+          file.presets.values.find(p => p.preferred == model.preferred && p.fallbacks == model.fallbacks)
+        val presetName = existingMatch match
+          case Some(p) => p.name
+          case None =>
+            var name = s"mig-$migN"
+            while existingNames.contains(name) || newPresets.contains(name) do
+              migN += 1
+              name = s"mig-$migN"
+            migN += 1
+            val agentList = agents.map(_._1).mkString(", ")
+            val preset = ModelPreset(
+              name = name,
+              description = s"Auto-migrated from: $agentList",
+              preferred = model.preferred,
+              fallbacks = model.fallbacks
+            )
+            newPresets += (name -> preset)
+            name
+        agents.foreach { (name, _, _) => agentToPreset += (name -> presetName) }
+      }
+      // Write: update presets file + update each agent.json
+      val updatedFile = file.copy(presets = file.presets ++ newPresets)
+      store.save(updatedFile)
+      agentToPreset.toList.foreach { (name, presetName) =>
+        EntityLoader.findAgentDir(name).unsafeRunSync() match
+          case Some(dir) =>
+            val jsonPath = dir / "agent.json"
+            parser.parse(os.read(jsonPath)) match
+              case Right(json) =>
+                // Remove model, add preset
+                val withoutModel = json.asObject
+                  .map(obj => Json.fromFields(obj.toMap.removed("model")))
+                  .getOrElse(json)
+                val updated = withoutModel.deepMerge(Json.obj("preset" -> presetName.asJson))
+                os.write.over(jsonPath, updated.noSpaces)
+              case Left(_) => ()
+          case None => ()
+      }
+      // Build response data (plain values, not IO)
+      (agentToPreset.toList, newPresets.values.toList)
+    }.flatMap { (migrated, createdPresets) =>
+      val migratedAgents = migrated.map { (name, preset) =>
+        Json.obj("agent" -> name.asJson, "preset" -> preset.asJson)
+      }
+      Ok(
+        Json.obj(
+          "migratedAgents" -> migratedAgents.asJson,
+          "createdPresets" -> createdPresets.map(_.asJson).asJson
+        )
+      )
+    }.handleErrorWith(e => InternalServerError(Json.obj("error" -> s"Migration failed: ${e.getMessage}".asJson)))
+
   /**
    * Build mounted teams JSON for the frontend (GET /api/teams/mounted).
-   *  Reads from live FlowMembership runtime state. Each team is a card with
+   *  Reads from live TeamSessionRegistry runtime state. Each team is a card with
    *  agent tiles showing status.
    */
   private def buildMountedTeamsJson(): IO[Json] =
     for
-      flowsMap <- nebflow.core.flow.FlowMembership.listMountedFlows
+      teamsMap <- nebflow.core.flow.TeamSessionRegistry.listMountedTeams
       teams <- EntityLoader.listTeams()
-      flows <- flowsMap.toList.sortBy(_._1).traverse { (instanceName, agents) =>
+      teamsList <- teamsMap.toList.sortBy(_._1).traverse { (instanceName, agents) =>
         val teamDefOpt = teams.get(instanceName)
+        // Only render agents declared in team.json (lead + members). Delegate /
+        // SubTask sub-agents are no longer registered in TeamSessionRegistry
+        // (no Mail identity), so no ghost tiles can appear here; the filter
+        // remains as defense-in-depth. Fall back to all agents when the team
+        // definition is missing (legacy behavior).
+        val memberNames = teamDefOpt.map(td => (td.lead :: td.members).toSet)
         agents
+          .filter((name, _) => memberNames.forall(_.contains(name)))
           .traverse { (agentName, sid) =>
-            nebflow.core.flow.FlowMembership.isBusy(sid).map { busy =>
+            nebflow.core.flow.TeamSessionRegistry.isBusy(sid).map { busy =>
               Json.obj(
                 "name" -> agentName.asJson,
                 "sessionId" -> sid.asJson,
@@ -1407,12 +1912,11 @@ class RestApiRoutes(
             Json.obj(
               "name" -> instanceName.asJson,
               "type" -> "team".asJson,
-              "agents" -> agentsJson.asJson,
-              "flows" -> teamDefOpt.map(_.flows).getOrElse(List.empty[String]).asJson
+              "agents" -> agentsJson.asJson
             )
           }
       }
-    yield flows.asJson
+    yield teamsList.asJson
 
   // ── Flow editor helpers ──────────────────────────────────
 

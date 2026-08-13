@@ -52,7 +52,31 @@ case class SharedResources(
   scheduledTaskService: Option[ScheduledTaskService] = None,
   daemonService: Option[DaemonService] = None,
   knowledgeStore: KnowledgeStore = new KnowledgeStore(PathUtil.dataRoot / "workspace-items"),
+  subAgentTaskStore: SubAgentTaskStore = new SubAgentTaskStore(PathUtil.dataRoot / "subagent-tasks"),
   voiceMutedRef: Ref[IO, Boolean],
   lastWsActivity: Ref[IO, Long] = Ref.unsafe[IO, Long](System.currentTimeMillis()),
-  runtimeModels: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty)
+  runtimeModels: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty),
+  /**
+   * P1 统一注册表: the single registry for ALL running agents
+   * (Root/Team/Flow/Delegate/Ephemeral). Replaces `subAgentRegistry`; during P1
+   * `rootAgents` and `TeamSessionRegistry.actorMap` remain as dual-written
+   * caches (P3 removes them). Interaction answers route through this map only —
+   * a lookup miss never spawns a ghost agent.
+   */
+  agentRegistry: Ref[IO, Map[String, AgentRecord]] = Ref.unsafe[IO, Map[String, AgentRecord]](Map.empty),
+  /**
+   * P2 全局权限策略: one PermissionPolicy per Nebula root session, keyed by
+   * rootSessionId. Every agent in a root session's tree reads this bucket at
+   * decision time (dynamic inheritance — never a per-agent snapshot).
+   * Seeded by ensureRootAgent from session meta; written by SetSafetyMode.
+   */
+  permissionPolicies: Ref[IO, Map[String, PermissionPolicy]] = Ref.unsafe[IO, Map[String, PermissionPolicy]](Map.empty),
+  /**
+   * P2 InteractionHub: spawned once by GatewayMain at startup. Agents send
+   * InteractionRequest here for permission/AskUser; gateway forwards frontend
+   * answers as InteractionAnswered. Option so SharedResources can be built
+   * before the hub actor exists (tests, early boot).
+   */
+  interactionHubRef: Ref[IO, Option[ActorRef[InteractionHubCommand]]] =
+    Ref.unsafe[IO, Option[ActorRef[InteractionHubCommand]]](None)
 )

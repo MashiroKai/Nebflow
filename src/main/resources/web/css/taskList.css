@@ -127,63 +127,6 @@
   color: var(--color-text-muted, #888);
 }
 
-.task-completed {
-  opacity: 0.5;
-}
-
-.task-completed .task-label {
-  font-weight: 400;
-  text-decoration: line-through;
-  text-decoration-color: var(--color-text-muted, #888);
-  text-decoration-thickness: 1px;
-}
-
-/* Apple Reminders-style circle checkbox for completed tasks */
-.task-circle {
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  border: 1.5px solid var(--color-text-muted, #888);
-  border-radius: 50%;
-  background: transparent;
-  cursor: pointer;
-  padding: 0;
-  position: relative;
-  transition: border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
-  opacity: 0.6;
-}
-
-.task-circle:hover {
-  border-color: var(--color-primary, #07c160);
-  opacity: 1;
-}
-
-/* Filled state — click triggers dismiss, circle fills with checkmark */
-.task-circle.filled {
-  background: var(--color-primary, #07c160);
-  border-color: var(--color-primary, #07c160);
-  opacity: 1;
-  transform: scale(0.9);
-}
-
-.task-circle.filled::after {
-  content: '';
-  position: absolute;
-  left: 5px;
-  top: 2px;
-  width: 5px;
-  height: 9px;
-  border: solid #fff;
-  border-width: 0 1.5px 1.5px 0;
-  transform: rotate(45deg);
-  animation: circleCheck 0.2s ease;
-}
-
-@keyframes circleCheck {
-  from { opacity: 0; transform: rotate(45deg) scale(0.5); }
-  to   { opacity: 1; transform: rotate(45deg) scale(1); }
-}
-
 .task-label {
   flex: 1;
   overflow: hidden;
@@ -193,7 +136,7 @@
 }
 
 .task-active .task-label {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text, #000);
 }
 
@@ -204,16 +147,58 @@
   flex-shrink: 0;
 }
 
-.task-blocked {
-  color: var(--color-warning, #d4a574);
-  font-size: 11px;
-  flex-shrink: 0;
-}
-
 .task-more {
   font-size: 11px;
   color: var(--color-text-muted, #888);
   padding: 2px 0;
+}
+
+/* ── Status transition animations ── */
+
+.task-item {
+  perspective: 200px;
+}
+
+/* Icon 3D flip on status change (pending → in_progress) */
+.task-item.task-flipping .task-icon {
+  animation: task-icon-flip 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes task-icon-flip {
+  0%   { transform: rotateY(0deg); }
+  50%  { transform: rotateY(90deg); }
+  100% { transform: rotateY(0deg); }
+}
+
+/* New task slide-in from left */
+.task-item.task-entering {
+  animation: task-enter 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes task-enter {
+  from { opacity: 0; transform: translateX(-12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Completed/failed task slide-out to the right */
+.task-item.task-leaving {
+  animation: task-leave 0.35s ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes task-leave {
+  0%   { opacity: 1; transform: translateX(0); max-height: 30px; }
+  100% { opacity: 0; transform: translateX(30px); max-height: 0; padding-top: 0; padding-bottom: 0; }
+}
+
+/* Whole card fade when all tasks done */
+.task-card.task-card-leaving {
+  animation: task-card-leave 0.3s ease forwards;
+}
+
+@keyframes task-card-leave {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-8px); }
 }
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */

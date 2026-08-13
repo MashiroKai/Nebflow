@@ -50,11 +50,6 @@ export function dismissNotification(id) {
   }
 }
 
-export function clearNotifications() {
-  state.notifications = [];
-  renderNotifications();
-}
-
 function renderNotifications() {
   // Notifications are global — render into the primary banner.
   const banner = document.getElementById('notification-banner');

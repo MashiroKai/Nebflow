@@ -3,6 +3,7 @@ import state from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
 import { addNotification } from './notificationBanner.js';
+import { createIconsIn } from './utils.js';
 
 // Inline locale getter to avoid caching issues with module imports
 function getLocale() {
@@ -43,11 +44,6 @@ function loadPanelOpen() {
 function savePanelOpen(open) {
   try { localStorage.setItem(PANEL_OPEN_KEY, open ? 'true' : 'false'); }
   catch (_) {}
-}
-
-function clearCachedTasks(sessionId) {
-  if (!sessionId) return;
-  try { localStorage.removeItem(TASKS_CACHE_PREFIX + sessionId); } catch (_) {}
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -145,7 +141,7 @@ function renderList() {
     body.appendChild(buildInlineCreate());
   }
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(body);
 
   // Focus inline input if creating
   if (isCreating) {
@@ -230,28 +226,7 @@ function buildRow(r, isTriggered) {
   row.appendChild(circle);
   row.appendChild(content);
 
-  // Toggle switch (enabled/disabled) — only for non-triggered tasks
-  if (!isTriggered) {
-    const toggle = document.createElement('button');
-    toggle.className = 'reminder-toggle' + (r.enabled !== false ? ' on' : '');
-    toggle.title = r.enabled !== false ? t('task.enabled') : t('task.disabled');
-    toggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleTask(r.id, r.enabled === false);
-    });
-    row.appendChild(toggle);
-  }
-
   return row;
-}
-
-function toggleTask(id, enable) {
-  if (!state.activeSessionId) return;
-  // Optimistic UI update
-  tasks = tasks.map(t => t.id === id ? { ...t, enabled: enable } : t);
-  renderList();
-  // Backend toggles automatically based on id — no need to send enabled state
-  sendWs({ type: 'toggleScheduledTask', sessionId: state.activeSessionId, id });
 }
 
 
@@ -313,7 +288,7 @@ function openPanel() {
   panel.classList.add('open');
   savePanelOpen(true);
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(panel);
 
   if (state.activeSessionId) {
     sendWs({ type: 'listScheduledTasks', sessionId: state.activeSessionId });
@@ -478,7 +453,7 @@ onMessage('scheduledTaskTriggered', (msg) => {
         row.className = 'row system';
         row.appendChild(bubble);
         chat.appendChild(row);
-        if (typeof lucide !== 'undefined') lucide.createIcons();
+        if (typeof lucide !== 'undefined') createIconsIn(bubble);
         chat.scrollTop = chat.scrollHeight;
       }
     }

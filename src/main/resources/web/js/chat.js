@@ -3,7 +3,7 @@
 
 import state, { AGENT_PALETTE } from './state.js';
 import { activeView, setActiveView } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs } from './ws.js';
@@ -34,12 +34,25 @@ const VoicePlayer = {
   processing: false,
   muted: localStorage.getItem('voiceMuted') === 'true',
   _current: null, // { audio, url, element, resolve }
-  _cache: new Map(), // text → Promise<blobUrl>（流式预取 + 缓存）
+  _cache: new Map(), // text → Promise<blobUrl>（流式预取 + 缓存，有界 LRU）
+  _cacheLimit: 20,   // evicted entries get URL.revokeObjectURL — blob URLs pin memory until revoked
+
+  /** Insert into the bounded LRU cache. Evicts the oldest entry and revokes
+   *  its blob URL once the (possibly in-flight) fetch resolves. */
+  _cacheSet(text, promise) {
+    if (this._cache.has(text)) this._cache.delete(text);
+    this._cache.set(text, promise);
+    while (this._cache.size > this._cacheLimit) {
+      const [oldestKey, oldestPromise] = this._cache.entries().next().value;
+      this._cache.delete(oldestKey);
+      Promise.resolve(oldestPromise).then(url => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
+    }
+  },
 
   /** 流式预取：检测到完整 voice 块时立即发起 TTS 请求（并行，不等结果）。 */
   prefetch(text) {
     if (!text || this._cache.has(text)) return;
-    this._cache.set(text, this._fetchTts(text));
+    this._cacheSet(text, this._fetchTts(text));
   },
 
   /** 调用后端 TTS API，返回 blobUrl 的 Promise。 */
@@ -60,9 +73,15 @@ const VoicePlayer = {
 
   /** 获取音频 URL：有缓存用缓存（可能还在 in-flight），没有就发请求。 */
   async _getAudioUrl(text) {
-    if (this._cache.has(text)) return await this._cache.get(text);
+    if (this._cache.has(text)) {
+      // LRU touch — move to newest so frequently replayed clips survive.
+      const p = this._cache.get(text);
+      this._cache.delete(text);
+      this._cache.set(text, p);
+      return await p;
+    }
     const p = this._fetchTts(text);
-    this._cache.set(text, p);
+    this._cacheSet(text, p);
     return await p;
   },
 
@@ -113,7 +132,13 @@ const VoicePlayer = {
     this.queue = [];
     if (this._current) {
       this._current.audio.pause();
-      this._current.resolve('cancelled');
+      // Revoke the in-flight blob URL and drop its cache entry so the revoked
+      // URL can never be replayed from cache (a replay simply re-fetches).
+      const cur = this._current;
+      const text = cur.element ? cur.element.textContent : null;
+      if (text) this._cache.delete(text);
+      if (cur.url) URL.revokeObjectURL(cur.url);
+      cur.resolve('cancelled');
     }
   },
 
@@ -219,9 +244,10 @@ export function setBusy(sessionId) {
   if (sessionId) state.busySessionIds.add(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: true } }));
   if (activeView && activeView.sessionId === sessionId) {
-    const { sendBtn, stopBtn } = activeView.dom;
+    const { sendBtn, stopBtn, statusWrap } = activeView.dom;
     if (sendBtn) sendBtn.style.display = 'none';
     if (stopBtn) stopBtn.style.display = 'flex';
+    if (statusWrap) statusWrap.classList.add('on');
   }
 }
 
@@ -229,9 +255,10 @@ export function clearBusy(sessionId) {
   state.busySessionIds.delete(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: false } }));
   if (activeView && activeView.sessionId === sessionId) {
-    const { input, sendBtn, stopBtn } = activeView.dom;
+    const { input, sendBtn, stopBtn, statusWrap } = activeView.dom;
     if (sendBtn) sendBtn.style.display = 'flex';
     if (stopBtn) stopBtn.style.display = 'none';
+    if (statusWrap) statusWrap.classList.remove('on');
     if (input) input.focus();
     refreshSendButtonState();
   }
@@ -297,6 +324,96 @@ export function renderUserBubble(text, attachments, timestamp) {
   return { type: 'user', text, timestamp: ts, attachments: (attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) };
 }
 
+// ---------- Injected bubble (task P+Q: tool-injected prompts & result notifications) ----------
+// Mail/Delegate/SubTask/Skill/Flow/ExternalEvent injections arrive as WS
+// {type:"user", injected:true, source} and are persisted as UiMessage.User
+// with source. Rendered as a light-blue bubble on the user side (right),
+// visually distinct from the user's own green bubble.
+
+/** Map backend injection source → display label. Sources are tool/protocol
+ *  names (proper nouns) — no i18n needed. Unknown sources are capitalized. */
+const INJECTED_SOURCE_LABELS = {
+  mail: 'Mail', delegate: 'Delegate', subtask: 'SubTask', skill: 'Skill',
+  ask: 'Ask', flow: 'Flow', tool: 'Tool', api: 'API',
+};
+
+/** Map backend eventType → display suffix for the source label.
+ *  Shown as 'SOURCE · EventType' in the injected bubble header. */
+const EVENT_TYPE_LABELS = {
+  completed: 'Completed', failed: 'Failed', crashed: 'Crashed',
+  trigger: 'Triggered', inject: 'Injected',
+  info: 'Info', result: 'Result', interrupt: 'Interrupt',
+  follow_up: 'Follow-up', parallel: 'Parallel',
+};
+
+/** Build the source label text, optionally combining with sender and eventType.
+ *  e.g. source='mail', sender='Manager', eventType='result' → 'Mail · Manager · Result'
+ *  sender is optional (backward compatible): absent → 'SOURCE · EventType'. */
+export function injectedSourceLabel(source, eventType, sender) {
+  if (!source) return '';
+  const base = INJECTED_SOURCE_LABELS[source] || source.charAt(0).toUpperCase() + source.slice(1);
+  const parts = [base];
+  if (sender) parts.push(sender);
+  if (eventType) {
+    const et = EVENT_TYPE_LABELS[eventType] || eventType.charAt(0).toUpperCase() + eventType.slice(1);
+    parts.push(et);
+  }
+  return parts.join(' · ');
+}
+
+/** Build a row element for an injected message (pure builder — no DOM append,
+ *  no scroll). Shared by live render (renderInjectedBubble) and history
+ *  restore (persistence.js) so both paths render identically.
+ *  deferFn (optional): batch-restore path passes persistence.js's deferMd to
+ *  defer markdown rendering into post-append rAF batches — prevents a
+ *  synchronous markdown storm when restoring long histories (P0-2). */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, deferFn) {
+  const row = document.createElement('div');
+  row.className = 'row user';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble injected';
+  const label = document.createElement('div');
+  label.className = 'ask-label injected-source-label';
+  label.textContent = injectedSourceLabel(source, eventType, sender);
+  const content = document.createElement('div');
+  if (deferFn) deferFn(content, text || '');
+  else content.innerHTML = renderMarkdownWithMath(text || '', false);
+  bubble.appendChild(label);
+  bubble.appendChild(content);
+  row.appendChild(bubble);
+
+  // Timestamp + copy button (same pill badge as user bubble) — only when a
+  // real timestamp is provided; history restore may lack one.
+  if (timestamp) {
+    const badge = document.createElement('div');
+    badge.className = 'duration-badge';
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'duration-badge-time';
+    timeSpan.setAttribute('data-ts', timestamp);
+    timeSpan.textContent = formatHm(timestamp);
+    timeSpan.title = '点击切换 12/24 小时制';
+    timeSpan.addEventListener('click', toggleTimeFormat);
+    badge.appendChild(timeSpan);
+    if (text) {
+      const div = document.createElement('span');
+      div.className = 'duration-badge-divider';
+      badge.appendChild(div);
+      badge.appendChild(createMsgCopyButton(text));
+    }
+    row.appendChild(badge);
+  }
+  return row;
+}
+
+/** Live-render an injected message into the active view. */
+export function renderInjectedBubble(text, source, timestamp, eventType, sender) {
+  const chat = activeView.dom.chat;
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender);
+  chat.appendChild(row);
+  chat.scrollTop = chat.scrollHeight;
+}
+
 /** Format epoch millis as HH:MM (24h) or h:MM AM/PM (12h), respecting user preference */
 export function formatHm(ms) {
   const d = new Date(ms);
@@ -310,53 +427,114 @@ export function formatHm(ms) {
   return String(d.getHours()).padStart(2, '0') + ':' + mm;
 }
 
+// ---------- rAF stream render scheduler ----------
+// Coalesces high-frequency streaming deltas into one DOM render per frame.
+// Slots are keyed per (view, key) so concurrent views (main window + an open
+// popup) and concurrent streams (ai / agent:<id> / ask) coalesce independently.
+// The target is refreshed on every delta, so the pending rAF always renders
+// the latest accumulated text into the latest bubble. This generalizes the
+// module-level rAF pattern of appendThinkingDelta.
+function scheduleStreamRender(view, key, target, render) {
+  if (!view._streamRafSlots) view._streamRafSlots = {};
+  let slot = view._streamRafSlots[key];
+  if (!slot) slot = view._streamRafSlots[key] = { raf: null, target: null, render: null };
+  slot.target = target;
+  slot.render = render;
+  if (!slot.raf) {
+    slot.raf = requestAnimationFrame(() => {
+      slot.raf = null;
+      const t = slot.target; slot.target = null;
+      const r = slot.render; slot.render = null;
+      if (t && r) r(t);
+    });
+  }
+}
+
+/** Cancel a pending stream render — finish*() calls this before its final render. */
+function cancelStreamRender(view, key) {
+  const slot = view && view._streamRafSlots ? view._streamRafSlots[key] : null;
+  if (slot && slot.raf) {
+    cancelAnimationFrame(slot.raf);
+    slot.raf = null;
+    slot.target = null;
+    slot.render = null;
+  }
+}
+
+/** rAF-time scroll — mirrors smartScroll()'s snapped || near-bottom logic but
+ *  scrolls the chat element captured at schedule time (activeView may point
+ *  elsewhere by fire time). Same approach as appendThinkingDelta's rAF. */
+function rafScrollChat(target) {
+  const threshold = 60;
+  if (target.snapped || target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+    target.chat.scrollTop = target.chat.scrollHeight;
+  }
+}
+
 // ---------- AI text streaming ----------
 export function appendAiText(text) {
-  const chat = activeView.dom.chat;
-  activeView.stream.aiText += text;
+  const view = activeView;
+  const chat = view.dom.chat;
+  view.stream.aiText += text;
   // 流式检测：发现完整的 <voice>...</voice> 块立即并行预取 TTS
-  const voiceMatches = activeView.stream.aiText.match(/<voice>([\s\S]+?)<\/voice>/g);
+  const voiceMatches = view.stream.aiText.match(/<voice>([\s\S]+?)<\/voice>/g);
   if (voiceMatches) {
     voiceMatches.forEach(m => {
       const content = m.replace(/<\/?voice>/g, '').trim();
       VoicePlayer.prefetch(content);
     });
   }
-  if (activeView.stream.currentAiBubble && activeView.stream.currentAiBubble.classList.contains('thinking-placeholder')) {
+  if (view.stream.currentAiBubble && view.stream.currentAiBubble.classList.contains('thinking-placeholder')) {
     if (window.__stopThinkingTimer) window.__stopThinkingTimer();
-    activeView.stream.currentAiBubble.classList.remove('thinking-placeholder');
-    activeView.stream.currentAiBubble.innerHTML = '';
+    view.stream.currentAiBubble.classList.remove('thinking-placeholder');
+    view.stream.currentAiBubble.innerHTML = '';
   }
-  if (!activeView.stream.currentAiBubble) {
+  if (!view.stream.currentAiBubble) {
     const row = document.createElement('div');
     row.className = 'row ai';
-    activeView.stream.currentAiBubble = document.createElement('div');
-    activeView.stream.currentAiBubble.className = 'bubble ai';
-    row.appendChild(activeView.stream.currentAiBubble);
+    view.stream.currentAiBubble = document.createElement('div');
+    view.stream.currentAiBubble.className = 'bubble ai';
+    row.appendChild(view.stream.currentAiBubble);
     chat.appendChild(row);
   }
-  const askBox = activeView.stream.currentAiBubble.querySelector('.option-box');
-  if (askBox) askBox.remove();
-  const cursor = '<span class="cursor"></span>';
-  activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '') + cursor;
-  if (askBox) activeView.stream.currentAiBubble.appendChild(askBox);
-  smartScroll();
+  // Preserve any option box across re-renders: keep it OUT of the bubble while
+  // streaming so innerHTML replacement can't destroy its event listeners.
+  const askBox = view.stream.currentAiBubble.querySelector('.option-box');
+  if (askBox) { askBox.remove(); view.stream.aiStreamAskBox = askBox; }
+  // rAF-throttled render — accumulate on every delta, render at most once per
+  // frame. The full accumulated text lives on the bubble node so the rAF never
+  // depends on which view is active at fire time.
+  const bubble = view.stream.currentAiBubble;
+  bubble._nfText = view.stream.aiText || '';
+  scheduleStreamRender(view, 'ai',
+    { bubble, chat, snapped: view.stream.scrollSnapped },
+    (target) => {
+      if (!target.bubble.isConnected) return;
+      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
+      const box = view.stream.aiStreamAskBox;
+      if (box) target.bubble.appendChild(box);
+      rafScrollChat(target);
+    });
 }
 
 export function finishAi(durationMs, model) {
+  // Cancel any pending throttled render — this final render supersedes it.
+  cancelStreamRender(activeView, 'ai');
   if (activeView.stream.currentAiBubble) {
     if (!activeView.stream.aiText || !activeView.stream.aiText.trim()) {
       const row = activeView.stream.currentAiBubble.closest('.row');
       if (row) row.remove();
       activeView.stream.currentAiBubble = null;
       activeView.stream.aiText = '';
+      activeView.stream.aiStreamAskBox = null;
       return null;
     }
-    const askBox = activeView.stream.currentAiBubble.querySelector('.option-box');
+    const askBox = activeView.stream.aiStreamAskBox || activeView.stream.currentAiBubble.querySelector('.option-box');
     if (askBox) askBox.remove();
     const bubble = activeView.stream.currentAiBubble;
     bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
     if (askBox) bubble.appendChild(askBox);
+    activeView.stream.aiStreamAskBox = null;
     const ts = Date.now();
     let hasBadge = false;
     if (durationMs != null && durationMs > 0) {
@@ -515,8 +693,9 @@ export function renderDurationBadge(bubble, durationMs, model, seed, timestamp, 
 
 // ---------- Multi-agent rendering ----------
 export function appendAgentText(agentId, text) {
-  const chat = activeView.dom.chat;
-  if (!activeView.stream.agentBubbles[agentId]) {
+  const view = activeView;
+  const chat = view.dom.chat;
+  if (!view.stream.agentBubbles[agentId]) {
     const row = document.createElement('div');
     row.className = 'row ai agent-row';
     const bubble = document.createElement('div');
@@ -533,16 +712,23 @@ export function appendAgentText(agentId, text) {
     }
     row.appendChild(bubble);
     chat.appendChild(row);
-    activeView.stream.agentBubbles[agentId] = { bubble, text: '', row, badge };
+    view.stream.agentBubbles[agentId] = { bubble, text: '', row, badge };
   }
-  const a = activeView.stream.agentBubbles[agentId];
+  const a = view.stream.agentBubbles[agentId];
   a.text += text;
-  const cursor = '<span class="cursor"></span>';
-  a.bubble.innerHTML = renderMarkdownWithMath(a.text) + cursor;
-  smartScroll();
+  // rAF-throttled render (same scheduler as appendAiText)
+  a.bubble._nfText = a.text;
+  scheduleStreamRender(view, 'agent:' + agentId,
+    { bubble: a.bubble, chat, snapped: view.stream.scrollSnapped },
+    (target) => {
+      if (!target.bubble.isConnected) return;
+      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
+      rafScrollChat(target);
+    });
 }
 
 export function finishAgent(agentId) {
+  cancelStreamRender(activeView, 'agent:' + agentId);
   const a = activeView.stream.agentBubbles[agentId];
   if (a) {
     if (!a.text || a.text.trim() === '') {
@@ -589,7 +775,7 @@ export function applyPopCard(card, label, summary, inputJson, isError) {
       const fileName = popFilePath.split('/').pop() || popFilePath;
       window.dispatchEvent(new CustomEvent('workspace-open-item', {
         detail: {
-          id: 'pop:' + popFilePath,
+          id: 'file:' + popFilePath,
           title: popTitle || fileName,
           itemType: '',
           content: '',
@@ -707,6 +893,36 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
       (mailBody ? '<div class="body">' + mailBody + '</div>' : '') + '</div>';
     smartScroll();
     if (mailBody) attachToolClick(card);
+    return { type: 'tool', label, summary, content: null, isError, input: inputJson };
+  }
+
+  if (_toolName === 'RemoveUnnecessary' && inputJson) {
+    const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+    const localLabel = localizeToolLabel(label);
+    const labelParts = localLabel.split('\n', 2);
+    const labelHtml = escapeHtml(labelParts[0])
+      + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
+
+    // Extract the user's summary from input
+    let summaryBody = '';
+    try {
+      const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
+      const userSummary = inp.summary || '';
+      if (userSummary) {
+        summaryBody = '<div class="tool-removeunnecessary-summary">' + renderMarkdownWithMath(userSummary) + '</div>';
+      }
+    } catch {}
+
+    // Result text (e.g. "Replaced 3 tool result(s)") — strip the "Summary: ..." suffix
+    const resultText = content ? content.replace(/Summary:.*$/s, '').trim() : '';
+
+    card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+      '<div class="content"><div class="label">' + labelHtml + '</div>' +
+      (resultText ? '<div class="tool-result-badge">' + escapeHtml(resultText) + '</div>' : '') +
+      (summaryBody ? '<div class="body">' + summaryBody + '</div>' : '') + '</div>';
+    smartScroll();
+    if (summaryBody) attachToolClick(card);
     return { type: 'tool', label, summary, content: null, isError, input: inputJson };
   }
 
@@ -1258,7 +1474,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   btnRow.appendChild(confirmBtn);
   box.appendChild(btnRow);
   container.appendChild(box);
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  createIconsIn(box);
   smartScroll();
 
   function checkAllAnswered() {
@@ -1267,7 +1483,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 }
 
 // ---------- AskUser ----------
-export function renderAskUser(items, askSessionId) {
+export function renderAskUser(items, askSessionId, agentName) {
   if (!Array.isArray(items) || items.length === 0) {
     renderError(t('chat.waitingQuestion'));
     return { type: 'askUser', items: [] };
@@ -1280,6 +1496,14 @@ export function renderAskUser(items, askSessionId) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble ai';
   row.appendChild(bubble);
+  // Show source agent badge if not Nebula
+  if (agentName && agentName !== 'Nebula') {
+    const badge = document.createElement('div');
+    badge.className = 'ask-user-source';
+    badge.textContent = agentName;
+    badge.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: 8px; padding: 2px 8px; background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: 6px; display: inline-block;';
+    bubble.appendChild(badge);
+  }
   chat.appendChild(row);
   // Use the sessionId from the askUser message, not the currently active session
   const targetSid = askSessionId || activeView.sessionId;
@@ -1303,7 +1527,7 @@ export function renderAskUser(items, askSessionId) {
 }
 
 // ---------- Permission prompt ----------
-export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel) {
+export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession) {
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
@@ -1343,6 +1567,16 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     const bannerText = t(dangerConf.i18nKey, { detail: detail || '' });
     banner.innerHTML = dangerConf.icon + '<span>' + escapeHtml(bannerText) + '</span>';
     bubble.appendChild(banner);
+  }
+
+  // Source badge: show which sub-agent this permission request came from
+  if (sourceAgent) {
+    const sourceBadge = document.createElement('div');
+    sourceBadge.className = 'perm-source-badge';
+    const shortSession = sourceSession ? sourceSession.substring(0, 12) : '';
+    sourceBadge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17l9.2-9.2M17 17V7H7"/></svg>' +
+      '<span>' + escapeHtml(t('chat.permSource', { agent: sourceAgent, session: shortSession })) + '</span>';
+    bubble.appendChild(sourceBadge);
   }
 
   row.appendChild(bubble);
@@ -1487,31 +1721,40 @@ export function renderSkillBubble(skillName, text) {
 }
 
 export function appendAskAnswer(delta) {
-  const chat = activeView.dom.chat;
-  activeView.stream.askAnswerText += delta;
-  if (!activeView.stream.currentAskBubble) {
+  const view = activeView;
+  const chat = view.dom.chat;
+  view.stream.askAnswerText += delta;
+  if (!view.stream.currentAskBubble) {
     const row = document.createElement('div');
     row.className = 'row ai';
-    activeView.stream.currentAskBubble = document.createElement('div');
-    activeView.stream.currentAskBubble.className = 'bubble ai';
+    view.stream.currentAskBubble = document.createElement('div');
+    view.stream.currentAskBubble.className = 'bubble ai';
     const label = document.createElement('div');
     label.className = 'ask-label';
     label.textContent = t('chat.askLabel');
     const content = document.createElement('div');
-    activeView.stream.currentAskBubble.appendChild(label);
-    activeView.stream.currentAskBubble.appendChild(content);
-    row.appendChild(activeView.stream.currentAskBubble);
+    view.stream.currentAskBubble.appendChild(label);
+    view.stream.currentAskBubble.appendChild(content);
+    row.appendChild(view.stream.currentAskBubble);
     chat.appendChild(row);
   }
-  const contentEl = activeView.stream.currentAskBubble.querySelector('div:not(.ask-label)');
-  if (contentEl) {
-    const cursor = '<span class="cursor"></span>';
-    contentEl.innerHTML = renderMarkdownWithMath(activeView.stream.askAnswerText || '') + cursor;
-  }
-  smartScroll();
+  // rAF-throttled render (same scheduler as appendAiText)
+  const bubble = view.stream.currentAskBubble;
+  bubble._nfText = view.stream.askAnswerText || '';
+  scheduleStreamRender(view, 'ask',
+    { bubble, chat, snapped: view.stream.scrollSnapped },
+    (target) => {
+      if (!target.bubble.isConnected) return;
+      const contentEl = target.bubble.querySelector('div:not(.ask-label)');
+      if (contentEl) {
+        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
+      }
+      rafScrollChat(target);
+    });
 }
 
 export function finishAskAnswer(durationMs, model) {
+  cancelStreamRender(activeView, 'ask');
   if (activeView.stream.currentAskBubble) {
     const contentEl = activeView.stream.currentAskBubble.querySelector('div:not(.ask-label)');
     if (contentEl) {
@@ -1527,6 +1770,7 @@ export function finishAskAnswer(durationMs, model) {
 }
 
 export function renderAskError(msg) {
+  cancelStreamRender(activeView, 'ask');
   // Clean up any in-progress ask bubble
   if (activeView.stream.currentAskBubble) {
     const row = activeView.stream.currentAskBubble.closest('.row');

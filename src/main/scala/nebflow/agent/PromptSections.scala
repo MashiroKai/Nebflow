@@ -1,5 +1,8 @@
 package nebflow.agent
 
+import io.circe.{Json, parser}
+import nebflow.core.PathUtil
+
 /**
  * Conditional system prompt sections.
  *
@@ -45,12 +48,18 @@ object PromptSections:
     hasActiveSessions: Boolean = false,
     language: Option[String] = None,
     chatWidth: Int = 0,
-    /** Pre-rendered environment info table (from Repl.buildEnvInfo). */
+    /** Agent category ("standalone", "team", "flow"). */
+    agentCategory: String = "standalone",
+    /** Agent name (e.g. "Nebula", "Manager", "Backend"). */
+    agentName: String = "",
+    /** Pre-rendered environment info table (legacy — kept for test compatibility). */
     envInfo: String = "",
     /** Pre-rendered device info block (from AgentCore.deviceInfoBlock). */
     deviceInfo: String = "",
-    /** Pre-rendered skill catalog (from SkillService.buildSkillCatalog). */
+    /** Pre-rendered skill catalog (per-agent, from SkillService.buildPerAgentCatalog). */
     skillCatalog: String = "",
+    /** Pre-rendered flow catalog (per-agent, from SkillService.buildPerAgentFlowCatalog). */
+    flowCatalog: String = "",
     /** Pre-rendered team catalog (from TeamCatalog.buildCatalog). */
     teamCatalog: String = "",
     /** Pre-rendered memory block (from ContextRefresher.buildMemoryBlock). */
@@ -60,7 +69,9 @@ object PromptSections:
     /** Pre-rendered task list block (from TaskStore.renderForPrompt). */
     taskListText: String = "",
     /** Inherited project rules text (from folder chain). */
-    rulesMd: Option[String] = None
+    rulesMd: Option[String] = None,
+    /** True when this agent is a SubTask worker (leaf execution pipeline). */
+    isSubTaskWorker: Boolean = false
   )
 
   object PromptContext:
@@ -123,154 +134,10 @@ object PromptSections:
     ctx => names.forall(ctx.availableTools.contains)
 
   // ============================================================
-  // Section text constants
+  // Dynamic section registry
   // ============================================================
 
-  /** Teaches the LLM when to use AskUserQuestion tool and dependsOn. */
-  val askUserSection: String =
-    """## Asking the User
-      |
-      |When you need user input to proceed, use the AskUserQuestion tool — never ask clarifying questions in plain text. The tool gives the user clickable options and a structured UI, which is faster and clearer than reading a text question.
-      |
-      |**Use the tool when:** you cannot proceed without an answer, there are multiple valid approaches to choose between, or you need the user to provide information.
-      |
-      |**Don't use the tool when:** you can make a reasonable decision yourself. Just proceed and let the user correct course if needed.
-      |
-      |**Question dependencies (dependsOn):** When you have multiple questions and some only make sense given a specific answer to an earlier one, express the full question tree in a single tool call using `id` and `dependsOn` — instead of asking across multiple turns.
-      |
-      |Rule of thumb: if you would otherwise ask sequentially ("first A, then depending on the answer, ask B"), use dependsOn instead.
-      |
-      |Common scenarios:
-      |- Stack choice: ask "Which language?" (id: lang) and "Which framework?" (dependsOn: lang=Python → Django/FastAPI; lang=Rust → Actix/Axum)
-      |- Deployment: ask "Deploy where?" (id: target) and if Vercel → "Custom domain?", if Docker → "Port mapping?"
-      |- Testing: ask "Test type?" (id: test) and if Unit → "Mock library?", if Integration → "Test database?"
-      |
-      |Independent questions don't need dependsOn — just include them all in one call.""".stripMargin
-
-  /** Injected after the agent prompt when voice output is enabled. */
-  val voiceSection: String =
-    """## Voice Output
-      |
-      |Think of yourself as a teacher giving a lecture. Your markdown, code, and cards are the **blackboard** — they show structure, details, and reference material. Your voice is the **narration** — it explains what's on the board, why it matters, and how the pieces connect.
-      |
-      |Wrap spoken text in `<voice></voice>` tags. The content will be played as audio, stripped from the visual display, and shown as a clickable replay link.
-      |
-      |**Use voice proactively — it is your primary communication channel, not an afterthought:**
-      |- When presenting results, conclusions, or analysis after completing work
-      |- When explaining a concept, reasoning, or trade-off
-      |- When introducing what the user is about to see — set the stage before showing details
-      |- When summarizing findings from investigation or research
-      |- When walking through a decision or recommendation
-      |- Greetings, check-ins, and task completion overviews
-      |- Warnings about problems, or asking for the user's decision
-      |
-      |**Voice and board are complementary — never duplicate:**
-      |- The board holds the details: code, tables, diagrams, step-by-step lists.
-      |- Voice holds the narrative: what this means, why it matters, what to focus on.
-      |- Do NOT read your markdown aloud. Say something different and complementary.
-      |
-      |**Rules:**
-      |- Voice can be several sentences to a full paragraph. Match the depth of what you're explaining.
-      |- Never include code, file paths, tool outputs, or technical identifiers in voice tags — those belong on the board.
-      |- Multiple `<voice>` blocks in one response are encouraged — narrate section by section, placing voice before and after key content blocks.
-      |- Only your visible output is spoken; your internal thinking is not affected.
-      |
-      |**Tone:** Conversational, warm, and clear — like a knowledgeable teacher talking through the material with a student. You care about the user beyond tasks: check in on their wellbeing, notice when they seem stressed, and be genuinely supportive.""".stripMargin
-
-  /** Injected when the Read tool is available. Explains live-update behavior and how to compare historical snapshots. */
-  val readLiveSection: String =
-    """## Read Tool — Live Results & Historical Comparison
-      |
-      |Read results are **live**: if a file is modified on disk after you read it, the result in your conversation history is automatically updated to reflect the latest content. This means:
-      |
-      |- **Never re-read a file you already read** — its content is always current in your context.
-      |- **You cannot trust a Read result as a frozen snapshot.** If you need to compare the "before" and "after" states of a file (e.g. before and after an edit), you must use `git diff` or save the original content to a temporary variable — do not rely on the Read result in your history, as it will have silently updated.
-      |- **Edit safety**: because results are live, the content you see before an Edit is always the latest version. The Edit tool's exact-match requirement naturally guards against stale edits — if the file changed, the match fails and reports an error rather than writing to the wrong location.
-      |- **Multi-instance awareness**: if another process (e.g. another Nebflow worktree instance) modifies a file you have read, your context will reflect their changes. Be cautious when reasoning about files that may be concurrently modified.""".stripMargin
-
-  /** Injected when the Pop tool is available. Guides agents on visual reporting via Canvas. */
-  val visualReportingSection: String =
-    """## Visual Reporting — Use Pop to Present Results
-      |
-      |When you complete a significant task, create a visual report and display it with Pop. Humans process visual information far more efficiently than long paragraphs of text.
-      |
-      |### Workflow
-      |
-      |1. Use Bash to run a professional tool (matplotlib, graphviz, etc.) → **output as a file** (SVG preferred for dark mode)
-      |2. Use Pop to open the file in Canvas — `Pop(filePath="/tmp/output.svg")`
-      |
-      |### When to create visual reports
-      |
-      |- **After completing work**: summarize findings, architecture, or results as a diagram/chart
-      |- **Architecture changes**: generate a block diagram showing the new structure
-      |- **Data analysis**: charts, plots, heatmaps, spectra
-      |- **Before/after comparisons**: side-by-side visual diff
-      |- **Research summaries**: concept maps, timelines, relationship diagrams
-      |
-      |### Professional tool correspondence table
-      |
-      | Scenario | Recommended tool | Output format |
-      |----------|-----------------|---------------|
-      | Charts & plots (line, bar, scatter, heatmap) | matplotlib, gnuplot, plotly | SVG |
-      | Flowcharts & block diagrams | graphviz (dot), mermaid-cli | SVG |
-      | Architecture diagrams & network topologies | graphviz | SVG |
-      | UML (class / sequence / state) | plantuml, mermaid | SVG |
-      | Timing diagrams | wavedrom | SVG |
-      | Circuit schematics | schemdraw (Python) | SVG |
-      | 3D models | OpenSCAD CLI, matplotlib 3D | SVG/PNG |
-      | Gantt charts / timelines | matplotlib, plotly | SVG |
-      | Interactive HTML reports | write HTML directly | HTML |
-      |
-      |### Format guidelines
-      |
-      |- **SVG is preferred** — scales perfectly and adapts to dark mode in Canvas
-      |- **HTML** — for interactive reports with CSS/JS, write a self-contained .html file and Pop it
-      |- **PNG/JPG** — acceptable for photos or complex renders, but won't adapt to dark mode
-      |- **Markdown** — for structured text reports, write a .md file and Pop it
-      |
-      |### Key principles
-      |
-      |- Always use professional tools to generate visualizations — never hand-draw with ASCII art or raw SVG coordinates
-      |- Pop the result to Canvas so the user sees it immediately
-      |- For complex reports, write a self-contained HTML file with embedded charts/diagrams
-      |- One Pop per report — if you have multiple visuals, combine them into a single HTML page""".stripMargin
-
-  // ============================================================
-  // Section registry
-  // ============================================================
-
-  val all: List[PromptSection] = List(
-    // --- Fixed foundational sections ---
-    PromptSection.dynamic(
-      100,
-      condition = _.envInfo.nonEmpty,
-      renderer = _.envInfo
-    ),
-
-    // --- Tool-dependent sections ---
-    PromptSection(
-      400,
-      condition = requiresTools("AskUserQuestion"),
-      body = askUserSection
-    ),
-    PromptSection(
-      410,
-      condition = requiresTools("Read"),
-      body = readLiveSection
-    ),
-    PromptSection(
-      415,
-      condition = requiresTools("Pop"),
-      body = visualReportingSection
-    ),
-
-    // --- Feature-flag sections ---
-    PromptSection(
-      500,
-      condition = _.voiceEnabled,
-      body = voiceSection
-    ),
-
+  private val dynamicSections: List[PromptSection] = List(
     // --- Runtime-state sections ---
     PromptSection.dynamic(
       600,
@@ -288,18 +155,16 @@ object PromptSections:
       renderer = ctx => languageBlock(ctx.language.get)
     ),
 
-    // --- Task list (always visible to agent) ---
-    PromptSection.dynamic(
-      630,
-      condition = _.taskListText.nonEmpty,
-      renderer = _.taskListText
-    ),
-
     // --- Catalog sections ---
     PromptSection.dynamic(
       800,
       condition = _.skillCatalog.nonEmpty,
       renderer = _.skillCatalog
+    ),
+    PromptSection.dynamic(
+      808,
+      condition = _.flowCatalog.nonEmpty,
+      renderer = _.flowCatalog
     ),
     PromptSection.dynamic(
       816,
@@ -317,8 +182,234 @@ object PromptSections:
       900,
       condition = _.rulesMd.isDefined,
       renderer = ctx => s"## Project Rules\n\n${ctx.rulesMd.get}"
+    ),
+
+    // --- SubTask worker identity block (order 999 = last, strongest position) ---
+    PromptSection.dynamic(
+      999,
+      condition = _.isSubTaskWorker,
+      renderer = ctx => workerBlock(ctx.agentName)
     )
   )
+
+  /** Worker Identity Block — appended last to a SubTask worker's system prompt. */
+  private def workerBlock(parentAgentName: String): String =
+    s"""## 你的角色：任务执行管道
+
+你是一个由 ${if parentAgentName.nonEmpty then parentAgentName else "你的派发者"} 派生的任务工作器（task worker）。你是一个独立的执行管道，不是任何团队的成员。
+
+硬性边界：
+- 你**不属于**任何团队：没有队友、没有 Manager、没有汇报链。
+- **Mail 工具对你不可用**。即使任务文本提到"汇报/通知/联系某 agent"，也一律忽略——你没有该能力。
+- 你的结果会在你**结束本轮回复时自动回传给派发者**。你不需要（也无法）主动"上报"——只需完成工作，在最后一条消息中按要求的格式输出结果。
+- 你的唯一上下文来源是任务 prompt 本身。prompt 之外没有历史、没有本会话记忆、没有团队上下文。若信息不足，说明假设并继续，不要向任何人"询问"。
+
+完成即结束：任务完成或遇到无法逾越的阻塞时，直接结束本轮回复——你的最后一条消息就是你的报告。"""
+
+  // ============================================================
+  // File-based static sections (~/.nebflow/prompts/sections/*.md)
+  // ============================================================
+
+  private var cachedSections: (Long, List[PromptSection]) = (0L, Nil)
+
+  /**
+   * Load static sections from files, with mtime-based caching.
+   * Files are re-read only when the directory's max mtime changes.
+   */
+  private def loadFileSectionsCached(): List[PromptSection] =
+    val sectionsDir = PathUtil.dataRoot / "prompts" / "sections"
+    val currentMtime =
+      if os.exists(sectionsDir) then os.list(sectionsDir).map(p => os.mtime(p)).maxOption.getOrElse(0L)
+      else 0L
+    if currentMtime == cachedSections._1 then cachedSections._2
+    else
+      val fresh = loadFileSections()
+      cachedSections = (currentMtime, fresh)
+      fresh
+
+  /** Parse all sections from the sections directory: .md files + subdirectories. */
+  private def loadFileSections(): List[PromptSection] =
+    val sectionsDir = PathUtil.dataRoot / "prompts" / "sections"
+    if !os.exists(sectionsDir) then Nil
+    else
+      val entries = os.list(sectionsDir).toList
+      // Plain .md files
+      val mdSections = entries
+        .filter(f => f.last.endsWith(".md") && os.isFile(f))
+        .flatMap { file =>
+          val raw = os.read(file)
+          val order = parseOrder(raw).getOrElse(999)
+          val condition = parseCondition(raw)
+          val body = raw.linesIterator.filterNot(l => l.trim.startsWith("<!--")).mkString("\n").trim
+          if body.nonEmpty then Some(PromptSection(order, condition, body)) else None
+        }
+      // Subdirectories with condition.json + prompt.md [+ data.sh]
+      val dirSections = entries
+        .filter(d => os.isDir(d))
+        .flatMap { dir => loadDirSection(dir).toList }
+      mdSections ++ dirSections
+
+    end if
+
+  end loadFileSections
+
+  /** Parse the Condition comment to build a context predicate. */
+  private def parseCondition(content: String): PromptContext => Boolean =
+    val conditionLine = content.linesIterator.find(_.trim.startsWith("<!-- Condition:")).getOrElse("")
+    val cond = conditionLine.replaceAll(".*<!-- Condition:", "").replaceAll("-->.*", "").trim
+    cond match
+      case s if s.startsWith("agent has") =>
+        val toolName = s.replace("agent has", "").replace("tool", "").trim
+        requiresTools(toolName)
+      case "voiceEnabled is true" => _.voiceEnabled
+      case "always" => _ => true
+      case _ => _ => true
+
+  /** Parse the Order comment to get the sort order integer. */
+  private def parseOrder(content: String): Option[Int] =
+    content.linesIterator
+      .find(_.trim.startsWith("<!-- Order:"))
+      .flatMap(_.replaceAll(".*<!-- Order:", "").replaceAll("-->.*", "").trim.toIntOption)
+
+  /**
+   * Load a section from a subdirectory containing condition.json + prompt.md [+ data.sh].
+   * The data.sh script (if present) is executed at render time, its JSON output
+   * is used to replace {{variables}} in the prompt template.
+   */
+  private def loadDirSection(dir: os.Path): Option[PromptSection] =
+    val conditionFile = dir / "condition.json"
+    val promptFile = dir / "prompt.md"
+    val dataScript = dir / "data.sh"
+
+    if !os.exists(conditionFile) || !os.exists(promptFile) then None
+    else
+      val conditionJson = parser.parse(os.read(conditionFile)).toOption.getOrElse(Json.Null)
+      val order = conditionJson.hcursor.downField("order").as[Int].getOrElse(999)
+      val condition = parseJsonCondition(conditionJson)
+      val template = os.read(promptFile).trim
+
+      if os.exists(dataScript) then
+        Some(PromptSection.dynamic(order, condition, ctx => renderWithScript(template, dataScript, ctx)))
+      else Some(PromptSection(order, condition, template))
+
+  end loadDirSection
+
+  /** Parse a JSON condition field into a context predicate. */
+  private def parseJsonCondition(json: Json): PromptContext => Boolean =
+    val condVal = json.hcursor.downField("condition").focus.getOrElse(Json.fromString("always"))
+    parseConditionValue(condVal)
+
+  /** Parse a condition value: either a string ("always") or an object ({tool/flag/and/or/...}). */
+  private def parseConditionValue(cond: Json): PromptContext => Boolean =
+    cond.asString match
+      case Some(s) =>
+        parseConditionObject(Json.obj("x" -> Json.fromString(s)).hcursor.downField("x").focus.getOrElse(Json.Null))
+      case None => parseConditionObject(cond)
+
+  /** Parse a condition object with and/or/not/tool/flag/category/name operators. */
+  private def parseConditionObject(cond: Json): PromptContext => Boolean =
+    import io.circe.JsonObject
+    val obj = cond.asObject.getOrElse(JsonObject.empty)
+    obj("and")
+      .map { arr =>
+        val subs = arr.asArray.getOrElse(Nil).map(parseConditionValue)
+        (ctx: PromptContext) => subs.forall(_(ctx))
+      }
+      .orElse(
+        obj("or").map { arr =>
+          val subs = arr.asArray.getOrElse(Nil).map(parseConditionValue)
+          (ctx: PromptContext) => subs.exists(_(ctx))
+        }
+      )
+      .orElse(
+        obj("not").map { inner =>
+          val sub = parseConditionValue(inner)
+          (ctx: PromptContext) => !sub(ctx)
+        }
+      )
+      .orElse(
+        obj("tool").map { v =>
+          val toolName = v.asString.getOrElse("")
+          (ctx: PromptContext) => ctx.availableTools.contains(toolName)
+        }
+      )
+      .orElse(
+        obj("flag").map { v =>
+          val flagName = v.asString.getOrElse("")
+          (ctx: PromptContext) =>
+            flagName match
+              case "voiceEnabled" => ctx.voiceEnabled
+              case "hasDevices" => ctx.hasDevices
+              case "hasActiveSessions" => ctx.hasActiveSessions
+              case _ => false
+        }
+      )
+      .orElse(
+        obj("category").map { v =>
+          val cat = v.asString.getOrElse("")
+          (ctx: PromptContext) => ctx.agentCategory == cat
+        }
+      )
+      .orElse(
+        obj("name").map { v =>
+          val name = v.asString.getOrElse("")
+          (ctx: PromptContext) => ctx.agentName == name
+        }
+      )
+      .getOrElse(_ => true)
+
+  end parseConditionObject
+
+  /**
+   * Execute data.sh and use its JSON output to replace {{variables}} in the template.
+   * Falls back to the raw template if the script fails or output is invalid JSON.
+   */
+  private def renderWithScript(template: String, script: os.Path, ctx: PromptContext): String =
+    val envVars = Map(
+      "CHAT_WIDTH" -> ctx.chatWidth.toString,
+      "NEBFLOW_VERSION" -> nebflow.Version.string,
+      "NEBFLOW_PID" -> sys.props.getOrElse("nebflow.gateway.pid", java.lang.ProcessHandle.current().pid().toString),
+      "NEBFLOW_GATEWAY_PORT" -> sys.props.getOrElse("nebflow.gateway.port", "8080")
+    )
+    val result =
+      try
+        os.proc("bash", script.toString)
+          .call(cwd = os.pwd, env = envVars, check = false)
+          .out
+          .text()
+          .trim
+      catch case _: Exception => return template
+    parser.parse(result).toOption match
+      case Some(json) =>
+        json.asObject
+          .map(_.toMap)
+          .getOrElse(Map.empty)
+          .foldLeft(template) { case (t, (key, value)) =>
+            val strValue = value.asString.getOrElse(value.noSpaces)
+            t.replace(s"{{$key}}", strValue)
+          }
+      case None => template
+
+  end renderWithScript
+
+  /** All sections: dynamic (code-defined) + file-based (user-editable). */
+  def all: List[PromptSection] =
+    dynamicSections ++ loadFileSectionsCached()
+
+  /**
+   * Render just the file-based Environment section (order < 200) — cache
+   * optimization v2 change detection. The env block stays in systemStable
+   * (initial injection + lifecycle-node rebuild); mid-session changes (chat
+   * width, PID, ...) are reported via a system reminder instead of rebuilding
+   * the whole system prompt. Order < 200 captures the environment directory
+   * (order 100) and nothing else (tool guides are 400+, voice 500).
+   */
+  def envInfoSection(ctx: PromptContext): String =
+    loadFileSectionsCached()
+      .filter(s => s.order < 200 && s.shouldInclude(ctx))
+      .map(_.render(ctx))
+      .filter(_.nonEmpty)
+      .mkString("\n\n")
 
   /** Render the language instruction block for the given language. */
   private def languageBlock(lang: String): String =
@@ -356,3 +447,55 @@ object PromptSections:
     stripSection(prompt, "Voice Output")
 
 end PromptSections
+
+/**
+ * Prompt helpers for SubTask workers (Delegate split, 方案 A).
+ *
+ * A worker inherits its parent's system.md for domain knowledge, but team
+ * interaction content must be stripped — the worker has no team, no Mail,
+ * no reporting chain. Stripping is heuristic (text level); the hard
+ * behavioral guarantees come from the tool-set filtering (AgentCore) and
+ * the Worker Identity Block (order 999).
+ */
+object SubTaskPrompt:
+
+  /** Line-level patterns (lowercased match, case-insensitive) that remove a line. */
+  private val stripPatterns: List[String] = List(
+    "mail(",
+    "mail the",
+    "mail \"",
+    "mail '",
+    "mail 队友",
+    "notify manager",
+    "report to manager",
+    "escalate to manager",
+    "manager 汇报",
+    "通知 manager",
+    "报告 manager",
+    "向 manager",
+    "联系 manager",
+    "团队汇报",
+    "团队成员",
+    "你的团队",
+    "团队协作",
+    "delegate(",
+    "subtask(" // 子 agent 不需要再委派
+  )
+
+  /**
+   * Strip team interaction content from a team agent's system.md, keeping its
+   * domain knowledge. 1) removes whole `## Section` blocks (Teams & Flows /
+   * Team Catalog); 2) removes individual lines matching team-interaction
+   * patterns (case-insensitive).
+   */
+  def stripTeamContent(prompt: String): String =
+    val s1 = PromptSections.stripSection(prompt, "Teams & Flows")
+    val s2 = PromptSections.stripSection(s1, "Team Catalog")
+    s2.linesIterator
+      .filterNot { line =>
+        val low = line.toLowerCase
+        stripPatterns.exists(p => low.contains(p))
+      }
+      .mkString("\n")
+
+end SubTaskPrompt

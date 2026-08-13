@@ -12,12 +12,13 @@
 // entry only.
 //
 // The bar is an independent glass card (see nav.css #activity-bar). It is NOT
-// part of the panelDragger 3-column layout — order:-1 keeps it leftmost, and it
+// part of the 3-column layout — order:-1 keeps it leftmost, and it
 // stays visible when the sidebar is collapsed.
 
 import { openSettingsPanel, isSettingsPanelActive, showPanel } from './sidebar.js';
 import { fetchNeblinkStatus, getNeblinkState } from './neblink.js';
 import { renderAgentManager, isAgentsPanelActive } from './agentManager.js';
+import { createIconsIn } from './utils.js';
 
 let initialized = false;
 let statusPollTimer = null;
@@ -38,7 +39,7 @@ export function initActivityBar() {
   observeSettingsPanel();
   observeAgentsPanel();
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(document.getElementById('activity-bar'));
 }
 
 // ── Settings ─────────────────────────────────────────────

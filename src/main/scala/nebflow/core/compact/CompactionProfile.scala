@@ -3,14 +3,14 @@ package nebflow.core.compact
 /**
  * Determines compaction behavior for an agent based on its role in the flow hierarchy.
  *
- *  Profiles control *additional* triggers beyond the shared token-based compaction:
- *  - Root:    dream mode (idle reflection, fact extraction)
- *  - Manager: mail-turn compaction (progress summary per coordination turn)
- *  - Worker:  experience extraction (skill proposals from completed tasks)
- *  - Legacy:  no additional triggers (backward-compatible fallback)
+ * Profiles select the pre-compaction hook and compact-reminder prompt template.
+ * They no longer control additional triggers — all extraction (memory/progress/skill)
+ * happens as a pre-compaction step, not via independent timers or turn hooks.
  *
- *  All profiles share the same token-based compaction (FullCompact + FastMicroCompact)
- *  and emergency fallback (emergencyClean on circuit breaker).
+ *  - Root:    NebulaMemoryHook (fact extraction → User.md)
+ *  - Manager: ManagerProgressHook (progress summary → memory.md)
+ *  - Worker:  WorkerSkillHook (skill proposals → skill-proposals/)
+ *  - Legacy:  NoOpHook
  */
 enum CompactionProfile:
   case Root, Manager, Worker, Legacy

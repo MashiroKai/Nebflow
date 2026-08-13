@@ -8,6 +8,7 @@
 import state from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { openPathPickerCallback } from './sidebar.js';
+import { createIconsIn } from './utils.js';
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -91,10 +92,6 @@ function getFileInfo(name) {
 
 function shouldHide(name, isDir) {
   return isDir && HIDDEN_DIRS.has(name);
-}
-
-function escapeAttr(s) {
-  return s.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // ── Render ─────────────────────────────────────────────────────────────
@@ -261,11 +258,15 @@ function openFile(path, fileName, pinned = false) {
 
 // Track pinned requests keyed by file path
 const pendingPinned = new Map();
+// Track background-refresh requests (canvas.js scheduleFileRefresh) keyed by
+// file path — their fileContent responses must not steal tab activation.
+const pendingRefresh = new Set();
 
 // Listen for canvas tab restore requests — set pinned state before readFile
 window.addEventListener('explorer-preload-pinned', (e) => {
   if (e.detail && e.detail.path) {
     pendingPinned.set(e.detail.path, e.detail.pinned !== false);
+    if (e.detail.refresh) pendingRefresh.add(e.detail.path);
   }
 });
 
@@ -308,7 +309,7 @@ onMessage('dirListing', (msg) => {
     pending.container.innerHTML = '<div class="explorer-empty">Empty</div>';
   }
 
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') createIconsIn(pending.container);
 });
 
 onMessage('fileContent', (msg) => {
@@ -320,6 +321,9 @@ onMessage('fileContent', (msg) => {
   const tabId = `file:${msg.path}`;
   const pinned = pendingPinned.get(msg.path) || false;
   pendingPinned.delete(msg.path);
+  // Background refresh responses (activation-triggered) re-render in place but
+  // must not yank the user back to that tab.
+  const background = pendingRefresh.delete(msg.path);
   const item = {
     id: tabId,
     title: msg.fileName || msg.path,
@@ -330,6 +334,7 @@ onMessage('fileContent', (msg) => {
     path: msg.path,
     rootPath: explorerRoot,
     pinned,
+    background,
   };
   window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: item }));
 });

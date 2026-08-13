@@ -3,6 +3,7 @@ package nebflow.agent
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.entity.{EntityLoader, TeamCatalog}
+import nebflow.core.presets.PresetStore
 import nebflow.core.skill.SkillService
 import nebflow.core.{PathUtil, SystemReminder, SystemReminders}
 import nebflow.service.{MemoryStore, RulesStore}
@@ -28,7 +29,8 @@ object ContextRefresher:
   val promptSources: List[InjectionSource] = List(
     systemPrefixForAll,
     systemPrefixForTeams,
-    systemPrefixForFlows
+    systemPrefixForFlows,
+    managerPrefixSource
   )
 
   /**
@@ -77,6 +79,17 @@ object ContextRefresher:
     new FileInjectionSource(
       "system-prefix-for-flows",
       PathUtil.dataRoot / "prompts" / "system-prefix-for-flows.md"
+    )
+
+  /**
+   * Manager prefix: ~/.nebflow/prompts/manager-prefix.md
+   *  Injected only for Team Manager agents (name == "Manager").
+   *  No JAR fallback — empty if file doesn't exist.
+   */
+  val managerPrefixSource: FileInjectionSource =
+    new FileInjectionSource(
+      "manager-prefix",
+      PathUtil.dataRoot / "prompts" / "manager-prefix.md"
     )
 
   // ============================================================
@@ -232,25 +245,26 @@ object ContextRefresher:
   /**
    * Build a memory block string for system prompt injection.
    *
-   * Reads all memory levels and formats them into a single Markdown block:
-   *   - User memory    (~/.nebflow/User.md)                  — global, all agents
-   *   - Agent memory   (~/.nebflow/agents/<name>/memory.md)  — per agent
-   *   - Project memory (~/.nebflow/projects/<proj>/memory/<name>.md) — per project+agent
+   * Reads memory levels and formats them into a single Markdown block:
+   *   - User memory    (~/.nebflow/User.md)                              — global
+   *   - Agent memory   (~/.nebflow/agents/<name>/memory.md)               — Nebula
+   *     or (~/.nebflow/teams/<team>/agents/<name>/memory.md)              — Team agents
    *
    * Only levels that exist on disk are included.
    */
   def buildMemoryBlock(
     agentName: String,
-    projectMemory: Option[String] = None
+    teamName: Option[String] = None
   ): String =
+    val agentMemory = teamName match
+      case Some(tn) => MemoryStore.loadTeamAgentMemory(tn, agentName)
+      case None => MemoryStore.loadAgentMemory(agentName)
+
     val sections = List(
       MemoryStore.loadUserMemory
         .map(content => s"## User Memory\n\n$content"),
-      MemoryStore
-        .loadAgentMemory(agentName)
-        .map(content => s"## Agent Memory\n\n$content"),
-      projectMemory
-        .map(content => s"## Project Memory\n\n$content")
+      agentMemory
+        .map(content => s"## Agent Memory\n\n$content")
     ).flatten
 
     if sections.isEmpty then ""
@@ -278,27 +292,62 @@ object ContextRefresher:
     agentDef: AgentDef
   ): IO[TurnContext] =
     for
-      freshDefOpt <- resources.agentLibrary.get(agentDef.name)
+      // Detect team membership once — used for both the def refresh source
+      // and the memory block below.
+      teamNameOpt <- state.sessionId match
+        case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
+        case None => IO.pure(None)
+      // Team agents reload their def from the team dir every turn so panel
+      // edits (e.g. PUT /api/agents/:name/model) take effect on the running
+      // actor. agentLibrary.get only scans the GLOBAL agents dir — for team
+      // agents it returns None and the code would silently keep using the
+      // actor-startup snapshot (MailTool/FlowTreeActor loadTeamAgent result).
+      // loadTeamAgent checks teams/<team>/agents/<name>/ first, then global.
+      freshDefOpt <- teamNameOpt match
+        case Some(teamName) =>
+          EntityLoader.loadTeamAgent(teamName, agentDef.name).map { entryOpt =>
+            entryOpt.map { entry =>
+              val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
+              AgentDef(
+                name = entry.name,
+                description = entry.description,
+                tools = entry.tools,
+                systemPrompt = entry.systemPrompt,
+                category = entry.category,
+                mcpServers = entry.mcpServers,
+                model = Some(resolvedModel),
+                preset = entry.preset,
+                skills = entry.skills,
+                flows = entry.flows,
+                avatar = agentDef.avatar,
+                displayName = agentDef.displayName,
+                voiceEnabled = agentDef.voiceEnabled
+              )
+            }
+          }
+        case None => resources.agentLibrary.get(agentDef.name)
       globalDef = freshDefOpt.getOrElse(agentDef)
+      // SubTask workers are leaf task-execution pipelines: strip all team /
+      // manager / memory context — the prompt is their only context source.
+      isWorker = state.isSubTaskWorker
       // Load all-agent prefix + category-specific prefix
       allPrefixRaw <- systemPrefixForAll.get
-      categoryPrefix <- globalDef.category match
-        case "team" => systemPrefixForTeams.get
-        case "flow" => systemPrefixForFlows.get
-        case _ => IO.pure("")
-      systemPrefixRaw = allPrefixRaw + categoryPrefix
+      categoryPrefix <-
+        if isWorker then IO.pure("")
+        else
+          globalDef.category match
+            case "team" => systemPrefixForTeams.get
+            case "flow" => systemPrefixForFlows.get
+            case _ => IO.pure("")
+      // Manager prefix: only for Team Manager agents
+      managerPrefix <-
+        if isWorker || globalDef.name != "Manager" then IO.pure("")
+        else managerPrefixSource.get
+      systemPrefixRaw = allPrefixRaw + categoryPrefix + managerPrefix
       systemPrefix = systemPrefixRaw
       projectRoot <- resolveProjectRoot(state.folderId, resources, globalDef.name)
       // Projects directory: ~/.nebflow/projects/<folderName>/
       projectsDir <- resolveProjectsDir(state.folderId, resources, globalDef.name)
-      // Load project-level agent memory (supplements global agent memory)
-      projectMem <- projectsDir match
-        case Some(dir) =>
-          IO.blocking {
-            val p = dir / "memory" / s"${globalDef.name}.md"
-            if os.exists(p) then Some(os.read(p).trim).filter(_.nonEmpty) else None
-          }
-        case None => IO.pure(None)
       // Load project rules from projects dir + folder rules (personal)
       projectRules <- projectsDir match
         case Some(dir) =>
@@ -311,12 +360,20 @@ object ContextRefresher:
       rulesMd = mergeRules(projectRules, folderRules)
       thinkingConfig <- resources.thinkingConfigRef.get
       (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
-      skillCatalog <- SkillService.buildSkillCatalog(state.execution.delegateCount)
-      teamCatalog <- buildTeamCatalogForSession(state.sessionId)
-      memoryBlock = buildMemoryBlock(
-        globalDef.name,
-        projectMem
-      )
+      skillCatalog <- SkillService.buildPerAgentCatalog(globalDef.skills)
+      flowCatalog <-
+        if isWorker then IO.pure("")
+        else SkillService.buildPerAgentFlowCatalog(globalDef.flows)
+      teamCatalog <-
+        if isWorker then IO.pure("")
+        else buildTeamCatalogForSession(state.sessionId)
+      // Memory: only Nebula (standalone, name="Nebula") and team agents get memory.
+      // Team agents get memory; standalone agents (Coder/Explorer/etc) don't.
+      // SubTask workers get none — clean context, prompt is the only input.
+      isTeamAgent = teamNameOpt.isDefined
+      memoryBlock =
+        if !isWorker && (isTeamAgent || globalDef.name == "Nebula") then buildMemoryBlock(globalDef.name, teamNameOpt)
+        else ""
     yield TurnContext(
       globalDef,
       systemPrefix,
@@ -327,6 +384,7 @@ object ContextRefresher:
       currentBranch,
       skillCatalog,
       teamCatalog,
+      flowCatalog,
       memoryBlock
     )
 
@@ -348,7 +406,7 @@ object ContextRefresher:
     sessionId match
       case Some(sid) =>
         for
-          teamNameOpt <- nebflow.core.flow.FlowMembership.flowOfSession(sid)
+          teamNameOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
           result <- teamNameOpt match
             case Some(teamName) =>
               // Team agent: show team-specific catalog

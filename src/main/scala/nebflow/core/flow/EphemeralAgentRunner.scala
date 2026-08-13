@@ -60,9 +60,16 @@ object EphemeralAgentRunner:
             readTracker = None,
             fileHistory = None,
             contextWindow = resources.contextWindow,
-            expectsMail = false
+            expectsMail = false,
+            // P2: standalone agent buckets its own permission policy (same as
+            // its AgentRecord below).
+            rootSessionId = sessionId
           ),
           s"ephemeral-agent-${agentDef.name.take(10)}"
+        )
+        // Register in agentRegistry so WS events (askUser, permission) route correctly
+        _ <- resources.agentRegistry.update(
+          _ + (sessionId -> AgentRecord(sessionId, ref, AgentKind.Ephemeral, sessionId))
         )
         // Send input with bridge actor as replyTo
         _ <- (ref ! AgentCommand.UserInput(
@@ -72,6 +79,7 @@ object EphemeralAgentRunner:
         // Wait for completion — no timeout, event-driven
         eventResult <- resultDeferred.get
         // Stop agent actor + cleanup
+        _ <- resources.agentRegistry.update(_ - sessionId)
         _ <- resources.actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
         _ <- resources.actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
         _ <- resources.sessionStore.deleteSession(sessionId).handleErrorWith(_ => IO.unit)

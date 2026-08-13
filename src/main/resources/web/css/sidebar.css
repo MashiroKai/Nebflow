@@ -26,12 +26,6 @@
       0px 8px 24px rgba(0, 0, 0, 0.35);
   }
 }
-/* Divider between nav and session list */
-.sidebar-divider {
-  width: 1px;
-  background: var(--glass-border);
-  flex-shrink: 0;
-}
 
 /* ---------- Sidebar Panel — inner column inside #sidebar ---------- */
 #sidebar-panel {
@@ -52,8 +46,6 @@
 .panel.active { display: flex; }
 
 /* ---------- Sidebar Top Bar ---------- */
-/* The bump-zone (pill at top) is the drag handle for panel reordering.
-   The topbar itself is not a drag area — cursor: grab lives on .bump-zone. */
 .sidebar-topbar {
   display: flex;
   align-items: center;
@@ -120,16 +112,6 @@
 }
 .panel-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); border-color: var(--color-frame-text-muted); opacity: 1; }
 
-/* Session management actions bar */
-.session-actions {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 6px 14px;
-  flex-shrink: 0;
-}
-
 #session-list {
   flex: 1;
   overflow-y: auto;
@@ -156,13 +138,13 @@
 
 /* Multi-selection styles */
 .session-item.selected {
-  background: hsla(145, 76%, 40%, 0.08);
+  background: rgba(128, 128, 128, 0.08);
 }
 .session-item.selected .session-name {
   color: var(--color-frame-text-bright);
 }
 .session-item.selected:hover {
-  background: hsla(145, 76%, 40%, 0.12);
+  background: rgba(128, 128, 128, 0.12);
 }
 
 /* Multi-select floating toolbar */
@@ -185,47 +167,6 @@
 @keyframes msBarIn {
   from { opacity: 0; transform: translateX(-50%) translateY(6px) scale(0.96); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
-}
-.ms-count {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--color-frame-text);
-  white-space: nowrap;
-  letter-spacing: -0.01em;
-}
-.ms-divider {
-  width: 1px;
-  height: 16px;
-  background: var(--color-frame-border);
-}
-.ms-actions {
-  display: flex;
-  gap: 2px;
-}
-.ms-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-frame-text-muted);
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-}
-.ms-btn:hover {
-  background: var(--color-frame-hover);
-  color: var(--color-frame-text-bright);
-}
-.ms-btn svg {
-  width: 15px;
-  height: 15px;
-}
-.ms-delete:hover {
-  color: #ef4444;
-  background: rgba(239,68,68,0.10);
 }
 
 /* Delete drop zone */
@@ -560,7 +501,7 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-weight: 500;
+  font-weight: 400;
 }
 .folder-item:hover .folder-name { color: var(--color-frame-text-bright); }
 .folder-name[contenteditable="true"] {
@@ -754,29 +695,6 @@
   font-size: 13px;
   color: var(--color-frame-text);
 }
-.settings-value {
-  font-size: 12px;
-  color: var(--color-frame-text-muted);
-}
-
-/* Text input for settings */
-.settings-text-input {
-  background: var(--color-frame-input-bg);
-  border: 1px solid var(--color-frame-input-border);
-  border-radius: 6px;
-  color: var(--color-frame-input-text);
-  font-size: 12px;
-  padding: 4px 8px;
-  width: 140px;
-  outline: none;
-  transition: border-color 0.2s;
-}
-.settings-text-input:focus {
-  border-color: rgba(91, 127, 191, 0.5);
-}
-.settings-text-input::placeholder {
-  color: var(--color-frame-text-muted);
-}
 
 /* Toggle switch */
 .toggle {
@@ -968,6 +886,180 @@
   padding: 8px 0;
 }
 
+/* ── Model Presets (settings section, P3) ───────────────────────────────── */
+.preset-card { cursor: default; }
+.preset-card:hover { border-color: var(--color-frame-input-border); }
+.preset-default-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(91, 127, 191, 0.12);
+  border: 1px solid rgba(91, 127, 191, 0.3);
+  color: #5b7fbf;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.preset-card-key {
+  font: 400 10px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+  flex-shrink: 0;
+}
+.preset-card-body { padding: 8px 10px; }
+.preset-card-desc {
+  font-size: 11px;
+  color: var(--color-frame-text-muted);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+/* Read-only chain chips (shared: preset cards, agent detail, flow viewers) */
+.preset-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.preset-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 500 10.5px ui-monospace, SFMono-Regular, monospace;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-frame-input-border);
+  color: var(--color-frame-text-muted);
+  background: transparent;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preset-chip.preferred {
+  border-color: rgba(91, 127, 191, 0.35);
+  background: rgba(91, 127, 191, 0.08);
+  color: var(--color-frame-text);
+}
+.preset-chip.playing { border-color: rgba(7, 193, 96, 0.4); }
+.preset-chip .agent-detail-playing-dot { flex-shrink: 0; }
+.preset-chain-arrow {
+  font-size: 10px;
+  color: var(--color-frame-text-muted);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.preset-chain-empty {
+  font-size: 11px;
+  color: var(--color-frame-text-muted);
+  opacity: 0.8;
+}
+.preset-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.preset-card-agents {
+  font-size: 10.5px;
+  color: var(--color-frame-text-muted);
+  cursor: default;
+  min-width: 0;
+}
+.preset-card-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.preset-card-actions .cfg-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+/* Chain editor inside the preset modal */
+.preset-chain-editor .agent-detail-model-row { margin-bottom: 6px; }
+.preset-drag-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin: -2px 0 6px;
+}
+/* Legacy migration banner */
+.preset-migrate-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(230, 162, 60, 0.35);
+  border-radius: 6px;
+  background: rgba(230, 162, 60, 0.08);
+}
+.preset-migrate-text {
+  font-size: 11.5px;
+  color: var(--color-frame-text);
+  line-height: 1.4;
+}
+/* Migration dialog (P5) */
+.preset-migrate-summary {
+  font-size: 12.5px;
+  color: var(--color-frame-text);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+.preset-migrate-group {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--color-frame-input-border);
+  border-radius: 6px;
+  background: var(--color-frame-input-bg);
+}
+.preset-migrate-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.preset-migrate-group-name {
+  font: 600 12px -apple-system, sans-serif;
+  color: var(--color-frame-text);
+}
+.preset-migrate-reuse {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(91, 127, 191, 0.12);
+  border: 1px solid rgba(91, 127, 191, 0.3);
+  color: #5b7fbf;
+  font-weight: 500;
+}
+.preset-migrate-group-arrow {
+  color: var(--color-frame-text-muted);
+  font-size: 12px;
+}
+.preset-migrate-group-agents {
+  font: 500 11px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+}
+.preset-migrate-note {
+  font-size: 11px;
+  color: var(--color-frame-text-muted);
+  margin-top: 10px;
+  line-height: 1.5;
+}
+.preset-migrate-error {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(229, 57, 53, 0.35);
+  background: rgba(229, 57, 53, 0.08);
+  color: #e53935;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+
+
 /* ── Config Buttons ──────────────────────────────────────────────────────── */
 .cfg-btn {
   font-size: 11px;
@@ -1018,60 +1110,25 @@
 }
 .cfg-select {
   width: 100%;
-  background: var(--color-frame-input-bg);
+  /* Etched glass — same material as .cfg-input */
+  background: var(--glass-etched-bg);
   color: var(--color-frame-input-text);
-  border: 1px solid var(--color-frame-input-border);
-  border-radius: 5px;
-  padding: 5px 8px;
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 8px;
+  padding: 6px 8px;
   font-size: 12px;
   font-family: inherit;
   outline: none;
   cursor: pointer;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .cfg-select:focus {
-  border-color: rgba(91, 127, 191, 0.5);
+  border-color: var(--color-frame-text-muted);
   box-shadow:
-    0 0 0 2px rgba(91, 127, 191, 0.08),
+    0 0 0 2px rgba(128, 128, 128, 0.08),
     0 0 0 4px rgba(91, 127, 191, 0.04);
 }
-.cfg-select-sm { margin-top: 6px; }
-.cfg-tag-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 4px;
-}
-.cfg-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: var(--color-frame-border);
-  color: var(--color-frame-text);
-  cursor: grab;
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-user-drag: none;
-  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
-}
-.cfg-tag:active { cursor: grabbing; }
-.cfg-tag.dragging {
-  opacity: 0.4;
-  transform: scale(0.95);
-}
-.cfg-tag.drag-over {
-  box-shadow: 0 0 0 2px rgba(91, 127, 191, 0.5);
-  transform: scale(1.05);
-}
-.cfg-tag-remove {
-  cursor: pointer;
-  color: var(--color-frame-text-muted);
-  font-weight: bold;
-  transition: color 0.15s;
-}
-.cfg-tag-remove:hover { color: #e53935; }
 
 /* ── Config Modal ────────────────────────────────────────────────────────── */
 .cfg-modal-overlay {
@@ -1152,16 +1209,16 @@
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .cfg-input:focus {
-  border-color: rgba(91, 127, 191, 0.5);
+  border-color: var(--color-frame-text-muted);
   box-shadow:
-    0 0 0 2px rgba(91, 127, 191, 0.08),
+    0 0 0 2px rgba(128, 128, 128, 0.08),
     0 0 0 4px rgba(91, 127, 191, 0.04);
 }
 @media (prefers-color-scheme: dark) {
   .cfg-input:focus {
-    border-color: rgba(91, 127, 191, 0.4);
+    border-color: var(--color-frame-text-muted);
     box-shadow:
-      0 0 0 2px rgba(91, 127, 191, 0.12),
+      0 0 0 2px rgba(128, 128, 128, 0.12),
       0 0 0 4px rgba(91, 127, 191, 0.06);
   }
 }
@@ -1369,6 +1426,8 @@
   display: flex; flex-direction: column;
   height: 100%; min-height: 0;
   padding: 24px 28px; max-width: 720px;
+  overflow-y: auto;
+  scrollbar-color: var(--color-frame-border) transparent;
 }
 .agent-detail-loading {
   font: 400 13px -apple-system, sans-serif;
@@ -1412,8 +1471,9 @@
   border-top: 1px solid var(--color-border);
   flex-shrink: 0;
 }
-/* System prompt section grows to fill remaining height */
-.agent-detail-section:has(.agent-detail-prompt-edit) {
+/* System prompt section grows to fill remaining height (source or rendered mode) */
+.agent-detail-section:has(.agent-detail-prompt-edit),
+.agent-detail-section:has(.agent-detail-prompt-render) {
   flex: 1;
   display: flex; flex-direction: column;
   min-height: 300px;
@@ -1431,6 +1491,7 @@
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: rgba(0,0,0,0.02);
+  cursor: grab;
 }
 .agent-detail-model-row.playing {
   border-color: var(--color-primary, #07c160);
@@ -1447,9 +1508,11 @@
   color: var(--color-text);
   flex: 1;
 }
+.agent-detail-model-row:active { cursor: grabbing; }
 .agent-detail-grip {
-  opacity: 0.4; font-size: 12px; flex-shrink: 0;
+  opacity: 0.6; font-size: 14px; flex-shrink: 0;
 }
+.agent-detail-model-row:hover .agent-detail-grip { opacity: 0.85; }
 .agent-detail-model-pos {
   font: 600 10px -apple-system, sans-serif;
   color: var(--color-primary, #07c160);
@@ -1458,6 +1521,7 @@
 .agent-detail-model-row.dragging { opacity: 0.4; }
 .agent-detail-model-row.drag-over {
   border-color: var(--color-primary, #07c160);
+  border-top: 2px solid var(--color-primary, #07c160);
   box-shadow: 0 0 0 2px rgba(7,193,96,0.15);
 }
 .agent-detail-model-add { margin-top: 8px; }
@@ -1472,6 +1536,43 @@
   cursor: pointer; outline: none;
 }
 .agent-detail-empty-spacer { height: 4px; }
+
+/* Preset dropdown + read-only resolved chain (agent detail, P4) */
+.agent-detail-preset-select {
+  width: 100%; height: 30px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: rgba(0,0,0,0.02);
+  color: var(--color-text);
+  font: 500 12px -apple-system, sans-serif;
+  padding: 0 8px;
+  cursor: pointer; outline: none;
+  margin-bottom: 8px;
+  transition: border-color 0.15s;
+}
+.agent-detail-preset-select:focus { border-color: rgba(91,127,191,0.4); }
+.agent-detail-preset-chain { margin-bottom: 6px; }
+.agent-detail-model-current {
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  display: flex; align-items: center; gap: 6px;
+  min-height: 14px;
+}
+.agent-detail-current-ref {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-weight: 500;
+  color: var(--color-text);
+}
+/* Sapphire blue pulsing dot — running on a fallback model */
+.agent-detail-fallback-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgb(91,127,191);
+  animation: agent-pulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@media (prefers-color-scheme: dark) {
+  .agent-detail-preset-select { background: rgba(255,255,255,0.03); }
+}
 
 /* Model remove button */
 .agent-detail-model-remove {
@@ -1499,7 +1600,7 @@
   line-height: 1.6;
   white-space: pre-wrap;
 }
-.agent-detail-prompt-edit:focus { border-color: rgba(91,127,191,0.35); }
+.agent-detail-prompt-edit:focus { border-color: var(--color-frame-text-muted); }
 .agent-detail-save-btn {
   margin-top: 8px;
   flex-shrink: 0;
@@ -1514,6 +1615,38 @@
 }
 .agent-detail-save-btn:hover { background: rgba(91,127,191,0.06); border-color: rgba(91,127,191,0.3); }
 
+/* System Prompt label row + render/source toggle */
+.agent-detail-label-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.agent-detail-label-row .agent-detail-label { margin-bottom: 0; }
+.agent-detail-prompt-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0;
+  border: 1px solid var(--color-border); border-radius: 6px;
+  background: transparent; cursor: pointer;
+  color: var(--color-text-muted); flex-shrink: 0;
+  transition: all 0.15s;
+}
+.agent-detail-prompt-toggle:hover {
+  background: rgba(91,127,191,0.06);
+  color: var(--color-text);
+  border-color: rgba(91,127,191,0.3);
+}
+.agent-detail-prompt-toggle svg { width: 14px; height: 14px; stroke-width: 2; }
+
+/* Rendered markdown view of the system prompt (shares .canvas-md-viewer styles).
+   Flex-fills the section like the textarea; scrolls internally on long prompts. */
+.agent-detail-prompt-render {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  scrollbar-color: var(--color-frame-border) transparent;
+}
+
 /* Default model badge */
 .agent-mgr-default-badge, .agent-detail-default-badge {
   display: inline-block;
@@ -1525,16 +1658,6 @@
   margin-left: 4px;
   vertical-align: middle;
 }
-
-/* Model inherited (read-only global default) */
-.agent-detail-model-inherited { opacity: 0.6; }
-.agent-detail-model-inherited-label {
-  font: 400 11px -apple-system, sans-serif;
-  color: var(--color-text-muted);
-  margin-bottom: 8px;
-  font-style: italic;
-}
-.agent-detail-model-row.inherited { cursor: default; }
 
 /* Tool toggle chip grid */
 .agent-detail-tools-grid {
@@ -1559,6 +1682,70 @@
   border-color: rgba(91,127,191,0.35);
   background: rgba(91,127,191,0.08);
   color: rgb(91,127,191);
+}
+/* Fixed (system-injected) tool chips — read-only, not toggleable */
+.agent-detail-tool-check.fixed {
+  opacity: 0.55;
+  cursor: default;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.agent-detail-tool-check.fixed svg {
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+}
+.agent-detail-tools-fixed-label,
+.agent-detail-tools-config-label {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+.agent-detail-tools-config-label { margin-top: 8px; }
+/* ── Skills / Flows toggle chips (P4) ── */
+.agent-detail-sub-hint {
+  font: 400 10px -apple-system, sans-serif;
+  color: var(--color-text-muted); opacity: 0.65;
+  margin: -2px 0 6px;
+}
+.agent-detail-skills-grid,
+.agent-detail-flows-grid {
+  display: flex; flex-wrap: wrap; gap: 5px;
+}
+.agent-detail-skill-check,
+.agent-detail-flow-check {
+  font: 500 10px ui-monospace, SFMono-Regular, monospace;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+.agent-detail-skill-check:hover,
+.agent-detail-flow-check:hover {
+  border-color: rgba(91,127,191,0.3);
+  color: var(--color-text);
+}
+.agent-detail-skill-check.checked {
+  border-color: rgba(7,193,96,0.4);
+  background: rgba(7,193,96,0.08);
+  color: var(--color-primary, #07c160);
+}
+.agent-detail-flow-check.checked {
+  border-color: rgba(91,127,191,0.4);
+  background: rgba(91,127,191,0.08);
+  color: rgb(91,127,191);
+}
+.agent-detail-chips-loading,
+.agent-detail-chips-empty {
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-text-muted); opacity: 0.6;
 }
 .agent-detail-empty {
   font: 400 12px -apple-system, sans-serif;
@@ -1587,7 +1774,6 @@
   background: rgba(0,0,0,0.02);
   border-radius: 8px;
 }
-.agent-detail-prompt-more { color: rgb(91,127,191); cursor: pointer; }
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
@@ -1601,5 +1787,4 @@
   .agent-detail-model-row { background: rgba(255,255,255,0.03); }
   .agent-detail-prompt-edit { background: rgba(255,255,255,0.03); }
   .agent-detail-save-btn { background: rgba(255,255,255,0.03); }
-  .agent-detail-tool-add input { background: rgba(255,255,255,0.03); }
 }

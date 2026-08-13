@@ -7,7 +7,9 @@ import io.circe.syntax.given
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
-import nebflow.core.tools.{FileHistory, ReadTracker}
+import nebflow.core.flow.{NodeStatus, VerdictFamily}
+import nebflow.core.presets.PresetStore
+import nebflow.core.tools.{FileHistory, FlowReportStore, ReadTracker}
 import nebflow.shared.{Message, MessageRole}
 
 /**
@@ -42,19 +44,21 @@ object FlowDagExecutor:
     resources: SharedResources,
     actorSystem: ActorSystem,
     wsSend: Option[Json => IO[Unit]],
-    instanceId: String
+    instanceId: String,
+    parentAgentRef: Option[ActorRef[AgentCommand]] = None,
+    rootSessionId: String = ""
   ): IO[Either[String, String]] =
 
     val emitWs = wsSend.getOrElse((_: Json) => IO.unit)
 
-    /** Emit a flowProgress WS event. */
-    def emitProgress(nodeId: String, status: String, extra: (String, Json)*): IO[Unit] =
+    /** Emit a flowProgress WS event. Status serializes via NodeStatus.wire (stable wire values). */
+    def emitProgress(nodeId: String, status: NodeStatus, extra: (String, Json)*): IO[Unit] =
       val fields = List(
         "type" -> "flowProgress".asJson,
         "instanceId" -> instanceId.asJson,
         "flowName" -> flow.name.asJson,
         "nodeId" -> nodeId.asJson,
-        "status" -> status.asJson
+        "status" -> status.wire.asJson
       ) ++ extra
       emitWs(Json.obj(fields*))
 
@@ -92,16 +96,31 @@ object FlowDagExecutor:
                   NodeResult(nodeId, "", false, Some(s"Agent '${node.agent}' not found in flow or global library"))
                 )
               case Some(entry) =>
-                val agentDef = AgentDef(
-                  name = entry.name,
-                  description = entry.description,
-                  tools = entry.tools,
-                  systemPrompt = entry.systemPrompt,
-                  voiceEnabled = entry.voice,
-                  category = entry.category,
-                  mcpServers = entry.mcpServers
+                val agentDef =
+                  val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
+                  AgentDef(
+                    name = entry.name,
+                    description = entry.description,
+                    tools = entry.tools,
+                    systemPrompt = entry.systemPrompt,
+                    voiceEnabled = entry.voice,
+                    category = entry.category,
+                    mcpServers = entry.mcpServers,
+                    model = Some(resolvedModel),
+                    preset = entry.preset
+                  )
+                executeAgent(
+                  nodeId,
+                  node.agent,
+                  agentDef,
+                  inputText,
+                  resources,
+                  actorSystem,
+                  wsSend,
+                  flow.name,
+                  parentAgentRef,
+                  rootSessionId
                 )
-                executeAgent(nodeId, node.agent, agentDef, inputText, resources, actorSystem, wsSend, flow.name)
             updatedCtx = ctx.copy(nodeOutputs = ctx.nodeOutputs + (nodeId -> result.output))
           yield (result, updatedCtx)
           end for
@@ -157,68 +176,144 @@ object FlowDagExecutor:
                   totalLoops = ctx.totalLoops + 1
                 )
                 runNode(target, newCtx)
-            case NodeRoute.Switch(switchExpr, cases) =>
-              val fieldValue = extractSwitchValue(switchExpr, result.output, ctx, cases)
-              cases.get(fieldValue) match
-                case Some(NodeRoute.Return) =>
-                  IO.pure(Right(result.output))
-                case Some(NodeRoute.Goto(target)) =>
-                  val loopKey = s"${result.nodeId}->$target"
-                  val newCount = ctx.loopCounts.getOrElse(loopKey, 0) + 1
-                  if newCount > flow.maxLoop then IO.pure(Left(s"Max loop (${flow.maxLoop}) exceeded at edge $loopKey"))
-                  else
-                    val newCtx = ctx.copy(
-                      loopCounts = ctx.loopCounts + (loopKey -> newCount),
-                      totalLoops = ctx.totalLoops + 1
-                    )
-                    runNode(target, newCtx)
-                case Some(NodeRoute.Switch(_, _)) =>
-                  IO.pure(Left(s"Nested switch not supported in routing"))
+            case NodeRoute.Switch(switchExpr, cases, default) =>
+              // Verdict priority: FlowReport verdict (structured, trustworthy) →
+              // extract from output via the five-stage pipeline.
+              val rawValue = result.verdict.getOrElse {
+                extractSwitchValue(switchExpr, result.output, ctx, cases)
+              }
+              // Normalize: exact → same-family → substring (warn). flow.json
+              // declares only standard keys; aliases (pass/success/done → ok,
+              // fail/error → error) are the engine's responsibility.
+              val matchedKey = VerdictFamily.matchCase(rawValue, cases.keySet)
+              def routeTo(route: NodeRoute): IO[Either[String, String]] =
+                route match
+                  case NodeRoute.Return =>
+                    IO.pure(Right(result.output))
+                  case NodeRoute.Goto(target) =>
+                    val loopKey = s"${result.nodeId}->$target"
+                    val newCount = ctx.loopCounts.getOrElse(loopKey, 0) + 1
+                    if newCount > flow.maxLoop then
+                      IO.pure(Left(s"Max loop (${flow.maxLoop}) exceeded at edge $loopKey"))
+                    else
+                      val newCtx = ctx.copy(
+                        loopCounts = ctx.loopCounts + (loopKey -> newCount),
+                        totalLoops = ctx.totalLoops + 1
+                      )
+                      runNode(target, newCtx)
+                  case NodeRoute.Switch(_, _, _) =>
+                    IO.pure(Left(s"Nested switch not supported in routing"))
+              matchedKey match
+                case Some(key) => routeTo(cases(key))
                 case None =>
-                  IO.pure(Left(s"Switch '$switchExpr' value '$fieldValue' matched no case"))
+                  // No case matched — conservative `default` route, else a clear
+                  // error listing the available cases (replaces bare "matched no case").
+                  default match
+                    case Some(route) => routeTo(route)
+                    case None =>
+                      IO.pure(
+                        Left(
+                          s"Switch '$switchExpr' value '$rawValue' matched no case. " +
+                            s"Available cases: ${cases.keys.toList.sorted.mkString(", ")}"
+                        )
+                      )
               end match
 
     /** Run a node: execute -> handleResult -> route. */
     def runNode(nodeId: String, ctx: FlowExecContext): IO[Either[String, String]] =
       for
-        _ <- logger.info(s"Flow '${flow.name}': executing node '$nodeId'")
-        _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, "running")
-        _ <- emitProgress(nodeId, "running")
-        (result, ctx2) <- executeNode(nodeId, ctx)
-        _ <-
-          if result.success then
-            nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, "completed", result.output) *>
-              emitProgress(
-                nodeId,
-                "completed",
-                "output" -> (if result.output.length > 200 then result.output.take(197) + "..."
-                             else result.output).asJson
-              )
+        // Check cancellation before executing each node
+        cancelled <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)
+        result <-
+          if cancelled then IO.pure(Left[String, String]("Flow cancelled by user"))
           else
-            nebflow.core.flow.RunningFlowRegistry.setNodeStatus(
-              instanceId,
-              nodeId,
-              "failed",
-              "",
-              result.error.getOrElse("unknown")
-            ) *>
-              emitProgress(nodeId, "failed", "error" -> result.error.getOrElse("unknown").asJson)
-        handled <- handleResult(nodeId, result, ctx2)
-        finalResult <- handled match
-          case Left(err) => IO.pure(Left(err))
-          case Right((nr, ctx3)) => route(nr, ctx3)
-      yield finalResult
+            for
+              _ <- logger.info(s"Flow '${flow.name}': executing node '$nodeId'")
+              _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, NodeStatus.Running)
+              _ <- emitProgress(nodeId, NodeStatus.Running)
+              (result, ctx2) <- executeNode(nodeId, ctx)
+              status = NodeStatus.toNodeStatus(result, cancelled = false)
+              _ <-
+                if status == NodeStatus.Completed then
+                  nebflow.core.flow.RunningFlowRegistry.setNodeStatus(
+                    instanceId,
+                    nodeId,
+                    NodeStatus.Completed,
+                    result.output
+                  ) *>
+                    emitProgress(
+                      nodeId,
+                      NodeStatus.Completed,
+                      "output" -> (if result.output.length > 200 then result.output.take(197) + "..."
+                                   else result.output).asJson
+                    )
+                else
+                  nebflow.core.flow.RunningFlowRegistry.setNodeStatus(
+                    instanceId,
+                    nodeId,
+                    NodeStatus.Failed,
+                    "",
+                    result.error.getOrElse("unknown")
+                  ) *>
+                    emitProgress(nodeId, NodeStatus.Failed, "error" -> result.error.getOrElse("unknown").asJson)
+              handled <- handleResult(nodeId, result, ctx2)
+              finalResult <- handled match
+                case Left(err) => IO.pure(Left(err))
+                case Right((nr, ctx3)) => route(nr, ctx3)
+            yield finalResult
+      yield result
 
     // Register the running flow, execute, then clean up
     for
       _ <- registerFlow(instanceId, flow)
-      result <- runNode(flow.entry, FlowExecContext(flow.name, taskInput))
-      _ <- nebflow.core.flow.RunningFlowRegistry.update(instanceId)(rf =>
-        rf.copy(
-          status = if result.isRight then "completed" else "failed",
-          completedAt = Some(System.currentTimeMillis())
+      // Emit flowStarted so the frontend can render the full DAG immediately
+      _ <- emitWs(
+        Json.obj(
+          "type" -> "flowStarted".asJson,
+          "instanceId" -> instanceId.asJson,
+          "flowName" -> flow.name.asJson,
+          "description" -> flow.description.asJson,
+          "entry" -> flow.entry.asJson,
+          "nodes" -> flow.nodes.toList
+            .sortBy(_._1)
+            .map { (nodeId, node) =>
+              Json.obj(
+                "nodeId" -> nodeId.asJson,
+                "agent" -> node.agent.asJson,
+                "status" -> "pending".asJson
+              )
+            }
+            .asJson,
+          "edges" -> flow.nodes.toList.flatMap { (nodeId, node) =>
+            node.onComplete match
+              case NodeRoute.Goto(target) =>
+                List(Json.obj("from" -> nodeId.asJson, "to" -> target.asJson, "condition" -> Json.Null))
+              case NodeRoute.Return =>
+                List(Json.obj("from" -> nodeId.asJson, "to" -> "$return".asJson, "condition" -> Json.Null))
+              case NodeRoute.Switch(_, cases, _) =>
+                cases.toList.map { (cond, route) =>
+                  val target = route match
+                    case NodeRoute.Goto(t) => t
+                    case NodeRoute.Return => "$return"
+                    case _ => "?"
+                  Json.obj("from" -> nodeId.asJson, "to" -> target.asJson, "condition" -> cond.asJson)
+                }
+          }.asJson
         )
       )
+      result <- runNode(flow.entry, FlowExecContext(flow.name, taskInput))
+      // Update final status (preserve "cancelled" if it was cancelled)
+      cancelled <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)
+      _ <-
+        if cancelled then IO.unit
+        else
+          nebflow.core.flow.RunningFlowRegistry.update(instanceId)(rf =>
+            rf.copy(
+              status = if result.isRight then NodeStatus.Completed else NodeStatus.Failed,
+              completedAt = Some(System.currentTimeMillis())
+            )
+          )
+      _ <- nebflow.core.flow.RunningFlowRegistry.clearCancelled(instanceId)
       _ <- emitWs(
         Json.obj(
           "type" -> "flowCompleted".asJson,
@@ -238,7 +333,7 @@ object FlowDagExecutor:
       nodeId -> nebflow.core.flow.RunningFlowRegistry.NodeState(
         nodeId = nodeId,
         agent = node.agent,
-        status = "pending"
+        status = NodeStatus.Pending
       )
     }.toMap
 
@@ -247,7 +342,7 @@ object FlowDagExecutor:
       node.onComplete match
         case NodeRoute.Goto(target) => List((nodeId, target, None))
         case NodeRoute.Return => List((nodeId, "$return", None))
-        case NodeRoute.Switch(_, cases) =>
+        case NodeRoute.Switch(_, cases, _) =>
           cases.toList.map { (cond, route) =>
             val target = route match
               case NodeRoute.Goto(t) => t
@@ -265,7 +360,7 @@ object FlowDagExecutor:
         entry = flow.entry,
         nodes = nodes,
         edges = edges,
-        status = "running",
+        status = NodeStatus.Running,
         startedAt = System.currentTimeMillis()
       )
     )
@@ -289,10 +384,26 @@ object FlowDagExecutor:
     resources: SharedResources,
     actorSystem: ActorSystem,
     wsSend: Option[Json => IO[Unit]],
-    flowName: String
+    flowName: String,
+    parentAgentRef: Option[ActorRef[AgentCommand]] = None,
+    rootSessionId: String = ""
   ): IO[NodeResult] =
     val rawWsSend = wsSend.getOrElse((_: Json) => IO.unit)
     val sessionId = s"dag-${flowName.take(10)}-$nodeId-${System.currentTimeMillis().toString.takeRight(6)}"
+    // P2: flow nodes inherit the triggering agent's root session so their
+    // InteractionRequests render in the Nebula window and share its policy.
+    val effectiveRootSessionId = if rootSessionId.nonEmpty then rootSessionId else sessionId
+    // Route flow agent events with nodeSessionId = this flow node's session id.
+    // Injected only when absent: AgentStreamEvent.toJson already stamps
+    // nodeSessionId for subagent events (protocol.scala withNodeSession), and
+    // an unconditional merge would clobber the nodeSessionId of a Delegate
+    // sub-agent spawned inside this flow agent (which must keep its
+    // "delegate-*" prefix so the frontend routes it to the delegate popup).
+    val routedWsSend: Json => IO[Unit] = (json: Json) =>
+      val withNode =
+        if json.hcursor.downField("nodeSessionId").as[String].isRight then json
+        else json.deepMerge(Json.obj("nodeSessionId" -> sessionId.asJson))
+      rawWsSend(withNode)
     for
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
@@ -312,18 +423,27 @@ object FlowDagExecutor:
         AgentActor(
           agentDef = agentDef,
           resources = resources,
-          wsSend = rawWsSend,
+          wsSend = routedWsSend,
           depth = 1,
-          parentRef = None,
+          parentRef = parentAgentRef,
           sessionId = Some(sessionId),
           sessionName = Some(s"$flowName/$nodeId"),
           initialMessages = Nil,
           readTracker = Some(readTracker),
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
-          expectsMail = false
+          expectsMail = false,
+          rootSessionId = effectiveRootSessionId
         ),
         s"dagnode-${nodeId.take(10)}-${sessionId.take(8)}"
+      )
+      // P1: register flow node agents in the unified AgentRegistry — this was
+      // previously missing entirely, so permission answers routed to a ghost
+      // root agent and were silently dropped (D2 for dag-* sessions).
+      _ <- resources.agentRegistry.update(
+        _ + (
+          sessionId -> AgentRecord(sessionId, ref, AgentKind.Flow, effectiveRootSessionId, parentAgentRef)
+        )
       )
       // Send input with the bridge actor as replyTo
       _ <- (ref ! AgentCommand.UserInput(
@@ -332,18 +452,36 @@ object FlowDagExecutor:
       )).void
       // Wait for completion — no timeout, event-driven
       eventResult <- resultDeferred.get
+      _ <- resources.agentRegistry.update(_ - sessionId)
       _ <- actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
       _ <- actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
+      // Read FlowReport if the agent called FlowReport, then clean up
+      reportOpt <- FlowReportStore.get(sessionId)
+      _ <- FlowReportStore.remove(sessionId)
       _ <- resources.sessionStore.deleteSession(sessionId).handleErrorWith(_ => IO.unit)
       nodeResult <- eventResult match
         case Right(messages) =>
-          IO.pure(
-            NodeResult(
-              nodeId = nodeId,
-              output = extractLastAssistantOutput(messages),
-              success = true
-            )
-          )
+          val textOutput = extractLastAssistantOutput(messages)
+          reportOpt match
+            case Some((verdict, reportOutput)) =>
+              IO.pure(
+                NodeResult(
+                  nodeId = nodeId,
+                  output = if reportOutput.nonEmpty then reportOutput else textOutput,
+                  success = true,
+                  verdict = Some(verdict)
+                )
+              )
+            case None =>
+              // Backward compat: agent didn't call FlowReport, use text output
+              IO.pure(
+                NodeResult(
+                  nodeId = nodeId,
+                  output = textOutput,
+                  success = true
+                )
+              )
+          end match
         case Left(errMsg) =>
           IO.pure(
             NodeResult(
@@ -377,7 +515,13 @@ object FlowDagExecutor:
    * Extract a field value from node output for switch routing.
    *  switchExpr format: "$reviewer.verdict"
    *  -> look up reviewer's output, try to parse as JSON and extract "verdict" field
-   *  -> fallback: scan output for keyword matching case keys
+   *  -> fallback: text regex `(?i)\b(?:verdict|status)\s*[:：]\s*(\w+)` (covers
+   *     plain-text "VERDICT: pass" output, e.g. entity-creator)
+   *  -> fallback: case-insensitive substring containment against case keys (warn)
+   *  -> "unknown" (the route layer then applies default / explicit error)
+   *
+   *  FlowReport verdict (when the agent called the tool) is the stage-1 source,
+   *  already consumed by route() before this pipeline runs.
    */
   private def extractSwitchValue(
     switchExpr: String,
@@ -389,17 +533,28 @@ object FlowDagExecutor:
     switchExpr match
       case pattern(nodeId, field) =>
         val output = ctx.nodeOutputs.getOrElse(nodeId, currentNodeOutput)
-        // Try JSON parsing
-        io.circe.parser
+        // ① JSON field extraction
+        val fromJson = io.circe.parser
           .parse(output)
           .toOption
           .flatMap(_.hcursor.downField(field).as[String].toOption)
-          .getOrElse {
-            // Fallback: match against case keys (case-insensitive contains)
-            cases.keys
-              .find(k => output.toLowerCase.contains(k.toLowerCase))
-              .getOrElse("unknown")
+          .map(_.trim)
+          .filter(_.nonEmpty)
+        fromJson.getOrElse {
+          // ② Text regex: "VERDICT: pass" / "status: ok"
+          val regex = "(?i)\\b(?:verdict|status)\\s*[:：]\\s*(\\w+)".r
+          val fromRegex = regex.findFirstMatchIn(output).map(_.group(1))
+          fromRegex.getOrElse {
+            // ③ Case-insensitive substring containment (legacy fallback, warns)
+            cases.keys.find(k => output.toLowerCase.contains(k.toLowerCase)) match
+              case Some(hit) =>
+                logger.warnSync(
+                  s"Switch '$switchExpr': matched case '$hit' by substring containment (legacy fallback — prefer JSON/FlowReport verdicts)"
+                )
+                hit
+              case None => "unknown"
           }
+        }
       case _ => "unknown"
     end match
   end extractSwitchValue

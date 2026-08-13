@@ -233,18 +233,6 @@
   white-space: nowrap;
 }
 
-/* Session list agent tag */
-.session-agent-tag {
-  font-size: 10px;
-  color: var(--color-frame-text-muted);
-  margin-left: auto;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--color-frame-input-bg);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
 /* ===== Canvas Panel (画板) ===== */
 /* Generic display container on the right side.
    Always display:flex (never display:none) — mirrors the sidebar pattern.
@@ -357,12 +345,22 @@ body.canvas-open #canvas-panel {
   flex: 1;
   min-width: 0;
   overflow-x: auto;
-  scrollbar-width: none;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border, rgba(128,128,128,0.35)) transparent;
   background: rgba(128, 128, 128, 0.08);
   border-radius: 10px;
   padding: 3px;
 }
-.canvas-tab-bar::-webkit-scrollbar { display: none; }
+.canvas-tab-bar::-webkit-scrollbar { height: 5px; }
+.canvas-tab-bar::-webkit-scrollbar-track { background: transparent; }
+.canvas-tab-bar::-webkit-scrollbar-thumb {
+  background: var(--color-border, rgba(128, 128, 128, 0.35));
+  border-radius: 3px;
+}
+.canvas-tab-bar::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted, rgba(128, 128, 128, 0.6));
+}
 
 /* ── Individual tab ── */
 @keyframes canvas-tab-enter {
@@ -438,6 +436,12 @@ body.canvas-open #canvas-panel {
   .canvas-tab-bar {
     background: rgba(255, 255, 255, 0.04);
   }
+  .canvas-tab-bar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.25);
+  }
+  .canvas-tab-bar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.4);
+  }
   .canvas-tab:not(.active):hover {
     background: rgba(255, 255, 255, 0.1);
   }
@@ -495,16 +499,16 @@ body.canvas-open #canvas-panel {
   cursor: pointer;
   border-radius: 4px;
   padding: 0;
-  opacity: 0;
+  opacity: 0.45;
   transition: opacity 0.15s, background 0.15s;
   flex-shrink: 0;
 }
-/* Close button appears on hover */
+/* Close button always visible, deepens on hover */
 .canvas-tab:hover .canvas-tab-close {
-  opacity: 0.5;
+  opacity: 0.8;
 }
 .canvas-tab-close:hover {
-  opacity: 0.9 !important;
+  opacity: 1 !important;
   background: rgba(128, 128, 128, 0.18);
   color: var(--color-text);
 }
@@ -550,7 +554,43 @@ body.canvas-open #canvas-panel {
 .canvas-tab-label.dirty::before {
   content: '• ';
   color: var(--color-primary, #3b82f6);
-  font-weight: bold;
+  font-weight: 500;
+}
+
+/* Floating rendered↔source toggle (markdown & HTML viewers) */
+.canvas-source-toggle {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  color: var(--color-text);
+  transition: all 0.2s ease;
+  opacity: 0.6;
+}
+.canvas-source-toggle:hover {
+  background: var(--glass-control-bg-hover);
+  opacity: 1;
+  transform: scale(1.05);
+}
+
+.canvas-md-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
 }
 
 .canvas-md-viewer {
@@ -719,19 +759,6 @@ body.canvas-open #canvas-panel {
 .canvas-yaml-viewer code {
   font-family: inherit;
 }
-.canvas-code-viewer {
-  padding: 12px 0;
-}
-.canvas-code-viewer pre {
-  margin: 0;
-  border-radius: 8px;
-}
-.canvas-html-viewer {
-  padding: 16px 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
 
 /* ── Image viewer ── */
 .canvas-image-viewer {
@@ -752,6 +779,7 @@ body.canvas-open #canvas-panel {
   height: auto;
   border-radius: 8px;
   object-fit: contain;
+  -webkit-user-drag: none; /* Safari: no native drag ghost (see draggable=false in viewImage) */
 }
 
 /* ── PDF viewer ── */
@@ -823,55 +851,6 @@ body.canvas-open #canvas-panel {
   font-weight: 600;
 }
 
-/* ── CSV table ── */
-.canvas-csv-viewer {
-  padding: 12px;
-  overflow: auto;
-}
-.csv-table {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 12px;
-}
-.csv-table th,
-.csv-table td {
-  border: 1px solid var(--color-border, rgba(128,128,128,0.15));
-  padding: 6px 10px;
-  text-align: left;
-  white-space: nowrap;
-}
-.csv-table th {
-  background: var(--color-surface);
-  font-weight: 600;
-  color: var(--color-text);
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-.csv-table td {
-  color: var(--color-text-muted);
-}
-.csv-table tr:hover td {
-  background: var(--color-hover, rgba(128,128,128,0.05));
-}
-
-/* ── Text viewer ── */
-.canvas-text-viewer {
-  padding: 12px;
-}
-.canvas-text-viewer .text-file-info {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  opacity: 0.5;
-  margin-bottom: 8px;
-}
-.canvas-text-viewer pre {
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
 /* ── Error / Empty ── */
 .canvas-error {
   padding: 24px;
@@ -897,13 +876,6 @@ body.canvas-open #canvas-panel {
 @keyframes canvas-spin {
   to { transform: rotate(360deg); }
 }
-.canvas-empty {
-  padding: 24px;
-  text-align: center;
-  color: var(--color-text-muted);
-  opacity: 0.4;
-  font-size: 13px;
-}
 
 /* ═══════════════════════════════════════════════════════════════════════
    Three-column layout: unified cards + draggable resizers
@@ -915,7 +887,7 @@ body.canvas-open #canvas-panel {
 
 /* ── UI initialization lock — prevents transition jitter on page load ──
    Added by inline <head> script before body renders, removed by JS after
-   all layout initialization (width restoration, panel ordering) completes.
+   all layout initialization (width restoration) completes.
    Without this, sidebar's transition: flex-basis animates the initial
    width pin, causing visible jitter. */
 html.ui-init #sidebar,
@@ -964,7 +936,7 @@ html.ui-init #canvas-panel {
   position: relative;
   z-index: 40;
   cursor: col-resize;
-  display: none;             /* panelDragger.js controls visibility */
+  display: none;             /* colResizer.js controls visibility */
 }
 /* Invisible drag hit area — only around the grip, not the full height */
 .col-resizer::after {
@@ -991,33 +963,11 @@ html.ui-init #canvas-panel {
   z-index: 2;
 }
 .col-resizer:hover::before,
-.col-resizer.dragging::before,
-.col-resizer.drop-target::before {
+.col-resizer.dragging::before {
   opacity: 0.9;
   background: var(--color-primary);
   height: 48px;
   width: 5px;
-}
-/* While reordering panels, suppress the resize handle's own :hover so only the
-   drop-target handle lights up (otherwise the handle under the cursor also
-   highlights, making the indicator look wrong — especially when dragging left). */
-body.panel-dragging .col-resizer:hover::before {
-  opacity: 0.35;
-  background: var(--color-text-muted);
-  height: 36px;
-  width: 4px;
-}
-/* Drop-target highlight must beat the hover suppression above so the
-   indicator stays bright even when the cursor is directly over it. */
-body.panel-dragging .col-resizer.drop-target::before {
-  opacity: 0.9;
-  background: var(--color-primary);
-  height: 48px;
-  width: 5px;
-}
-/* During panel drag, make highlight changes feel instant (no 200ms fade). */
-body.panel-dragging .col-resizer::before {
-  transition: opacity 0.05s, background 0.05s;
 }
 /* While dragging, prevent text selection / iframe pointer events interfering. */
 body.col-resizing { cursor: col-resize; user-select: none; }
@@ -1030,114 +980,8 @@ body.col-resizing #main,
 body.col-resizing #canvas-panel { transition: none; }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   Panel drag-to-reorder (panelDragger.js)
-   Drag a panel header to move it between positions.
+   Dark Theme — Canvas Panel
    ═══════════════════════════════════════════════════════════════════════ */
-
-/* ── Drag-handle pill — simple horizontal bar on each header ──
-   No bump, no edge styling. Just a grab indicator that lights up on hover. */
-
-/* Both need position:relative for ::after drag-handle pill */
-.sidebar-topbar { position: relative; z-index: 1; }
-/* .canvas-header already has position:relative in its main rule */
-
-/* Pill indicator */
-.sidebar-topbar::after,
-#header::after,
-.canvas-header::after {
-  content: '';
-  position: absolute;
-  top: 4px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 36px;
-  height: 4px;
-  border-radius: 9999px;
-  background: var(--color-text-muted);
-  opacity: 0.3;
-  pointer-events: none;
-  transition: opacity 0.2s, background 0.2s, width 0.2s, height 0.2s;
-  z-index: 3;
-}
-
-/* Hover/drag lights up the pill */
-.sidebar-topbar.bump-hover::after,
-#header.bump-hover::after,
-.canvas-header.bump-hover::after,
-body.panel-dragging .panel-drag-source > .sidebar-topbar::after,
-body.panel-dragging .panel-drag-source > #header::after,
-body.panel-dragging .panel-drag-source > .canvas-header::after {
-  opacity: 0.9;
-  background: var(--color-primary);
-  width: 48px;
-  height: 5px;
-}
-
-/* Invisible hover hit zone — only the pill area triggers hover on main/canvas */
-.bump-zone {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 80px;
-  height: 14px;
-  z-index: 4;
-  background: transparent;
-  cursor: grab;
-}
-
-/* Buttons & interactive elements inside headers keep pointer cursor */
-.sidebar-topbar button,
-#header button,
-#header .ctx-bar-wrap {
-  cursor: pointer;
-}
-#header input,
-#header textarea {
-  cursor: text;
-}
-
-/* While dragging: suppress text selection & iframe pointer events */
-body.panel-dragging {
-  cursor: grabbing;
-  user-select: none;
-}
-body.panel-dragging iframe {
-  pointer-events: none;
-}
-body.panel-dragging .bump-zone {
-  cursor: grabbing;
-}
-
-/* Source panel being dragged — dimmed to show it's the moving one */
-.panel-drag-source {
-  opacity: 0.25;
-  transition: opacity 0.15s;
-}
-
-/* Ghost — floating label following the cursor during drag */
-.panel-drag-ghost {
-  position: fixed;
-  top: 0;
-  left: 0;
-  transform: translate(-50%, -50%);
-  padding: 6px 14px;
-  background: var(--glass-bg, rgba(255,255,255,0.7));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 20px));
-  backdrop-filter: blur(var(--glass-blur, 20px));
-  border: 1px solid var(--glass-border, rgba(0,0,0,0.08));
-  border-radius: 9999px;
-  color: var(--color-text);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  pointer-events: none;
-  z-index: 9999;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-  white-space: nowrap;
-}
-
-/* ── Dark Theme — Canvas Panel ────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   #canvas-panel {
     box-shadow:

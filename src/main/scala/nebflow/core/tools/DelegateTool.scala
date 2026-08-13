@@ -9,7 +9,12 @@ import nebflow.core.NebflowLogger
 import nebflow.shared.{Message, MessageRole}
 
 /**
- * DelegateTool — lets an agent spawn a sub-agent for a subtask.
+ * DelegateTool — Nebula/调度器专用 sub-agent delegation.
+ *
+ * Only available to the Nebula root agent (NebulaExclusiveTools). Lets Nebula
+ * spawn a sub-agent for a subtask, either targeting a standalone agent or
+ * triggering a flow pipeline. Team members delegate via SubTaskTool instead
+ * (self-clone + ephemeral worker, no Mail identity).
  *
  * Two modes:
  *   - **Background** (default): returns immediately. The sub-agent's result
@@ -36,12 +41,37 @@ object DelegateTool extends Tool:
    */
   private def routeWsSend(
     wsSend: Option[io.circe.Json => IO[Unit]],
-    parentSessionId: Option[String]
+    parentSessionId: Option[String],
+    subagentId: String
   ): io.circe.Json => IO[Unit] =
     val base = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
     parentSessionId match
-      case Some(sid) => json => base(json.deepMerge(Json.obj("sessionId" -> sid.asJson)))
-      case None => base
+      case Some(sid) =>
+        json =>
+          // Carry the original parent sessionId as rootSessionId so nested
+          // delegates (child → grandchild) still index against the top-level
+          // main session on the frontend. routeWsSend wrappers compose such that
+          // the wrapper created first (closest to the root session) executes
+          // last, so overwriting here always yields the true root session id.
+          // JsonObject.add is O(1) per field, replacing the O(n) deepMerge chain.
+          json.asObject match
+            case Some(obj) =>
+              val builder = obj.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
+              // Preserve an existing nodeSessionId: for nested delegates, toJson
+              // already stamped the grandchild's own nodeSessionId — overwriting it
+              // would route grandchild events into the child's popup.
+              val finalObj =
+                if obj.contains("nodeSessionId") then builder
+                else builder.add("nodeSessionId", subagentId.asJson)
+              base(Json.fromJsonObject(finalObj))
+            case None => base(json)
+      case None =>
+        json =>
+          json.asObject match
+            case Some(obj) => base(Json.fromJsonObject(obj.add("nodeSessionId", subagentId.asJson)))
+            case None => base(json)
+    end match
+  end routeWsSend
 
   /** Maximum sub-agent depth (matches AgentCore.MaxDepth). */
   val MaxDepth: Int = 5
@@ -59,16 +89,19 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
 - A task splits into independent parts (e.g. "implement the API and write its tests" → Delegate one, do the other)
 - A new Mail arrives while you're mid-task → Delegate it instead of interrupting
 - A subtask needs deep focus without cluttering your main context
+- Trigger a flow pipeline: Delegate(flow="code-review", prompt="review branch feature-x")
 
 **When NOT to use:**
 - Steps depend on each other (Step B needs Step A's result) — do serially
 - Trivial — faster to just do it yourself
 - Subtasks touch the same files — conflict risk
 
-**Agent targeting:**
+**Targeting:**
 - Default: spawns a copy of the calling agent (self-clone)
 - With `agent` parameter: spawns the specified standalone agent (e.g. Coder, Explorer)
-- Cannot target team/flow agents — those require Mail
+- With `flow` parameter: triggers a flow DAG pipeline (e.g. code-review)
+- `agent` and `flow` are mutually exclusive
+- Cannot target team agents — those require Mail
 
 **Rules:**
 - Prompt must be self-contained (the sub-agent starts with a clean context). Set fork=true to pass your conversation history.
@@ -105,6 +138,10 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
         "agent" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Target standalone agent name (e.g. 'Coder', 'Explorer'). If omitted, clones the calling agent. Only standalone agents can be targeted.".asJson
+        ),
+        "flow" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Flow name to trigger (e.g. \"code-review\", \"release-beta\"). When specified, triggers a flow DAG pipeline. The flow result is delivered via ExternalEvent when complete. Cannot be combined with \"agent\" parameter.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)
@@ -115,7 +152,8 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     val desc = input("description").flatMap(_.asString).getOrElse("")
     val forked = input("fork").flatMap(_.asBoolean).getOrElse(false)
     val agent = input("agent").flatMap(_.asString).getOrElse("")
-    val target = if agent.nonEmpty then s"→ $agent" else ""
+    val flow = input("flow").flatMap(_.asString).getOrElse("")
+    val target = if agent.nonEmpty then s"→ $agent" else if flow.nonEmpty then s"→ flow:$flow" else ""
     if forked then s"Delegate($desc [fork] $target)".trim
     else s"Delegate($desc $target)".trim
 
@@ -129,8 +167,49 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     val lifecycle = input("lifecycle").flatMap(_.asString).getOrElse("ephemeral")
     val taskDescription = input("taskDescription").flatMap(_.asString).getOrElse(description)
     val targetAgentName = input("agent").flatMap(_.asString).filter(_.nonEmpty)
+    val flowName = input("flow").flatMap(_.asString).filter(_.nonEmpty)
 
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
+    else if flowName.isDefined && targetAgentName.isDefined then
+      IO.pure(Left(ToolError("Cannot specify both 'agent' and 'flow' parameters")))
+    else if flowName.isDefined then
+      // Validate: agent must declare this flow in its flows list
+      ctx.agentDef match
+        case Some(ad) if !ad.flows.contains(flowName.get) =>
+          val allowed = if ad.flows.isEmpty then "(none — no flows declared)" else ad.flows.mkString(", ")
+          IO.pure(Left(ToolError(s"Flow '${flowName.get}' not allowed for agent '${ad.name}'. Allowed: $allowed")))
+        case _ =>
+      // Trigger flow via FlowDagRunner
+      (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
+        case (Some(resources), Some(sys), Some(callerRef)) =>
+          for
+            // P2: resolve the caller's root session so flow nodes inherit the
+            // same permission policy and render interactions in the Nebula window.
+            callerRoot <- ctx.sessionId match
+              case Some(sid) =>
+                resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+              case None => IO.pure("")
+            flowOpt <- nebflow.core.entity.EntityLoader.loadFlow(flowName.get)
+            r <- flowOpt match
+              case Some(flowDef) =>
+                for
+                  runnerRef <- sys.spawn(
+                    nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
+                    s"dag-runner-${flowName.get.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
+                  )
+                  _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(
+                    flowDef,
+                    prompt,
+                    callerRef,
+                    callerRoot
+                  )).void
+                yield Right(s"Flow '${flowName.get}' started. Result will be delivered when complete.")
+              case None =>
+                IO.pure(Left(ToolError(s"Flow '${flowName.get}' not found")))
+          yield r
+        case _ =>
+          IO.pure(Left(ToolError("Cannot start flow: missing resources")))
+      end match
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-agent depth ($MaxDepth) reached. Cannot delegate further.")))
     else
@@ -180,41 +259,54 @@ $prompt"""
               val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
                 case (Some(store), Some(sid)) => store.getSafetyMode(sid)
                 case _ => IO.pure("confirm-edits")
-              safetyModeIO.flatMap { safetyMode =>
-                if lifecycle == "persistent" then
-                  spawnPersistent(
-                    agentDef = agentDef,
-                    prompt = adjustedPrompt,
-                    description = description,
-                    taskDescription = taskDescription,
-                    agentName = agentName,
-                    initialMessages = initialMessages,
-                    system = system,
-                    resources = resources,
-                    parentDepth = ctx.depth,
-                    parentRef = ctx.agentActorRef,
-                    wsSend = ctx.wsSend,
-                    projectRoot = ctx.projectRoot,
-                    parentSessionId = ctx.sessionId,
-                    safetyMode = safetyMode
-                  )
-                else
-                  spawnBackground(
-                    agentDef = agentDef,
-                    prompt = adjustedPrompt,
-                    description = description,
-                    agentName = agentName,
-                    initialMessages = initialMessages,
-                    system = system,
-                    resources = resources,
-                    parentDepth = ctx.depth,
-                    parentRef = ctx.agentActorRef,
-                    wsSend = ctx.wsSend,
-                    projectRoot = ctx.projectRoot,
-                    parentSessionId = ctx.sessionId,
-                    safetyMode = safetyMode
-                  )
-              }
+              // P2: resolve the caller's permission-policy bucket (root session)
+              // so the delegate inherits the same policy as the caller — the
+              // whole tree anchors to one rootSessionId.
+              val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
+                case (Some(res), Some(sid)) =>
+                  res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+                case _ => IO.pure(ctx.sessionId.getOrElse(""))
+              for
+                safetyMode <- safetyModeIO
+                rootSid <- callerRootIO
+                result <-
+                  if lifecycle == "persistent" then
+                    spawnPersistent(
+                      agentDef = agentDef,
+                      prompt = adjustedPrompt,
+                      description = description,
+                      taskDescription = taskDescription,
+                      agentName = agentName,
+                      initialMessages = initialMessages,
+                      system = system,
+                      resources = resources,
+                      parentDepth = ctx.depth,
+                      parentRef = ctx.agentActorRef,
+                      wsSend = ctx.wsSend,
+                      projectRoot = ctx.projectRoot,
+                      parentSessionId = ctx.sessionId,
+                      safetyMode = safetyMode,
+                      rootSessionId = rootSid
+                    )
+                  else
+                    spawnBackground(
+                      agentDef = agentDef,
+                      prompt = adjustedPrompt,
+                      description = description,
+                      agentName = agentName,
+                      initialMessages = initialMessages,
+                      system = system,
+                      resources = resources,
+                      parentDepth = ctx.depth,
+                      parentRef = ctx.agentActorRef,
+                      wsSend = ctx.wsSend,
+                      projectRoot = ctx.projectRoot,
+                      parentSessionId = ctx.sessionId,
+                      safetyMode = safetyMode,
+                      rootSessionId = rootSid
+                    )
+              yield result
+              end for
             case _ =>
               IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
       }
@@ -238,14 +330,15 @@ $prompt"""
     wsSend: Option[io.circe.Json => IO[Unit]],
     projectRoot: String,
     parentSessionId: Option[String] = None,
-    safetyMode: String = "confirm-edits"
+    safetyMode: String = "confirm-edits",
+    rootSessionId: String = ""
   ): IO[Either[ToolError, String]] =
     for
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
       childDepth = parentDepth + 1
       subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
-      childWsSend = routeWsSend(wsSend, parentSessionId)
+      childWsSend = routeWsSend(wsSend, parentSessionId, subagentId)
       subagentRef <- system.spawn(
         AgentActor(
           agentDef = agentDef,
@@ -253,22 +346,82 @@ $prompt"""
           wsSend = childWsSend,
           depth = childDepth,
           parentRef = parentRef,
-          sessionId = parentSessionId,
+          sessionId = Some(subagentId),
           sessionName = Some(description),
           initialMessages = initialMessages,
           readTracker = Some(readTracker),
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
           projectRoot = Some(projectRoot),
-          safetyMode = safetyMode
+          safetyMode = safetyMode,
+          rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
         ),
         subagentId
       )
+      // P2: BackoffSupervisor replaces backgroundAdapter — auto-restarts on crash
       adapterRef <- system.spawn(
-        backgroundAdapter(subagentRef, parentRef, description, agentName, subagentId, resources),
+        BackoffSupervisor(
+          childRef = subagentRef,
+          childSpawnFn = (sys: ActorSystem) =>
+            sys.spawn(
+              AgentActor(
+                agentDef = agentDef,
+                resources = resources,
+                wsSend = childWsSend,
+                depth = childDepth,
+                parentRef = parentRef,
+                sessionId = Some(subagentId),
+                sessionName = Some(description),
+                initialMessages = initialMessages,
+                contextWindow = resources.contextWindow,
+                projectRoot = Some(projectRoot),
+                safetyMode = safetyMode,
+                rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
+              ),
+              subagentId
+            ),
+          childName = subagentId,
+          parentRef = parentRef,
+          description = description,
+          agentName = agentName,
+          subagentId = subagentId,
+          resources = resources,
+          initialPrompt = prompt,
+          source = "delegate",
+          wsSend = Some(childWsSend)
+        ),
         s"$subagentId-adapter"
       )
-      _ = logger.info(s"Spawned background sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
+      _ = logger.info(s"Spawned supervised background sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
+      _ <- resources.agentRegistry.update(
+        _ + (
+          subagentId -> AgentRecord(
+            subagentId,
+            subagentRef,
+            AgentKind.Delegate,
+            if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId),
+            parentRef
+          )
+        )
+      )
+      // P3.1: persist task metadata for crash recovery
+      _ <- resources.subAgentTaskStore
+        .recordTask(
+          SubAgentTask(
+            taskId = subagentId,
+            parentSessionId = parentSessionId.getOrElse(""),
+            agentName = agentName,
+            prompt = prompt,
+            description = description,
+            status = "running",
+            retryCount = 0,
+            spawnedAt = System.currentTimeMillis(),
+            completedAt = None,
+            lastError = None,
+            source = "delegate"
+          )
+        )
+        .handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}")))
       _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
       s"""Sub-agent '$agentName' started in background for: $description.
@@ -291,37 +444,67 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
     Behaviors.setup { ctx =>
       ctx.watch(subagentRef)
 
-      def notifyParentAndStop(eventType: String, payload: String): IO[Behavior[AgentEvent]] =
+      def notifyParentAndStop(
+        eventType: String,
+        payload: String,
+        extraMetadata: JsonObject = JsonObject.empty
+      ): IO[Behavior[AgentEvent]] =
         val notify = parentRef match
           case Some(ref) =>
             ref ! AgentCommand.ExternalEvent(
               source = "delegate",
               eventType = eventType,
               payload = payload,
-              metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson),
+              metadata = JsonObject(
+                "description" -> description.asJson,
+                "agentName" -> agentName.asJson
+              ).deepMerge(extraMetadata),
               correlationId = Some(subagentId)
             )
           case None => IO.unit
-        (notify *> (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
+        (notify *> resources.agentRegistry.update(_ - subagentId) *>
+          (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
           IO.pure(Behaviors.stopped[AgentEvent]))
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
+      end notifyParentAndStop
 
       IO.pure(
         new Behavior[AgentEvent]:
           def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
-            val (eventType, payload) = event match
+            event match
               case AgentEvent.Completed(_, messages) =>
                 val text = extractLastAssistantText(messages)
-                if text.nonEmpty then ("completed", s"[Sub-agent completed] \"$description\":\n$text")
-                else ("completed", s"[Sub-agent completed] \"$description\" (no text output)")
-              case AgentEvent.Failed(_, error) =>
-                ("failed", s"[Sub-agent failed] \"$description\": ${error.message}")
-            notifyParentAndStop(eventType, payload)
+                if text.nonEmpty then notifyParentAndStop("completed", s"\"$description\":\n$text")
+                else notifyParentAndStop("completed", s"\"$description\" (no text output)")
+              case AgentEvent.Failed(sessionId, error) =>
+                val sessionInfo =
+                  if sessionId.nonEmpty then s" [session=$sessionId]" else ""
+                val retryable = error.errorType match
+                  case AgentErrorType.LlmFailed => true
+                  case AgentErrorType.Timeout => true
+                  case _ => false
+                notifyParentAndStop(
+                  "failed",
+                  s"\"$description\": ${error.message}$sessionInfo",
+                  JsonObject(
+                    "failedSessionId" -> subagentId.asJson,
+                    "retryable" -> retryable.asJson,
+                    "failureType" -> error.errorType.toString.asJson
+                  )
+                )
 
           override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
             signal match
               case SystemSignal.Terminated(_) =>
-                notifyParentAndStop("failed", s"[Sub-agent crashed] \"$description\": terminated unexpectedly")
+                notifyParentAndStop(
+                  "failed",
+                  s"\"$description\": terminated unexpectedly",
+                  JsonObject(
+                    "failedSessionId" -> subagentId.asJson,
+                    "retryable" -> true.asJson,
+                    "failureType" -> "crashed".asJson
+                  )
+                )
       )
     }
 
@@ -343,14 +526,15 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
     wsSend: Option[io.circe.Json => IO[Unit]],
     projectRoot: String,
     parentSessionId: Option[String] = None,
-    safetyMode: String = "confirm-edits"
+    safetyMode: String = "confirm-edits",
+    rootSessionId: String = ""
   ): IO[Either[ToolError, String]] =
     for
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
       childDepth = parentDepth + 1
       subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
-      childWsSend = routeWsSend(wsSend, parentSessionId)
+      childWsSend = routeWsSend(wsSend, parentSessionId, subagentId)
       subagentRef <- system.spawn(
         AgentActor(
           agentDef = agentDef,
@@ -358,23 +542,35 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
           wsSend = childWsSend,
           depth = childDepth,
           parentRef = parentRef,
-          sessionId = parentSessionId,
+          sessionId = Some(subagentId),
           sessionName = Some(description),
           initialMessages = initialMessages,
           readTracker = Some(readTracker),
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
           projectRoot = Some(projectRoot),
-          safetyMode = safetyMode
+          safetyMode = safetyMode,
+          rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
         ),
         subagentId
       )
       address = subagentRef.path.toString
       adapterRef <- system.spawn(
-        persistentAdapter(subagentRef, parentRef, description, agentName, subagentId, address),
+        persistentAdapter(subagentRef, parentRef, description, agentName, subagentId, address, resources),
         s"$subagentId-adapter"
       )
       _ = logger.info(s"Spawned persistent sub-agent: $subagentId (depth=$childDepth, agent=$agentName, addr=$address)")
+      _ <- resources.agentRegistry.update(
+        _ + (
+          subagentId -> AgentRecord(
+            subagentId,
+            subagentRef,
+            AgentKind.Delegate,
+            if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId),
+            parentRef
+          )
+        )
+      )
       _ <- parentRef.fold(IO.unit)(ref => ref ! AgentCommand.SessionStarted(address, agentName, taskDescription))
       _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
@@ -394,7 +590,8 @@ You will be notified when the initial task completes."""
     description: String,
     agentName: String,
     subagentId: String,
-    address: String
+    address: String,
+    resources: SharedResources
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       ctx.watch(subagentRef)
@@ -433,12 +630,13 @@ You will be notified when the initial task completes."""
           override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
             signal match
               case SystemSignal.Terminated(_) =>
-                // Persistent session died — notify parent, adapter stops
-                notifyParentAndStop(
-                  "failed",
-                  s"[Session crashed] \"$description\": persistent session terminated unexpectedly",
-                  "crashed"
-                )
+                // Persistent session died — unregister, notify parent, adapter stops
+                resources.agentRegistry.update(_ - subagentId) *>
+                  notifyParentAndStop(
+                    "failed",
+                    s"[Session crashed] \"$description\": persistent session terminated unexpectedly",
+                    "crashed"
+                  )
       )
     }
 

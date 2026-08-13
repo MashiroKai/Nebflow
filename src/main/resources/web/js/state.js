@@ -4,7 +4,6 @@ export const LS_SESSIONS_KEY = 'nebflow_sessions';
 export const LS_HISTORY_KEY = 'nebflow_input_history';
 export const LS_DRAFTS_KEY = 'nebflow_input_drafts';
 export const LS_MODEL_INFO_KEY = 'nebflow_model_info';
-export const MAX_FILE_SIZE = 500 * 1024;
 export const AGENT_PALETTE = ['#6C8EBF', '#D4A574', '#82B366', '#B5739D', '#9678B6', '#D6B656'];
 
 function safeParse(json, fallback) {
@@ -132,10 +131,10 @@ export default {
   // Per-session background tasks: sessionId -> [{ taskId, description, status }]
   sessionBgTasks: {},
 
-  // Per-session delegate agents: sessionId -> { [agentId]: { name, task, currentTool, done } }
+  // Per-session background sub-agents: sessionId -> { [agentId]: { name, task, currentTool, done } }
   // Global (not per-view) so agentDone events are processed even when the
   // parent session isn't currently displayed, preventing stale indicators.
-  sessionDelegates: {},
+  sessionBgAgents: {},
 
   // Per-agent aggregate state: agentName -> 'working' | 'waiting' | 'compressing' | 'complete' | 'idle'
   agentStates: {},
@@ -150,13 +149,10 @@ export default {
 
   // Per-session model info: sessionId -> { model, contextWindow, inputTokens }
   sessionModelInfo: safeParse(localStorage.getItem('nebflow_model_info'), {}),
-  updateHeaderModelInfo: null,
   updateBypassToggle: null,
   updateSafetyToggle: null,
   COMPACT_THRESHOLD: 0.90,
-
-  // Card design prompt
-  cardDesignPrompt: '',
+  updateHeaderModelInfo: null,
 
   // Plan mode: agentId of the active plan agent (null when not in plan mode)
   planAgentId: null,

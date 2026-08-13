@@ -4,7 +4,6 @@
 // ctx = { content, absPath, fileName, size, itemType }
 //
 // The registry maps itemType → viewer function.
-// New file types can be added via registerViewer().
 
 function getToken() {
   return localStorage.getItem('nebflow_token') || '';
@@ -91,6 +90,36 @@ const themePropScript = `<script>
 })();
 <\/script>`;
 
+/** Script injected into the iframe to intercept # anchor clicks and scroll
+ *  within the iframe instead of navigating to the parent URL. */
+const anchorNavScript = `<script>
+(function(){
+  document.addEventListener('click', function(e) {
+    var link = e.target.closest('a[href^="#"]');
+    if (!link) return;
+    var href = link.getAttribute('href');
+    if (!href || href === '#') { e.preventDefault(); window.scrollTo(0, 0); return; }
+    e.preventDefault();
+    var id = href.slice(1);
+    var target = document.getElementById(id);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+})();
+<\/script>`;
+
+/** Script injected into the iframe to forward image clicks to the parent
+ *  for lightbox preview. Uses the _nfImagePreview message prefix. */
+const imgClickScript = `<script>
+(function(){
+  document.addEventListener('click', function(e){
+    var img = e.target.closest ? e.target.closest('img') : null;
+    if (!img) return;
+    e.preventDefault();
+    parent.postMessage({ _nfImagePreview: { src: img.currentSrc || img.src, alt: img.alt || '' } }, window.location.origin);
+  }, true);
+})();
+<\/script>`;
+
 /** Watch for system theme changes and propagate CSS vars to all Canvas HTML iframes.
  *  Initialized once on first viewHtml call. */
 let _canvasThemeWatcherInit = false;
@@ -157,8 +186,99 @@ async function viewMonaco(pane, ctx) {
   }
 }
 
+// ── Render/source toggle (markdown & HTML viewers) ─────────────────────
+
+const CODE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+const EYE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+
+/** Add a floating rendered↔source toggle button to a viewer pane.
+ *  Rendered → source: clear the render, mount a Monaco editor with the source.
+ *  Source → rendered: pull the latest content from the Monaco model (survives
+ *  edits), dispose the editor, re-run the viewer — which re-attaches this
+ *  toggle with the updated ctx.
+ *  @param {HTMLElement} pane — canvas tab pane
+ *  @param {Function} renderFn — viewer function (viewMarkdown / viewHtml)
+ *  @param {Object} ctx — { content, absPath, fileName } */
+function addSourceToggle(pane, renderFn, ctx) {
+  pane.querySelector('.canvas-source-toggle')?.remove();
+  // The button is absolutely positioned — the pane must be a positioning
+  // context. (.canvas-tab-pane already is; defensive fallback only.)
+  if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
+
+  const btn = document.createElement('button');
+  btn.className = 'canvas-source-toggle';
+  btn.innerHTML = CODE_ICON_SVG;
+  btn.title = 'View source';
+
+  let busy = false;  // guard against clicks during async Monaco load
+  btn.addEventListener('click', async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const inSource = pane.dataset.sourceMode === '1';
+      if (!inSource) {
+        // → Source mode
+        pane.dataset.sourceMode = '1';
+        btn.innerHTML = EYE_ICON_SVG;
+        btn.title = 'View rendered';
+        if (pane._editorHandle) { pane._editorHandle.dispose(); pane._editorHandle = null; }
+        pane.innerHTML = '';
+        pane.classList.remove('scrollable');
+
+        const container = document.createElement('div');
+        container.className = 'canvas-monaco-container';
+        container.style.width = '100%';
+        container.style.height = '100%';
+        if (!window.monaco) {
+          container.innerHTML = '<div class="canvas-loading"><div class="canvas-loading-spinner"></div></div>';
+        }
+        pane.appendChild(container);
+        pane.appendChild(btn);  // innerHTML='' above detached it
+
+        const { createEditor, setActiveEditor } = await import('./monacoEditor.js');
+        const handle = await createEditor(container, {
+          path: ctx.absPath || ctx.fileName,
+          content: ctx.content || '',
+          fileName: ctx.fileName,
+        });
+        container.querySelector('.canvas-loading')?.remove();
+        pane._editorHandle = handle;
+
+        // Same wiring as viewMonaco: dirty indicator + global Ctrl+S routing
+        handle.onDirty((dirty) => {
+          pane._dirty = dirty;
+          pane.dispatchEvent(new CustomEvent('editor-dirty-change', { detail: { dirty } }));
+        });
+        pane.addEventListener('canvas-tab-activated', () => {
+          if (pane._editorHandle !== handle) return;  // stale editor from an old toggle cycle
+          setActiveEditor(handle);
+          handle.focus();
+        });
+        if (pane.classList.contains('active')) setActiveEditor(handle);
+      } else {
+        // → Rendered mode. Take the latest content from the Monaco model so
+        // unsaved edits survive the round-trip (createEditor reuses the cached
+        // model — passing stale ctx.content would wipe them).
+        let latest = ctx.content;
+        if (pane._editorHandle) {
+          latest = pane._editorHandle.model.getValue();
+          pane._editorHandle.dispose();
+          pane._editorHandle = null;
+        }
+        delete pane.dataset.sourceMode;
+        // renderFn clears the pane and re-attaches the toggle via its own
+        // addSourceToggle call, carrying the updated content forward.
+        await renderFn(pane, { ...ctx, content: latest });
+      }
+    } finally {
+      busy = false;
+    }
+  });
+  pane.appendChild(btn);
+}
+
 /** Markdown viewer — render formatted markdown (read-only preview) */
-async function viewMarkdown(pane, { content, absPath }) {
+async function viewMarkdown(pane, { content, absPath, fileName }) {
   const { renderMarkdownWithMath } = await import('./utils.js');
   let html = renderMarkdownWithMath(content || '', false);
 
@@ -183,8 +303,48 @@ async function viewMarkdown(pane, { content, absPath }) {
     html = html.replace(/<img\b/g, '<img onerror="this.style.opacity=0.3;this.title=\'Failed: \'+this.src"');
   }
 
-  pane.innerHTML = `<div class="canvas-md-viewer">${html}</div>`;
-  pane.classList.add('scrollable');
+  pane.classList.remove('scrollable');
+  pane.innerHTML = `<div class="canvas-md-scroll"><div class="canvas-md-viewer">${html}</div></div>`;
+
+  // marked v5+ dropped the `headerIds` option, so add slug ids manually
+  // for TOC anchor navigation. Keeps word chars, spaces, CJK, hyphens;
+  // strips other punctuation, lowercases, spaces→hyphens.
+  const mdViewer = pane.querySelector('.canvas-md-viewer');
+  if (mdViewer) {
+    const slugCounts = {};
+    const slugify = (text) => (text || '')
+      .toLowerCase()
+      .replace(/[^\w\s\u4e00-\u9fff-]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-');
+    mdViewer.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(h => {
+      if (h.id) return;
+      let slug = slugify(h.textContent);
+      if (!slug) slug = 'heading';
+      if (slug in slugCounts) { slugCounts[slug]++; slug = `${slug}-${slugCounts[slug]}`; }
+      else slugCounts[slug] = 0;
+      h.id = slug;
+    });
+    // Handle TOC anchor clicks — scroll within the pane, not the window.
+    // marked v12 URL-encodes CJK chars in href="#..." anchors, but heading
+    // IDs use raw characters. Try decoded first, fall back to raw.
+    mdViewer.addEventListener('click', (e) => {
+      const link = e.target.closest('a[href^="#"]');
+      if (!link) return;
+      const href = link.getAttribute('href');
+      if (!href || href === '#') return;
+      e.preventDefault();
+      const raw = href.slice(1);
+      let decoded;
+      try { decoded = decodeURIComponent(raw); } catch { decoded = raw; }
+      const target = mdViewer.querySelector(`[id="${decoded}"]`) ||
+                     mdViewer.querySelector(`[id="${raw}"]`);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
+  addSourceToggle(pane, viewMarkdown, { content, absPath, fileName });
 }
 
 /** YAML viewer — structured view with syntax highlighting */
@@ -227,7 +387,7 @@ function viewYaml(pane, { content, fileName }) {
  *
  *  Unlike Card (auto-height in chat), Canvas fills the panel height and
  *  scrolls internally — like a browser viewport. */
-function viewHtml(pane, { content, absPath }) {
+function viewHtml(pane, { content, absPath, fileName }) {
   initCanvasThemeWatcher();
   pane.innerHTML = '';
 
@@ -283,7 +443,7 @@ function viewHtml(pane, { content, absPath }) {
   <\/script>`;
 
   // 6. Assemble srcdoc with base styles (transparent bg, theme-aware, scrollable)
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${svgInlineScript}${themePropScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${svgInlineScript}${imgClickScript}${anchorNavScript}${themePropScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.style.width = '100%';
@@ -294,6 +454,8 @@ function viewHtml(pane, { content, absPath }) {
   iframe.dataset.nfCanvasHtml = '1';
   iframe.srcdoc = srcdoc;
   pane.appendChild(iframe);
+
+  addSourceToggle(pane, viewHtml, { content, absPath, fileName });
 }
 
 /** Image viewer — <img> served via /api/nf-file */
@@ -306,12 +468,18 @@ function viewImage(pane, { absPath, fileName, size }) {
   const url = `/api/nf-file?path=${encodeURIComponent(absPath)}&token=${encodeURIComponent(tok)}`;
   const img = new Image();
   img.alt = fileName || 'image';
+  // Prevent native image drag. <img> is draggable by default — an accidental
+  // drag on the image starts a native DnD session, and a wedged session
+  // (e.g. drop outside the window, Safari quirks) suppresses click events
+  // page-wide, which presents as "canvas tabs stop responding".
+  img.draggable = false;
   img.onerror = () => {
     let reason = 'File may be corrupted or not a valid image format.';
     if (size && size < 500) reason += ` (File is only ${size} bytes — likely an error page or placeholder, not a real image.)`;
     pane.innerHTML = `<div class="canvas-error">${reason}<br>Path: ${escapeHtml(absPath)}</div>`;
   };
   img.onload = () => {
+    if (!pane.isConnected) return;  // tab closed while the image was loading
     pane.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'canvas-image-viewer';
@@ -720,15 +888,6 @@ const viewers = {
   pptx: viewPptx,
   epub: viewEpub,
 };
-
-/**
- * Register a custom viewer for a file type.
- * @param {string} itemType — e.g. 'image', 'pdf', 'code'
- * @param {Function} fn — async (paneEl, ctx) => void
- */
-export function registerViewer(itemType, fn) {
-  viewers[itemType] = fn;
-}
 
 /**
  * Render file content into a Canvas tab pane using the appropriate viewer.

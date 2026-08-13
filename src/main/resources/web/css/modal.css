@@ -6,7 +6,6 @@
 #agent-overlay,
 #modal-overlay,
 #memory-overlay,
-#card-design-overlay,
 #rules-overlay,
 #path-picker-overlay {
   position: fixed;
@@ -21,7 +20,6 @@
 #agent-overlay.on,
 #modal-overlay.on,
 #memory-overlay.on,
-#card-design-overlay.on,
 #rules-overlay.on,
 #path-picker-overlay.on { display: flex; }
 
@@ -30,7 +28,6 @@
 #delete-box,
 #agent-modal,
 #memory-modal,
-#card-design-modal,
 #rules-modal,
 #path-picker-modal {
   position: relative;
@@ -51,7 +48,6 @@
   #delete-box,
   #agent-modal,
   #memory-modal,
-  #card-design-modal,
   #rules-modal,
   #path-picker-modal {
     box-shadow:
@@ -66,7 +62,6 @@
 #delete-box::before,
 #agent-modal::before,
 #memory-modal::before,
-#card-design-modal::before,
 #rules-modal::before,
 #path-picker-modal::before {
   content: '';
@@ -104,7 +99,6 @@
 #agent-system-input,
 #agent-model-input,
 #memory-content-input,
-#card-design-input,
 #rules-input {
   width: 100%;
   background: var(--glass-etched-bg);
@@ -133,7 +127,6 @@
 #agent-system-input:focus,
 #agent-model-input:focus,
 #memory-content-input:focus,
-#card-design-input:focus,
 #rules-input:focus {
   border-color: rgba(91, 127, 191, 0.5) !important;
   box-shadow:
@@ -149,7 +142,6 @@
   #agent-system-input:focus,
   #agent-model-input:focus,
   #memory-content-input:focus,
-  #card-design-input:focus,
   #rules-input:focus {
     border-color: rgba(91, 127, 191, 0.4) !important;
     box-shadow:
@@ -159,22 +151,12 @@
 }
 
 /* ── Shared Button Styles ──────────────────────────────────────────────── */
-.modal-btn {
-  font-size: 12px;
-  padding: 6px 16px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.25s ease;
-}
 
 /* Neutral / Cancel button */
-.modal-btn-neutral,
 #modal-cancel,
 #delete-cancel,
 #agent-modal-actions button,
 #memory-modal-actions button,
-#card-design-modal-actions button,
 #rules-modal-actions button,
 #path-picker-actions button {
   font-size: 12px;
@@ -187,12 +169,10 @@
   color: var(--color-frame-text-dim);
   transition: all 0.25s ease;
 }
-.modal-btn-neutral:hover,
 #modal-cancel:hover,
 #delete-cancel:hover,
 #agent-modal-actions button:hover,
 #memory-modal-actions button:hover,
-#card-design-modal-actions button:hover,
 #rules-modal-actions button:hover,
 #path-picker-actions button:hover {
   background: rgba(91, 127, 191, 0.08);
@@ -204,19 +184,15 @@
 }
 
 /* Primary / Save button — sapphire style */
-.modal-btn-primary,
 #agent-modal-save,
 #memory-modal-save,
-#card-design-modal-save,
 #path-picker-select {
   border-color: rgba(91, 127, 191, 0.35) !important;
   color: rgb(91, 127, 191) !important;
   background: rgba(91, 127, 191, 0.06) !important;
 }
-.modal-btn-primary:hover,
 #agent-modal-save:hover,
 #memory-modal-save:hover,
-#card-design-modal-save:hover,
 #path-picker-select:hover {
   background: rgba(91, 127, 191, 0.14) !important;
   border-color: rgba(91, 127, 191, 0.55) !important;
@@ -227,7 +203,6 @@
 }
 
 /* Destructive button */
-.modal-btn-danger,
 #delete-confirm,
 #rules-modal-delete,
 #path-picker-clear {
@@ -236,7 +211,6 @@
   background: rgba(220, 60, 60, 0.04) !important;
   transition: all 0.25s ease;
 }
-.modal-btn-danger:hover,
 #delete-confirm:hover,
 #rules-modal-delete:hover,
 #path-picker-clear:hover {
@@ -384,21 +358,6 @@
   color: rgb(91, 127, 191);
   background: rgba(91, 127, 191, 0.06);
 }
-.agent-tool-check.builtin {
-  opacity: 0.45;
-  cursor: default;
-  border-style: dashed;
-  background: transparent;
-}
-.agent-built-in-label {
-  width: 100%;
-  font-size: 10px;
-  color: var(--color-frame-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-top: 4px;
-  margin-bottom: 2px;
-}
 .agent-tool-check input { display: none; }
 .agent-field-label {
   font-size: 11px;
@@ -466,37 +425,6 @@
   gap: 8px;
   margin-top: 14px;
 }
-
-/* ---------- Card Design Modal ---------- */
-#card-design-modal {
-  display: none;
-  border-radius: 20px;
-  width: 560px;
-  max-height: 85vh;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-#card-design-modal.show { display: block; }
-#card-design-modal-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-frame-text-bright);
-  margin-bottom: 14px;
-}
-#card-design-modal-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-#card-design-input {
-  min-height: 360px;
-}
-#card-design-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 14px;
-}
-#card-design-modal-reset { margin-right: auto; }
 
 /* ---------- Rules Editor Modal ---------- */
 #rules-modal {
@@ -628,14 +556,6 @@
       0 0 0 2px rgba(91, 127, 191, 0.12),
       0 0 0 4px rgba(91, 127, 191, 0.06);
   }
-}
-.cfg-secret-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.cfg-secret-row .cfg-input {
-  flex: 1;
 }
 .cfg-eye-btn {
   background: none;

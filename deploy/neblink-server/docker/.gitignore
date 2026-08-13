@@ -1,7 +1,0 @@
-# Secrets — never commit.
-.env
-
-# Persistent data volumes (SQLite db, Caddy certs).
-data/
-caddy-data/
-caddy-config/
