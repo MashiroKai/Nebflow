@@ -622,7 +622,8 @@ class RestApiRoutes(
                       val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
                       // Extract user info from neblink-server response (if available).
                       val avatarUrl = json.hcursor.downField("avatarUrl").as[Option[String]].toOption.flatten
-                      val githubLogin = json.hcursor.downField("githubLogin").as[Option[String]].toOption.flatten
+                      // neblink-server serializes github_username as "githubUsername" (camelCase)
+                      val githubLogin = json.hcursor.downField("githubUsername").as[Option[String]].toOption.flatten
                       deviceToken match
                         case Some(tok) =>
                           for
