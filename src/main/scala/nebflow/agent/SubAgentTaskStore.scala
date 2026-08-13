@@ -19,17 +19,17 @@ import nebflow.core.PathUtil
  *    re-delegate after a retryable failure.
  */
 case class SubAgentTask(
-  taskId: String,              // = subagentId (delegate-xxx / subtask-xxx)
+  taskId: String, // = subagentId (delegate-xxx / subtask-xxx)
   parentSessionId: String,
   agentName: String,
   prompt: String,
   description: String,
-  status: String,              // "running" | "completed" | "failed" | "restarting"
-  retryCount: Int,             // how many times restarted by supervisor
-  spawnedAt: Long,             // epoch millis
-  completedAt: Option[Long],   // epoch millis
-  lastError: Option[String],   // last error message if failed
-  source: String               // "delegate" | "subtask"
+  status: String, // "running" | "completed" | "failed" | "restarting"
+  retryCount: Int, // how many times restarted by supervisor
+  spawnedAt: Long, // epoch millis
+  completedAt: Option[Long], // epoch millis
+  lastError: Option[String], // last error message if failed
+  source: String // "delegate" | "subtask"
 )
 
 object SubAgentTask:
@@ -106,18 +106,20 @@ class SubAgentTaskStore(baseDir: os.Path):
     }
 
   /** Find all tasks in "running" status (for startup recovery). */
-  def findRunningTasks: IO[List[SubAgentTask]] = IO.blocking {
-    if !os.exists(baseDir) then Nil
-    else
-      os.list(baseDir).flatMap { f =>
-        if f.toString.endsWith(".json") then
-          decode[List[SubAgentTask]](os.read(f)) match
-            case Right(list) => list.filter(_.status == "running")
-            case Left(_) => Nil
-        else Nil
-      }.toList
-  }.handleErrorWith(e =>
-    logger.warn(s"findRunningTasks failed: ${e.getMessage}").as(Nil)
-  )
+  def findRunningTasks: IO[List[SubAgentTask]] = IO
+    .blocking {
+      if !os.exists(baseDir) then Nil
+      else
+        os.list(baseDir)
+          .flatMap { f =>
+            if f.toString.endsWith(".json") then
+              decode[List[SubAgentTask]](os.read(f)) match
+                case Right(list) => list.filter(_.status == "running")
+                case Left(_) => Nil
+            else Nil
+          }
+          .toList
+    }
+    .handleErrorWith(e => logger.warn(s"findRunningTasks failed: ${e.getMessage}").as(Nil))
 
 end SubAgentTaskStore

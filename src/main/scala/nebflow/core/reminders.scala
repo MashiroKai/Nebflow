@@ -188,8 +188,7 @@ object SystemReminders:
   def isTimeReminderMessage(msg: Message): Boolean =
     msg.role == MessageRole.User && (msg.content match
       case Left(text) => text.startsWith("<system-reminder>\nCurrent time:")
-      case Right(_) => false
-    )
+      case Right(_) => false)
 
   /**
    * Prune older time-reminder messages, keeping only the most recent

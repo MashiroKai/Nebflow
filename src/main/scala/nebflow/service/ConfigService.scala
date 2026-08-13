@@ -118,6 +118,8 @@ object ConfigService:
                 case Nil => IO.pure(Right(()))
                 case names => scrubAgentModelRefs(names).as(Right(()))
           }
+    end if
+  end updateConfig
 
   private val sensitiveKeyPattern = "(?i)(api[_-]?key|secret|app[_-]?secret|encrypt[_-]?key|token|password)".r
 
@@ -219,6 +221,12 @@ object ConfigService:
                 .map(obj => Json.fromFields(obj.toMap.updated("llm", newLlm)).noSpaces)
                 .getOrElse(json)
 
+            end if
+
+    end match
+
+  end scrubGlobalChain
+
   /** Every agent.json across standalone / team / flow layers. */
   private def allAgentJsonFiles(): List[os.Path] =
     val root = PathUtil.dataRoot
@@ -257,6 +265,10 @@ object ConfigService:
               if fields.isEmpty then Json.fromFields(base - "model")
               else Json.fromFields(base.updated("model", Json.fromFields(fields.toMap)))
             case None => json
+
+    end match
+
+  end scrubAgentJson
 
   /**
    * Scrub deleted-provider references from every agent.json's

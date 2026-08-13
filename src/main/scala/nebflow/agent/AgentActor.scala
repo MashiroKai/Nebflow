@@ -20,13 +20,19 @@ import scala.concurrent.duration.*
 object AgentActor extends AgentCore with AgentSession:
 
   private val MaxEmptyResponseRetries = 5
+
   /** Max "you must call Mail" reminder injections before giving up (initial + retries). */
   private val MaxMailReminders = 2
-  /** Transient LLM failures (bad_record_mac, connection resets, timeouts) are
-    * auto-retried this many times before the agent fails (initial + retries). */
+
+  /**
+   * Transient LLM failures (bad_record_mac, connection resets, timeouts) are
+   * auto-retried this many times before the agent fails (initial + retries).
+   */
   private val LlmFailRetryMax = 3
+
   /** Exponential backoff base for LLM fail retries (ms). 2s → 4s → 8s. */
   private val LlmFailBackoffBaseMs = 2000L
+
   /** Cap for LLM fail backoff (ms). */
   private val LlmFailBackoffMaxMs = 10000L
   private val logger = NebflowLogger.forName("nebflow.agent")
@@ -97,9 +103,7 @@ object AgentActor extends AgentCore with AgentSession:
       val withEt = eventType.fold(base)(et => base.deepMerge(Json.obj("eventType" -> et.asJson)))
       val withSender = sender.fold(withEt)(s => withEt.deepMerge(Json.obj("sender" -> s.asJson)))
       ctx.forkTurn(
-        wsSend(withSender).handleErrorWith(e =>
-          IO(logger.warn(s"injected user event failed: ${e.getMessage}"))
-        )
+        wsSend(withSender).handleErrorWith(e => IO(logger.warn(s"injected user event failed: ${e.getMessage}")))
       )
     }
 
@@ -225,6 +229,7 @@ object AgentActor extends AgentCore with AgentSession:
       Json.obj(base.toList*)
     })
     Json.obj(fields.toList*)
+  end buildAskUserJson
 
   // ============================================================
   // Idle state
@@ -274,7 +279,8 @@ object AgentActor extends AgentCore with AgentSession:
               stateWithWidth.sessionId.fold(IO.unit)(sid => emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
             else IO.unit
           val injectedEventIO = injectionSource match
-            case Some(src) => emitInjectedUserEvent(stateWithWidth.wsSend, stateWithWidth.sessionId, text, src, sender = sender)
+            case Some(src) =>
+              emitInjectedUserEvent(stateWithWidth.wsSend, stateWithWidth.sessionId, text, src, sender = sender)
             case None => IO.unit
           for
             _ <- sessionBusyIO
@@ -1274,12 +1280,21 @@ object AgentActor extends AgentCore with AgentSession:
                       )
                       for
                         _ <- imm.source match
-                          case Some(src) => emitInjectedUserEvent(state.wsSend, state.sessionId, imm.text, src, imm.eventType, imm.sender)
+                          case Some(src) =>
+                            emitInjectedUserEvent(
+                              state.wsSend,
+                              state.sessionId,
+                              imm.text,
+                              src,
+                              imm.eventType,
+                              imm.sender
+                            )
                           case None => IO.unit
                         res <- pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
                       yield res
                     case None => IO.pure(idle(agentDef, resources, depth, parentRef, compactedState))
                 yield result
+                end for
               end if
             case Left(err) =>
               logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "compaction-failed", s"err=$err")
@@ -1373,15 +1388,17 @@ object AgentActor extends AgentCore with AgentSession:
         val payload = buildAskUserJson(Some(rootSid), srcAgent, items, Some(srcAgent), Some(srcSession))
         val sendIO = resources.interactionHubRef.get.flatMap {
           case Some(hub) =>
-            (hub ! InteractionHubCommand.Request(InteractionRequest(
-              requestId = requestId,
-              kind = InteractionKind.AskUser,
-              payload = payload,
-              reply = InteractionReply.AskUserReply(replyToOpt),
-              rootSessionId = rootSid,
-              sourceAgent = srcAgent,
-              sourceSession = srcSession
-            ))).void
+            (hub ! InteractionHubCommand.Request(
+              InteractionRequest(
+                requestId = requestId,
+                kind = InteractionKind.AskUser,
+                payload = payload,
+                reply = InteractionReply.AskUserReply(replyToOpt),
+                rootSessionId = rootSid,
+                sourceAgent = srcAgent,
+                sourceSession = srcSession
+              )
+            )).void
           case None =>
             // Hub not spawned (early boot / tests): cancel the ask so the
             // caller's AskUserQuestionTool `.?` does not hang forever.
@@ -1520,8 +1537,14 @@ object AgentActor extends AgentCore with AgentSession:
     replyTo: Option[ActorRef[AgentEvent]],
     result: ConsumeResult
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-      "mail-reminder", s"agent finished without Mail (reminder ${state.mailReminders + 1}/$MaxMailReminders)")
+    logAgentEvent(
+      agentDef,
+      depth,
+      state.sessionId,
+      state.sessionName,
+      "mail-reminder",
+      s"agent finished without Mail (reminder ${state.mailReminders + 1}/$MaxMailReminders)"
+    )
     val assistantContent = (result.thinking, result.text) match
       case (None, _) => Left(result.text)
       case (Some(t), "") => Right(List(ContentBlock.Thinking(t, result.thinkingSignature)))
@@ -1536,11 +1559,13 @@ object AgentActor extends AgentCore with AgentSession:
     )
     val newMessages = state.messages ++ List(assistantMsg, reminderMsg)
     val updatedState =
-      state.copy(execution = state.execution.copy(
-        messages = newMessages,
-        status = AgentStatus.Processing,
-        mailReminders = state.mailReminders + 1
-      ))
+      state.copy(execution =
+        state.execution.copy(
+          messages = newMessages,
+          status = AgentStatus.Processing,
+          mailReminders = state.mailReminders + 1
+        )
+      )
     pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, replyTo)
   end handleMissingMail
 
@@ -1621,8 +1646,14 @@ object AgentActor extends AgentCore with AgentSession:
         handleMissingMail(agentDef, resources, depth, parentRef, state, replyTo, result)
       else
         if state.expectsMail && !state.mailUsedThisTurn then
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-            "mail-give-up", s"agent finished without Mail after $MaxMailReminders reminders")
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "mail-give-up",
+            s"agent finished without Mail after $MaxMailReminders reminders"
+          )
         finishTurn(
           agentDef,
           resources,
@@ -1751,7 +1782,9 @@ object AgentActor extends AgentCore with AgentSession:
       )
       for
         _ <- roundCompleteIO
-        _ <- if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true)) else IO.unit
+        _ <-
+          if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+          else IO.unit
         _ <- state.sessionId.fold(IO.unit)(sid =>
           ctx.forkTurn(
             (resources.sessionStore.saveMessagesForSession(sid, messagesWithPending) *>
@@ -1764,6 +1797,7 @@ object AgentActor extends AgentCore with AgentSession:
         _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithPending))
         result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
       yield result
+      end for
     else if state.pendingCompaction.isEmpty && state.execution.pendingImmediateInputs.nonEmpty then
       // Inject ONE queued immediate input (serial processing).
       val immInput = state.execution.pendingImmediateInputs.head
@@ -1801,9 +1835,19 @@ object AgentActor extends AgentCore with AgentSession:
         )
       for
         _ <- roundCompleteIO
-        _ <- if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true)) else IO.unit
+        _ <-
+          if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+          else IO.unit
         _ <- immInput.source match
-          case Some(src) => emitInjectedUserEvent(state.wsSend, state.sessionId, immInput.text, src, immInput.eventType, immInput.sender)
+          case Some(src) =>
+            emitInjectedUserEvent(
+              state.wsSend,
+              state.sessionId,
+              immInput.text,
+              src,
+              immInput.eventType,
+              immInput.sender
+            )
           case None => IO.unit
         _ <- state.sessionId.fold(IO.unit)(sid =>
           ctx.forkTurn(
@@ -1817,6 +1861,7 @@ object AgentActor extends AgentCore with AgentSession:
         _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithImmediate))
         result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
       yield result
+      end for
     else
       val effectiveInputTokens = state.latestUsage
         .map(_.inputTokens)
@@ -1883,7 +1928,8 @@ object AgentActor extends AgentCore with AgentSession:
         val keptInteraction = state.execution.interaction.filter(_.pendingPermission.isDefined)
         val updatedState = state
           .copy(execution =
-            ExecutionContext.idle(newMessages, state.execution.turnIdx)
+            ExecutionContext
+              .idle(newMessages, state.execution.turnIdx)
               .copy(
                 interaction = keptInteraction,
                 // Preserve queue when compaction is in progress — CompactionComplete drains it.

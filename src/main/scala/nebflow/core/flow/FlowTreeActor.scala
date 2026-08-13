@@ -26,9 +26,10 @@ import nebflow.shared.{Message, MessageRole}
 //   4. Cancel: stop all running actors for a team
 //   5. Crash recovery: resume interrupted turns
 
-/** Global registry for team session lookups (replaces FlowMembership).
-  * Tracks (instance, agent) → sessionId and running actors.
-  */
+/**
+ * Global registry for team session lookups (replaces FlowMembership).
+ * Tracks (instance, agent) → sessionId and running actors.
+ */
 object TeamSessionRegistry:
   private val logger = NebflowLogger.forName("nebflow.flow.registry")
   // (instanceName, agentName) → sessionId
@@ -114,7 +115,11 @@ object TeamSessionRegistry:
    *   - Right(None) — not found anywhere
    *   - Left(error) — ambiguous short name (candidates listed) or team not found
    */
-  def resolveSessionId(senderSid: String, address: String, sessionStore: nebflow.gateway.SessionStore): IO[Either[String, Option[String]]] =
+  def resolveSessionId(
+    senderSid: String,
+    address: String,
+    sessionStore: nebflow.gateway.SessionStore
+  ): IO[Either[String, Option[String]]] =
     // "team/agent" scoped format — exact match, no ambiguity.
     val slashIdx = address.indexOf('/')
     if slashIdx > 0 then
@@ -155,7 +160,12 @@ object TeamSessionRegistry:
                   s"Agent '$address' cannot be mailed from outside a team. Mail a TEAM name (e.g. \"nebflow-project\") — the Manager dispatches to members. Team members use short names internally."
                 )
               )
+        end match
       }
+
+    end if
+
+  end resolveSessionId
 
   /** Global short-name lookup with ambiguity detection. */
   private def resolveGlobal(
@@ -360,8 +370,7 @@ object FlowTreeActor:
       baseName = teamDef.name
       alreadyMounted = names.contains(baseName)
       _ <-
-        if alreadyMounted then
-          hotReloadTeam(flowNamesRef, cfg, baseName, teamDef)
+        if alreadyMounted then hotReloadTeam(flowNamesRef, cfg, baseName, teamDef)
         else
           for
             _ <- createTeamAgentSessions(baseName, teamDef, cfg)
@@ -465,6 +474,8 @@ object FlowTreeActor:
       _ <- if isManager then TeamSessionRegistry.registerManager(instanceName, sessionMeta.id) else IO.unit
     yield ()
     end for
+
+  end createSingleTeamSession
 
   private def handleUnmount(
     flowNamesRef: Ref[IO, Map[String, String]],
@@ -645,16 +656,19 @@ object FlowTreeActor:
             case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
             case None => EntityLoader.loadAgent(agentName)
           _ <- entryOpt.traverse_ { entry =>
-            val agentDef = {
+            val agentDef =
               val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
               AgentDef(
-                name = entry.name, description = entry.description, tools = entry.tools,
-                systemPrompt = entry.systemPrompt, voiceEnabled = entry.voice,
+                name = entry.name,
+                description = entry.description,
+                tools = entry.tools,
+                systemPrompt = entry.systemPrompt,
+                voiceEnabled = entry.voice,
                 category = entry.category,
-                mcpServers = entry.mcpServers, model = Some(resolvedModel),
+                mcpServers = entry.mcpServers,
+                model = Some(resolvedModel),
                 preset = entry.preset
               )
-            }
             val rootSid = cfg.sessionId.getOrElse(session.id)
             for
               policyOpt <- cfg.resources.permissionPolicies.get.map(_.get(rootSid))
@@ -680,8 +694,10 @@ object FlowTreeActor:
               _ <- (ref ! AgentCommand.ResumeTurn(turnStartMessageCount, turnIdx)).void
               _ <- emit(cfg, "flowResumed", "sessionId" -> session.id.asJson)
             yield ()
+            end for
           }
         yield ()
+        end for
       }
     yield ()
 

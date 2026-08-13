@@ -122,9 +122,11 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   // single disk write per session per 2-second window.
   private val dirtyMsgSessions: Ref[IO, Set[String]] =
     Ref.unsafe[IO, Set[String]](Set.empty)
+
   private val pendingMsgs: Ref[IO, Map[String, List[Message]]] =
     Ref.unsafe[IO, Map[String, List[Message]]](Map.empty)
   private val msgFlushDelayMs: Long = 2000L
+
   private val msgFlushFiber: Ref[IO, Option[cats.effect.kernel.Fiber[IO, Throwable, Unit]]] =
     Ref.unsafe[IO, Option[cats.effect.kernel.Fiber[IO, Throwable, Unit]]](None)
 
@@ -493,6 +495,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           notifySessionChanged(targetId) *>
           scheduleMsgFlush
       }
+  end saveMessagesForSession
 
   def flushIndex: IO[Unit] = saveIndex
 
@@ -793,24 +796,24 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       .flatMap { case (wasActive, newActiveId) =>
         // Cancel any pending debounced writes for this session (no point writing then deleting)
         dirtyMsgSessions.update(_ - id) *> pendingMsgs.update(_ - id) *>
-        IO.blocking {
-          // Remove session data files
-          val f = sessionFile(id)
-          if os.exists(f) then os.remove(f)
-          // Remove meta sidecar
-          val mf = metaSidecarFile(id)
-          if os.exists(mf) then os.remove(mf)
-          // Remove task directory
-          val td = tasksDir / id
-          if os.exists(td) then os.remove.all(td)
-          // Remove uploaded attachments directory
-          val ud = PathUtil.dataRoot / "uploads" / id
-          if os.exists(ud) then os.remove.all(ud)
-        } *> deleteUiMessages(id) *> appendSemaphores.update(
-          _ - id
-        ) *> (if wasActive && newActiveId.nonEmpty then
-                loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
-              else IO.unit) *> saveIndex
+          IO.blocking {
+            // Remove session data files
+            val f = sessionFile(id)
+            if os.exists(f) then os.remove(f)
+            // Remove meta sidecar
+            val mf = metaSidecarFile(id)
+            if os.exists(mf) then os.remove(mf)
+            // Remove task directory
+            val td = tasksDir / id
+            if os.exists(td) then os.remove.all(td)
+            // Remove uploaded attachments directory
+            val ud = PathUtil.dataRoot / "uploads" / id
+            if os.exists(ud) then os.remove.all(ud)
+          } *> deleteUiMessages(id) *> appendSemaphores.update(
+            _ - id
+          ) *> (if wasActive && newActiveId.nonEmpty then
+                  loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
+                else IO.unit) *> saveIndex
       }
 
   def markUnread(id: String): IO[Unit] =

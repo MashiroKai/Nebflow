@@ -94,8 +94,7 @@ class FlowSemanticsSpec extends FunSuite:
     assertEquals(NodeStatus.Cancelled.wire, "cancelled")
 
   test("NodeStatus: fromWire round-trip + unknown is None (never silent)"):
-    for s <- NodeStatus.values do
-      assertEquals(NodeStatus.fromWire(s.wire), Some(s))
+    for s <- NodeStatus.values do assertEquals(NodeStatus.fromWire(s.wire), Some(s))
     assertEquals(NodeStatus.fromWire("PENDING"), Some(NodeStatus.Pending)) // case-insensitive
     assertEquals(NodeStatus.fromWire("weird"), None)
     assertEquals(NodeStatus.fromWire(""), None)
@@ -153,7 +152,11 @@ class FlowSemanticsSpec extends FunSuite:
     }
 
   test("Switch encodes default back to JSON"):
-    val sw = NodeRoute.Switch("$reviewer.verdict", Map("pass" -> NodeRoute.Return, "fix" -> NodeRoute.Goto("fixer")), Some(NodeRoute.Return))
+    val sw = NodeRoute.Switch(
+      "$reviewer.verdict",
+      Map("pass" -> NodeRoute.Return, "fix" -> NodeRoute.Goto("fixer")),
+      Some(NodeRoute.Return)
+    )
     val json = summon[io.circe.Encoder[NodeRoute]].apply(sw)
     assertEquals(json.hcursor.downField("default").as[String], Right("$return"))
 
@@ -179,3 +182,4 @@ class FlowSemanticsSpec extends FunSuite:
     // matchCase itself must return None here (no silent fallback).
     assertEquals(VerdictFamily.matchCase("retry", Set("pass", "fix")), None)
     assertEquals(VerdictFamily.matchCase("whatever", Set("merge", "reject")), None)
+end FlowSemanticsSpec

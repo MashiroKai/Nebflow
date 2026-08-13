@@ -15,18 +15,24 @@ case class DaemonConfig(
   restartOnExit: Boolean = false,
   port: Option[Int] = None,
   // --- Crash detection & auto-restart (all optional, backward compatible) ---
-  /** Base delay (seconds) for the first auto-restart; doubles per attempt
-      (exponential backoff), capped at 60s. */
+  /**
+   * Base delay (seconds) for the first auto-restart; doubles per attempt
+   *      (exponential backoff), capped at 60s.
+   */
   restartBackoffSec: Int = 2,
   /** Give up after this many consecutive crash restarts (crash-loop protection). */
   restartMaxAttempts: Int = 5,
-  /** A run longer than this (seconds) resets the consecutive-crash counter,
-      so a daemon that crashes once a day is never falsely exhausted. */
+  /**
+   * A run longer than this (seconds) resets the consecutive-crash counter,
+   *      so a daemon that crashes once a day is never falsely exhausted.
+   */
   restartStableWindowSec: Int = 60,
-  /** Active health-check interval (seconds): periodically TCP-probes `port`
-      and treats the daemon as crashed when it stays closed while the process
-      is alive. 0 disables the active health check (only process-exit
-      detection remains). */
+  /**
+   * Active health-check interval (seconds): periodically TCP-probes `port`
+   *      and treats the daemon as crashed when it stays closed while the process
+   *      is alive. 0 disables the active health check (only process-exit
+   *      detection remains).
+   */
   healthCheckSec: Int = 15
 )
 
@@ -77,6 +83,7 @@ object DaemonStatus:
   // `daemon-status ${status}` CSS class contract. The Scala 3 derived
   // encoder would emit {"Running": {}} which the frontend can't use.
   given Encoder[DaemonStatus] = Encoder.encodeString.contramap(_.toString.toLowerCase)
+
   given Decoder[DaemonStatus] = Decoder.decodeString.emap(s =>
     DaemonStatus.values.find(_.toString.equalsIgnoreCase(s)).toRight(s"Unknown daemon status: $s")
   )

@@ -130,6 +130,27 @@ docs/
 - **RunningFlowRegistry**: Tracks running DAG instances for frontend progress visualization. `cleanupStale` removes completed flows after 5 minutes.
 - **FlowDagRunner**: One-shot actor spawned by MailTool for flow name dispatch. Executes DAG nodes synchronously, Mails result back to caller.
 
+### 2026-08-13: Beta 1.4.1-beta.39 — 11 changes
+
+**Bug fixes:**
+1. `fix/high-cpu-killtree` — High CPU fix: killProcessTree replaces destroyForcibly for reliable child-process cleanup + tail log regex fix (P0/P1)
+2. `fix/bubble-cursor-compaction` — Clear agent bubble cursor after compaction completes (green cursor linger)
+3. `fix/neblink-config` — NebLink config fix: correct server address resolution + Device Flow auth migration
+4. `fix/tool-panel-fixed-split` — Agent tool config panel: distinguish fixed tools vs configurable tools; fix tool injection logic (Mail for team-only, base tools auto-injected)
+5. `fix/preset-panel-overflow` — Model preset panel layout overflow fix
+
+**Features:**
+6. `feat/injected-bubble-sender` — Blue (injected) bubbles show source Agent Name (Delegate/SubTask) — structured Mail sender field
+7. `feat/model-preset` — Model Preset system: drop displayName (name is sole identifier) + chain drag-to-reorder; full pipeline (Store → API → Settings UI → Agent page binding → legacy migration dialog)
+8. `feat/pop-url` — Pop tool supports HTTP/HTTPS URLs in Canvas (sandboxed iframe + X-Frame-Options fallback)
+9. `feat/expectsMail-safety-net` — Teams communication contract fix: expectsMail safety net for team members + report contract prompt
+10. `feat/flow-dag-v4` — Flow DAG V4 style: compact 3-ring reverse spin + glass nodes + bezier edges
+
+**Style:**
+11. `style/glass-control-glow` — Glass texture enhancement: glow + drop-shadow layers on .glass-control for unified interactive control surface
+
+Version bumped to 1.4.1-beta.39.
+
 ### 2026-08-06: Beta 1.4.1-beta.38 — 10 changes
 
 **Bug fixes:**

@@ -1199,6 +1199,7 @@ class RestApiRoutes(
                   )
                 )
               yield result
+              end for
         yield result
 
     // PUT /agents/:name/model — update agent's model configuration
@@ -1273,6 +1274,7 @@ class RestApiRoutes(
               case None =>
                 NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
           yield result
+          end for
         }
 
     // ===== Entity API (Team/Flow/Agent management) =====
@@ -1348,12 +1350,15 @@ class RestApiRoutes(
             "entry" -> f.entry.asJson,
             "maxLoop" -> f.maxLoop.asJson,
             "nodeCount" -> f.nodes.size.asJson,
-            "nodes" -> f.nodes.toList.sortBy(_._1).map { (nodeId, node) =>
-              Json.obj(
-                "nodeId" -> nodeId.asJson,
-                "agent" -> node.agent.asJson
-              )
-            }.asJson,
+            "nodes" -> f.nodes.toList
+              .sortBy(_._1)
+              .map { (nodeId, node) =>
+                Json.obj(
+                  "nodeId" -> nodeId.asJson,
+                  "agent" -> node.agent.asJson
+                )
+              }
+              .asJson,
             "edges" -> edges.map { (from, to, cond) =>
               Json.obj("from" -> from.asJson, "to" -> to.asJson, "condition" -> cond.asJson)
             }.asJson
@@ -1456,8 +1461,7 @@ class RestApiRoutes(
         else
           val store = new PresetStore()
           IO.blocking(store.load()).flatMap { file =>
-            if file.presets.contains(name) then
-              Conflict(Json.obj("error" -> s"Preset '$name' already exists".asJson))
+            if file.presets.contains(name) then Conflict(Json.obj("error" -> s"Preset '$name' already exists".asJson))
             else
               val description = body.hcursor.downField("description").as[String].getOrElse("")
               val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
@@ -1477,8 +1481,7 @@ class RestApiRoutes(
         else
           val store = new PresetStore()
           IO.blocking(store.load()).flatMap { file =>
-            if !file.presets.contains(name) then
-              NotFound(Json.obj("error" -> s"Preset '$name' not found".asJson))
+            if !file.presets.contains(name) then NotFound(Json.obj("error" -> s"Preset '$name' not found".asJson))
             else
               val updated = file.copy(defaultPreset = name)
               IO.blocking(store.save(updated)) *>
@@ -1498,8 +1501,7 @@ class RestApiRoutes(
               val description = body.hcursor.downField("description").as[String].getOrElse(existing.description)
               val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
               val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(existing.fallbacks)
-              val updated = existing.copy(description = description,
-                preferred = preferred, fallbacks = fallbacks)
+              val updated = existing.copy(description = description, preferred = preferred, fallbacks = fallbacks)
               val newFile = file.copy(presets = file.presets + (presetName -> updated))
               IO.blocking(store.save(newFile)) *>
                 Ok(updated.asJson)
@@ -1530,10 +1532,8 @@ class RestApiRoutes(
     case req @ POST -> Root / "presets" / "migrate-legacy" =>
       req.as[Json].flatMap { body =>
         val agentNames = body.hcursor.downField("agentNames").as[List[String]].getOrElse(Nil)
-        if agentNames.isEmpty then
-          BadRequest(Json.obj("error" -> "Missing or empty agentNames".asJson))
-        else
-          migrateLegacyModels(agentNames)
+        if agentNames.isEmpty then BadRequest(Json.obj("error" -> "Missing or empty agentNames".asJson))
+        else migrateLegacyModels(agentNames)
       }
 
     // ===== Daemon Management =====
@@ -1571,20 +1571,25 @@ class RestApiRoutes(
               val autoStartOpt = body.hcursor.downField("autoStart").as[Option[Boolean]].toOption.flatten
               val restartOnExitOpt = body.hcursor.downField("restartOnExit").as[Option[Boolean]].toOption.flatten
               if autoStartOpt.isEmpty && restartOnExitOpt.isEmpty then
-                BadRequest(Json.obj("error" -> "No updatable fields provided (expected autoStart or restartOnExit)".asJson))
+                BadRequest(
+                  Json.obj("error" -> "No updatable fields provided (expected autoStart or restartOnExit)".asJson)
+                )
               else
                 val store = new DaemonStore()
-                store.update(
-                  daemonId,
-                  cfg =>
-                    cfg.copy(
-                      autoStart = autoStartOpt.getOrElse(cfg.autoStart),
-                      restartOnExit = restartOnExitOpt.getOrElse(cfg.restartOnExit)
-                    )
-                ).flatMap {
-                  case None => NotFound(Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))
-                  case Some(updated) => Ok(updated.asJson)
-                }
+                store
+                  .update(
+                    daemonId,
+                    cfg =>
+                      cfg.copy(
+                        autoStart = autoStartOpt.getOrElse(cfg.autoStart),
+                        restartOnExit = restartOnExitOpt.getOrElse(cfg.restartOnExit)
+                      )
+                  )
+                  .flatMap {
+                    case None => NotFound(Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))
+                    case Some(updated) => Ok(updated.asJson)
+                  }
+              end if
             }
       }
 
@@ -1645,7 +1650,9 @@ class RestApiRoutes(
             // otherwise the entry reappears on the next GET /daemons.
             val store = new DaemonStore()
             svc.stop(daemonId).timeout(15.seconds).handleErrorWith { e =>
-              logger.warn(s"Stop failed/timed out for daemon '$daemonId' during delete; removing config anyway: ${e.getMessage}")
+              logger.warn(
+                s"Stop failed/timed out for daemon '$daemonId' during delete; removing config anyway: ${e.getMessage}"
+              )
             } *> store.remove(daemonId) *> Ok(Json.obj("deleted" -> true.asJson))
       }
 
@@ -1713,7 +1720,10 @@ class RestApiRoutes(
   private def scanAgentPresets(): Map[String, Option[String]] =
     allAgentJsonFiles().flatMap { path =>
       parser.parse(os.read(path)).toOption.flatMap { json =>
-        val name = json.hcursor.downField("name").as[String].toOption
+        val name = json.hcursor
+          .downField("name")
+          .as[String]
+          .toOption
           .getOrElse((path / os.up).last) // fall back to directory name
         val preset = json.hcursor.downField("preset").as[Option[String]].toOption.flatten
         Some(name -> preset)
@@ -1737,7 +1747,8 @@ class RestApiRoutes(
             val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
             val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
             if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
-            else if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then "default-preset"
+            else if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then
+              "default-preset"
             else "global"
           case None => "global"
     else
@@ -1749,9 +1760,14 @@ class RestApiRoutes(
           if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
           else
             val file = store.load()
-            if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then "default-preset"
+            if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then
+              "default-preset"
             else "global"
         case None => "global"
+
+    end if
+
+  end computeResolvedFrom
 
   /**
    * Remove the `preset` field from all agent.json files that reference the given
@@ -1794,8 +1810,7 @@ class RestApiRoutes(
             parser.parse(os.read(dir / "agent.json")).toOption.flatMap { json =>
               val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
               // Only migrate non-empty configs
-              if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then
-                Some((name, dir, model.get))
+              if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then Some((name, dir, model.get))
               else None
             }
       }
@@ -1811,9 +1826,8 @@ class RestApiRoutes(
       groups.toList.sortBy(_._1).foreach { (fp, agents) =>
         val model = agents.head._3
         // Skip if this fingerprint already matches an existing preset
-        val existingMatch = file.presets.values.find(p =>
-          p.preferred == model.preferred && p.fallbacks == model.fallbacks
-        )
+        val existingMatch =
+          file.presets.values.find(p => p.preferred == model.preferred && p.fallbacks == model.fallbacks)
         val presetName = existingMatch match
           case Some(p) => p.name
           case None =>
@@ -1857,13 +1871,13 @@ class RestApiRoutes(
       val migratedAgents = migrated.map { (name, preset) =>
         Json.obj("agent" -> name.asJson, "preset" -> preset.asJson)
       }
-      Ok(Json.obj(
-        "migratedAgents" -> migratedAgents.asJson,
-        "createdPresets" -> createdPresets.map(_.asJson).asJson
-      ))
-    }.handleErrorWith(e =>
-      InternalServerError(Json.obj("error" -> s"Migration failed: ${e.getMessage}".asJson))
-    )
+      Ok(
+        Json.obj(
+          "migratedAgents" -> migratedAgents.asJson,
+          "createdPresets" -> createdPresets.map(_.asJson).asJson
+        )
+      )
+    }.handleErrorWith(e => InternalServerError(Json.obj("error" -> s"Migration failed: ${e.getMessage}".asJson)))
 
   /**
    * Build mounted teams JSON for the frontend (GET /api/teams/mounted).

@@ -62,6 +62,7 @@ case class Message(
     case Left(text) => text
     case Right(blocks) =>
       blocks.collect { case ContentBlock.Text(t) => t }.mkString("\n")
+end Message
 
 // ===== Tool Definition =====
 
@@ -241,9 +242,15 @@ sealed trait UiMessage:
 
 object UiMessage:
 
-  case class User(text: String, attachments: List[Json] = Nil, injected: Boolean = false, timestamp: Long = 0L,
-                  source: Option[String] = None, eventType: Option[String] = None, sender: Option[String] = None)
-      extends UiMessage:
+  case class User(
+    text: String,
+    attachments: List[Json] = Nil,
+    injected: Boolean = false,
+    timestamp: Long = 0L,
+    source: Option[String] = None,
+    eventType: Option[String] = None,
+    sender: Option[String] = None
+  ) extends UiMessage:
     val typeName = "user"
 
   case class Ai(
@@ -274,8 +281,13 @@ object UiMessage:
       extends UiMessage:
     val typeName = "ask"
 
-  case class AskPermission(toolName: String, summary: String, input: String,
-                           sourceAgent: Option[String] = None, sourceSession: Option[String] = None) extends UiMessage:
+  case class AskPermission(
+    toolName: String,
+    summary: String,
+    input: String,
+    sourceAgent: Option[String] = None,
+    sourceSession: Option[String] = None
+  ) extends UiMessage:
     val typeName = "askPermission"
 
   case class System(content: String, i18nKey: Option[String] = None, params: Option[Json] = None) extends UiMessage:
@@ -336,7 +348,15 @@ object UiMessage:
           source <- cursor.downField("source").as[Option[String]]
           eventType <- cursor.downField("eventType").as[Option[String]]
           sender <- cursor.downField("sender").as[Option[String]]
-        yield User(text, atts.getOrElse(Nil), injected.getOrElse(false), timestamp.getOrElse(0L), source, eventType, sender)
+        yield User(
+          text,
+          atts.getOrElse(Nil),
+          injected.getOrElse(false),
+          timestamp.getOrElse(0L),
+          source,
+          eventType,
+          sender
+        )
       case "ai" =>
         for
           text <- cursor.downField("text").as[String]

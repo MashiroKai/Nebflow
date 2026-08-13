@@ -199,7 +199,9 @@ private[agent] trait AgentCore:
     // ── 1. Role-based pre-compaction extraction (fire-and-forget, non-blocking) ──
     val preHookIO: IO[Unit] = hook
       .run(state.messages, agentDef.name, state.sessionId, None, resources)
-      .handleErrorWith(e => IO(lifecycleLog.warn(s"Pre-compaction hook failed for ${agentDef.name}: ${e.getMessage}")).void)
+      .handleErrorWith(e =>
+        IO(lifecycleLog.warn(s"Pre-compaction hook failed for ${agentDef.name}: ${e.getMessage}")).void
+      )
 
     // ── 2. Two-stage compaction ──
     //    Stage 1 (Save): memory-bearing agents (Nebula + team) get a save turn
@@ -568,14 +570,15 @@ private[agent] trait AgentCore:
              sessionIdOpt
            )
          else IO.unit) *>
-          permissionDecision(resources, state, call).flatMap {
-            case PermissionDecision.Allow => executeTool(call, callCtx)
-            case PermissionDecision.Deny =>
-              IO.pure(
-                ToolExecResult(s"Tool ${call.name} is denied by the session permission policy", isError = true)
-              )
-            case PermissionDecision.Ask => askUserPermission(call, state, permissionDeferredRef, callCtx)
-          }
+          permissionDecision(resources, state, call)
+            .flatMap {
+              case PermissionDecision.Allow => executeTool(call, callCtx)
+              case PermissionDecision.Deny =>
+                IO.pure(
+                  ToolExecResult(s"Tool ${call.name} is denied by the session permission policy", isError = true)
+                )
+              case PermissionDecision.Ask => askUserPermission(call, state, permissionDeferredRef, callCtx)
+            }
             .map(r => (call, r))
             .attempt
             .map {
@@ -761,28 +764,36 @@ private[agent] trait AgentCore:
       enriched = permJson.deepMerge(enrichment)
       _ <- resourcesOpt.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
         case Some(hub) =>
-          (hub ! InteractionHubCommand.Request(InteractionRequest(
-            requestId = java.util.UUID.randomUUID().toString.take(8),
-            kind = InteractionKind.Permission,
-            payload = enriched,
-            reply = InteractionReply.PermissionReply(deferred),
-            rootSessionId = rootSessionId,
-            sourceAgent = sourceAgent,
-            sourceSession = sourceSession
-          ))).void
+          (hub ! InteractionHubCommand.Request(
+            InteractionRequest(
+              requestId = java.util.UUID.randomUUID().toString.take(8),
+              kind = InteractionKind.Permission,
+              payload = enriched,
+              reply = InteractionReply.PermissionReply(deferred),
+              rootSessionId = rootSessionId,
+              sourceAgent = sourceAgent,
+              sourceSession = sourceSession
+            )
+          )).void
         case None =>
           // Hub not spawned (early boot / tests): P1 fallback — the requesting
           // agent holds the Deferred itself and renders locally.
           (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
             state.wsSend(
-              enriched.deepMerge(Json.obj(
-                "sessionId" -> state.sessionId.asJson,
-                "sourceAgent" -> sourceAgent.asJson,
-                "sourceSession" -> sourceSession.asJson
-              ))
+              enriched.deepMerge(
+                Json.obj(
+                  "sessionId" -> state.sessionId.asJson,
+                  "sourceAgent" -> sourceAgent.asJson,
+                  "sourceSession" -> sourceSession.asJson
+                )
+              )
             )
       }
     yield ()
+
+    end for
+
+  end sendPermissionRequest
 
   protected def executeTool(call: ToolCall, ctx: ToolContext): IO[ToolExecResult] =
     ToolRegistry.TOOL_MAP.get(call.name) match
@@ -905,7 +916,11 @@ private[agent] trait AgentCore:
 
   end buildAllowedToolSet
 
-  protected def buildToolList(agentDef: AgentDef, depth: Int = 0, isSubTaskWorker: Boolean = false): Option[List[ToolDefinition]] =
+  protected def buildToolList(
+    agentDef: AgentDef,
+    depth: Int = 0,
+    isSubTaskWorker: Boolean = false
+  ): Option[List[ToolDefinition]] =
     val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker)
     Some(ToolRegistry.ALL_TOOLS.filter(t => allowedSet.contains(t.name)))
 
@@ -1004,16 +1019,14 @@ private[agent] trait AgentCore:
         case StreamChunk.TextDelta(delta) if delta.nonEmpty && !isCompactTurn =>
           textBuf.append(delta)
           textCount += 1
-          if textCount >= MaxBatch || System.currentTimeMillis() - lastFlushMs >= FlushWindowMs then
-            flushAll()
+          if textCount >= MaxBatch || System.currentTimeMillis() - lastFlushMs >= FlushWindowMs then flushAll()
           else IO.unit
 
         // Batch thinking instead of one frame per chunk.
         case StreamChunk.ThinkingDelta(delta) if delta.nonEmpty && !isCompactTurn =>
           if !isSubagent then thinkingBuf.append(delta)
           thinkingCount += 1
-          if thinkingCount >= MaxBatch || System.currentTimeMillis() - lastFlushMs >= FlushWindowMs then
-            flushAll()
+          if thinkingCount >= MaxBatch || System.currentTimeMillis() - lastFlushMs >= FlushWindowMs then flushAll()
           else IO.unit
 
         case StreamChunk.ToolCallStart(name) if name != "AskUserQuestion" && !isCompactTurn =>
@@ -1144,6 +1157,7 @@ private[agent] trait AgentCore:
 end AgentCore
 
 object AgentCore:
+
   /**
    * Nebula-exclusive tools: only available when agentName == "Nebula".
    * - Schedule: session-scoped scheduled tasks
@@ -1163,8 +1177,14 @@ object AgentCore:
    * These are injected automatically — agent.json does not need to list them.
    */
   val BaseTools = Set(
-    "Read", "Write", "Edit", "Glob", "Grep", "Bash",
-    "Issue", "RemoveUnnecessary"
+    "Read",
+    "Write",
+    "Edit",
+    "Glob",
+    "Grep",
+    "Bash",
+    "Issue",
+    "RemoveUnnecessary"
   )
 
   /**
@@ -1179,6 +1199,6 @@ object AgentCore:
     agentDef.category match
       case "team" => BaseTools + "Mail"
       case "flow" => BaseTools + "FlowReport"
-      case _      => BaseTools
+      case _ => BaseTools
 
 end AgentCore

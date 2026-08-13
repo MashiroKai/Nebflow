@@ -14,7 +14,8 @@ case class CompactConfig(
   postCompactTokenBudget: Int = 50000
 ):
 
-  /** Exponential backoff: delay = compactionRetryDelayMs * 2^(failures - 1)
+  /**
+   * Exponential backoff: delay = compactionRetryDelayMs * 2^(failures - 1)
    * Returns 0 for failures=0 (no backoff needed).
    */
   def backoffMs(failures: Int): Long =
@@ -27,7 +28,8 @@ case class CompactConfig(
 end CompactConfig
 
 object CompactConfig:
-  /** Return hardcoded defaults — no longer reads nebflow.json.
+  /**
+   * Return hardcoded defaults — no longer reads nebflow.json.
    * The `compact` section in nebflow.json is silently ignored.
    */
   def apply(): CompactConfig = new CompactConfig()

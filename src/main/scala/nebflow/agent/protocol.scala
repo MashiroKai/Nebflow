@@ -247,6 +247,7 @@ enum InteractionKind:
  * queueing keyed by requestId).
  */
 sealed trait InteractionReply
+
 object InteractionReply:
   final case class PermissionReply(deferred: cats.effect.Deferred[IO, Boolean]) extends InteractionReply
   final case class AskUserReply(replyTo: Option[ActorRef[List[String]]]) extends InteractionReply
@@ -330,11 +331,14 @@ enum AgentStreamEvent:
     // For subagent events, inject nodeSessionId so the frontend can persist
     // messages to the correct flow agent session's ui.json.
     val withNodeSession: Json => Json =
-      if isSubagent then sessionId match
-        case Some(sid) => json => json.asObject match
-          case Some(obj) => Json.fromJsonObject(obj.add("nodeSessionId", sid.asJson))
-          case None => json
-        case None => identity
+      if isSubagent then
+        sessionId match
+          case Some(sid) =>
+            json =>
+              json.asObject match
+                case Some(obj) => Json.fromJsonObject(obj.add("nodeSessionId", sid.asJson))
+                case None => json
+          case None => identity
       else identity
     withNodeSession(this match
       case TextDelta(text) =>
@@ -868,6 +872,7 @@ extension (s: AgentState)
   def withEmptyResponseRetries(count: Int): AgentState =
     s.copy(execution = s.execution.copy(emptyResponseRetries = count))
   def llmFailRetries: Int = s.execution.llmFailRetries
+
   def withLlmFailRetries(count: Int): AgentState =
     s.copy(execution = s.execution.copy(llmFailRetries = count))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))

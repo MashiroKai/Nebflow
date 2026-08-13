@@ -75,9 +75,19 @@ class SessionRecorder private (
         if text.nonEmpty then
           sessionStore.appendUiMessages(
             sessionId,
-            List(UiMessage.User(text, injected = injected, timestamp = System.currentTimeMillis(), source = source, eventType = eventType, sender = sender))
+            List(
+              UiMessage.User(
+                text,
+                injected = injected,
+                timestamp = System.currentTimeMillis(),
+                source = source,
+                eventType = eventType,
+                sender = sender
+              )
+            )
           )
         else IO.unit
+        end if
 
       case _ => IO.unit
 

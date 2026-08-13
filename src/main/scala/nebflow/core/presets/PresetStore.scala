@@ -15,13 +15,14 @@ import nebflow.llm.{Config, NebflowServiceConfig}
  * [[AgentModelConfig]] at agent-load time so the LLM layer is unchanged.
  */
 case class ModelPreset(
-  name: String,           // key in the presets map, also the display label
+  name: String, // key in the presets map, also the display label
   description: String = "",
   preferred: Option[String] = None,
   fallbacks: List[String] = Nil
 )
 
 object ModelPreset:
+
   given Encoder[ModelPreset] = Encoder.instance { p =>
     Json.obj(
       "name" -> p.name.asJson,
@@ -30,6 +31,7 @@ object ModelPreset:
       "fallbacks" -> p.fallbacks.asJson
     )
   }
+
   // Backward-compatible: ignores a legacy "displayName" field if present in old JSON.
   given Decoder[ModelPreset] = Decoder.instance { c =>
     for
@@ -40,6 +42,8 @@ object ModelPreset:
     yield ModelPreset(name, description, preferred, fallbacks)
   }
 
+end ModelPreset
+
 /** Root structure of `model-presets.json`. */
 case class PresetFile(
   defaultPreset: String,
@@ -47,12 +51,14 @@ case class PresetFile(
 )
 
 object PresetFile:
+
   given Encoder[PresetFile] = Encoder.instance { f =>
     Json.obj(
       "defaultPreset" -> f.defaultPreset.asJson,
       "presets" -> f.presets.asJson
     )
   }
+
   given Decoder[PresetFile] = Decoder.instance { c =>
     for
       defaultPreset <- c.downField("defaultPreset").as[String]
@@ -144,6 +150,10 @@ class PresetStore(
                 // 4. Global chain (empty = let getCandidatesForAgent use global)
                 (AgentModelConfig.empty, "global")
 
+    end match
+
+  end resolve
+
   /** Build the initial PresetFile from the global model chain in nebflow.json. */
   private def initFromFile(): PresetFile =
     val globalChain = readGlobalChain()
@@ -167,14 +177,21 @@ class PresetStore(
         case Right(cfg) => cfg.llm.model.default :: cfg.llm.model.fallbacks
         case Left(_) =>
           // Fallback: raw JSON parse
-          io.circe.parser.parse(os.read(nebflowJson)).toOption
+          io.circe.parser
+            .parse(os.read(nebflowJson))
+            .toOption
             .flatMap(_.hcursor.downField("llm").downField("model").focus)
             .map { modelJson =>
               val default = modelJson.hcursor.downField("default").as[Option[String]].toOption.flatten.getOrElse("")
-              val fallbacks = modelJson.hcursor.downField("fallbacks").as[Option[List[String]]].toOption.flatten.getOrElse(Nil)
+              val fallbacks =
+                modelJson.hcursor.downField("fallbacks").as[Option[List[String]]].toOption.flatten.getOrElse(Nil)
               (default :: fallbacks).filter(_.nonEmpty)
             }
             .getOrElse(Nil)
+
+    end if
+
+  end readGlobalChain
 
   /** Repair a PresetFile with a dangling defaultPreset by re-initializing. */
   private def repair(f: PresetFile): PresetFile =

@@ -311,8 +311,9 @@ object GatewayMain extends IOApp.Simple:
                                   // Every agent's permission/AskUser requests and every frontend
                                   // interaction answer route through this single actor.
                                   val hubSetup: IO[Unit] =
-                                    actorSystem.spawn(nebflow.agent.InteractionHub(), "interaction-hub").flatMap { hubRef =>
-                                      sharedResources.interactionHubRef.set(Some(hubRef))
+                                    actorSystem.spawn(nebflow.agent.InteractionHub(), "interaction-hub").flatMap {
+                                      hubRef =>
+                                        sharedResources.interactionHubRef.set(Some(hubRef))
                                     }
                                   hubSetup *> telemetryIO.flatMap { telemetry =>
                                     val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
@@ -436,10 +437,9 @@ object GatewayMain extends IOApp.Simple:
                                               // already-stopped set is a no-op, so it is safe alongside the
                                               // graceful path in `.guarantee` below.
                                               Runtime.getRuntime.addShutdownHook(
-                                                new Thread(
-                                                  () =>
-                                                    try daemonService.stopAll().unsafeRunSync()
-                                                    catch case _: Throwable => ()
+                                                new Thread(() =>
+                                                  try daemonService.stopAll().unsafeRunSync()
+                                                  catch case _: Throwable => ()
                                                 )
                                               )
                                               // Auto-start daemons configured with autoStart=true

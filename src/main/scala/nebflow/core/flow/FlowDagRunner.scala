@@ -34,11 +34,20 @@ object FlowDagRunner:
     Behaviors.receiveMessage:
       case RunFlow(flowDef, taskInput, replyTo, rootSessionId) =>
         val instanceId = s"flow-${flowDef.name.take(15)}-${java.util.UUID.randomUUID().toString.take(8)}"
-        val parentAgentRef = Some(replyTo)  // replyTo is the AgentRef of the agent that triggered the flow
+        val parentAgentRef = Some(replyTo) // replyTo is the AgentRef of the agent that triggered the flow
         for
           _ <- logger.info(s"Starting DAG execution for flow '${flowDef.name}' (instance: $instanceId)")
           result <- FlowDagExecutor
-            .execute(flowDef, taskInput, resources, resources.actorSystem, wsSend, instanceId, parentAgentRef, rootSessionId)
+            .execute(
+              flowDef,
+              taskInput,
+              resources,
+              resources.actorSystem,
+              wsSend,
+              instanceId,
+              parentAgentRef,
+              rootSessionId
+            )
             .handleErrorWith(e => IO(logger.warn(s"FlowDagExecutor failed: ${e.getMessage}")).as(Left(e.getMessage)))
           _ <- result match
             case Right(output) =>

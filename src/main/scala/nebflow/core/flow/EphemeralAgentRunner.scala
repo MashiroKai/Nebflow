@@ -68,7 +68,9 @@ object EphemeralAgentRunner:
           s"ephemeral-agent-${agentDef.name.take(10)}"
         )
         // Register in agentRegistry so WS events (askUser, permission) route correctly
-        _ <- resources.agentRegistry.update(_ + (sessionId -> AgentRecord(sessionId, ref, AgentKind.Ephemeral, sessionId)))
+        _ <- resources.agentRegistry.update(
+          _ + (sessionId -> AgentRecord(sessionId, ref, AgentKind.Ephemeral, sessionId))
+        )
         // Send input with bridge actor as replyTo
         _ <- (ref ! AgentCommand.UserInput(
           text = msg.taskInput,

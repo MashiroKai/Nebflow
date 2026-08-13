@@ -32,10 +32,12 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
     exitCode: Option[Int] = None,
     outputBuffer: mutable.ArrayDeque[String] = mutable.ArrayDeque.empty[String],
     readFiber: Option[cats.effect.FiberIO[Unit]] = None,
-    /** True while an explicit stop (user API / stopAll / JVM shutdown hook) is in
-        flight. monitorExit treats an exit with this set as intentional: status
-        becomes Stopped (never Crashed) and no auto-restart fires — this is what
-        keeps the JVM shutdown path (stopAll) from restarting daemons. */
+    /**
+     * True while an explicit stop (user API / stopAll / JVM shutdown hook) is in
+     *        flight. monitorExit treats an exit with this set as intentional: status
+     *        becomes Stopped (never Crashed) and no auto-restart fires — this is what
+     *        keeps the JVM shutdown path (stopAll) from restarting daemons.
+     */
     stopRequested: Boolean = false,
     /** Consecutive auto-restarts already performed (0 = fresh/manual start). */
     restartCount: Int = 0
@@ -44,8 +46,11 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
   private val OutputCap = 200 // lines per daemon
   private val MaxOutputChars = 16000 // when returning to API
   private val MaxBackoffDelay = 60.seconds
-  /** Consecutive port-probe failures (at healthCheckSec intervals) before the
-      active health check declares a live-but-port-closed process crashed. */
+
+  /**
+   * Consecutive port-probe failures (at healthCheckSec intervals) before the
+   *      active health check declares a live-but-port-closed process crashed.
+   */
   private val HealthCheckFailThreshold = 4
 
   private val entries: Ref[IO, Map[String, DaemonEntry]] = Ref.unsafe(Map.empty)
@@ -118,8 +123,7 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
   def getState(id: String): IO[Option[DaemonState]] =
     entries.get.flatMap(_.get(id) match
       case Some(entry) => toStateIO(id, entry).map(Some(_))
-      case None => IO.pure(None)
-    )
+      case None => IO.pure(None))
 
   /** Get states for a list of daemon configs (merges config + runtime status + port probe). */
   def getStates(configs: List[DaemonConfig]): IO[List[DaemonState]] =
@@ -134,8 +138,10 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
 
   private def doStart(config: DaemonConfig): IO[DaemonState] = doStart(config, restartCount = 0)
 
-  /** Start a daemon process. `restartCount` is carried over from the auto-restart
-      chain so the crash-loop counter survives process replacements. */
+  /**
+   * Start a daemon process. `restartCount` is carried over from the auto-restart
+   *      chain so the crash-loop counter survives process replacements.
+   */
   private def doStart(config: DaemonConfig, restartCount: Int): IO[DaemonState] =
     IO.blocking {
       val workDir = config.cwd match
@@ -193,7 +199,9 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
     // also covers the JVM shutdown path (stopAll -> doStop) — daemons must die
     // with Nebflow, not be resurrected by the shutdown hook's own kill.
     entries.update(map => map.updated(id, entry.copy(stopRequested = true))) *>
-      ProcessTree.killProcessTree(entry.process.getOrElse(throw new IllegalStateException(s"Daemon '$id' has no process"))) *>
+      ProcessTree.killProcessTree(
+        entry.process.getOrElse(throw new IllegalStateException(s"Daemon '$id' has no process"))
+      ) *>
       entry.readFiber.traverse_(_.cancel) *>
       entries.update { map =>
         map.updated(
@@ -318,8 +326,9 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
                   doStart(entry.config, attempt).void.handleErrorWith(e =>
                     logger.error(s"[daemon] Auto-restart failed for '${entry.config.name}': ${e.getMessage}")
                   )
-                case _ => IO.unit
-              )
+                case _ => IO.unit)
+            end if
+          end if
     }
 
   /** Exponential backoff: base * 2^(attempt-1), capped at MaxBackoffDelay. */
@@ -332,9 +341,10 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
   private def startHealthMonitor(config: DaemonConfig, process: Process): IO[Unit] =
     config.port match
       case Some(_) if config.healthCheckSec > 0 =>
-        monitorHealth(config, process).handleErrorWith(e =>
-          logger.error(s"[daemon] Health check for '${config.name}' stopped: ${e.getMessage}")
-        ).start.void
+        monitorHealth(config, process)
+          .handleErrorWith(e => logger.error(s"[daemon] Health check for '${config.name}' stopped: ${e.getMessage}"))
+          .start
+          .void
       case _ => IO.unit
 
   /**
@@ -375,6 +385,8 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
         }
 
     loop(0)
+
+  end monitorHealth
 
   private def toState(id: String, entry: DaemonEntry): DaemonState =
     DaemonState(

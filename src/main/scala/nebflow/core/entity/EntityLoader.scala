@@ -148,6 +148,8 @@ object EntityLoader:
         Some(entry.copy(name = resolvedName, systemPrompt = prompt, category = inferredCategory))
       }
 
+  end loadAgentFromDir
+
   /** Load agent entry from `agents/<name>/agent.json` + `system.md`. */
   def loadAgent(name: String): IO[Option[AgentEntry]] =
     IO.blocking { loadAgentFromDir(agentsDir / name) }

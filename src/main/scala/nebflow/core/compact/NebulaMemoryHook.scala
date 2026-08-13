@@ -28,11 +28,12 @@ object NebulaMemoryHook extends PreCompactionHook:
       for
         facts <- extractFacts(messages, agentName, sessionId, resources)
         pattern <- UsageTracker.analyzePattern()
-        _ <- if facts.nonEmpty then
-          DreamMode
-            .updateMemory(facts, pattern)
-            .handleErrorWith(e => IO(logger.warn(s"Memory update failed: ${e.getMessage}")).void)
-        else IO.unit
+        _ <-
+          if facts.nonEmpty then
+            DreamMode
+              .updateMemory(facts, pattern)
+              .handleErrorWith(e => IO(logger.warn(s"Memory update failed: ${e.getMessage}")).void)
+          else IO.unit
       yield ()
 
   private def extractFacts(
@@ -52,7 +53,6 @@ object NebulaMemoryHook extends PreCompactionHook:
     resources.llm
       .send(request)
       .map(resp => DreamMode.parseResponse(resp.reply))
-      .handleErrorWith(e =>
-        IO(logger.warn(s"Fact extraction LLM failed: ${e.getMessage}")).as(Nil)
-      )
+      .handleErrorWith(e => IO(logger.warn(s"Fact extraction LLM failed: ${e.getMessage}")).as(Nil))
+  end extractFacts
 end NebulaMemoryHook

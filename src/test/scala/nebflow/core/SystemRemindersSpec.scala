@@ -35,14 +35,18 @@ class SystemRemindersSpec extends FunSuite:
     )
 
   test("isTimeReminderMessage matches persisted time-reminder format"):
-    val reminder = Message(MessageRole.User, Left("<system-reminder>\nCurrent time: 2026-08-11 17:00 +08:00\n</system-reminder>"))
+    val reminder =
+      Message(MessageRole.User, Left("<system-reminder>\nCurrent time: 2026-08-11 17:00 +08:00\n</system-reminder>"))
     assert(SystemReminders.isTimeReminderMessage(reminder))
     assert(!SystemReminders.isTimeReminderMessage(Message(MessageRole.User, Left("hello"))))
     assert(!SystemReminders.isTimeReminderMessage(Message(MessageRole.Assistant, Left("Current time: x"))))
 
   test("pruneTimeReminders keeps only the most recent N time reminders, preserving order"):
     val before = (0 until 25).map { i =>
-      Message(MessageRole.User, Left(s"<system-reminder>\nCurrent time: 2026-08-11 ${i / 60}:${i % 60} +08:00\n</system-reminder>"))
+      Message(
+        MessageRole.User,
+        Left(s"<system-reminder>\nCurrent time: 2026-08-11 ${i / 60}:${i % 60} +08:00\n</system-reminder>")
+      )
     }.toList
     // Interleave some non-time messages to verify they are never dropped
     val mixed = List(
