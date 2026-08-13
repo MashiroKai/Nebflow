@@ -32,13 +32,10 @@ private[agent] trait AgentCore:
    * - Delegate: 调度器/根 agent 专用——指派 standalone agent 或触发 flow。
    *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
    */
-  private val NebulaExclusiveTools = Set(
-    "Schedule",
-    "Delegate"
-  )
+  private val NebulaExclusiveTools = AgentCore.NebulaExclusiveTools
 
   /** Tools available to Nebula and Team Leads, but NOT workers. */
-  private val LeadLevelTools = Set("TaskCreate", "TaskUpdate")
+  private val LeadLevelTools = AgentCore.LeadLevelTools
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 
@@ -874,14 +871,10 @@ private[agent] trait AgentCore:
       case Nil => Set.empty[String]
       case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
       case names => names.toSet
-    // Mail is always available — it's a communication primitive, not a domain tool
-    // Issue is always available — agents should be able to report system problems
-    // FlowReport is available only to flow-category agents
-    val withBuiltin =
-      if agentDef.category == "flow" then
-        base + "Mail" + "Issue" + "FlowReport"
-      else
-        base + "Mail" + "Issue"
+    // Fixed tools are auto-injected based on agent category — they don't
+    // need to be listed in agent.json. Mail is team-only; FlowReport is
+    // flow-only; all agents get base tools (file ops, search, shell, feedback).
+    val withBuiltin = base ++ AgentCore.fixedToolsFor(agentDef)
     val isNebula = agentDef.name == "Nebula"
     val nebulaFiltered = if isNebula then withBuiltin else withBuiltin -- NebulaExclusiveTools
     // Task tools: available to Nebula and Team Lead, NOT workers
@@ -1147,5 +1140,45 @@ private[agent] trait AgentCore:
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)
+
+end AgentCore
+
+object AgentCore:
+  /**
+   * Nebula-exclusive tools: only available when agentName == "Nebula".
+   * - Schedule: session-scoped scheduled tasks
+   * - Delegate: 调度器/根 agent 专用——指派 standalone agent 或触发 flow。
+   *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
+   */
+  val NebulaExclusiveTools = Set(
+    "Schedule",
+    "Delegate"
+  )
+
+  /** Tools available to Nebula and Team Leads, but NOT workers. */
+  val LeadLevelTools = Set("TaskCreate", "TaskUpdate")
+
+  /**
+   * Base tools always available to ALL agents regardless of category.
+   * These are injected automatically — agent.json does not need to list them.
+   */
+  val BaseTools = Set(
+    "Read", "Write", "Edit", "Glob", "Grep", "Bash",
+    "Issue", "RemoveUnnecessary"
+  )
+
+  /**
+   * Fixed tools for a given agent: base tools plus category-specific tools.
+   * These are auto-injected and should NOT be stored in agent.json.
+   *
+   * - Team agents: BaseTools + Mail (communication primitive)
+   * - Flow agents: BaseTools + FlowReport (no Mail)
+   * - Standalone agents: BaseTools only (no Mail, no FlowReport)
+   */
+  def fixedToolsFor(agentDef: AgentDef): Set[String] =
+    agentDef.category match
+      case "team" => BaseTools + "Mail"
+      case "flow" => BaseTools + "FlowReport"
+      case _      => BaseTools
 
 end AgentCore

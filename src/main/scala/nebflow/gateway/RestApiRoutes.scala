@@ -6,6 +6,7 @@ import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
+import nebflow.agent.AgentCore
 import nebflow.agent.SharedResources
 import nebflow.core.PathUtil
 import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
@@ -1152,6 +1153,8 @@ class RestApiRoutes(
                   "name" -> defn.name.asJson,
                   "description" -> defn.description.asJson,
                   "tools" -> defn.tools.asJson,
+                  "category" -> defn.category.asJson,
+                  "fixedTools" -> AgentCore.fixedToolsFor(defn).toList.asJson,
                   "systemPrompt" -> defn.systemPrompt.asJson,
                   "displayName" -> defn.displayName.getOrElse(defn.name).asJson,
                   "model" -> defn.model.asJson,
