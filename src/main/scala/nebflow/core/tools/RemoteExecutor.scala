@@ -327,36 +327,44 @@ class RemoteExecutor(
     params: JsonObject,
     timeout: FiniteDuration
   ): IO[Either[ToolError, String]] =
-    IO.blocking {
-      val body = io.circe.Json.obj(
-        "action" -> toolName.asJson,
-        "params" -> params.asJson
-      )
-      val resp = basicRequest
-        .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/remote-exec"))
-        .contentType("application/json")
-        .body(body.noSpaces)
-        .readTimeout(timeout)
-        .response(asStringAlways)
-        .send(neblinkService.httpBackend)
+    for
+      // Send our own deviceId so the peer can authenticate us by network
+      // membership (same networkId) when its IP-based trust list is stale —
+      // e.g. after a NIC filter change or DHCP address rotation.
+      selfDeviceId <- neblinkService.identity.map(_.deviceId)
+      result <- IO.blocking {
+        val body = io.circe.Json.obj(
+          "action" -> toolName.asJson,
+          "params" -> params.asJson
+        )
+        val resp = basicRequest
+          .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/remote-exec"))
+          .contentType("application/json")
+          .header("X-Neblink-Device", selfDeviceId)
+          .body(body.noSpaces)
+          .readTimeout(timeout)
+          .response(asStringAlways)
+          .send(neblinkService.httpBackend)
 
-      if !resp.code.isSuccess then Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
-      else
-        decode[io.circe.Json](resp.body) match
-          case Right(json) =>
-            val output = json.hcursor.downField("output").as[String].getOrElse("")
-            val error = json.hcursor.downField("error").as[String].getOrElse("")
-            if error.nonEmpty then Left(ToolError(s"Remote error: $error"))
-            else Right(output)
-          case Left(err) =>
-            Left(ToolError(s"Invalid response from remote: ${err.getMessage}"))
-    }.handleErrorWith { e =>
-      val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-      val lower = msg.toLowerCase
-      if lower.contains("timeout") || lower.contains("timed out") then
-        IO.pure(Left(ToolError(s"Command timed out on ${peer.deviceName} after ${timeout.toSeconds}s: $msg")))
-      else IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName} at ${peer.address}: $msg")))
-    }
+        if !resp.code.isSuccess then
+          Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
+        else
+          decode[io.circe.Json](resp.body) match
+            case Right(json) =>
+              val output = json.hcursor.downField("output").as[String].getOrElse("")
+              val error = json.hcursor.downField("error").as[String].getOrElse("")
+              if error.nonEmpty then Left(ToolError(s"Remote error: $error"))
+              else Right(output)
+            case Left(err) =>
+              Left(ToolError(s"Invalid response from remote: ${err.getMessage}"))
+      }.handleErrorWith { e =>
+        val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+        val lower = msg.toLowerCase
+        if lower.contains("timeout") || lower.contains("timed out") then
+          IO.pure(Left(ToolError(s"Command timed out on ${peer.deviceName} after ${timeout.toSeconds}s: $msg")))
+        else IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName} at ${peer.address}: $msg")))
+      }
+    yield result
   end p2pExecute
 
   /**
@@ -388,15 +396,32 @@ class RemoteExecutor(
   /**
    * Connection-level failures worth retrying (connection refused, DNS failure).
    * Does NOT match timeout errors — those mean the command is running but slow.
+   * Does NOT match HTTP 403 — that is a trust rejection, not a transient
+   * network blip, so retrying wastes time (trust state won't change in 1-2s).
    */
   private def isTransientError(err: ToolError): Boolean =
     val msg = err.message.toLowerCase
     msg.startsWith("cannot reach")
 
   /**
-   * Best-path execution: try P2P first; if unreachable (connection error only,
-   * not timeout), fall back to relay via NebLink Server. A timeout means the
-   * command is running on the remote device, just slow — do NOT relay-retry.
+   * HTTP 403 "Not a trusted peer" rejection. The direct P2P path is blocked by
+   * the remote's IP trust list (stale discovery, NIC filtering, or DHCP IP
+   * change), but the relay authenticates against the NebLink Server with a
+   * token — bypassing IP trust entirely — so this is relay-fallback eligible.
+   */
+  private def isTrustRejection(err: ToolError): Boolean =
+    err.message.toLowerCase.contains("remote device returned http 403")
+
+  /** Errors that justify a relay fallback (connection failure or trust rejection). */
+  private def shouldRelayFallback(err: ToolError): Boolean =
+    isTransientError(err) || isTrustRejection(err)
+
+  /**
+   * Best-path execution: try P2P first; if the direct path is unavailable —
+   * either a connection error or an HTTP 403 trust rejection — fall back to
+   * the relay via the NebLink Server (which authenticates with a token,
+   * bypassing IP trust). A timeout means the command is already running on the
+   * remote device, just slow — do NOT relay-retry.
    */
   private def executeViaBestPath(
     peer: PeerInfo,
@@ -406,11 +431,11 @@ class RemoteExecutor(
   ): IO[Either[ToolError, String]] =
     p2pExecuteWithRetry(peer, toolName, params, timeout).flatMap {
       case Right(result) => IO.pure(Right(result))
-      case Left(err) if isTransientError(err) =>
+      case Left(err) if shouldRelayFallback(err) =>
         relayClient match
           case None => IO.pure(Left(err))
           case Some(client) =>
-            logger.info(s"P2P unreachable for ${peer.deviceName}, falling back to relay") *>
+            logger.info(s"P2P unavailable for ${peer.deviceName} (${err.message.take(80)}), falling back to relay") *>
               client.relayExec(peer.deviceId, toolName, params).map {
                 case Right(output) => Right(output)
                 case Left(relayErr) =>
