@@ -630,9 +630,7 @@ class RestApiRoutes(
                               secret = "",
                               deviceToken = Some(tok)
                             )
-                            current <- NeblinkConfig.load
-                            updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
-                            _ <- NeblinkConfig.save(updated)
+                            _ <- ms.updateConfig(cfg => cfg.copy(enabled = true, neblinkServer = Some(newConfig)))
                             // Hot-swap the client in the discovery service.
                             _ <- neblinkDiscovery
                               .fold(IO.unit)(d => d.setClient(Some(new NeblinkClient(newConfig, gatewayPort))))
