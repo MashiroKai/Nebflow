@@ -450,6 +450,92 @@ export function hasTab(id) {
 
 // ── File viewers ───────────────────────────────────────────
 
+/** Render a web URL into a tab pane: slim toolbar (hostname + "open in new
+ *  window"), the sandboxed iframe (flex:1), and a permanent low-key hint
+ *  strip below. X-Frame-Options blocking cannot be detected reliably — the
+ *  iframe's load event fires even when the page refuses to embed — so the
+ *  hint is always visible rather than conditional. All text goes through
+ *  textContent (never innerHTML) since url/title are agent-controlled.
+ *  @param {HTMLElement} pane — The tab content pane.
+ *  @param {string} url      — The http(s) URL to embed. */
+function renderUrlPane(pane, url) {
+  // Only http(s) pages belong in an iframe — reject anything else
+  // (javascript:, data:, file:) so the sandbox stays meaningful.
+  if (!/^https?:\/\//i.test(url)) {
+    const err = document.createElement('div');
+    err.style.cssText = 'padding:24px;font-size:13px;color:var(--color-text-muted)';
+    err.textContent = '无法显示该链接：仅支持 http/https 网页。';
+    pane.appendChild(err);
+    return;
+  }
+
+  // ── Top toolbar: hostname + "open in new window" fallback ──
+  const bar = document.createElement('div');
+  bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:12px;' +
+    'height:32px;padding:0 12px;min-width:0;' +
+    'border-bottom:1px solid var(--color-border);' +
+    'font-size:12px;color:var(--color-text-muted);user-select:none';
+
+  const host = document.createElement('span');
+  let hostText = url;
+  try { hostText = new URL(url).hostname || url; } catch (_) { /* keep raw url */ }
+  host.textContent = hostText;
+  host.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+
+  const openLink = document.createElement('a');
+  openLink.href = url;
+  openLink.target = '_blank';
+  openLink.rel = 'noopener noreferrer';
+  openLink.textContent = '在新窗口打开';
+  openLink.style.cssText = 'flex:none;color:var(--color-text-muted);text-decoration:none;cursor:pointer';
+  openLink.addEventListener('mouseenter', () => { openLink.style.color = 'var(--color-text)'; });
+  openLink.addEventListener('mouseleave', () => { openLink.style.color = 'var(--color-text-muted)'; });
+
+  bar.append(host, openLink);
+
+  // ── The embedded page ──
+  const iframe = document.createElement('iframe');
+  iframe.src = url;
+  iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-forms');
+  iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+  iframe.setAttribute('allow', 'clipboard-read; clipboard-write');
+  iframe.style.cssText = 'flex:1;min-height:0;width:100%;border:none;background:var(--color-surface)';
+
+  // ── Bottom hint strip — always visible (embedding refusal is undetectable) ──
+  const hint = document.createElement('div');
+  hint.style.cssText = 'flex:none;display:flex;align-items:center;justify-content:center;gap:6px;' +
+    'padding:4px 12px;font-size:11px;color:var(--color-text-muted);opacity:.7;user-select:none';
+  const hintText = document.createElement('span');
+  hintText.textContent = '如果页面没有显示，可能是该网站不允许嵌入';
+  const hintLink = document.createElement('a');
+  hintLink.href = url;
+  hintLink.target = '_blank';
+  hintLink.rel = 'noopener noreferrer';
+  hintLink.textContent = '点击在新窗口打开';
+  hintLink.style.cssText = 'flex:none;color:inherit;text-decoration:underline;cursor:pointer';
+  hint.append(hintText, hintLink);
+
+  // Best-effort blocked detection: a refused embed still fires load, and a
+  // cross-origin frame legitimately has null contentDocument — so neither
+  // can diagnose XFO. The only certain signal is no contentWindow at all;
+  // on that (or onerror, which some embed failures do trigger) the hint is
+  // emphasized. Everything else stays ambiguous and relies on the hint.
+  const emphasizeHint = () => {
+    hint.style.opacity = '1';
+    hintText.textContent = '该网站似乎不允许嵌入显示';
+  };
+  iframe.addEventListener('error', emphasizeHint);
+  iframe.addEventListener('load', () => {
+    setTimeout(() => {
+      try {
+        if (!iframe.contentWindow) emphasizeHint();
+      } catch (_) { /* cross-origin access may throw — expected, ignore */ }
+    }, 3000);
+  });
+
+  pane.append(bar, iframe, hint);
+}
+
 /** Open a file or workspace item in a Canvas tab.
  *  Uses the file viewer registry for rendering all file types.
  *  Text files open in Monaco editor (editable). Binary files are read-only.
@@ -461,6 +547,25 @@ export async function openWorkspaceItem(item) {
   let { id } = item;
   const { itemType, title, content, absPath, size, pinned } = item;
   if (!id) return;
+
+  // URL type — render the page in a sandboxed iframe. Handled before all
+  // file logic: URL tabs have no absPath (scheduleFileRefresh skips them)
+  // and are excluded from persistTabs (a restored URL tab would be a dead
+  // pane — nothing re-renders it).
+  if (itemType === 'url') {
+    if (!item.url) return;
+    if (tabs.has(id)) {
+      if (pinned) pinTab(id);
+      tabs.get(id)._lastRefreshAt = Date.now();
+      if (!item.background) setActiveTab(id);
+      return;
+    }
+    const urlEntry = openTab(id, title || item.url, { type: 'url', pinned: !!pinned });
+    if (!urlEntry) return;
+    renderUrlPane(urlEntry.paneEl, item.url);
+    urlEntry._lastRefreshAt = Date.now();
+    return;
+  }
 
   // Dedupe by absPath: a refresh/readFile response always arrives with the
   // canonical id `file:<path>`, but the same file may already be open under a
@@ -654,6 +759,11 @@ function persistTabs() {
       // Skip runtime flow-run tabs — their instanceId is invalid after a
       // restart, so restoring them would leave dead tabs.
       if (t.type === 'flow-run') continue;
+      // Skip URL tabs — they have no absPath and restoreTabs' panel-tab
+      // branch would re-open them as empty dead panes (canvas-tab-restore
+      // has no renderer for type 'url'). Losing URL tabs across a reload is
+      // acceptable per spec.
+      if (t.type === 'url') continue;
       serializable.push({
         id: t.id,
         title: t.title,
