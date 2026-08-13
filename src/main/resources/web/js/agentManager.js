@@ -21,6 +21,16 @@ function esc(s) {
 // Icons for the System Prompt render/source toggle (mirror fileViewers.js)
 const CODE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
 const EYE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+// Lock icon for system-fixed tool chips (inline SVG, no emoji per design rules)
+const LOCK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+// Tools always injected by the system — fallback until the API ships fixedTools
+const FIXED_BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'Issue', 'RemoveUnnecessary'];
+function resolveFixedTools(detail) {
+  if (Array.isArray(detail?.fixedTools)) return detail.fixedTools;
+  if (detail?.category === 'team') return [...FIXED_BASE_TOOLS, 'Mail'];
+  if (detail?.category === 'flow') return [...FIXED_BASE_TOOLS, 'FlowReport'];
+  return FIXED_BASE_TOOLS;
+}
 function shortModel(ref) {
   if (!ref) return '';
   const idx = ref.lastIndexOf('/');
@@ -251,12 +261,26 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
   const allTools = (state.availableTools || []).map(t => typeof t === 'string' ? t : t.name);
   const isAll = tools.includes('*');
 
-  const toolsHtml = `<div class="agent-detail-tools-grid" id="agent-detail-tools-grid">
-    ${allTools.map(tname => {
-      const checked = isAll || tools.includes(tname);
-      return `<span class="agent-detail-tool-check${checked ? ' checked' : ''}" data-tool="${esc(tname)}">${esc(tname)}</span>`;
-    }).join('')}
-  </div>`;
+  // Split tools into system-fixed (read-only) and user-configurable (toggleable).
+  const fixedTools = resolveFixedTools(detail);
+  const configurableTools = allTools.filter(tname => !fixedTools.includes(tname));
+
+  const fixedToolsHtml = fixedTools.length ? `
+    <div class="agent-detail-tools-fixed-label">${t('agent.toolsFixedLabel')}</div>
+    <div class="agent-detail-tools-grid">
+      ${fixedTools.map(tname =>
+        `<span class="agent-detail-tool-check fixed" title="${esc(t('agent.toolsFixedTip'))}">${LOCK_ICON_SVG}${esc(tname)}</span>`
+      ).join('')}
+    </div>` : '';
+
+  const toolsHtml = `${fixedToolsHtml}
+    ${fixedTools.length ? `<div class="agent-detail-tools-config-label">${t('agent.toolsConfigLabel')}</div>` : ''}
+    <div class="agent-detail-tools-grid" id="agent-detail-tools-grid">
+      ${configurableTools.map(tname => {
+        const checked = isAll || tools.includes(tname);
+        return `<span class="agent-detail-tool-check${checked ? ' checked' : ''}" data-tool="${esc(tname)}">${esc(tname)}</span>`;
+      }).join('')}
+    </div>`;
 
   pane.innerHTML = `
     <div class="agent-detail">
@@ -352,20 +376,22 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
     setTimeout(() => { saveBtn.textContent = 'Save'; }, 1500);
   });
 
-  // Bind tool toggle chips
+  // Bind tool toggle chips — configurable tools only; fixed tools are never sent.
   const toolsGrid = pane.querySelector('#agent-detail-tools-grid');
   if (toolsGrid) {
-    const currentTools = new Set(tools);
+    const currentConfig = new Set(
+      isAll ? configurableTools : tools.filter(tname => !fixedTools.includes(tname))
+    );
     toolsGrid.querySelectorAll('.agent-detail-tool-check').forEach(el => {
       el.addEventListener('click', () => {
         const tool = el.dataset.tool;
         el.classList.toggle('checked');
         if (el.classList.contains('checked')) {
-          currentTools.add(tool);
+          currentConfig.add(tool);
         } else {
-          currentTools.delete(tool);
+          currentConfig.delete(tool);
         }
-        sendWs({ type: 'updateAgentTools', name, tools: [...currentTools] });
+        sendWs({ type: 'updateAgentTools', name, tools: [...currentConfig] });
       });
     });
   }
