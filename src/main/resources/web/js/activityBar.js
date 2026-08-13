@@ -3,7 +3,7 @@
 // Layout (top → bottom):
 //   • Avatar — the NebLink login entry. Tap when logged out → opens the
 //     NebLink device-flow login modal (GitHub OAuth). Tap when logged in →
-//     shows a floating profile panel with device info + disconnect.
+//     opens the profile page on nebflow.space in a new tab.
 //   • (spacer)
 //   • Settings.
 //
@@ -95,12 +95,12 @@ function observeAgentsPanel() {
 function bindAvatar() {
   const avatar = document.getElementById('activity-avatar');
   if (!avatar) return;
-  avatar.addEventListener('click', (e) => {
+  avatar.addEventListener('click', () => {
     const st = getNeblinkState();
     if (st.pairing) return; // pairing in progress — ignore
-    if (st.device?.deviceId) {
-      // Logged in → show profile panel
-      showProfilePanel(st, avatar);
+    if (st.loggedIn) {
+      // Logged in → open the profile page on nebflow.space
+      window.open('https://nebflow.space/profile', '_blank');
     } else {
       // Not logged in → open the NebLink device-flow login modal (GitHub OAuth)
       showLoginModal();
@@ -298,58 +298,6 @@ function showLoginModal() {
   startFlow();
 }
 
-/** Floating profile panel showing device info and peers, with logout button. */
-function showProfilePanel(st, avatarEl) {
-  document.getElementById('nebflow-profile-panel')?.remove();
-  const esc = (s) => String(s ?? '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
-  const panel = document.createElement('div');
-  panel.id = 'nebflow-profile-panel';
-  panel.className = 'nebflow-profile-panel';
-  const peers = st.peers || [];
-  panel.innerHTML = `
-    <div class="profile-header">
-      <h3>设备信息</h3>
-      <button class="profile-close">&times;</button>
-    </div>
-    <div class="profile-body">
-      <div class="profile-item"><span class="label">设备名</span><span class="value">${esc(st.device?.deviceName)}</span></div>
-      <div class="profile-item"><span class="label">设备 ID</span><span class="value">${esc(st.device?.deviceId?.substring(0, 12))}…</span></div>
-      <div class="profile-item"><span class="label">平台</span><span class="value">${esc(st.device?.platform)}</span></div>
-      <div class="profile-peers">
-        <div class="label">在线设备 (${peers.length})</div>
-        ${peers.length > 0
-          ? peers.map(p => `<div class="peer-item">${esc(p.deviceName)} (${esc(p.platform)})</div>`).join('')
-          : '<div class="peer-empty">无其他设备</div>'}
-      </div>
-      <button class="profile-logout">断开连接</button>
-    </div>`;
-  document.body.appendChild(panel);
-
-  panel.querySelector('.profile-close').onclick = () => panel.remove();
-  panel.querySelector('.profile-logout').onclick = async () => {
-    const token = localStorage.getItem('nebflow_token') || '';
-    try {
-      await fetch('/api/neblink/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ enabled: false }),
-      });
-    } catch (e) { /* non-critical */ }
-    panel.remove();
-    location.reload();
-  };
-
-  // Click outside to close
-  setTimeout(() => {
-    document.addEventListener('click', function close(e) {
-      if (!panel.contains(e.target) && e.target !== avatarEl && !avatarEl?.contains(e.target)) {
-        panel.remove();
-        document.removeEventListener('click', close);
-      }
-    });
-  }, 100);
-}
-
 // ── State refresh → avatar styling ───────────────────────
 async function refresh() {
   await fetchNeblinkStatus();
@@ -360,7 +308,7 @@ function renderAvatar() {
   const avatar = document.getElementById('activity-avatar');
   if (!avatar) return;
   const st = getNeblinkState();
-  const loggedIn = !!(st.device?.deviceId);
+  const loggedIn = !!st.loggedIn;
   const avatarUrl = st.device?.avatarUrl || '';
   const logoEl = avatar.querySelector('.activity-avatar-logo');
   const photoEl = avatar.querySelector('.activity-avatar-photo');
@@ -388,5 +336,5 @@ function renderAvatar() {
   avatar.classList.toggle('pairing', !!st.pairing);
   avatar.title = st.pairing
     ? 'Pairing…'
-    : (loggedIn ? 'NebLink connected' : 'Click to log in to NebLink');
+    : (loggedIn ? '个人主页' : '登录');
 }
