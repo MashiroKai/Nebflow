@@ -41,7 +41,7 @@ import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { handleFlowAgentHistory } from './flowAgentPopup.js';
 import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
-import { initNeblink, checkPairingRedirect } from './neblink.js';
+import { initNeblink } from './neblink.js';
 import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
 import * as planMode from './planMode.js';
@@ -2237,7 +2237,6 @@ if (!restoreTabs()) {
 initScheduledTask();
 initDaemons();
 initNeblink();
-checkPairingRedirect();
 initDropbox();
 planMode.init();
 

@@ -25,6 +25,9 @@ let neblinkState = {
   pairing: false,
   pairError: '',
   enrollMsg: '',
+  // User login state: true when a NebLink device credential exists and
+  // NebLink is enabled (reported by the backend).
+  loggedIn: false,
   // Device-flow state: 'idle' | 'waiting' | 'success'
   flowState: 'idle',
   userCode: '',
@@ -53,6 +56,7 @@ export async function fetchNeblinkStatus() {
     });
     if (!resp.ok) return;
     const data = await resp.json();
+    neblinkState.loggedIn = !!data.loggedIn;
     // Normalize local device fields to match peer field names
     const d = data.device;
     neblinkState.device = d ? {
@@ -61,7 +65,8 @@ export async function fetchNeblinkStatus() {
       platform: d.platform,
       capabilities: d.capabilities || {},
       userDescription: d.userDescription || '',
-      avatarUrl: d.avatarUrl || ''
+      avatarUrl: d.avatarUrl || '',
+      githubLogin: d.githubLogin || ''
     } : null;
     neblinkState.peers = data.peers || [];
   } catch (e) {
@@ -77,6 +82,8 @@ export async function refreshNeblink() {
 
 // ---- Pairing flow ----
 
+// 暂时禁用，邮箱注册功能完成后重新启用
+// （已从 main.js 初始化流程中摘除调用，函数代码保留供后期邮箱注册复用）
 /** Check URL for pairing redirect from nebflow.space/connect */
 export function checkPairingRedirect() {
   const params = new URLSearchParams(window.location.search);
@@ -148,30 +155,19 @@ export function neblinkSettingsHTML() {
     </div>`;
   }
 
-  // If no device configured — show device-flow login button
-  if (!local.deviceId) {
+  // If not logged in — show a hint pointing to the avatar login entry.
+  // Login happens exclusively through the avatar (device-flow modal);
+  // there is intentionally no login button here.
+  if (!neblinkState.loggedIn) {
     const pairErr = neblinkState.pairError
       ? `<div class="neblink-error">${escapeHtml(neblinkState.pairError)}</div>` : '';
-    // Device-flow states: idle | waiting (showing user code) | success
-    const flowState = neblinkState.flowState || 'idle';
-    const userCode = neblinkState.userCode || '';
-    let flowUI = '';
-    if (flowState === 'waiting') {
-      flowUI = `
-        <div style="margin-top:14px;padding:16px;border:1px solid var(--border,#2d2d4a);border-radius:8px;background:var(--bg,#0f0f17);text-align:center">
-          <div style="font-size:13px;color:var(--text-muted,#8888aa);margin-bottom:8px">在浏览器中完成 GitHub 授权以连接此设备</div>
-          <div style="font-family:'SF Mono','Fira Code',monospace;font-size:24px;font-weight:600;color:var(--success,#4ecdc4);letter-spacing:2px;margin-bottom:8px">${escapeHtml(userCode)}</div>
-          <div style="font-size:12px;color:var(--text-muted,#8888aa)">授权码（已在新标签页打开）</div>
-          <div style="margin-top:10px;font-size:12px;color:var(--text-muted,#8888aa)" id="neblink-flow-waiting">等待授权完成...</div>
-        </div>`;
-    } else if (flowState === 'success') {
-      flowUI = `<div class="neblink-error" style="color:var(--success,#4ecdc4)">✓ 连接成功！设备已加入网络。</div>`;
-    }
     return `<div class="neblink-login-section">
-      <div class="neblink-login-hint">${t('neblink.loginHint') || '登录后，所有设备自动互相可见'}</div>
+      <div class="neblink-logged-out">
+        <img class="neblink-logged-out-logo" src="logo.svg" alt="">
+        <div class="neblink-logged-out-text">未登录，NebLink 不可用</div>
+        <div class="neblink-logged-out-hint">点击左上角头像登录</div>
+      </div>
       ${pairErr}
-      <button class="neblink-login-btn" id="neblink-device-flow-btn">${t('neblink.login') || '登录连接设备'}</button>
-      ${flowUI}
     </div>`;
   }
 
@@ -240,6 +236,7 @@ export function neblinkSettingsHTML() {
       <div class="neblink-section-label">${t('neblink.devices')}</div>
       <div class="neblink-peers-list">${deviceRows}</div>
       ${peerHint}
+      <button class="neblink-logout-btn" id="neblink-logout-btn">退出登录</button>
     </div>`;
 }
 
@@ -351,34 +348,22 @@ export function cancelDeviceFlow() {
 export function bindNeblinkEvents(rerender) {
   _rerender = rerender;
 
-  // Device-flow login button — initiates the Tailscale-style authorization
-  // flow: POST /api/neblink/device-flow/start → get userCode + verificationUri
-  // → open browser → poll /api/neblink/device-flow/poll until approved.
-  const flowBtn = document.getElementById('neblink-device-flow-btn');
-  if (flowBtn) {
-    flowBtn.addEventListener('click', async () => {
-      flowBtn.disabled = true;
-      flowBtn.textContent = '...';
-      neblinkState.pairError = '';
+  // Logout button — clears the device credential + disables NebLink via
+  // POST /api/neblink/logout, then refreshes status so the settings panel
+  // and the avatar both return to the logged-out state.
+  const logoutBtn = document.getElementById('neblink-logout-btn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+      logoutBtn.disabled = true;
+      logoutBtn.textContent = '正在退出…';
       try {
-        // Start the device flow.
-        const startData = await startDeviceFlow();
-        // Store the codes and show the waiting UI.
-        neblinkState.deviceCode = startData.deviceCode;
-        neblinkState.userCode = startData.userCode;
-        neblinkState.flowState = 'waiting';
-        // Open the verification URI in a new tab for the user to authorize.
-        if (startData.verificationUri) {
-          window.open(startData.verificationUri, '_blank');
-        }
-        rerender();
-        // Start polling.
-        pollDeviceFlow(startData.deviceCode, startData.interval || 3, startData.expiresIn || 900);
-      } catch (e) {
-        neblinkState.pairError = e.message || '网络错误';
-        neblinkState.flowState = 'idle';
-        rerender();
-      }
+        await fetch('/api/neblink/logout', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + getAuthToken() },
+        });
+      } catch (e) { /* non-critical — refresh state either way */ }
+      await fetchNeblinkStatus();
+      rerender();
     });
   }
 
