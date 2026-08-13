@@ -20,6 +20,8 @@ import scala.concurrent.duration.*
 object AgentActor extends AgentCore with AgentSession:
 
   private val MaxEmptyResponseRetries = 5
+  /** Max "you must call Mail" reminder injections before giving up (initial + retries). */
+  private val MaxMailReminders = 2
   /** Transient LLM failures (bad_record_mac, connection resets, timeouts) are
     * auto-retried this many times before the agent fails (initial + retries). */
   private val LlmFailRetryMax = 3
@@ -1518,7 +1520,8 @@ object AgentActor extends AgentCore with AgentSession:
     replyTo: Option[ActorRef[AgentEvent]],
     result: ConsumeResult
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "mail-reminder", "agent finished without Mail")
+    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
+      "mail-reminder", s"agent finished without Mail (reminder ${state.mailReminders + 1}/$MaxMailReminders)")
     val assistantContent = (result.thinking, result.text) match
       case (None, _) => Left(result.text)
       case (Some(t), "") => Right(List(ContentBlock.Thinking(t, result.thinkingSignature)))
@@ -1533,7 +1536,11 @@ object AgentActor extends AgentCore with AgentSession:
     )
     val newMessages = state.messages ++ List(assistantMsg, reminderMsg)
     val updatedState =
-      state.copy(execution = state.execution.copy(messages = newMessages, status = AgentStatus.Processing))
+      state.copy(execution = state.execution.copy(
+        messages = newMessages,
+        status = AgentStatus.Processing,
+        mailReminders = state.mailReminders + 1
+      ))
     pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, replyTo)
   end handleMissingMail
 
@@ -1608,10 +1615,14 @@ object AgentActor extends AgentCore with AgentSession:
     else if result.toolCalls.nonEmpty then
       pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
     else if result.text.nonEmpty || result.thinking.nonEmpty then
-      // Mail check: flow agents must call Mail before finishing
-      if state.expectsMail && !state.mailUsedThisTurn then
+      // Mail check: team members must call Mail before finishing.
+      // After MaxMailReminders retries, give up and finishTurn (avoid infinite loop).
+      if state.expectsMail && !state.mailUsedThisTurn && state.mailReminders < MaxMailReminders then
         handleMissingMail(agentDef, resources, depth, parentRef, state, replyTo, result)
       else
+        if state.expectsMail && !state.mailUsedThisTurn then
+          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
+            "mail-give-up", s"agent finished without Mail after $MaxMailReminders reminders")
         finishTurn(
           agentDef,
           resources,

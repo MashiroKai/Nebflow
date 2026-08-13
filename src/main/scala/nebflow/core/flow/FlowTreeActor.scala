@@ -671,7 +671,8 @@ object FlowTreeActor:
                   sessionName = Some(session.name),
                   projectRoot = Some(cfg.projectRoot),
                   safetyMode = safetyMode,
-                  rootSessionId = rootSid
+                  rootSessionId = rootSid,
+                  expectsMail = agentDef.name != "Manager"
                 ),
                 s"resume-${session.id.take(8)}"
               )
