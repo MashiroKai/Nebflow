@@ -149,6 +149,10 @@ class NeblinkService private (
 
   def peers: IO[List[PeerInfo]] = peersRef.get.map(_.values.toList)
 
+  /** Clear all peers (used on logout). Triggers peer-change callbacks. */
+  def clearPeers: IO[Unit] =
+    peersRef.set(Map.empty) *> notifyPeersChanged
+
   /** Apply any persisted description override to a peer. */
   private def applyDescOverride(peer: PeerInfo): IO[PeerInfo] =
     peerDescRef.get.map { descs =>
