@@ -380,6 +380,10 @@ class RestApiRoutes(
           cfg <- ms.neblinkConfig
           // Logged in = device credential exists AND NebLink is enabled.
           loggedIn = cred.isDefined && cfg.enabled
+          // P1-2: accurate per-peer connectivity. serverOnline (heartbeat) alone
+          // doesn't mean the peer is reachable — cross-network peers need relay.
+          directOnline = (deviceId: String) => ms.presenceServiceOpt.exists(_.isConnected(deviceId))
+          relayAvailable = ms.relayTunnelOpt.exists(_.isAlive)
           r <- Ok(
             Json.obj(
               "loggedIn" -> loggedIn.asJson,
@@ -401,7 +405,10 @@ class RestApiRoutes(
                     "address" -> p.address.asJson,
                     "capabilities" -> p.capabilities.asJson,
                     "userDescription" -> p.userDescription.asJson,
-                    "lastSeen" -> p.lastSeen.asJson
+                    "lastSeen" -> p.lastSeen.asJson,
+                    "online" -> true.asJson, // server heartbeat: device is registered
+                    "directOnline" -> directOnline(p.deviceId).asJson, // P2P WS reachable
+                    "relayAvailable" -> relayAvailable.asJson // our relay tunnel is up
                   )
                 )
                 .asJson
@@ -409,57 +416,6 @@ class RestApiRoutes(
           )
         yield r
       }
-
-    // Handshake — called by a discovered peer to establish trust and exchange device secrets.
-    // Trust check: peer IP list (primary) or device-ID network membership (fallback).
-    case req @ POST -> Root / "neblink" / "handshake" =>
-      neblinkService match
-        case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
-        case Some(ms) =>
-          val callerIp = req.remoteAddr.fold("")(a => a.toString)
-          // Bearer format: deviceId:callerDeviceSecret (header-only, no body needed)
-          val bearer = req.headers
-            .get[Authorization]
-            .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
-              t
-            }
-            .getOrElse("")
-          val parts = bearer.split(":", 2)
-          if parts.length != 2 || parts(0).isEmpty then
-            Forbidden(Json.obj("error" -> "Invalid peer auth format".asJson))
-          else
-            val callerSecret = parts(1)
-            req.as[Json].flatMap { body =>
-              val hc = body.hcursor
-              val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-              val deviceName = hc.downField("deviceName").as[String].getOrElse("Unknown")
-              val platform = hc.downField("platform").as[String].getOrElse("")
-              val port = hc.downField("port").as[Int].getOrElse(8080)
-              // Trust: IP list (primary) or device-ID network membership (fallback).
-              isKnownNetworkDevice(ms, deviceId, callerIp).flatMap { known =>
-                if deviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
-                else if !ms.isTrustedPeer(callerIp) && !known then
-                  Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
-                else
-                  ms.handleHandshake(deviceId, deviceName, platform, callerIp, port, callerSecret)
-                    .flatMap { _ =>
-                      ms.identity
-                        .map { id =>
-                          Json.obj(
-                            "deviceId" -> id.deviceId.asJson,
-                            "deviceName" -> id.deviceName.asJson,
-                            "platform" -> id.platform.asJson,
-                            "deviceSecret" -> id.deviceSecret.asJson
-                          )
-                        }
-                        .flatMap(Ok(_))
-                    }
-                    .handleErrorWith { e =>
-                      Forbidden(Json.obj("error" -> e.getMessage.asJson))
-                    }
-              }
-            }
-          end if
 
     // Update neblink config (e.g. syncIntervalSec)
     case req @ PATCH -> Root / "neblink" / "config" =>
@@ -691,13 +647,6 @@ class RestApiRoutes(
     // File sync endpoints (fingerprints, file GET/PUT) — removed
 
     // Peer notification — lightweight ping to trigger immediate sync
-    case req @ POST -> Root / "neblink" / "notify" =>
-      verifyPeerAccess(req).flatMap {
-        case Left(resp) => IO.pure(resp)
-        case Right(ms) =>
-          Ok(Json.obj("ok" -> true.asJson))
-      }
-
     case req @ POST -> Root / "neblink" / "remote-exec" =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
@@ -710,22 +659,32 @@ class RestApiRoutes(
             val params = PathUtil.expandPathParams(
               hc.downField("params").as[io.circe.JsonObject].getOrElse(io.circe.JsonObject.empty)
             )
-            val toolOpt = nebflow.core.tools.ToolRegistry.TOOL_MAP.get(action)
-            toolOpt match
-              case Some(tool) =>
-                val projectRoot = hc.downField("projectRoot").as[String].getOrElse(System.getProperty("user.dir", "."))
-                val ctx = nebflow.core.tools.ToolContext(
-                  projectRoot = projectRoot,
-                  isRemoteExec = true
-                )
-                tool.call(params, ctx).attempt.flatMap {
-                  case Right(Right(result)) => Ok(Json.obj("output" -> result.asJson))
-                  case Right(Left(err)) => Ok(Json.obj("error" -> err.message.asJson, "output" -> "".asJson))
-                  case Left(e) =>
-                    Ok(Json.obj("error" -> s"Tool execution failed: ${e.getMessage}".asJson, "output" -> "".asJson))
+            val projectRoot = hc.downField("projectRoot").as[String].getOrElse(System.getProperty("user.dir", "."))
+
+            // Extended actions (FileTransfer, Notify, RemoteUpdate) share handlers
+            // with the relay tunnel so P2P and relay paths behave identically.
+            action match
+              case "FileTransfer" =>
+                nebflow.neblink.FileTransferAction.handle(params).flatMap {
+                  case Right(json) => Ok(Json.obj("output" -> json.noSpaces.asJson))
+                  case Left(err)   => Ok(Json.obj("error" -> err.asJson, "output" -> "".asJson))
                 }
-              case None =>
-                BadRequest(Json.obj("error" -> s"Unknown tool: $action".asJson))
+              case _ =>
+                val toolOpt = nebflow.core.tools.ToolRegistry.TOOL_MAP.get(action)
+                toolOpt match
+                  case Some(tool) =>
+                    val ctx = nebflow.core.tools.ToolContext(
+                      projectRoot = projectRoot,
+                      isRemoteExec = true
+                    )
+                    tool.call(params, ctx).attempt.flatMap {
+                      case Right(Right(result)) => Ok(Json.obj("output" -> result.asJson))
+                      case Right(Left(err))     => Ok(Json.obj("error" -> err.message.asJson, "output" -> "".asJson))
+                      case Left(e) =>
+                        Ok(Json.obj("error" -> s"Tool execution failed: ${e.getMessage}".asJson, "output" -> "".asJson))
+                    }
+                  case None =>
+                    BadRequest(Json.obj("error" -> s"Unknown tool: $action".asJson))
             end match
           }
       }
@@ -739,43 +698,19 @@ class RestApiRoutes(
         case Right(_) =>
           req.as[Json].flatMap { body =>
             val beta = body.hcursor.downField("beta").as[Boolean].getOrElse(false)
-            val isWindows = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
-            val script =
-              if beta then
-                if isWindows then
-                  """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
-                else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
-              else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
-              else "curl -fsSL https://nebflow.space/install.sh | sh"
-
             logger.info(s"[neblink] Remote update requested (beta=$beta), running install script...") *>
-              IO.blocking {
-                import sys.process.*
-                val exitCode = script.!
-                exitCode
-              }.flatMap { exitCode =>
-                if exitCode == 0 then
+              nebflow.neblink.RemoteUpdateAction.runInstallScript(beta).flatMap {
+                case Right(msg) =>
                   logger.info("[neblink] Install succeeded, spawning restart helper and shutting down...") *>
                     IO.blocking(nebflow.core.RestartHelper.spawnRestart()) *>
-                    // Schedule JVM exit after 1 second (allows HTTP response to be sent)
                     IO.delay {
                       sharedResources.dispatcher.unsafeRunAndForget(
                         IO.sleep(1.second) *> IO(System.exit(0))
                       )
                     } *>
-                    Ok(
-                      Json.obj(
-                        "ok" -> true.asJson,
-                        "message" -> "Update installed, restarting...".asJson
-                      )
-                    )
-                else
-                  Ok(
-                    Json.obj(
-                      "ok" -> false.asJson,
-                      "error" -> s"Install script failed (exit code: $exitCode)".asJson
-                    )
-                  )
+                    Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+                case Left(err) =>
+                  Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
               }
           }
       }
@@ -855,7 +790,71 @@ class RestApiRoutes(
                   Response[IO](status).withEntity(Json.obj("error" -> err.asJson)).pure[IO]
               }
       }
+
+    // Gateway-mediated remote update: CLI sends this, gateway does P2P first then relay
+    case req @ POST -> Root / "neblink" / "remote-update" =>
+      withAuth(req) {
+        neblinkService match
+          case None => Ok(Json.obj("success" -> false.asJson, "error" -> "NebLink not enabled".asJson))
+          case Some(ns) =>
+            req.as[Json].flatMap { body =>
+              val targetDevice = body.hcursor.downField("device").as[String].getOrElse("")
+              val beta = body.hcursor.downField("beta").as[Boolean].getOrElse(false)
+              doRemoteUpdate(ns, targetDevice, beta).flatMap {
+                case Right(msg) => Ok(Json.obj("success" -> true.asJson, "message" -> msg.asJson))
+                case Left(err)  => Ok(Json.obj("success" -> false.asJson, "error" -> err.asJson))
+              }
+            }
+      }
+
   }
+
+  /** Shared remote-update logic: P2P HTTP first, relay fallback. Used by REST + WS handlers. */
+  private def doRemoteUpdate(
+    ns: nebflow.neblink.NeblinkService,
+    targetDevice: String,
+    beta: Boolean
+  ): IO[Either[String, String]] =
+    ns.peers.flatMap { peers =>
+      peers.find(p =>
+        p.deviceName.equalsIgnoreCase(targetDevice) ||
+        p.deviceName.toLowerCase.contains(targetDevice.toLowerCase)
+      ) match
+        case None => IO.pure(Left(s"Device '$targetDevice' not found"))
+        case Some(peer) =>
+          if peer.address.isEmpty then IO.pure(Left(s"Device '$targetDevice' has no address"))
+          else
+            logger.info(s"Remote update via P2P: ${peer.deviceName} at ${peer.address} (beta=$beta)") *>
+              IO.blocking {
+                import sttp.client4.*
+                val body = Json.obj("beta" -> beta.asJson).noSpaces
+                val resp = basicRequest
+                  .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/update"))
+                  .contentType("application/json")
+                  .body(body)
+                  .readTimeout(180.seconds)
+                  .response(asStringAlways)
+                  .send(ns.httpBackend)
+                resp
+              }.flatMap { resp =>
+                if resp.code.isSuccess then IO.pure(Right("Update installed, device is restarting..."))
+                else relayUpdateFallback(ns, peer, beta, s"P2P HTTP ${resp.code}")
+              }.handleErrorWith { e =>
+                relayUpdateFallback(ns, peer, beta, s"P2P unreachable: ${e.getMessage}")
+              }
+    }
+
+  private def relayUpdateFallback(
+    ns: nebflow.neblink.NeblinkService,
+    peer: nebflow.neblink.PeerInfo,
+    beta: Boolean,
+    p2pError: String
+  ): IO[Either[String, String]] =
+    ns.relayClientOpt match
+      case Some(client) =>
+        logger.info(s"P2P update failed ($p2pError), trying relay to ${peer.deviceName}") *>
+          client.relayUpdate(peer.deviceId, beta)
+      case None => IO.pure(Left(p2pError))
 
   // ===== WebSocket Presence Server Endpoint =====
 

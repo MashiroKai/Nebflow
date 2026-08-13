@@ -221,17 +221,32 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
       }
     yield result
 
-  /** Send heartbeat and get updated peer list. Requires prior login. */
+  /**
+   * Send heartbeat and get updated peer list. Requires prior login.
+   *
+   * Re-detects local endpoints on every heartbeat so the server sees our current
+   * IP — after a network change (e.g. laptop moved to a different Wi-Fi), the
+   * server's stored address becomes stale and peers can't reach us via P2P.
+   * Including endpoints in the body lets the server update our address even
+   * when it doesn't change (idempotent).
+   */
   def heartbeat: IO[Either[String, List[NeblinkPeerInfo]]] =
     sessionToken match
       case None => IO.pure(Left("Not logged in"))
       case Some(token) =>
-        sendRequest("POST", s"${config.url}/api/device/heartbeat", "", Some(token)).flatMap {
-          case Right(respBody) =>
-            decode[HeartbeatResponse](respBody) match
-              case Right(hb) => IO.pure(Right(hb.peers))
-              case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
-          case Left(err) => IO.pure(Left(err))
+        detectLocalEndpoints.flatMap { endpoints =>
+          val body = Json.obj(
+            "endpoints" -> endpoints.map { e =>
+              Json.obj("address" -> e.address.asJson, "port" -> e.port.asJson, "kind" -> e.kind.asJson)
+            }.asJson
+          ).noSpaces
+          sendRequest("POST", s"${config.url}/api/device/heartbeat", body, Some(token)).flatMap {
+            case Right(respBody) =>
+              decode[HeartbeatResponse](respBody) match
+                case Right(hb) => IO.pure(Right(hb.peers))
+                case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
+            case Left(err) => IO.pure(Left(err))
+          }
         }
 
   /**
@@ -305,6 +320,59 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
   /** Extract all peer IP addresses from NebLink Server peer list. */
   def peerAddresses(serverPeers: List[NeblinkPeerInfo]): Set[String] =
     serverPeers.flatMap(_.endpoints.map(_.address)).toSet
+
+  // ===== Relay file transfer (FileTransfer action) =====
+
+  /** Pull a file from a remote device via relay. Returns (base64 content, size). */
+  def relayTransferGet(targetDeviceId: String, path: String): IO[Either[String, (String, Long)]] =
+    val params = JsonObject("direction" -> "get".asJson, "path" -> path.asJson)
+    relayExec(targetDeviceId, "FileTransfer", params).flatMap {
+      case Right(output) =>
+        decode[Json](output) match
+          case Right(json) =>
+            val contentB64 = json.hcursor.downField("content").as[String].getOrElse("")
+            val size = json.hcursor.downField("size").as[Long].getOrElse(0L)
+            if contentB64.isEmpty then IO.pure(Left("Empty response"))
+            else IO.pure(Right((contentB64, size)))
+          case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  /** Push a file to a remote device via relay. Returns size in bytes. */
+  def relayTransferPut(
+    targetDeviceId: String,
+    path: String,
+    contentB64: String,
+    overwrite: Boolean
+  ): IO[Either[String, Long]] =
+    val params = JsonObject(
+      "direction" -> "put".asJson,
+      "path" -> path.asJson,
+      "content" -> contentB64.asJson,
+      "overwrite" -> overwrite.asJson
+    )
+    relayExec(targetDeviceId, "FileTransfer", params).flatMap {
+      case Right(output) =>
+        decode[Json](output) match
+          case Right(json) =>
+            val size = json.hcursor.downField("size").as[Long].getOrElse(0L)
+            IO.pure(Right(size))
+          case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  /** Send a notification message to a remote device via relay (Notify action). */
+  def relayNotify(targetDeviceId: String, channel: String, payload: Json): IO[Either[String, String]] =
+    val params = JsonObject(
+      "channel" -> channel.asJson,
+      "payload" -> payload
+    )
+    relayExec(targetDeviceId, "Notify", params)
+
+  /** Trigger a remote update on a device via relay (RemoteUpdate action). */
+  def relayUpdate(targetDeviceId: String, beta: Boolean): IO[Either[String, String]] =
+    val params = JsonObject("beta" -> beta.asJson)
+    relayExec(targetDeviceId, "RemoteUpdate", params)
 
   // ===== Private helpers =====
 

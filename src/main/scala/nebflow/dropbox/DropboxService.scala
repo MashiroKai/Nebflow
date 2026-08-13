@@ -9,7 +9,7 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.gateway.WsHub
-import nebflow.neblink.NeblinkService
+import nebflow.neblink.{NeblinkClient, NeblinkService}
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
@@ -89,9 +89,25 @@ final class DropboxService private (
       )
       for
         _ <- addMessage(deviceId, msg)
-        _ <- neblinkService.sendData(deviceId, "dropbox", payload)
+        _ <- sendDataOrRelay(deviceId, "dropbox", payload)
         _ <- notifyFrontend("dropbox-message", deviceId, msg.asJson)
       yield ()
+    }
+
+  /**
+   * Send a data-channel message via P2P WS; fall back to relay Notify when no
+   * direct WS connection exists (cross-network peers).
+   */
+  private def sendDataOrRelay(deviceId: String, channel: String, payload: Json): IO[Unit] =
+    neblinkService.sendData(deviceId, channel, payload).flatMap {
+      case true  => IO.unit
+      case false =>
+        neblinkService.relayClientOpt match
+          case Some(client) =>
+            client.relayNotify(deviceId, channel, payload).void
+              .handleErrorWith(e => logger.warn(s"Relay notify to $deviceId failed: ${e.getMessage}"))
+          case None =>
+            logger.warn(s"Cannot deliver dropbox message to $deviceId: no P2P WS and no relay client")
     }
 
   /** Offer a file to a peer. Generates a transferId and sends the offer. */
@@ -138,7 +154,7 @@ final class DropboxService private (
             for
               _ <- transfersRef.update(_ + (transferId -> transfer))
               _ <- addMessage(deviceId, msg)
-              _ <- neblinkService.sendData(deviceId, "dropbox", payload)
+              _ <- sendDataOrRelay(deviceId, "dropbox", payload)
               _ <- notifyFrontend("dropbox-message", deviceId, msg.asJson)
             yield ()
       }
@@ -155,14 +171,14 @@ final class DropboxService private (
             _ <- transfersRef.update(_ + (transferId -> t.copy(status = newStatus)))
             _ <- updateMessageStatus(senderDeviceId, t.msgId, newStatus)
             _ <- neblinkService.sendData(
-              senderDeviceId,
-              "dropbox",
-              Json.obj(
-                "kind" -> "file-response".asJson,
-                "transferId" -> transferId.asJson,
-                "accepted" -> accepted.asJson
-              )
-            )
+                  senderDeviceId,
+                  "dropbox",
+                  Json.obj(
+                    "kind" -> "file-response".asJson,
+                    "transferId" -> transferId.asJson,
+                    "accepted" -> accepted.asJson
+                  )
+                ).void
           yield ()
         case None => IO.unit
     yield ()
@@ -189,13 +205,13 @@ final class DropboxService private (
           _ <- IO.blocking(os.makeDir.all(tempDir))
           senderHash <- streamToFileWithHash(body, tempPath)
           _ <- updateTransferStatus(transferId, "transferring")
-          result <- sendTempToPeer(t.peerAddress, transferId, tempPath)
+          result <- sendTempToPeer(t, tempPath)
           _ <- IO.blocking(os.remove(tempPath)).handleErrorWith(_ => IO.unit)
           _ <- result match
             case Right(receiverHash) =>
               val matchResult = senderHash == receiverHash
               for
-                _ <- neblinkService.sendData(
+                _ <- sendDataOrRelay(
                   t.peerDeviceId,
                   "dropbox",
                   Json.obj(
@@ -322,7 +338,7 @@ final class DropboxService private (
       _ <- transfersRef.update(_ + (transferId -> transfer))
       _ <- addMessage(senderId, msg)
       _ <- notifyFrontend("dropbox-message", senderId, msg.asJson)
-      _ <- neblinkService.sendData(senderId, "dropbox", acceptPayload)
+      _ <- neblinkService.sendData(senderId, "dropbox", acceptPayload).void
     yield ()
 
   end handleIncomingOffer
@@ -419,8 +435,23 @@ final class DropboxService private (
   private def streamToFileWithHash(stream: Stream[IO, Byte], path: os.Path): IO[String] =
     DropboxUtil.streamToFileWithHash(stream, path)
 
-  /** Send a temp file to the peer's HTTP endpoint. Returns the peer's SHA-256 or an error. */
-  private def sendTempToPeer(peerAddress: String, transferId: String, tempPath: os.Path): IO[Either[String, String]] =
+  /**
+   * Send a temp file to the peer — P2P HTTP first, relay FileTransfer fallback.
+   * Returns the peer's SHA-256 (P2P) or the sender's own hash (relay — same content).
+   */
+  private def sendTempToPeer(t: FileTransfer, tempPath: os.Path): IO[Either[String, String]] =
+    p2pSendTempToPeer(t.peerAddress, t.transferId, tempPath).flatMap {
+      case r @ Right(_) => IO.pure(r)
+      case Left(p2pErr) =>
+        neblinkService.relayClientOpt match
+          case Some(client) =>
+            logger.info(s"P2P file transfer failed (${p2pErr.take(80)}), falling back to relay") *>
+              relaySendTempToPeer(t.peerDeviceId, t.fileName, tempPath, client)
+          case None => IO.pure(Left(p2pErr))
+    }
+
+  /** P2P HTTP push to the peer's dropbox endpoint. Returns the peer's SHA-256 or an error. */
+  private def p2pSendTempToPeer(peerAddress: String, transferId: String, tempPath: os.Path): IO[Either[String, String]] =
     IO.blocking {
       val client = HttpClient
         .newBuilder()
@@ -445,6 +476,30 @@ final class DropboxService private (
           .getOrElse(Left(s"Peer returned 200 but no sha256 in body: $body"))
       else Left(s"Peer returned HTTP $status: $body")
     }.handleErrorWith(e => IO.pure(Left(s"Transfer failed: ${e.getMessage}")))
+
+  /**
+   * Relay fallback: push the file to the peer's Downloads directory via relay
+   * FileTransfer. The receiver gets the file directly in ~/Downloads (no temp
+   * rename dance) — returns the sender's hash since content is identical.
+   */
+  private def relaySendTempToPeer(
+    peerDeviceId: String,
+    fileName: String,
+    tempPath: os.Path,
+    client: NeblinkClient
+  ): IO[Either[String, String]] =
+    for
+      hash <- DropboxUtil.hashFile(tempPath)
+      b64 <- IO.blocking(java.util.Base64.getEncoder.encodeToString(os.read.bytes(tempPath)))
+      result <- client.relayTransferPut(
+        peerDeviceId,
+        s"~/Downloads/$fileName",
+        b64,
+        overwrite = true // receiver-side naming is handled by direct overwrite
+      )
+    yield result match
+      case Right(_) => Right(hash) // same content — hash trivially matches
+      case Left(err) => Left(s"Relay file transfer failed: $err")
 
   /** Rename temp file to final name in Downloads, handling name conflicts. */
   private def commitTempFile(t: FileTransfer): IO[Unit] =

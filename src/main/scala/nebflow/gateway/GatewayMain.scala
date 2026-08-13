@@ -369,6 +369,10 @@ object GatewayMain extends IOApp.Simple:
                                                 new nebflow.neblink.NeblinkClient(nc.neblinkServer.get, cfg.port.value)
                                               )
                                             case _ => None
+                                        // Wire relay client + presence service into NeblinkService so
+                                        // TransferFileTool / DropboxService / status endpoint can use them.
+                                        neblinkService.setRelayClient(neblinkClient)
+                                        neblinkService.setPresenceService(presenceService)
                                         // Register remote executor for cross-device tool dispatch (P2P + relay fallback)
                                         RemoteExecutor.initialize(neblinkService, dispatcher, neblinkClient)
                                         // Start relay tunnel if NebLink Server is configured — maintains a
@@ -382,6 +386,7 @@ object GatewayMain extends IOApp.Simple:
                                             serverUrl,
                                             () => client.currentSessionToken
                                           )(dispatcher)
+                                          neblinkService.setRelayTunnel(relayTunnel)
                                           dispatcher.unsafeRunAndForget(relayTunnel.connect())
                                         }
                                         // Discovery service — uses NebLink Server for discovery
