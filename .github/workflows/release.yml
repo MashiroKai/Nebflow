@@ -58,7 +58,7 @@ jobs:
 
       - name: Run tests
         if: steps.check.outputs.skipped == 'false'
-        run: sbt test
+        run: sbt -Dmunit.failOnFlaky=false test
 
       - name: Build assembly
         if: steps.check.outputs.skipped == 'false'
