@@ -986,8 +986,9 @@ export function injectUserMessage(text, options = {}) {
     renderUserBubble(trimmed, []);
   }
 
-  // Save to persistence
-  saveMsg({ type: 'user', text: trimmed, injected: true });
+  // Save to persistence (plain user message — plugin-card interaction, not a
+  // tool injection, so no `injected` marker)
+  saveMsg({ type: 'user', text: trimmed });
 
   // Send via WebSocket (same format as normal send)
   const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -996,7 +997,6 @@ export function injectUserMessage(text, options = {}) {
     attachments: [],
     clientMessageId,
     sessionId,
-    injected: true,
     chatWidth: activeView.dom.chat?.clientWidth || 0
   });
 
