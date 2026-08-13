@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import io.circe.{Decoder, Encoder, Json}
+import io.circe.{Decoder, Encoder, Json, JsonObject}
 import nebflow.core.NebflowLogger
 
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
@@ -114,6 +114,9 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
     .build()
 
   @volatile private var sessionToken: Option[String] = None
+
+  /** Expose current session token for NeblinkRelayTunnel (live read on each reconnect). */
+  def currentSessionToken: Option[String] = sessionToken
 
   /** Detect local IPv4 addresses for endpoint reporting to the NebLink Server. */
   def detectLocalEndpoints: IO[List[NeblinkEndpoint]] = IO.blocking {
@@ -235,6 +238,32 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
         sendRequest("DELETE", s"${config.url}/api/device/logout", "", Some(token))
           .handleErrorWith(_ => IO.unit)
           *> IO { sessionToken = None }
+
+  /**
+   * Execute a tool on a remote device via the NebLink Server relay tunnel.
+   * Used as fallback when P2P direct connection is unreachable (cross-network).
+   * The request goes: this device -> Server -> target device's WS tunnel.
+   */
+  def relayExec(targetDeviceId: String, action: String, params: JsonObject): IO[Either[String, String]] =
+    sessionToken match
+      case None => IO.pure(Left("Not logged in"))
+      case Some(token) =>
+        val body = Json.obj(
+          "action" -> action.asJson,
+          "params" -> params.asJson,
+          "projectRoot" -> System.getProperty("user.dir", ".").asJson
+        ).noSpaces
+        sendRequest("POST", s"${config.url}/api/relay/$targetDeviceId/exec", body, Some(token)).flatMap {
+          case Right(respBody) =>
+            decode[Json](respBody) match
+              case Right(json) =>
+                val output = json.hcursor.downField("output").as[String].getOrElse("")
+                val error = json.hcursor.downField("error").as[String].getOrElse("")
+                if error.nonEmpty then IO.pure(Left(error))
+                else IO.pure(Right(output))
+              case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
+          case Left(err) => IO.pure(Left(err))
+        }
 
   /** Convert NebLink Server peers to neblink PeerInfo. Picks first endpoint as address. */
   def toNeblinkPeers(serverPeers: List[NeblinkPeerInfo]): List[PeerInfo] =

@@ -356,8 +356,6 @@ object GatewayMain extends IOApp.Simple:
 
                                     bridgeSetup.flatMap { bridgeManager =>
                                       neblinkServiceF.flatMap { neblinkService =>
-                                        // Register remote executor for cross-device tool dispatch (P2P only)
-                                        RemoteExecutor.initialize(neblinkService, dispatcher)
                                         // Presence WS service — maintains real-time online/offline via persistent WebSocket connections
                                         val presenceService =
                                           new nebflow.neblink.NeblinkPresenceService(neblinkService, cfg.port.value)(
@@ -371,6 +369,21 @@ object GatewayMain extends IOApp.Simple:
                                                 new nebflow.neblink.NeblinkClient(nc.neblinkServer.get, cfg.port.value)
                                               )
                                             case _ => None
+                                        // Register remote executor for cross-device tool dispatch (P2P + relay fallback)
+                                        RemoteExecutor.initialize(neblinkService, dispatcher, neblinkClient)
+                                        // Start relay tunnel if NebLink Server is configured — maintains a
+                                        // persistent WS to the server so cross-network relay-exec requests
+                                        // can reach this device.
+                                        neblinkClient.foreach { client =>
+                                          val serverUrl =
+                                            neblinkService.neblinkConfig.unsafeRunSync().neblinkServer.get.url
+                                          val relayTunnel = new nebflow.neblink.NeblinkRelayTunnel(
+                                            neblinkService,
+                                            serverUrl,
+                                            () => client.currentSessionToken
+                                          )(dispatcher)
+                                          dispatcher.unsafeRunAndForget(relayTunnel.connect())
+                                        }
                                         // Discovery service — uses NebLink Server for discovery
                                         val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
                                           neblinkService,
