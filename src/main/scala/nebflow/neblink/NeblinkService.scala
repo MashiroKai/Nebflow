@@ -91,7 +91,8 @@ class NeblinkService private (
   def updateDeviceInfo(
     capabilities: Option[Map[String, String]] = None,
     userDescription: Option[String] = None,
-    avatarUrl: Option[String] = None
+    avatarUrl: Option[String] = None,
+    githubLogin: Option[String] = None
   ): IO[Unit] =
     for
       updated <- identityRef.modify { id =>
@@ -102,7 +103,10 @@ class NeblinkService private (
           // string clears it, None leaves it untouched.
           avatarUrl = avatarUrl match
             case Some(url) => Some(url).filter(_.nonEmpty)
-            case None => id.avatarUrl
+            case None => id.avatarUrl,
+          githubLogin = githubLogin match
+            case Some(login) => Some(login).filter(_.nonEmpty)
+            case None => id.githubLogin
         )
         (newId, newId)
       }

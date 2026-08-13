@@ -19,7 +19,8 @@ case class DeviceIdentity(
   deviceSecret: String = "",
   capabilities: Map[String, String] = Map.empty,
   userDescription: String = "",
-  avatarUrl: Option[String] = None
+  avatarUrl: Option[String] = None,
+  githubLogin: Option[String] = None
 )
 
 object DeviceIdentity:
