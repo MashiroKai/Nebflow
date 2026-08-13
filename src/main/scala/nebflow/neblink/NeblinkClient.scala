@@ -159,6 +159,8 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
                 "networkId" -> config.networkId.asJson,
                 "deviceId" -> deviceId.asJson,
                 "deviceToken" -> token.asJson,
+                "deviceName" -> deviceName.asJson,
+                "platform" -> platform.asJson,
                 "endpoints" -> endpointJson.asJson
               )
               .noSpaces
