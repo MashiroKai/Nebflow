@@ -260,7 +260,18 @@ class NeblinkService private (
 
   // ===== Shared HTTP backend (used by RemoteExecutor for P2P tool calls) =====
 
-  private[nebflow] lazy val httpBackend = DefaultSyncBackend()
+  /**
+   * P2P HTTP backend with a short 3s connect timeout (P0-1): unreachable peers
+   * fail fast instead of stalling 15s+ per attempt, so the relay fallback kicks
+   * in quickly. Read timeout is still controlled per-request via .readTimeout().
+   */
+  private[nebflow] lazy val httpBackend: sttp.client4.SyncBackend =
+    sttp.client4.httpclient.HttpClientSyncBackend.usingClient(
+      java.net.http.HttpClient
+        .newBuilder()
+        .connectTimeout(java.time.Duration.ofSeconds(3))
+        .build()
+    )
 
   // ===== Data Channel =====
 

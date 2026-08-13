@@ -24,8 +24,25 @@ object PathUtil:
       (s.length >= 2 && s.charAt(1) == ':') // Windows drive (C:\...)
 
   /**
+   * Normalize path separators for the current OS.
+   * On Windows (`\\` separator), forward slashes are converted to backslashes.
+   * On Unix (`/` separator), this is a no-op.
+   *
+   * This prevents mixed-separator paths (e.g. `C:\Users\Kai/Desktop`) that
+   * os-lib rejects when parsing path segments — see BUG 1 & 2.
+   */
+  def normalizeSeparators(s: String): String =
+    val sep = java.io.File.separatorChar
+    if sep == '\\' then s.replace('/', '\\')
+    else s
+
+  /**
    * Expand a leading `~` (or `~/`) to the JVM's `user.home`.
    * Leaves all other strings unchanged. Idempotent.
+   *
+   * After expansion, separators are normalized for the current OS so that
+   * `~/Desktop` on Windows produces `C:\Users\Kai\Desktop` (all backslashes),
+   * not `C:\Users\Kai/Desktop` (mixed separators that os-lib rejects).
    *
    * For remote-exec, this MUST run on the *receiving* device so `~` resolves
    * to the remote user's home (e.g. `C:\Users\kai` on Windows), not the
@@ -33,24 +50,32 @@ object PathUtil:
    */
   def expandTilde(s: String): String =
     val home = sys.props.getOrElse("user.home", "~")
-    if s == "~" then home
-    else if s.startsWith("~/") then home + s.substring(1)
-    else s
+    val expanded =
+      if s == "~" then home
+      else if s.startsWith("~/") then home + s.substring(1)
+      else s
+    normalizeSeparators(expanded)
 
   /**
-   * Expand leading `~` in known path params of a tool-call JsonObject.
+   * Expand leading `~` and normalize separators in known path params of a
+   * tool-call JsonObject.
+   *
    * Used by remote-exec receivers (P2P direct + relay) so path-bearing tools
-   * (Read/Write/Edit/Glob/Grep) accept `~` relative to the receiving device.
+   * (Read/Write/Edit/Glob/Grep) accept `~` relative to the receiving device,
+   * and so Windows-style paths with forward slashes (e.g. `C:/Users/dev/x`)
+   * are normalized to the OS-native separator.
    *
    * Bash is excluded — its shell expands `~` natively, and rewriting inside
    * `command` strings would be unsafe.
    */
   def expandPathParams(params: JsonObject): JsonObject =
-    def expandKey(obj: JsonObject, key: String): JsonObject =
+    def normalizeKey(obj: JsonObject, key: String): JsonObject =
       obj(key).flatMap(_.asString) match
-        case Some(s) if s.startsWith("~") => obj.add(key, expandTilde(s).asJson)
-        case _ => obj
-    Set("file_path", "path").foldLeft(params)(expandKey)
+        case Some(s) =>
+          val expanded = if s.startsWith("~") then expandTilde(s) else normalizeSeparators(s)
+          obj.add(key, expanded.asJson)
+        case None => obj
+    Set("file_path", "path").foldLeft(params)(normalizeKey)
 
   /** Construct an os.Path from a string, handling Windows cross-drive paths. */
   def resolvePath(s: String): Path =
