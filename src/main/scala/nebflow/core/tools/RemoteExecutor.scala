@@ -10,7 +10,9 @@ import nebflow.core.NebflowLogger
 import nebflow.neblink.{NeblinkClient, NeblinkService, PeerInfo}
 import sttp.client4.*
 
+import java.net.NetworkInterface
 import scala.concurrent.duration.*
+import scala.jdk.CollectionConverters.*
 
 /**
  * Executes tool calls on remote devices via direct P2P over NebLink.
@@ -36,6 +38,32 @@ class RemoteExecutor(
 
   /** Timeout for background remote calls — the HTTP call waits up to this long. */
   private val BgTimeout = 3600.seconds
+
+  // ---- P0-3: Path memory — remember last successful transport per device ----
+
+  /** Map: deviceId → (method, timestamp). TTL-locked to avoid stale relay bias. */
+  @volatile private var lastSuccessPath: Map[String, (String, Long)] = Map.empty
+  private val PathMemoryTtlMs = 5.minutes.toMillis
+
+  /** Read cached transport method if fresh, else None (and clean up expired entry). */
+  private def getPathMemory(deviceId: String): Option[String] =
+    lastSuccessPath.get(deviceId) match
+      case Some((method, ts)) if System.currentTimeMillis() - ts < PathMemoryTtlMs => Some(method)
+      case Some(_) =>
+        lastSuccessPath = lastSuccessPath.removed(deviceId)
+        None
+      case None => None
+
+  private def recordPathMemory(deviceId: String, method: String): IO[Unit] = IO {
+    lastSuccessPath = lastSuccessPath.updated(deviceId, (method, System.currentTimeMillis()))
+  }
+
+  private def clearPathMemory(deviceId: String): IO[Unit] = IO {
+    lastSuccessPath = lastSuccessPath.removed(deviceId)
+  }
+
+  /** Read-only tools safe for parallel P2P + Relay racing (no side effects on cancellation). */
+  private val ReadOnlyTools = Set("Read", "Glob", "Grep")
 
   /** Expose NeblinkService for system prompt generation (device list). */
   def neblinkServiceOpt: Option[NeblinkService] = Some(neblinkService)
@@ -417,11 +445,19 @@ class RemoteExecutor(
     isTransientError(err) || isTrustRejection(err)
 
   /**
-   * Best-path execution: try P2P first; if the direct path is unavailable —
-   * either a connection error or an HTTP 403 trust rejection — fall back to
-   * the relay via the NebLink Server (which authenticates with a token,
-   * bypassing IP trust). A timeout means the command is already running on the
-   * remote device, just slow — do NOT relay-retry.
+   * Best-path execution with performance optimizations:
+   *
+   * 1. **P0-3 Path memory**: if relay was the last successful transport for this
+   *    device (within 5 min TTL), skip P2P entirely.
+   * 2. **P0-2 Subnet check**: if the peer's IP is not in the same /24 subnet as
+   *    any local IP, P2P is impossible — skip to relay.
+   * 3. **P1 Parallel race** (read-only tools only): send P2P and Relay concurrently,
+   *    use whichever responds first. Safe because read-only tools have no side
+   *    effects on cancellation.
+   * 4. **Serial fallback** (write tools): P2P first, then Relay on failure.
+   *
+   * BUG 4 fix: relay fallback includes a cold-start retry (500ms delay + 2nd attempt)
+   * to handle WS tunnel reconnection latency.
    */
   private def executeViaBestPath(
     peer: PeerInfo,
@@ -429,20 +465,159 @@ class RemoteExecutor(
     params: JsonObject,
     timeout: FiniteDuration
   ): IO[Either[ToolError, String]] =
-    p2pExecuteWithRetry(peer, toolName, params, timeout).flatMap {
-      case Right(result) => IO.pure(Right(result))
-      case Left(err) if shouldRelayFallback(err) =>
-        relayClient match
-          case None => IO.pure(Left(err))
-          case Some(client) =>
-            logger.info(s"P2P unavailable for ${peer.deviceName} (${err.message.take(80)}), falling back to relay") *>
-              client.relayExec(peer.deviceId, toolName, params).map {
-                case Right(output) => Right(output)
-                case Left(relayErr) =>
-                  Left(ToolError(s"P2P failed: ${err.message}; Relay also failed: $relayErr"))
+    relayClient match
+      case None =>
+        // No relay available — P2P only
+        p2pExecuteWithRetry(peer, toolName, params, timeout).flatMap {
+          case r @ Right(_) => recordPathMemory(peer.deviceId, "p2p").as(r)
+          case l @ Left(_)  => IO.pure(l)
+        }
+
+      case Some(client) =>
+        // P0-3: check path memory — skip P2P if relay was last success
+        val memoryOpt = getPathMemory(peer.deviceId)
+
+        for
+          // P0-2: subnet check — skip P2P if not same /24 subnet
+          sameSubnet <- isSameSubnet(peer.address)
+          skipP2p = memoryOpt.contains("relay") || !sameSubnet
+
+          result <-
+            if skipP2p then
+              // Relay only — with cold-start retry for tunnel reconnection latency
+              relayWithColdStartRetry(client, peer, toolName, params).flatMap {
+                case Right(output) => recordPathMemory(peer.deviceId, "relay").as(Right(output))
+                case Left(err)     => clearPathMemory(peer.deviceId).as(Left(ToolError(s"Relay failed: $err")))
               }
-      case Left(err) => IO.pure(Left(err))
+            else if ReadOnlyTools.contains(toolName) then
+              // P1: parallel race for read-only tools (safe cancellation)
+              raceP2PAndRelay(peer, toolName, params, timeout, client)
+            else
+              // Write tools: serial P2P → relay fallback
+              p2pExecuteWithRetry(peer, toolName, params, timeout).flatMap {
+                case Right(output) => recordPathMemory(peer.deviceId, "p2p").as(Right(output))
+                case Left(err) if shouldRelayFallback(err) =>
+                  logger.info(
+                    s"P2P unavailable for ${peer.deviceName} (${err.message.take(80)}), falling back to relay"
+                  ) *>
+                    relayWithColdStartRetry(client, peer, toolName, params).flatMap {
+                      case Right(output) => recordPathMemory(peer.deviceId, "relay").as(Right(output))
+                      case Left(relayErr) =>
+                        IO.pure(Left(ToolError(s"P2P failed: ${err.message}; Relay also failed: $relayErr")))
+                    }
+                case Left(err) => IO.pure(Left(err))
+              }
+        yield result
+  end executeViaBestPath
+
+  // ---- P0-2: Subnet detection ----
+
+  /**
+   * Check whether the peer's IP is in the same /24 subnet as any local IPv4 address.
+   * Returns `false` on any parse error (conservative: skip P2P on uncertain ground).
+   */
+  private def isSameSubnet(peerAddress: String): IO[Boolean] = IO.blocking {
+    try
+      // Extract IP from URL like "http://192.168.1.145:8080"
+      val ip = peerAddress
+        .stripPrefix("http://")
+        .stripPrefix("https://")
+        .split(":")(0)
+        .split("/")(0)
+      val peerOctets = ip.split("\\.")
+      if peerOctets.length != 4 then false
+      else
+        val localIps = NetworkInterface.getNetworkInterfaces.asScala.toList
+          .filter(_.isUp)
+          .filterNot(_.isLoopback)
+          .flatMap(_.getInetAddresses.asScala)
+          .filter(_.isInstanceOf[java.net.Inet4Address])
+          .map(_.getHostAddress)
+
+        localIps.exists { localIp =>
+          val localOctets = localIp.split("\\.")
+          localOctets.length == 4 &&
+          localOctets(0) == peerOctets(0) &&
+          localOctets(1) == peerOctets(1) &&
+          localOctets(2) == peerOctets(2)
+        }
+    catch case _: Exception => false
+  }
+
+  // ---- BUG 4: Relay cold-start retry ----
+
+  /**
+   * Relay execution with a single cold-start retry.
+   *
+   * After a relay tunnel reconnects, the first relay_request may time out because
+   * the server's routing table hasn't registered the new WS connection yet.
+   * A short 500ms delay + second attempt covers this window.
+   */
+  private def relayWithColdStartRetry(
+    client: NeblinkClient,
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject
+  ): IO[Either[String, String]] =
+    client.relayExec(peer.deviceId, toolName, params).flatMap {
+      case Right(output) => IO.pure(Right(output))
+      case Left(err)     =>
+        // Cold start retry — relay tunnel might have just reconnected
+        IO.sleep(500.millis) *> client.relayExec(peer.deviceId, toolName, params).map {
+          case Right(output)   => Right(output)
+          case Left(err2)      => Left(s"$err; $err2 (2 attempts)")
+        }
     }
+
+  // ---- P1: Parallel race for read-only tools ----
+
+  /**
+   * Race P2P and Relay concurrently for read-only tools. Whichever responds first
+   * with a success wins; the loser fiber is cancelled. If the first to finish
+   * fails, we wait for the second.
+   *
+   * Only safe for read-only tools (Read/Glob/Grep) because cancelling a write
+   * tool mid-execution could leave the remote filesystem in an inconsistent state.
+   */
+  private def raceP2PAndRelay(
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject,
+    timeout: FiniteDuration,
+    client: NeblinkClient
+  ): IO[Either[ToolError, String]] =
+    val p2pIO: IO[Either[ToolError, String]] = p2pExecuteWithRetry(peer, toolName, params, timeout)
+    val relayIO: IO[Either[ToolError, String]] =
+      client.relayExec(peer.deviceId, toolName, params).map {
+        case Right(output) => Right(output)
+        case Left(err)     => Left(ToolError(s"Relay failed: $err"))
+      }
+
+    for
+      p2pFiber   <- p2pIO.start
+      relayFiber <- relayIO.start
+      // Race to see which fiber finishes first (success or failure).
+      // IO.race cancels the losing *join* IO but NOT the underlying fiber.
+      raceResult <- IO.race(p2pFiber.joinWithNever, relayFiber.joinWithNever)
+      result <- raceResult match
+        case Left(r @ Right(_)) =>
+          // P2P won with success — cancel relay fiber, record memory
+          relayFiber.cancel *> recordPathMemory(peer.deviceId, "p2p").as(r)
+        case Left(Left(_)) =>
+          // P2P failed first — wait for relay
+          relayFiber.joinWithNever.flatMap(r =>
+            recordPathMemory(peer.deviceId, if r.isRight then "relay" else "p2p").as(r)
+          )
+        case Right(r @ Right(_)) =>
+          // Relay won with success — cancel P2P fiber, record memory
+          p2pFiber.cancel *> recordPathMemory(peer.deviceId, "relay").as(r)
+        case Right(Left(_)) =>
+          // Relay failed first — wait for P2P
+          p2pFiber.joinWithNever.flatMap(r =>
+            recordPathMemory(peer.deviceId, if r.isRight then "p2p" else "relay").as(r)
+          )
+    yield result
+  end raceP2PAndRelay
 
   // ---- Helpers ----
 

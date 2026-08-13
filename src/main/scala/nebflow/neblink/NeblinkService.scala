@@ -53,6 +53,24 @@ class NeblinkService private (
   /** IPs of peers discovered via NebLink Server. Trusted for incoming connections. */
   @volatile private var trustedPeerIps: Set[String] = Set.empty
 
+  /** NebLink client (relay) — set by GatewayMain at startup so services can use relay fallback. */
+  @volatile private var _relayClient: Option[NeblinkClient] = None
+
+  /** Relay tunnel — set by GatewayMain so status endpoint can report relay availability. */
+  @volatile private var _relayTunnel: Option[NeblinkRelayTunnel] = None
+
+  /** Presence service — set by GatewayMain so status endpoint can check direct WS connections. */
+  @volatile private var _presenceService: Option[NeblinkPresenceService] = None
+
+  def setRelayClient(client: Option[NeblinkClient]): Unit = _relayClient = client
+  def relayClientOpt: Option[NeblinkClient] = _relayClient
+
+  def setRelayTunnel(tunnel: NeblinkRelayTunnel): Unit = _relayTunnel = Some(tunnel)
+  def relayTunnelOpt: Option[NeblinkRelayTunnel] = _relayTunnel
+
+  def setPresenceService(ps: NeblinkPresenceService): Unit = _presenceService = Some(ps)
+  def presenceServiceOpt: Option[NeblinkPresenceService] = _presenceService
+
   /** Update trusted peer IPs (from NebLink Server discovery). */
   def updateTrustedIps(ips: Set[String]): IO[Unit] = IO { trustedPeerIps = ips }
 
@@ -260,7 +278,18 @@ class NeblinkService private (
 
   // ===== Shared HTTP backend (used by RemoteExecutor for P2P tool calls) =====
 
-  private[nebflow] lazy val httpBackend = DefaultSyncBackend()
+  /**
+   * P2P HTTP backend with a short 3s connect timeout (P0-1): unreachable peers
+   * fail fast instead of stalling 15s+ per attempt, so the relay fallback kicks
+   * in quickly. Read timeout is still controlled per-request via .readTimeout().
+   */
+  private[nebflow] lazy val httpBackend: sttp.client4.SyncBackend =
+    sttp.client4.httpclient.HttpClientSyncBackend.usingClient(
+      java.net.http.HttpClient
+        .newBuilder()
+        .connectTimeout(java.time.Duration.ofSeconds(3))
+        .build()
+    )
 
   // ===== Data Channel =====
 
@@ -280,18 +309,18 @@ class NeblinkService private (
 
   /**
    * Send function for outgoing WS data messages. Set by GatewayMain after
-   * NeblinkPresenceService is created. Default is a no-op so callers are safe
-   * before wiring is complete.
+   * NeblinkPresenceService is created. Default returns false (no connection).
+   * Returns true if the message was sent over an active WS connection.
    */
-  private val sendDataFnRef: Ref[IO, (String, String, Json) => IO[Unit]] =
-    Ref.unsafe[IO, (String, String, Json) => IO[Unit]]((_, _, _) => IO.unit)
+  private val sendDataFnRef: Ref[IO, (String, String, Json) => IO[Boolean]] =
+    Ref.unsafe[IO, (String, String, Json) => IO[Boolean]]((_, _, _) => IO.pure(false))
 
   /** Wire the send function (called once at startup by GatewayMain). */
-  def setSendDataFn(fn: (String, String, Json) => IO[Unit]): IO[Unit] =
+  def setSendDataFn(fn: (String, String, Json) => IO[Boolean]): IO[Unit] =
     sendDataFnRef.set(fn)
 
-  /** Send a data message to a peer over the WS presence connection. */
-  def sendData(deviceId: String, channel: String, payload: Json): IO[Unit] =
+  /** Send a data message to a peer over the WS presence connection. Returns true if sent. */
+  def sendData(deviceId: String, channel: String, payload: Json): IO[Boolean] =
     sendDataFnRef.get.flatMap(_(deviceId, channel, payload))
 
   // ===== File Transfer (P2P, peer IP auth) =====
