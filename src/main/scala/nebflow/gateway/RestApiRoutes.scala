@@ -364,39 +364,44 @@ class RestApiRoutes(
         }
       }
 
-    // NebLink status — identity, peers
+    // NebLink status — identity, peers, login state
     case req @ GET -> Root / "neblink" / "status" =>
       withNeblink(req) { ms =>
-        ms.identity.flatMap { id =>
-          ms.peers.flatMap { peersList =>
-            Ok(
-              Json.obj(
-                "device" -> Json.obj(
-                  "id" -> id.deviceId.asJson,
-                  "name" -> id.deviceName.asJson,
-                  "platform" -> id.platform.asJson,
-                  "capabilities" -> id.capabilities.asJson,
-                  "userDescription" -> id.userDescription.asJson,
-                  "avatarUrl" -> id.avatarUrl.asJson,
-                  "githubLogin" -> id.githubLogin.asJson
-                ),
-                "peers" -> peersList
-                  .map(p =>
-                    Json.obj(
-                      "deviceId" -> p.deviceId.asJson,
-                      "deviceName" -> p.deviceName.asJson,
-                      "platform" -> p.platform.asJson,
-                      "address" -> p.address.asJson,
-                      "capabilities" -> p.capabilities.asJson,
-                      "userDescription" -> p.userDescription.asJson,
-                      "lastSeen" -> p.lastSeen.asJson
-                    )
+        for
+          id <- ms.identity
+          peersList <- ms.peers
+          cred <- DeviceCredential.load
+          cfg <- ms.neblinkConfig
+          // Logged in = device credential exists AND NebLink is enabled.
+          loggedIn = cred.isDefined && cfg.enabled
+          r <- Ok(
+            Json.obj(
+              "loggedIn" -> loggedIn.asJson,
+              "device" -> Json.obj(
+                "id" -> id.deviceId.asJson,
+                "name" -> id.deviceName.asJson,
+                "platform" -> id.platform.asJson,
+                "capabilities" -> id.capabilities.asJson,
+                "userDescription" -> id.userDescription.asJson,
+                "avatarUrl" -> id.avatarUrl.asJson,
+                "githubLogin" -> id.githubLogin.asJson
+              ),
+              "peers" -> peersList
+                .map(p =>
+                  Json.obj(
+                    "deviceId" -> p.deviceId.asJson,
+                    "deviceName" -> p.deviceName.asJson,
+                    "platform" -> p.platform.asJson,
+                    "address" -> p.address.asJson,
+                    "capabilities" -> p.capabilities.asJson,
+                    "userDescription" -> p.userDescription.asJson,
+                    "lastSeen" -> p.lastSeen.asJson
                   )
-                  .asJson
-              )
+                )
+                .asJson
             )
-          }
-        }
+          )
+        yield r
       }
 
     // Handshake — called by a discovered peer to establish trust and exchange device secrets.
@@ -462,37 +467,26 @@ class RestApiRoutes(
         }
       }
 
-    // Pair device — save NebLink Server config received from nebflow.space/connect redirect
-    case req @ POST -> Root / "neblink" / "pair" =>
-      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
-      else
-        req.as[Json].flatMap { body =>
-          val serverOpt = body.hcursor.downField("server").as[Option[String]].toOption.flatten
-          val networkIdOpt = body.hcursor.downField("networkId").as[Option[String]].toOption.flatten
-          val secretOpt = body.hcursor.downField("secret").as[Option[String]].toOption.flatten
-          // Optional account avatar URL returned by nebflow.space on pairing.
-          val avatarOpt = body.hcursor.downField("avatar").as[Option[String]].toOption.flatten
-          (serverOpt, networkIdOpt, secretOpt) match
-            case (Some(server), Some(networkId), Some(secret)) =>
-              val newConfig = NeblinkServerConfig(url = server, networkId = networkId, secret = secret)
-              for
-                current <- NeblinkConfig.load
-                updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
-                _ <- NeblinkConfig.save(updated)
-                // Persist the account avatar (if nebflow.space provided one) onto
-                // the device identity so the UI can show it after login.
-                _ <- neblinkService.fold(IO.unit)(_.updateDeviceInfo(avatarUrl = avatarOpt))
-                resp <- Ok(
-                  Json.obj(
-                    "ok" -> true.asJson,
-                    "message" -> "Configuration saved. Please restart Nebflow to apply.".asJson
-                  )
-                )
-              yield resp
-            case _ =>
-              BadRequest(Json.obj("error" -> "Missing server, networkId, or secret".asJson))
-          end match
-        }
+    // Logout — clear device credential, disable NebLink (keep server address),
+    // stop the client, clear user info and peers. Reverses the device-flow login.
+    case req @ POST -> Root / "neblink" / "logout" =>
+      withNeblink(req) { ms =>
+        for
+          // 1. Delete the device credential file (~/.nebflow/neblink/device.json)
+          _ <- DeviceCredential.clear
+          // 2. Disable NebLink in config (keep neblinkServer address for next login).
+          //    updateConfig refreshes the in-memory ref AND persists to disk, so
+          //    /status reflects the change immediately without a restart.
+          _ <- ms.updateConfig(_.copy(enabled = false))
+          // 3. Stop the NebLink client (hot-swap to None).
+          _ <- neblinkDiscovery.fold(IO.unit)(d => d.setClient(None))
+          // 4. Clear user info (avatar, github login) from the device identity.
+          _ <- ms.updateDeviceInfo(avatarUrl = Some(""), githubLogin = Some(""))
+          // 5. Clear all discovered peers.
+          _ <- ms.clearPeers
+          r <- Ok(Json.obj("ok" -> true.asJson))
+        yield r
+      }
 
     // Enroll device via pairing code — calls the NebLink Server's
     // /api/device/enroll, receives a long-lived device credential, persists it,
