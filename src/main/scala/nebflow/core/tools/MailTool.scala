@@ -725,7 +725,8 @@ Message type (optional, default "INFO"):
                   sessionName = Some(session.name),
                   projectRoot = Some(ctx.projectRoot),
                   safetyMode = safetyMode,
-                  rootSessionId = rootSid
+                  rootSessionId = rootSid,
+                  expectsMail = entry.name != "Manager"
                 ),
                 s"mail-${session.id.take(8)}"
               )
