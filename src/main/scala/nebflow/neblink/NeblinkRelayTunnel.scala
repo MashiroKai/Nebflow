@@ -45,6 +45,9 @@ final class NeblinkRelayTunnel(
   private val lastPong = new AtomicLong(System.currentTimeMillis())
   private var heartbeat: Option[ScheduledExecutorService] = None
 
+  /** Check if the relay tunnel is currently connected (for status reporting). */
+  def isAlive: Boolean = alive.get()
+
   /** Start the relay tunnel connection loop. Runs in background until stop(). */
   def connect(): IO[Unit] =
     logger.info("Starting relay tunnel to NebLink Server") *>
@@ -140,16 +143,36 @@ final class NeblinkRelayTunnel(
 
     val toolOpt = ToolRegistry.TOOL_MAP.get(action)
     for
-      (output, error) <- toolOpt match
-        case Some(tool) =>
-          val ctx = ToolContext(projectRoot = projectRoot, isRemoteExec = true)
-          tool.call(params, ctx).attempt.map {
-            case Right(Right(result)) => (result, "")
-            case Right(Left(err)) => ("", err.message)
-            case Left(e) => ("", s"Tool execution failed: ${e.getMessage}")
+      (output, error) <- action match
+        case "FileTransfer" =>
+          FileTransferAction.handle(params).map {
+            case Right(json) => (json.noSpaces, "")
+            case Left(err)   => ("", err)
           }
-        case None =>
-          IO.pure(("", s"Unknown tool: $action"))
+        case "Notify" =>
+          val payload = params("payload").getOrElse(Json.Null)
+          neblinkService.handleDataMessage(payload).as(("notified", ""))
+        case "RemoteUpdate" =>
+          val beta = params("beta").flatMap(_.asBoolean).getOrElse(false)
+          RemoteUpdateAction.runInstallScript(beta).flatMap {
+            case Right(msg) =>
+              // Schedule restart — same logic as RestApiRoutes POST /neblink/update
+              IO.blocking(nebflow.core.RestartHelper.spawnRestart()) *>
+                IO.delay(dispatcher.unsafeRunAndForget(IO.sleep(1.second) *> IO(System.exit(0)))) *>
+                IO.pure((msg, ""))
+            case Left(err) => IO.pure(("", err))
+          }
+        case _ =>
+          toolOpt match
+            case Some(tool) =>
+              val ctx = ToolContext(projectRoot = projectRoot, isRemoteExec = true)
+              tool.call(params, ctx).attempt.map {
+                case Right(Right(result)) => (result, "")
+                case Right(Left(err))     => ("", err.message)
+                case Left(e)              => ("", s"Tool execution failed: ${e.getMessage}")
+              }
+            case None =>
+              IO.pure(("", s"Unknown tool: $action"))
       resp = Json.obj(
         "type" -> "relay_response".asJson,
         "requestId" -> requestId.asJson,
