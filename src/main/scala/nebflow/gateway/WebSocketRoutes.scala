@@ -2536,6 +2536,37 @@ class WebSocketRoutes(
                 }
 
           case "remoteUpdate" =>
+            def tryRelayUpdate(
+              ns: nebflow.neblink.NeblinkService,
+              peer: nebflow.neblink.PeerInfo,
+              beta: Boolean,
+              p2pError: String
+            ): IO[Unit] =
+              ns.relayClientOpt match
+                case Some(client) =>
+                  logger.info(s"P2P update failed ($p2pError), trying relay to ${peer.deviceName}") *>
+                    client.relayUpdate(peer.deviceId, beta).flatMap {
+                      case Right(msg) =>
+                        wsSend(io.circe.Json.obj(
+                          "type" -> "remoteUpdateResult".asJson,
+                          "success" -> true.asJson,
+                          "device" -> peer.deviceName.asJson,
+                          "message" -> msg.asJson
+                        ))
+                      case Left(err) =>
+                        wsSend(io.circe.Json.obj(
+                          "type" -> "remoteUpdateResult".asJson,
+                          "success" -> false.asJson,
+                          "error" -> s"P2P: $p2pError; Relay: $err".asJson
+                        ))
+                    }
+                case None =>
+                  wsSend(io.circe.Json.obj(
+                    "type" -> "remoteUpdateResult".asJson,
+                    "success" -> false.asJson,
+                    "error" -> p2pError.asJson
+                  ))
+
             val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
             val targetDevice = hc.downField("device").as[String].getOrElse("")
             val beta = hc.downField("beta").as[Boolean].getOrElse(false)
@@ -2606,21 +2637,10 @@ class WebSocketRoutes(
                                   )
                                 )
                               else
-                                wsSend(
-                                  io.circe.Json.obj(
-                                    "type" -> "remoteUpdateResult".asJson,
-                                    "success" -> false.asJson,
-                                    "error" -> s"Remote returned HTTP ${resp.code}".asJson
-                                  )
-                                )
+                                // P2P returned an HTTP error — try relay before failing
+                                tryRelayUpdate(neblinkService, peer, beta, s"Remote returned HTTP ${resp.code}")
                             }.handleErrorWith { e =>
-                              wsSend(
-                                io.circe.Json.obj(
-                                  "type" -> "remoteUpdateResult".asJson,
-                                  "success" -> false.asJson,
-                                  "error" -> s"Cannot reach ${peer.deviceName}: ${e.getMessage}".asJson
-                                )
-                              )
+                              tryRelayUpdate(neblinkService, peer, beta, s"Cannot reach ${peer.deviceName}: ${e.getMessage}")
                             }
                     end match
                   }

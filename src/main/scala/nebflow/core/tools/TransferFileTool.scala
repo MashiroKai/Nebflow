@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.neblink.PeerInfo
+import nebflow.neblink.{NeblinkClient, PeerInfo}
 import sttp.client4.*
 
 import scala.concurrent.duration.*
@@ -150,6 +150,22 @@ object TransferFileTool extends Tool:
     peer: PeerInfo,
     ns: nebflow.neblink.NeblinkService
   ): IO[Either[ToolError, String]] =
+    p2pTransferLocalToRemote(srcPath, tgtPath, overwrite, peer, ns).flatMap {
+      case r @ Right(_) => IO.pure(r)
+      case Left(p2pErr) =>
+        ns.relayClientOpt match
+          case Some(client) =>
+            relayTransferLocalToRemote(srcPath, tgtPath, overwrite, peer, client)
+          case None => IO.pure(Left(p2pErr))
+    }
+
+  private def p2pTransferLocalToRemote(
+    srcPath: String,
+    tgtPath: String,
+    overwrite: Boolean,
+    peer: PeerInfo,
+    ns: nebflow.neblink.NeblinkService
+  ): IO[Either[ToolError, String]] =
     IO.blocking {
       val src = os.pwd / os.RelPath(srcPath)
       if !os.exists(src) then Left(ToolError(s"Source file not found on local device: $srcPath"))
@@ -199,6 +215,22 @@ object TransferFileTool extends Tool:
     peer: PeerInfo,
     ns: nebflow.neblink.NeblinkService
   ): IO[Either[ToolError, String]] =
+    p2pTransferRemoteToLocal(srcPath, tgtPath, overwrite, peer, ns).flatMap {
+      case r @ Right(_) => IO.pure(r)
+      case Left(p2pErr) =>
+        ns.relayClientOpt match
+          case Some(client) =>
+            relayTransferRemoteToLocal(srcPath, tgtPath, overwrite, peer, client)
+          case None => IO.pure(Left(p2pErr))
+    }
+
+  private def p2pTransferRemoteToLocal(
+    srcPath: String,
+    tgtPath: String,
+    overwrite: Boolean,
+    peer: PeerInfo,
+    ns: nebflow.neblink.NeblinkService
+  ): IO[Either[ToolError, String]] =
     IO.blocking {
       val encodedPath = java.net.URLEncoder.encode(srcPath, "UTF-8")
       val resp = basicRequest
@@ -231,6 +263,23 @@ object TransferFileTool extends Tool:
     }
 
   private def transferRemoteToRemote(
+    srcPath: String,
+    tgtPath: String,
+    overwrite: Boolean,
+    srcPeer: PeerInfo,
+    tgtPeer: PeerInfo,
+    ns: nebflow.neblink.NeblinkService
+  ): IO[Either[ToolError, String]] =
+    p2pTransferRemoteToRemote(srcPath, tgtPath, overwrite, srcPeer, tgtPeer, ns).flatMap {
+      case r @ Right(_) => IO.pure(r)
+      case Left(p2pErr) =>
+        ns.relayClientOpt match
+          case Some(client) =>
+            relayTransferRemoteToRemote(srcPath, tgtPath, overwrite, srcPeer, tgtPeer, client)
+          case None => IO.pure(Left(p2pErr))
+    }
+
+  private def p2pTransferRemoteToRemote(
     srcPath: String,
     tgtPath: String,
     overwrite: Boolean,
@@ -284,6 +333,75 @@ object TransferFileTool extends Tool:
       end if
     }.handleErrorWith { e =>
       IO.pure(Left(ToolError(s"Remote-to-remote transfer failed: ${e.getMessage}")))
+    }
+
+  // ===== Relay fallback methods =====
+
+  private def relayTransferLocalToRemote(
+    srcPath: String,
+    tgtPath: String,
+    overwrite: Boolean,
+    peer: PeerInfo,
+    client: NeblinkClient
+  ): IO[Either[ToolError, String]] =
+    IO.blocking {
+      val src = os.pwd / os.RelPath(srcPath)
+      if !os.exists(src) then Left(ToolError(s"Source file not found: $srcPath"))
+      else
+        val content = os.read.bytes(src)
+        val b64 = java.util.Base64.getEncoder.encodeToString(content)
+        Right((b64, content.length))
+    }.flatMap {
+      case Left(err) => IO.pure(Left(err))
+      case Right((b64, size)) =>
+        client.relayTransferPut(peer.deviceId, tgtPath, b64, overwrite).map {
+          case Right(remoteSize) =>
+            Right(s"Transferred $srcPath ($remoteSize bytes) → ${peer.deviceName}:$tgtPath (via relay)")
+          case Left(err) =>
+            Left(ToolError(s"P2P and relay both failed. Relay: $err"))
+        }
+    }
+
+  private def relayTransferRemoteToLocal(
+    srcPath: String,
+    tgtPath: String,
+    overwrite: Boolean,
+    peer: PeerInfo,
+    client: NeblinkClient
+  ): IO[Either[ToolError, String]] =
+    client.relayTransferGet(peer.deviceId, srcPath).flatMap {
+      case Right((contentB64, size)) =>
+        IO.blocking {
+          val content = java.util.Base64.getDecoder.decode(contentB64)
+          val tgt = os.pwd / os.RelPath(tgtPath)
+          if !overwrite && os.exists(tgt) then
+            Left(ToolError(s"Target file already exists: $tgtPath (use overwrite=true to replace)"))
+          else
+            os.write(tgt, content, createFolders = true)
+            Right(s"Transferred ${peer.deviceName}:$srcPath ($size bytes) → $tgtPath (via relay)")
+        }.handleErrorWith(e => IO.pure(Left(ToolError(s"Relay write failed: ${e.getMessage}"))))
+      case Left(err) => IO.pure(Left(ToolError(s"P2P and relay both failed. Relay: $err")))
+    }
+
+  private def relayTransferRemoteToRemote(
+    srcPath: String,
+    tgtPath: String,
+    overwrite: Boolean,
+    srcPeer: PeerInfo,
+    tgtPeer: PeerInfo,
+    client: NeblinkClient
+  ): IO[Either[ToolError, String]] =
+    client.relayTransferGet(srcPeer.deviceId, srcPath).flatMap {
+      case Right((contentB64, size)) =>
+        client.relayTransferPut(tgtPeer.deviceId, tgtPath, contentB64, overwrite).map {
+          case Right(remoteSize) =>
+            Right(
+              s"Transferred ${srcPeer.deviceName}:$srcPath ($size bytes) → ${tgtPeer.deviceName}:$tgtPath (via relay)"
+            )
+          case Left(err) =>
+            Left(ToolError(s"Relay put to target failed: $err"))
+        }
+      case Left(err) => IO.pure(Left(ToolError(s"Relay get from source failed: $err")))
     }
 
   // ===== Helpers =====
