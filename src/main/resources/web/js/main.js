@@ -41,7 +41,7 @@ import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { handleFlowAgentHistory } from './flowAgentPopup.js';
 import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
-import { initNeblink, checkPairingRedirect } from './neblink.js';
+import { initNeblink } from './neblink.js';
 import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
 import * as planMode from './planMode.js';
@@ -1643,10 +1643,10 @@ onMessage('user', (msg, view) => {
   // window on restore ("outgoing Delegate prompt shows as blue bubble").
   // Sub-agent streams restore from their own backend history instead.
   if (!msg.nodeSessionId) {
-    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null }, sid);
+    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, sourceTeam: msg.sourceTeam || null }, sid);
   }
   if (sid === state.activeSessionId && view) {
-    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender);
+    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.sourceTeam);
     smartScroll();
   }
 });
@@ -2237,7 +2237,6 @@ if (!restoreTabs()) {
 initScheduledTask();
 initDaemons();
 initNeblink();
-checkPairingRedirect();
 initDropbox();
 planMode.init();
 
