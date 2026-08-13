@@ -348,12 +348,20 @@ const EVENT_TYPE_LABELS = {
 
 /** Build the source label text, optionally combining with sender and eventType.
  *  e.g. source='mail', sender='Manager', eventType='result' → 'Mail · Manager · Result'
- *  sender is optional (backward compatible): absent → 'SOURCE · EventType'. */
-export function injectedSourceLabel(source, eventType, sender) {
-  if (!source) return '';
-  const base = INJECTED_SOURCE_LABELS[source] || source.charAt(0).toUpperCase() + source.slice(1);
-  const parts = [base];
-  if (sender) parts.push(sender);
+ *  sender is optional (backward compatible): absent → 'SOURCE · EventType'.
+ *  sourceTeam (optional, backward compatible): present → the message came from a
+ *  Team agent; the label shows the team path instead of the SOURCE prefix,
+ *  e.g. 'nebflow-project/Backend · Result'. */
+export function injectedSourceLabel(source, eventType, sender, sourceTeam) {
+  if (!source && !sourceTeam) return '';
+  const parts = [];
+  if (sourceTeam) {
+    parts.push(sender ? `${sourceTeam}/${sender}` : sourceTeam);
+  } else {
+    const base = INJECTED_SOURCE_LABELS[source] || source.charAt(0).toUpperCase() + source.slice(1);
+    parts.push(base);
+    if (sender) parts.push(sender);
+  }
   if (eventType) {
     const et = EVENT_TYPE_LABELS[eventType] || eventType.charAt(0).toUpperCase() + eventType.slice(1);
     parts.push(et);
@@ -366,8 +374,10 @@ export function injectedSourceLabel(source, eventType, sender) {
  *  restore (persistence.js) so both paths render identically.
  *  deferFn (optional): batch-restore path passes persistence.js's deferMd to
  *  defer markdown rendering into post-append rAF batches — prevents a
- *  synchronous markdown storm when restoring long histories (P0-2). */
-export function buildInjectedRow(text, source, timestamp, eventType, sender, deferFn) {
+ *  synchronous markdown storm when restoring long histories (P0-2).
+ *  sourceTeam (optional): Team name for Team-agent messages — shown in the
+ *  source label as 'team/agent' (see injectedSourceLabel). */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn) {
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -375,7 +385,7 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, def
   bubble.className = 'bubble injected';
   const label = document.createElement('div');
   label.className = 'ask-label injected-source-label';
-  label.textContent = injectedSourceLabel(source, eventType, sender);
+  label.textContent = injectedSourceLabel(source, eventType, sender, sourceTeam);
   const content = document.createElement('div');
   if (deferFn) deferFn(content, text || '');
   else content.innerHTML = renderMarkdownWithMath(text || '', false);
@@ -407,9 +417,9 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, def
 }
 
 /** Live-render an injected message into the active view. */
-export function renderInjectedBubble(text, source, timestamp, eventType, sender) {
+export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam) {
   const chat = activeView.dom.chat;
-  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender);
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam);
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
 }
