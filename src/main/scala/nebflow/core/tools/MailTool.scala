@@ -771,14 +771,18 @@ Message type (optional, default "INFO"):
     system: ActorSystem
   ): IO[Either[ToolError, String]] =
     val senderName = ctx.agentDef.map(_.name).getOrElse("Nebula")
+    val senderSid = ctx.sessionId.getOrElse("")
     for
+      // Resolve the sender's team so the injected bubble can show "team/agent" attribution.
+      teamOpt <- TeamSessionRegistry.teamOfSession(senderSid)
       _ <- ref ! AgentCommand.ImmediateInput(
         message,
         source = Some("mail"),
         eventType = Some(mailType.toLowerCase),
-        sender = Some(senderName)
+        sender = Some(senderName),
+        senderTeam = teamOpt
       )
-      _ <- nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse(""))
+      _ <- nebflow.core.UsageTracker.record("mail", senderSid)
     yield Right(s"Message sent to $label. The agent will process it.")
 
   end sendMail
