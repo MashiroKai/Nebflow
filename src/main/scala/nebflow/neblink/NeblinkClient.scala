@@ -321,6 +321,59 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
   def peerAddresses(serverPeers: List[NeblinkPeerInfo]): Set[String] =
     serverPeers.flatMap(_.endpoints.map(_.address)).toSet
 
+  // ===== Relay file transfer (FileTransfer action) =====
+
+  /** Pull a file from a remote device via relay. Returns (base64 content, size). */
+  def relayTransferGet(targetDeviceId: String, path: String): IO[Either[String, (String, Long)]] =
+    val params = JsonObject("direction" -> "get".asJson, "path" -> path.asJson)
+    relayExec(targetDeviceId, "FileTransfer", params).flatMap {
+      case Right(output) =>
+        decode[Json](output) match
+          case Right(json) =>
+            val contentB64 = json.hcursor.downField("content").as[String].getOrElse("")
+            val size = json.hcursor.downField("size").as[Long].getOrElse(0L)
+            if contentB64.isEmpty then IO.pure(Left("Empty response"))
+            else IO.pure(Right((contentB64, size)))
+          case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  /** Push a file to a remote device via relay. Returns size in bytes. */
+  def relayTransferPut(
+    targetDeviceId: String,
+    path: String,
+    contentB64: String,
+    overwrite: Boolean
+  ): IO[Either[String, Long]] =
+    val params = JsonObject(
+      "direction" -> "put".asJson,
+      "path" -> path.asJson,
+      "content" -> contentB64.asJson,
+      "overwrite" -> overwrite.asJson
+    )
+    relayExec(targetDeviceId, "FileTransfer", params).flatMap {
+      case Right(output) =>
+        decode[Json](output) match
+          case Right(json) =>
+            val size = json.hcursor.downField("size").as[Long].getOrElse(0L)
+            IO.pure(Right(size))
+          case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  /** Send a notification message to a remote device via relay (Notify action). */
+  def relayNotify(targetDeviceId: String, channel: String, payload: Json): IO[Either[String, String]] =
+    val params = JsonObject(
+      "channel" -> channel.asJson,
+      "payload" -> payload
+    )
+    relayExec(targetDeviceId, "Notify", params)
+
+  /** Trigger a remote update on a device via relay (RemoteUpdate action). */
+  def relayUpdate(targetDeviceId: String, beta: Boolean): IO[Either[String, String]] =
+    val params = JsonObject("beta" -> beta.asJson)
+    relayExec(targetDeviceId, "RemoteUpdate", params)
+
   // ===== Private helpers =====
 
   private def sendRequest(

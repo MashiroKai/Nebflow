@@ -209,8 +209,13 @@ final class NeblinkPresenceService(
   private[neblink] def onDataReceived(payload: Json): Unit =
     dispatcher.unsafeRunAndForget(neblinkService.handleDataMessage(payload))
 
-  /** Send a data message to a connected peer over the WS presence connection. */
-  def sendData(deviceId: String, channel: String, payload: Json): IO[Unit] =
+  /** Check if a direct WS connection exists to the given device. */
+  def isConnected(deviceId: String): Boolean =
+    connections.containsKey(deviceId)
+
+  /** Send a data message to a connected peer over the WS presence connection.
+   * Returns true if sent, false if no active WS connection. */
+  def sendData(deviceId: String, channel: String, payload: Json): IO[Boolean] =
     IO.blocking {
       val conn = connections.get(deviceId)
       if conn != null then
@@ -220,7 +225,10 @@ final class NeblinkPresenceService(
           "payload" -> payload
         )
         conn.ws.sendText(msg.noSpaces, true)
-      ()
+        true
+      else
+        logger.debug(s"No WS connection to $deviceId, data message not delivered via P2P")
+        false
     }
 
   /**
