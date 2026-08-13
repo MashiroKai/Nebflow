@@ -388,7 +388,9 @@ export function renderSettings() {
   // Refresh neblink peers periodically while settings panel is open
   const refreshNeblink = () => {
     fetchNeblinkStatus().then(() => {
-      const neblinkDiv = content.querySelector('.neblink-logged-in');
+      // Match both states: logged in (.neblink-logged-in) and logged out
+      // (.neblink-login-section) so login/logout swaps render correctly.
+      const neblinkDiv = content.querySelector('.neblink-logged-in, .neblink-login-section');
       if (neblinkDiv && document.getElementById('settings-content').contains(neblinkDiv)) {
         const wrapper = document.createElement('div');
         wrapper.innerHTML = neblinkSettingsHTML();
