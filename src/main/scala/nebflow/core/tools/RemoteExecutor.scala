@@ -7,7 +7,7 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
 import nebflow.core.NebflowLogger
-import nebflow.neblink.{NeblinkService, PeerInfo}
+import nebflow.neblink.{NeblinkClient, NeblinkService, PeerInfo}
 import sttp.client4.*
 
 import scala.concurrent.duration.*
@@ -20,7 +20,11 @@ import scala.concurrent.duration.*
  *
  * NebLink provides the connectivity layer — no relay server needed.
  */
-class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO]):
+class RemoteExecutor(
+  neblinkService: NeblinkService,
+  dispatcher: Dispatcher[IO],
+  relayClient: Option[NeblinkClient] = None
+):
 
   private val logger = NebflowLogger.forName("nebflow.remote-executor")
 
@@ -48,7 +52,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
       if peer.address.isEmpty then IO.pure(Left(ToolError(s"Device '${peer.deviceName}' has no address.")))
       else if isBackground && ctxOpt.isDefined then executeRemoteBackground(peer, toolName, params, ctxOpt.get)
       else if ctxOpt.isDefined then executeForegroundWithAutoBackground(peer, toolName, params, ctxOpt.get)
-      else p2pExecuteWithRetry(peer, toolName, params, SyncTimeout)
+      else executeViaBestPath(peer, toolName, params, SyncTimeout)
 
     neblinkService.peers.flatMap { peers =>
       resolvePeer(deviceName, peers) match
@@ -128,7 +132,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
 
       // HTTP call — never cancelled, runs to completion on the remote device
       commandFiber <- (for
-        r <- p2pExecuteWithRetry(peer, toolName, remoteParams, BgTimeout)
+        r <- executeViaBestPath(peer, toolName, remoteParams, BgTimeout)
         _ <- resultRef.set(Some(r))
         _ <- signal.complete(()).void
       yield ()).start
@@ -190,7 +194,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
     doneRef: Ref[IO, Boolean]
   ): Unit =
     val completionIO =
-      p2pExecute(peer, toolName, params, BgTimeout)
+      executeViaBestPath(peer, toolName, params, BgTimeout)
         .flatMap {
           case Right(output) => notifyRemoteBgResult(ctx, jobId, description, Right(output))
           case Left(err) => notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
@@ -389,6 +393,32 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
     val msg = err.message.toLowerCase
     msg.startsWith("cannot reach")
 
+  /**
+   * Best-path execution: try P2P first; if unreachable (connection error only,
+   * not timeout), fall back to relay via NebLink Server. A timeout means the
+   * command is running on the remote device, just slow — do NOT relay-retry.
+   */
+  private def executeViaBestPath(
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject,
+    timeout: FiniteDuration
+  ): IO[Either[ToolError, String]] =
+    p2pExecuteWithRetry(peer, toolName, params, timeout).flatMap {
+      case Right(result) => IO.pure(Right(result))
+      case Left(err) if isTransientError(err) =>
+        relayClient match
+          case None => IO.pure(Left(err))
+          case Some(client) =>
+            logger.info(s"P2P unreachable for ${peer.deviceName}, falling back to relay") *>
+              client.relayExec(peer.deviceId, toolName, params).map {
+                case Right(output) => Right(output)
+                case Left(relayErr) =>
+                  Left(ToolError(s"P2P failed: ${err.message}; Relay also failed: $relayErr"))
+              }
+      case Left(err) => IO.pure(Left(err))
+    }
+
   // ---- Helpers ----
 
   /**
@@ -424,9 +454,13 @@ object RemoteExecutor:
 
   @volatile private var instance: Option[RemoteExecutor] = None
 
-  /** Wire the RemoteExecutor with a NeblinkService and Dispatcher. Called on startup. */
-  def initialize(neblinkService: NeblinkService, dispatcher: Dispatcher[IO]): Unit =
-    instance = Some(new RemoteExecutor(neblinkService, dispatcher))
+  /** Wire the RemoteExecutor with a NeblinkService, Dispatcher, and optional relay client. Called on startup. */
+  def initialize(
+    neblinkService: NeblinkService,
+    dispatcher: Dispatcher[IO],
+    relayClient: Option[NeblinkClient] = None
+  ): Unit =
+    instance = Some(new RemoteExecutor(neblinkService, dispatcher, relayClient))
 
   /** Get the current instance, or None if neblink is not initialized. */
   def current: Option[RemoteExecutor] = instance
