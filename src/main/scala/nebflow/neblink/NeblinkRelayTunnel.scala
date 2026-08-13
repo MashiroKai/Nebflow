@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.NebflowLogger
+import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 
 import java.net.URI
@@ -129,7 +129,12 @@ final class NeblinkRelayTunnel(
     val hc = msg.hcursor
     val requestId = hc.downField("requestId").as[String].getOrElse("")
     val action = hc.downField("action").as[String].getOrElse("")
-    val params = hc.downField("params").as[JsonObject].getOrElse(JsonObject.empty)
+    // Expand ~ to *this* device's user.home — must happen on the receiver so
+    // the path resolves to the local filesystem (e.g. C:\Users\kai on Windows),
+    // not the sender's home directory.
+    val params = PathUtil.expandPathParams(
+      hc.downField("params").as[JsonObject].getOrElse(JsonObject.empty)
+    )
     val projectRoot =
       hc.downField("projectRoot").as[String].getOrElse(System.getProperty("user.dir", "."))
 
