@@ -698,7 +698,11 @@ class RestApiRoutes(
           req.as[Json].flatMap { body =>
             val hc = body.hcursor
             val action = hc.downField("action").as[String].getOrElse("")
-            val params = hc.downField("params").as[io.circe.JsonObject].getOrElse(io.circe.JsonObject.empty)
+            // Expand ~ to this device's user.home — same rationale as the relay
+            // path: the path must resolve on the local (receiving) filesystem.
+            val params = PathUtil.expandPathParams(
+              hc.downField("params").as[io.circe.JsonObject].getOrElse(io.circe.JsonObject.empty)
+            )
             val toolOpt = nebflow.core.tools.ToolRegistry.TOOL_MAP.get(action)
             toolOpt match
               case Some(tool) =>

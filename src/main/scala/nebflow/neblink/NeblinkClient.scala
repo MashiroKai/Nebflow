@@ -118,17 +118,42 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
   /** Expose current session token for NeblinkRelayTunnel (live read on each reconnect). */
   def currentSessionToken: Option[String] = sessionToken
 
-  /** Detect local IPv4 addresses for endpoint reporting to the NebLink Server. */
+  /**
+   * Detect local IPv4 addresses for endpoint reporting to the NebLink Server.
+   *
+   * Filters out virtual NICs (Hyper-V, WSL2, Docker, VMware, VirtualBox) whose
+   * addresses are unreachable from the real LAN — e.g. `192.168.121.1` on a
+   * Windows `vEthernet (WSL)` adapter. If filtering would remove every
+   * endpoint, falls back to the unfiltered list so P2P still has a chance.
+   */
   def detectLocalEndpoints: IO[List[NeblinkEndpoint]] = IO.blocking {
     try
-      NetworkInterface.getNetworkInterfaces.asScala.toList
+      val allNics = NetworkInterface.getNetworkInterfaces.asScala.toList
         .filter(_.isUp)
         .filterNot(_.isLoopback)
-        .flatMap(_.getInetAddresses.asScala)
-        .filter(_.isInstanceOf[java.net.Inet4Address])
-        .map(addr => NeblinkEndpoint(addr.getHostAddress, serverPort, "lan", ""))
+
+      def toEndpoints(nics: List[NetworkInterface]): List[NeblinkEndpoint] =
+        nics.flatMap(_.getInetAddresses.asScala)
+          .filter(_.isInstanceOf[java.net.Inet4Address])
+          .map(addr => NeblinkEndpoint(addr.getHostAddress, serverPort, "lan", ""))
+
+      val physical = allNics.filterNot(isLikelyVirtualNic)
+      val preferred = toEndpoints(physical)
+      if preferred.nonEmpty then preferred else toEndpoints(allNics) // never lose all endpoints
     catch case _: Exception => Nil
   }
+
+  /**
+   * Heuristic virtual-NIC detector. `NetworkInterface.isVirtual()` is
+   * unreliable across OSes (returns false for Hyper-V/WSL on Windows), so we
+   * combine it with name-pattern matching against the common virtual adapter
+   * display names. Conservative: only flags well-known virtual markers.
+   */
+  private def isLikelyVirtualNic(nic: NetworkInterface): Boolean =
+    val names = Seq(nic.getDisplayName, nic.getName).map(n => Option(n).getOrElse("").toLowerCase)
+    val virtualMarkers =
+      Seq("virtual", "vethernet", "vmware", "docker", "wsl", "hyper-v", "virtualbox", "loopback pseudo")
+    nic.isVirtual || names.exists(n => virtualMarkers.exists(n.contains))
 
   /**
    * Login to NebLink Server. Stores session token. Returns initial peer list.

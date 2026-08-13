@@ -1,5 +1,7 @@
 package nebflow.core
 
+import io.circe.JsonObject
+import io.circe.syntax.*
 import os.Path
 
 /**
@@ -20,6 +22,35 @@ object PathUtil:
     s.startsWith("/") || // Unix absolute
       s.startsWith("\\\\") || // UNC path (\\server\share)
       (s.length >= 2 && s.charAt(1) == ':') // Windows drive (C:\...)
+
+  /**
+   * Expand a leading `~` (or `~/`) to the JVM's `user.home`.
+   * Leaves all other strings unchanged. Idempotent.
+   *
+   * For remote-exec, this MUST run on the *receiving* device so `~` resolves
+   * to the remote user's home (e.g. `C:\Users\kai` on Windows), not the
+   * sender's. Expanding on the sender would produce the wrong OS's home path.
+   */
+  def expandTilde(s: String): String =
+    val home = sys.props.getOrElse("user.home", "~")
+    if s == "~" then home
+    else if s.startsWith("~/") then home + s.substring(1)
+    else s
+
+  /**
+   * Expand leading `~` in known path params of a tool-call JsonObject.
+   * Used by remote-exec receivers (P2P direct + relay) so path-bearing tools
+   * (Read/Write/Edit/Glob/Grep) accept `~` relative to the receiving device.
+   *
+   * Bash is excluded — its shell expands `~` natively, and rewriting inside
+   * `command` strings would be unsafe.
+   */
+  def expandPathParams(params: JsonObject): JsonObject =
+    def expandKey(obj: JsonObject, key: String): JsonObject =
+      obj(key).flatMap(_.asString) match
+        case Some(s) if s.startsWith("~") => obj.add(key, expandTilde(s).asJson)
+        case _ => obj
+    Set("file_path", "path").foldLeft(params)(expandKey)
 
   /** Construct an os.Path from a string, handling Windows cross-drive paths. */
   def resolvePath(s: String): Path =
