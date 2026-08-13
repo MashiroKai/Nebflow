@@ -7,7 +7,7 @@ import io.circe.{Json, JsonObject}
 import java.nio.file.{Files, Path, Paths}
 
 /**
- * Pop tool — opens a file in the Canvas panel as a new tab.
+ * Pop tool — opens a file or URL in the Canvas panel as a new tab.
  *
  * Sends a WebSocket message to the frontend, which dispatches a
  * `workspace-open-item` event that canvas.js picks up to render the file
@@ -16,6 +16,9 @@ import java.nio.file.{Files, Path, Paths}
  *
  * For binary files (images, PDFs, Office docs), only metadata is sent — the
  * frontend fetches the content via /api/nf-file, same as the file explorer.
+ *
+ * For HTTP/HTTPS URLs, the URL is sent directly — the frontend renders it
+ * in an embedded iframe.
  */
 object PopTool extends Tool:
 
@@ -75,10 +78,19 @@ object PopTool extends Tool:
       Some(Paths.get(expanded).normalize())
     catch case _: Exception => None
 
+  /** Extract hostname from a URL string. */
+  private def extractHostname(url: String): String =
+    try java.net.URI.create(url).getHost
+    catch case _: Exception => url
+
+  /** Check if a string is an HTTP/HTTPS URL. */
+  private def isHttpUrl(s: String): Boolean =
+    s.startsWith("http://") || s.startsWith("https://")
+
   val name = "Pop"
 
   val description: String =
-    """Opens a file in the Canvas panel as a new tab. The file is displayed using the appropriate viewer (Monaco editor for code, markdown renderer, image viewer, PDF viewer, etc.).
+    """Opens a file or URL in the Canvas panel as a new tab. Files are displayed using the appropriate viewer (Monaco editor for code, markdown renderer, image viewer, PDF viewer, etc.). URLs are displayed in an embedded iframe.
 
 ## When to use
 
@@ -86,16 +98,18 @@ object PopTool extends Tool:
 - The user asks to "open" or "show" a file.
 - You generated a plot, diagram, or document and want to present it.
 - After completing work, generate a visual report (diagram, chart, HTML page) and Pop it to present results to the user.
+- You want to show a web page (e.g. a deployed site, documentation) to the user.
 
-The Canvas tab supports the same file types as the file explorer. The tab title defaults to the filename; provide `title` to customize it.
+The Canvas tab supports the same file types as the file explorer. The tab title defaults to the filename (or hostname for URLs); provide `title` to customize it.
 
 ## Parameters
 
-- filePath (string, required): Absolute path to the file (supports `~` expansion).
-- title (string, optional): Custom tab title. Defaults to the filename.
+- filePath (string, required): Absolute path to the file (supports `~` expansion), or an HTTP/HTTPS URL.
+- title (string, optional): Custom tab title. Defaults to the filename or URL hostname.
 
 Example: {"filePath": "/tmp/output.svg"}
-Example: {"filePath": "~/projects/README.md", "title": "README"}"""
+Example: {"filePath": "~/projects/README.md", "title": "README"}
+Example: {"filePath": "https://example.com"}"""
 
   val inputSchema: JsonObject = JsonObject.fromIterable(
     List(
@@ -103,7 +117,7 @@ Example: {"filePath": "~/projects/README.md", "title": "README"}"""
       "properties" -> Json.obj(
         "filePath" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Absolute path to the file to display (supports ~ expansion)".asJson
+          "description" -> "Absolute path to the file to display (supports ~ expansion), or an HTTP/HTTPS URL".asJson
         ),
         "title" -> Json.obj(
           "type" -> "string".asJson,
@@ -119,6 +133,21 @@ Example: {"filePath": "~/projects/README.md", "title": "README"}"""
     val customTitle = input("title").flatMap(_.asString).getOrElse("")
 
     if filePathStr.isBlank then IO.pure(Left(ToolError("Pop tool requires a `filePath` parameter.")))
+    else if isHttpUrl(filePathStr) then
+      val hostname = extractHostname(filePathStr)
+      val tabTitle = if customTitle.nonEmpty then customTitle else hostname
+      val msg = Json.obj(
+        "type" -> "popFile".asJson,
+        "item" -> Json.obj(
+          "id" -> s"url:$filePathStr".asJson,
+          "itemType" -> "url".asJson,
+          "title" -> tabTitle.asJson,
+          "url" -> filePathStr.asJson,
+          "pinned" -> true.asJson
+        )
+      )
+      val sendIO = ctx.wsSend.getOrElse((_: Json) => IO.unit)
+      sendIO(msg) >> IO.pure(Right(s"Opened $tabTitle in Canvas."))
     else
       resolvePath(filePathStr) match
         case None =>
@@ -171,12 +200,17 @@ Example: {"filePath": "~/projects/README.md", "title": "README"}"""
   def summarize(input: JsonObject): String =
     val filePath = input("filePath").flatMap(_.asString).getOrElse("?")
     val title = input("title").flatMap(_.asString).getOrElse("")
-    val label = if title.nonEmpty then title else filePath.split('/').lastOption.getOrElse(filePath)
+    val label =
+      if title.nonEmpty then title
+      else if isHttpUrl(filePath) then extractHostname(filePath)
+      else filePath.split('/').lastOption.getOrElse(filePath)
     s"Pop\n  ($label)"
 
   def summarizeResult(input: JsonObject, result: String): String =
     val filePath = input("filePath").flatMap(_.asString).getOrElse("?")
-    val fileName = filePath.split('/').lastOption.getOrElse(filePath)
+    val fileName =
+      if isHttpUrl(filePath) then extractHostname(filePath)
+      else filePath.split('/').lastOption.getOrElse(filePath)
     s"Opened $fileName in Canvas"
 
 end PopTool
