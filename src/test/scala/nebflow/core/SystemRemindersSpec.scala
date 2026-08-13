@@ -11,7 +11,7 @@ import nebflow.shared.{Message, MessageRole}
  */
 class SystemRemindersSpec extends FunSuite:
 
-  private val timePattern = raw"Current time: \d{4}-\d{2}-\d{2} \d{2}:\d{2} [+-]\d{2}:\d{2}".r
+  private val timePattern = raw"Current time: \d{4}-\d{2}-\d{2} \d{2}:\d{2} (Z|[+-]\d{2}:\d{2})".r
 
   test("time reminder is injected on user turns only"):
     val on = SystemReminders.collectAll(isUserTurn = true)
