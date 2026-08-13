@@ -1982,9 +1982,15 @@ class RestApiRoutes(
    */
   private def proxyPost(serverUrl: String, path: String, body: String): IO[Either[String, Json]] =
     IO.blocking {
+      // Force HTTP/1.1 + bypass system proxy. The JDK HttpClient's HTTP/2
+      // connection-reuse + TLS 1.3 session resumption clashes with the Caddy
+      // reverse proxy in front of neblink.nebflow.space, producing
+      // connect timeouts / bad_record_mac TLS alerts on reused connections.
       val client = java.net.http.HttpClient
         .newBuilder()
+        .version(java.net.http.HttpClient.Version.HTTP_1_1)
         .proxy(java.net.ProxySelector.of(null))
+        .connectTimeout(java.time.Duration.ofSeconds(15))
         .build()
       val request = java.net.http.HttpRequest
         .newBuilder()

@@ -102,10 +102,15 @@ import NeblinkCodecs.{given, *}
 class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
   private val logger = NebflowLogger.forName("nebflow.neblink.client")
 
-  // HTTP client that bypasses system proxy (direct LAN/WAN access)
+  // HTTP client: force HTTP/1.1 and bypass system proxy (direct LAN/WAN access).
+  // HTTP/1.1 avoids the JDK HttpClient's HTTP/2 connection-reuse + TLS 1.3
+  // session resumption clash with the Caddy reverse proxy in front of
+  // neblink.nebflow.space (connect timeouts / bad_record_mac TLS alerts).
   private val httpClient = HttpClient
     .newBuilder()
+    .version(HttpClient.Version.HTTP_1_1)
     .proxy(java.net.ProxySelector.of(null))
+    .connectTimeout(java.time.Duration.ofSeconds(15))
     .build()
 
   @volatile private var sessionToken: Option[String] = None
