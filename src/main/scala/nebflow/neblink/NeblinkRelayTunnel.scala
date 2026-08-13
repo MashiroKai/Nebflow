@@ -65,26 +65,31 @@ final class NeblinkRelayTunnel(
     if !running.get() then IO.unit
     else
       val delay = if attempt == 0 then 0.seconds else math.min(30, 1 << (attempt - 1)).seconds
-      IO.sleep(delay) *>
-        IO.whenA(running.get()) {
+      IO.sleep(delay).flatMap { _ =>
+        if !running.get() then IO.unit
+        else
           tokenGetter() match
             case None =>
-              logger.debug("Relay tunnel: no session token yet, waiting...") *>
-                connectLoop(attempt + 1)
+              val wait = math.min(30, 1 << math.min(attempt, 4)).seconds
+              logger.debug(s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s...").flatMap { _ =>
+                IO.sleep(wait).flatMap { _ => connectLoop(attempt + 1) }
+              }
             case Some(token) =>
               neblinkService.identity
                 .flatMap(id => connectOnce(id, token))
                 .flatMap { _ =>
                   if running.get() then
-                    logger.info("Relay tunnel disconnected, reconnecting...") *>
+                    logger.info("Relay tunnel disconnected, reconnecting...").flatMap { _ =>
                       connectLoop(0) // reset for immediate retry
+                    }
                   else IO.unit
                 }
                 .handleErrorWith { e =>
-                  logger.warn(s"Relay tunnel error: ${e.getMessage}") *>
-                    (if running.get() then connectLoop(attempt + 1) else IO.unit)
+                  logger.warn(s"Relay tunnel error: ${e.getMessage}").flatMap { _ =>
+                    if running.get() then connectLoop(attempt + 1) else IO.unit
+                  }
                 }
-        }
+      }
 
   /** Establish a single WS connection; returns when the connection ends. */
   private def connectOnce(id: DeviceIdentity, token: String): IO[Unit] =
