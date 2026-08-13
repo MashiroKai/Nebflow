@@ -9,9 +9,10 @@ import nebflow.core.tools.ToolRegistry
  *
  * buildAllowedToolSet is the single source of truth: it filters both the
  * LLM-request schema and runtime tool-call execution. The contract:
- *   - a concrete tools list → exactly those tools + Mail
+ *   - a concrete tools list → those tools + fixed tools (base + category-specific)
  *   - "*" → all registered tools
- *   - Mail is always present (except for SubTask workers)
+ *   - Mail is team-only (auto-injected for team agents, never for flow/standalone)
+ *   - FlowReport is flow-only
  *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate)
  *   - SubTask workers (isSubTaskWorker=true) are leaf agents: no Mail /
  *     SubTask / Delegate regardless of their tools list
@@ -27,10 +28,22 @@ class AllowedToolSetSpec extends FunSuite:
   private def mkDef(name: String, tools: List[String], mcpServers: List[String] = Nil): AgentDef =
     AgentDef(name = name, description = "", tools = tools, systemPrompt = "", mcpServers = mcpServers)
 
-  test("concrete tools list yields exactly those tools + Mail + Issue"):
-    val defn = mkDef("researcher", List("Read", "Glob", "Grep"))
+  test("team agent concrete tools list yields those tools + base + Mail"):
+    val defn = mkDef("researcher", List("Read", "Glob", "Grep")).copy(category = "team")
     val allowed = CoreProbe.allowed(defn)
-    assertEquals(allowed, Set("Read", "Glob", "Grep", "Mail", "Issue"))
+    assertEquals(
+      allowed,
+      Set("Read", "Glob", "Grep", "Write", "Edit", "Bash", "Issue", "RemoveUnnecessary", "Mail")
+    )
+
+  test("standalone agent gets base fixed tools but NOT Mail"):
+    val defn = mkDef("solo", List("Read", "Pop"))
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("Read"))
+    assert(allowed.contains("Pop"))
+    assert(allowed.contains("Issue"))
+    assert(allowed.contains("Write"))
+    assert(!allowed.contains("Mail"), "standalone agent does not get Mail")
 
   test("'*' expands to all registered tools, minus Nebula-exclusive for non-Nebula"):
     val defn = mkDef("omni", List("*"))
@@ -50,11 +63,18 @@ class AllowedToolSetSpec extends FunSuite:
     // Schedule is stripped for non-Nebula agents
     assert(!allowed.contains("Schedule"))
 
-  test("Mail and Issue are always available even when not listed"):
-    val defn = mkDef("minimal", List("Read"))
-    val allowed = CoreProbe.allowed(defn)
-    assert(allowed.contains("Mail"))
-    assert(allowed.contains("Issue"))
+  test("base fixed tools always available; Mail only for team category"):
+    val standaloneDefn = mkDef("minimal", List("Read"))
+    val standaloneAllowed = CoreProbe.allowed(standaloneDefn)
+    assert(!standaloneAllowed.contains("Mail"), "standalone does not get Mail")
+    assert(standaloneAllowed.contains("Issue"), "Issue is a base tool")
+    assert(standaloneAllowed.contains("Write"), "Write is a base tool")
+    assert(standaloneAllowed.contains("RemoveUnnecessary"), "RemoveUnnecessary is a base tool")
+
+    val teamDefn = mkDef("teammate", List("Read")).copy(category = "team")
+    val teamAllowed = CoreProbe.allowed(teamDefn)
+    assert(teamAllowed.contains("Mail"), "team agent gets Mail")
+    assert(teamAllowed.contains("Issue"), "team agent also gets base tools")
 
   test("FlowReport is available only to flow-category agents"):
     val flowDefn = mkDef("reviewer", List("Read")).copy(category = "flow")
@@ -71,7 +91,6 @@ class AllowedToolSetSpec extends FunSuite:
     assert(allowed.contains("Read"), "Read allowed")
     assert(allowed.contains("Pop"), "Pop is no longer Nebula-exclusive — must be kept")
     assert(allowed.contains("AskUserQuestion"), "AskUserQuestion is no longer Nebula-exclusive")
-    assert(allowed.contains("Mail"))
 
   test("Nebula keeps Nebula-exclusive tools"):
     val defn = mkDef("Nebula", List("Read", "Pop", "AskUserQuestion"))
@@ -148,9 +167,9 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!wildcardAllowed.contains("SubTask"), "wildcard worker: SubTask stripped")
     assert(!wildcardAllowed.contains("Delegate"), "wildcard worker: Delegate stripped")
 
-  test("non-worker with SubTask listed keeps Mail and SubTask"):
-    val defn = mkDef("backend", List("Read", "SubTask"))
+  test("team agent with SubTask listed keeps Mail and SubTask"):
+    val defn = mkDef("backend", List("Read", "SubTask")).copy(category = "team")
     val allowed = CoreProbe.allowed(defn)
-    assert(allowed.contains("Mail"), "non-worker keeps Mail")
-    assert(allowed.contains("SubTask"), "non-worker keeps SubTask")
+    assert(allowed.contains("Mail"), "team agent keeps Mail")
+    assert(allowed.contains("SubTask"), "team agent keeps SubTask")
 end AllowedToolSetSpec

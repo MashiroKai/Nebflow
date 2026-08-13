@@ -85,8 +85,9 @@ class AgentLibrary(
   }
 
   /**
-   * Update the tools list in agent.json. Reads the existing file, modifies
-   *  the "tools" field, and writes it back.
+   * Update the tools list in agent.json. Reads the existing file, filters out
+   * fixed tools (auto-injected by system) and wildcard, writes only the
+   * configurable tools.
    */
   def updateTools(name: String, tools: List[String]): IO[Unit] = IO.blocking {
     val jsonPath = agentsDir / name / "agent.json"
@@ -94,7 +95,11 @@ class AgentLibrary(
       val json = os.read(jsonPath)
       io.circe.parser.parse(json).toOption match
         case Some(parsed) =>
-          val updated = parsed.deepMerge(io.circe.Json.obj("tools" -> tools.asJson))
+          // Filter out fixed tools and wildcard — they're auto-injected
+          val defn = loadFromDir(agentsDir / name).getOrElse(AgentDef(name = name, description = ""))
+          val fixed = AgentCore.fixedToolsFor(defn)
+          val configurable = tools.filterNot(t => t == "*" || fixed.contains(t))
+          val updated = parsed.deepMerge(io.circe.Json.obj("tools" -> configurable.asJson))
           os.write.over(jsonPath, updated.noSpaces)
         case None => () // skip if unparseable
   }
