@@ -90,7 +90,8 @@ object AgentActor extends AgentCore with AgentSession:
     text: String,
     source: String,
     eventType: Option[String] = None,
-    sender: Option[String] = None
+    sender: Option[String] = None,
+    senderTeam: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
       val base = Json.obj(
@@ -102,8 +103,9 @@ object AgentActor extends AgentCore with AgentSession:
       )
       val withEt = eventType.fold(base)(et => base.deepMerge(Json.obj("eventType" -> et.asJson)))
       val withSender = sender.fold(withEt)(s => withEt.deepMerge(Json.obj("sender" -> s.asJson)))
+      val withTeam = senderTeam.fold(withSender)(t => withSender.deepMerge(Json.obj("senderTeam" -> t.asJson)))
       ctx.forkTurn(
-        wsSend(withSender).handleErrorWith(e => IO(logger.warn(s"injected user event failed: ${e.getMessage}")))
+        wsSend(withTeam).handleErrorWith(e => IO(logger.warn(s"injected user event failed: ${e.getMessage}")))
       )
     }
 
@@ -244,7 +246,7 @@ object AgentActor extends AgentCore with AgentSession:
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
-      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender) =>
+      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam) =>
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then
           logger.info(s"Dropping duplicate message with clientMessageId=${clientMessageId.getOrElse("")}")
@@ -280,7 +282,7 @@ object AgentActor extends AgentCore with AgentSession:
             else IO.unit
           val injectedEventIO = injectionSource match
             case Some(src) =>
-              emitInjectedUserEvent(stateWithWidth.wsSend, stateWithWidth.sessionId, text, src, sender = sender)
+              emitInjectedUserEvent(stateWithWidth.wsSend, stateWithWidth.sessionId, text, src, sender = sender, senderTeam = senderTeam)
             case None => IO.unit
           for
             _ <- sessionBusyIO
@@ -546,8 +548,8 @@ object AgentActor extends AgentCore with AgentSession:
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
-      case AgentCommand.ImmediateInput(text, blocks, source, _, sender) =>
-        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender)
+      case AgentCommand.ImmediateInput(text, blocks, source, _, sender, senderTeam) =>
+        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam)
         yield idle(agentDef, resources, depth, parentRef, state)
 
       // Supervisor restart in idle state
@@ -1017,7 +1019,7 @@ object AgentActor extends AgentCore with AgentSession:
           case None => Nil
         val immEventIO = immInputOpt match
           case Some(imm) if imm.source.isDefined =>
-            emitInjectedUserEvent(state.wsSend, state.sessionId, imm.text, imm.source.get, imm.eventType, imm.sender)
+            emitInjectedUserEvent(state.wsSend, state.sessionId, imm.text, imm.source.get, imm.eventType, imm.sender, imm.senderTeam)
           case _ => IO.unit
         val newMessages =
           baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages
@@ -1287,7 +1289,8 @@ object AgentActor extends AgentCore with AgentSession:
                               imm.text,
                               src,
                               imm.eventType,
-                              imm.sender
+                              imm.sender,
+                              imm.senderTeam
                             )
                           case None => IO.unit
                         res <- pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
@@ -1846,7 +1849,8 @@ object AgentActor extends AgentCore with AgentSession:
               immInput.text,
               src,
               immInput.eventType,
-              immInput.sender
+              immInput.sender,
+              immInput.senderTeam
             )
           case None => IO.unit
         _ <- state.sessionId.fold(IO.unit)(sid =>
