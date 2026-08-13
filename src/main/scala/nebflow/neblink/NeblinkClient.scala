@@ -221,17 +221,32 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
       }
     yield result
 
-  /** Send heartbeat and get updated peer list. Requires prior login. */
+  /**
+   * Send heartbeat and get updated peer list. Requires prior login.
+   *
+   * Re-detects local endpoints on every heartbeat so the server sees our current
+   * IP — after a network change (e.g. laptop moved to a different Wi-Fi), the
+   * server's stored address becomes stale and peers can't reach us via P2P.
+   * Including endpoints in the body lets the server update our address even
+   * when it doesn't change (idempotent).
+   */
   def heartbeat: IO[Either[String, List[NeblinkPeerInfo]]] =
     sessionToken match
       case None => IO.pure(Left("Not logged in"))
       case Some(token) =>
-        sendRequest("POST", s"${config.url}/api/device/heartbeat", "", Some(token)).flatMap {
-          case Right(respBody) =>
-            decode[HeartbeatResponse](respBody) match
-              case Right(hb) => IO.pure(Right(hb.peers))
-              case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
-          case Left(err) => IO.pure(Left(err))
+        detectLocalEndpoints.flatMap { endpoints =>
+          val body = Json.obj(
+            "endpoints" -> endpoints.map { e =>
+              Json.obj("address" -> e.address.asJson, "port" -> e.port.asJson, "kind" -> e.kind.asJson)
+            }.asJson
+          ).noSpaces
+          sendRequest("POST", s"${config.url}/api/device/heartbeat", body, Some(token)).flatMap {
+            case Right(respBody) =>
+              decode[HeartbeatResponse](respBody) match
+                case Right(hb) => IO.pure(Right(hb.peers))
+                case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
+            case Left(err) => IO.pure(Left(err))
+          }
         }
 
   /**
