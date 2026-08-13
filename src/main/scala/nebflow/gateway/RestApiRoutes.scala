@@ -377,7 +377,8 @@ class RestApiRoutes(
                   "platform" -> id.platform.asJson,
                   "capabilities" -> id.capabilities.asJson,
                   "userDescription" -> id.userDescription.asJson,
-                  "avatarUrl" -> id.avatarUrl.asJson
+                  "avatarUrl" -> id.avatarUrl.asJson,
+                  "githubLogin" -> id.githubLogin.asJson
                 ),
                 "peers" -> peersList
                   .map(p =>
@@ -619,6 +620,9 @@ class RestApiRoutes(
                       // Success — persist credential + update config + hot-swap.
                       val deviceToken = json.hcursor.downField("deviceToken").as[String].toOption
                       val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
+                      // Extract user info from neblink-server response (if available).
+                      val avatarUrl = json.hcursor.downField("avatarUrl").as[Option[String]].toOption.flatten
+                      val githubLogin = json.hcursor.downField("githubLogin").as[Option[String]].toOption.flatten
                       deviceToken match
                         case Some(tok) =>
                           for
@@ -639,6 +643,8 @@ class RestApiRoutes(
                               .fold(IO.unit)(d => d.setClient(Some(new NeblinkClient(newConfig, gatewayPort))))
                             // Trigger immediate re-discovery.
                             _ <- ms.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
+                            // Persist GitHub user info (avatar + login) from server response.
+                            _ <- ms.updateDeviceInfo(avatarUrl = avatarUrl, githubLogin = githubLogin)
                             r <- Ok(
                               Json.obj(
                                 "ok" -> true.asJson,
