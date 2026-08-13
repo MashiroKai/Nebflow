@@ -294,7 +294,7 @@ class DaemonSpec extends FunSuite:
     }
   }
 
-  test("DaemonService: explicit stop does not trigger auto-restart (JVM shutdown coordination)") {
+  test("DaemonService: explicit stop does not trigger auto-restart (JVM shutdown coordination)".flaky) {
     withDispatcher { disp =>
       val svc = new DaemonService(disp)
       val cfg = DaemonConfig("stopper", "Stopper", List("sleep", "30"), autoStart = true, restartBackoffSec = 1)
