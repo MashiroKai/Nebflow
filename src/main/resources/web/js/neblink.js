@@ -257,26 +257,50 @@ function platformDisplay(platform) {
   return { icon: generic, text: platform || 'Device' };
 }
 
-// ---- Device-flow polling ----
+// ---- Device-flow start / polling ----
+
+/**
+ * Start a NebLink device-flow authorization.
+ * Returns the flow payload {deviceCode, userCode, verificationUri, interval,
+ * expiresIn} on success; throws Error(message) otherwise.
+ * Shared by the Settings panel button and the avatar login modal.
+ */
+export async function startDeviceFlow() {
+  const resp = await fetch('/api/neblink/device-flow/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || '启动设备流程失败');
+  return data;
+}
 
 /**
  * Poll the local gateway's /api/neblink/device-flow/poll until the device is
  * approved (or expired/errored). On success, the Scala backend persists the
  * credential and hot-swaps the client — the UI just needs to refresh state.
+ *
+ * Optional callbacks let non-Settings callers (avatar login modal) react to
+ * the outcome; neblinkState is updated either way.
  */
 let _flowPollTimer = null;
-function pollDeviceFlow(deviceCode, interval, expiresInSeconds) {
+export function pollDeviceFlow(deviceCode, interval, expiresInSeconds, onSuccess, onError) {
   // Cancel any existing poll.
   if (_flowPollTimer) clearTimeout(_flowPollTimer);
   const deadline = Date.now() + expiresInSeconds * 1000;
 
+  const fail = (errMsg) => {
+    neblinkState.flowState = 'idle';
+    neblinkState.pairError = errMsg;
+    neblinkState.userCode = '';
+    neblinkState.deviceCode = '';
+    if (_rerender) _rerender();
+    onError?.(errMsg);
+  };
+
   const poll = async () => {
     if (Date.now() > deadline) {
-      neblinkState.flowState = 'idle';
-      neblinkState.pairError = '授权超时，请重试';
-      neblinkState.userCode = '';
-      neblinkState.deviceCode = '';
-      if (_rerender) _rerender();
+      fail('授权超时，请重试');
       return;
     }
     try {
@@ -295,6 +319,7 @@ function pollDeviceFlow(deviceCode, interval, expiresInSeconds) {
         if (_rerender) _rerender();
         // Refresh neblink status after a short delay so the new device shows up.
         setTimeout(() => fetchNeblinkStatus(), 1500);
+        onSuccess?.();
         return;
       }
       if (data.error === 'authorization_pending') {
@@ -303,20 +328,23 @@ function pollDeviceFlow(deviceCode, interval, expiresInSeconds) {
         return;
       }
       // Other error (expired, denied, etc.)
-      neblinkState.flowState = 'idle';
-      neblinkState.pairError = data.error || '授权失败';
-      neblinkState.userCode = '';
-      neblinkState.deviceCode = '';
-      if (_rerender) _rerender();
+      fail(data.error || '授权失败');
     } catch (e) {
-      neblinkState.flowState = 'idle';
-      neblinkState.pairError = '网络错误: ' + e.message;
-      neblinkState.userCode = '';
-      neblinkState.deviceCode = '';
-      if (_rerender) _rerender();
+      fail('网络错误: ' + e.message);
     }
   };
   _flowPollTimer = setTimeout(poll, interval * 1000);
+}
+
+/** Cancel an in-progress device-flow poll (e.g. the login modal was closed). */
+export function cancelDeviceFlow() {
+  if (_flowPollTimer) { clearTimeout(_flowPollTimer); _flowPollTimer = null; }
+  if (neblinkState.flowState === 'waiting') {
+    neblinkState.flowState = 'idle';
+    neblinkState.userCode = '';
+    neblinkState.deviceCode = '';
+    if (_rerender) _rerender();
+  }
 }
 
 // ---- Bind events after HTML insert ----
@@ -334,17 +362,7 @@ export function bindNeblinkEvents(rerender) {
       neblinkState.pairError = '';
       try {
         // Start the device flow.
-        const startResp = await fetch('/api/neblink/device-flow/start', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
-        });
-        const startData = await startResp.json();
-        if (!startResp.ok) {
-          neblinkState.pairError = startData.error || '启动设备流程失败';
-          neblinkState.flowState = 'idle';
-          rerender();
-          return;
-        }
+        const startData = await startDeviceFlow();
         // Store the codes and show the waiting UI.
         neblinkState.deviceCode = startData.deviceCode;
         neblinkState.userCode = startData.userCode;
@@ -357,7 +375,7 @@ export function bindNeblinkEvents(rerender) {
         // Start polling.
         pollDeviceFlow(startData.deviceCode, startData.interval || 3, startData.expiresIn || 900);
       } catch (e) {
-        neblinkState.pairError = '网络错误: ' + e.message;
+        neblinkState.pairError = e.message || '网络错误';
         neblinkState.flowState = 'idle';
         rerender();
       }
