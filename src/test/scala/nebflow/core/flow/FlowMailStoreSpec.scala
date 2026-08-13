@@ -29,7 +29,7 @@ class FlowMailStoreSpec extends CatsEffectSuite:
   test("#7/#8: a plain UUID sessionId is still accepted") {
     FlowMailStore.load("550e8400-e29b-41d4-a716-446655440000", "code-review").attempt.map {
       case Right(_) => () // ok
-      case Left(e)  => fail(s"UUID sessionId must be accepted: ${e.getMessage}")
+      case Left(e) => fail(s"UUID sessionId must be accepted: ${e.getMessage}")
     }
   }
 

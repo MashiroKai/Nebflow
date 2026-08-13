@@ -46,28 +46,32 @@ object DelegateTool extends Tool:
   ): io.circe.Json => IO[Unit] =
     val base = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
     parentSessionId match
-      case Some(sid) => json =>
-        // Carry the original parent sessionId as rootSessionId so nested
-        // delegates (child → grandchild) still index against the top-level
-        // main session on the frontend. routeWsSend wrappers compose such that
-        // the wrapper created first (closest to the root session) executes
-        // last, so overwriting here always yields the true root session id.
-        // JsonObject.add is O(1) per field, replacing the O(n) deepMerge chain.
-        json.asObject match
-          case Some(obj) =>
-            val builder = obj.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
-            // Preserve an existing nodeSessionId: for nested delegates, toJson
-            // already stamped the grandchild's own nodeSessionId — overwriting it
-            // would route grandchild events into the child's popup.
-            val finalObj =
-              if obj.contains("nodeSessionId") then builder
-              else builder.add("nodeSessionId", subagentId.asJson)
-            base(Json.fromJsonObject(finalObj))
-          case None => base(json)
-      case None => json =>
-        json.asObject match
-          case Some(obj) => base(Json.fromJsonObject(obj.add("nodeSessionId", subagentId.asJson)))
-          case None => base(json)
+      case Some(sid) =>
+        json =>
+          // Carry the original parent sessionId as rootSessionId so nested
+          // delegates (child → grandchild) still index against the top-level
+          // main session on the frontend. routeWsSend wrappers compose such that
+          // the wrapper created first (closest to the root session) executes
+          // last, so overwriting here always yields the true root session id.
+          // JsonObject.add is O(1) per field, replacing the O(n) deepMerge chain.
+          json.asObject match
+            case Some(obj) =>
+              val builder = obj.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
+              // Preserve an existing nodeSessionId: for nested delegates, toJson
+              // already stamped the grandchild's own nodeSessionId — overwriting it
+              // would route grandchild events into the child's popup.
+              val finalObj =
+                if obj.contains("nodeSessionId") then builder
+                else builder.add("nodeSessionId", subagentId.asJson)
+              base(Json.fromJsonObject(finalObj))
+            case None => base(json)
+      case None =>
+        json =>
+          json.asObject match
+            case Some(obj) => base(Json.fromJsonObject(obj.add("nodeSessionId", subagentId.asJson)))
+            case None => base(json)
+    end match
+  end routeWsSend
 
   /** Maximum sub-agent depth (matches AgentCore.MaxDepth). */
   val MaxDepth: Int = 5
@@ -182,7 +186,8 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
             // P2: resolve the caller's root session so flow nodes inherit the
             // same permission policy and render interactions in the Nebula window.
             callerRoot <- ctx.sessionId match
-              case Some(sid) => resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+              case Some(sid) =>
+                resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
               case None => IO.pure("")
             flowOpt <- nebflow.core.entity.EntityLoader.loadFlow(flowName.get)
             r <- flowOpt match
@@ -192,13 +197,19 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
                     nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
                     s"dag-runner-${flowName.get.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
                   )
-                  _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(flowDef, prompt, callerRef, callerRoot)).void
+                  _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(
+                    flowDef,
+                    prompt,
+                    callerRef,
+                    callerRoot
+                  )).void
                 yield Right(s"Flow '${flowName.get}' started. Result will be delivered when complete.")
               case None =>
                 IO.pure(Left(ToolError(s"Flow '${flowName.get}' not found")))
           yield r
         case _ =>
           IO.pure(Left(ToolError("Cannot start flow: missing resources")))
+      end match
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-agent depth ($MaxDepth) reached. Cannot delegate further.")))
     else
@@ -295,6 +306,7 @@ $prompt"""
                       rootSessionId = rootSid
                     )
               yield result
+              end for
             case _ =>
               IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
       }
@@ -350,23 +362,24 @@ $prompt"""
       adapterRef <- system.spawn(
         BackoffSupervisor(
           childRef = subagentRef,
-          childSpawnFn = (sys: ActorSystem) => sys.spawn(
-            AgentActor(
-              agentDef = agentDef,
-              resources = resources,
-              wsSend = childWsSend,
-              depth = childDepth,
-              parentRef = parentRef,
-              sessionId = Some(subagentId),
-              sessionName = Some(description),
-              initialMessages = initialMessages,
-              contextWindow = resources.contextWindow,
-              projectRoot = Some(projectRoot),
-              safetyMode = safetyMode,
-              rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
+          childSpawnFn = (sys: ActorSystem) =>
+            sys.spawn(
+              AgentActor(
+                agentDef = agentDef,
+                resources = resources,
+                wsSend = childWsSend,
+                depth = childDepth,
+                parentRef = parentRef,
+                sessionId = Some(subagentId),
+                sessionName = Some(description),
+                initialMessages = initialMessages,
+                contextWindow = resources.contextWindow,
+                projectRoot = Some(projectRoot),
+                safetyMode = safetyMode,
+                rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
+              ),
+              subagentId
             ),
-            subagentId
-          ),
           childName = subagentId,
           parentRef = parentRef,
           description = description,
@@ -380,31 +393,35 @@ $prompt"""
         s"$subagentId-adapter"
       )
       _ = logger.info(s"Spawned supervised background sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
-      _ <- resources.agentRegistry.update(_ + (
-        subagentId -> AgentRecord(
-          subagentId,
-          subagentRef,
-          AgentKind.Delegate,
-          if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId),
-          parentRef
+      _ <- resources.agentRegistry.update(
+        _ + (
+          subagentId -> AgentRecord(
+            subagentId,
+            subagentRef,
+            AgentKind.Delegate,
+            if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId),
+            parentRef
+          )
         )
-      ))
+      )
       // P3.1: persist task metadata for crash recovery
-      _ <- resources.subAgentTaskStore.recordTask(
-        SubAgentTask(
-          taskId = subagentId,
-          parentSessionId = parentSessionId.getOrElse(""),
-          agentName = agentName,
-          prompt = prompt,
-          description = description,
-          status = "running",
-          retryCount = 0,
-          spawnedAt = System.currentTimeMillis(),
-          completedAt = None,
-          lastError = None,
-          source = "delegate"
+      _ <- resources.subAgentTaskStore
+        .recordTask(
+          SubAgentTask(
+            taskId = subagentId,
+            parentSessionId = parentSessionId.getOrElse(""),
+            agentName = agentName,
+            prompt = prompt,
+            description = description,
+            status = "running",
+            retryCount = 0,
+            spawnedAt = System.currentTimeMillis(),
+            completedAt = None,
+            lastError = None,
+            source = "delegate"
+          )
         )
-      ).handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}")))
+        .handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}")))
       _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
       s"""Sub-agent '$agentName' started in background for: $description.
@@ -449,6 +466,7 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
           (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
           IO.pure(Behaviors.stopped[AgentEvent]))
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
+      end notifyParentAndStop
 
       IO.pure(
         new Behavior[AgentEvent]:
@@ -542,15 +560,17 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
         s"$subagentId-adapter"
       )
       _ = logger.info(s"Spawned persistent sub-agent: $subagentId (depth=$childDepth, agent=$agentName, addr=$address)")
-      _ <- resources.agentRegistry.update(_ + (
-        subagentId -> AgentRecord(
-          subagentId,
-          subagentRef,
-          AgentKind.Delegate,
-          if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId),
-          parentRef
+      _ <- resources.agentRegistry.update(
+        _ + (
+          subagentId -> AgentRecord(
+            subagentId,
+            subagentRef,
+            AgentKind.Delegate,
+            if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId),
+            parentRef
+          )
         )
-      ))
+      )
       _ <- parentRef.fold(IO.unit)(ref => ref ! AgentCommand.SessionStarted(address, agentName, taskDescription))
       _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(

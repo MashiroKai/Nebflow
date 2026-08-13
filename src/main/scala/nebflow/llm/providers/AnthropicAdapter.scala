@@ -77,10 +77,8 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
                   Json.Null
           }
           val filtered = content.filterNot(_ == Json.Null)
-          if filtered.isEmpty then
-            Json.obj("role" -> Json.fromString(role), "content" -> Json.fromString(" "))
-          else
-            Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(filtered))
+          if filtered.isEmpty then Json.obj("role" -> Json.fromString(role), "content" -> Json.fromString(" "))
+          else Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(filtered))
       end match
     }
 

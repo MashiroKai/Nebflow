@@ -32,7 +32,7 @@ object ManagerProgressHook extends PreCompactionHook:
     IO.blocking {
       val memPath = teamName match
         case Some(tn) => PathUtil.dataRoot / "teams" / tn / "agents" / agentName / "memory.md"
-        case None     => PathUtil.dataRoot / "agents" / agentName / "memory.md"
+        case None => PathUtil.dataRoot / "agents" / agentName / "memory.md"
       val existing = if os.exists(memPath) then os.read(memPath) else ""
       val sectionMarker = "## Project Progress"
       val updated =

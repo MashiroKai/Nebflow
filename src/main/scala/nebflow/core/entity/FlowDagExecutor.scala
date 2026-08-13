@@ -96,7 +96,7 @@ object FlowDagExecutor:
                   NodeResult(nodeId, "", false, Some(s"Agent '${node.agent}' not found in flow or global library"))
                 )
               case Some(entry) =>
-                val agentDef = {
+                val agentDef =
                   val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
                   AgentDef(
                     name = entry.name,
@@ -109,8 +109,18 @@ object FlowDagExecutor:
                     model = Some(resolvedModel),
                     preset = entry.preset
                   )
-                }
-                executeAgent(nodeId, node.agent, agentDef, inputText, resources, actorSystem, wsSend, flow.name, parentAgentRef, rootSessionId)
+                executeAgent(
+                  nodeId,
+                  node.agent,
+                  agentDef,
+                  inputText,
+                  resources,
+                  actorSystem,
+                  wsSend,
+                  flow.name,
+                  parentAgentRef,
+                  rootSessionId
+                )
             updatedCtx = ctx.copy(nodeOutputs = ctx.nodeOutputs + (nodeId -> result.output))
           yield (result, updatedCtx)
           end for
@@ -214,38 +224,43 @@ object FlowDagExecutor:
       for
         // Check cancellation before executing each node
         cancelled <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)
-        result <- if cancelled then
-          IO.pure(Left[String, String]("Flow cancelled by user"))
-        else
-          for
-            _ <- logger.info(s"Flow '${flow.name}': executing node '$nodeId'")
-            _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, NodeStatus.Running)
-            _ <- emitProgress(nodeId, NodeStatus.Running)
-            (result, ctx2) <- executeNode(nodeId, ctx)
-            status = NodeStatus.toNodeStatus(result, cancelled = false)
-            _ <-
-              if status == NodeStatus.Completed then
-                nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, NodeStatus.Completed, result.output) *>
-                  emitProgress(
+        result <-
+          if cancelled then IO.pure(Left[String, String]("Flow cancelled by user"))
+          else
+            for
+              _ <- logger.info(s"Flow '${flow.name}': executing node '$nodeId'")
+              _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, NodeStatus.Running)
+              _ <- emitProgress(nodeId, NodeStatus.Running)
+              (result, ctx2) <- executeNode(nodeId, ctx)
+              status = NodeStatus.toNodeStatus(result, cancelled = false)
+              _ <-
+                if status == NodeStatus.Completed then
+                  nebflow.core.flow.RunningFlowRegistry.setNodeStatus(
+                    instanceId,
                     nodeId,
                     NodeStatus.Completed,
-                    "output" -> (if result.output.length > 200 then result.output.take(197) + "..."
-                                 else result.output).asJson
-                  )
-              else
-                nebflow.core.flow.RunningFlowRegistry.setNodeStatus(
-                  instanceId,
-                  nodeId,
-                  NodeStatus.Failed,
-                  "",
-                  result.error.getOrElse("unknown")
-                ) *>
-                  emitProgress(nodeId, NodeStatus.Failed, "error" -> result.error.getOrElse("unknown").asJson)
-            handled <- handleResult(nodeId, result, ctx2)
-            finalResult <- handled match
-              case Left(err) => IO.pure(Left(err))
-              case Right((nr, ctx3)) => route(nr, ctx3)
-          yield finalResult
+                    result.output
+                  ) *>
+                    emitProgress(
+                      nodeId,
+                      NodeStatus.Completed,
+                      "output" -> (if result.output.length > 200 then result.output.take(197) + "..."
+                                   else result.output).asJson
+                    )
+                else
+                  nebflow.core.flow.RunningFlowRegistry.setNodeStatus(
+                    instanceId,
+                    nodeId,
+                    NodeStatus.Failed,
+                    "",
+                    result.error.getOrElse("unknown")
+                  ) *>
+                    emitProgress(nodeId, NodeStatus.Failed, "error" -> result.error.getOrElse("unknown").asJson)
+              handled <- handleResult(nodeId, result, ctx2)
+              finalResult <- handled match
+                case Left(err) => IO.pure(Left(err))
+                case Right((nr, ctx3)) => route(nr, ctx3)
+            yield finalResult
       yield result
 
     // Register the running flow, execute, then clean up
@@ -259,17 +274,22 @@ object FlowDagExecutor:
           "flowName" -> flow.name.asJson,
           "description" -> flow.description.asJson,
           "entry" -> flow.entry.asJson,
-          "nodes" -> flow.nodes.toList.sortBy(_._1).map { (nodeId, node) =>
-            Json.obj(
-              "nodeId" -> nodeId.asJson,
-              "agent" -> node.agent.asJson,
-              "status" -> "pending".asJson
-            )
-          }.asJson,
+          "nodes" -> flow.nodes.toList
+            .sortBy(_._1)
+            .map { (nodeId, node) =>
+              Json.obj(
+                "nodeId" -> nodeId.asJson,
+                "agent" -> node.agent.asJson,
+                "status" -> "pending".asJson
+              )
+            }
+            .asJson,
           "edges" -> flow.nodes.toList.flatMap { (nodeId, node) =>
             node.onComplete match
-              case NodeRoute.Goto(target) => List(Json.obj("from" -> nodeId.asJson, "to" -> target.asJson, "condition" -> Json.Null))
-              case NodeRoute.Return => List(Json.obj("from" -> nodeId.asJson, "to" -> "$return".asJson, "condition" -> Json.Null))
+              case NodeRoute.Goto(target) =>
+                List(Json.obj("from" -> nodeId.asJson, "to" -> target.asJson, "condition" -> Json.Null))
+              case NodeRoute.Return =>
+                List(Json.obj("from" -> nodeId.asJson, "to" -> "$return".asJson, "condition" -> Json.Null))
               case NodeRoute.Switch(_, cases, _) =>
                 cases.toList.map { (cond, route) =>
                   val target = route match
@@ -284,13 +304,15 @@ object FlowDagExecutor:
       result <- runNode(flow.entry, FlowExecContext(flow.name, taskInput))
       // Update final status (preserve "cancelled" if it was cancelled)
       cancelled <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)
-      _ <- if cancelled then IO.unit
-           else nebflow.core.flow.RunningFlowRegistry.update(instanceId)(rf =>
-             rf.copy(
-               status = if result.isRight then NodeStatus.Completed else NodeStatus.Failed,
-               completedAt = Some(System.currentTimeMillis())
-             )
-           )
+      _ <-
+        if cancelled then IO.unit
+        else
+          nebflow.core.flow.RunningFlowRegistry.update(instanceId)(rf =>
+            rf.copy(
+              status = if result.isRight then NodeStatus.Completed else NodeStatus.Failed,
+              completedAt = Some(System.currentTimeMillis())
+            )
+          )
       _ <- nebflow.core.flow.RunningFlowRegistry.clearCancelled(instanceId)
       _ <- emitWs(
         Json.obj(
@@ -418,9 +440,11 @@ object FlowDagExecutor:
       // P1: register flow node agents in the unified AgentRegistry — this was
       // previously missing entirely, so permission answers routed to a ghost
       // root agent and were silently dropped (D2 for dag-* sessions).
-      _ <- resources.agentRegistry.update(_ + (
-        sessionId -> AgentRecord(sessionId, ref, AgentKind.Flow, effectiveRootSessionId, parentAgentRef)
-      ))
+      _ <- resources.agentRegistry.update(
+        _ + (
+          sessionId -> AgentRecord(sessionId, ref, AgentKind.Flow, effectiveRootSessionId, parentAgentRef)
+        )
+      )
       // Send input with the bridge actor as replyTo
       _ <- (ref ! AgentCommand.UserInput(
         text = inputText,

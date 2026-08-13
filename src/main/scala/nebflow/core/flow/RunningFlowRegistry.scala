@@ -41,7 +41,7 @@ object RunningFlowRegistry:
   /** Mark a flow as cancelled. The DAG executor checks this between nodes. */
   def cancel(instanceId: String): IO[Unit] =
     cancelledFlows.update(_ + instanceId) *>
-    update(instanceId)(_.copy(status = NodeStatus.Cancelled))
+      update(instanceId)(_.copy(status = NodeStatus.Cancelled))
 
   /** Check if a flow has been cancelled. */
   def isCancelled(instanceId: String): IO[Boolean] =
@@ -73,7 +73,8 @@ object RunningFlowRegistry:
             output = if output.nonEmpty then output else ns.output,
             error = if error.nonEmpty then error else ns.error,
             startedAt = if status == NodeStatus.Running then Some(now) else ns.startedAt,
-            completedAt = if status == NodeStatus.Completed || status == NodeStatus.Failed then Some(now) else ns.completedAt
+            completedAt =
+              if status == NodeStatus.Completed || status == NodeStatus.Failed then Some(now) else ns.completedAt
           ))
         case None => rf.nodes
       val newStatus = status match
@@ -83,7 +84,8 @@ object RunningFlowRegistry:
       rf.copy(
         nodes = updatedNodes,
         status = newStatus,
-        completedAt = if newStatus == NodeStatus.Completed || newStatus == NodeStatus.Failed then Some(now) else rf.completedAt
+        completedAt =
+          if newStatus == NodeStatus.Completed || newStatus == NodeStatus.Failed then Some(now) else rf.completedAt
       )
     }
 

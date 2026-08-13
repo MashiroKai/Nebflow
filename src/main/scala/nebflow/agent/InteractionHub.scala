@@ -80,21 +80,38 @@ object InteractionHub:
           s"sourceAgent=${req.sourceAgent}"
       )
       // Register BEFORE rendering so a fast answer can never miss the slot.
-      _ <- pending.update(_ + (req.requestId ->
-        PendingRequest(req.reply, req.rootSessionId, req.sourceAgent, req.sourceSession, req.kind, req.payload,
-          System.currentTimeMillis())))
+      _ <- pending.update(
+        _ + (req.requestId ->
+          PendingRequest(
+            req.reply,
+            req.rootSessionId,
+            req.sourceAgent,
+            req.sourceSession,
+            req.kind,
+            req.payload,
+            System.currentTimeMillis()
+          ))
+      )
       send <- rootWsSend.get.map(_.get(req.rootSessionId))
       _ <- send.fold(
-        logger.warn(s"InteractionRequest dropped: no root wsSend registered for rootSessionId=${req.rootSessionId}") *> IO.unit
+        logger.warn(
+          s"InteractionRequest dropped: no root wsSend registered for rootSessionId=${req.rootSessionId}"
+        ) *> IO.unit
       )(ws =>
         // roundComplete first: flush any in-flight text buffer into the root
         // session's ui.json before the interactive card (matches P1 root behavior).
-        (ws(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> req.rootSessionId.asJson)).handleErrorWith(_ => IO.unit) *>
+        (ws(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> req.rootSessionId.asJson)).handleErrorWith(_ =>
+          IO.unit
+        ) *>
           ws(render).handleErrorWith { e =>
             logger.warn(s"InteractionRequest render failed for requestId=${req.requestId}: ${e.getMessage}") *> IO.unit
           }).void
       )
     yield ()
+
+    end for
+
+  end handleRequest
 
   /** Build the askPermission card JSON, rendered at sessionId=rootSessionId. */
   private def renderPermission(req: InteractionRequest): Json =
@@ -165,12 +182,16 @@ end InteractionHub
 
 /** Commands accepted by the InteractionHub actor. */
 sealed trait InteractionHubCommand
+
 object InteractionHubCommand:
   /** Gateway → hub: register a root session's recording wsSend (render target). */
   final case class RegisterRoot(rootSessionId: String, wsSend: Json => IO[Unit]) extends InteractionHubCommand
+
   /** Gateway → hub: root session closed — remove its render target. */
   final case class UnregisterRoot(rootSessionId: String) extends InteractionHubCommand
+
   /** Agent → hub: a permission / AskUser request from any agent in the tree. */
   final case class Request(req: InteractionRequest) extends InteractionHubCommand
+
   /** Gateway → hub: user answered (translated from permissionAnswer/askUserAnswer). */
   final case class Answered(ans: InteractionAnswered) extends InteractionHubCommand

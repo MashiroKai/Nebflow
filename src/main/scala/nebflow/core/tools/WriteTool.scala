@@ -68,9 +68,10 @@ Usage:
     val contentOpt = input("content").flatMap(_.asString)
     if !nebflow.core.PathUtil.isAbsolute(filePathStr) then
       IO.pure(Left(ToolError(s"Path must be absolute, got: $filePathStr")))
-    else contentOpt match
-      case Some(content) => doWrite(Paths.get(filePathStr), content, ctx)
-      case None => IO.pure(Left(ToolError("Field 'content' must be a string")))
+    else
+      contentOpt match
+        case Some(content) => doWrite(Paths.get(filePathStr), content, ctx)
+        case None => IO.pure(Left(ToolError("Field 'content' must be a string")))
 
   private def doWrite(
     filePath: Path,

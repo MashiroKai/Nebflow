@@ -204,16 +204,19 @@ Message type (optional, default "INFO"):
       case Some((instance, agentName)) =>
         EntityLoader.loadTeamAgent(instance, agentName).flatMap {
           case Some(entry) =>
-            val agentDef = {
+            val agentDef =
               val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
               AgentDef(
-                name = entry.name, description = entry.description, tools = entry.tools,
-                systemPrompt = entry.systemPrompt, voiceEnabled = entry.voice,
+                name = entry.name,
+                description = entry.description,
+                tools = entry.tools,
+                systemPrompt = entry.systemPrompt,
+                voiceEnabled = entry.voice,
                 category = entry.category,
-                mcpServers = entry.mcpServers, model = Some(resolvedModel),
+                mcpServers = entry.mcpServers,
+                model = Some(resolvedModel),
                 preset = entry.preset
               )
-            }
             doFork(system, resources, agentDef, Some(targetSid), question, address, ctx)
           case None =>
             IO.pure(Left(ToolError(s"Agent '$address' definition not found.")))
@@ -245,7 +248,8 @@ Message type (optional, default "INFO"):
       // inherits the same root-session policy and renders interactions in the
       // same Nebula window as the caller.
       callerRootSessionId <- ctx.sessionId match
-        case Some(sid) => resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+        case Some(sid) =>
+          resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
         case None => IO.pure("")
 
       tempSession <- resources.sessionStore
@@ -337,12 +341,12 @@ Message type (optional, default "INFO"):
     if isFlowCaller then
       responseDeferred.get.flatMap {
         case Right(text) => cleanupFork *> IO.pure(Right(text))
-        case Left(err)   => cleanupFork *> IO.pure(Left(ToolError(err)))
+        case Left(err) => cleanupFork *> IO.pure(Left(ToolError(err)))
       }
     else
       responseDeferred.get.race(IO.sleep(AskBackgroundThreshold)).flatMap {
         case Left(Right(text)) => cleanupFork *> IO.pure(Right(text))
-        case Left(Left(err))   => cleanupFork *> IO.pure(Left(ToolError(err)))
+        case Left(Left(err)) => cleanupFork *> IO.pure(Left(ToolError(err)))
         case Right(_) =>
           val jobId = s"ask-${java.util.UUID.randomUUID().toString.take(8)}"
           val description = s"ask $address"
@@ -371,7 +375,9 @@ Message type (optional, default "INFO"):
               s"${AskBackgroundThreshold.toSeconds}s. The fork continues in the background — " +
               "you will be notified when the answer arrives. Continue with other work or finish your turn."
           )
+          end for
       }
+    end if
   end waitForForkAnswer
 
   /** Emit a WS event so the frontend shows the ask as a background task. */
@@ -593,6 +599,7 @@ Message type (optional, default "INFO"):
                                 case None => mailNotFound(address)
                         yield res
                       else mailNotFound(address)
+                      end if
                 yield sr2
           yield sr
     yield result
@@ -674,10 +681,14 @@ Message type (optional, default "INFO"):
           _ <- entryOpt.traverse_ { entry =>
             val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
             val agentDef = AgentDef(
-              name = entry.name, description = entry.description, tools = entry.tools,
-              systemPrompt = entry.systemPrompt, voiceEnabled = entry.voice,
+              name = entry.name,
+              description = entry.description,
+              tools = entry.tools,
+              systemPrompt = entry.systemPrompt,
+              voiceEnabled = entry.voice,
               category = entry.category,
-              mcpServers = entry.mcpServers, model = Some(resolvedModel),
+              mcpServers = entry.mcpServers,
+              model = Some(resolvedModel),
               preset = entry.preset
             )
             // Route team agent events with a "team-" prefixed nodeSessionId so
@@ -731,18 +742,22 @@ Message type (optional, default "INFO"):
                 s"mail-${session.id.take(8)}"
               )
               _ <- TeamSessionRegistry.registerActor(session.id, ref)
-              _ <- resources.agentRegistry.update(_ + (
-                session.id -> AgentRecord(
-                  sessionId = session.id,
-                  ref = ref,
-                  kind = AgentKind.Team,
-                  rootSessionId = rootSid,
-                  parentRef = ctx.agentActorRef
+              _ <- resources.agentRegistry.update(
+                _ + (
+                  session.id -> AgentRecord(
+                    sessionId = session.id,
+                    ref = ref,
+                    kind = AgentKind.Team,
+                    rootSessionId = rootSid,
+                    parentRef = ctx.agentActorRef
+                  )
                 )
-              ))
+              )
             yield ref
+            end for
           }
         yield ()
+        end for
       }
       ref <- TeamSessionRegistry.getRunningActor(sessionId)
     yield ref
@@ -757,9 +772,16 @@ Message type (optional, default "INFO"):
   ): IO[Either[ToolError, String]] =
     val senderName = ctx.agentDef.map(_.name).getOrElse("Nebula")
     for
-      _ <- ref ! AgentCommand.ImmediateInput(message, source = Some("mail"), eventType = Some(mailType.toLowerCase), sender = Some(senderName))
+      _ <- ref ! AgentCommand.ImmediateInput(
+        message,
+        source = Some("mail"),
+        eventType = Some(mailType.toLowerCase),
+        sender = Some(senderName)
+      )
       _ <- nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse(""))
     yield Right(s"Message sent to $label. The agent will process it.")
+
+  end sendMail
 
   private def mailNotFound(address: String): IO[Either[ToolError, String]] =
     val msg =

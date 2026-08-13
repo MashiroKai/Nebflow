@@ -21,8 +21,8 @@ case class AgentEntry(
   mcpServers: List[String] = Nil,
   model: Option[AgentModelConfig] = None,
   preset: Option[String] = None, // references a named preset in model-presets.json
-  skills: List[String] = Nil,   // skill names this agent can see (frontmatter injection)
-  flows: List[String] = Nil     // flow names this agent can trigger via Delegate(flow=...)
+  skills: List[String] = Nil, // skill names this agent can see (frontmatter injection)
+  flows: List[String] = Nil // flow names this agent can trigger via Delegate(flow=...)
 )
 
 object AgentEntry:

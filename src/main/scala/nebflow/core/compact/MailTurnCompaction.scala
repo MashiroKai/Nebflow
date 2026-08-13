@@ -67,7 +67,8 @@ object MailTurnCompaction:
 
   end extractAndStore
 
-  /** Build a text progress summary from the turn's messages.
+  /**
+   * Build a text progress summary from the turn's messages.
    *
    * Heuristic extraction (no LLM call):
    * - Request: first User message content (the Mail text)

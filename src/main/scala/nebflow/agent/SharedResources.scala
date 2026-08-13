@@ -70,8 +70,7 @@ case class SharedResources(
    * decision time (dynamic inheritance — never a per-agent snapshot).
    * Seeded by ensureRootAgent from session meta; written by SetSafetyMode.
    */
-  permissionPolicies: Ref[IO, Map[String, PermissionPolicy]] =
-    Ref.unsafe[IO, Map[String, PermissionPolicy]](Map.empty),
+  permissionPolicies: Ref[IO, Map[String, PermissionPolicy]] = Ref.unsafe[IO, Map[String, PermissionPolicy]](Map.empty),
   /**
    * P2 InteractionHub: spawned once by GatewayMain at startup. Agents send
    * InteractionRequest here for permission/AskUser; gateway forwards frontend

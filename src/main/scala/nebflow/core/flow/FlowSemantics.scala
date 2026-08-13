@@ -15,22 +15,22 @@ enum NodeStatus:
 
   /** Stable wire value shared with persistence / WS / frontend (kebab, lowercase). */
   def wire: String = this match
-    case Pending   => "pending"
-    case Running   => "running"
+    case Pending => "pending"
+    case Running => "running"
     case Completed => "completed"
-    case Failed    => "failed"
+    case Failed => "failed"
     case Cancelled => "cancelled"
 
 object NodeStatus:
 
   /** Parse a wire value. Unknown strings decode to None — explicitly exposed, never silent. */
   def fromWire(raw: String): Option[NodeStatus] = raw.trim.toLowerCase match
-    case "pending"   => Some(Pending)
-    case "running"   => Some(Running)
+    case "pending" => Some(Pending)
+    case "running" => Some(Running)
     case "completed" => Some(Completed)
-    case "failed"    => Some(Failed)
+    case "failed" => Some(Failed)
     case "cancelled" => Some(Cancelled)
-    case _           => None
+    case _ => None
 
   /**
    * NodeResult → NodeStatus mapping (the only mapping function).
@@ -41,6 +41,8 @@ object NodeStatus:
     if cancelled then Cancelled
     else if result.success then Completed
     else Failed
+
+end NodeStatus
 
 /**
  * Engine-level verdict normalization. Flow domain values (pass/fix, merge/skip,
@@ -53,14 +55,34 @@ object VerdictFamily:
 
   /** Aliases that route to the ok/continue family. */
   val OkFamily = Set(
-    "ok", "pass", "passed", "success", "succeeded", "successful",
-    "true", "yes", "done", "complete", "completed", "clean", "fixed"
+    "ok",
+    "pass",
+    "passed",
+    "success",
+    "succeeded",
+    "successful",
+    "true",
+    "yes",
+    "done",
+    "complete",
+    "completed",
+    "clean",
+    "fixed"
   )
 
   /** Aliases that route to the error/stop family. */
   val ErrorFamily = Set(
-    "error", "fail", "failed", "failure", "false",
-    "no", "reject", "rejected", "abort", "aborted", "revise"
+    "error",
+    "fail",
+    "failed",
+    "failure",
+    "false",
+    "no",
+    "reject",
+    "rejected",
+    "abort",
+    "aborted",
+    "revise"
   )
 
   private val logger = NebflowLogger.forName("nebflow.entity.executor")
@@ -110,5 +132,7 @@ object VerdictFamily:
                   )
                   Some(h)
                 case None => None
+    end if
+  end matchCase
 
 end VerdictFamily

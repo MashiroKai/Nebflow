@@ -29,7 +29,8 @@ class MessageSourceCodecSpec extends FunSuite:
     assertEquals(decoded.get.textContent, "hello")
 
   test("UserInput with injected=true and source persists in UiMessage.User JSON"):
-    val ui: UiMessage = UiMessage.User("📬 Mail from Manager", injected = true, timestamp = 1700000000000L, source = Some("mail"))
+    val ui: UiMessage =
+      UiMessage.User("📬 Mail from Manager", injected = true, timestamp = 1700000000000L, source = Some("mail"))
     val json = ui.asJson.noSpaces
     assert(json.contains("\"injected\":true"))
     assert(json.contains("\"source\":\"mail\""))
@@ -51,7 +52,13 @@ class MessageSourceCodecSpec extends FunSuite:
       case other => fail(s"expected User, got $other")
 
   test("UiMessage.User with sender round-trips through JSON"):
-    val ui: UiMessage = UiMessage.User("task from Manager", injected = true, timestamp = 1700000000000L, source = Some("mail"), sender = Some("Manager"))
+    val ui: UiMessage = UiMessage.User(
+      "task from Manager",
+      injected = true,
+      timestamp = 1700000000000L,
+      source = Some("mail"),
+      sender = Some("Manager")
+    )
     val json = ui.asJson.noSpaces
     assert(json.contains("\"sender\":\"Manager\""), s"json contains sender: $json")
     val decoded = decode[UiMessage](json).toOption

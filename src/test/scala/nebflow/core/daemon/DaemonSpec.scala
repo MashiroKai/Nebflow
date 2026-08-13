@@ -263,11 +263,15 @@ class DaemonSpec extends FunSuite:
       else Thread.sleep(intervalMs)
     ok
 
-  test("DaemonService: autoStart daemon auto-restarts on crash, gives up after restartMaxAttempts (crash loop protection)") {
+  test(
+    "DaemonService: autoStart daemon auto-restarts on crash, gives up after restartMaxAttempts (crash loop protection)"
+  ) {
     withDispatcher { disp =>
       val svc = new DaemonService(disp)
       val cfg = DaemonConfig(
-        "crashloop", "Crash Loop", List("sh", "-c", "exit 7"),
+        "crashloop",
+        "Crash Loop",
+        List("sh", "-c", "exit 7"),
         autoStart = true,
         restartBackoffSec = 1,
         restartMaxAttempts = 2

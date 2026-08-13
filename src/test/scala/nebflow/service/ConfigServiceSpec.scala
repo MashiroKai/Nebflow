@@ -46,7 +46,9 @@ class ConfigServiceSpec extends FunSuite:
 
   test("validateConfig accepts null provider (deletion) without field errors") {
     val cfg =
-      s"""{"llm":{"providers":{"Zai":null,"glm":${validProvider("glm").noSpaces}},"model":{"default":"glm/m1","fallbacks":[]}}}"""
+      s"""{"llm":{"providers":{"Zai":null,"glm":${validProvider(
+          "glm"
+        ).noSpaces}},"model":{"default":"glm/m1","fallbacks":[]}}}"""
     assertEquals(ConfigService.validateConfig(cfg), Nil)
   }
 
@@ -71,7 +73,9 @@ class ConfigServiceSpec extends FunSuite:
   test("updateConfig deletes provider and scrubs global chain + agent fallbacks") {
     // Seed config with provider Zai referenced as the global default
     val seed =
-      s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider("glm").noSpaces}},"model":{"default":"Zai/m1","fallbacks":["glm/m1"]}}}"""
+      s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
+          "glm"
+        ).noSpaces}},"model":{"default":"Zai/m1","fallbacks":["glm/m1"]}}}"""
     os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
 
     // Seed agent.json files across all three layers, referencing Zai
@@ -159,7 +163,9 @@ class ConfigServiceSpec extends FunSuite:
   test("scrubbed default with no remaining fallback keeps required field as empty string") {
     // default references the deleted provider and there is no fallback to promote
     val seed =
-      s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider("glm").noSpaces}},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
+      s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
+          "glm"
+        ).noSpaces}},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
     os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
 
     val incoming = """{"llm":{"providers":{"Zai":null}}}"""

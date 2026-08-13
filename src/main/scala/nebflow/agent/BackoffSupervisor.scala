@@ -67,31 +67,29 @@ object BackoffSupervisor:
       ctx.watch(childRef)
       IO(logger.info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)")).as(
         active(
-        childRef,
-        childSpawnFn,
-        childName,
-        parentRef,
-        description,
-        agentName,
-        subagentId,
-        resources,
-        initialPrompt,
-        source,
-        extraMetadata,
-        wsSend,
-        restartCount = 0,
-        restartHistory = Nil,
-        minBackoff,
-        maxBackoff,
-        maxRestarts,
-        withinTimeRange
-      )
+          childRef,
+          childSpawnFn,
+          childName,
+          parentRef,
+          description,
+          agentName,
+          subagentId,
+          resources,
+          initialPrompt,
+          source,
+          extraMetadata,
+          wsSend,
+          restartCount = 0,
+          restartHistory = Nil,
+          minBackoff,
+          maxBackoff,
+          maxRestarts,
+          withinTimeRange
+        )
       )
     }
 
-  /**
-   * Active state: forwards completion/failure to parent, restarts on Terminated.
-   */
+  /** Active state: forwards completion/failure to parent, restarts on Terminated. */
   private def active(
     childRef: ActorRef[AgentCommand],
     childSpawnFn: ActorSystem => IO[ActorRef[AgentCommand]],
@@ -173,16 +171,22 @@ object BackoffSupervisor:
                 "description" -> description.asJson
               )
               val notifyIO = wsSend match
-                case Some(send) => send(retryEvent).handleErrorWith(e =>
-                  IO(logger.warn(s"subagentRetry WS event failed: ${e.getMessage}")))
+                case Some(send) =>
+                  send(retryEvent).handleErrorWith(e =>
+                    IO(logger.warn(s"subagentRetry WS event failed: ${e.getMessage}"))
+                  )
                 case None => IO.unit
 
               for
                 _ <- notifyIO
-                _ <- resources.subAgentTaskStore.updateStatus(
-                  "", subagentId, "restarting", retryCount = Some(newRestartCount)
-                ).handleErrorWith(e =>
-                  IO(logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}")))
+                _ <- resources.subAgentTaskStore
+                  .updateStatus(
+                    "",
+                    subagentId,
+                    "restarting",
+                    retryCount = Some(newRestartCount)
+                  )
+                  .handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}")))
                 _ <- IO.sleep(delay.millis)
                 _ <- resources.agentRegistry.update(_ - subagentId)
                 newChild <- childSpawnFn(ctx.system)
@@ -210,6 +214,7 @@ object BackoffSupervisor:
                 maxRestarts,
                 withinTimeRange
               )
+              end for
             else
               logger.warn(
                 s"BackoffSupervisor: child $childName exceeded maxRestarts " +
@@ -224,6 +229,7 @@ object BackoffSupervisor:
                   "failureType" -> "supervision-exhausted".asJson
                 )
               )
+            end if
 
       /** Notify parent via ExternalEvent, clean up registry, stop self. */
       private def notifyParentAndStop(
@@ -239,7 +245,10 @@ object BackoffSupervisor:
         // P3.1: update task store status
         val taskStatus = if eventType == "completed" then "completed" else "failed"
         val taskUpdate = resources.subAgentTaskStore
-          .updateStatus("", subagentId, taskStatus,
+          .updateStatus(
+            "",
+            subagentId,
+            taskStatus,
             completedAt = Some(System.currentTimeMillis()),
             lastError = if eventType == "failed" then Some(payload) else None
           )
@@ -260,6 +269,8 @@ object BackoffSupervisor:
           (childRef ! AgentCommand.Stop(s"$source-complete")) *>
           IO.pure(Behaviors.stopped[AgentEvent]))
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
+
+      end notifyParentAndStop
 
   private def extractLastAssistantText(messages: List[Message]): String =
     messages.reverse

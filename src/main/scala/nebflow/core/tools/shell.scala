@@ -238,11 +238,10 @@ final class ShellSession private (
               case true => IO.pure(false)
               case false =>
                 // 1) Kill the underlying OS process directly (not relying on fiber cancellation)
-                val killProcess = {
+                val killProcess =
                   val proc = job.health.processRef.get()
                   if proc != null && proc.isAlive then ProcessTree.killProcessTree(proc)
                   else IO.unit
-                }
                 // 2) Complete the deferred so any waiters get the cancellation signal
                 val completeDeferred =
                   job.deferred.complete(Left(new InterruptedException("Cancelled"))).attempt.void
@@ -503,8 +502,7 @@ final class ShellSession private (
                     _ <-
                       if !cpuActive then
                         IO(proc.isAlive()).flatMap { stillAlive =>
-                          if stillAlive then
-                            stuckFlag.set(true) *> ProcessTree.killProcessTree(proc)
+                          if stillAlive then stuckFlag.set(true) *> ProcessTree.killProcessTree(proc)
                           else IO.unit
                         }
                       else IO.unit
@@ -560,16 +558,24 @@ final class ShellSession private (
           // — use that error for the callback instead of the raw execute result.
           deferred.complete(result).void *>
             on_complete.fold(IO.unit) { cb =>
-              IO.delay(cb(existing)).flatten.handleErrorWith(e =>
-                IO.delay(NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}"))
-              )
+              IO.delay(cb(existing))
+                .flatten
+                .handleErrorWith(e =>
+                  IO.delay(
+                    NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}")
+                  )
+                )
             }
         case _ =>
           deferred.complete(result).void *>
             on_complete.fold(IO.unit) { cb =>
-              IO.delay(cb(result)).flatten.handleErrorWith(e =>
-                IO.delay(NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}"))
-              )
+              IO.delay(cb(result))
+                .flatten
+                .handleErrorWith(e =>
+                  IO.delay(
+                    NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}")
+                  )
+                )
             }
       }
     }
@@ -645,7 +651,8 @@ final class ShellSession private (
               if isRegisteredJob && health.deadNotified.compareAndSet(false, true) then
                 // Only complete deferred for registered (auto-backgrounded) jobs,
                 // where the watcher fiber may not detect the death
-                NebflowLogger.forName("nebflow.shell")
+                NebflowLogger
+                  .forName("nebflow.shell")
                   .info(s"Job $jobId process died unexpectedly (exit: ${proc.exitValue()}) — completing deferred") *>
                   deferred
                     .complete(
@@ -671,16 +678,19 @@ final class ShellSession private (
                   ProcessTree.killProcessTree(proc) *>
                   deferred
                     .complete(
-                      Left(new TimeoutException(
-                        s"Background command was idle (no output) for ${idleMs / 1000}s " +
-                          s"and was automatically cancelled. The command may be stuck " +
-                          s"or waiting for interactive input. Consider using a non-interactive " +
-                          s"alternative or running it manually."
-                      ))
+                      Left(
+                        new TimeoutException(
+                          s"Background command was idle (no output) for ${idleMs / 1000}s " +
+                            s"and was automatically cancelled. The command may be stuck " +
+                            s"or waiting for interactive input. Consider using a non-interactive " +
+                            s"alternative or running it manually."
+                        )
+                      )
                     )
                     .attempt
                     .void
               else loop
+              end if
             end if
         }
     loop.start.map(Some(_))

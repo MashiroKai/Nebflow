@@ -7,8 +7,10 @@ package nebflow.core.compact
 object CompactThreshold:
   /** Fixed threshold for large-context models (256k tokens). */
   private val LargeContextFixed = 256000
+
   /** Models with contextWindow above this use the fixed threshold. */
   private val LargeContextLine = 300000
+
   /** Trigger ratio for small-context models (80%). */
   private val SmallContextRatio = 0.8
 

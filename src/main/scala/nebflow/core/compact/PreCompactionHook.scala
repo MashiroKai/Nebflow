@@ -21,6 +21,7 @@ import nebflow.shared.*
  *   - May call LLM (independent request, not the agent's main loop).
  */
 trait PreCompactionHook:
+
   def run(
     messages: List[Message],
     agentName: String,
@@ -35,15 +36,17 @@ end PreCompactionHook
 // ─────────────────────────────────────────────
 
 object PreCompactionHooks:
+
   def forProfile(profile: CompactionProfile): PreCompactionHook =
     profile match
-      case CompactionProfile.Root    => NebulaMemoryHook
+      case CompactionProfile.Root => NebulaMemoryHook
       case CompactionProfile.Manager => ManagerProgressHook
-      case CompactionProfile.Worker  => WorkerSkillHook
-      case CompactionProfile.Legacy  => NoOpHook
+      case CompactionProfile.Worker => WorkerSkillHook
+      case CompactionProfile.Legacy => NoOpHook
 
 /** No-op hook for Legacy/unprofiled agents. */
 object NoOpHook extends PreCompactionHook:
+
   def run(
     messages: List[Message],
     agentName: String,

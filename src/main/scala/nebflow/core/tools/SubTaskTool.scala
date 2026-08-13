@@ -126,8 +126,13 @@ Multiple SubTask calls in one response run concurrently — use this to parallel
                   rootSessionId = rootSid
                 )
               yield result
+              end for
             case _ =>
               IO.pure(Left(ToolError("SubTask requires ActorSystem and SharedResources")))
+
+    end if
+
+  end call
 
   /**
    * Wraps wsSend so that the parent session's sessionId is injected into every
@@ -144,21 +149,27 @@ Multiple SubTask calls in one response run concurrently — use this to parallel
   ): io.circe.Json => IO[Unit] =
     val base = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
     parentSessionId match
-      case Some(sid) => json =>
-        json.asObject match
-          case Some(obj) =>
-            val builder = obj.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
-            // Preserve an existing nodeSessionId (nested sub-agents); otherwise
-            // stamp the worker's own nodeSessionId for popup routing.
-            val finalObj =
-              if obj.contains("nodeSessionId") then builder
-              else builder.add("nodeSessionId", subtaskId.asJson)
-            base(Json.fromJsonObject(finalObj))
-          case None => base(json)
-      case None => json =>
-        json.asObject match
-          case Some(obj) => base(Json.fromJsonObject(obj.add("nodeSessionId", subtaskId.asJson)))
-          case None => base(json)
+      case Some(sid) =>
+        json =>
+          json.asObject match
+            case Some(obj) =>
+              val builder = obj.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
+              // Preserve an existing nodeSessionId (nested sub-agents); otherwise
+              // stamp the worker's own nodeSessionId for popup routing.
+              val finalObj =
+                if obj.contains("nodeSessionId") then builder
+                else builder.add("nodeSessionId", subtaskId.asJson)
+              base(Json.fromJsonObject(finalObj))
+            case None => base(json)
+      case None =>
+        json =>
+          json.asObject match
+            case Some(obj) => base(Json.fromJsonObject(obj.add("nodeSessionId", subtaskId.asJson)))
+            case None => base(json)
+
+    end match
+
+  end routeWsSend
 
   private def spawnWorker(
     agentDef: AgentDef,
@@ -204,24 +215,25 @@ Multiple SubTask calls in one response run concurrently — use this to parallel
       adapterRef <- system.spawn(
         BackoffSupervisor(
           childRef = workerRef,
-          childSpawnFn = (sys: ActorSystem) => sys.spawn(
-            AgentActor(
-              agentDef = agentDef,
-              resources = resources,
-              wsSend = childWsSend,
-              depth = childDepth,
-              parentRef = parentRef,
-              sessionId = Some(subtaskId),
-              sessionName = Some(description),
-              initialMessages = Nil,
-              contextWindow = resources.contextWindow,
-              projectRoot = Some(projectRoot),
-              safetyMode = safetyMode,
-              rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subtaskId),
-              isSubTaskWorker = true
+          childSpawnFn = (sys: ActorSystem) =>
+            sys.spawn(
+              AgentActor(
+                agentDef = agentDef,
+                resources = resources,
+                wsSend = childWsSend,
+                depth = childDepth,
+                parentRef = parentRef,
+                sessionId = Some(subtaskId),
+                sessionName = Some(description),
+                initialMessages = Nil,
+                contextWindow = resources.contextWindow,
+                projectRoot = Some(projectRoot),
+                safetyMode = safetyMode,
+                rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subtaskId),
+                isSubTaskWorker = true
+              ),
+              subtaskId
             ),
-            subtaskId
-          ),
           childName = subtaskId,
           parentRef = parentRef,
           description = description,
@@ -238,31 +250,35 @@ Multiple SubTask calls in one response run concurrently — use this to parallel
       _ = logger.info(s"Spawned supervised sub-task worker: $subtaskId (depth=$childDepth, agent=${agentDef.name})")
       // Registered in agentRegistry (active snapshot + kind) but NOT in
       // TeamSessionRegistry/sessionMap — the worker has no Mail identity.
-      _ <- resources.agentRegistry.update(_ + (
-        subtaskId -> AgentRecord(
-          subtaskId,
-          workerRef,
-          AgentKind.SubTask,
-          if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subtaskId),
-          parentRef
+      _ <- resources.agentRegistry.update(
+        _ + (
+          subtaskId -> AgentRecord(
+            subtaskId,
+            workerRef,
+            AgentKind.SubTask,
+            if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subtaskId),
+            parentRef
+          )
         )
-      ))
+      )
       // P3.1: persist task metadata for crash recovery
-      _ <- resources.subAgentTaskStore.recordTask(
-        SubAgentTask(
-          taskId = subtaskId,
-          parentSessionId = parentSessionId.getOrElse(""),
-          agentName = agentDef.name,
-          prompt = prompt,
-          description = description,
-          status = "running",
-          retryCount = 0,
-          spawnedAt = System.currentTimeMillis(),
-          completedAt = None,
-          lastError = None,
-          source = "subtask"
+      _ <- resources.subAgentTaskStore
+        .recordTask(
+          SubAgentTask(
+            taskId = subtaskId,
+            parentSessionId = parentSessionId.getOrElse(""),
+            agentName = agentDef.name,
+            prompt = prompt,
+            description = description,
+            status = "running",
+            retryCount = 0,
+            spawnedAt = System.currentTimeMillis(),
+            completedAt = None,
+            lastError = None,
+            source = "subtask"
+          )
         )
-      ).handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}")))
+        .handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}")))
       _ <- workerRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
       s"""Sub-task worker started for: $description.
@@ -311,6 +327,7 @@ Do NOT duplicate this worker's work — avoid working with the same files or top
           (workerRef ! AgentCommand.Stop("subtask-complete")) *>
           IO.pure(Behaviors.stopped[AgentEvent]))
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
+      end notifyParentAndStop
 
       IO.pure(
         new Behavior[AgentEvent]:
@@ -319,10 +336,12 @@ Do NOT duplicate this worker's work — avoid working with the same files or top
               case AgentEvent.Completed(_, messages) =>
                 val text = extractLastAssistantText(messages)
                 if text.nonEmpty then
-                  notifyParentAndStop("completed", s""""$description":
-$text""")
-                else
-                  notifyParentAndStop("completed", s""""$description" (no text output)""")
+                  notifyParentAndStop(
+                    "completed",
+                    s""""$description":
+$text"""
+                  )
+                else notifyParentAndStop("completed", s""""$description" (no text output)""")
               case AgentEvent.Failed(sessionId, error) =>
                 val sessionInfo =
                   if sessionId.nonEmpty then s" [session=$sessionId]" else ""

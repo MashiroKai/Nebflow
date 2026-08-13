@@ -58,6 +58,7 @@ class InteractionHubSpec extends CatsEffectSuite:
       assertEquals(card.hcursor.downField("requestId").as[String], Right("r1"))
       assertEquals(card.hcursor.downField("sourceAgent").as[String], Right("Frontend"))
       assertEquals(card.hcursor.downField("toolName").as[String], Right("Edit"))
+    end for
   }
 
   test("answer routes by requestId — two concurrent requests complete independently (D4)") {
@@ -70,14 +71,19 @@ class InteractionHubSpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.Request(permRequest("r1", d1))
       _ <- hub ! InteractionHubCommand.Request(permRequest("r2", d2))
       _ <- IO.sleep(50.millis)
-      _ <- hub ! InteractionHubCommand.Answered(InteractionAnswered("r2", "root-1", Json.obj("approved" -> Json.fromBoolean(false))))
-      _ <- hub ! InteractionHubCommand.Answered(InteractionAnswered("r1", "root-1", Json.obj("approved" -> Json.fromBoolean(true))))
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("r2", "root-1", Json.obj("approved" -> Json.fromBoolean(false)))
+      )
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("r1", "root-1", Json.obj("approved" -> Json.fromBoolean(true)))
+      )
       a1 <- d1.get
       a2 <- d2.get
       _ <- system.stopAll
     yield
       assertEquals(a1, true) // r1 approved
       assertEquals(a2, false) // r2 denied — answers never cross-talk
+    end for
   }
 
   test("old frontend fallback: answer without requestId completes oldest pending for the root session") {
@@ -91,16 +97,21 @@ class InteractionHubSpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.Request(permRequest("r-old-2", d2))
       _ <- IO.sleep(50.millis)
       // no requestId → FIFO by rootSessionId: completes the OLDEST (r-old-1)
-      _ <- hub ! InteractionHubCommand.Answered(InteractionAnswered("", "root-1", Json.obj("approved" -> Json.fromBoolean(true))))
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("", "root-1", Json.obj("approved" -> Json.fromBoolean(true)))
+      )
       a1 <- d1.get
       _ <- IO.sleep(50.millis)
       // second answer (also no requestId) → next oldest (r-old-2)
-      _ <- hub ! InteractionHubCommand.Answered(InteractionAnswered("", "root-1", Json.obj("approved" -> Json.fromBoolean(false))))
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("", "root-1", Json.obj("approved" -> Json.fromBoolean(false)))
+      )
       a2 <- d2.get
       _ <- system.stopAll
     yield
       assertEquals(a1, true)
       assertEquals(a2, false)
+    end for
   }
 
   test("askUser request renders question and routes answers back to replyTo") {
@@ -132,13 +143,16 @@ class InteractionHubSpec extends CatsEffectSuite:
       card = events.find(_.hcursor.downField("type").as[String].contains("askUser")).get
       // Completing the replyTo requires an actual listener; verify rendering +
       // that the answer is accepted (no drop warning) is covered by routing test.
-      _ <- hub ! InteractionHubCommand.Answered(InteractionAnswered("ask-1", "root-1", Json.obj("answers" -> Json.arr(Json.fromString("yes")))))
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("ask-1", "root-1", Json.obj("answers" -> Json.arr(Json.fromString("yes"))))
+      )
       _ <- IO.sleep(100.millis)
       _ <- system.stopAll
     yield
       assertEquals(card.hcursor.downField("sessionId").as[String], Right("root-1"))
       assertEquals(card.hcursor.downField("requestId").as[String], Right("ask-1"))
       assertEquals(card.hcursor.downField("agentName").as[String], Right("Frontend"))
+    end for
   }
 
 end InteractionHubSpec

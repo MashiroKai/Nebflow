@@ -219,8 +219,7 @@ object PromptSections:
   private def loadFileSectionsCached(): List[PromptSection] =
     val sectionsDir = PathUtil.dataRoot / "prompts" / "sections"
     val currentMtime =
-      if os.exists(sectionsDir) then
-        os.list(sectionsDir).map(p => os.mtime(p)).maxOption.getOrElse(0L)
+      if os.exists(sectionsDir) then os.list(sectionsDir).map(p => os.mtime(p)).maxOption.getOrElse(0L)
       else 0L
     if currentMtime == cachedSections._1 then cachedSections._2
     else
@@ -250,6 +249,10 @@ object PromptSections:
         .flatMap { dir => loadDirSection(dir).toList }
       mdSections ++ dirSections
 
+    end if
+
+  end loadFileSections
+
   /** Parse the Condition comment to build a context predicate. */
   private def parseCondition(content: String): PromptContext => Boolean =
     val conditionLine = content.linesIterator.find(_.trim.startsWith("<!-- Condition:")).getOrElse("")
@@ -259,8 +262,8 @@ object PromptSections:
         val toolName = s.replace("agent has", "").replace("tool", "").trim
         requiresTools(toolName)
       case "voiceEnabled is true" => _.voiceEnabled
-      case "always"               => _ => true
-      case _                      => _ => true
+      case "always" => _ => true
+      case _ => _ => true
 
   /** Parse the Order comment to get the sort order integer. */
   private def parseOrder(content: String): Option[Int] =
@@ -287,8 +290,9 @@ object PromptSections:
 
       if os.exists(dataScript) then
         Some(PromptSection.dynamic(order, condition, ctx => renderWithScript(template, dataScript, ctx)))
-      else
-        Some(PromptSection(order, condition, template))
+      else Some(PromptSection(order, condition, template))
+
+  end loadDirSection
 
   /** Parse a JSON condition field into a context predicate. */
   private def parseJsonCondition(json: Json): PromptContext => Boolean =
@@ -298,51 +302,63 @@ object PromptSections:
   /** Parse a condition value: either a string ("always") or an object ({tool/flag/and/or/...}). */
   private def parseConditionValue(cond: Json): PromptContext => Boolean =
     cond.asString match
-      case Some(s) => parseConditionObject(Json.obj("x" -> Json.fromString(s)).hcursor.downField("x").focus.getOrElse(Json.Null))
-      case None    => parseConditionObject(cond)
+      case Some(s) =>
+        parseConditionObject(Json.obj("x" -> Json.fromString(s)).hcursor.downField("x").focus.getOrElse(Json.Null))
+      case None => parseConditionObject(cond)
 
   /** Parse a condition object with and/or/not/tool/flag/category/name operators. */
   private def parseConditionObject(cond: Json): PromptContext => Boolean =
     import io.circe.JsonObject
     val obj = cond.asObject.getOrElse(JsonObject.empty)
-    obj("and").map { arr =>
-      val subs = arr.asArray.getOrElse(Nil).map(parseConditionValue)
-      (ctx: PromptContext) => subs.forall(_(ctx))
-    }.orElse(
-      obj("or").map { arr =>
+    obj("and")
+      .map { arr =>
         val subs = arr.asArray.getOrElse(Nil).map(parseConditionValue)
-        (ctx: PromptContext) => subs.exists(_(ctx))
+        (ctx: PromptContext) => subs.forall(_(ctx))
       }
-    ).orElse(
-      obj("not").map { inner =>
-        val sub = parseConditionValue(inner)
-        (ctx: PromptContext) => !sub(ctx)
-      }
-    ).orElse(
-      obj("tool").map { v =>
-        val toolName = v.asString.getOrElse("")
-        (ctx: PromptContext) => ctx.availableTools.contains(toolName)
-      }
-    ).orElse(
-      obj("flag").map { v =>
-        val flagName = v.asString.getOrElse("")
-        (ctx: PromptContext) => flagName match
-          case "voiceEnabled"      => ctx.voiceEnabled
-          case "hasDevices"        => ctx.hasDevices
-          case "hasActiveSessions" => ctx.hasActiveSessions
-          case _                   => false
-      }
-    ).orElse(
-      obj("category").map { v =>
-        val cat = v.asString.getOrElse("")
-        (ctx: PromptContext) => ctx.agentCategory == cat
-      }
-    ).orElse(
-      obj("name").map { v =>
-        val name = v.asString.getOrElse("")
-        (ctx: PromptContext) => ctx.agentName == name
-      }
-    ).getOrElse(_ => true)
+      .orElse(
+        obj("or").map { arr =>
+          val subs = arr.asArray.getOrElse(Nil).map(parseConditionValue)
+          (ctx: PromptContext) => subs.exists(_(ctx))
+        }
+      )
+      .orElse(
+        obj("not").map { inner =>
+          val sub = parseConditionValue(inner)
+          (ctx: PromptContext) => !sub(ctx)
+        }
+      )
+      .orElse(
+        obj("tool").map { v =>
+          val toolName = v.asString.getOrElse("")
+          (ctx: PromptContext) => ctx.availableTools.contains(toolName)
+        }
+      )
+      .orElse(
+        obj("flag").map { v =>
+          val flagName = v.asString.getOrElse("")
+          (ctx: PromptContext) =>
+            flagName match
+              case "voiceEnabled" => ctx.voiceEnabled
+              case "hasDevices" => ctx.hasDevices
+              case "hasActiveSessions" => ctx.hasActiveSessions
+              case _ => false
+        }
+      )
+      .orElse(
+        obj("category").map { v =>
+          val cat = v.asString.getOrElse("")
+          (ctx: PromptContext) => ctx.agentCategory == cat
+        }
+      )
+      .orElse(
+        obj("name").map { v =>
+          val name = v.asString.getOrElse("")
+          (ctx: PromptContext) => ctx.agentName == name
+        }
+      )
+      .getOrElse(_ => true)
+
+  end parseConditionObject
 
   /**
    * Execute data.sh and use its JSON output to replace {{variables}} in the template.
@@ -359,16 +375,22 @@ object PromptSections:
       try
         os.proc("bash", script.toString)
           .call(cwd = os.pwd, env = envVars, check = false)
-          .out.text().trim
+          .out
+          .text()
+          .trim
       catch case _: Exception => return template
     parser.parse(result).toOption match
       case Some(json) =>
-        json.asObject.map(_.toMap).getOrElse(Map.empty)
+        json.asObject
+          .map(_.toMap)
+          .getOrElse(Map.empty)
           .foldLeft(template) { case (t, (key, value)) =>
             val strValue = value.asString.getOrElse(value.noSpaces)
             t.replace(s"{{$key}}", strValue)
           }
       case None => template
+
+  end renderWithScript
 
   /** All sections: dynamic (code-defined) + file-based (user-editable). */
   def all: List[PromptSection] =
@@ -439,11 +461,25 @@ object SubTaskPrompt:
 
   /** Line-level patterns (lowercased match, case-insensitive) that remove a line. */
   private val stripPatterns: List[String] = List(
-    "mail(", "mail the", "mail \"", "mail '", "mail 队友",
-    "notify manager", "report to manager", "escalate to manager",
-    "manager 汇报", "通知 manager", "报告 manager", "向 manager", "联系 manager",
-    "团队汇报", "团队成员", "你的团队", "团队协作",
-    "delegate(", "subtask(" // 子 agent 不需要再委派
+    "mail(",
+    "mail the",
+    "mail \"",
+    "mail '",
+    "mail 队友",
+    "notify manager",
+    "report to manager",
+    "escalate to manager",
+    "manager 汇报",
+    "通知 manager",
+    "报告 manager",
+    "向 manager",
+    "联系 manager",
+    "团队汇报",
+    "团队成员",
+    "你的团队",
+    "团队协作",
+    "delegate(",
+    "subtask(" // 子 agent 不需要再委派
   )
 
   /**
