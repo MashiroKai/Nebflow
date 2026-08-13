@@ -28,7 +28,9 @@ object AgentCommand:
      */
     source: Option[String] = None,
     /** Sender agent name for Mail-delivered messages (shown as attribution label). */
-    sender: Option[String] = None
+    sender: Option[String] = None,
+    /** Team name of the sender for Mail-delivered messages (shown as attribution label). */
+    senderTeam: Option[String] = None
   ) extends AgentCommand
 
   case class ImmediateInput(
@@ -39,7 +41,9 @@ object AgentCommand:
     /** Structured event type (e.g. mail type, completion status) for the UI source label. */
     eventType: Option[String] = None,
     /** Sender agent name for Mail-delivered messages (shown as attribution label). */
-    sender: Option[String] = None
+    sender: Option[String] = None,
+    /** Team name of the sender for Mail-delivered messages. */
+    senderTeam: Option[String] = None
   ) extends AgentCommand
   case class Interrupt() extends AgentCommand
 
