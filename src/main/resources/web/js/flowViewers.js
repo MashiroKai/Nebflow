@@ -4,7 +4,7 @@
 
 import { renderMarkdownWithMath } from './utils.js';
 import state from './state.js';
-import { esc, authHeaders, fmtTime, overlayRoot } from './flowHelpers.js';
+import { esc, authHeaders, fmtTime, fmtRelTime, overlayRoot, setMailPending } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { fetchPresets, setAgentPreset, resolvedChainHtml } from './presets.js';
 
@@ -58,6 +58,7 @@ function renderAgentModelSection(el, agentName, cfg, presetData) {
 export function closeViewer() {
   const existing = overlayRoot().querySelector('.flow-viewer-overlay');
   if (existing) existing.remove();
+  mailboxCtx = null;
 }
 
 export function openViewerShell(title, opts = {}) {
@@ -117,20 +118,115 @@ export async function openRules(teamName) {
 
 // ── Inbox viewer ───────────────────────────────────────────
 
-export async function openMailbox(flowName) {
-  const body = openViewerShell(flowName);
+// Context of the currently open mailbox — lets mailQueued/mailDequeued WS
+// events refresh the Pending section live (see refreshMailboxPending).
+let mailboxCtx = null; // { flowName, team }
+
+function pendingRowHtml(it) {
+  const preview = String(it.message || '').replace(/\s+/g, ' ').trim();
+  const truncated = preview.length > 160 ? preview.slice(0, 160) + '…' : preview;
+  const typeTag = it.type ? `<span class="flow-mail-queue-tag">${esc(it.type)}</span>` : '';
+  return `
+    <div class="flow-mail-row pending" data-item-id="${esc(it.id || '')}" data-sid="${esc(it.toSession || '')}">
+      <div class="flow-mail-meta">
+        <span class="flow-mail-pending-dot"></span>
+        <span class="flow-mail-from">${esc(it.from || '?')}</span>
+        <span class="flow-mail-arrow">→</span>
+        <span class="flow-mail-to">${esc(it.to || '?')}</span>
+        <span class="flow-mail-queue-tag">Queue</span>
+        ${typeTag}
+        <span class="flow-mail-time">${esc(fmtRelTime(it.timestamp))}</span>
+        <button class="flow-mail-cancel" title="Remove from queue">Cancel</button>
+      </div>
+      <div class="flow-mail-content">${esc(truncated)}</div>
+    </div>`;
+}
+
+/** Load pending mail-queue items for every agent session of the team and
+ *  render the Pending section. Hidden entirely when the queue is empty. */
+async function loadPendingSection(body, team) {
+  const section = body.querySelector('#flow-mail-pending-section');
+  const list = body.querySelector('#flow-mail-pending-list');
+  const countEl = body.querySelector('#flow-mail-pending-count');
+  if (!section || !list || !countEl) return;
+  const agents = (team?.agents || []).filter(a => a.sessionId);
+  if (agents.length === 0) { section.style.display = 'none'; list.innerHTML = ''; return; }
+  const results = await Promise.allSettled(agents.map(async a => {
+    const resp = await fetch(`/api/mailbox/${encodeURIComponent(a.sessionId)}/pending`, { headers: authHeaders() });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return (Array.isArray(data) ? data : []).map(it => ({ ...it, to: it.to || a.name, toSession: a.sessionId }));
+  }));
+  // Viewer may have been closed/reopened while awaiting — bail if detached.
+  if (!section.isConnected) return;
+  const items = results.flatMap(r => (r.status === 'fulfilled' ? r.value : []));
+  // Queue order: oldest first (FIFO).
+  items.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  if (items.length === 0) { section.style.display = 'none'; list.innerHTML = ''; return; }
+  section.style.display = '';
+  countEl.textContent = `(${items.length})`;
+  list.innerHTML = items.map(pendingRowHtml).join('');
+  list.querySelectorAll('.flow-mail-cancel').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const row = btn.closest('.flow-mail-row');
+      const itemId = row?.getAttribute('data-item-id') || '';
+      const sid = row?.getAttribute('data-sid') || '';
+      if (!itemId || !sid) return;
+      btn.disabled = true;
+      try {
+        const resp = await fetch(`/api/mailbox/${encodeURIComponent(sid)}/pending/${encodeURIComponent(itemId)}`, { method: 'DELETE', headers: authHeaders() });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const remaining = await resp.json();
+        // Keep the team-card badge in sync, then reload the section.
+        setMailPending(sid, Array.isArray(remaining) ? remaining.length : 0);
+        document.dispatchEvent(new CustomEvent('mail-pending-changed'));
+        loadPendingSection(body, team);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'Retry';
+      }
+    });
+  });
+}
+
+/** Called by flowCanvas on mailQueued/mailDequeued — live-refresh the
+ *  Pending section if the mailbox viewer is currently open. */
+export function refreshMailboxPending() {
+  if (!mailboxCtx) return;
+  const body = overlayRoot().querySelector('.flow-viewer-overlay #flow-viewer-body');
+  if (!body) { mailboxCtx = null; return; }
+  loadPendingSection(body, mailboxCtx.team);
+}
+
+export async function openMailbox(flowName, team = null) {
+  const body = openViewerShell(`Inbox — ${flowName}`);
   if (!body) return;
-  body.innerHTML = `<div class="flow-mail-empty">Loading…</div>`;
+  mailboxCtx = { flowName, team };
+  body.innerHTML = `
+    <div class="flow-mail-section" id="flow-mail-pending-section" style="display:none">
+      <div class="flow-mail-section-title"><span class="flow-mail-pending-dot"></span>Pending <span id="flow-mail-pending-count"></span></div>
+      <div id="flow-mail-pending-list"></div>
+    </div>
+    <div class="flow-mail-section">
+      <div class="flow-mail-section-title">History</div>
+      <div id="flow-mail-history-list"><div class="flow-mail-empty">Loading…</div></div>
+    </div>`;
+  // Pending: per-session queue items, aggregated across the team's agents.
+  loadPendingSection(body, team);
+  // History: existing FlowMailStore records (per-team, unchanged).
+  const historyList = body.querySelector('#flow-mail-history-list');
   const parentSid = state.activeSessionId || '';
-  if (!parentSid) { body.innerHTML = `<div class="flow-mail-empty">No active session.</div>`; return; }
+  if (!parentSid) { historyList.innerHTML = `<div class="flow-mail-empty">No active session.</div>`; return; }
   try {
     const resp = await fetch(`/api/teams/mailbox/${encodeURIComponent(parentSid)}/${encodeURIComponent(flowName)}`, { headers: authHeaders() });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     const records = data.records || [];
-    if (records.length === 0) { body.innerHTML = `<div class="flow-mail-empty">Inbox is empty.</div>`; return; }
+    if (!historyList.isConnected) return;
+    if (records.length === 0) { historyList.innerHTML = `<div class="flow-mail-empty">Inbox is empty.</div>`; return; }
     const sorted = [...records].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-    body.innerHTML = sorted.map((r, i) => `
+    historyList.innerHTML = sorted.map((r, i) => `
       <div class="flow-mail-row" data-idx="${i}">
         <div class="flow-mail-meta">
           <span class="flow-mail-from">${esc(r.from || '?')}</span>
@@ -141,14 +237,14 @@ export async function openMailbox(flowName) {
         </div>
         <div class="flow-mail-content">${renderMarkdownWithMath(r.message || '')}</div>
       </div>`).join('');
-    body.querySelectorAll('.flow-mail-row').forEach(row => {
+    historyList.querySelectorAll('.flow-mail-row').forEach(row => {
       row.addEventListener('click', () => {
         const expanded = row.classList.toggle('expanded');
         const hint = row.querySelector('.flow-mail-expand');
         if (hint) hint.textContent = expanded ? '收起 ▴' : '展开 ▾';
       });
     });
-  } catch (e) { body.innerHTML = `<div class="flow-mail-empty">Failed: ${esc(e.message)}</div>`; }
+  } catch (e) { historyList.innerHTML = `<div class="flow-mail-empty">Failed: ${esc(e.message)}</div>`; }
 }
 
 // ── Definition editor ──────────────────────────────────────
