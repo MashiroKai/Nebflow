@@ -15,7 +15,7 @@
 import state from './state.js';
 import { chatViews } from './chatView.js';
 import { switchToSession } from './sidebar.js';
-import { t, getLocale } from './i18n.js';
+import { t } from './i18n.js';
 import { escapeHtml } from './utils.js';
 
 const MAX_RESULTS = 200;

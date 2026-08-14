@@ -72,7 +72,11 @@ function renderFlowsTab() {
     scroll.style.flexDirection = 'column';
     // Center the content column horizontally; sections cap at max-width
     // (see .flow-defs-section in flowCss.js) so cards sit centered.
+    // nowrap is required: in a wrapping column flex container, each line's
+    // cross size shrinks to its widest item, so align-items would center
+    // within a content-sized line — visually still left-aligned.
     scroll.style.alignItems = 'center';
+    scroll.style.flexWrap = 'nowrap';
     pane.appendChild(scroll);
     // Flow definitions are rendered inline below from the flowDefs state
     // (populated by fetchFlowDefs). The previous renderFlowList() call was
@@ -134,6 +138,9 @@ function renderStaticDag(pane, dag) {
     scroll = document.createElement('div');
     scroll.className = 'team-scroll';
     scroll.style.flexDirection = 'column';
+    // See renderFlowsTab: nowrap keeps align-items centering effective.
+    scroll.style.alignItems = 'center';
+    scroll.style.flexWrap = 'nowrap';
     pane.appendChild(scroll);
   }
   const pseudoRf = {
