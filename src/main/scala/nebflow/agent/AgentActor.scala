@@ -17,6 +17,26 @@ import nebflow.shared.given
 
 import scala.concurrent.duration.*
 
+/**
+ * Pure turn-boundary drain decisions shared by ToolsComplete / CompactionComplete.
+ * Top-level and side-effect-free so specs can verify the compaction guard
+ * directly (queued-inputs-during-compaction bug, 2026-08-14).
+ */
+object TurnBoundaryDrains:
+
+  /**
+   * Drain at most the head of a queue at a turn boundary (serial processing,
+   * remainder stays queued). While a compaction job is pending the queue must
+   * NOT be consumed: anything injected into the save/compact turn's history is
+   * discarded when the summary replaces it — consumed from the queue yet lost.
+   * CompactionComplete drains the queues after the summary is in place.
+   */
+  def drainHead[A](queue: List[A], compactionPending: Boolean): (Option[A], List[A]) =
+    if compactionPending then (None, queue)
+    else (queue.headOption, if queue.isEmpty then queue else queue.tail)
+
+end TurnBoundaryDrains
+
 object AgentActor extends AgentCore with AgentSession:
 
   private val MaxEmptyResponseRetries = 5
@@ -91,7 +111,8 @@ object AgentActor extends AgentCore with AgentSession:
     source: String,
     eventType: Option[String] = None,
     sender: Option[String] = None,
-    senderTeam: Option[String] = None
+    senderTeam: Option[String] = None,
+    delivery: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
       val base = Json.obj(
@@ -104,6 +125,7 @@ object AgentActor extends AgentCore with AgentSession:
       val withEt = eventType.fold(base)(et => base.deepMerge(Json.obj("eventType" -> et.asJson)))
       val withSender = sender.fold(withEt)(s => withEt.deepMerge(Json.obj("sender" -> s.asJson)))
       val withTeam = senderTeam.fold(withSender)(t => withSender.deepMerge(Json.obj("senderTeam" -> t.asJson)))
+      val withDelivery = delivery.fold(withTeam)(d => withTeam.deepMerge(Json.obj("delivery" -> d.asJson)))
       ctx.forkTurn(
         wsSend(withTeam).handleErrorWith(e => IO(logger.warn(s"injected user event failed: ${e.getMessage}")))
       )
@@ -246,7 +268,7 @@ object AgentActor extends AgentCore with AgentSession:
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
-      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam) =>
+      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery) =>
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then
           logger.info(s"Dropping duplicate message with clientMessageId=${clientMessageId.getOrElse("")}")
@@ -282,7 +304,15 @@ object AgentActor extends AgentCore with AgentSession:
             else IO.unit
           val injectedEventIO = injectionSource match
             case Some(src) =>
-              emitInjectedUserEvent(stateWithWidth.wsSend, stateWithWidth.sessionId, text, src, sender = sender, senderTeam = senderTeam)
+              emitInjectedUserEvent(
+                stateWithWidth.wsSend,
+                stateWithWidth.sessionId,
+                text,
+                src,
+                sender = sender,
+                senderTeam = senderTeam,
+                delivery = delivery
+              )
             case None => IO.unit
           for
             _ <- sessionBusyIO
@@ -548,8 +578,8 @@ object AgentActor extends AgentCore with AgentSession:
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
-      case AgentCommand.ImmediateInput(text, blocks, source, _, sender, senderTeam) =>
-        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam)
+      case AgentCommand.ImmediateInput(text, blocks, source, _, sender, senderTeam, delivery) =>
+        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery)
         yield idle(agentDef, resources, depth, parentRef, state)
 
       // Queued mail arriving in idle — drain immediately as a new turn
@@ -564,7 +594,8 @@ object AgentActor extends AgentCore with AgentSession:
             None,
             0,
             source = Some("mail-queue"),
-            sender = Some(item.from)
+            sender = Some(item.from),
+            delivery = Some("queue")
           )
           // Emit WS so frontend removes the pending item
           _ <- emitDequeuedWs(state.wsSend, sid, item.id)
@@ -958,13 +989,37 @@ object AgentActor extends AgentCore with AgentSession:
                 )
               }
               _ <- replyTo.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
-            yield idle(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              cleanedState.withStatus(AgentStatus.Error(error.getMessage))
-            )
+              // A pending CompactionJob whose LLM call died fatally must not
+              // survive into idle (zombie): the next normal reply would be
+              // misrouted as the compact summary and replace all messages.
+              // Complete the deferred waiter and record the failure — mirrors
+              // finishTurn's zombie guard and the CompactionComplete(Left) path.
+              _ <- state.pendingCompaction
+                .flatMap(_.replyDeferred)
+                .traverse_(d =>
+                  d.complete(Left("Compaction abandoned: LLM failed during compaction")).void
+                    .handleErrorWith(_ => IO.unit)
+                )
+            yield
+              val compactionWasPending = state.pendingCompaction.isDefined
+              val fatalState = cleanedState
+                .withStatus(AgentStatus.Error(error.getMessage))
+                .withPendingCompaction(None)
+              val finalState =
+                if compactionWasPending then
+                  logAgentEvent(
+                    agentDef,
+                    depth,
+                    state.sessionId,
+                    state.sessionName,
+                    "compaction-abandoned",
+                    s"reason=llm-fatal job=${state.pendingCompaction.map(_.subagentId).getOrElse("")}"
+                  )
+                  fatalState
+                    .withCompactionFailures(state.compactionFailures + 1)
+                    .withLastCompactionFailureAt(System.currentTimeMillis())
+                else fatalState
+              idle(agentDef, resources, depth, parentRef, finalState)
             end for
           end if
         end if
@@ -997,10 +1052,12 @@ object AgentActor extends AgentCore with AgentSession:
         // processing, same as pendingImmediateInputs). Multiple simultaneously
         // due events (e.g. scheduled tasks) are consumed strictly one at a time
         // — no concurrency, no aggregation — the remainder stays queued for the
-        // next turn boundary.
-        val (eventOpt, remainingEvents) = state.execution.pendingEvents.headOption match
-          case Some(e) => (Some(e), state.execution.pendingEvents.drop(1))
-          case None => (None, state.execution.pendingEvents)
+        // next turn boundary. Guarded against a pending compaction job: the
+        // save/compact turn's history is replaced by the summary, so an event
+        // drained here would be consumed from the queue yet discarded with the
+        // pre-compaction messages. CompactionComplete re-drains afterwards.
+        val (eventOpt, remainingEvents) =
+          TurnBoundaryDrains.drainHead(state.execution.pendingEvents, state.pendingCompaction.isDefined)
         val eventMessages = eventOpt match
           case Some(e) =>
             logAgentEvent(
@@ -1017,9 +1074,7 @@ object AgentActor extends AgentCore with AgentSession:
         // While compaction is in progress, keep inputs queued — injecting mid-compaction
         // risks the input being lost in the summary. CompactionComplete drains them.
         val (immInputOpt, remainingImmInputs) =
-          if state.pendingCompaction.isEmpty then
-            (state.execution.pendingImmediateInputs.headOption, state.execution.pendingImmediateInputs.drop(1))
-          else (None, state.execution.pendingImmediateInputs)
+          TurnBoundaryDrains.drainHead(state.execution.pendingImmediateInputs, state.pendingCompaction.isDefined)
         val immediateMessages = immInputOpt match
           case Some(imm) =>
             logAgentEvent(
@@ -1037,7 +1092,16 @@ object AgentActor extends AgentCore with AgentSession:
           case None => Nil
         val immEventIO = immInputOpt match
           case Some(imm) if imm.source.isDefined =>
-            emitInjectedUserEvent(state.wsSend, state.sessionId, imm.text, imm.source.get, imm.eventType, imm.sender, imm.senderTeam)
+            emitInjectedUserEvent(
+              state.wsSend,
+              state.sessionId,
+              imm.text,
+              imm.source.get,
+              imm.eventType,
+              imm.sender,
+              imm.senderTeam,
+              imm.delivery
+            )
           case _ => IO.unit
         val newMessages =
           baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages
@@ -1308,7 +1372,8 @@ object AgentActor extends AgentCore with AgentSession:
                               src,
                               imm.eventType,
                               imm.sender,
-                              imm.senderTeam
+                              imm.senderTeam,
+                              imm.delivery
                             )
                           case None => IO.unit
                         res <- pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
@@ -1328,7 +1393,34 @@ object AgentActor extends AgentCore with AgentSession:
                               )
                             ))
                         case None =>
-                          IO.pure(idle(agentDef, resources, depth, parentRef, compactedState))
+                          // No user inputs either — drain ONE queued external event
+                          // (arrived during compaction, held back by the ToolsComplete
+                          // guard). Inject as a system-reminder and dispatch a
+                          // follow-up turn; the tail stays queued for the next turn
+                          // boundary, mirroring finishTurn's event drain.
+                          compactedState.execution.pendingEvents.headOption match
+                            case Some(ev) =>
+                              logAgentEvent(
+                                agentDef,
+                                depth,
+                                state.sessionId,
+                                state.sessionName,
+                                "pending-events-injected-after-compaction",
+                                s"events=1 remaining=${compactedState.execution.pendingEvents.tail.size}"
+                              )
+                              val eventMessage = Message(
+                                MessageRole.User,
+                                Left(s"<system-reminder>\n${ev.payload}\n</system-reminder>")
+                              )
+                              val drainedState = compactedState.copy(execution =
+                                compactedState.execution.copy(
+                                  messages = compactedState.messages :+ eventMessage,
+                                  pendingEvents = compactedState.execution.pendingEvents.tail
+                                )
+                              )
+                              pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
+                            case None =>
+                              IO.pure(idle(agentDef, resources, depth, parentRef, compactedState))
                 yield result
                 end for
               end if
@@ -1757,6 +1849,40 @@ object AgentActor extends AgentCore with AgentSession:
     textAlreadyStreamed: Boolean = false,
     model: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    // ── Zombie-compaction guard ──
+    // A pending CompactionJob must never survive into idle: the next normal
+    // LLM reply would be misrouted by handleLlmCompleteBranch's pendingCompaction
+    // ladder as the compact summary and REPLACE all messages (data loss).
+    // Legitimate compaction flows never reach finishTurn — the ladder
+    // intercepts every LlmComplete while a job is pending — so arriving here
+    // with a job means the attempt died mid-turn (context overflow on the
+    // compact call, max-tokens truncation, …). Complete the deferred waiter,
+    // record the failure. Mirrors CompactionComplete(Left) / handleCompactFailure /
+    // Interrupt. Events queued during the dead compaction are then delivered
+    // normally by finishTurnCont's pendingEvents drain (job now cleared).
+    val (normalizedState, compactionCleanup) = state.pendingCompaction match
+      case Some(job) =>
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "compaction-abandoned",
+          s"reason=turn-ended-before-compact job=${job.subagentId} phase=${job.phase.toString}"
+        )
+        val now = System.currentTimeMillis()
+        (
+          state
+            .withPendingCompaction(None)
+            .withCompactionFailures(state.compactionFailures + 1)
+            .withLastCompactionFailureAt(now),
+          job.replyDeferred
+            .fold(IO.unit)(d =>
+              d.complete(Left("Compaction abandoned: turn ended before the compact phase")).void
+                .handleErrorWith(_ => IO.unit)
+            )
+        )
+      case None => (state, IO.unit)
     val isSubagent = parentRef.isDefined
     val sendText = !textAlreadyStreamed && text.nonEmpty
     val assistantContent = (thinking, text) match
@@ -1764,19 +1890,20 @@ object AgentActor extends AgentCore with AgentSession:
       case (Some(t), "") => Right(List(ContentBlock.Thinking(t, thinkingSignature)))
       case (Some(t), txt) =>
         Right(List(ContentBlock.Thinking(t, thinkingSignature), ContentBlock.Text(txt)))
-    val newMessages = state.messages :+ Message(MessageRole.Assistant, assistantContent)
+    val newMessages = normalizedState.messages :+ Message(MessageRole.Assistant, assistantContent)
     val sendTextIO =
       if sendText then
         emitStream(state.wsSend, AgentStreamEvent.TextDelta(text), isSubagent = isSubagent, state.sessionId)
       else IO.unit
     for
+      _ <- compactionCleanup
       _ <- sendTextIO
       result <- finishTurnCont(
         agentDef,
         resources,
         depth,
         parentRef,
-        state,
+        normalizedState,
         replyTo,
         newMessages,
         text,
@@ -1963,7 +2090,7 @@ object AgentActor extends AgentCore with AgentSession:
                 else IO.unit
               _ <- emitInjectedUserEvent(
                 state.wsSend, state.sessionId, item.message,
-                "mail-queue", Some("queue"), Some(item.from), None
+                "mail-queue", Some("queue"), Some(item.from), None, Some("queue")
               )
               _ <- ctx.forkTurn(
                 (resources.sessionStore.saveMessagesForSession(sid, messagesWithQueue) *>

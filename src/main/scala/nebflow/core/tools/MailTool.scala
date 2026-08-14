@@ -319,7 +319,7 @@ Message type (optional, default "INFO"):
         s"fork-${agentDef.name}-${java.util.UUID.randomUUID().toString.take(8)}"
       )
 
-      _ <- agentRef ! AgentCommand.UserInput(question, Some(adapterRef))
+      _ <- agentRef ! AgentCommand.UserInput(question, Some(adapterRef), delivery = Some("ask"))
 
       result <- waitForForkAnswer(
         system,
@@ -950,7 +950,8 @@ Message type (optional, default "INFO"):
         source = Some("mail"),
         eventType = Some(mailType.toLowerCase),
         sender = Some(senderName),
-        senderTeam = teamOpt
+        senderTeam = teamOpt,
+        delivery = Some("immediate")
       )
       _ <- nebflow.core.UsageTracker.record("mail", senderSid)
     yield Right(s"Message sent to $label. The agent will process it.")
