@@ -139,7 +139,7 @@ end PeerInfo
 
 case class NeblinkConfig(
   enabled: Boolean = false,
-  syncIntervalSec: Int = 300,
+  syncIntervalSec: Int = 45,
   neblinkServer: Option[NeblinkServerConfig] = None
 )
 
@@ -149,7 +149,7 @@ object NeblinkConfig:
   given Decoder[NeblinkConfig] = Decoder.instance { c =>
     for
       enabled <- c.downField("enabled").as[Option[Boolean]].map(_.getOrElse(false))
-      syncIntervalSec <- c.downField("syncIntervalSec").as[Option[Int]].map(_.getOrElse(300))
+      syncIntervalSec <- c.downField("syncIntervalSec").as[Option[Int]].map(_.getOrElse(45))
       // Backward compat: try "neblinkServer" first, fall back to "coordinator"
       neblinkServer <- c.downField("neblinkServer").as[Option[NeblinkServerConfig]].flatMap {
         case Some(config) => Right(Some(config))
