@@ -1055,6 +1055,26 @@ class RestApiRoutes(
           result <- Ok(Json.obj("cleared" -> true.asJson))
         yield result
 
+    // GET /teams/mail-queue/:sessionId — pending queue mails
+    case GET -> Root / "teams" / "mail-queue" / sessionId =>
+      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
+        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
+      else
+        for
+          items <- nebflow.core.flow.MailQueueStore.load(sessionId)
+          result <- Ok(Json.obj("items" -> items.asJson))
+        yield result
+
+    // DELETE /teams/mail-queue/:sessionId/:itemId — cancel a pending queue mail
+    case DELETE -> Root / "teams" / "mail-queue" / sessionId / itemId =>
+      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
+        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
+      else
+        for
+          remaining <- nebflow.core.flow.MailQueueStore.removeById(sessionId, itemId)
+          result <- Ok(Json.obj("items" -> remaining.asJson))
+        yield result
+
     // ===== Flow Editor APIs =====
 
     // GET /teams/def/:name — return team definition for the editor

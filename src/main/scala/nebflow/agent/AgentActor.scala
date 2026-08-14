@@ -552,6 +552,24 @@ object AgentActor extends AgentCore with AgentSession:
         for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam)
         yield idle(agentDef, resources, depth, parentRef, state)
 
+      // Queued mail arriving in idle — drain immediately as a new turn
+      case AgentCommand.MailQueued(item, _) =>
+        val sid = state.sessionId.getOrElse("")
+        for
+          _ <- nebflow.core.flow.MailQueueStore.removeHead(sid).void
+          _ <- ctx.self ! AgentCommand.UserInput(
+            item.message,
+            None,
+            None,
+            None,
+            0,
+            source = Some("mail-queue"),
+            sender = Some(item.from)
+          )
+          // Emit WS so frontend removes the pending item
+          _ <- emitDequeuedWs(state.wsSend, sid, item.id)
+        yield idle(agentDef, resources, depth, parentRef, state)
+
       // Supervisor restart in idle state
       case AgentCommand.RestartAgent(level) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart-idle", s"level=${level.toString}")
@@ -1466,6 +1484,21 @@ object AgentActor extends AgentCore with AgentSession:
         )
         IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
 
+      // Queued mail arriving while busy — just count; actual content is on disk
+      case AgentCommand.MailQueued(item, _) =>
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "mail-queued",
+          s"from=${item.from} pendingCount=${state.execution.pendingMailQueueCount + 1}"
+        )
+        val updatedExec = state.execution.copy(
+          pendingMailQueueCount = state.execution.pendingMailQueueCount + 1
+        )
+        IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
+
       // --- Session management (persistent sub-agents) ---
       case AgentCommand.SessionStarted(address, agentName, taskDescription) =>
         val session = AgentSessionInfo(address, agentName, taskDescription, "running")
@@ -1781,7 +1814,8 @@ object AgentActor extends AgentCore with AgentSession:
       val updatedState = state.copy(execution =
         ExecutionContext
           .idle(messagesWithPending, state.execution.turnIdx)
-          .copy(pendingEvents = remainingEvents, pendingImmediateInputs = state.execution.pendingImmediateInputs)
+          .copy(pendingEvents = remainingEvents, pendingImmediateInputs = state.execution.pendingImmediateInputs,
+                pendingMailQueueCount = state.execution.pendingMailQueueCount)
       )
       for
         _ <- roundCompleteIO
@@ -1834,7 +1868,8 @@ object AgentActor extends AgentCore with AgentSession:
         .copy(execution =
           ExecutionContext
             .idle(messagesWithImmediate, state.execution.turnIdx)
-            .copy(pendingImmediateInputs = remainingInputs)
+            .copy(pendingImmediateInputs = remainingInputs,
+                  pendingMailQueueCount = state.execution.pendingMailQueueCount)
         )
       for
         _ <- roundCompleteIO
@@ -1866,6 +1901,51 @@ object AgentActor extends AgentCore with AgentSession:
         result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
       yield result
       end for
+    else if state.pendingCompaction.isEmpty && state.execution.pendingMailQueueCount > 0 then
+      // Queue drain: next queued mail (less urgent than immediate inputs).
+      // Load head from disk, remove it, inject as a new user turn.
+      val sid = state.sessionId.getOrElse("")
+      for
+        items <- nebflow.core.flow.MailQueueStore.load(sid)
+        headOpt = items.headOption
+        result <- headOpt match
+          case Some(item) =>
+            val queueMessage =
+              Message(MessageRole.User, Left(item.message)).copy(source = Some("mail-queue"))
+            val messagesWithQueue = newMessages ++ List(queueMessage)
+            val updatedState = state.copy(execution =
+              ExecutionContext
+                .idle(messagesWithQueue, state.execution.turnIdx)
+                .copy(pendingMailQueueCount = state.execution.pendingMailQueueCount - 1)
+            )
+            for
+              _ <- nebflow.core.flow.MailQueueStore.removeHead(sid)
+              _ <-
+                if !isSubagent then emitSessionBusy(state.wsSend, sid, busy = true)
+                else IO.unit
+              _ <- emitInjectedUserEvent(
+                state.wsSend, state.sessionId, item.message,
+                "mail-queue", Some("queue"), Some(item.from), None
+              )
+              _ <- ctx.forkTurn(
+                (resources.sessionStore.saveMessagesForSession(sid, messagesWithQueue) *>
+                  resources.sessionStore.flushIndex)
+                  .handleErrorWith(e =>
+                    IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
+                  )
+              )
+              _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithQueue))
+              r <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
+            yield r
+          case None =>
+            // Count > 0 but disk queue empty (items cancelled while busy) — reset
+            // count and re-enter finishTurnCont which will hit the idle branch.
+            finishTurnCont(
+              agentDef, resources, depth, parentRef,
+              state.copy(execution = state.execution.copy(pendingMailQueueCount = 0)),
+              replyTo, newMessages, text, model, thinking, thinkingSignature, textAlreadyStreamed, isSubagent
+            )
+      yield result
     else
       val effectiveInputTokens = state.latestUsage
         .map(_.inputTokens)
@@ -1968,6 +2048,21 @@ object AgentActor extends AgentCore with AgentSession:
   private def markTeamIdle(agentDef: AgentDef, sid: Option[String]): IO[Unit] =
     if agentDef.category == "team" then
       sid.fold(IO.unit)(s => TeamSessionRegistry.markIdle(s).handleErrorWith(_ => IO.unit))
+    else IO.unit
+
+  /** Emit a WS event so the frontend removes a pending mail-queue item. */
+  private def emitDequeuedWs(wsSend: Json => IO[Unit], sessionId: String, itemId: String): IO[Unit] =
+    if sessionId.nonEmpty then
+      nebflow.core.flow.MailQueueStore.size(sessionId).flatMap { pendingCount =>
+        wsSend(
+          Json.obj(
+            "type" -> "mailDequeued".asJson,
+            "sessionId" -> sessionId.asJson,
+            "itemId" -> itemId.asJson,
+            "pendingCount" -> pendingCount.asJson
+          )
+        ).handleErrorWith(_ => IO.unit)
+      }
     else IO.unit
 
   private def pipeLlmCall(
