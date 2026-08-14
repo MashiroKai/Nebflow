@@ -137,6 +137,50 @@ class EmptyCompletionTrackerSpec extends CatsEffectSuite:
   }
 
   // ============================================================
+  // Explicit restore — clearOverride (B3 restore semantics, 1b)
+  // ============================================================
+
+  test("clearOverride: explicit vision=true restore clears override and counters") {
+    val tracker = EmptyCompletionTracker()
+    for
+      // Demote via signal 2 (immediate)
+      _ <- tracker.onVisionError(pid, mid, "this model does not support image input")
+      v1 <- tracker.getRuntimeVision(pid, mid)
+      // User explicitly annotates vision=true (REST PUT): runtime heuristic
+      // state must be cleared — explicit intent outranks auto-demotion.
+      _ <- tracker.clearOverride(pid, mid)
+      v2 <- tracker.getRuntimeVision(pid, mid)
+      // Counters cleared too: a single later empty completion must not
+      // re-trip the threshold on stale counts.
+      _ <- tracker.onEmptyCompletion(pid, mid, hadImage = true)
+      v3 <- tracker.getRuntimeVision(pid, mid)
+    yield
+      assertEquals(v1, Some(false))
+      assertEquals(v2, None) // effectiveVision falls back to candidate.vision
+      assertEquals(v3, None)
+  }
+
+  test("shared instance: REST clearOverride and the LLM pipeline see the same state") {
+    // RestApiRoutes (PUT vision=true) clears EmptyCompletionTracker.shared;
+    // interface.scala reads the same instance — otherwise the restore would
+    // only fix the persisted annotation while the in-memory override keeps
+    // stripping images until restart. Uses a dedicated modelId and cleans up,
+    // so the JVM-wide singleton carries no state into other suites.
+    val t1 = EmptyCompletionTracker.shared
+    val t2 = EmptyCompletionTracker.shared
+    assert(t1 eq t2)
+    for
+      _ <- t1.onVisionError(pid, "shared-model", "no image support")
+      v <- t2.getRuntimeVision(pid, "shared-model")
+      _ <- t1.clearOverride(pid, "shared-model")
+      _ <- t1.clearOverride(pid, "shared-model") // also clears counters
+      v2 <- t2.getRuntimeVision(pid, "shared-model")
+    yield
+      assertEquals(v, Some(false))
+      assertEquals(v2, None)
+  }
+
+  // ============================================================
   // ModelRegistry tri-state annotations (B3 Phase 1)
   // ============================================================
 
