@@ -42,6 +42,20 @@ class EmptyCompletionTrackerSpec extends CatsEffectSuite:
     assert(!tracker.isVisionError("rate limit exceeded"))
   }
 
+  test("isVisionError matches Chinese vision-blame phrasings") {
+    val tracker = EmptyCompletionTracker()
+    assert(tracker.isVisionError("该模型不支持图片输入"))
+    assert(tracker.isVisionError("当前模型不支持图像理解"))
+    assert(tracker.isVisionError("无法识别图片内容"))
+    assert(tracker.isVisionError("无法处理图像"))
+    assert(tracker.isVisionError("模型暂不支持多模态输入"))
+    assert(tracker.isVisionError("不支持该类型内容"))
+    // Restraint: an error merely mentioning 图片 in a non-capability context
+    // (download failure, invalid format) must not demote vision
+    assert(!tracker.isVisionError("图片下载失败"))
+    assert(!tracker.isVisionError("图片格式无效"))
+  }
+
   // ============================================================
   // Signal 1: repeated empty completions (threshold >= 2, with image)
   // ============================================================

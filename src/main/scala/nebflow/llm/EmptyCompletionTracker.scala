@@ -39,7 +39,22 @@ final class EmptyCompletionTracker:
     "image",
     "multimodal",
     "multi-modal",
-    "not support"
+    "not support",
+    // Chinese phrasings used by domestic providers (GLM/Kimi/Qwen/DeepSeek
+    // etc.). Compound phrases rather than bare "图片"/"图像": an error merely
+    // containing 图片 (e.g. 图片下载失败, a download failure) is not a
+    // vision-capability signal. isVisionError only sees provider error
+    // messages, so these stay narrowly about image-input handling.
+    "不支持图片",
+    "不支持图像",
+    "图片输入",
+    "图像输入",
+    "无法识别图片",
+    "无法识别图像",
+    "无法处理图片",
+    "无法处理图像",
+    "多模态",
+    "不支持该类型内容"
   )
 
   /** Does this provider error message explicitly blame image support? */
