@@ -2107,16 +2107,19 @@ class RestApiRoutes(
 
   /**
    * GET {baseUrl}models with protocol-specific auth headers and extract the
-   * model ids (both OpenAI-compatible and Anthropic reply `{"data":[{"id":..}]}`,
-   * normalized with empty ids removed and duplicates collapsed). Uses the same
-   * JDK HttpClient posture as the LLM adapters: HTTP/1.1 forced, system proxy
+   * model entries (both OpenAI-compatible and Anthropic reply
+   * `{"data":[{"id":..}]}`, normalized with empty ids removed and duplicates
+   * collapsed). Each entry is `{id}` plus `contextLength` when the provider
+   * reports one (OpenRouter `context_length`, others `context_window`) —
+   * absent/unparsable means the field is simply omitted. Uses the same JDK
+   * HttpClient posture as the LLM adapters: HTTP/1.1 forced, system proxy
    * honored — a probe must see the same network path real completions take.
    */
   private def fetchProviderModels(
     modelsUrl: java.net.URI,
     apiKey: String,
     protocol: String
-  ): IO[Either[String, List[String]]] =
+  ): IO[Either[String, List[Json]]] =
     IO.blocking {
       val client = java.net.http.HttpClient
         .newBuilder()
@@ -2140,12 +2143,21 @@ class RestApiRoutes(
         if status >= 200 && status < 300 then
           parser.parse(response.body()) match
             case Right(json) =>
-              val ids = json.hcursor
+              val entries = json.hcursor
                 .downField("data")
                 .as[List[Json]]
                 .getOrElse(Nil)
-                .flatMap(j => j.hcursor.downField("id").as[String].toOption)
-              val models = ids.map(_.trim).filter(_.nonEmpty).distinct
+                .flatMap(j => j.hcursor.downField("id").as[String].toOption.map(_.trim).filter(_.nonEmpty).map(id => (id, j)))
+              // distinct by id, first occurrence wins
+              val seen = scala.collection.mutable.LinkedHashSet.empty[String]
+              val models = entries.collect { case (id, raw) if seen.add(id) =>
+                val ctx = List("context_length", "context_window")
+                  .flatMap(k => raw.hcursor.downField(k).as[Long].toOption)
+                  .headOption
+                ctx match
+                  case Some(n) => Json.obj("id" -> id.asJson, "contextLength" -> n.asJson)
+                  case None    => Json.obj("id" -> id.asJson)
+              }
               if models.isEmpty then Left("Provider returned no models")
               else Right(models)
             case Left(err) => Left(s"Invalid JSON from provider: ${err.message}")
