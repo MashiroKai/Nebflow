@@ -1421,6 +1421,14 @@ onMessage('flowMail', (msg) => {
   flowCanvas.onFlowMail(msg);
 });
 
+onMessage('mailQueued', (msg) => {
+  flowCanvas.onMailQueued(msg);
+});
+
+onMessage('mailDequeued', (msg) => {
+  flowCanvas.onMailDequeued(msg);
+});
+
 // ── Flow agent status tracking ────────────────────────────
 // agentStart/agentDone carry nodeSessionId (set by FlowAgentActivator's wsSend wrapper).
 // ws.js intercepts them into the popup ChatView, but we also need to update
