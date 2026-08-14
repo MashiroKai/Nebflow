@@ -78,7 +78,7 @@ class NeblinkModelSpec extends CatsEffectSuite:
   test("NeblinkConfig default values") {
     val cfg = NeblinkConfig()
     assertEquals(cfg.enabled, false, "Default enabled should be false")
-    assertEquals(cfg.syncIntervalSec, 300, "Default sync interval should be 300 seconds")
+    assertEquals(cfg.syncIntervalSec, 45, "Default sync interval should be 45 seconds")
   }
 
   test("NeblinkConfig serialization roundtrip") {
