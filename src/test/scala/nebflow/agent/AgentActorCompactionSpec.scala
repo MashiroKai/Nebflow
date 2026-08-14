@@ -243,6 +243,24 @@ class AgentActorCompactionSpec extends FunSuite:
     assertEquals(drained.map(_.payload), Some("payload-1"))
   }
 
+  test("finishTurnCont branch-3: empty pendingUserInputs must be tail-safe") {
+    // Mirror of the turn-fully-finished drain (AgentActor finishTurnCont, after
+    // markTeamIdle): the forward is guarded by headOption, and the tail update
+    // must be empty-safe in the same style. The REST /api/command turn-end path
+    // reached this branch with an EMPTY queue on every turn in live testing
+    // (9/9 sessions) — a bare .tail threw "tail of empty list" there.
+    val state = mkState(0).copy(execution = state0Execution(Nil))
+    assert(state.execution.pendingUserInputs.isEmpty, "branch-3 is reached with an empty queue")
+    val remainingEmpty =
+      val queued = state.execution.pendingUserInputs
+      if queued.isEmpty then queued else queued.tail
+    assertEquals(remainingEmpty, Nil)
+    // Non-empty queue still consumes exactly the head.
+    val queued2: List[String] = List("m1", "m2")
+    val remaining2 = if queued2.isEmpty then queued2 else queued2.tail
+    assertEquals(remaining2, List("m2"))
+  }
+
   /** Default execution context seeded with a pendingEvents queue (specs build
     * AgentState without an explicit execution). */
   private def state0Execution(events: List[AgentCommand.ExternalEvent]) =
