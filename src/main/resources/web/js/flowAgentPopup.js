@@ -44,6 +44,9 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   max-width: 100%; max-height: 100%;
   display: flex; flex-direction: column;
   background: var(--glass-bg);
+  /* Panel keeps its own glass blur; only the overlay is forbidden from dimming. */
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: 20px;
   overflow: hidden;

@@ -282,6 +282,12 @@ function showLoginModal() {
 }
 
 // ── State refresh → avatar styling ───────────────────────
+// Error latch: remember avatar URLs that failed to load (e.g. GitHub avatars
+// unreachable without a proxy). Without this, the 10s refresh poll re-shows
+// the broken <img> every cycle (src unchanged → no retry → broken-image icon)
+// and the onerror fallback to the logo never sticks.
+let avatarFailedUrl = '';
+
 async function refresh() {
   await fetchNeblinkStatus();
   renderAvatar();
@@ -302,10 +308,11 @@ function renderAvatar() {
   // Logged out → show the logo.
   // Filter obviously fake/placeholder URLs
   const validAvatarUrl = avatarUrl && avatarUrl.startsWith('http') && !avatarUrl.includes('example.com') ? avatarUrl : '';
-  const showPhoto = loggedIn && validAvatarUrl;
+  const showPhoto = loggedIn && validAvatarUrl && avatarFailedUrl !== validAvatarUrl;
   if (photoEl) {
     photoEl.hidden = !showPhoto;
     photoEl.onerror = () => {
+      avatarFailedUrl = validAvatarUrl; // latch: stop re-showing the broken image
       photoEl.hidden = true;
       if (logoEl) logoEl.hidden = false;
     };
