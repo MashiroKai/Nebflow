@@ -367,6 +367,28 @@ export default {
   'dropbox.completed': '已完成',
   'dropbox.failed': '传输失败',
 
+  // === Chat History Search ===
+  'search.btnTitle': '搜索聊天记录',
+  'search.title': '搜索聊天记录',
+  'search.placeholder': '输入关键词…',
+  'search.scopeCurrent': '当前会话',
+  'search.scopeAll': '全部会话',
+  'search.allTypes': '全部类型',
+  'search.anyTool': '任意工具调用',
+  'search.go': '搜索',
+  'search.hint': '输入关键词，或选择工具/日期过滤条件',
+  'search.searching': '正在搜索…',
+  'search.progress': '正在搜索 {done}/{total} 个会话…',
+  'search.results': '{n} 条结果',
+  'search.truncated': '仅显示前 {n} 条',
+  'search.noResults': '无匹配结果',
+  'search.noSession': '当前没有活跃会话',
+  'search.failed': '搜索失败',
+  'search.jumpFailed': '未能在会话中定位该消息',
+  'search.typeUser': '用户',
+  'search.typeAi': 'AI',
+  'search.typeTool': '工具',
+
   // === Daemons (Dev Servers) ===
   'daemons.title': '开发服务器',
   'daemons.empty': '暂无服务',

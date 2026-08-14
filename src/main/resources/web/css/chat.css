@@ -102,6 +102,37 @@
   height: 16px;
 }
 
+/* Search history button — same glass-icon pattern as the memory button */
+#header #search-btn {
+  background: none;
+  border: 1px solid transparent; /* reserves edge space for glass hover */
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+#header #search-btn:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  color: var(--color-frame-text);
+}
+#header #search-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* Context window indicator — always compact ring */
 
 #header #header-model-info {
