@@ -121,11 +121,64 @@ function sanitizeForCache(entry) {
     e.text = e.text.slice(0, MAX_TEXT_LEN) + '…';
   if (typeof e.answer === 'string' && e.answer.length > MAX_TEXT_LEN)
     e.answer = e.answer.slice(0, MAX_TEXT_LEN) + '…';
-  // Strip base64 attachment previews — they can be multi-MB
+  // Strip base64 attachment previews — they can be multi-MB. Keep `path`:
+  // it's a small string and lets the restore path re-render the image from
+  // the uploads route (G1) even after the preview is gone.
   if (e.attachments) {
-    e.attachments = e.attachments.map(a => ({ type: a.type, name: a.name }));
+    e.attachments = e.attachments.map(a => ({ type: a.type, name: a.name, path: a.path }));
   }
   return e;
+}
+
+// ---------- Attachment rendering (shared by both restore paths) ----------
+
+/** Convert an absolute uploads path (ui.json records attachments as
+ *  {name, type, path}) into a served URL for the backend's
+ *  GET /uploads/<sid>/<file> route. Auth: same-origin cookie usually
+ *  suffices; the ?token= query is the stale-cookie fallback (token from the
+ *  frontend's existing store — localStorage key 'nebflow_token', same one
+ *  the WS connect uses). Returns null when the path isn't under an
+ *  uploads dir or is otherwise unusable. */
+export function attachmentImageUrl(path) {
+  if (!path || typeof path !== 'string') return null;
+  const norm = path.replace(/\\/g, '/');
+  const idx = norm.indexOf('/uploads/');
+  if (idx < 0) return null;
+  const rel = norm.slice(idx + '/uploads/'.length); // <sid>/<file>
+  if (!rel || rel.includes('..')) return null;
+  const encoded = rel.split('/').map(encodeURIComponent).join('/');
+  const tok = localStorage.getItem('nebflow_token') || '';
+  return `/uploads/${encoded}` + (tok ? `?token=${encodeURIComponent(tok)}` : '');
+}
+
+/** Append one attachment bubble to a message row. Images render as <img>
+ *  from the live preview (dataURL) or, after a refresh, from the uploads
+ *  route via att.path (G1). Non-image attachments keep the plain text tag. */
+function appendAttachmentBubble(row, att) {
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble user att-bubble';
+  const imgSrc =
+    att.type === 'image'
+      ? (att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:'))
+        ? att.preview
+        : attachmentImageUrl(att.path)
+      : null;
+  if (imgSrc) {
+    const img = document.createElement('img');
+    img.src = imgSrc;
+    img.className = 'att-img';
+    img.title = att.name || '';
+    img.draggable = false;
+    // Missing file (uploads dir cleaned, session deleted) — hide the broken
+    // img, the tag below still labels the attachment.
+    img.onerror = () => { img.style.display = 'none'; };
+    bubble.appendChild(img);
+  }
+  const tag = document.createElement('span');
+  tag.className = 'att-file-tag';
+  tag.textContent = (att.type === 'image' ? '[image' : '[file') + (att.name ? ': ' + att.name : '') + ']';
+  bubble.appendChild(tag);
+  row.appendChild(bubble);
 }
 
 // ---------- Save a message entry to localStorage (best-effort cache) ----------
@@ -227,26 +280,7 @@ export function restoreFromStorage() {
         }
         row.appendChild(bubble);
       }
-      (m.attachments || []).forEach(att => {
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble user att-bubble';
-        if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
-          const img = document.createElement('img');
-          img.src = att.preview;
-          img.className = 'att-img';
-          bubble.appendChild(img);
-          const tag = document.createElement('span');
-          tag.className = 'att-file-tag';
-          tag.textContent = '[image' + (att.name ? ': ' + att.name : '') + ']';
-          bubble.appendChild(tag);
-        } else {
-          const tag = document.createElement('span');
-          tag.className = 'att-file-tag';
-          tag.textContent = '[file' + (att.name ? ': ' + att.name : '') + ']';
-          bubble.appendChild(tag);
-        }
-        row.appendChild(bubble);
-      });
+      (m.attachments || []).forEach(att => appendAttachmentBubble(row, att));
       // Timestamp + copy button (pill style, matching AI duration badge)
       if (m.timestamp && m.timestamp > 0) {
         const badge = document.createElement('div');
@@ -571,26 +605,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         }
         row.appendChild(bubble);
       }
-      (m.attachments || []).forEach(att => {
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble user att-bubble';
-        if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
-          const img = document.createElement('img');
-          img.src = att.preview;
-          img.className = 'att-img';
-          bubble.appendChild(img);
-          const tag = document.createElement('span');
-          tag.className = 'att-file-tag';
-          tag.textContent = '[image' + (att.name ? ': ' + att.name : '') + ']';
-          bubble.appendChild(tag);
-        } else {
-          const tag = document.createElement('span');
-          tag.className = 'att-file-tag';
-          tag.textContent = '[file' + (att.name ? ': ' + att.name : '') + ']';
-          bubble.appendChild(tag);
-        }
-        row.appendChild(bubble);
-      });
+      (m.attachments || []).forEach(att => appendAttachmentBubble(row, att));
       // Timestamp + copy button (pill style, matching AI duration badge)
       if (m.timestamp && m.timestamp > 0) {
         const badge = document.createElement('div');
