@@ -152,10 +152,11 @@ async function loadPendingSection(body, team) {
   const agents = (team?.agents || []).filter(a => a.sessionId);
   if (agents.length === 0) { section.style.display = 'none'; list.innerHTML = ''; return; }
   const results = await Promise.allSettled(agents.map(async a => {
-    const resp = await fetch(`/api/mailbox/${encodeURIComponent(a.sessionId)}/pending`, { headers: authHeaders() });
+    const resp = await fetch(`/api/teams/mail-queue/${encodeURIComponent(a.sessionId)}`, { headers: authHeaders() });
     if (!resp.ok) return [];
     const data = await resp.json();
-    return (Array.isArray(data) ? data : []).map(it => ({ ...it, to: it.to || a.name, toSession: a.sessionId }));
+    const items = Array.isArray(data) ? data : (data.items || []);
+    return items.map(it => ({ ...it, to: it.to || a.name, toSession: a.sessionId }));
   }));
   // Viewer may have been closed/reopened while awaiting — bail if detached.
   if (!section.isConnected) return;
@@ -175,11 +176,12 @@ async function loadPendingSection(body, team) {
       if (!itemId || !sid) return;
       btn.disabled = true;
       try {
-        const resp = await fetch(`/api/mailbox/${encodeURIComponent(sid)}/pending/${encodeURIComponent(itemId)}`, { method: 'DELETE', headers: authHeaders() });
+        const resp = await fetch(`/api/teams/mail-queue/${encodeURIComponent(sid)}/${encodeURIComponent(itemId)}`, { method: 'DELETE', headers: authHeaders() });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const remaining = await resp.json();
         // Keep the team-card badge in sync, then reload the section.
-        setMailPending(sid, Array.isArray(remaining) ? remaining.length : 0);
+        const remainingItems = Array.isArray(remaining) ? remaining : (remaining.items || []);
+        setMailPending(sid, remainingItems.length);
         document.dispatchEvent(new CustomEvent('mail-pending-changed'));
         loadPendingSection(body, team);
       } catch (err) {
