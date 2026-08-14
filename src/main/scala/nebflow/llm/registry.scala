@@ -137,7 +137,10 @@ class ProviderRegistry(
 
   /**
    * Resolve vision + capabilities for a model.
-   * Priority: ModelConfig inline fields > ModelRegistry (models.json) > defaults (false, empty).
+   * Priority: ModelConfig inline fields > ModelRegistry (models.json) >
+   * optimistic default (B3 Phase 1: unannotated models resolve vision=true —
+   * a wrong strip is visible and self-corrects via runtime detection, while
+   * a wrong pessimistic default silently degrades every image request).
    */
   private def resolveCapabilities(
     providerId: String,
@@ -147,8 +150,8 @@ class ProviderRegistry(
     val registryEntry = ModelRegistry.lookup(providerId, modelId)
     val vision = modelConfig
       .flatMap(_.vision)
-      .orElse(registryEntry.map(_.vision))
-      .getOrElse(false)
+      .orElse(registryEntry.flatMap(_.vision))
+      .getOrElse(true)
     val caps = modelConfig
       .flatMap(_.capabilities)
       .orElse(registryEntry.map(_.capabilities))

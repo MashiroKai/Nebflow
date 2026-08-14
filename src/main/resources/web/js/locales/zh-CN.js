@@ -134,6 +134,7 @@ export default {
   'model.maxTokensPlaceholder': '最大词元',
   'model.contextPlaceholder': '上下文',
   'model.add': '+ 添加模型',
+  'model.visionAuto': 'Vision——运行时自动检测（出错自动降级）',
 
   // Provider model-list auto-fetch (B1)
   'provider.fetchModels': '获取模型列表',

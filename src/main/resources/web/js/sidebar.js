@@ -12,7 +12,7 @@ import { chatViews, setActiveView, activeView } from './chatView.js';
 import { cleanupCardIframes } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
-import { preloadModelCapabilities, renderVisionBadge, getVision, updateVision } from './modelCapabilities.js';
+import { preloadModelCapabilities, renderVisionBadge, getVision } from './modelCapabilities.js';
 import * as presets from './presets.js';
 
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -1054,7 +1054,7 @@ function showProviderModal(existingName, existingData, onSave) {
   const initialModels = p.models.length > 0 ? p.models.map(m => ({
     ...m,
     vision: getVision(`${existingName || ''}/${m.id}`)
-  })) : [{id: '', maxTokens: 131072, contextWindow: 200000, vision: false}];
+  })) : [{id: '', maxTokens: 131072, contextWindow: 200000, vision: true}];
 
   showModal({
     title: isEdit ? t('provider.edit', { name: existingName }) : t('provider.add'),
@@ -1077,10 +1077,9 @@ function showProviderModal(existingName, existingData, onSave) {
       if (!isEdit && apiKey === '***') { window.__showToast?.(t('provider.keyRequired'), 'error'); return; }
       const validModels = values.models.filter(m => m.id && m.id.trim());
       if (validModels.length === 0) { window.__showToast?.(t('provider.modelRequired'), 'error'); return; }
-      // Persist vision flags to models.json via capability API
-      validModels.forEach(m => {
-        updateVision({id: `${name}/${m.id}`, capabilities: []}, m.vision);
-      });
+      // Vision is no longer written from here (B3): the checkbox is a
+      // read-only reflection of the auto-detected state; manual toggling is
+      // retired and runtime demotion persists itself to models.json.
       onSave(name, {
         baseUrl,
         apiKey,
@@ -1191,8 +1190,10 @@ function renderModelRowContent(m) {
   const idField = providerModelChoices && providerModelChoices.length > 0
     ? renderModelIdSelect(id)
     : `<input class="cfg-input cfg-model-id" type="text" value="${escapeHtml(id)}" placeholder="${t('model.idPlaceholder')}">`;
+  // Read-only reflection of the auto-detected vision state (B3): manual
+  // toggling retired — unknown models default optimistic, errors demote.
   return `${idField}
-<label class="cfg-model-vision-check"><input type="checkbox" class="cfg-model-vision-cb" ${visionChecked}> Vision</label>
+<label class="cfg-model-vision-check" title="${t('model.visionAuto')}"><input type="checkbox" class="cfg-model-vision-cb" ${visionChecked} disabled> Vision</label>
 <input class="cfg-input cfg-model-max" type="number" value="${max}" placeholder="${t('model.maxTokensPlaceholder')}">
 <input class="cfg-input cfg-model-ctx" type="number" value="${ctx}" placeholder="${t('model.contextPlaceholder')}">
 <button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;

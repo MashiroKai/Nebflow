@@ -158,8 +158,15 @@ object LlmInterface:
                           Some(req.agentId)
                         )
                       )
-                      // On success, clear the empty-completion counter for this model.
-                      _ <- emptyTracker.resetOnSuccess(candidate.providerId, candidate.model)
+                      // On success, clear the empty-completion counter.
+                      // Oscillation fix: only an image-bearing success lifts
+                      // a vision=false override; after stripImages the
+                      // success proves nothing about vision.
+                      _ <- emptyTracker.resetOnSuccess(
+                        candidate.providerId,
+                        candidate.model,
+                        hadImage = hasImage(effectiveMessages)
+                      )
                     yield resp
                     end for
                   ,
@@ -347,11 +354,22 @@ object LlmInterface:
                                             // for any OpenAI-compatible provider). Use the actual providerId
                                             // from the candidate so the frontend shows correct provider name.
                                             val fixedMeta = done.meta.map(_.copy(providerId = candidate.providerId))
-                                            emptyTracker.resetOnSuccess(candidate.providerId, candidate.model) *>
-                                              IO.pure(
-                                                done
-                                                  .copy(meta = fixedMeta, contextWindow = Some(candidate.contextWindow))
-                                              )
+                                            // Oscillation fix: only an image-bearing success lifts a
+                                            // vision=false override. messagesRef holds what was actually
+                                            // sent (post-strip if PostEmptyRecovery fired), so a stripped
+                                            // retry success keeps the override in place.
+                                            messagesRef.get.flatMap { sentMsgs =>
+                                              emptyTracker
+                                                .resetOnSuccess(
+                                                  candidate.providerId,
+                                                  candidate.model,
+                                                  hadImage = hasImage(sentMsgs)
+                                                )
+                                                .as(
+                                                  done
+                                                    .copy(meta = fixedMeta, contextWindow = Some(candidate.contextWindow))
+                                                )
+                                            }
                                           else
                                             IO.raiseError(
                                               new RuntimeException(
@@ -431,7 +449,9 @@ object LlmInterface:
                                       val rawClassification = Fallback.classifyError(err)
                                       val isEmptyCompletion = err.getMessage != null &&
                                         err.getMessage.contains("Stream completed with no content")
-                                      // For empty completions, record in tracker and check for capability mismatch
+                                      // For empty completions, record in tracker and check for capability mismatch.
+                                      // For other errors, check for explicit vision/multimodal blame in the
+                                      // message (B3 Phase 1: immediate demotion, no threshold wait).
                                       val trackerIO =
                                         if isEmptyCompletion then
                                           for
@@ -443,7 +463,18 @@ object LlmInterface:
                                               img
                                             )
                                           yield img
-                                        else IO.pure(false)
+                                        else
+                                          for
+                                            msgs <- messagesRef.get
+                                            img = hasImage(msgs)
+                                            _ <- IO.whenA(img)(
+                                              emptyTracker.onVisionError(
+                                                candidate.providerId,
+                                                candidate.model,
+                                                Option(err.getMessage).getOrElse("")
+                                              )
+                                            )
+                                          yield img
 
                                       fs2.Stream.eval(trackerIO).flatMap { hadImage =>
                                         // Override classification: empty completion with image on non-vision model
