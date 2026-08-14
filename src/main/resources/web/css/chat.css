@@ -605,6 +605,39 @@
   color: rgb(var(--sapphire) / 0.85);
   opacity: 1;
 }
+
+/* Mail delivery mode badge (ask/queue/immediate) in the injected bubble
+ * source label. ask = emphasis (sender is synchronously waiting), queue =
+ * de-emphasized (async, will be handled later), immediate = plain text
+ * continuation (the default mode). Only rendered when the event/record
+ * carries a `delivery` field. */
+.delivery-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 9px;
+  line-height: 14px;
+  letter-spacing: 0.4px;
+  vertical-align: 1px;
+}
+.delivery-ask {
+  color: rgb(var(--sapphire) / 0.95);
+  background: rgb(var(--sapphire) / 0.14);
+}
+.delivery-queue {
+  color: var(--color-text-muted);
+  background: rgba(128, 128, 128, 0.14);
+}
+.delivery-immediate {
+  color: var(--color-text-muted);
+  background: none;
+  padding: 0;
+  margin-left: 4px;
+}
+.delivery-immediate::before {
+  content: '· ';
+}
 .bubble.user.att-bubble {
   background: rgba(0,0,0,0.04);
   color: #888;

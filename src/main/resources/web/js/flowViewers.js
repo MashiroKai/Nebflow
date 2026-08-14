@@ -133,7 +133,7 @@ function pendingRowHtml(it) {
         <span class="flow-mail-from">${esc(it.from || '?')}</span>
         <span class="flow-mail-arrow">→</span>
         <span class="flow-mail-to">${esc(it.to || '?')}</span>
-        <span class="flow-mail-queue-tag">Queue</span>
+        <span class="flow-mail-queue-tag" title="${esc(t('mailDelivery.queueTitle'))}">${esc(t('mailDelivery.queue'))}</span>
         ${typeTag}
         <span class="flow-mail-time">${esc(fmtRelTime(it.timestamp))}</span>
         <button class="flow-mail-cancel" title="Remove from queue">Cancel</button>
