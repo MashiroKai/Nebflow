@@ -912,6 +912,11 @@ private[agent] trait AgentCore:
     // Delegate is Nebula-exclusive (filtered above for everyone else); this
     // also defends against a worker whose agent.json explicitly lists them.
     if isSubTaskWorker then mcpFiltered -- Set("Mail", "SubTask", "Delegate")
+    // Flow agents have no Mail — flow nodes report via FlowReport, not Mail.
+    // Structurally defends against the 08-14 P0 root cause: a flow agent
+    // whose agent.json lists Mail (or uses "*") could block forever on a
+    // Mail ask (flow callers cannot receive background notifications).
+    else if agentDef.category == "flow" then mcpFiltered - "Mail"
     else mcpFiltered
 
   end buildAllowedToolSet
