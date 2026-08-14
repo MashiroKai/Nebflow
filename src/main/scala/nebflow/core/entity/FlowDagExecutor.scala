@@ -12,6 +12,8 @@ import nebflow.core.presets.PresetStore
 import nebflow.core.tools.{FileHistory, FlowReportStore, ReadTracker}
 import nebflow.shared.{Message, MessageRole}
 
+import scala.concurrent.duration.*
+
 /**
  * Executes a Flow DAG deterministically.
  *
@@ -27,6 +29,12 @@ import nebflow.shared.{Message, MessageRole}
  */
 object FlowDagExecutor:
   private val logger = NebflowLogger.forName("nebflow.entity.executor")
+
+  /** Per-node timeout: a single agent node may run up to this long. */
+  private val NodeTimeout: FiniteDuration = 5.minutes
+
+  /** Global flow timeout: the entire DAG must complete within this limit. */
+  private val GlobalFlowTimeout: FiniteDuration = 30.minutes
 
   /**
    * Execute a flow DAG.
@@ -301,7 +309,17 @@ object FlowDagExecutor:
           }.asJson
         )
       )
-      result <- runNode(flow.entry, FlowExecContext(flow.name, taskInput))
+      raceResult <- IO.race(
+        runNode(flow.entry, FlowExecContext(flow.name, taskInput)),
+        IO.sleep(GlobalFlowTimeout)
+      )
+      result = raceResult match
+        case Left(r) => r
+        case Right(_) =>
+          logger.warn(s"Flow '${flow.name}' timed out after ${GlobalFlowTimeout.toMinutes} minutes")
+          Left[String, String](
+            s"Flow '${flow.name}' timed out after ${GlobalFlowTimeout.toMinutes} minutes"
+          )
       // Update final status (preserve "cancelled" if it was cancelled)
       cancelled <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)
       _ <-
@@ -368,12 +386,14 @@ object FlowDagExecutor:
   end registerFlow
 
   /**
-   * Spawn an AgentActor, send input, wait for completion via event-driven callback (no timeout).
+   * Spawn an AgentActor, send input, wait for completion via event-driven callback.
    *
    *  Uses a Deferred + bridge actor pattern instead of ask-with-timeout:
    *  - A temporary actor receives the AgentEvent (Completed/Failed) from the agent
    *  - The bridge completes a Deferred, unblocking executeAgent
-   *  - No artificial timeout — the agent runs as long as needed
+   *  - Node-level timeout (5 min): if the agent never finishes (e.g. a blocking
+   *    tool call), the node fails with a timeout error instead of stalling the
+   *    flow forever
    *  - LLM-level timeouts (first-token, response) still apply inside the agent
    */
   private def executeAgent(
@@ -450,8 +470,13 @@ object FlowDagExecutor:
         text = inputText,
         replyTo = Some(bridgeRef)
       )).void
-      // Wait for completion — no timeout, event-driven
-      eventResult <- resultDeferred.get
+      // Wait for completion — with node-level timeout to prevent permanent stalls
+      raceResult <- IO.race(resultDeferred.get, IO.sleep(NodeTimeout))
+      eventResult = raceResult match
+        case Left(r) => r
+        case Right(_) =>
+          logger.warn(s"Node '$nodeId' timed out after ${NodeTimeout.toMinutes} minutes")
+          Left(s"Node '$nodeId' timed out after ${NodeTimeout.toMinutes} minutes")
       _ <- resources.agentRegistry.update(_ - sessionId)
       _ <- actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
       _ <- actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
