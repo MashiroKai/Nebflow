@@ -1569,6 +1569,39 @@ class RestApiRoutes(
         else migrateLegacyModels(agentNames)
       }
 
+    // ===== Provider model discovery =====
+
+    // POST /provider/models — fetch a provider's model list (GET {baseUrl}models)
+    // so the settings dialog can auto-populate model ids instead of hand-typing
+    // them. Body: {baseUrl, apiKey?, protocol?, name?}. When apiKey is absent or
+    // the masked "***" (edit dialog), the stored key of provider `name` is used.
+    // Best-effort: any failure returns 502 + message; the frontend falls back to
+    // manual entry (失败降级).
+    case req @ POST -> Root / "provider" / "models" =>
+      withAuth(req) {
+        req.as[Json].flatMap { body =>
+          val baseUrl = body.hcursor.downField("baseUrl").as[String].getOrElse("").trim
+          val protocol = body.hcursor.downField("protocol").as[String].getOrElse("anthropic")
+          val name = body.hcursor.downField("name").as[String].toOption.filter(_.nonEmpty)
+          if baseUrl.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: baseUrl".asJson))
+          else
+            checkHttpUrl(baseUrl) match
+              case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+              case Right(modelsUrl) =>
+                configRef.get.flatMap { cfg =>
+                  val rawKey = body.hcursor.downField("apiKey").as[String].toOption.map(_.trim).getOrElse("")
+                  val apiKey =
+                    // Masked key from the edit dialog — fall back to the stored one.
+                    if rawKey.nonEmpty && rawKey != "***" then rawKey
+                    else name.flatMap(n => cfg.llm.providers.get(n).map(_.apiKey)).getOrElse("")
+                  fetchProviderModels(modelsUrl, apiKey, protocol).flatMap {
+                    case Right(models) => Ok(Json.obj("models" -> models.asJson))
+                    case Left(err)    => BadGateway(Json.obj("error" -> err.asJson))
+                  }
+                }
+        }
+      }
+
     // ===== Daemon Management =====
 
     // GET /daemons — list all daemons with runtime state
@@ -2055,6 +2088,75 @@ class RestApiRoutes(
    */
   private def enrollWithServer(serverUrl: String, body: String): IO[Either[String, Json]] =
     proxyPost(serverUrl, "/api/device/enroll", body)
+
+  /**
+   * SSRF guard for provider model discovery: only absolute http(s) URLs with a
+   * non-empty host are fetchable. Blocks other schemes (file:, jar:, ftp:...)
+   * and URLs the JDK client would resolve to something unexpected. Returns the
+   * fully-joined `{baseUrl}models` URL on success.
+   */
+  private def checkHttpUrl(baseUrl: String): Either[String, java.net.URI] =
+    try
+      val normalized = if baseUrl.endsWith("/") then baseUrl else baseUrl + "/"
+      val uri = java.net.URI.create(normalized + "models")
+      val scheme = Option(uri.getScheme).map(_.toLowerCase).getOrElse("")
+      val host = Option(uri.getHost).map(_.trim).getOrElse("")
+      if (scheme == "http" || scheme == "https") && host.nonEmpty then Right(uri)
+      else Left("baseUrl must be an absolute http(s) URL with a host")
+    catch case _: Exception => Left("Invalid baseUrl")
+
+  /**
+   * GET {baseUrl}models with protocol-specific auth headers and extract the
+   * model ids (both OpenAI-compatible and Anthropic reply `{"data":[{"id":..}]}`,
+   * normalized with empty ids removed and duplicates collapsed). Uses the same
+   * JDK HttpClient posture as the LLM adapters: HTTP/1.1 forced, system proxy
+   * honored — a probe must see the same network path real completions take.
+   */
+  private def fetchProviderModels(
+    modelsUrl: java.net.URI,
+    apiKey: String,
+    protocol: String
+  ): IO[Either[String, List[String]]] =
+    IO.blocking {
+      val client = java.net.http.HttpClient
+        .newBuilder()
+        .version(java.net.http.HttpClient.Version.HTTP_1_1)
+        .connectTimeout(java.time.Duration.ofSeconds(10))
+        .build()
+      val reqBuilder = java.net.http.HttpRequest
+        .newBuilder()
+        .uri(modelsUrl)
+        .timeout(java.time.Duration.ofSeconds(15))
+        .GET()
+      if protocol == "openai" then
+        if apiKey.nonEmpty then reqBuilder.header("Authorization", s"Bearer $apiKey")
+      else
+        // anthropic
+        reqBuilder.header("x-api-key", apiKey)
+        reqBuilder.header("anthropic-version", "2023-06-01")
+      try
+        val response = client.send(reqBuilder.build(), java.net.http.HttpResponse.BodyHandlers.ofString())
+        val status = response.statusCode()
+        if status >= 200 && status < 300 then
+          parser.parse(response.body()) match
+            case Right(json) =>
+              val ids = json.hcursor
+                .downField("data")
+                .as[List[Json]]
+                .getOrElse(Nil)
+                .flatMap(j => j.hcursor.downField("id").as[String].toOption)
+              val models = ids.map(_.trim).filter(_.nonEmpty).distinct
+              if models.isEmpty then Left("Provider returned no models")
+              else Right(models)
+            case Left(err) => Left(s"Invalid JSON from provider: ${err.message}")
+        else
+          val detail = parser.parse(response.body()).toOption
+            .flatMap(_.hcursor.downField("error").downField("message").as[String].toOption)
+            .getOrElse(response.body().take(200))
+          Left(s"Provider returned HTTP $status: $detail")
+      catch case e: Exception => Left(e.getMessage)
+      end try
+    }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
 
   /**
    * Generic POST proxy to the NebLink Server. Returns the parsed JSON on
