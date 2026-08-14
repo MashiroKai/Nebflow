@@ -27,6 +27,15 @@ object PopTool extends Tool:
   /** Max text file size to send via WS (2 MB). Larger files are read by the frontend via /api/nf-file. */
   private val MaxTextSize = 2 * 1024 * 1024
 
+  /** Max single image size to embed as base64 data URI (5 MB). Larger images keep their original src. */
+  private val MaxEmbedImageSize = 5 * 1024 * 1024
+
+  /** Image extensions that can be embedded as data URIs in HTML. */
+  private val EmbeddableImageExtensions = Set("png", "jpg", "jpeg", "gif", "webp", "svg", "bmp")
+
+  /** Matches the src attribute value of an <img> tag (single or double quoted). */
+  private val ImgSrcPattern = """(?i)<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']""".r
+
   /** Extensions that the frontend fetches via /api/nf-file (binary viewers). */
   private val BinaryExtensions = Set(
     "png",
@@ -77,6 +86,67 @@ object PopTool extends Tool:
       val expanded = if s.startsWith("~") then sys.props("user.home") + s.substring(1) else s
       Some(Paths.get(expanded).normalize())
     catch case _: Exception => None
+
+  /** Map image file extension to MIME type. */
+  private def mimeFromExt(ext: String): String = ext.toLowerCase match
+    case "png"         => "image/png"
+    case "jpg" | "jpeg" => "image/jpeg"
+    case "gif"         => "image/gif"
+    case "webp"        => "image/webp"
+    case "svg"         => "image/svg+xml"
+    case "bmp"         => "image/bmp"
+    case _             => "application/octet-stream"
+
+  /** Check if a src value is a remote/special URL that should not be embedded. */
+  private def isRemoteOrSpecialUrl(src: String): Boolean =
+    val lower = src.toLowerCase
+    lower.startsWith("http://") || lower.startsWith("https://") ||
+      lower.startsWith("data:") || lower.startsWith("blob:") ||
+      lower.startsWith("#") || lower.startsWith("javascript:") ||
+      lower.startsWith("mailto:") || lower.startsWith("tel:")
+
+  /** Resolve an img src (file://, /absolute, ~/, or relative) to a local file Path. */
+  private def resolveImgSrc(src: String, htmlDir: Path): Option[Path] =
+    val cleaned =
+      if src.startsWith("file:///") then src.stripPrefix("file://")          // file:///path → /path
+      else if src.startsWith("file://localhost/") then "/" + src.stripPrefix("file://localhost")
+      else if src.startsWith("file://") then "/" + src.stripPrefix("file://") // file://path → /path
+      else if src.startsWith("file:") then src.stripPrefix("file:")
+      else src
+    resolvePath(cleaned).map(p =>
+      if p.isAbsolute then p
+      else htmlDir.resolve(p).normalize()
+    )
+
+  /**
+   * Embed local images referenced by <img src="..."> as base64 data URIs so
+   * they render inside the Canvas iframe without /api/nf-file or auth tokens.
+   * Remote URLs and unreadable files are left unchanged (silent skip).
+   */
+  private def embedLocalImages(html: String, htmlDir: Path): String =
+    ImgSrcPattern.replaceAllIn(html, { m =>
+      val src = m.group(1)
+      if isRemoteOrSpecialUrl(src) then m.group(0)
+      else
+        val replaced: Option[String] = resolveImgSrc(src, htmlDir).flatMap { imgPath =>
+          try
+            val ext = fileExtension(imgPath.toString)
+            if !Files.exists(imgPath) || !Files.isRegularFile(imgPath) ||
+               !EmbeddableImageExtensions.contains(ext)
+            then None
+            else if Files.size(imgPath) > MaxEmbedImageSize then None
+            else
+              val bytes = Files.readAllBytes(imgPath)
+              val b64 = java.util.Base64.getEncoder.encodeToString(bytes)
+              val dataUri = s"data:${mimeFromExt(ext)};base64,$b64"
+              // Replace only the src value: the regex guarantees group(1) is
+              // immediately before the closing quote at the end of the match.
+              val full = m.group(0)
+              Some(full.dropRight(src.length + 1) + dataUri + full.takeRight(1))
+          catch case _: Exception => None
+        }
+        replaced.getOrElse(m.group(0))
+    })
 
   /** Extract hostname from a URL string. */
   private def extractHostname(url: String): String =
@@ -167,9 +237,16 @@ Example: {"filePath": "https://example.com"}"""
 
               // For text files under MaxTextSize: read content and send via WS.
               // For binary files or large text: send metadata only, frontend fetches via /api/nf-file.
-              val content =
+              val rawContent =
                 if isBinary || size > MaxTextSize then ""
                 else new String(Files.readAllBytes(path), java.nio.charset.StandardCharsets.UTF_8)
+
+              // Embed local images as base64 data URIs so they render in the
+              // Canvas iframe. Only for HTML files with non-empty content.
+              val htmlDir = Option(path.getParent).getOrElse(Paths.get("."))
+              val content =
+                if itemType == "html" && rawContent.nonEmpty then embedLocalImages(rawContent, htmlDir)
+                else rawContent
 
               // Build the WS message — dispatched as 'popFile' type.
               val msg = Json.obj(
