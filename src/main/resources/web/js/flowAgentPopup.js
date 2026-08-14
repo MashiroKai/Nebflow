@@ -5,8 +5,9 @@
 // pre-rendered DOM is moved into the popup modal — so all history and
 // streaming output is preserved.
 //
-// The popup is mounted INSIDE the flow card (not on document.body) so it
-// is positioned and sized relative to the card, not the viewport.
+// The popup uses the .fullscreen variant: mounted on document.body and
+// centered in the viewport (same style as the Delegate popup). It is NOT
+// draggable — position is always centered.
 
 import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
 import { sendWs, onMessage, setFlowStepInterceptor } from './ws.js';
@@ -33,8 +34,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 @keyframes fa-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
-/* Modal — absolutely positioned so it can be dragged within the flow card.
-   Initial position is centered; drag bar (header) moves it. */
+/* Modal — fixed-position, always centered in the viewport. Not draggable. */
 .flow-agent-modal {
   position: absolute;
   left: 50%; top: 50%;
@@ -44,8 +44,6 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   max-width: 100%; max-height: 100%;
   display: flex; flex-direction: column;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: 20px;
   overflow: hidden;
@@ -63,18 +61,15 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   }
 }
 
-/* Header — matches #header glassmorphism + sapphire refraction line.
-   Doubles as the drag bar: cursor:grab, mousedown initiates drag. */
+/* Header — matches #header glassmorphism + sapphire refraction line. */
 .flow-agent-header {
   display: flex; align-items: center; gap: 6px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.08));
   flex-shrink: 0;
   position: relative;
-  cursor: grab;
   user-select: none;
 }
-.flow-agent-header:active { cursor: grabbing; }
 .flow-agent-header::before {
   content: '';
   position: absolute;
@@ -171,11 +166,11 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   left: -9999px;
 }
 
-/* Fullscreen variant — mounted on document.body (Delegate popup) */
+/* Fullscreen variant — mounted on document.body, centered in the viewport.
+   No dimming backdrop and no blur: the modal floats directly above the UI. */
 .flow-agent-overlay.fullscreen {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   z-index: 1000;
-  background: rgba(0,0,0,0.15);
   animation: fa-fade-in 0.2s ease;
 }
 .flow-agent-overlay.fullscreen .flow-agent-modal {
@@ -267,18 +262,13 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   }
 
   popupOverlay = document.createElement('div');
-  popupOverlay.className = 'flow-agent-overlay';
+  popupOverlay.className = 'flow-agent-overlay fullscreen';
 
-  // Mount on the flow pane's stable overlay root (#flow-overlay-root), a
-  // sibling of #team-scroll that survives renderAll re-renders. Mounting
-  // directly on the pane would let renderAll's scroll rebuild destroy an open
-  // popup; mounting on .team-card would drag it with the scroll.
-  // Tabs are now split into 'teams' and 'flows' — check both.
-  let flowPane = document.querySelector('.canvas-tab-pane[data-tab-id="teams"]')
-    || document.querySelector('.canvas-tab-pane[data-tab-id="flows"]');
-  const overlayRootEl = flowPane?.querySelector('#flow-overlay-root');
-  const flowCard = document.querySelector('.team-card');
-  const mountEl = overlayRootEl || flowPane || flowCard || document.body;
+  // Mount on document.body — the popup is always viewport-centered (same as
+  // the Delegate popup). Mounting inside the flow pane would let renderAll's
+  // scroll rebuild destroy an open popup; mounting on .team-card would drag
+  // it with the scroll.
+  const mountEl = document.body;
 
   popupOverlay.innerHTML = `
     <div class="flow-agent-modal">
@@ -315,35 +305,6 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
 
   // Render context usage ring (if model info exists for this session)
   updatePopupCtxRing();
-
-  // ── Drag: mousedown on header moves the modal within the flow card ──
-  const header = popupOverlay.querySelector('.flow-agent-header');
-  if (header) {
-    header.addEventListener('mousedown', (e) => {
-      if (e.target.id === 'flow-agent-close') return;
-      e.preventDefault();
-      const overlayRect = popupOverlay.getBoundingClientRect();
-      const modalRect = modal.getBoundingClientRect();
-      const startX = e.clientX - modalRect.left;
-      const startY = e.clientY - modalRect.top;
-
-      const onMove = (ev) => {
-        let newLeft = ev.clientX - overlayRect.left - startX;
-        let newTop = ev.clientY - overlayRect.top - startY;
-        newLeft = Math.max(0, Math.min(newLeft, overlayRect.width - modalRect.width));
-        newTop = Math.max(0, Math.min(newTop, overlayRect.height - modalRect.height));
-        modal.style.transform = 'none';
-        modal.style.left = newLeft + 'px';
-        modal.style.top = newTop + 'px';
-      };
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-  }
 
   popupOverlay.addEventListener('click', (e) => {
     if (e.target === popupOverlay || e.target.id === 'flow-agent-close') closeStepPopup();
