@@ -107,7 +107,7 @@ object LlmInterface:
         val cfgRef: Ref[IO, NebflowServiceConfig] = configRef.getOrElse(Ref.unsafe(config))
         val registry = ProviderRegistry(cfgRef, backend)
         val healthMonitor = ProviderHealthMonitor(registry)
-        val emptyTracker = new EmptyCompletionTracker
+        val emptyTracker = EmptyCompletionTracker.shared
         val result =
 
           val handle = new LlmHandle[IO]:

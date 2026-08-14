@@ -2178,6 +2178,12 @@ object AgentActor extends AgentCore with AgentSession:
         // tail is preserved for the next turn boundary drain.
         _ <- state.execution.pendingUserInputs.headOption.traverse_(msg => ctx.self ! msg)
       yield
+        // Empty-queue safe tail (same guard style as TurnBoundaryDrains.drainHead):
+        // the REST /api/command turn-end path reaches this branch with an empty
+        // queue on every turn — a bare .tail threw "tail of empty list" there.
+        val remainingUserInputs =
+          val queued = state.execution.pendingUserInputs
+          if queued.isEmpty then queued else queued.tail
         val keptInteraction = state.execution.interaction.filter(_.pendingPermission.isDefined)
         val updatedState = state
           .copy(execution =
@@ -2187,7 +2193,7 @@ object AgentActor extends AgentCore with AgentSession:
                 interaction = keptInteraction,
                 // Preserve queue when compaction is in progress — CompactionComplete drains it.
                 pendingImmediateInputs = state.execution.pendingImmediateInputs,
-                pendingUserInputs = state.execution.pendingUserInputs.tail
+                pendingUserInputs = remainingUserInputs
               )
           )
           .withMailTurnCount(state.mailTurnCount + 1)

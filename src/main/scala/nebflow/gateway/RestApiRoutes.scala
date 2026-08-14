@@ -202,7 +202,15 @@ class RestApiRoutes(
                 )
             val updatedModels = current.models + (key -> updatedEntry)
             nebflow.llm.ModelRegistry.save(updatedModels)
-            Ok(Json.obj("status" -> "ok".asJson))
+            // B3 restore semantics: an explicit vision=true annotation is user
+            // intent and outranks runtime auto-demotion — clear the in-memory
+            // override (and counters) too, otherwise effectiveVision stays
+            // false until restart (stripImages blocks any image-bearing
+            // success, so resetOnSuccess can never lift it).
+            val clearRuntime =
+              if visionOpt.contains(true) then nebflow.llm.EmptyCompletionTracker.shared.clearOverride(providerId, modelId)
+              else IO.unit
+            clearRuntime *> Ok(Json.obj("status" -> "ok".asJson))
           else BadRequest(Json.obj("error" -> "providerId and modelId required".asJson))
         }
       }
