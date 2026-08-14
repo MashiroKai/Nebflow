@@ -369,6 +369,22 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam) {
   return parts.join(' · ');
 }
 
+/** Mail delivery modes from the backend contract ('ask'|'queue'|'immediate').
+ *  Badges are appended to the injected source label when the WS event /
+ *  UiMessage carries a `delivery` field; old messages lack it → no badge. */
+const DELIVERY_MODES = new Set(['ask', 'queue', 'immediate']);
+
+/** Append a delivery-mode badge to the label element (no-op when the field
+ *  is absent or not a known mode — backward compatible with old history). */
+function appendDeliveryBadge(label, delivery) {
+  if (!delivery || !DELIVERY_MODES.has(delivery)) return;
+  const badge = document.createElement('span');
+  badge.className = `delivery-badge delivery-${delivery}`;
+  badge.textContent = t(`mailDelivery.${delivery}`);
+  badge.title = t(`mailDelivery.${delivery}Title`);
+  label.appendChild(badge);
+}
+
 /** Build a row element for an injected message (pure builder — no DOM append,
  *  no scroll). Shared by live render (renderInjectedBubble) and history
  *  restore (persistence.js) so both paths render identically.
@@ -376,8 +392,10 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam) {
  *  defer markdown rendering into post-append rAF batches — prevents a
  *  synchronous markdown storm when restoring long histories (P0-2).
  *  sourceTeam (optional): Team name for Team-agent messages — shown in the
- *  source label as 'team/agent' (see injectedSourceLabel). */
-export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn) {
+ *  source label as 'team/agent' (see injectedSourceLabel).
+ *  delivery (optional): Mail delivery mode 'ask'|'queue'|'immediate' — shown
+ *  as a badge in the label; absent on old messages → hidden. */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery) {
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -386,6 +404,7 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   const label = document.createElement('div');
   label.className = 'ask-label injected-source-label';
   label.textContent = injectedSourceLabel(source, eventType, sender, sourceTeam);
+  appendDeliveryBadge(label, delivery);
   const content = document.createElement('div');
   if (deferFn) deferFn(content, text || '');
   else content.innerHTML = renderMarkdownWithMath(text || '', false);
@@ -417,9 +436,9 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
 }
 
 /** Live-render an injected message into the active view. */
-export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam) {
+export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery) {
   const chat = activeView.dom.chat;
-  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam);
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery);
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
 }
@@ -1278,6 +1297,74 @@ export function renderSystemBubble(text) {
   // Persist to localStorage and backend (via recording ws send)
   import('./persistence.js').then(({ saveMsg }) => saveMsg({type: 'system', content: text}));
   return { type: 'system', text };
+}
+
+// ---------- Compaction status card ----------
+// Live-rendered status card for the compactStart → compactComplete/Failed
+// lifecycle: one card that morphs in place (spinning → done/failed) instead
+// of two plain notice bubbles. History restore is unchanged — the persisted
+// system text still renders as quiet notice cards after a refresh.
+const compactCheckSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+const compactFailSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+function findActiveCompactCard(view) {
+  return view?.dom?.chat?.querySelector('.compact-card[data-state="active"]') || null;
+}
+
+function appendCompactCard(view, state, innerHtml, startTs) {
+  const chat = view?.dom?.chat;
+  if (!chat) return null;
+  const row = document.createElement('div');
+  row.className = 'row notice';
+  const card = document.createElement('div');
+  card.className = 'compact-card';
+  card.dataset.state = state;
+  if (startTs) card.dataset.startTs = startTs;
+  card.innerHTML = innerHtml;
+  row.appendChild(card);
+  chat.appendChild(row);
+  smartScroll();
+  return card;
+}
+
+export function renderCompactStartCard(view = activeView) {
+  if (!view?.dom?.chat) return;
+  if (findActiveCompactCard(view)) return; // one active card at a time
+  appendCompactCard(view, 'active',
+    `<span class="compact-card-spinner"></span><span class="compact-card-label">${escapeHtml(t('chat.compactingCard'))}</span>`,
+    Date.now());
+}
+
+export function renderCompactDoneCard(view = activeView, { before, after, detail } = {}) {
+  const active = findActiveCompactCard(view);
+  const startTs = Number(active?.dataset.startTs) || 0;
+  const elapsed = startTs ? Math.max(1, Math.round((Date.now() - startTs) / 1000)) : 0;
+  let label = t('chat.compacted', { before, after, detail: detail || '' });
+  if (elapsed) label += t('chat.compactElapsed', { seconds: elapsed });
+  const inner = `<span class="compact-card-icon ok">${compactCheckSvg}</span><span class="compact-card-label">${escapeHtml(label)}</span>`;
+  if (active) {
+    active.dataset.state = 'done';
+    delete active.dataset.startTs;
+    active.innerHTML = inner;
+  } else {
+    // No active card (view was restored/switched mid-compaction) — append a
+    // card directly in its final state.
+    appendCompactCard(view, 'done', inner, 0);
+  }
+  smartScroll();
+}
+
+export function renderCompactFailCard(view = activeView, text) {
+  const active = findActiveCompactCard(view);
+  const inner = `<span class="compact-card-icon err">${compactFailSvg}</span><span class="compact-card-label">${escapeHtml(text)}</span>`;
+  if (active) {
+    active.dataset.state = 'error';
+    delete active.dataset.startTs;
+    active.innerHTML = inner;
+  } else {
+    appendCompactCard(view, 'error', inner, 0);
+  }
+  smartScroll();
 }
 
 
