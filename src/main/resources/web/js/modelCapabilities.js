@@ -1,6 +1,8 @@
-// modelCapabilities.js — Vision toggle for provider model cards.
-// Renders a single Vision pill inline within provider cards in Settings.
-// Fetches /api/models/capabilities, PUTs updates on toggle.
+// modelCapabilities.js — Vision capability readouts for provider model cards.
+// Renders a read-only Vision pill inline within provider cards in Settings.
+// Fetches /api/models/capabilities. Toggles are retired (B3): vision is
+// tri-state server-side (true/false/null=unknown), unknown resolves
+// optimistically to true, and runtime errors auto-disable vision.
 
 let models = [];
 let loading = false;
@@ -12,11 +14,6 @@ function authHeaders() {
   const tok = getToken();
   return tok ? { Authorization: `Bearer ${tok}` } : {};
 }
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-  ));
-}
 
 // ── API ────────────────────────────────────────────────────
 async function fetchModels() {
@@ -26,16 +23,21 @@ async function fetchModels() {
     if (!resp.ok) { models = []; loading = false; if (onReadyCb) onReadyCb(); return; }
     const data = await resp.json();
     const modelsMap = data.models || {};
+    // Tri-state: backend sends vision=false for explicit no-vision
+    // annotations, null/absent for unknown. Unknown resolves optimistically
+    // to true (matches backend resolveCapabilities, B3 Phase 1).
     models = Object.entries(modelsMap).map(([id, info]) => ({
       id,
       capabilities: info.capabilities || [],
-      vision: info.vision || false
+      vision: info.vision === false ? false : true
     }));
   } catch (e) { models = []; }
   loading = false;
   if (onReadyCb) onReadyCb();
 }
 
+/** PUT a vision annotation via REST. Kept as the programmatic channel —
+ *  no UI invokes it since toggles were retired (B3). */
 export async function updateVision(modelEntry, vision) {
   const slashIdx = modelEntry.id.indexOf('/');
   const providerId = slashIdx >= 0 ? modelEntry.id.substring(0, slashIdx) : modelEntry.id;
@@ -51,8 +53,6 @@ export async function updateVision(modelEntry, vision) {
   } catch (e) { /* non-critical */ }
 }
 
-// ── Public ─────────────────────────────────────────────────
-
 /** Pre-fetch model capabilities. Call once when Settings opens. */
 export function preloadModelCapabilities(callback) {
   onReadyCb = callback || null;
@@ -65,43 +65,8 @@ export function getVision(ref) {
   return m ? m.vision : false;
 }
 
-/** Get the underlying model entry object for mutation. */
-function getModelEntry(ref) {
-  return models.find(m => m.id === ref);
-}
-
 /** Read-only vision badge — only renders when vision is on. */
 export function renderVisionBadge(ref) {
   const vision = getVision(ref);
   return vision ? '<span class="vision-badge">Vision</span>' : '';
-}
-
-/** Render vision toggle HTML for a model ref.
- *  If vision is on → solid blue "Vision" pill.
- *  If off → dashed gray "Vision" pill. Click to toggle. */
-export function renderVisionToggle(ref) {
-  const vision = getVision(ref);
-  return `<button class="vision-toggle${vision ? ' on' : ''}"
-    data-model="${esc(ref)}"
-    title="图片理解">Vision</button>`;
-}
-
-/** Bind click handlers for vision toggles within a container. */
-export function bindVisionToggles(container) {
-  container.querySelectorAll('.vision-toggle').forEach(toggle => {
-    toggle.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const modelRef = toggle.dataset.model;
-      const entry = getModelEntry(modelRef);
-      if (!entry) return;
-
-      const newVision = !entry.vision;
-      await updateVision(entry, newVision);
-
-      // Re-render just this toggle
-      const parent = toggle.parentElement;
-      if (parent) parent.innerHTML = renderVisionToggle(modelRef);
-      bindVisionToggles(parent);
-    });
-  });
 }

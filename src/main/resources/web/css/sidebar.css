@@ -806,18 +806,18 @@
   white-space: nowrap;
   line-height: 1.5;
 }
-/* Vision checkbox in edit modal */
+/* Vision checkbox in edit modal — read-only (B3: auto-detected) */
 .cfg-model-vision-check {
   font: 500 11px -apple-system, sans-serif;
   color: var(--color-frame-text);
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  cursor: pointer;
+  cursor: default;
   white-space: nowrap;
   flex-shrink: 0;
 }
-.cfg-model-vision-check input { margin: 0; cursor: pointer; }
+.cfg-model-vision-check input { margin: 0; cursor: default; opacity: 0.75; }
 
 .cfg-card-header {
   display: flex;
