@@ -1,6 +1,7 @@
 import state from './state.js';
 import { findViewBySessionId, setActiveView, activeView, chatViews } from './chatView.js';
 import { isBgAgentId } from './utils.js';
+import { addNotification } from './notificationBanner.js';
 
 // ── Flow-step interceptor (registered by flowAgentPopup.js) ─────────────
 // ws.js must NOT import flowAgentPopup.js directly: that creates a circular
@@ -97,6 +98,7 @@ const GLOBAL_MSG_TYPES = new Set([
   'updateCheckResult', 'updateStarted', 'updateCompleted',
   'remoteUpdateResult', 'peerListChanged',
   'activeBgTasks', 'activeAgents',
+  'mailQueued', 'mailDequeued',
   'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-history', 'dropboxError'
 ]);
 const TERMINAL_MSG_TYPES = new Set([
@@ -177,6 +179,13 @@ export function sendWs(msg) {
 }
 
 // ---------- Connect ----------
+// Cookie auth is preferred (token stays out of URLs). But some setups block
+// cookies on localhost (Safari "block all cookies", restrictive private
+// modes) — the WS handshake then 403s forever even though the token is in
+// localStorage. Track pre-open handshake failures and fall back to ?token=
+// on the WS URL, which the server accepts as a secondary credential.
+let authParamFallback = false;
+
 export function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const urlParams = new URLSearchParams(location.search);
@@ -188,10 +197,19 @@ export function connect() {
   // Set auth cookie so the WebSocket connection authenticates via cookie
   // instead of exposing the token in the URL (history/logs/Referer leakage).
   if (storedToken) {
+    // Purge stale variants first: a cookie written by an older build with
+    // different attributes (Secure / domain=) is a SEPARATE jar entry that a
+    // plain document.cookie write cannot replace — the server would keep
+    // seeing the stale value win the cookie race.
+    const gone = '; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    document.cookie = `nebflow_token=; path=/${gone}`;
+    document.cookie = `nebflow_token=; path=/; domain=${location.hostname}${gone}`;
     document.cookie = `nebflow_token=${encodeURIComponent(storedToken)}; path=/; SameSite=Strict`;
   }
-  // Connect without token in URL — relies on cookie auth.
-  const wsUrl = `${proto}//${location.host}/ws`;
+  // Connect without token in URL — relies on cookie auth. After a rejected
+  // handshake (likely cookie blocked), retry with the ?token= fallback.
+  const qs = (authParamFallback && storedToken) ? `?token=${encodeURIComponent(storedToken)}` : '';
+  const wsUrl = `${proto}//${location.host}/ws${qs}`;
   try {
     state.ws = new WebSocket(wsUrl);
   } catch (e) {
@@ -200,7 +218,9 @@ export function connect() {
     return;
   }
 
+  let opened = false;
   state.ws.onopen = () => {
+    opened = true;
     reconnectAttempts = 0;
     state.connected = true;
     syncSendButtonConnState();
@@ -236,6 +256,19 @@ export function connect() {
     state.connected = false;
     syncSendButtonConnState();
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
+    if (!opened) {
+      // Handshake rejected (e.g. 403) before the socket ever opened.
+      if (!authParamFallback && storedToken) {
+        authParamFallback = true;
+        console.warn('[ws] handshake rejected — retrying with ?token= fallback (cookie may be blocked)');
+      } else {
+        const hint = storedToken
+          ? 'token 无效或服务端已更换 token，请用启动日志中的带 token 地址重新打开'
+          : '页面缺少 token，请通过启动时打印的带 token 地址打开（token 在 ~/.nebflow/auth.json）';
+        console.warn('[ws] connect failed:', hint);
+        addNotification('conn', `无法连接 nebflow：${hint}`);
+      }
+    }
     scheduleReconnect();
   };
 

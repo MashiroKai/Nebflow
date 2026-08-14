@@ -238,7 +238,8 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
           val body = Json.obj(
             "endpoints" -> endpoints.map { e =>
               Json.obj("address" -> e.address.asJson, "port" -> e.port.asJson, "kind" -> e.kind.asJson)
-            }.asJson
+            }.asJson,
+            "version" -> nebflow.Version.string.asJson
           ).noSpaces
           sendRequest("POST", s"${config.url}/api/device/heartbeat", body, Some(token)).flatMap {
             case Right(respBody) =>

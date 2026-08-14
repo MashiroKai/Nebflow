@@ -37,6 +37,7 @@ import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initDaemons } from './daemons.js';
+import { initChatSearch } from './chatSearch.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { handleFlowAgentHistory } from './flowAgentPopup.js';
@@ -1421,6 +1422,14 @@ onMessage('flowMail', (msg) => {
   flowCanvas.onFlowMail(msg);
 });
 
+onMessage('mailQueued', (msg) => {
+  flowCanvas.onMailQueued(msg);
+});
+
+onMessage('mailDequeued', (msg) => {
+  flowCanvas.onMailDequeued(msg);
+});
+
 // ── Flow agent status tracking ────────────────────────────
 // agentStart/agentDone carry nodeSessionId (set by FlowAgentActivator's wsSend wrapper).
 // ws.js intercepts them into the popup ChatView, but we also need to update
@@ -1493,8 +1502,10 @@ onMessage('compactComplete', (msg, view) => {
     const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
     renderSystemBubble(t('chat.compacted', { before: msg.before, after: msg.after, detail }));
   }
-  // Drain queued messages (compact = busy state, messages were queued)
-  if (sid) {
+  // Drain queued messages only if agent is NOT busy. During auto-compaction
+  // with resume, the agent immediately starts a resume turn after compactComplete.
+  // The 'done' event after the resume turn will drain correctly when idle.
+  if (sid && !state.busySessionIds.has(sid)) {
     import('./input.js').then(({ drainMessageQueue }) => setTimeout(() => drainMessageQueue(sid), 50));
   }
 });
@@ -1590,9 +1601,9 @@ onMessage('configData', (msg, view) => {
   state.configDirty = false;
   const editor = document.getElementById('config-editor');
   if (editor) editor.value = state.configText;
-  // Re-render settings if panel is visible
-  const settingsPanel = document.getElementById('panel-settings');
-  if (settingsPanel && settingsPanel.classList.contains('active')) {
+  // Re-render settings if the modal is open
+  const settingsOverlay = document.getElementById('settings-overlay');
+  if (settingsOverlay && settingsOverlay.classList.contains('on')) {
     renderSettings();
   }
 });
@@ -2236,6 +2247,7 @@ if (!restoreTabs()) {
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
 initDaemons();
+initChatSearch();
 initNeblink();
 initDropbox();
 planMode.init();

@@ -366,6 +366,28 @@ export default {
   'dropbox.completed': 'Completed',
   'dropbox.failed': 'Transfer failed',
 
+  // === Chat History Search ===
+  'search.btnTitle': 'Search chat history',
+  'search.title': 'Search Messages',
+  'search.placeholder': 'Keyword…',
+  'search.scopeCurrent': 'Current session',
+  'search.scopeAll': 'All sessions',
+  'search.allTypes': 'All types',
+  'search.anyTool': 'Any tool call',
+  'search.go': 'Search',
+  'search.hint': 'Enter a keyword, or pick tool/date filters',
+  'search.searching': 'Searching…',
+  'search.progress': 'Searching {done}/{total} sessions…',
+  'search.results': '{n} results',
+  'search.truncated': 'showing first {n}',
+  'search.noResults': 'No matching messages',
+  'search.noSession': 'No active session',
+  'search.failed': 'Search failed',
+  'search.jumpFailed': 'Could not locate the message in the session',
+  'search.typeUser': 'User',
+  'search.typeAi': 'AI',
+  'search.typeTool': 'Tool',
+
   // === Daemons (Dev Servers) ===
   'daemons.title': 'Dev Servers',
   'daemons.empty': 'No dev servers',

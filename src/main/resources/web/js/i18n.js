@@ -99,6 +99,10 @@ export function applyLocaleToHtml() {
     ['sidebar-edge', 'title', 'sidebar.edgeToggle'],
     ['new-agent-btn', 'title', 'nav.newAgent'],
     ['new-folder-btn', 'title', 'sidebar.newFolder'],
+    ['search-btn', 'title', 'search.btnTitle'],
+    ['search-modal-title', 'text', 'search.title'],
+    ['search-keyword', 'placeholder', 'search.placeholder'],
+    ['search-go', 'text', 'search.go'],
   ];
   for (const [id, attr, key] of extras) {
     const el = document.getElementById(id);
@@ -152,9 +156,9 @@ export function applyLocaleToHtml() {
   const sessionPanelTitle = document.querySelector('#panel-sessions .panel-title');
   if (sessionPanelTitle) sessionPanelTitle.textContent = t('sidebar.sessions');
 
-  // Settings panel title
-  const settingsPanelTitle = document.querySelector('#panel-settings .panel-title');
-  if (settingsPanelTitle) settingsPanelTitle.textContent = t('sidebar.settingsTitle');
+  // Settings modal title
+  const settingsModalTitle = document.getElementById('settings-modal-title');
+  if (settingsModalTitle) settingsModalTitle.textContent = t('sidebar.settingsTitle');
 
   // HTML lang attribute
   document.documentElement.lang = t('html.lang');

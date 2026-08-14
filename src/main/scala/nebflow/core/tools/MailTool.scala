@@ -8,7 +8,7 @@ import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowMailStore, TeamSessionRegistry}
+import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.presets.PresetStore
 import nebflow.shared.{Message, MessageRole}
 
@@ -17,23 +17,25 @@ import scala.concurrent.duration.*
 /**
  * Agent-to-agent communication tool.
  *
- * Two modes:
- * - Default (ask=false): Send a message to another agent. Async — recipient
- *   processes on next turn, sender doesn't wait. The standard communication method.
- * - ask=true: Synchronously fork the target agent's context (load their
- *   conversation history), ask the question, and block until the response arrives.
- *   If no answer within the background threshold (~60s), the ask converts to a
- *   background task: the caller gets immediate feedback and the answer is later
- *   injected into its conversation via ExternalEvent. The target's main task is
- *   NOT interrupted. Use for progress queries, quick questions, supplemental info.
- *   (The deprecated `fork` parameter is accepted as an alias for backward
- *   compatibility with persisted `.ui.json` records.)
+ * Three delivery modes (via `delivery` parameter):
+ * - immediate (default): Async send. Injected at next turn boundary. If recipient
+ *   is idle, starts a new turn. If busy, merged into the current turn. The standard
+ *   communication method. Backward compatible with `ask: false` (omitted).
+ * - queue: Serialized FIFO. Persisted to disk (survives restart). Each queued mail
+ *   triggers a full turn — processed one at a time, only after the current task
+ *   completes. Use for serial task chains: "do this, then that, then that."
+ * - ask: Synchronously fork the target agent's context, block for the answer.
+ *   Non-flow callers convert to background after 60s. Flow callers get a hard
+ *   5-minute timeout. Backward compatible with `ask: true`.
  */
 object MailTool extends Tool:
   private val logger = NebflowLogger(getClass)
 
   /** After this wait, a synchronous ask converts to a background task instead of failing. */
   private val AskBackgroundThreshold: FiniteDuration = 60.seconds
+
+  /** Flow-agent callers cannot use background conversion, so they get a hard timeout instead. */
+  private val FlowAskTimeout: FiniteDuration = 5.minutes
 
   val name: String = "Mail"
 
@@ -100,6 +102,12 @@ Message type (optional, default "INFO"):
           "enum" -> Json.arr("INFO".asJson, "FOLLOW_UP".asJson, "PARALLEL".asJson, "INTERRUPT".asJson, "RESULT".asJson),
           "description" -> """Message type tag. "INFO" = supplementary context (default); "FOLLOW_UP" = new task after current finishes; "PARALLEL" = delegate independently; "INTERRUPT" = urgent, handle now; "RESULT" = work results from another agent.""".asJson,
           "default" -> "INFO".asJson
+        ),
+        "delivery" -> Json.obj(
+          "type" -> "string".asJson,
+          "enum" -> Json.arr("ask".asJson, "queue".asJson, "immediate".asJson),
+          "description" -> "Delivery mode: 'ask' = sync fork (wait for answer); 'queue' = serialized FIFO (survives restart, processed one at a time after current task completes); 'immediate' = inject like user input (merged into current turn at next boundary). Default: 'immediate'.".asJson,
+          "default" -> "immediate".asJson
         )
       ),
       "required" -> Json.arr("address".asJson, "message".asJson)
@@ -108,29 +116,48 @@ Message type (optional, default "INFO"):
 
   def summarize(input: JsonObject): String =
     val addr = input("address").flatMap(_.asString).getOrElse("?")
-    val ask = input("ask").orElse(input("fork")).flatMap(_.asBoolean).getOrElse(false)
+    val delivery = input("delivery").flatMap(_.asString).getOrElse {
+      val ask = input("ask").orElse(input("fork")).flatMap(_.asBoolean).getOrElse(false)
+      if ask then "ask" else "immediate"
+    }
     val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
     val typeStr = if mailType != "INFO" then s" [$mailType]" else ""
-    if ask then s"Mail(→$addr, ask)$typeStr" else s"Mail(→$addr)$typeStr"
+    delivery match
+      case "ask"     => s"Mail(→$addr, ask)$typeStr"
+      case "queue"   => s"Mail(→$addr, queue)$typeStr"
+      case _         => s"Mail(→$addr)$typeStr"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val address = input("address").flatMap(_.asString).getOrElse("")
     val message = input("message").flatMap(_.asString).getOrElse("")
-    val ask = input("ask").orElse(input("fork")).flatMap(_.asBoolean).getOrElse(false)
     val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
+
+    // Delivery mode: explicit delivery param wins, fall back to ask param for
+    // backward compatibility (ask:true -> "ask", else -> "immediate").
+    val delivery = input("delivery").flatMap(_.asString)
+      .orElse {
+        val ask = input("ask").orElse(input("fork")).flatMap(_.asBoolean).getOrElse(false)
+        if ask then Some("ask") else Some("immediate")
+      }.getOrElse("immediate")
 
     if address.isEmpty then IO.pure(Left(ToolError("Missing required parameter: address")))
     else if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
-    else if ask then forkAndAsk(address, message, ctx)
     else
       ctx.actorSystem match
         case None =>
           IO.pure(Left(ToolError("No actor system available")))
         case Some(system) =>
-          if address.contains("://") then deliverToAddress(address, message, mailType, ctx, system)
-          else deliverToShortName(address, message, mailType, ctx, system)
+          delivery match
+            case "ask" => forkAndAsk(address, message, ctx)
+            case "queue" =>
+              if address.contains("://") then
+                IO.pure(Left(ToolError("Queue mode is only for team agents (short names), not URLs.")))
+              else deliverQueue(address, message, mailType, ctx, system)
+            case _ =>
+              if address.contains("://") then deliverToAddress(address, message, mailType, ctx, system)
+              else deliverToShortName(address, message, mailType, ctx, system)
   end call
 
   // ============================================================
@@ -310,9 +337,10 @@ Message type (optional, default "INFO"):
   /**
    * Wait for the fork answer.
    *
-   * Flow-agent callers stay purely synchronous (no timeout) — their transient
-   * sessions cannot receive background completion notifications, so converting
-   * to background would deadlock the flow step.
+   * Flow-agent callers stay synchronous (no background conversion — their
+   * transient sessions cannot receive completion notifications) but get a hard
+   * timeout: if the forked agent never answers, the caller receives a timeout
+   * error instead of blocking the flow step forever.
    *
    * Other callers race the answer against the background threshold: if the
    * answer arrives first, this is the old synchronous mode. If the threshold
@@ -339,9 +367,17 @@ Message type (optional, default "INFO"):
         resources.sessionStore.deleteSession(tempSessionId).handleErrorWith(_ => IO.unit)
 
     if isFlowCaller then
-      responseDeferred.get.flatMap {
-        case Right(text) => cleanupFork *> IO.pure(Right(text))
-        case Left(err) => cleanupFork *> IO.pure(Left(ToolError(err)))
+      responseDeferred.get.race(IO.sleep(FlowAskTimeout)).flatMap {
+        case Left(Right(text)) => cleanupFork *> IO.pure(Right(text))
+        case Left(Left(err)) => cleanupFork *> IO.pure(Left(ToolError(err)))
+        case Right(_) =>
+          logger.warn(s"Mail ask to '$address' timed out after ${FlowAskTimeout.toMinutes} min (flow caller)")
+          cleanupFork *>
+            IO.pure(
+              Left(
+                ToolError(s"Mail ask to '$address' timed out after ${FlowAskTimeout.toMinutes} minutes")
+              )
+            )
       }
     else
       responseDeferred.get.race(IO.sleep(AskBackgroundThreshold)).flatMap {
@@ -454,6 +490,133 @@ Message type (optional, default "INFO"):
         .as(Behaviors.stopped))
         .handleErrorWith(_ => IO.pure(Behaviors.stopped))
     }
+
+  // ============================================================
+  // Queue mode: persisted FIFO, drained one-per-turn
+  // ============================================================
+
+  private def deliverQueue(
+    address: String,
+    message: String,
+    mailType: String,
+    ctx: ToolContext,
+    system: ActorSystem
+  ): IO[Either[ToolError, String]] =
+    val senderSessionId = ctx.sessionId.getOrElse("")
+    val senderName = ctx.agentDef.map(_.name).getOrElse("")
+
+    TeamSessionRegistry.teamOfSession(senderSessionId).flatMap {
+      case None =>
+        if address == "Nebula" && senderName != "Nebula" then
+          canMailNebula(senderName, senderSessionId).flatMap { canMail =>
+            if canMail then resolveAndQueue(address, message, mailType, ctx, system, senderSessionId)
+            else
+              IO.pure(
+                Left(ToolError("Cannot mail Nebula directly. You are a team worker. Report to your Manager via Mail."))
+              )
+          }
+        else resolveAndQueue(address, message, mailType, ctx, system, senderSessionId)
+      case Some(teamName) =>
+        checkTeamScope(address, teamName, senderSessionId, senderName).flatMap {
+          case Some(error) => IO.pure(Left(ToolError(error)))
+          case None        => resolveAndQueue(address, message, mailType, ctx, system, senderSessionId)
+        }
+    }
+  end deliverQueue
+
+  /** Resolve target session (team name → lead, or short name) then queue the mail. */
+  private def resolveAndQueue(
+    address: String,
+    message: String,
+    mailType: String,
+    ctx: ToolContext,
+    system: ActorSystem,
+    senderSessionId: String
+  ): IO[Either[ToolError, String]] =
+    for
+      teamOpt <- EntityLoader.loadTeam(address)
+      result <- teamOpt match
+        case Some(team) =>
+          for
+            leadSidOpt <- TeamSessionRegistry.findTeamAgent(address, team.lead)
+            r <- leadSidOpt match
+              case Some(targetSid) => queueToSession(targetSid, team.lead, message, mailType, ctx, system, senderSessionId)
+              case None =>
+                IO.pure(Left(ToolError(s"Team '$address' is not mounted. Use Load(type: \"team\", name: \"$address\") first.")))
+          yield r
+        case None =>
+          for
+            senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
+            sr <- senderTeamOpt match
+              case None if address != "Nebula" && !address.contains("/") =>
+                IO.pure(Left(ToolError(TeamOnlyRoutingError)))
+              case _ =>
+                for
+                  targetRes <- ctx.sharedResources match
+                    case Some(res) => TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
+                    case None      => IO.pure(Right(None))
+                  sr2 <- targetRes match
+                    case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
+                    case Right(Some(targetSid)) =>
+                      queueToSession(targetSid, address, message, mailType, ctx, system, senderSessionId)
+                    case Right(None) => mailNotFound(address)
+                yield sr2
+          yield sr
+    yield result
+
+  /** Persist to MailQueueStore, activate target, send MailQueued command. */
+  private def queueToSession(
+    sessionId: String,
+    shortName: String,
+    message: String,
+    mailType: String,
+    ctx: ToolContext,
+    system: ActorSystem,
+    senderSessionId: String
+  ): IO[Either[ToolError, String]] =
+    val senderName = ctx.agentDef.map(_.name).getOrElse("Nebula")
+    val item = MailQueueStore.MailQueueItem(
+      id = s"mail-q-${java.util.UUID.randomUUID().toString.take(8)}",
+      from = senderName,
+      fromSession = senderSessionId,
+      message = message,
+      `type` = mailType,
+      timestamp = System.currentTimeMillis()
+    )
+    (ctx.sharedResources, ctx.actorSystem) match
+      case (Some(resources), Some(actorSystem)) =>
+        for
+          // 1. Persist to queue (survives restart)
+          _ <- MailQueueStore.append(sessionId, item)
+          // 2. Record in mailbox history
+          _ <- onMailDelivered(senderSessionId, sessionId, shortName, message, ctx)
+          // 3. Get or activate the target actor
+          existingOpt <- TeamSessionRegistry.getRunningActor(sessionId)
+          refOpt <- existingOpt match
+            case Some(ref) => IO.pure(Some(ref))
+            case None     => activateAgent(sessionId, resources, actorSystem, ctx)
+          // 4. Send MailQueued command
+          _ <- refOpt.traverse_(_ ! AgentCommand.MailQueued(item, senderSessionId))
+          // 5. Emit WS event
+          pendingCount <- MailQueueStore.size(sessionId)
+          _ <- emitWsEvent(ctx, Json.obj(
+            "type" -> "mailQueued".asJson,
+            "sessionId" -> sessionId.asJson,
+            "from" -> senderName.asJson,
+            "to" -> shortName.asJson,
+            "preview" -> message.take(200).asJson,
+            "pendingCount" -> pendingCount.asJson,
+            "timestamp" -> item.timestamp.asJson
+          ))
+        yield Right(s"Message queued to $shortName. Will be processed after current work completes (position #$pendingCount in queue).")
+      case _ =>
+        IO.pure(Left(ToolError(s"Cannot deliver queue mail to '$shortName': missing resources")))
+  end queueToSession
+
+  private def emitWsEvent(ctx: ToolContext, event: Json): IO[Unit] =
+    ctx.wsSend match
+      case Some(send) => send(event).handleErrorWith(_ => IO.unit)
+      case None       => IO.unit
 
   // ============================================================
   // Normal mode: async delivery
@@ -753,6 +916,13 @@ Message type (optional, default "INFO"):
                   )
                 )
               )
+              // Restart recovery: if mail-queue.json has pending items from a
+              // previous session, send MailQueued to trigger drain.
+              _ <- MailQueueStore
+                .load(session.id)
+                .flatMap(items => items.headOption.traverse_(head => ref ! AgentCommand.MailQueued(head, "")))
+                .start
+                .void
             yield ref
             end for
           }

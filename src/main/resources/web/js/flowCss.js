@@ -45,6 +45,7 @@ export const FLOW_CSS = `
 .team-card-title[data-act="def"]:hover { color: var(--color-primary, #07c160); }
 .team-card-actions { display: flex; gap: 4px; flex-shrink: 0; }
 .team-act-btn {
+  position: relative;
   width: 26px; height: 26px; border: 1px solid transparent; background: transparent;
   border-radius: 7px; color: var(--color-text-muted); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
@@ -52,6 +53,13 @@ export const FLOW_CSS = `
   transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .team-act-btn svg { width: 15px; height: 15px; }
+/* Pending mail-queue badge on the Inbox button — hidden when count is 0 */
+.team-mail-badge {
+  position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px;
+  padding: 0 4px; border-radius: 8px; background: var(--color-primary, #07c160);
+  color: #fff; font: 600 9px/15px -apple-system, sans-serif; text-align: center;
+  box-shadow: 0 0 0 2px var(--color-surface); pointer-events: none;
+}
 .team-act-btn:hover {
   background: var(--glass-control-bg-hover);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
@@ -185,6 +193,28 @@ export const FLOW_CSS = `
 .flow-mail-content th { background: var(--color-frame-input-bg, #f5f5f5); }
 .flow-mail-content a { color: var(--color-primary); } .flow-mail-content hr { border: none; border-top: 1px solid var(--color-border); margin: 8px 0; }
 .flow-mail-content strong { font-weight: 600; } .flow-mail-content img { max-width: 100%; border-radius: 8px; }
+
+/* Mailbox sections (Pending / History) */
+.flow-mail-section { margin-bottom: 14px; }
+.flow-mail-section:last-child { margin-bottom: 0; }
+.flow-mail-section-title {
+  font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 0 10px;
+  display: flex; align-items: center; gap: 6px;
+}
+
+/* Pending mail rows — pulsing dot signals "waiting to be processed" */
+.flow-mail-pending-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-primary, #07c160); flex-shrink: 0; animation: flow-pulse 1.6s ease-out infinite; }
+.flow-mail-row.pending { cursor: default; }
+.flow-mail-queue-tag { font: 500 10px -apple-system, sans-serif; color: rgb(91, 127, 191); background: rgba(91,127,191,0.08); padding: 1px 6px; border-radius: 5px; flex-shrink: 0; }
+.flow-mail-cancel {
+  font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted);
+  background: transparent; border: 1px solid rgba(128,128,128,0.25); border-radius: 6px;
+  padding: 2px 8px; cursor: pointer; flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+.flow-mail-cancel:hover { color: #e53935; border-color: #e53935; }
+.flow-mail-cancel:disabled { opacity: 0.5; cursor: default; }
 
 /* Definition editor */
 .flow-def-section { margin-bottom: 16px; }
@@ -571,9 +601,9 @@ export const FLOW_CSS = `
 @keyframes orbit-spin-ccw { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(-360deg); } }
 
 /* Flow definition cards (P6) — p5p6-v2 Flows tab */
-.flow-defs-section, .flow-running-section { width: 100%; margin-bottom: 16px; }
+.flow-defs-section, .flow-running-section { width: 100%; max-width: 1100px; margin: 0 auto 16px; }
 .flow-defs-header { font: 600 11px -apple-system; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 0 10px; }
-.flow-defs-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+.flow-defs-grid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
 .flow-def-card {
   flex: 1 1 240px; min-width: 220px; max-width: 360px;
   border-radius: 12px; background: var(--color-surface);

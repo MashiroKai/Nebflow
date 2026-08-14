@@ -1,9 +1,9 @@
-// agentManager.js — Agent management panel (VSCode Extensions style).
-// Sidebar list shows compact agent cards. Click opens a Canvas detail tab.
+// agentManager.js — Agent management as a Canvas tab (VSCode Extensions style).
+// The Agents tab lists compact agent cards. Click opens a Canvas detail tab.
 
 import state from './state.js';
 import { sendWs } from './ws.js';
-import { openTab, getTabPane } from './canvas.js';
+import { openTab, getTabPane, hasTab, setActiveTab } from './canvas.js';
 import { t } from './i18n.js';
 import * as presets from './presets.js';
 
@@ -115,9 +115,36 @@ function renderAgentCard(a) {
   </div>`;
 }
 
-/** Render the agent list into #agents-content, grouped by layer + scope. */
+// ── Agents Canvas tab ──────────────────────────────────────
+
+/** Open (or focus) the Agents Canvas tab and render the agent list. */
+export function openAgents() {
+  const btn = document.getElementById('agents-btn');
+  btn?.classList.add('active');
+  if (hasTab('agents')) {
+    setActiveTab('agents');
+  } else {
+    openTab('agents', 'Agents', { type: 'agents', closable: true });
+  }
+  renderAgentManager();
+}
+
+/** Ensure the scroll container exists inside the Agents tab pane. */
+function agentsContentEl() {
+  const pane = getTabPane('agents');
+  if (!pane) return null;
+  let content = pane.querySelector('#agents-content');
+  if (!content) {
+    content = document.createElement('div');
+    content.id = 'agents-content';
+    pane.appendChild(content);
+  }
+  return content;
+}
+
+/** Render the agent list into the Agents Canvas tab, grouped by layer + scope. */
 export function renderAgentManager() {
-  const content = document.getElementById('agents-content');
+  const content = agentsContentEl();
   if (!content) return;
   content.innerHTML = `<div class="agent-mgr-loading">Loading...</div>`;
 
@@ -462,7 +489,21 @@ async function loadSkillsFlowsSection(pane, name, detail) {
 
 // ── Public ─────────────────────────────────────────────────
 
-export function isAgentsPanelActive() {
-  const panel = document.getElementById('panel-agents');
-  return !!panel && panel.classList.contains('active');
+/** Whether the Agents Canvas tab currently exists. */
+export function isAgentsTabOpen() {
+  return hasTab('agents');
 }
+
+// Keep the Activity Bar button's active state in sync with the tab lifecycle
+// (same pattern as Teams/Flows in flowCanvas.js).
+document.addEventListener('canvas-tab-closed', (e) => {
+  if (e.detail?.id === 'agents') {
+    document.getElementById('agents-btn')?.classList.remove('active');
+  }
+});
+window.addEventListener('canvas-tab-restore', (e) => {
+  if (e.detail?.id === 'agents') {
+    document.getElementById('agents-btn')?.classList.add('active');
+    renderAgentManager();
+  }
+});

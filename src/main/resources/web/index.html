@@ -76,24 +76,6 @@
           </div>
         </div>
       </div>
-      <div id="panel-settings" class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Settings</span>
-          <div class="panel-actions">
-            <button id="settings-back-btn" class="panel-btn" title="Back"><i data-lucide="arrow-left"></i></button>
-          </div>
-        </div>
-        <div id="settings-content"></div>
-      </div>
-      <div id="panel-agents" class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Agents</span>
-          <div class="panel-actions">
-            <button id="agents-back-btn" class="panel-btn" title="Back"><i data-lucide="arrow-left"></i></button>
-          </div>
-        </div>
-        <div id="agents-content"></div>
-      </div>
     </div>
   </div>
 
@@ -114,6 +96,7 @@
         <button id="memory-btn" class="memory-btn" title="Memory" hidden><i data-lucide="brain"></i></button>
       </div>
       <div class="header-right">
+        <button id="search-btn" title="搜索聊天记录"><i data-lucide="search"></i></button>
         <div id="bypass-dropdown" class="header-dropdown">
           <button id="bypass-toggle" class="bypass-toggle" data-mode="confirm-edits" title="安全模式">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
@@ -307,6 +290,37 @@
         <button id="path-picker-clear">Clear</button>
         <button id="path-picker-select">Select This Folder</button>
       </div>
+    </div>
+  </div>
+  <!-- Settings Modal (centered popup — no dimming backdrop, no blur) -->
+  <div id="settings-overlay">
+    <div id="settings-modal">
+      <div class="settings-modal-header">
+        <span id="settings-modal-title">Settings</span>
+        <button id="settings-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>
+      </div>
+      <div id="settings-content"></div>
+    </div>
+  </div>
+  <!-- Chat History Search Modal (centered popup — no dimming backdrop, no blur) -->
+  <div id="search-overlay">
+    <div id="search-modal">
+      <div class="search-modal-header">
+        <span id="search-modal-title">Search Messages</span>
+        <button id="search-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>
+      </div>
+      <div class="search-controls">
+        <input id="search-keyword" type="text" placeholder="Keyword…" autocomplete="off">
+        <div class="search-filters">
+          <select id="search-scope" class="cfg-select"></select>
+          <select id="search-tool" class="cfg-select"></select>
+          <input id="search-date-from" class="cfg-input" type="date">
+          <input id="search-date-to" class="cfg-input" type="date">
+          <button id="search-go" class="cfg-btn cfg-btn-primary">Search</button>
+        </div>
+      </div>
+      <div id="search-status"></div>
+      <div id="search-results"></div>
     </div>
   </div>
   <script src="vendor/lucide.min.js"></script>

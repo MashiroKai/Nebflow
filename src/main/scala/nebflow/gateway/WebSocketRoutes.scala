@@ -382,8 +382,11 @@ class WebSocketRoutes(
       // Query param kept as fallback for cross-origin or first-load scenarios.
       val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
       val paramToken = req.params.get("token").getOrElse("")
-      val provided = if cookieToken.nonEmpty then cookieToken else paramToken
-      if Auth.validateToken(provided, token) then
+      // A stale cookie (e.g. written by an older build with Secure/domain
+      // attributes, so a fresh document.cookie write cannot replace it) must
+      // not lock the client out: if the cookie does not validate but a valid
+      // ?token= is presented, accept it.
+      if Auth.validateToken(cookieToken, token) || Auth.validateToken(paramToken, token) then
         for
           outbound <- Queue.unbounded[IO, WebSocketFrame]
 

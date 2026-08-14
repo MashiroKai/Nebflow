@@ -5,11 +5,11 @@
 
 import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab } from './canvas.js';
 import { FLOW_CSS } from './flowCss.js';
-import { esc, authHeaders, overlayRoot } from './flowHelpers.js';
+import { esc, authHeaders, overlayRoot, setMailPending } from './flowHelpers.js';
 import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf, populateTileModels } from './flowTeams.js';
 import { renderFlowRunInto, renderFlowsPanel, bindDagNodeClicks, dagCardHtml, renderStellarSystem, bindStellarNodeClicks } from './flowDag.js';
 import { renderFlowList } from './flowList.js';
-import { closeViewer, openMailbox, openRules, openDefinition } from './flowViewers.js';
+import { closeViewer, openMailbox, openRules, openDefinition, refreshMailboxPending } from './flowViewers.js';
 import { onReconnect } from './ws.js';
 import { createIconsIn } from './utils.js';
 
@@ -50,7 +50,7 @@ function renderTeamsTab() {
   renderTeamsPanel(scroll, teams, agentStatus, mailFlash, runningFlows);
   overlayRoot();
   bindTileClicks();
-  bindCardActions(openMailbox, openRules, openDefinition);
+  bindCardActions((fn) => openMailbox(fn, teams.find(f => f.name === fn) || null), openRules, openDefinition);
   bindFlowRowClicks(runningFlows, () => renderTeamsTab());
   if (typeof lucide !== 'undefined') createIconsIn(scroll);
   populateTileModels(teams);
@@ -70,7 +70,13 @@ function renderFlowsTab() {
     scroll.className = 'team-scroll';
     scroll.id = 'flow-scroll-flows';
     scroll.style.flexDirection = 'column';
-    scroll.style.alignItems = 'stretch';
+    // Center the content column horizontally; sections cap at max-width
+    // (see .flow-defs-section in flowCss.js) so cards sit centered.
+    // nowrap is required: in a wrapping column flex container, each line's
+    // cross size shrinks to its widest item, so align-items would center
+    // within a content-sized line — visually still left-aligned.
+    scroll.style.alignItems = 'center';
+    scroll.style.flexWrap = 'nowrap';
     pane.appendChild(scroll);
     // Flow definitions are rendered inline below from the flowDefs state
     // (populated by fetchFlowDefs). The previous renderFlowList() call was
@@ -132,6 +138,9 @@ function renderStaticDag(pane, dag) {
     scroll = document.createElement('div');
     scroll.className = 'team-scroll';
     scroll.style.flexDirection = 'column';
+    // See renderFlowsTab: nowrap keeps align-items centering effective.
+    scroll.style.alignItems = 'center';
+    scroll.style.flexWrap = 'nowrap';
     pane.appendChild(scroll);
   }
   const pseudoRf = {
@@ -246,6 +255,22 @@ export function onFlowMail(msg) {
     if (mailFlash.has(agent.sessionId)) clearTimeout(mailFlash.get(agent.sessionId));
     mailFlash.set(agent.sessionId, setTimeout(() => { mailFlash.delete(agent.sessionId); if (isCanvasOpen()) renderOpenTabs(); }, 1200));
   }
+  if (isCanvasOpen()) renderOpenTabs();
+}
+
+// ── Mail queue (pending) events ────────────────────────────
+// Both events carry the target agent's sessionId and the resulting
+// pendingCount for that session. Update the shared count map (team-card
+// badge) and live-refresh the mailbox viewer if open.
+export function onMailQueued(msg) {
+  setMailPending(msg.sessionId || '', typeof msg.pendingCount === 'number' ? msg.pendingCount : 0);
+  refreshMailboxPending();
+  if (isCanvasOpen()) renderOpenTabs();
+}
+
+export function onMailDequeued(msg) {
+  setMailPending(msg.sessionId || '', typeof msg.pendingCount === 'number' ? msg.pendingCount : 0);
+  refreshMailboxPending();
   if (isCanvasOpen()) renderOpenTabs();
 }
 
@@ -397,3 +422,7 @@ window.addEventListener('canvas-tab-restore', (e) => {
 // Re-fetch teams on WS reconnect — covers the race condition where
 // treeBranchMounted fires before the initial WS connection is established.
 onReconnect(() => { autoRestore(); });
+
+// Mailbox viewer's Cancel action updates pending counts directly — re-render
+// the team cards so the badge stays in sync.
+document.addEventListener('mail-pending-changed', () => { if (isCanvasOpen()) renderOpenTabs(); });
