@@ -15,9 +15,9 @@
 // part of the 3-column layout — order:-1 keeps it leftmost, and it
 // stays visible when the sidebar is collapsed.
 
-import { openSettingsPanel, isSettingsPanelActive, showPanel } from './sidebar.js';
+import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
 import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow } from './neblink.js';
-import { renderAgentManager, isAgentsPanelActive } from './agentManager.js';
+import { openAgents } from './agentManager.js';
 import { createIconsIn, escapeHtml } from './utils.js';
 
 let initialized = false;
@@ -36,8 +36,7 @@ export function initActivityBar() {
   refresh();
   statusPollTimer = setInterval(() => { if (!document.hidden) refresh(); }, 10000);
 
-  observeSettingsPanel();
-  observeAgentsPanel();
+  observeSettingsModal();
 
   if (typeof lucide !== 'undefined') createIconsIn(document.getElementById('activity-bar'));
 }
@@ -47,48 +46,32 @@ function bindSettingsButton() {
   const btn = document.getElementById('settings-btn');
   if (!btn) return;
   btn.addEventListener('click', () => {
-    // Toggle back to sessions when already on settings.
+    // Settings is a centered modal — click toggles it open/closed.
     if (isSettingsPanelActive()) {
-      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-      document.getElementById('panel-sessions')?.classList.add('active');
+      closeSettingsPanel();
     } else {
       openSettingsPanel();
     }
   });
 }
 
-/** Mirror the settings panel's active state onto the button highlight. */
-function observeSettingsPanel() {
+/** Mirror the settings modal's open state onto the button highlight. */
+function observeSettingsModal() {
   const btn = document.getElementById('settings-btn');
-  const panel = document.getElementById('panel-settings');
-  if (!btn || !panel) return;
-  const sync = () => btn.classList.toggle('active', panel.classList.contains('active'));
+  const overlay = document.getElementById('settings-overlay');
+  if (!btn || !overlay) return;
+  const sync = () => btn.classList.toggle('active', overlay.classList.contains('on'));
   sync();
-  new MutationObserver(sync).observe(panel, { attributes: true, attributeFilter: ['class'] });
+  new MutationObserver(sync).observe(overlay, { attributes: true, attributeFilter: ['class'] });
 }
 
 // ── Agents ───────────────────────────────────────────────
+// Agents is a Canvas tab (same pattern as Teams/Flows). The button's active
+// state is synced by agentManager.js via canvas-tab-closed / restore events.
 function bindAgentsButton() {
   const btn = document.getElementById('agents-btn');
   if (!btn) return;
-  btn.addEventListener('click', () => {
-    if (isAgentsPanelActive()) {
-      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-      document.getElementById('panel-sessions')?.classList.add('active');
-    } else {
-      showPanel('agents');
-      renderAgentManager();
-    }
-  });
-}
-
-function observeAgentsPanel() {
-  const btn = document.getElementById('agents-btn');
-  const panel = document.getElementById('panel-agents');
-  if (!btn || !panel) return;
-  const sync = () => btn.classList.toggle('active', panel.classList.contains('active'));
-  sync();
-  new MutationObserver(sync).observe(panel, { attributes: true, attributeFilter: ['class'] });
+  btn.addEventListener('click', () => openAgents());
 }
 
 // ── Avatar / login ───────────────────────────────────────

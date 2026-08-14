@@ -76,24 +76,6 @@
           </div>
         </div>
       </div>
-      <div id="panel-settings" class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Settings</span>
-          <div class="panel-actions">
-            <button id="settings-back-btn" class="panel-btn" title="Back"><i data-lucide="arrow-left"></i></button>
-          </div>
-        </div>
-        <div id="settings-content"></div>
-      </div>
-      <div id="panel-agents" class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Agents</span>
-          <div class="panel-actions">
-            <button id="agents-back-btn" class="panel-btn" title="Back"><i data-lucide="arrow-left"></i></button>
-          </div>
-        </div>
-        <div id="agents-content"></div>
-      </div>
     </div>
   </div>
 
@@ -307,6 +289,16 @@
         <button id="path-picker-clear">Clear</button>
         <button id="path-picker-select">Select This Folder</button>
       </div>
+    </div>
+  </div>
+  <!-- Settings Modal (centered popup — no dimming backdrop, no blur) -->
+  <div id="settings-overlay">
+    <div id="settings-modal">
+      <div class="settings-modal-header">
+        <span id="settings-modal-title">Settings</span>
+        <button id="settings-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>
+      </div>
+      <div id="settings-content"></div>
     </div>
   </div>
   <script src="vendor/lucide.min.js"></script>

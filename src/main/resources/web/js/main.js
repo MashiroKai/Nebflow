@@ -1600,9 +1600,9 @@ onMessage('configData', (msg, view) => {
   state.configDirty = false;
   const editor = document.getElementById('config-editor');
   if (editor) editor.value = state.configText;
-  // Re-render settings if panel is visible
-  const settingsPanel = document.getElementById('panel-settings');
-  if (settingsPanel && settingsPanel.classList.contains('active')) {
+  // Re-render settings if the modal is open
+  const settingsOverlay = document.getElementById('settings-overlay');
+  if (settingsOverlay && settingsOverlay.classList.contains('on')) {
     renderSettings();
   }
 });

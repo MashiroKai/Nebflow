@@ -33,6 +33,8 @@ export function clearActiveFolder() {
 }
 
 // ---------- Panel Switching ----------
+// Only one sidebar panel remains (Sessions/Explorer). Settings is a modal;
+// Agents is a Canvas tab.
 export function showPanel(tab) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const panel = document.getElementById('panel-' + tab);
@@ -40,26 +42,34 @@ export function showPanel(tab) {
 }
 
 /**
- * Open the Settings panel: switch view, fetch fresh config, and render.
- * Shared by the sidebar's back navigation and the Activity Bar settings button
- * so both trigger identical behavior.
+ * Open the Settings modal: show the centered overlay, fetch fresh config,
+ * and render. Shared by the Activity Bar settings button.
  */
 export function openSettingsPanel() {
-  showPanel('settings');
+  document.getElementById('settings-overlay')?.classList.add('on');
   sendWs({type: 'getConfig'});
   renderSettings();
 }
 
-/** Return whether the settings panel is currently shown. */
+/** Close the Settings modal and stop its periodic NebLink refresh. */
+export function closeSettingsPanel() {
+  document.getElementById('settings-overlay')?.classList.remove('on');
+  if (window._neblinkRefreshTimer) {
+    clearInterval(window._neblinkRefreshTimer);
+    window._neblinkRefreshTimer = null;
+  }
+}
+
+/** Return whether the settings modal is currently shown. */
 export function isSettingsPanelActive() {
-  const panel = document.getElementById('panel-settings');
-  return !!panel && panel.classList.contains('active');
+  const overlay = document.getElementById('settings-overlay');
+  return !!overlay && overlay.classList.contains('on');
 }
 
 // ---------- Session Switching ----------
 
 /** Switch the main panel to display a different session. */
-function switchToSession(sessionId) {
+export function switchToSession(sessionId) {
   if (!sessionId) return;
 
   // Same-session: just clear unread and scroll to bottom
@@ -112,24 +122,16 @@ function switchToSession(sessionId) {
 }
 
 export function initNavTabs() {
-  // Settings button now lives in the Activity Bar; its handler is wired in
-  // activityBar.js (which calls openSettingsPanel). Here we keep the back
-  // navigation from the Settings panel to the Sessions panel.
-  const settingsBackBtn = document.getElementById('settings-back-btn');
-  if (settingsBackBtn) {
-    settingsBackBtn.addEventListener('click', () => {
-      showPanel('sessions');
-    });
-  }
-
-  const agentsBackBtn = document.getElementById('agents-back-btn');
-  if (agentsBackBtn) {
-    agentsBackBtn.addEventListener('click', () => {
-      showPanel('sessions');
-    });
-  }
-
-  // Secondary panel close button — removed (canvas panel has its own close)
+  // Settings lives in a centered modal (opened from the Activity Bar via
+  // openSettingsPanel). Wire its close affordances here.
+  const overlay = document.getElementById('settings-overlay');
+  document.getElementById('settings-modal-close')?.addEventListener('click', closeSettingsPanel);
+  overlay?.addEventListener('click', (e) => {
+    if (e.target === overlay) closeSettingsPanel();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isSettingsPanelActive()) closeSettingsPanel();
+  });
 }
 
 // ---------- Agent icons in Nav Bar ----------
@@ -243,17 +245,7 @@ export function computeAgentStates() {
 /** Select an agent and load its sessions. */
 export function selectAgent(agentName) {
   const isSame = state.selectedAgent === agentName;
-  // When the same agent icon is clicked (e.g. returning from settings with a single agent),
-  // still switch the panel back to sessions.
-  if (isSame) {
-    const panel = document.getElementById('panel-settings');
-    if (panel && panel.classList.contains('active')) {
-      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-      document.getElementById('panel-sessions').classList.add('active');
-      document.querySelectorAll('.nav-item[data-tab]').forEach(n => n.classList.remove('active'));
-    }
-    return;
-  }
+  if (isSame) return;
   // Agent tab switches only filter the sidebar list.
   state.selectedAgent = agentName;
   // Clear unread count for this agent
@@ -263,10 +255,6 @@ export function selectAgent(agentName) {
     const el = document.querySelector(`#nav-agent-list .nav-agent[data-name="${agentName}"]`);
     if (el) { const dot = el.querySelector('.agent-notif-dot'); if (dot) dot.remove(); }
   }
-  // Switch back to sessions panel if on settings
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-  document.getElementById('panel-sessions').classList.add('active');
-  document.querySelectorAll('.nav-item[data-tab]').forEach(n => n.classList.remove('active'));
   // Update nav bar active state
   document.querySelectorAll('#nav-agent-list .nav-agent').forEach(el => {
     el.classList.toggle('active', el.dataset.name === agentName);
