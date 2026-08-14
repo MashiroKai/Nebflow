@@ -35,6 +35,9 @@ object MailTool extends Tool:
   /** After this wait, a synchronous ask converts to a background task instead of failing. */
   private val AskBackgroundThreshold: FiniteDuration = 60.seconds
 
+  /** Flow-agent callers cannot use background conversion, so they get a hard timeout instead. */
+  private val FlowAskTimeout: FiniteDuration = 5.minutes
+
   val name: String = "Mail"
 
   val description: String =
@@ -310,9 +313,10 @@ Message type (optional, default "INFO"):
   /**
    * Wait for the fork answer.
    *
-   * Flow-agent callers stay purely synchronous (no timeout) — their transient
-   * sessions cannot receive background completion notifications, so converting
-   * to background would deadlock the flow step.
+   * Flow-agent callers stay synchronous (no background conversion — their
+   * transient sessions cannot receive completion notifications) but get a hard
+   * timeout: if the forked agent never answers, the caller receives a timeout
+   * error instead of blocking the flow step forever.
    *
    * Other callers race the answer against the background threshold: if the
    * answer arrives first, this is the old synchronous mode. If the threshold
@@ -339,9 +343,17 @@ Message type (optional, default "INFO"):
         resources.sessionStore.deleteSession(tempSessionId).handleErrorWith(_ => IO.unit)
 
     if isFlowCaller then
-      responseDeferred.get.flatMap {
-        case Right(text) => cleanupFork *> IO.pure(Right(text))
-        case Left(err) => cleanupFork *> IO.pure(Left(ToolError(err)))
+      responseDeferred.get.race(IO.sleep(FlowAskTimeout)).flatMap {
+        case Left(Right(text)) => cleanupFork *> IO.pure(Right(text))
+        case Left(Left(err)) => cleanupFork *> IO.pure(Left(ToolError(err)))
+        case Right(_) =>
+          logger.warn(s"Mail ask to '$address' timed out after ${FlowAskTimeout.toMinutes} min (flow caller)")
+          cleanupFork *>
+            IO.pure(
+              Left(
+                ToolError(s"Mail ask to '$address' timed out after ${FlowAskTimeout.toMinutes} minutes")
+              )
+            )
       }
     else
       responseDeferred.get.race(IO.sleep(AskBackgroundThreshold)).flatMap {
