@@ -129,35 +129,6 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
 
   updateFooterStatus(entry);
 
-  // ── Drag: mousedown on header moves the modal ──
-  const header = popupOverlay.querySelector('.flow-agent-header');
-  if (header) {
-    header.addEventListener('mousedown', (e) => {
-      if (e.target.id === 'bgagent-close') return;
-      e.preventDefault();
-      const overlayRect = popupOverlay.getBoundingClientRect();
-      const modalRect = modal.getBoundingClientRect();
-      const startX = e.clientX - modalRect.left;
-      const startY = e.clientY - modalRect.top;
-
-      const onMove = (ev) => {
-        let newLeft = ev.clientX - overlayRect.left - startX;
-        let newTop = ev.clientY - overlayRect.top - startY;
-        newLeft = Math.max(0, Math.min(newLeft, overlayRect.width - modalRect.width));
-        newTop = Math.max(0, Math.min(newTop, overlayRect.height - modalRect.height));
-        modal.style.transform = 'none';
-        modal.style.left = newLeft + 'px';
-        modal.style.top = newTop + 'px';
-      };
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-  }
-
   popupOverlay.addEventListener('click', (e) => {
     if (e.target === popupOverlay || e.target.id === 'bgagent-close') closeStepPopup();
   });
