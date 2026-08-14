@@ -601,9 +601,9 @@ export const FLOW_CSS = `
 @keyframes orbit-spin-ccw { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(-360deg); } }
 
 /* Flow definition cards (P6) — p5p6-v2 Flows tab */
-.flow-defs-section, .flow-running-section { width: 100%; margin-bottom: 16px; }
+.flow-defs-section, .flow-running-section { width: 100%; max-width: 1100px; margin: 0 auto 16px; }
 .flow-defs-header { font: 600 11px -apple-system; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 0 10px; }
-.flow-defs-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+.flow-defs-grid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
 .flow-def-card {
   flex: 1 1 240px; min-width: 220px; max-width: 360px;
   border-radius: 12px; background: var(--color-surface);

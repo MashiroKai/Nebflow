@@ -70,7 +70,9 @@ function renderFlowsTab() {
     scroll.className = 'team-scroll';
     scroll.id = 'flow-scroll-flows';
     scroll.style.flexDirection = 'column';
-    scroll.style.alignItems = 'stretch';
+    // Center the content column horizontally; sections cap at max-width
+    // (see .flow-defs-section in flowCss.js) so cards sit centered.
+    scroll.style.alignItems = 'center';
     pane.appendChild(scroll);
     // Flow definitions are rendered inline below from the flowDefs state
     // (populated by fetchFlowDefs). The previous renderFlowList() call was
