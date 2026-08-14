@@ -258,12 +258,16 @@ object LlmLogWriter:
       val base = Json.obj("type" -> "thinking".asJson, "thinking" -> text.asJson)
       signature.fold(base)(s => base.deepMerge(Json.obj("signature" -> s.asJson)))
     case ContentBlock.Image(data, mediaType) =>
+      // Log-only serialization (API requests are built in AnthropicAdapter
+      // and keep the full payload) — the base64 data is replaced by a
+      // placeholder so request logs don't balloon with megabytes of image
+      // data per message.
       Json.obj(
         "type" -> "image".asJson,
         "source" -> Json.obj(
           "type" -> "base64".asJson,
           "media_type" -> mediaType.asJson,
-          "data" -> data.asJson
+          "data" -> s"<base64 omitted, ${data.length} bytes>".asJson
         )
       )
 
