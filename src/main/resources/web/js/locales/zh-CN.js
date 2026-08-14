@@ -393,6 +393,7 @@ export default {
   'search.scopeCurrent': '当前会话',
   'search.scopeAll': '全部会话',
   'search.allTypes': '全部类型',
+  'search.allAgents': '全部 Agent',
   'search.anyTool': '任意工具调用',
   'search.go': '搜索',
   'search.hint': '输入关键词，或选择工具/日期过滤条件',

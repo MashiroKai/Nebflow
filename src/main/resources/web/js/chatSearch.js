@@ -3,13 +3,15 @@
 // Header button opens a centered modal (no dimming backdrop, no blur).
 // Searches message history via the REST API (backend is the source of
 // truth — localStorage is only a truncated cache):
-//   GET /api/sessions              → session list (all-sessions scope)
+//   GET /api/sessions?includeUnindexed=1 → session list incl. unindexed
+//                                          delegate/subtask/dag sessions
 //   GET /api/sessions/{id}/history → full UiMessage list per session
 //
-// Filters: keyword (case-insensitive substring), tool name (from the
-// labels actually present in the searched scope), date range (applies to
-// messages that carry a timestamp; tool messages have none and are
-// excluded when a date range is set).
+// Filters: keyword (case-insensitive substring), agent (session-level, from
+// the agentName of each session), tool name (clean names extracted from the
+// rich labels present in the searched scope), date range (applies to
+// messages that carry a timestamp; tool messages have none and are excluded
+// when a date range is set).
 // Clicking a result switches to that session and scrolls to the message.
 
 import state from './state.js';
@@ -77,6 +79,10 @@ function renderStaticLabels() {
   if (tool) {
     tool.innerHTML = `<option value="">${escapeHtml(t('search.allTypes'))}</option>`;
   }
+  const agent = document.getElementById('search-agent');
+  if (agent) {
+    agent.innerHTML = `<option value="">${escapeHtml(t('search.allAgents'))}</option>`;
+  }
   const go = document.getElementById('search-go');
   if (go) go.textContent = t('search.go');
   const status = document.getElementById('search-status');
@@ -92,7 +98,9 @@ function authHeaders() {
 }
 
 async function fetchSessionList() {
-  const resp = await fetch('/api/sessions', { headers: authHeaders() });
+  // includeUnindexed=1: also returns delegate-*/subtask-*/dag-* sessions whose
+  // ui.json exists on disk but which never entered the session index.
+  const resp = await fetch('/api/sessions?includeUnindexed=1', { headers: authHeaders() });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = await resp.json();
   return data.sessions || [];
@@ -152,6 +160,7 @@ async function runSearch() {
   const kw = (document.getElementById('search-keyword')?.value || '').trim();
   const scope = document.getElementById('search-scope')?.value || 'current';
   const toolSel = document.getElementById('search-tool')?.value || '';
+  const agentSel = document.getElementById('search-agent')?.value || '';
   const fromVal = document.getElementById('search-date-from')?.value || '';
   const toVal = document.getElementById('search-date-to')?.value || '';
   const fromTs = fromVal ? new Date(fromVal + 'T00:00:00').getTime() : 0;
@@ -176,6 +185,11 @@ async function runSearch() {
       sessions = [{ id: sid, name: local?.name || sid }];
     } else {
       sessions = await fetchSessionList();
+      // Agent filter options come from the FULL list (before filtering)
+      populateAgentFilter(sessions, agentSel);
+      // Filter at the session level — also skips history fetches for
+      // sessions that cannot match.
+      if (agentSel) sessions = sessions.filter(s => agentNameOf(s) === agentSel);
     }
 
     // Fetch histories (bounded concurrency), with progress for the all-scope
@@ -200,7 +214,7 @@ async function runSearch() {
         if (toolSel === '__any__') {
           if (m.kind !== 'tool') continue;
         } else if (toolSel) {
-          if (m.kind !== 'tool' || m.tool !== toolSel) continue;
+          if (m.kind !== 'tool' || cleanToolName(m.tool) !== toolSel) continue;
         }
         if ((fromTs || toTs) && m.ts) {
           if (fromTs && m.ts < fromTs) continue;
@@ -232,21 +246,59 @@ async function runSearch() {
   }
 }
 
-/** Rebuild the tool filter options from the tool labels in the fetched set. */
+// ── Tool name normalization ────────────────────────────────
+// ui.json tool labels are RICH display strings, not tool names:
+//   "Edit(jarvis.html)\n  (\"/path\")", "Bash\n  (cd \"...\")",
+//   "Mail(→Manager) [RESULT]", "TaskUpdate(#1, completed)"
+// Deduping/filtering on the full label floods the dropdown with one variant
+// per call. Extract the clean tool name — the leading identifier before
+// '(' / whitespace / newline.
+function cleanToolName(label) {
+  const m = /^([A-Za-z_][A-Za-z0-9_-]*)/.exec(label || '');
+  return m ? m[1] : (label || '');
+}
+
+/** Display name of the agent that owns a session (backend derives it from
+ *  the id prefix for unindexed sessions, e.g. "Explorer (delegate)"). */
+function agentNameOf(s) {
+  return s.agentName || '';
+}
+
+/** Rebuild the agent filter options from the fetched session list. */
+function populateAgentFilter(sessions, keepValue) {
+  const sel = document.getElementById('search-agent');
+  if (!sel) return;
+  const counts = new Map();
+  for (const s of sessions) {
+    const name = agentNameOf(s);
+    if (name) counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  const sorted = [...counts.keys()].sort((a, b) => a.localeCompare(b));
+  sel.innerHTML =
+    `<option value="">${escapeHtml(t('search.allAgents'))}</option>` +
+    sorted.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${counts.get(n)})</option>`).join('');
+  if ([...sel.options].some(o => o.value === keepValue)) sel.value = keepValue;
+}
+
+/** Rebuild the tool filter options from the tool labels in the fetched set.
+ *  Options are CLEAN tool names (with call counts), not raw labels. */
 function populateToolFilter(perSession, keepValue) {
   const sel = document.getElementById('search-tool');
   if (!sel) return;
-  const labels = new Set();
+  const counts = new Map();
   for (const { msgs } of perSession) {
     for (const raw of msgs) {
-      if (raw.type === 'tool' && raw.label) labels.add(raw.label);
+      if (raw.type === 'tool' && raw.label) {
+        const name = cleanToolName(raw.label);
+        if (name) counts.set(name, (counts.get(name) || 0) + 1);
+      }
     }
   }
-  const sorted = [...labels].sort();
+  const sorted = [...counts.keys()].sort();
   sel.innerHTML =
     `<option value="">${escapeHtml(t('search.allTypes'))}</option>` +
     `<option value="__any__">${escapeHtml(t('search.anyTool'))}</option>` +
-    sorted.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+    sorted.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${counts.get(n)})</option>`).join('');
   // Restore previous selection if still available
   if ([...sel.options].some(o => o.value === keepValue)) sel.value = keepValue;
 }
@@ -259,7 +311,7 @@ function renderResults(container, kw) {
   }
   container.innerHTML = lastResults.map((r, i) => {
     const typeBadge = r.kind === 'tool'
-      ? `${escapeHtml(t('search.typeTool'))} · ${escapeHtml(r.tool)}`
+      ? `${escapeHtml(t('search.typeTool'))} · ${escapeHtml(cleanToolName(r.tool))}`
       : r.kind === 'user'
         ? escapeHtml(t('search.typeUser'))
         : escapeHtml(t('search.typeAi'));

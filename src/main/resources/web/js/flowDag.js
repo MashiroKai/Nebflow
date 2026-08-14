@@ -105,18 +105,27 @@ export function layoutDagNodes(rf) {
 
   const maxDepth = Math.max(0, ...Object.keys(nodesAtDepth).map(Number));
   const width = Math.max((maxAtDepth - 1) * H_SPACING + NODE_W + PAD * 2, 320);
-  const height = maxDepth * V_SPACING + NODE_H + PAD * 2;
+  // Vertical: node row centers sit at y = depth*V_SPACING; with top offset
+  // PAD the first row's top edge is PAD - NODE_H/2 from the canvas top.
+  // height = lastRowCenter + PAD keeps the bottom margin identical (no extra
+  // NODE_H term — that used to make the bottom margin 100px vs 20px on top).
+  const height = maxDepth * V_SPACING + PAD * 2;
 
   return { positions, width, height };
 }
 
 // ── Solar-system node ──────────────────────────────────────
 
-function solarNodeHtml(n, flowName, pos, statusOf) {
+/** Node positions from layoutDagNodes are ROW-CENTERED on x=0 (can be
+ *  negative, e.g. a 3-node row is x=-160/0/160). Render with the canvas
+ *  center as the horizontal origin (originX = width/2) — using PAD as the
+ *  origin pushed negative-x nodes off the left edge (clipped) and made the
+ *  whole graph lean left instead of centering. */
+function solarNodeHtml(n, flowName, pos, statusOf, originX) {
   const nodeId = n.nodeId || '';
   const agent = n.agent || '';
   const st = statusOf(n) || 'pending';
-  const left = pos.x - NODE_W / 2 + PAD;
+  const left = pos.x - NODE_W / 2 + originX;
   const top = pos.y - NODE_H / 2 + PAD;
   const statusIcon = st === 'completed' ? '<span class="solar-node-status ok">✓</span>'
     : st === 'failed' ? '<span class="solar-node-status err">✗</span>' : '';
@@ -156,7 +165,7 @@ function solarEdgesSvg(rf, positions, statusOf) {
       <circle class="flow-edge-arrow" cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="3"/>
       ${cond}`;
   }).join('');
-  return `<svg class="solar-edges" width="${positions._w}" height="${positions._h}"><g transform="translate(${PAD},${PAD})">${paths}</g></svg>`;
+  return `<svg class="solar-edges" width="${positions._w}" height="${positions._h}"><g transform="translate(${(positions._w / 2).toFixed(1)},${PAD})">${paths}</g></svg>`;
 }
 
 // ── Card ───────────────────────────────────────────────────
@@ -176,7 +185,7 @@ export function dagCardHtml(rf, opts = {}) {
   const nodesHtml = nodes.map(n => {
     const pos = positions[n.nodeId];
     if (!pos) return '';
-    return solarNodeHtml(n, rf.flowName, pos, statusOf);
+    return solarNodeHtml(n, rf.flowName, pos, statusOf, width / 2);
   }).join('');
 
   const isActive = statusCls === 'running';

@@ -392,6 +392,7 @@ export default {
   'search.scopeCurrent': 'Current session',
   'search.scopeAll': 'All sessions',
   'search.allTypes': 'All types',
+  'search.allAgents': 'All agents',
   'search.anyTool': 'Any tool call',
   'search.go': 'Search',
   'search.hint': 'Enter a keyword, or pick tool/date filters',
