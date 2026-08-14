@@ -591,9 +591,6 @@
 #settings-modal {
   display: none;
   border-radius: 20px;
-  /* 用户约束：弹窗无背景模糊——覆盖共享 glass card 组的 backdrop-filter */
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
   width: 560px;
   max-width: calc(100vw - 48px);
   max-height: 85vh;
@@ -623,9 +620,6 @@
 #search-modal {
   display: none;
   border-radius: 20px;
-  /* 用户约束：弹窗无背景模糊——覆盖共享 glass card 组的 backdrop-filter */
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
   width: 640px;
   max-width: calc(100vw - 48px);
   max-height: 85vh;
