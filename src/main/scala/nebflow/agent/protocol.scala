@@ -651,7 +651,13 @@ case class ExecutionContext(
   // Pending queue mails (delivery=queue): counter only — actual items live on
   // disk (MailQueueStore). Drained one per turn at turn end, after immediate
   // inputs. Incremented by MailQueued in processing state, reset when drained.
-  pendingMailQueueCount: Int = 0
+  pendingMailQueueCount: Int = 0,
+  // User inputs (UserInput/SkillActivate/AskQuestion) that arrived while the
+  // agent was busy (processing). Drained one per turn boundary — the head is
+  // re-sent to self so the idle handler processes it with full metadata.
+  // Replaces the dead-end `pending` function parameter on the processing
+  // behavior (messages entered but were never drained).
+  pendingUserInputs: List[AgentCommand] = Nil
 )
 
 object ExecutionContext:

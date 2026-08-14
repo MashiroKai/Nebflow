@@ -1313,7 +1313,22 @@ object AgentActor extends AgentCore with AgentSession:
                           case None => IO.unit
                         res <- pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
                       yield res
-                    case None => IO.pure(idle(agentDef, resources, depth, parentRef, compactedState))
+                    case None =>
+                      // No immediate inputs — check pending user inputs (e.g. messages
+                      // that arrived during compaction). Forward head to self so the
+                      // idle handler processes it with full metadata; preserve the tail.
+                      state.execution.pendingUserInputs.headOption match
+                        case Some(userCmd) =>
+                          (ctx.self ! userCmd) *>
+                            IO.pure(idle(agentDef, resources, depth, parentRef,
+                              compactedState.copy(execution =
+                                compactedState.execution.copy(
+                                  pendingUserInputs = state.execution.pendingUserInputs.tail
+                                )
+                              )
+                            ))
+                        case None =>
+                          IO.pure(idle(agentDef, resources, depth, parentRef, compactedState))
                 yield result
                 end for
               end if
@@ -1464,12 +1479,32 @@ object AgentActor extends AgentCore with AgentSession:
         )
 
       // --- Buffer user-initiated messages during processing ---
+      // Stored in ExecutionContext.pendingUserInputs (not the dead-end `pending`
+      // parameter) so they are drained at the next turn boundary — the head is
+      // re-sent to self and processed by the idle handler with full metadata.
       case msg: AgentCommand.UserInput =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state, pending :+ msg))
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "user-input-queued",
+          s"textLen=${msg.text.length} pending=${state.execution.pendingUserInputs.size + 1}"
+        )
+        val updatedExec = state.execution.copy(
+          pendingUserInputs = state.execution.pendingUserInputs :+ msg
+        )
+        IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
       case msg: AgentCommand.SkillActivate =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state, pending :+ msg))
+        val updatedExec = state.execution.copy(
+          pendingUserInputs = state.execution.pendingUserInputs :+ msg
+        )
+        IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
       case msg: AgentCommand.AskQuestion =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state, pending :+ msg))
+        val updatedExec = state.execution.copy(
+          pendingUserInputs = state.execution.pendingUserInputs :+ msg
+        )
+        IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
       case msg: AgentCommand.ImmediateInput =>
         logAgentEvent(
           agentDef,
@@ -1815,7 +1850,8 @@ object AgentActor extends AgentCore with AgentSession:
         ExecutionContext
           .idle(messagesWithPending, state.execution.turnIdx)
           .copy(pendingEvents = remainingEvents, pendingImmediateInputs = state.execution.pendingImmediateInputs,
-                pendingMailQueueCount = state.execution.pendingMailQueueCount)
+                pendingMailQueueCount = state.execution.pendingMailQueueCount,
+                pendingUserInputs = state.execution.pendingUserInputs)
       )
       for
         _ <- roundCompleteIO
@@ -1869,7 +1905,8 @@ object AgentActor extends AgentCore with AgentSession:
           ExecutionContext
             .idle(messagesWithImmediate, state.execution.turnIdx)
             .copy(pendingImmediateInputs = remainingInputs,
-                  pendingMailQueueCount = state.execution.pendingMailQueueCount)
+                  pendingMailQueueCount = state.execution.pendingMailQueueCount,
+                  pendingUserInputs = state.execution.pendingUserInputs)
         )
       for
         _ <- roundCompleteIO
@@ -1916,7 +1953,8 @@ object AgentActor extends AgentCore with AgentSession:
             val updatedState = state.copy(execution =
               ExecutionContext
                 .idle(messagesWithQueue, state.execution.turnIdx)
-                .copy(pendingMailQueueCount = state.execution.pendingMailQueueCount - 1)
+                .copy(pendingMailQueueCount = state.execution.pendingMailQueueCount - 1,
+                      pendingUserInputs = state.execution.pendingUserInputs)
             )
             for
               _ <- nebflow.core.flow.MailQueueStore.removeHead(sid)
@@ -2008,6 +2046,10 @@ object AgentActor extends AgentCore with AgentSession:
         // idle, so clear the team busy mark. The two earlier branches re-enter
         // pipeLlmCall which re-marks busy, so they must NOT clear here.
         _ <- markTeamIdle(agentDef, state.sessionId)
+        // Drain pending user inputs: forward head to self (agent is now idle,
+        // so it will be processed with full metadata by the idle handler). The
+        // tail is preserved for the next turn boundary drain.
+        _ <- state.execution.pendingUserInputs.headOption.traverse_(msg => ctx.self ! msg)
       yield
         val keptInteraction = state.execution.interaction.filter(_.pendingPermission.isDefined)
         val updatedState = state
@@ -2017,7 +2059,8 @@ object AgentActor extends AgentCore with AgentSession:
               .copy(
                 interaction = keptInteraction,
                 // Preserve queue when compaction is in progress — CompactionComplete drains it.
-                pendingImmediateInputs = state.execution.pendingImmediateInputs
+                pendingImmediateInputs = state.execution.pendingImmediateInputs,
+                pendingUserInputs = state.execution.pendingUserInputs.tail
               )
           )
           .withMailTurnCount(state.mailTurnCount + 1)
