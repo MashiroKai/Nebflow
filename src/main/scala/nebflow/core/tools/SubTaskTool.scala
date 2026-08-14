@@ -239,6 +239,7 @@ Multiple SubTask calls in one response run concurrently — use this to parallel
           description = description,
           agentName = agentDef.name,
           subagentId = subtaskId,
+          parentSessionId = parentSessionId.getOrElse(""),
           resources = resources,
           initialPrompt = prompt,
           source = "subtask",

@@ -40,6 +40,10 @@ object BackoffSupervisor:
    * @param description human-readable task description
    * @param agentName   child agent name
    * @param subagentId  session id
+   * @param parentSessionId the parent (root) session that owns this task —
+   *                        SubAgentTaskStore keys task files by it; must match
+   *                        the id used at recordTask time or status updates
+   *                        silently write nowhere
    * @param resources   shared resources (for agentRegistry cleanup)
    * @param initialPrompt the original prompt to re-inject after restart
    * @param source       ExternalEvent source string ("delegate" or "subtask")
@@ -53,6 +57,7 @@ object BackoffSupervisor:
     description: String,
     agentName: String,
     subagentId: String,
+    parentSessionId: String,
     resources: SharedResources,
     initialPrompt: String,
     source: String,
@@ -74,6 +79,7 @@ object BackoffSupervisor:
           description,
           agentName,
           subagentId,
+          parentSessionId,
           resources,
           initialPrompt,
           source,
@@ -98,6 +104,7 @@ object BackoffSupervisor:
     description: String,
     agentName: String,
     subagentId: String,
+    parentSessionId: String,
     resources: SharedResources,
     initialPrompt: String,
     source: String,
@@ -181,7 +188,7 @@ object BackoffSupervisor:
                 _ <- notifyIO
                 _ <- resources.subAgentTaskStore
                   .updateStatus(
-                    "",
+                    parentSessionId,
                     subagentId,
                     "restarting",
                     retryCount = Some(newRestartCount)
@@ -202,6 +209,7 @@ object BackoffSupervisor:
                 description,
                 agentName,
                 subagentId,
+                parentSessionId,
                 resources,
                 initialPrompt,
                 source,
@@ -246,7 +254,7 @@ object BackoffSupervisor:
         val taskStatus = if eventType == "completed" then "completed" else "failed"
         val taskUpdate = resources.subAgentTaskStore
           .updateStatus(
-            "",
+            parentSessionId,
             subagentId,
             taskStatus,
             completedAt = Some(System.currentTimeMillis()),
