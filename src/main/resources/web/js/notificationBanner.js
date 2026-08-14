@@ -65,7 +65,7 @@ function renderNotifications() {
 
   let html = '';
   toShow.forEach(n => {
-    const iconLabel = n.type === 'skill' ? 'S' : (n.type === 'reminder' ? 'R' : 'N');
+    const iconLabel = n.type === 'skill' ? 'S' : (n.type === 'reminder' ? 'R' : (n.type === 'conn' ? '!' : 'N'));
     const escapedText = escapeHtml(n.text);
     html += `
       <div class="notif-item" data-id="${escapeHtml(n.id)}">

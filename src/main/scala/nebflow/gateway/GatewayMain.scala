@@ -526,7 +526,7 @@ object GatewayMain extends IOApp.Simple:
                                                           s"gateway listening on ${cfg.host}:${cfg.port}"
                                                         )
                                                         _ <- logger.info(
-                                                          s"access URL: $baseUrl (token in ~/.nebflow/.token)"
+                                                          s"access URL: $baseUrl (token in ~/.nebflow/auth.json)"
                                                         )
                                                         // Telemetry: app_start
                                                         _ <- telemetry.fold(IO.unit)(
