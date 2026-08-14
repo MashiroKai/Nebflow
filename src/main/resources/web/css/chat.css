@@ -1376,6 +1376,9 @@
 .notif-icon.reminder {
   background: #D4A574;
 }
+.notif-icon.conn {
+  background: #C0392B;
+}
 .notif-text {
   flex: 1;
   min-width: 0;
