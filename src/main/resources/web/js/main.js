@@ -1272,9 +1272,15 @@ function renderBgAgentDropdown() {
     const status = info.done ? '<span class="bgagent-done">done</span>' : '<span class="bgagent-running">running</span>';
     const displayName = info.name || id;
     const label = info.task ? displayName + ' · ' + escapeHtml(info.task) : displayName;
-    // nodeSessionId for Delegate/SubTask sub-agents starts with "delegate-"/"subtask-" (backend protocol)
-    const nodeSessionId = isBgAgentId(id) ? id : null;
-    const clickAttr = nodeSessionId ? `data-node-session-id="${escapeHtml(nodeSessionId)}" style="cursor:pointer"` : '';
+    // The sub-agent's OWN session id — agentStart carries it as msg.sessionId
+    // (rootSessionId is the host). For delegate-*/subtask-* entries it equals
+    // the entry id; for team-member/flow-agent entries (keyed by name) it is
+    // the agent's real session id. getHistory reads ui.json from disk, so any
+    // session id works — every row is clickable.
+    const sessionId = info.sessionId || (isBgAgentId(id) ? id : '');
+    const clickAttr = sessionId
+      ? `data-bg-key="${escapeHtml(id)}" data-node-session-id="${escapeHtml(sessionId)}" style="cursor:pointer"`
+      : '';
     return '<div class="bg-task-row" ' + clickAttr + '>' +
       '<div class="bg-task-info">' +
         '<span class="bg-task-name">' + status + ' ' + label + '</span>' +
@@ -1287,10 +1293,10 @@ function renderBgAgentDropdown() {
   listEl.querySelectorAll('[data-node-session-id]').forEach(row => {
     row.addEventListener('click', (e) => {
       e.stopPropagation();
-      const nodeSessionId = row.getAttribute('data-node-session-id');
-      const info = bgAgents[nodeSessionId];
-      if (info) {
-        openBgAgentPopup(nodeSessionId, info.name, info.task);
+      const sessionId = row.getAttribute('data-node-session-id');
+      const info = bgAgents[row.getAttribute('data-bg-key')];
+      if (info && sessionId) {
+        openBgAgentPopup(sessionId, info.name, info.task);
         // Close the dropdown
         const dropdown = activeView.dom.bgagentDropdownEl;
         if (dropdown) dropdown.classList.add('hidden');
@@ -1340,6 +1346,10 @@ onMessage('agentStart', (msg, view) => {
   state.sessionBgAgents[sid][aid] = {
     name: msg.name || aid,
     task: msg.taskDescription || '',
+    // msg.sessionId is the sub-agent's OWN session (rootSessionId is the
+    // host) — stored so every dropdown row can open its chat popup,
+    // including team-member/flow agents whose entry key is just a name.
+    sessionId: msg.sessionId || '',
     currentTool: null,
     done: false,
   };
@@ -2457,6 +2467,7 @@ onMessage('activeAgents', (msg) => {
     state.sessionBgAgents[sid][a.agentId] = {
       name: a.agentName || a.agentId,
       task: '',
+      sessionId: a.sessionId || '',
       currentTool: null,
       done: false,
     };
