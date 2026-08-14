@@ -141,6 +141,7 @@ export default {
   'provider.fetchModelsLoaded': '{count} models fetched — pick from the dropdown',
   'provider.fetchModelsFailed': 'Could not fetch the model list — enter it manually',
   'provider.modelSelectPlaceholder': 'Select a model…',
+  'provider.keyValid': 'key valid',
 
   // === Mail delivery mode badges ===
   'mailDelivery.ask': 'Ask',
