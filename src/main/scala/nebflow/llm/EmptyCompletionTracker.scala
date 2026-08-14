@@ -108,4 +108,27 @@ final class EmptyCompletionTracker:
   def getRuntimeVision(providerId: String, modelId: String): IO[Option[Boolean]] =
     runtimeOverrides.get.map(_.get(ref(providerId, modelId)))
 
+  /**
+   * Clear ALL runtime heuristics (override + empty-completion counters) for a
+   * model. Called when the user explicitly annotates vision=true via REST: an
+   * explicit annotation is a statement of intent that outranks the runtime
+   * auto-demotion heuristic (B3 restore semantics — without this, a persisted
+   * vision=false plus a live in-memory override could never be recovered
+   * without a restart, because stripImages guarantees no image-bearing success
+   * ever reaches resetOnSuccess).
+   */
+  def clearOverride(providerId: String, modelId: String): IO[Unit] =
+    val key = ref(providerId, modelId)
+    counters.update(_ - key) *> runtimeOverrides.update(_ - key)
+
+end EmptyCompletionTracker
+
+object EmptyCompletionTracker:
+  /**
+   * Shared JVM-wide instance. Runtime vision overrides are keyed by
+   * providerId/modelId — they describe the MODEL, not the agent session — so
+   * the LLM pipeline (interface.scala) and the REST API (RestApiRoutes,
+   * PUT vision=true → clearOverride) must read/write the same state.
+   */
+  val shared: EmptyCompletionTracker = new EmptyCompletionTracker
 end EmptyCompletionTracker
