@@ -1156,6 +1156,54 @@
   color: #5b8dd9;
 }
 
+/* ---------- Compaction status card ---------- */
+/* Live compactStart → compactComplete/Failed lifecycle. One card morphs in
+ * place: spinning (active) → check (done) / × (error). Restrained glass-lite
+ * surface — hairline border, no backdrop blur, single sapphire accent. */
+.compact-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 12px;
+  padding: 7px 14px;
+  font-size: 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.25s ease, color 0.25s ease;
+  max-width: 85%;
+}
+.compact-card-label {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compact-card-spinner {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border: 2px solid rgb(var(--sapphire) / 0.25);
+  border-top-color: rgb(var(--sapphire) / 0.9);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+.compact-card-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  animation: fadeIn 0.2s ease;
+}
+.compact-card-icon.ok { color: var(--color-success); }
+.compact-card-icon.err { color: var(--color-error); }
+.compact-card[data-state="active"] {
+  border-color: rgb(var(--sapphire) / 0.3);
+  color: var(--color-text);
+}
+.compact-card[data-state="error"] {
+  border-color: rgba(244, 67, 54, 0.35);
+}
+
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   #header {

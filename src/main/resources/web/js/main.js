@@ -8,6 +8,7 @@ import {
   appendAgentText, finishAgent, getAgentColor,
   renderTool, renderToolPending, renderError, renderTimeoutNotice,
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
+  renderCompactStartCard, renderCompactDoneCard, renderCompactFailCard,
   showOptions, renderAskUser, renderPermissionPrompt,
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
@@ -1482,7 +1483,10 @@ onMessage('compactStart', (msg, view) => {
   resetStreamTimeout(sid);
   setCompacting(sid, true);
   if (view) {
-    renderSystemBubble(t('chat.compacting'));
+    renderCompactStartCard(view);
+    // Persist the same system text as before — history restore renders it as
+    // a quiet notice card; the live status card is a live-view-only element.
+    saveMsg({ type: 'system', content: t('chat.compacting') }, sid);
   }
 });
 
@@ -1500,7 +1504,9 @@ onMessage('compactComplete', (msg, view) => {
   }
   if (view) {
     const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
-    renderSystemBubble(t('chat.compacted', { before: msg.before, after: msg.after, detail }));
+    const text = t('chat.compacted', { before: msg.before, after: msg.after, detail });
+    renderCompactDoneCard(view, { before: msg.before, after: msg.after, detail });
+    saveMsg({ type: 'system', content: text }, sid);
   }
   // Drain queued messages only if agent is NOT busy. During auto-compaction
   // with resume, the agent immediately starts a resume turn after compactComplete.
@@ -1522,7 +1528,9 @@ onMessage('compactFailed', (msg, view) => {
     view.stream.activeAgentId = null;
   }
   if (view) {
-    renderSystemBubble(t('chat.compactFailed', { attempt: msg.attempt, maxAttempts: msg.maxAttempts }));
+    const text = t('chat.compactFailed', { attempt: msg.attempt, maxAttempts: msg.maxAttempts });
+    renderCompactFailCard(view, text);
+    saveMsg({ type: 'system', content: text }, sid);
   }
   if (msg.attempt >= msg.maxAttempts) {
     if (view) {

@@ -237,6 +237,8 @@ export default {
   'chat.thinking.4': 'Traversing the nebula...',
   'chat.thinking.5': 'Reaching for the light...',
   'chat.compacting': 'Compacting context...',
+  'chat.compactingCard': 'Compacting context',
+  'chat.compactElapsed': ' · took {seconds}s',
   'chat.compacted': 'Context compacted: {before} → {after} messages{detail}',
   'chat.compactFailed': 'Context compaction failed (attempt {attempt}/{maxAttempts})',
   'chat.compactCircuitBreaker': 'Context compaction circuit breaker open after {attempt} attempts',

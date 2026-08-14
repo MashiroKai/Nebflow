@@ -1299,6 +1299,74 @@ export function renderSystemBubble(text) {
   return { type: 'system', text };
 }
 
+// ---------- Compaction status card ----------
+// Live-rendered status card for the compactStart → compactComplete/Failed
+// lifecycle: one card that morphs in place (spinning → done/failed) instead
+// of two plain notice bubbles. History restore is unchanged — the persisted
+// system text still renders as quiet notice cards after a refresh.
+const compactCheckSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+const compactFailSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+function findActiveCompactCard(view) {
+  return view?.dom?.chat?.querySelector('.compact-card[data-state="active"]') || null;
+}
+
+function appendCompactCard(view, state, innerHtml, startTs) {
+  const chat = view?.dom?.chat;
+  if (!chat) return null;
+  const row = document.createElement('div');
+  row.className = 'row notice';
+  const card = document.createElement('div');
+  card.className = 'compact-card';
+  card.dataset.state = state;
+  if (startTs) card.dataset.startTs = startTs;
+  card.innerHTML = innerHtml;
+  row.appendChild(card);
+  chat.appendChild(row);
+  smartScroll();
+  return card;
+}
+
+export function renderCompactStartCard(view = activeView) {
+  if (!view?.dom?.chat) return;
+  if (findActiveCompactCard(view)) return; // one active card at a time
+  appendCompactCard(view, 'active',
+    `<span class="compact-card-spinner"></span><span class="compact-card-label">${escapeHtml(t('chat.compactingCard'))}</span>`,
+    Date.now());
+}
+
+export function renderCompactDoneCard(view = activeView, { before, after, detail } = {}) {
+  const active = findActiveCompactCard(view);
+  const startTs = Number(active?.dataset.startTs) || 0;
+  const elapsed = startTs ? Math.max(1, Math.round((Date.now() - startTs) / 1000)) : 0;
+  let label = t('chat.compacted', { before, after, detail: detail || '' });
+  if (elapsed) label += t('chat.compactElapsed', { seconds: elapsed });
+  const inner = `<span class="compact-card-icon ok">${compactCheckSvg}</span><span class="compact-card-label">${escapeHtml(label)}</span>`;
+  if (active) {
+    active.dataset.state = 'done';
+    delete active.dataset.startTs;
+    active.innerHTML = inner;
+  } else {
+    // No active card (view was restored/switched mid-compaction) — append a
+    // card directly in its final state.
+    appendCompactCard(view, 'done', inner, 0);
+  }
+  smartScroll();
+}
+
+export function renderCompactFailCard(view = activeView, text) {
+  const active = findActiveCompactCard(view);
+  const inner = `<span class="compact-card-icon err">${compactFailSvg}</span><span class="compact-card-label">${escapeHtml(text)}</span>`;
+  if (active) {
+    active.dataset.state = 'error';
+    delete active.dataset.startTs;
+    active.innerHTML = inner;
+  } else {
+    appendCompactCard(view, 'error', inner, 0);
+  }
+  smartScroll();
+}
+
 
 // ---------- Universal Option Box ----------
 // Renders an inline option picker. Used by AskUser tool, /thinking, permission prompts.
