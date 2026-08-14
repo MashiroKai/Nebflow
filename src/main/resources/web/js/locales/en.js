@@ -135,6 +135,21 @@ export default {
   'model.contextPlaceholder': 'Context',
   'model.add': '+ Add Model',
 
+  // Provider model-list auto-fetch (B1)
+  'provider.fetchModels': 'Fetch model list',
+  'provider.fetchingModels': 'Fetching model list…',
+  'provider.fetchModelsLoaded': '{count} models fetched — pick from the dropdown',
+  'provider.fetchModelsFailed': 'Could not fetch the model list — enter it manually',
+  'provider.modelSelectPlaceholder': 'Select a model…',
+
+  // === Mail delivery mode badges ===
+  'mailDelivery.ask': 'Ask',
+  'mailDelivery.queue': 'Queue',
+  'mailDelivery.immediate': 'Immediate',
+  'mailDelivery.askTitle': 'Ask: the sender waits synchronously for a reply',
+  'mailDelivery.queueTitle': 'Queue: processed one by one after the current task finishes',
+  'mailDelivery.immediateTitle': 'Immediate: injected into the conversation right away',
+
   // === Session context menu ===
   'ctx.markUnread': 'Mark as unread',
   'ctx.pin': 'Pin',
