@@ -135,6 +135,21 @@ export default {
   'model.contextPlaceholder': '上下文',
   'model.add': '+ 添加模型',
 
+  // Provider model-list auto-fetch (B1)
+  'provider.fetchModels': '获取模型列表',
+  'provider.fetchingModels': '正在获取模型列表…',
+  'provider.fetchModelsLoaded': '已获取 {count} 个模型，可从下拉选择',
+  'provider.fetchModelsFailed': '未能自动获取模型列表，请手动输入',
+  'provider.modelSelectPlaceholder': '选择模型…',
+
+  // === Mail delivery mode badges ===
+  'mailDelivery.ask': '同步',
+  'mailDelivery.queue': '排队',
+  'mailDelivery.immediate': '即时',
+  'mailDelivery.askTitle': 'Ask：发送方同步等待回复',
+  'mailDelivery.queueTitle': 'Queue：排队，当前任务完成后逐条处理',
+  'mailDelivery.immediateTitle': 'Immediate：即时注入到对话',
+
   // === Session context menu (already Chinese) ===
   'ctx.markUnread': '标记为未读',
   'ctx.pin': '置顶',
@@ -222,6 +237,8 @@ export default {
   'chat.thinking.4': '穿越星云中...',
   'chat.thinking.5': '追光逐影中...',
   'chat.compacting': '正在压缩上下文...',
+  'chat.compactingCard': '正在压缩上下文',
+  'chat.compactElapsed': ' · 用时 {seconds}s',
   'chat.compacted': '上下文已压缩：{before} → {after} 条消息{detail}',
   'chat.compactFailed': '上下文压缩失败（第 {attempt}/{maxAttempts} 次）',
   'chat.compactCircuitBreaker': '上下文压缩连续 {attempt} 次失败，已熔断',

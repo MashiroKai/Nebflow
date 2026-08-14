@@ -891,6 +891,118 @@ onMessage('error', (data) => {
   }
 });
 
+// --- Provider model-list auto-fetch (B1) ---
+// Model choices fetched for the currently open provider modal. Set on a
+// successful POST /api/provider/models; renderModelRowContent reads it so
+// both existing and newly added rows offer a dropdown instead of free text.
+// The proxy endpoint may not exist yet (404) — fetch failure degrades to
+// manual input without blocking the flow.
+let providerModelChoices = null;
+
+function providerAuthHeaders() {
+  const tok = localStorage.getItem('nebflow_token') || '';
+  return tok ? { Authorization: `Bearer ${tok}` } : {};
+}
+
+async function fetchProviderModels(baseUrl, apiKey) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    const resp = await fetch('/api/provider/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...providerAuthHeaders() },
+      body: JSON.stringify({ baseUrl, apiKey }),
+      signal: ctrl.signal,
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) return { ok: false, error: data.error || `HTTP ${resp.status}` };
+    const models = Array.isArray(data.models) ? data.models.filter(m => typeof m === 'string' && m) : [];
+    return { ok: true, models };
+  } catch (e) {
+    return { ok: false, error: e.name === 'AbortError' ? 'timeout' : e.message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function renderModelIdSelect(currentId) {
+  const opts = [...providerModelChoices];
+  if (currentId && !opts.includes(currentId)) opts.unshift(currentId);
+  return `<select class="cfg-select cfg-model-id">
+    <option value="" disabled ${currentId ? '' : 'selected'}>${t('provider.modelSelectPlaceholder')}</option>
+    ${opts.map(o => `<option value="${escapeHtml(o)}" ${o === currentId ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
+  </select>`;
+}
+
+/** Convert manual id inputs in existing rows to dropdowns after a successful
+ *  fetch. Current values are preserved (added as an extra option if absent
+ *  from the fetched list). */
+function upgradeModelRowsToSelects(container) {
+  container.querySelectorAll('.cfg-model-row').forEach(row => {
+    const input = row.querySelector('input.cfg-model-id');
+    if (!input) return; // already a select
+    const current = input.value.trim();
+    const tmp = document.createElement('template');
+    tmp.innerHTML = renderModelIdSelect(current).trim();
+    input.replaceWith(tmp.content.firstChild);
+  });
+}
+
+/** Wire base URL → auto-fetch model list inside the provider modal: a fetch
+ *  button + status line above the models list, plus debounced auto-fetch on
+ *  baseUrl/apiKey change. Degrades gracefully when the proxy endpoint is
+ *  missing or the provider errors — manual input stays usable. */
+function wireProviderModelFetch() {
+  const overlay = document.getElementById('cfg-modal');
+  if (!overlay) return;
+  providerModelChoices = null;
+  const baseInput = overlay.querySelector('[data-field="baseUrl"]');
+  const keyInput = overlay.querySelector('[data-field="apiKey"]');
+  const container = overlay.querySelector('[data-field="models"]');
+  const group = container?.closest('.cfg-form-group');
+  if (!baseInput || !container || !group) return;
+
+  const statusRow = document.createElement('div');
+  statusRow.className = 'cfg-fetch-status-row';
+  statusRow.innerHTML = `<button type="button" class="cfg-fetch-models-btn">${t('provider.fetchModels')}</button><span class="cfg-fetch-status"></span>`;
+  group.insertBefore(statusRow, container);
+  const fetchBtn = statusRow.querySelector('.cfg-fetch-models-btn');
+  const status = statusRow.querySelector('.cfg-fetch-status');
+
+  let fetchGen = 0; // race guard: stale responses (older trigger) are dropped
+  async function runFetch() {
+    const baseUrl = baseInput.value.trim();
+    if (!baseUrl || !/^https?:\/\//.test(baseUrl)) {
+      status.textContent = '';
+      status.className = 'cfg-fetch-status';
+      return;
+    }
+    const gen = ++fetchGen;
+    fetchBtn.disabled = true;
+    status.textContent = t('provider.fetchingModels');
+    status.className = 'cfg-fetch-status loading';
+    const res = await fetchProviderModels(baseUrl, keyInput ? keyInput.value.trim() : '');
+    if (gen !== fetchGen || !overlay.isConnected) return;
+    fetchBtn.disabled = false;
+    if (res.ok && res.models.length > 0) {
+      providerModelChoices = res.models;
+      upgradeModelRowsToSelects(container);
+      status.textContent = t('provider.fetchModelsLoaded', { count: res.models.length });
+      status.className = 'cfg-fetch-status ok';
+    } else {
+      providerModelChoices = null;
+      status.textContent = t('provider.fetchModelsFailed');
+      status.className = 'cfg-fetch-status fail';
+    }
+  }
+
+  fetchBtn.addEventListener('click', runFetch);
+  let debounceTimer = null;
+  const autoFetch = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(runFetch, 400); };
+  baseInput.addEventListener('change', autoFetch);
+  keyInput?.addEventListener('change', autoFetch);
+}
+
 // --- Provider modal ---
 function showProviderModal(existingName, existingData, onSave) {
   const isEdit = !!existingName;
@@ -933,6 +1045,9 @@ function showProviderModal(existingName, existingData, onSave) {
       });
     }
   });
+  // baseUrl/apiKey change → auto-fetch model list (dropdown); degrades to
+  // manual input when the proxy endpoint is unavailable.
+  wireProviderModelFetch();
 }
 
 // --- Generic modal ---
@@ -1025,11 +1140,14 @@ function showModal({title, fields, onConfirm}) {
 }
 
 function renderModelRowContent(m) {
-  const id = m ? escapeHtml(m.id) : '';
+  const id = m ? m.id : '';
   const max = m ? m.maxTokens : '';
   const ctx = m ? m.contextWindow : '';
   const visionChecked = m && m.vision ? 'checked' : '';
-  return `<input class="cfg-input cfg-model-id" type="text" value="${id}" placeholder="${t('model.idPlaceholder')}">
+  const idField = providerModelChoices && providerModelChoices.length > 0
+    ? renderModelIdSelect(id)
+    : `<input class="cfg-input cfg-model-id" type="text" value="${escapeHtml(id)}" placeholder="${t('model.idPlaceholder')}">`;
+  return `${idField}
 <label class="cfg-model-vision-check"><input type="checkbox" class="cfg-model-vision-cb" ${visionChecked}> Vision</label>
 <input class="cfg-input cfg-model-max" type="number" value="${max}" placeholder="${t('model.maxTokensPlaceholder')}">
 <input class="cfg-input cfg-model-ctx" type="number" value="${ctx}" placeholder="${t('model.contextPlaceholder')}">
