@@ -2808,7 +2808,13 @@ class WebSocketRoutes(
                             if mimeType.contains("png") then "png"
                             else if mimeType.contains("webp") then "webp"
                             else "jpg"
-                          val fileName = s"${System.nanoTime()}_$name"
+                          // Use the MIME-derived extension, not the original
+                          // filename's: the frontend re-encodes uploads to JPEG
+                          // (compressImage), so "shot.png" would otherwise be
+                          // saved with JPEG bytes under a .png name — and
+                          // ReadTool maps MIME by extension.
+                          val stem = name.replaceAll("\\.[a-zA-Z0-9]+$", "")
+                          val fileName = s"${System.nanoTime()}_$stem.$ext"
                           val safeName = fileName.replaceAll("[/\\\\]", "_").replace("..", "_")
                           val filePath = uploadDir / safeName
                           val decoded = java.util.Base64.getDecoder.decode(data)
