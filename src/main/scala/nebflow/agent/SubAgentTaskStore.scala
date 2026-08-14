@@ -48,6 +48,14 @@ class SubAgentTaskStore(baseDir: os.Path):
   private val logger = NebflowLogger.forName("nebflow.subagent-task.store")
 
   private def sessionFile(parentSessionId: String): os.Path =
+    // Guard: a blank parentSessionId (caller bug — e.g. an unsupervised
+    // context with no session) must not silently write to ".json" where it
+    // pollutes the directory and is never read back. Callers already wrap
+    // store operations in handleErrorWith, so this degrades to a warn.
+    if parentSessionId.isBlank then
+      throw new IllegalArgumentException(
+        s"subAgentTaskStore: blank parentSessionId refused (would write ${baseDir}/.json)"
+      )
     baseDir / s"$parentSessionId.json"
 
   private def ensureBaseDir: IO[Unit] = IO.blocking {

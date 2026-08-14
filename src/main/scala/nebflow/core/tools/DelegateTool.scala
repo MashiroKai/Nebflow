@@ -385,6 +385,7 @@ $prompt"""
           description = description,
           agentName = agentName,
           subagentId = subagentId,
+          parentSessionId = parentSessionId.getOrElse(""),
           resources = resources,
           initialPrompt = prompt,
           source = "delegate",
