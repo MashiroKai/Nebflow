@@ -99,6 +99,10 @@ export function applyLocaleToHtml() {
     ['sidebar-edge', 'title', 'sidebar.edgeToggle'],
     ['new-agent-btn', 'title', 'nav.newAgent'],
     ['new-folder-btn', 'title', 'sidebar.newFolder'],
+    ['search-btn', 'title', 'search.btnTitle'],
+    ['search-modal-title', 'text', 'search.title'],
+    ['search-keyword', 'placeholder', 'search.placeholder'],
+    ['search-go', 'text', 'search.go'],
   ];
   for (const [id, attr, key] of extras) {
     const el = document.getElementById(id);

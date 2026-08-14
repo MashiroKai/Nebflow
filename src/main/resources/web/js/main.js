@@ -37,6 +37,7 @@ import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initDaemons } from './daemons.js';
+import { initChatSearch } from './chatSearch.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { handleFlowAgentHistory } from './flowAgentPopup.js';
@@ -2246,6 +2247,7 @@ if (!restoreTabs()) {
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
 initDaemons();
+initChatSearch();
 initNeblink();
 initDropbox();
 planMode.init();
