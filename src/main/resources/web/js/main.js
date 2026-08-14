@@ -1501,8 +1501,10 @@ onMessage('compactComplete', (msg, view) => {
     const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
     renderSystemBubble(t('chat.compacted', { before: msg.before, after: msg.after, detail }));
   }
-  // Drain queued messages (compact = busy state, messages were queued)
-  if (sid) {
+  // Drain queued messages only if agent is NOT busy. During auto-compaction
+  // with resume, the agent immediately starts a resume turn after compactComplete.
+  // The 'done' event after the resume turn will drain correctly when idle.
+  if (sid && !state.busySessionIds.has(sid)) {
     import('./input.js').then(({ drainMessageQueue }) => setTimeout(() => drainMessageQueue(sid), 50));
   }
 });
