@@ -172,4 +172,27 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Mail"), "team agent keeps Mail")
     assert(allowed.contains("SubTask"), "team agent keeps SubTask")
+
+  // ===== Flow agents: Mail structurally disabled (08-14 P0 root cause) =====
+
+  test("flow agent with '*' wildcard never gets Mail (P0 penetration case)"):
+    val flowWildcard = mkDef("scanner", List("*")).copy(category = "flow")
+    val allowed = CoreProbe.allowed(flowWildcard)
+    assert(!allowed.contains("Mail"), "flow agent with '*' must not get Mail — a flow agent calling Mail(ask) blocks forever (08-14 P0)")
+    assert(allowed.contains("FlowReport"), "flow agent keeps FlowReport")
+    assert(allowed.contains("Read"), "flow agent keeps normal tools")
+
+  test("flow agent with Mail explicitly listed still loses it"):
+    val flowExplicit = mkDef("reviewer", List("Read", "Mail")).copy(category = "flow")
+    val allowed = CoreProbe.allowed(flowExplicit)
+    assert(!allowed.contains("Mail"), "explicitly listed Mail is stripped for flow agents")
+    assert(allowed.contains("Read"), "other tools unaffected")
+
+  test("team and standalone Mail access unaffected by the flow filter"):
+    val team = mkDef("backend", List("Read")).copy(category = "team")
+    assert(CoreProbe.allowed(team).contains("Mail"), "team agent keeps Mail")
+    // Standalone agents that explicitly list Mail keep it — the structural
+    // block is flow-only (flow nodes report via FlowReport).
+    val solo = mkDef("solo", List("Read", "Mail"))
+    assert(CoreProbe.allowed(solo).contains("Mail"), "standalone agent explicitly listing Mail keeps it")
 end AllowedToolSetSpec
