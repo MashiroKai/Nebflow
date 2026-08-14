@@ -182,14 +182,24 @@ class RestApiRoutes(
         req.as[Json].flatMap { body =>
           val providerId = body.hcursor.downField("providerId").as[String].getOrElse("")
           val modelId = body.hcursor.downField("modelId").as[String].getOrElse("")
-          val vision = body.hcursor.downField("vision").as[Boolean].getOrElse(false)
+          // B3 Phase 2: vision is tri-state — absent in the request body keeps
+          // the existing annotation instead of collapsing to false.
+          val visionOpt = body.hcursor.downField("vision").as[Option[Boolean]].toOption.flatten
           val capabilities = body.hcursor.downField("capabilities").as[List[String]].getOrElse(Nil)
           if providerId.nonEmpty && modelId.nonEmpty then
             val key = s"$providerId/$modelId"
             val current = nebflow.llm.ModelRegistry.loadForApi
             val updatedEntry = current.models.get(key) match
-              case Some(existing) => existing.copy(vision = vision, capabilities = capabilities)
-              case None => nebflow.llm.ModelRegistry.ModelEntry(vision = vision, capabilities = capabilities)
+              case Some(existing) =>
+                existing.copy(
+                  vision = visionOpt.orElse(existing.vision),
+                  capabilities = capabilities
+                )
+              case None =>
+                nebflow.llm.ModelRegistry.ModelEntry(
+                  vision = visionOpt,
+                  capabilities = capabilities
+                )
             val updatedModels = current.models + (key -> updatedEntry)
             nebflow.llm.ModelRegistry.save(updatedModels)
             Ok(Json.obj("status" -> "ok".asJson))

@@ -134,6 +134,7 @@ export default {
   'model.maxTokensPlaceholder': 'Max tokens',
   'model.contextPlaceholder': 'Context',
   'model.add': '+ Add Model',
+  'model.visionAuto': 'Vision — auto-detected at runtime (errors disable it automatically)',
 
   // === Session context menu ===
   'ctx.markUnread': 'Mark as unread',
