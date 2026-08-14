@@ -1,6 +1,7 @@
 package nebflow.core.flow
 
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
+import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 
@@ -38,21 +39,50 @@ object RunningFlowRegistry:
   private val flows: Ref[IO, Map[String, RunningFlow]] = Ref.unsafe(Map.empty)
   private val cancelledFlows: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
 
-  /** Mark a flow as cancelled. The DAG executor checks this between nodes. */
+  // Per-instance cancel signal: completed by cancel(), raced against by the
+  // DAG executor's executeAgent so a user cancel PIERCES the running node
+  // (Stop + actor stop) instead of waiting for it to finish on its own.
+  // The cancelledFlows flag stays: it covers the between-nodes check.
+  private val cancelSignals: Ref[IO, Map[String, Deferred[IO, Unit]]] = Ref.unsafe(Map.empty)
+
+  /**
+   * Mark a flow as cancelled. Sets the between-nodes flag and completes the
+   * per-instance cancel signal (idempotent — Deferred.complete on an
+   * already-completed signal is a no-op, so repeated cancels are harmless).
+   */
   def cancel(instanceId: String): IO[Unit] =
     cancelledFlows.update(_ + instanceId) *>
-      update(instanceId)(_.copy(status = NodeStatus.Cancelled))
+      update(instanceId)(_.copy(status = NodeStatus.Cancelled)) *>
+      cancelSignals.get.flatMap(_.get(instanceId).traverse_(_.complete(())))
 
   /** Check if a flow has been cancelled. */
   def isCancelled(instanceId: String): IO[Boolean] =
     cancelledFlows.get.map(_.contains(instanceId))
 
-  /** Clear the cancel flag (called after flow execution ends). */
+  /**
+   * Clear the cancel flag and drop the cancel signal (called after flow
+   * execution ends so the signal map doesn't grow unboundedly).
+   */
   def clearCancelled(instanceId: String): IO[Unit] =
-    cancelledFlows.update(_ - instanceId)
+    cancelledFlows.update(_ - instanceId) *>
+      cancelSignals.update(_ - instanceId)
+
+  /**
+   * The per-instance cancel signal. Creates one if absent (register normally
+   * already did), so a caller can always race on a real Deferred.
+   */
+  def cancelSignal(instanceId: String): IO[Deferred[IO, Unit]] =
+    Deferred[IO, Unit].flatMap { fresh =>
+      cancelSignals.modify { m =>
+        m.get(instanceId) match
+          case Some(existing) => (m, existing)
+          case None           => (m + (instanceId -> fresh), fresh)
+      }
+    }
 
   def register(flow: RunningFlow): IO[Unit] =
-    flows.update(_ + (flow.instanceId -> flow))
+    flows.update(_ + (flow.instanceId -> flow)) *>
+      cancelSignal(flow.instanceId).void
 
   def update(instanceId: String)(f: RunningFlow => RunningFlow): IO[Unit] =
     flows.update(m => m.get(instanceId).map(f).map(rf => m + (instanceId -> rf)).getOrElse(m))
@@ -94,20 +124,22 @@ object RunningFlowRegistry:
 
   /** Remove a completed/failed flow instance. */
   def remove(instanceId: String): IO[Unit] =
-    flows.update(_ - instanceId)
+    flows.update(_ - instanceId) *>
+      cancelSignals.update(_ - instanceId)
 
   /**
    * Remove flows that completed more than 5 minutes ago.
    * Called periodically to prevent unbounded memory growth.
    */
   def cleanupStale(retentionMs: Long = 5 * 60 * 1000): IO[Unit] =
-    flows.update { m =>
+    flows.modify { m =>
       val now = System.currentTimeMillis()
-      m.filterNot { (_, rf) =>
+      val kept = m.filterNot { (_, rf) =>
         (rf.status == NodeStatus.Completed || rf.status == NodeStatus.Failed) &&
         rf.completedAt.exists(now - _ > retentionMs)
       }
-    }
+      (kept, kept)
+    }.flatMap(kept => cancelSignals.update(sig => sig.filter((id, _) => kept.contains(id))))
 
   def toJson(flow: RunningFlow): JsonObject = JsonObject.fromIterable(
     List(

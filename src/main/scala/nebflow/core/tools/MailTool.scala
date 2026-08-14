@@ -25,17 +25,13 @@ import scala.concurrent.duration.*
  *   triggers a full turn — processed one at a time, only after the current task
  *   completes. Use for serial task chains: "do this, then that, then that."
  * - ask: Synchronously fork the target agent's context, block for the answer.
- *   Non-flow callers convert to background after 60s. Flow callers get a hard
- *   5-minute timeout. Backward compatible with `ask: true`.
+ *   Converts to background after 60s. Backward compatible with `ask: true`.
  */
 object MailTool extends Tool:
   private val logger = NebflowLogger(getClass)
 
   /** After this wait, a synchronous ask converts to a background task instead of failing. */
   private val AskBackgroundThreshold: FiniteDuration = 60.seconds
-
-  /** Flow-agent callers cannot use background conversion, so they get a hard timeout instead. */
-  private val FlowAskTimeout: FiniteDuration = 5.minutes
 
   val name: String = "Mail"
 
@@ -329,7 +325,6 @@ Message type (optional, default "INFO"):
         tempSession.id,
         responseDeferred,
         address,
-        ctx.agentDef.exists(_.category == "flow"),
         ctx
       )
     yield result
@@ -337,17 +332,15 @@ Message type (optional, default "INFO"):
   /**
    * Wait for the fork answer.
    *
-   * Flow-agent callers stay synchronous (no background conversion — their
-   * transient sessions cannot receive completion notifications) but get a hard
-   * timeout: if the forked agent never answers, the caller receives a timeout
-   * error instead of blocking the flow step forever.
-   *
-   * Other callers race the answer against the background threshold: if the
-   * answer arrives first, this is the old synchronous mode. If the threshold
-   * wins, the ask converts to a background task — same pattern as BashTool's
+   * Races the answer against the background threshold: if the answer arrives
+   * first, this is the old synchronous mode. If the threshold wins, the ask
+   * converts to a background task — same pattern as BashTool's
    * auto-background: immediate feedback to the caller, the fork agent keeps
    * running, and the answer is later injected into the caller's conversation
    * via ExternalEvent. No hard timeout — the ask never fails on slowness.
+   *
+   * (Flow agents no longer reach this path at all: buildAllowedToolSet
+   * strips Mail from flow-category agents, so they cannot ask.)
    */
   private def waitForForkAnswer(
     system: ActorSystem,
@@ -357,7 +350,6 @@ Message type (optional, default "INFO"):
     tempSessionId: String,
     responseDeferred: Deferred[IO, Either[String, String]],
     address: String,
-    isFlowCaller: Boolean,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     // Stop fork agent + adapter, delete temp session.
@@ -366,54 +358,39 @@ Message type (optional, default "INFO"):
         system.stop(adapterRef).handleErrorWith(_ => IO.unit) *>
         resources.sessionStore.deleteSession(tempSessionId).handleErrorWith(_ => IO.unit)
 
-    if isFlowCaller then
-      responseDeferred.get.race(IO.sleep(FlowAskTimeout)).flatMap {
-        case Left(Right(text)) => cleanupFork *> IO.pure(Right(text))
-        case Left(Left(err)) => cleanupFork *> IO.pure(Left(ToolError(err)))
-        case Right(_) =>
-          logger.warn(s"Mail ask to '$address' timed out after ${FlowAskTimeout.toMinutes} min (flow caller)")
-          cleanupFork *>
-            IO.pure(
-              Left(
-                ToolError(s"Mail ask to '$address' timed out after ${FlowAskTimeout.toMinutes} minutes")
-              )
-            )
-      }
-    else
-      responseDeferred.get.race(IO.sleep(AskBackgroundThreshold)).flatMap {
-        case Left(Right(text)) => cleanupFork *> IO.pure(Right(text))
-        case Left(Left(err)) => cleanupFork *> IO.pure(Left(ToolError(err)))
-        case Right(_) =>
-          val jobId = s"ask-${java.util.UUID.randomUUID().toString.take(8)}"
-          val description = s"ask $address"
-          for
-            _ <- BgTaskRegistry.register(jobId, ctx.sessionId.getOrElse(""), description, "ask")
-            _ <- emitAskStarted(ctx, jobId, description)
-            // Detached fiber: wait for the fork to finish, then cleanup +
-            // notify the caller. Never fails the ask — the fork decides.
-            _ <- (responseDeferred.get
-              .flatMap {
-                case Right(text) =>
-                  cleanupFork *>
-                    BgTaskRegistry.unregister(jobId) *>
-                    emitAskFinished(ctx, jobId, description, succeeded = true) *>
-                    notifyAskCompleted(ctx, address, jobId, text, succeeded = true)
-                case Left(err) =>
-                  cleanupFork *>
-                    BgTaskRegistry.unregister(jobId) *>
-                    emitAskFinished(ctx, jobId, description, succeeded = false) *>
-                    notifyAskCompleted(ctx, address, jobId, err, succeeded = false)
-              })
-              .start
-              .void
-          yield Right(
-            s"[Ask moved to background] Mail ask to '$address' has been running for over " +
-              s"${AskBackgroundThreshold.toSeconds}s. The fork continues in the background — " +
-              "you will be notified when the answer arrives. Continue with other work or finish your turn."
-          )
-          end for
-      }
-    end if
+    responseDeferred.get.race(IO.sleep(AskBackgroundThreshold)).flatMap {
+      case Left(Right(text)) => cleanupFork *> IO.pure(Right(text))
+      case Left(Left(err)) => cleanupFork *> IO.pure(Left(ToolError(err)))
+      case Right(_) =>
+        val jobId = s"ask-${java.util.UUID.randomUUID().toString.take(8)}"
+        val description = s"ask $address"
+        for
+          _ <- BgTaskRegistry.register(jobId, ctx.sessionId.getOrElse(""), description, "ask")
+          _ <- emitAskStarted(ctx, jobId, description)
+          // Detached fiber: wait for the fork to finish, then cleanup +
+          // notify the caller. Never fails the ask — the fork decides.
+          _ <- (responseDeferred.get
+            .flatMap {
+              case Right(text) =>
+                cleanupFork *>
+                  BgTaskRegistry.unregister(jobId) *>
+                  emitAskFinished(ctx, jobId, description, succeeded = true) *>
+                  notifyAskCompleted(ctx, address, jobId, text, succeeded = true)
+              case Left(err) =>
+                cleanupFork *>
+                  BgTaskRegistry.unregister(jobId) *>
+                  emitAskFinished(ctx, jobId, description, succeeded = false) *>
+                  notifyAskCompleted(ctx, address, jobId, err, succeeded = false)
+            })
+            .start
+            .void
+        yield Right(
+          s"[Ask moved to background] Mail ask to '$address' has been running for over " +
+            s"${AskBackgroundThreshold.toSeconds}s. The fork continues in the background — " +
+            "you will be notified when the answer arrives. Continue with other work or finish your turn."
+        )
+        end for
+    }
   end waitForForkAnswer
 
   /** Emit a WS event so the frontend shows the ask as a background task. */

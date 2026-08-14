@@ -30,12 +30,6 @@ import scala.concurrent.duration.*
 object FlowDagExecutor:
   private val logger = NebflowLogger.forName("nebflow.entity.executor")
 
-  /** Per-node timeout: a single agent node may run up to this long. */
-  private val NodeTimeout: FiniteDuration = 5.minutes
-
-  /** Global flow timeout: the entire DAG must complete within this limit. */
-  private val GlobalFlowTimeout: FiniteDuration = 30.minutes
-
   /**
    * Execute a flow DAG.
    *
@@ -126,6 +120,7 @@ object FlowDagExecutor:
                   actorSystem,
                   wsSend,
                   flow.name,
+                  instanceId,
                   parentAgentRef,
                   rootSessionId
                 )
@@ -240,7 +235,11 @@ object FlowDagExecutor:
               _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, NodeStatus.Running)
               _ <- emitProgress(nodeId, NodeStatus.Running)
               (result, ctx2) <- executeNode(nodeId, ctx)
-              status = NodeStatus.toNodeStatus(result, cancelled = false)
+              // Cancel may have pierced the node mid-run (executeAgent races
+              // the cancel signal) — re-check so the node's terminal status
+              // reflects "cancelled" instead of a misleading "failed".
+              cancelledNow <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)
+              status = NodeStatus.toNodeStatus(result, cancelled = cancelledNow)
               _ <-
                 if status == NodeStatus.Completed then
                   nebflow.core.flow.RunningFlowRegistry.setNodeStatus(
@@ -259,11 +258,11 @@ object FlowDagExecutor:
                   nebflow.core.flow.RunningFlowRegistry.setNodeStatus(
                     instanceId,
                     nodeId,
-                    NodeStatus.Failed,
+                    status,
                     "",
                     result.error.getOrElse("unknown")
                   ) *>
-                    emitProgress(nodeId, NodeStatus.Failed, "error" -> result.error.getOrElse("unknown").asJson)
+                    emitProgress(nodeId, status, "error" -> result.error.getOrElse("unknown").asJson)
               handled <- handleResult(nodeId, result, ctx2)
               finalResult <- handled match
                 case Left(err) => IO.pure(Left(err))
@@ -309,17 +308,11 @@ object FlowDagExecutor:
           }.asJson
         )
       )
-      raceResult <- IO.race(
-        runNode(flow.entry, FlowExecContext(flow.name, taskInput)),
-        IO.sleep(GlobalFlowTimeout)
-      )
-      result = raceResult match
-        case Left(r) => r
-        case Right(_) =>
-          logger.warn(s"Flow '${flow.name}' timed out after ${GlobalFlowTimeout.toMinutes} minutes")
-          Left[String, String](
-            s"Flow '${flow.name}' timed out after ${GlobalFlowTimeout.toMinutes} minutes"
-          )
+      // No global wall-clock timeout: flow termination is event-driven —
+      // routing to $return, onError Stop, or user cancel. The routing loop
+      // itself is bounded by maxLoop. Node lifetime is governed by agent-
+      // internal timeouts (LLM first-token / stream-idle, per-tool timeouts).
+      result <- runNode(flow.entry, FlowExecContext(flow.name, taskInput))
       // Update final status (preserve "cancelled" if it was cancelled)
       cancelled <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)
       _ <-
@@ -391,10 +384,15 @@ object FlowDagExecutor:
    *  Uses a Deferred + bridge actor pattern instead of ask-with-timeout:
    *  - A temporary actor receives the AgentEvent (Completed/Failed) from the agent
    *  - The bridge completes a Deferred, unblocking executeAgent
-   *  - Node-level timeout (5 min): if the agent never finishes (e.g. a blocking
-   *    tool call), the node fails with a timeout error instead of stalling the
-   *    flow forever
-   *  - LLM-level timeouts (first-token, response) still apply inside the agent
+   *  - Deliberately NO wall-clock timeout: node lifetime is event-driven —
+   *    every finishTurn path guarantees the replyTo gets Completed/Failed,
+   *    and actor onError recovery covers exceptional exits. Liveness is the
+   *    agent's own responsibility (LLM first-token/stream-idle timeouts,
+   *    per-tool timeouts). A 5-minute node timeout was tried (09f4be58) and
+   *    killed legitimate long work (8-minute sbt compiles), so it was removed.
+   *  - The only early exit is the user's cancel signal: cancelFlow pierces
+   *    the RUNNING node (Stop the agent's turn, stop the actor) instead of
+   *    waiting for the node to finish on its own.
    */
   private def executeAgent(
     nodeId: String,
@@ -405,6 +403,7 @@ object FlowDagExecutor:
     actorSystem: ActorSystem,
     wsSend: Option[Json => IO[Unit]],
     flowName: String,
+    instanceId: String,
     parentAgentRef: Option[ActorRef[AgentCommand]] = None,
     rootSessionId: String = ""
   ): IO[NodeResult] =
@@ -428,14 +427,21 @@ object FlowDagExecutor:
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
       resultDeferred <- Deferred[IO, Either[String, List[Message]]]
-      // Bridge actor: receives AgentEvent, completes the Deferred, self-stops
+      // Bridge actor: receives AgentEvent, completes the Deferred, self-stops.
+      // The deferred MUST be completed synchronously inside the receive action:
+      // forkTurn here races with returning Behaviors.stopped — the actor loop
+      // exits and its guarantee cancels the current turn before the forked
+      // fiber runs, leaving the deferred forever incomplete and the executor
+      // hanging (the intermittent "flow freeze" this executor was blamed for).
+      // The receive IO runs to completion before the loop observes
+      // Behaviors.stopped, so a direct complete has no such window.
       bridgeRef <- actorSystem.spawn(
-        Behaviors.receive[AgentEvent] { (ctx, event) =>
+        Behaviors.receive[AgentEvent] { (_, event) =>
           event match
             case AgentEvent.Completed(_, messages) =>
-              ctx.forkTurn(resultDeferred.complete(Right(messages)).void).as(Behaviors.stopped)
+              resultDeferred.complete(Right(messages)).void.as(Behaviors.stopped)
             case AgentEvent.Failed(_, err) =>
-              ctx.forkTurn(resultDeferred.complete(Left(err.message)).void).as(Behaviors.stopped)
+              resultDeferred.complete(Left(err.message)).void.as(Behaviors.stopped)
         },
         s"bridge-${nodeId.take(10)}-${sessionId.take(8)}"
       )
@@ -470,13 +476,23 @@ object FlowDagExecutor:
         text = inputText,
         replyTo = Some(bridgeRef)
       )).void
-      // Wait for completion — with node-level timeout to prevent permanent stalls
-      raceResult <- IO.race(resultDeferred.get, IO.sleep(NodeTimeout))
-      eventResult = raceResult match
-        case Left(r) => r
+      // Wait for completion — no wall-clock timeout (see method doc). The only
+      // competing event is the user's cancel signal.
+      cancelSig <- nebflow.core.flow.RunningFlowRegistry.cancelSignal(instanceId)
+      raceResult <- IO.race(resultDeferred.get, cancelSig.get)
+      // Cancel pierce: tell the agent to abandon its in-flight turn first
+      // (Stop → cancelCurrentTurn aborts the turn fiber), then fall through
+      // to the shared cleanup below — stop(ref)'s guarantee cancels whatever
+      // remains. A cancelled node never retries: the completed signal makes
+      // any Restart retry of this node fail instantly with the same error.
+      _ <- raceResult match
         case Right(_) =>
-          logger.warn(s"Node '$nodeId' timed out after ${NodeTimeout.toMinutes} minutes")
-          Left(s"Node '$nodeId' timed out after ${NodeTimeout.toMinutes} minutes")
+          logger.info(s"Flow '$flowName' node '$nodeId' cancelled by user — stopping agent")
+          (ref ! AgentCommand.Stop("Flow cancelled by user")).void
+        case Left(_) => IO.unit
+      eventResult = raceResult match
+        case Left(r)  => r
+        case Right(_) => Left("Flow cancelled by user")
       _ <- resources.agentRegistry.update(_ - sessionId)
       _ <- actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
       _ <- actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
