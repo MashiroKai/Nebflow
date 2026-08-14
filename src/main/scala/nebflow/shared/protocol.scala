@@ -250,7 +250,8 @@ object UiMessage:
     source: Option[String] = None,
     eventType: Option[String] = None,
     sender: Option[String] = None,
-    senderTeam: Option[String] = None
+    senderTeam: Option[String] = None,
+    delivery: Option[String] = None
   ) extends UiMessage:
     val typeName = "user"
 
@@ -302,7 +303,8 @@ object UiMessage:
       val withSrc = m.source.fold(withInj)(s => withInj.deepMerge(Json.obj("source" -> s.asJson)))
       val withEt = m.eventType.fold(withSrc)(et => withSrc.deepMerge(Json.obj("eventType" -> et.asJson)))
       val withSender = m.sender.fold(withEt)(s => withEt.deepMerge(Json.obj("sender" -> s.asJson)))
-      m.senderTeam.fold(withSender)(t => withSender.deepMerge(Json.obj("senderTeam" -> t.asJson)))
+      val withTeam = m.senderTeam.fold(withSender)(t => withSender.deepMerge(Json.obj("senderTeam" -> t.asJson)))
+      m.delivery.fold(withTeam)(d => withTeam.deepMerge(Json.obj("delivery" -> d.asJson)))
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -351,6 +353,7 @@ object UiMessage:
           eventType <- cursor.downField("eventType").as[Option[String]]
           sender <- cursor.downField("sender").as[Option[String]]
           senderTeam <- cursor.downField("senderTeam").as[Option[String]]
+          delivery <- cursor.downField("delivery").as[Option[String]]
         yield User(
           text,
           atts.getOrElse(Nil),
@@ -359,7 +362,8 @@ object UiMessage:
           source,
           eventType,
           sender,
-          senderTeam
+          senderTeam,
+          delivery
         )
       case "ai" =>
         for

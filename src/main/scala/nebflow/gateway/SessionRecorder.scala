@@ -72,6 +72,8 @@ class SessionRecorder private (
         val source = hc.downField("source").as[Option[String]].getOrElse(None)
         val eventType = hc.downField("eventType").as[Option[String]].getOrElse(None)
         val sender = hc.downField("sender").as[Option[String]].getOrElse(None)
+        val senderTeam = hc.downField("senderTeam").as[Option[String]].getOrElse(None)
+        val delivery = hc.downField("delivery").as[Option[String]].getOrElse(None)
         if text.nonEmpty then
           sessionStore.appendUiMessages(
             sessionId,
@@ -82,7 +84,9 @@ class SessionRecorder private (
                 timestamp = System.currentTimeMillis(),
                 source = source,
                 eventType = eventType,
-                sender = sender
+                sender = sender,
+                senderTeam = senderTeam,
+                delivery = delivery
               )
             )
           )
