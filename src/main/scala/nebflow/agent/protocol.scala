@@ -30,7 +30,9 @@ object AgentCommand:
     /** Sender agent name for Mail-delivered messages (shown as attribution label). */
     sender: Option[String] = None,
     /** Team name of the sender for Mail-delivered messages (shown as attribution label). */
-    senderTeam: Option[String] = None
+    senderTeam: Option[String] = None,
+    /** Delivery mode marker: "ask" | "queue" | "immediate" for Mail-injected inputs. */
+    delivery: Option[String] = None
   ) extends AgentCommand
 
   case class ImmediateInput(
@@ -43,7 +45,9 @@ object AgentCommand:
     /** Sender agent name for Mail-delivered messages (shown as attribution label). */
     sender: Option[String] = None,
     /** Team name of the sender for Mail-delivered messages. */
-    senderTeam: Option[String] = None
+    senderTeam: Option[String] = None,
+    /** Delivery mode marker: "ask" | "queue" | "immediate" for Mail delivery. */
+    delivery: Option[String] = None
   ) extends AgentCommand
   case class Interrupt() extends AgentCommand
 

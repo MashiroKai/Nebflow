@@ -3522,6 +3522,7 @@ class WebSocketRoutes(
         val evtType = hc.downField("eventType").as[Option[String]].getOrElse(None)
         val sender = hc.downField("sender").as[Option[String]].getOrElse(None)
         val senderTeam = hc.downField("senderTeam").as[Option[String]].getOrElse(None)
+        val delivery = hc.downField("delivery").as[Option[String]].getOrElse(None)
         val targetSession = hc
           .downField("nodeSessionId")
           .as[String]
@@ -3541,7 +3542,8 @@ class WebSocketRoutes(
                 source = source,
                 eventType = evtType,
                 sender = sender,
-                senderTeam = senderTeam
+                senderTeam = senderTeam,
+                delivery = delivery
               )
             )
           )

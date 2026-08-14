@@ -91,7 +91,8 @@ object AgentActor extends AgentCore with AgentSession:
     source: String,
     eventType: Option[String] = None,
     sender: Option[String] = None,
-    senderTeam: Option[String] = None
+    senderTeam: Option[String] = None,
+    delivery: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
       val base = Json.obj(
@@ -104,6 +105,7 @@ object AgentActor extends AgentCore with AgentSession:
       val withEt = eventType.fold(base)(et => base.deepMerge(Json.obj("eventType" -> et.asJson)))
       val withSender = sender.fold(withEt)(s => withEt.deepMerge(Json.obj("sender" -> s.asJson)))
       val withTeam = senderTeam.fold(withSender)(t => withSender.deepMerge(Json.obj("senderTeam" -> t.asJson)))
+      val withDelivery = delivery.fold(withTeam)(d => withTeam.deepMerge(Json.obj("delivery" -> d.asJson)))
       ctx.forkTurn(
         wsSend(withTeam).handleErrorWith(e => IO(logger.warn(s"injected user event failed: ${e.getMessage}")))
       )
@@ -246,7 +248,7 @@ object AgentActor extends AgentCore with AgentSession:
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
-      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam) =>
+      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery) =>
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then
           logger.info(s"Dropping duplicate message with clientMessageId=${clientMessageId.getOrElse("")}")
@@ -282,7 +284,15 @@ object AgentActor extends AgentCore with AgentSession:
             else IO.unit
           val injectedEventIO = injectionSource match
             case Some(src) =>
-              emitInjectedUserEvent(stateWithWidth.wsSend, stateWithWidth.sessionId, text, src, sender = sender, senderTeam = senderTeam)
+              emitInjectedUserEvent(
+                stateWithWidth.wsSend,
+                stateWithWidth.sessionId,
+                text,
+                src,
+                sender = sender,
+                senderTeam = senderTeam,
+                delivery = delivery
+              )
             case None => IO.unit
           for
             _ <- sessionBusyIO
@@ -548,8 +558,8 @@ object AgentActor extends AgentCore with AgentSession:
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
-      case AgentCommand.ImmediateInput(text, blocks, source, _, sender, senderTeam) =>
-        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam)
+      case AgentCommand.ImmediateInput(text, blocks, source, _, sender, senderTeam, delivery) =>
+        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery)
         yield idle(agentDef, resources, depth, parentRef, state)
 
       // Queued mail arriving in idle — drain immediately as a new turn
@@ -564,7 +574,8 @@ object AgentActor extends AgentCore with AgentSession:
             None,
             0,
             source = Some("mail-queue"),
-            sender = Some(item.from)
+            sender = Some(item.from),
+            delivery = Some("queue")
           )
           // Emit WS so frontend removes the pending item
           _ <- emitDequeuedWs(state.wsSend, sid, item.id)
@@ -1037,7 +1048,16 @@ object AgentActor extends AgentCore with AgentSession:
           case None => Nil
         val immEventIO = immInputOpt match
           case Some(imm) if imm.source.isDefined =>
-            emitInjectedUserEvent(state.wsSend, state.sessionId, imm.text, imm.source.get, imm.eventType, imm.sender, imm.senderTeam)
+            emitInjectedUserEvent(
+              state.wsSend,
+              state.sessionId,
+              imm.text,
+              imm.source.get,
+              imm.eventType,
+              imm.sender,
+              imm.senderTeam,
+              imm.delivery
+            )
           case _ => IO.unit
         val newMessages =
           baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages
@@ -1308,7 +1328,8 @@ object AgentActor extends AgentCore with AgentSession:
                               src,
                               imm.eventType,
                               imm.sender,
-                              imm.senderTeam
+                              imm.senderTeam,
+                              imm.delivery
                             )
                           case None => IO.unit
                         res <- pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
@@ -1963,7 +1984,7 @@ object AgentActor extends AgentCore with AgentSession:
                 else IO.unit
               _ <- emitInjectedUserEvent(
                 state.wsSend, state.sessionId, item.message,
-                "mail-queue", Some("queue"), Some(item.from), None
+                "mail-queue", Some("queue"), Some(item.from), None, Some("queue")
               )
               _ <- ctx.forkTurn(
                 (resources.sessionStore.saveMessagesForSession(sid, messagesWithQueue) *>
