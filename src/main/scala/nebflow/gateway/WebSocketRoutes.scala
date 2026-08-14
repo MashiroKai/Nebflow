@@ -376,7 +376,7 @@ class WebSocketRoutes(
     if sessionId.isEmpty then IO.unit
     else ensureAgent(sessionId)(ref => ref ! command)
 
-  def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
+  def routes: HttpRoutes[IO] = WebSocketRoutes.uploadsRoutes(token) <+> HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
       // Cookie takes priority to avoid token leakage in browser history/logs/Referer.
       // Query param kept as fallback for cross-origin or first-load scenarios.
@@ -3754,3 +3754,48 @@ class WebSocketRoutes(
           .map(_.id)
 
 end WebSocketRoutes
+
+object WebSocketRoutes:
+
+  /**
+    * G1: serve user-uploaded attachments from
+    * `~/.nebflow/uploads/<sid>/<file>`. Restored session history (ui.json)
+    * records attachments as {name,type,path}; without a route serving the
+    * uploads dir those images are unrenderable after a restart.
+    *
+    * Authenticated — unlike the voice-models route, uploads are user
+    * screenshots (sensitive). Cookie `nebflow_token` first + `?token=` query
+    * fallback (same dual-channel pattern as the /ws route): a malicious page
+    * cross-site <img>-probing the localhost gateway gets no SameSite cookie
+    * sent, while the same-origin frontend attaches it automatically. The
+    * query fallback covers cookie-less contexts (and a stale cookie, same
+    * rationale as /ws).
+    *
+    * Lives in the companion (composed ahead of the instance routes) because
+    * it touches none of the class dependencies — testable with just a
+    * gateway token.
+    */
+  def uploadsRoutes(token: String): HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case req @ GET -> _ if req.uri.path.renderString.startsWith("/uploads/") =>
+      val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
+      val paramToken = req.params.get("token").getOrElse("")
+      if !(Auth.validateToken(cookieToken, token) || Auth.validateToken(paramToken, token)) then
+        Forbidden("Invalid token")
+      else
+        val segs = req.uri.path.segments.map(_.encoded).toList
+        // Path shape is exactly <sid>/<filename> — two segments after "uploads".
+        if segs.sizeIs != 3 then NotFound()
+        else
+          val relParts = segs.drop(1) // drop "uploads"
+          // Block path traversal (same guard style as voice-models)
+          if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+          else
+            val uploadsBase = PathUtil.dataRoot / "uploads"
+            val filePath = uploadsBase / os.RelPath(relParts.mkString("/"))
+            // Final defense: the resolved path must stay under the base
+            if filePath.startsWith(uploadsBase) && os.exists(filePath) && os.isFile(filePath) then
+              StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+            else NotFound()
+        end if
+      end if
+  }
