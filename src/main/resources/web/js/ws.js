@@ -97,6 +97,7 @@ const GLOBAL_MSG_TYPES = new Set([
   'updateCheckResult', 'updateStarted', 'updateCompleted',
   'remoteUpdateResult', 'peerListChanged',
   'activeBgTasks', 'activeAgents',
+  'mailQueued', 'mailDequeued',
   'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-history', 'dropboxError'
 ]);
 const TERMINAL_MSG_TYPES = new Set([
