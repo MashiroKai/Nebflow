@@ -897,11 +897,24 @@ onMessage('error', (data) => {
 // both existing and newly added rows offer a dropdown instead of free text.
 // The proxy endpoint may not exist yet (404) — fetch failure degrades to
 // manual input without blocking the flow.
+// Elements are normalized to {id, contextLength} — the backend may send plain
+// strings (old contract) or objects with an optional contextLength (e.g.
+// OpenRouter exposes context_length; OpenAI/Anthropic do not).
 let providerModelChoices = null;
 
 function providerAuthHeaders() {
   const tok = localStorage.getItem('nebflow_token') || '';
   return tok ? { Authorization: `Bearer ${tok}` } : {};
+}
+
+/** Normalize one models[] element: 'id-string' | {id, contextLength?} →
+ *  {id, contextLength|null}. Unknown shapes are dropped. */
+function normalizeModelEntry(m) {
+  if (typeof m === 'string' && m) return { id: m, contextLength: null };
+  if (m && typeof m.id === 'string' && m.id) {
+    return { id: m.id, contextLength: Number.isFinite(m.contextLength) ? m.contextLength : null };
+  }
+  return null;
 }
 
 async function fetchProviderModels(baseUrl, apiKey) {
@@ -916,7 +929,7 @@ async function fetchProviderModels(baseUrl, apiKey) {
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) return { ok: false, error: data.error || `HTTP ${resp.status}` };
-    const models = Array.isArray(data.models) ? data.models.filter(m => typeof m === 'string' && m) : [];
+    const models = Array.isArray(data.models) ? data.models.map(normalizeModelEntry).filter(Boolean) : [];
     return { ok: true, models };
   } catch (e) {
     return { ok: false, error: e.name === 'AbortError' ? 'timeout' : e.message };
@@ -925,8 +938,26 @@ async function fetchProviderModels(baseUrl, apiKey) {
   }
 }
 
+function contextLengthFor(id) {
+  if (!id || !providerModelChoices) return null;
+  const found = providerModelChoices.find(m => m.id === id);
+  return found && found.contextLength ? found.contextLength : null;
+}
+
+/** Fill the row's contextWindow input with the fetched contextLength — only
+ *  when the input is empty (never overwrite a user-set value). maxTokens is
+ *  intentionally not touched. */
+function fillContextIfEmpty(row) {
+  if (!row) return;
+  const sel = row.querySelector('.cfg-model-id');
+  const ctxInput = row.querySelector('.cfg-model-ctx');
+  if (!sel || !ctxInput || ctxInput.value) return;
+  const len = contextLengthFor(sel.value);
+  if (len) ctxInput.value = len;
+}
+
 function renderModelIdSelect(currentId) {
-  const opts = [...providerModelChoices];
+  const opts = providerModelChoices.map(m => m.id);
   if (currentId && !opts.includes(currentId)) opts.unshift(currentId);
   return `<select class="cfg-select cfg-model-id">
     <option value="" disabled ${currentId ? '' : 'selected'}>${t('provider.modelSelectPlaceholder')}</option>
@@ -936,15 +967,18 @@ function renderModelIdSelect(currentId) {
 
 /** Convert manual id inputs in existing rows to dropdowns after a successful
  *  fetch. Current values are preserved (added as an extra option if absent
- *  from the fetched list). */
+ *  from the fetched list); empty contextWindow inputs are auto-filled from
+ *  the fetched contextLength. */
 function upgradeModelRowsToSelects(container) {
   container.querySelectorAll('.cfg-model-row').forEach(row => {
     const input = row.querySelector('input.cfg-model-id');
-    if (!input) return; // already a select
-    const current = input.value.trim();
-    const tmp = document.createElement('template');
-    tmp.innerHTML = renderModelIdSelect(current).trim();
-    input.replaceWith(tmp.content.firstChild);
+    if (input) {
+      const current = input.value.trim();
+      const tmp = document.createElement('template');
+      tmp.innerHTML = renderModelIdSelect(current).trim();
+      input.replaceWith(tmp.content.firstChild);
+    }
+    fillContextIfEmpty(row);
   });
 }
 
@@ -987,7 +1021,12 @@ function wireProviderModelFetch() {
     if (res.ok && res.models.length > 0) {
       providerModelChoices = res.models;
       upgradeModelRowsToSelects(container);
-      status.textContent = t('provider.fetchModelsLoaded', { count: res.models.length });
+      // A successful list fetch with a non-empty key doubles as credential
+      // validation — flag the key as valid. Anonymous providers (empty key)
+      // never get this hint.
+      const hasKey = !!(keyInput && keyInput.value.trim());
+      status.textContent = t('provider.fetchModelsLoaded', { count: res.models.length })
+        + (hasKey ? ` · ${t('provider.keyValid')}` : '');
       status.className = 'cfg-fetch-status ok';
     } else {
       providerModelChoices = null;
@@ -1001,6 +1040,11 @@ function wireProviderModelFetch() {
   const autoFetch = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(runFetch, 400); };
   baseInput.addEventListener('change', autoFetch);
   keyInput?.addEventListener('change', autoFetch);
+  // Delegated: picking a model from the dropdown auto-fills an empty
+  // contextWindow from the fetched contextLength (never overwrites).
+  container.addEventListener('change', (e) => {
+    if (e.target.matches('select.cfg-model-id')) fillContextIfEmpty(e.target.closest('.cfg-model-row'));
+  });
 }
 
 // --- Provider modal ---

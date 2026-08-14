@@ -141,6 +141,7 @@ export default {
   'provider.fetchModelsLoaded': '已获取 {count} 个模型，可从下拉选择',
   'provider.fetchModelsFailed': '未能自动获取模型列表，请手动输入',
   'provider.modelSelectPlaceholder': '选择模型…',
+  'provider.keyValid': '密钥有效',
 
   // === Mail delivery mode badges ===
   'mailDelivery.ask': '同步',
