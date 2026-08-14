@@ -10,9 +10,7 @@ import nebflow.core.NebflowLogger
 import nebflow.neblink.{NeblinkClient, NeblinkService, PeerInfo}
 import sttp.client4.*
 
-import java.net.NetworkInterface
 import scala.concurrent.duration.*
-import scala.jdk.CollectionConverters.*
 
 /**
  * Executes tool calls on remote devices via direct P2P over NebLink.
@@ -449,8 +447,9 @@ class RemoteExecutor(
    *
    * 1. **P0-3 Path memory**: if relay was the last successful transport for this
    *    device (within 5 min TTL), skip P2P entirely.
-   * 2. **P0-2 Subnet check**: if the peer's IP is not in the same /24 subnet as
-   *    any local IP, P2P is impossible — skip to relay.
+   * 2. **Presence check**: if there is no active presence WS connection to the
+   *    peer (cross-network), P2P is impossible — skip to relay (fast-fail with
+   *    a clear error if the relay tunnel is also down).
    * 3. **P1 Parallel race** (read-only tools only): send P2P and Relay concurrently,
    *    use whichever responds first. Safe because read-only tools have no side
    *    effects on cancellation.
@@ -476,19 +475,28 @@ class RemoteExecutor(
       case Some(client) =>
         // P0-3: check path memory — skip P2P if relay was last success
         val memoryOpt = getPathMemory(peer.deviceId)
+        // Presence-based P2P check: skip P2P if no active presence WS to peer
+        val directOnline = neblinkService.presenceServiceOpt.exists(_.isConnected(peer.deviceId))
+        val relayAvailable = neblinkService.relayTunnelOpt.exists(_.isAlive)
+        val skipP2p = memoryOpt.contains("relay") || !directOnline
 
         for
-          // P0-2: subnet check — skip P2P if not same /24 subnet
-          sameSubnet <- isSameSubnet(peer.address)
-          skipP2p = memoryOpt.contains("relay") || !sameSubnet
-
           result <-
             if skipP2p then
-              // Relay only — with cold-start retry for tunnel reconnection latency
-              relayWithColdStartRetry(client, peer, toolName, params).flatMap {
-                case Right(output) => recordPathMemory(peer.deviceId, "relay").as(Right(output))
-                case Left(err)     => clearPathMemory(peer.deviceId).as(Left(ToolError(s"Relay failed: $err")))
-              }
+              if !relayAvailable then
+                IO.pure(
+                  Left(
+                    ToolError(
+                      s"Device ${peer.deviceName} is unreachable: no direct connection and relay tunnel is down"
+                    )
+                  )
+                )
+              else
+                // Relay only — with cold-start retry for tunnel reconnection latency
+                relayWithColdStartRetry(client, peer, toolName, params).flatMap {
+                  case Right(output) => recordPathMemory(peer.deviceId, "relay").as(Right(output))
+                  case Left(err)     => clearPathMemory(peer.deviceId).as(Left(ToolError(s"Relay failed: $err")))
+                }
             else if ReadOnlyTools.contains(toolName) then
               // P1: parallel race for read-only tools (safe cancellation)
               raceP2PAndRelay(peer, toolName, params, timeout, client)
@@ -510,40 +518,6 @@ class RemoteExecutor(
         yield result
   end executeViaBestPath
 
-  // ---- P0-2: Subnet detection ----
-
-  /**
-   * Check whether the peer's IP is in the same /24 subnet as any local IPv4 address.
-   * Returns `false` on any parse error (conservative: skip P2P on uncertain ground).
-   */
-  private def isSameSubnet(peerAddress: String): IO[Boolean] = IO.blocking {
-    try
-      // Extract IP from URL like "http://192.168.1.145:8080"
-      val ip = peerAddress
-        .stripPrefix("http://")
-        .stripPrefix("https://")
-        .split(":")(0)
-        .split("/")(0)
-      val peerOctets = ip.split("\\.")
-      if peerOctets.length != 4 then false
-      else
-        val localIps = NetworkInterface.getNetworkInterfaces.asScala.toList
-          .filter(_.isUp)
-          .filterNot(_.isLoopback)
-          .flatMap(_.getInetAddresses.asScala)
-          .filter(_.isInstanceOf[java.net.Inet4Address])
-          .map(_.getHostAddress)
-
-        localIps.exists { localIp =>
-          val localOctets = localIp.split("\\.")
-          localOctets.length == 4 &&
-          localOctets(0) == peerOctets(0) &&
-          localOctets(1) == peerOctets(1) &&
-          localOctets(2) == peerOctets(2)
-        }
-    catch case _: Exception => false
-  }
-
   // ---- BUG 4: Relay cold-start retry ----
 
   /**
@@ -551,7 +525,7 @@ class RemoteExecutor(
    *
    * After a relay tunnel reconnects, the first relay_request may time out because
    * the server's routing table hasn't registered the new WS connection yet.
-   * A short 500ms delay + second attempt covers this window.
+   * A short 150ms delay + second attempt covers this window.
    */
   private def relayWithColdStartRetry(
     client: NeblinkClient,
@@ -563,7 +537,7 @@ class RemoteExecutor(
       case Right(output) => IO.pure(Right(output))
       case Left(err)     =>
         // Cold start retry — relay tunnel might have just reconnected
-        IO.sleep(500.millis) *> client.relayExec(peer.deviceId, toolName, params).map {
+        IO.sleep(150.millis) *> client.relayExec(peer.deviceId, toolName, params).map {
           case Right(output)   => Right(output)
           case Left(err2)      => Left(s"$err; $err2 (2 attempts)")
         }

@@ -170,7 +170,7 @@ final class DropboxService private (
           for
             _ <- transfersRef.update(_ + (transferId -> t.copy(status = newStatus)))
             _ <- updateMessageStatus(senderDeviceId, t.msgId, newStatus)
-            _ <- neblinkService.sendData(
+            _ <- sendDataOrRelay(
                   senderDeviceId,
                   "dropbox",
                   Json.obj(
@@ -178,7 +178,7 @@ final class DropboxService private (
                     "transferId" -> transferId.asJson,
                     "accepted" -> accepted.asJson
                   )
-                ).void
+                )
           yield ()
         case None => IO.unit
     yield ()
@@ -338,7 +338,7 @@ final class DropboxService private (
       _ <- transfersRef.update(_ + (transferId -> transfer))
       _ <- addMessage(senderId, msg)
       _ <- notifyFrontend("dropbox-message", senderId, msg.asJson)
-      _ <- neblinkService.sendData(senderId, "dropbox", acceptPayload).void
+      _ <- sendDataOrRelay(senderId, "dropbox", acceptPayload)
     yield ()
 
   end handleIncomingOffer
