@@ -369,6 +369,22 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam) {
   return parts.join(' · ');
 }
 
+/** Mail delivery modes from the backend contract ('ask'|'queue'|'immediate').
+ *  Badges are appended to the injected source label when the WS event /
+ *  UiMessage carries a `delivery` field; old messages lack it → no badge. */
+const DELIVERY_MODES = new Set(['ask', 'queue', 'immediate']);
+
+/** Append a delivery-mode badge to the label element (no-op when the field
+ *  is absent or not a known mode — backward compatible with old history). */
+function appendDeliveryBadge(label, delivery) {
+  if (!delivery || !DELIVERY_MODES.has(delivery)) return;
+  const badge = document.createElement('span');
+  badge.className = `delivery-badge delivery-${delivery}`;
+  badge.textContent = t(`mailDelivery.${delivery}`);
+  badge.title = t(`mailDelivery.${delivery}Title`);
+  label.appendChild(badge);
+}
+
 /** Build a row element for an injected message (pure builder — no DOM append,
  *  no scroll). Shared by live render (renderInjectedBubble) and history
  *  restore (persistence.js) so both paths render identically.
@@ -376,8 +392,10 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam) {
  *  defer markdown rendering into post-append rAF batches — prevents a
  *  synchronous markdown storm when restoring long histories (P0-2).
  *  sourceTeam (optional): Team name for Team-agent messages — shown in the
- *  source label as 'team/agent' (see injectedSourceLabel). */
-export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn) {
+ *  source label as 'team/agent' (see injectedSourceLabel).
+ *  delivery (optional): Mail delivery mode 'ask'|'queue'|'immediate' — shown
+ *  as a badge in the label; absent on old messages → hidden. */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery) {
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -386,6 +404,7 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   const label = document.createElement('div');
   label.className = 'ask-label injected-source-label';
   label.textContent = injectedSourceLabel(source, eventType, sender, sourceTeam);
+  appendDeliveryBadge(label, delivery);
   const content = document.createElement('div');
   if (deferFn) deferFn(content, text || '');
   else content.innerHTML = renderMarkdownWithMath(text || '', false);
@@ -417,9 +436,9 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
 }
 
 /** Live-render an injected message into the active view. */
-export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam) {
+export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery) {
   const chat = activeView.dom.chat;
-  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam);
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery);
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
 }
