@@ -502,6 +502,58 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   def listSessions: IO[List[SessionMeta]] =
     indexRef.get.map { case (_, sessions, _) => sessions.sortBy(-_.updatedAt) }
 
+  // Patterns mirror the generators: DelegateTool.scala `delegate-<agent>-<uuid8>`,
+  // SubTaskTool.scala `subtask-<uuid8>`, FlowDagExecutor.scala
+  // `dag-<flow[:10]>-<nodeId>-<ts6>`. Greedy middles + anchored suffixes keep
+  // the parse deterministic when agent/flow/node names contain hyphens.
+  private val DelegateId = "^delegate-(.+)-[0-9a-f]{8}$".r
+  private val DagId      = "^dag-(.+)-([0-9]{6})$".r
+  private val SubtaskId  = "^subtask-[0-9a-f]{8}$".r
+
+  /** Derive (name, agentName) for an on-disk-only session from its file id. */
+  private def unindexedNameAndAgent(id: String): (String, String) =
+    id match
+      case DelegateId(agent) => (s"$agent (delegate)", agent)
+      case SubtaskId()       => (s"Subtask ${id.drop("subtask-".length)}", "")
+      case DagId(middle, _)  =>
+        // The flow/node boundary is ambiguous once both contain hyphens; taking
+        // the last segment matches the common single-segment nodeId case.
+        (s"$middle (flow)", middle.split('-').last)
+      case _                 => (id, "")
+
+  /**
+   * Search-scope session list: indexed sessions ∪ on-disk `.ui.json` files
+   * whose id is NOT in the index.
+   *
+   * Delegate / SubTask / DAG-flow sub-agent sessions write their `.ui.json`
+   * directly but never enter the index (recoverOrphans only recovers
+   * UUID-named `<id>.json` files, and their ids never match that regex), so
+   * `listSessions` — and therefore GET /api/sessions and scope=all search —
+   * could not see them even though getUiMessages reads their history fine.
+   * This per-request disk scan fills that gap for the search endpoint only:
+   * synthesized entries are never added to the index, and `listSessions`
+   * (the sidebar path) stays untouched. ~550 files make the scan cheap.
+   */
+  def listSessionsIncludeUnindexed: IO[List[SessionMeta]] =
+    listSessions.flatMap { indexed =>
+      IO.blocking {
+        val indexedIds = indexed.map(_.id).toSet
+        if !os.exists(sessionsDir) then Nil
+        else
+          os.list(sessionsDir)
+            .filter(p => os.isFile(p) && p.last.endsWith(".ui.json"))
+            .toList
+            .flatMap { f =>
+              val id = f.last.stripSuffix(".ui.json")
+              if id.nonEmpty && !indexedIds.contains(id) then
+                val mtime = os.mtime(f)
+                val (name, agent) = unindexedNameAndAgent(id)
+                List(SessionMeta(id, name, mtime, mtime, hasUnread = false, agentName = Some(agent)))
+              else Nil
+            }
+      }.map(unindexed => (indexed ++ unindexed).sortBy(-_.updatedAt))
+    }
+
   /** List folders for a given agent. Old folders (agentName == "") are visible to Nebula only. */
   def listFolders(agentName: String): IO[List[Folder]] =
     indexRef.get.map { case (_, _, folders) =>

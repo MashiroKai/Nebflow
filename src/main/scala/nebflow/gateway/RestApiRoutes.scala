@@ -85,10 +85,16 @@ class RestApiRoutes(
         }
       }
 
-    // Session list
+    // Session list. `includeUnindexed=1` (search scope) unions in on-disk-only
+    // .ui.json sessions (delegate/subtask/dag sub-agents) that never enter the
+    // index. The sidebar consumes this endpoint WITHOUT the param and must stay
+    // index-only — that isolation is the reason this is a query param.
     case req @ GET -> Root / "sessions" =>
       withAuth(req) {
-        sessionStore.listSessions.flatMap { sessions =>
+        val list =
+          if req.params.get("includeUnindexed").contains("1") then sessionStore.listSessionsIncludeUnindexed
+          else sessionStore.listSessions
+        list.flatMap { sessions =>
           sessionStore.getActiveId.flatMap { activeId =>
             Ok(Json.obj("sessions" -> sessions.asJson, "activeId" -> activeId.asJson))
           }
