@@ -65,20 +65,46 @@ object FlowDagExecutor:
       emitWs(Json.obj(fields*))
 
     /**
-     * Resolve template variables: $task -> task input, $<nodeId>.output -> node output.
+     * Resolve template variables: $task -> task input, $<nodeId>.output -> node
+     * output, $<nodeId>.slots.<field> -> structured slot value (string slots
+     * insert directly; array slots insert compact JSON — deterministic and
+     * structure-preserving).
      *  Uses quoteReplacement to prevent $ and \ in agent output from being
-     *  interpreted as regex group references (Illegal group reference error).
+     * interpreted as regex group references (Illegal group reference error).
      */
     def resolveInput(template: String, ctx: FlowExecContext): String =
       val withTask = template.replace("$task", ctx.taskInput)
+      val slotsPattern = "\\$([a-zA-Z0-9_-]+)\\.slots\\.([a-zA-Z0-9_-]+)".r
+      val withSlots = slotsPattern.replaceAllIn(
+        withTask,
+        m =>
+          java.util.regex.Matcher.quoteReplacement(
+            ctx.nodeSlots.get(m.group(1)).flatMap(_.get(m.group(2))) match
+              case Some(json) if json.isString => json.asString.getOrElse("")
+              case Some(json)                  => json.noSpaces
+              case None => s"[slots.${m.group(2)} of ${m.group(1)} not found]"
+          )
+      )
       val pattern = "\\$([a-zA-Z0-9_-]+)\\.output".r
       pattern.replaceAllIn(
-        withTask,
+        withSlots,
         m =>
           java.util.regex.Matcher.quoteReplacement(
             ctx.nodeOutputs.getOrElse(m.group(1), s"[output of ${m.group(1)} not found]")
           )
       )
+
+    /**
+     * The node's output contract (R8-P1): Switch case keys + outputs slot
+     * schema. Injected into the spawned agent so FlowReport validates the
+     * verdict enum and slot types at call time.
+     */
+    def nodeContract(node: FlowNode): Option[FlowNodeContract] =
+      val caseKeys = node.onComplete match
+        case NodeRoute.Switch(_, cases, _, _) => cases.keySet
+        case _                                => Set.empty[String]
+      if caseKeys.isEmpty && node.outputs.isEmpty then None
+      else Some(FlowNodeContract(caseKeys, node.outputs))
 
     /** Execute a single DAG node: spawn agent, send input, collect output. */
     def executeNode(
@@ -109,7 +135,8 @@ object FlowDagExecutor:
                     category = entry.category,
                     mcpServers = entry.mcpServers,
                     model = Some(resolvedModel),
-                    preset = entry.preset
+                    preset = entry.preset,
+                    flowContract = nodeContract(node)
                   )
                 executeAgent(
                   nodeId,
@@ -124,7 +151,10 @@ object FlowDagExecutor:
                   parentAgentRef,
                   rootSessionId
                 )
-            updatedCtx = ctx.copy(nodeOutputs = ctx.nodeOutputs + (nodeId -> result.output))
+            updatedCtx = ctx.copy(
+              nodeOutputs = ctx.nodeOutputs + (nodeId -> result.output),
+              nodeSlots = ctx.nodeSlots + (nodeId -> result.slots)
+            )
           yield (result, updatedCtx)
           end for
 
@@ -179,48 +209,84 @@ object FlowDagExecutor:
                   totalLoops = ctx.totalLoops + 1
                 )
                 runNode(target, newCtx)
-            case NodeRoute.Switch(switchExpr, cases, default) =>
+            case NodeRoute.Switch(switchExpr, cases, default, lenient) =>
               // Verdict priority: FlowReport verdict (structured, trustworthy) →
-              // extract from output via the five-stage pipeline.
-              val rawValue = result.verdict.getOrElse {
-                extractSwitchValue(switchExpr, result.output, ctx, cases)
+              // extract from output via the legacy pipeline — but ONLY when the
+              // flow is not strict, or this switch explicitly opts back in via
+              // lenient. strictVerdict=true + no verdict = routing failure
+              // (normally already caught at the node level in runNode; this is
+              // the backstop for onError=resume paths).
+              val rawValueOpt: Option[String] = result.verdict.orElse {
+                if flow.strictVerdict && !lenient then None
+                else Some(extractSwitchValue(switchExpr, result.output, ctx, cases))
               }
-              // Normalize: exact → same-family → substring (warn). flow.json
-              // declares only standard keys; aliases (pass/success/done → ok,
-              // fail/error → error) are the engine's responsibility.
-              val matchedKey = VerdictFamily.matchCase(rawValue, cases.keySet)
-              def routeTo(route: NodeRoute): IO[Either[String, String]] =
-                route match
-                  case NodeRoute.Return =>
-                    IO.pure(Right(result.output))
-                  case NodeRoute.Goto(target) =>
-                    val loopKey = s"${result.nodeId}->$target"
-                    val newCount = ctx.loopCounts.getOrElse(loopKey, 0) + 1
-                    if newCount > flow.maxLoop then
-                      IO.pure(Left(s"Max loop (${flow.maxLoop}) exceeded at edge $loopKey"))
-                    else
-                      val newCtx = ctx.copy(
-                        loopCounts = ctx.loopCounts + (loopKey -> newCount),
-                        totalLoops = ctx.totalLoops + 1
-                      )
-                      runNode(target, newCtx)
-                  case NodeRoute.Switch(_, _, _) =>
-                    IO.pure(Left(s"Nested switch not supported in routing"))
-              matchedKey match
-                case Some(key) => routeTo(cases(key))
+              rawValueOpt match
                 case None =>
-                  // No case matched — conservative `default` route, else a clear
-                  // error listing the available cases (replaces bare "matched no case").
-                  default match
-                    case Some(route) => routeTo(route)
+                  IO.pure(
+                    Left(
+                      s"Switch '$switchExpr' received no FlowReport verdict (flow '${flow.name}' " +
+                        s"strictVerdict=true, switch lenient=false). Expected verdict one of: " +
+                        s"${cases.keys.toList.sorted.mkString(", ")}"
+                    )
+                  )
+                case Some(rawValue) =>
+                  // Normalize: exact → same-family → substring (warn). flow.json
+                  // declares only standard keys; aliases (pass/success/done → ok,
+                  // fail/error → error) are the engine's responsibility.
+                  val matchedKey = VerdictFamily.matchCase(rawValue, cases.keySet)
+                  def routeTo(route: NodeRoute): IO[Either[String, String]] =
+                    route match
+                      case NodeRoute.Return =>
+                        IO.pure(Right(result.output))
+                      case NodeRoute.Goto(target) =>
+                        val loopKey = s"${result.nodeId}->$target"
+                        val newCount = ctx.loopCounts.getOrElse(loopKey, 0) + 1
+                        if newCount > flow.maxLoop then
+                          IO.pure(Left(s"Max loop (${flow.maxLoop}) exceeded at edge $loopKey"))
+                        else
+                          val newCtx = ctx.copy(
+                            loopCounts = ctx.loopCounts + (loopKey -> newCount),
+                            totalLoops = ctx.totalLoops + 1
+                          )
+                          runNode(target, newCtx)
+                      case NodeRoute.Switch(_, _, _, _) =>
+                        IO.pure(Left(s"Nested switch not supported in routing"))
+                  matchedKey match
+                    case Some(key) => routeTo(cases(key))
                     case None =>
-                      IO.pure(
-                        Left(
-                          s"Switch '$switchExpr' value '$rawValue' matched no case. " +
-                            s"Available cases: ${cases.keys.toList.sorted.mkString(", ")}"
-                        )
-                      )
+                      // No case matched — conservative `default` route, else a clear
+                      // error listing the available cases (replaces bare "matched no case").
+                      default match
+                        case Some(route) => routeTo(route)
+                        case None =>
+                          IO.pure(
+                            Left(
+                              s"Switch '$switchExpr' value '$rawValue' matched no case. " +
+                                s"Available cases: ${cases.keys.toList.sorted.mkString(", ")}"
+                            )
+                          )
               end match
+
+    /**
+     * R8-P1 strict verdict, second line of defense: a switch node that ended
+     * WITHOUT a FlowReport verdict fails the NODE (onError chain applies —
+     * Stop aborts, Restart re-runs the agent, Resume falls through to the
+     * route() backstop). Guess extraction is opt-in via the switch's lenient
+     * flag; strictVerdict=false keeps the legacy behavior completely unchanged.
+     */
+    def strictVerdictFailure(nodeId: String, result: NodeResult): Option[String] =
+      if !(flow.strictVerdict && result.success && result.verdict.isEmpty) then None
+      else
+        flow.nodes.get(nodeId).flatMap { n =>
+          n.onComplete match
+            case NodeRoute.Switch(expr, cases, _, lenient) if !lenient =>
+              Some(
+                s"Switch '$expr' received no FlowReport verdict (flow '${flow.name}' " +
+                  s"strictVerdict=true, switch lenient=false). Expected verdict one of: " +
+                  s"${cases.keys.toList.sorted.mkString(", ")}"
+              )
+            case _ => None
+        }
 
     /** Run a node: execute -> handleResult -> route. */
     def runNode(nodeId: String, ctx: FlowExecContext): IO[Either[String, String]] =
@@ -234,7 +300,10 @@ object FlowDagExecutor:
               _ <- logger.info(s"Flow '${flow.name}': executing node '$nodeId'")
               _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, NodeStatus.Running)
               _ <- emitProgress(nodeId, NodeStatus.Running)
-              (result, ctx2) <- executeNode(nodeId, ctx)
+              (result0, ctx2) <- executeNode(nodeId, ctx)
+              result = strictVerdictFailure(nodeId, result0) match
+                case Some(msg) => result0.copy(success = false, error = Some(msg))
+                case None      => result0
               // Cancel may have pierced the node mid-run (executeAgent races
               // the cancel signal) — re-check so the node's terminal status
               // reflects "cancelled" instead of a misleading "failed".
@@ -297,7 +366,7 @@ object FlowDagExecutor:
                 List(Json.obj("from" -> nodeId.asJson, "to" -> target.asJson, "condition" -> Json.Null))
               case NodeRoute.Return =>
                 List(Json.obj("from" -> nodeId.asJson, "to" -> "$return".asJson, "condition" -> Json.Null))
-              case NodeRoute.Switch(_, cases, _) =>
+              case NodeRoute.Switch(_, cases, _, _) =>
                 cases.toList.map { (cond, route) =>
                   val target = route match
                     case NodeRoute.Goto(t) => t
@@ -353,7 +422,7 @@ object FlowDagExecutor:
       node.onComplete match
         case NodeRoute.Goto(target) => List((nodeId, target, None))
         case NodeRoute.Return => List((nodeId, "$return", None))
-        case NodeRoute.Switch(_, cases, _) =>
+        case NodeRoute.Switch(_, cases, _, _) =>
           cases.toList.map { (cond, route) =>
             val target = route match
               case NodeRoute.Goto(t) => t
@@ -504,13 +573,14 @@ object FlowDagExecutor:
         case Right(messages) =>
           val textOutput = extractLastAssistantOutput(messages)
           reportOpt match
-            case Some((verdict, reportOutput)) =>
+            case Some(data) =>
               IO.pure(
                 NodeResult(
                   nodeId = nodeId,
-                  output = if reportOutput.nonEmpty then reportOutput else textOutput,
+                  output = if data.output.nonEmpty then data.output else textOutput,
                   success = true,
-                  verdict = Some(verdict)
+                  verdict = Some(data.verdict),
+                  slots = data.slots.toMap
                 )
               )
             case None =>

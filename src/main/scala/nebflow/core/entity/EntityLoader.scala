@@ -424,7 +424,7 @@ object EntityLoader:
       node.onComplete match
         case NodeRoute.Goto(target) if !flow.nodes.contains(target) =>
           List(s"node '$id' routes to unknown node '$target'")
-        case NodeRoute.Switch(_, cases, _) =>
+        case NodeRoute.Switch(_, cases, _, _) =>
           cases.toList.flatMap {
             case (_, NodeRoute.Goto(target)) if !flow.nodes.contains(target) =>
               List(s"node '$id' switch case routes to unknown node '$target'")
