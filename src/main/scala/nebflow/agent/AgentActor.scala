@@ -901,10 +901,15 @@ object AgentActor extends AgentCore with AgentSession:
             "save-phase-fallback",
             s"err=${error.getMessage.take(80)}"
           )
-          val compactState = state
-            .withPendingCompaction(state.pendingCompaction.map(_.copy(phase = CompactionPhase.Compact)))
-            .withMessages(state.messages :+ CompactService.buildCompactReminder(depth))
-          pipeLlmCall(agentDef, resources, depth, parentRef, compactState, replyTo)
+          // B5: keep the profile consistent with the turn that started the
+          // save phase (lead vs member at depth 1).
+          (if depth == 1 then isTeamLeadForCompaction(agentDef, state.sessionId) else IO.pure(false))
+            .flatMap { isLead =>
+              val compactState = state
+                .withPendingCompaction(state.pendingCompaction.map(_.copy(phase = CompactionPhase.Compact)))
+                .withMessages(state.messages :+ CompactService.buildCompactReminder(depth, isLead))
+              pipeLlmCall(agentDef, resources, depth, parentRef, compactState, replyTo)
+            }
         else
           val cleanedState = state
           logAgentEvent(
@@ -2313,10 +2318,15 @@ object AgentActor extends AgentCore with AgentSession:
     pending: List[AgentCommand]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "save-phase-complete")
-    val compactState = state
-      .withPendingCompaction(state.pendingCompaction.map(_.copy(phase = CompactionPhase.Compact)))
-      .withMessages(state.messages :+ CompactService.buildCompactReminder(depth))
-    pipeLlmCall(agentDef, resources, depth, parentRef, compactState, replyTo)
+    // B5: keep the profile consistent with the turn that started the save
+    // phase (lead vs member at depth 1).
+    (if depth == 1 then isTeamLeadForCompaction(agentDef, state.sessionId) else IO.pure(false))
+      .flatMap { isLead =>
+        val compactState = state
+          .withPendingCompaction(state.pendingCompaction.map(_.copy(phase = CompactionPhase.Compact)))
+          .withMessages(state.messages :+ CompactService.buildCompactReminder(depth, isLead))
+        pipeLlmCall(agentDef, resources, depth, parentRef, compactState, replyTo)
+      }
 
   // ============================================================
   // Compact response handlers

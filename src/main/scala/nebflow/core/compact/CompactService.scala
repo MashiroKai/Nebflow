@@ -33,8 +33,8 @@ object CompactService:
    * stop its current task and produce a summary.
    * Different agent roles need different summary focus areas.
    */
-  def buildCompactReminder(depth: Int = 0): Message =
-    val profile = CompactionProfile.fromDepth(depth)
+  def buildCompactReminder(depth: Int = 0, isLead: Boolean = false): Message =
+    val profile = CompactionProfile.fromDepth(depth, isLead)
     val prompt = profile match
       case CompactionProfile.Worker => WorkerCompactReminder
       case CompactionProfile.Manager => ManagerCompactReminder
@@ -55,8 +55,8 @@ object CompactService:
    * ContextRefresher's injection condition) get a save turn; others go
    * straight to compact (behavior unchanged).
    */
-  def buildSaveMemoryReminder(depth: Int): Message =
-    val profile = CompactionProfile.fromDepth(depth)
+  def buildSaveMemoryReminder(depth: Int, isLead: Boolean = false): Message =
+    val profile = CompactionProfile.fromDepth(depth, isLead)
     val prompt = profile match
       case CompactionProfile.Worker => WorkerSaveMemoryReminder
       case CompactionProfile.Manager => ManagerSaveMemoryReminder

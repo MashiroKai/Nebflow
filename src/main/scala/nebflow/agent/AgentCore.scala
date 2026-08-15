@@ -182,6 +182,25 @@ private[agent] trait AgentCore:
         case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid).map(_.isDefined)
         case None => IO.pure(false)
 
+  /**
+   * B5: whether this depth-1 agent is a team lead — a registered Manager
+   * session, or name-based lead of any defined team (covers fork/temporary
+   * sessions, same fallback as MailTool.canMailNebula). Non-lead depth-1
+   * agents (team members, flow agents, delegate sub-agents) compact with
+   * the Worker profile instead of Manager.
+   */
+  protected def isTeamLeadForCompaction(agentDef: AgentDef, sessionId: Option[String]): IO[Boolean] =
+    def nameIsLead: IO[Boolean] =
+      if agentDef.name.isEmpty then IO.pure(false)
+      else nebflow.core.entity.EntityLoader.listTeams().map(_.values.exists(_.lead == agentDef.name))
+    sessionId match
+      case Some(sid) =>
+        nebflow.core.flow.TeamSessionRegistry.isManager(sid).flatMap {
+          case true  => IO.pure(true)
+          case false => nameIsLead
+        }
+      case None => nameIsLead
+
   protected def startDirectCompaction(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -194,27 +213,30 @@ private[agent] trait AgentCore:
     resumeAfterCompact: Boolean = true,
     postCompactInstruction: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val profile = CompactionProfile.fromDepth(depth)
-    val hook = PreCompactionHooks.forProfile(profile)
-
-    // ── 1. Role-based pre-compaction extraction (fire-and-forget, non-blocking) ──
-    val preHookIO: IO[Unit] = hook
-      .run(state.messages, agentDef.name, state.sessionId, None, resources)
-      .handleErrorWith(e =>
-        IO(lifecycleLog.warn(s"Pre-compaction hook failed for ${agentDef.name}: ${e.getMessage}")).void
-      )
-
-    // ── 2. Two-stage compaction ──
-    //    Stage 1 (Save): memory-bearing agents (Nebula + team) get a save turn
-    //    with tools available to write memory/skills; ending the turn transitions
-    //    to stage 2. Other agents go straight to stage 2 (compact) — unchanged.
-    val jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
     for
+      // B5: depth 1 must distinguish lead (Manager profile) from members
+      // (Worker profile). Depths 0 / 2+ don't need the lookup.
+      isLead <- if depth == 1 then isTeamLeadForCompaction(agentDef, state.sessionId) else IO.pure(false)
+      profile = CompactionProfile.fromDepth(depth, isLead)
+      hook = PreCompactionHooks.forProfile(profile)
+
+      // ── 1. Role-based pre-compaction extraction (fire-and-forget, non-blocking) ──
+      preHookIO = hook
+        .run(state.messages, agentDef.name, state.sessionId, None, resources)
+        .handleErrorWith(e =>
+          IO(lifecycleLog.warn(s"Pre-compaction hook failed for ${agentDef.name}: ${e.getMessage}")).void
+        )
+
+      // ── 2. Two-stage compaction ──
+      //    Stage 1 (Save): memory-bearing agents (Nebula + team) get a save turn
+      //    with tools available to write memory/skills; ending the turn transitions
+      //    to stage 2. Other agents go straight to stage 2 (compact) — unchanged.
+      jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
       saveTurn <- shouldInjectSaveReminder(agentDef, state)
       phase = if saveTurn then CompactionPhase.Save else CompactionPhase.Compact
       reminder =
-        if saveTurn then CompactService.buildSaveMemoryReminder(depth)
-        else CompactService.buildCompactReminder(depth)
+        if saveTurn then CompactService.buildSaveMemoryReminder(depth, isLead)
+        else CompactService.buildCompactReminder(depth, isLead)
       pending = CompactionJob(jobId, mode, None, replyTo, resumeAfterCompact, postCompactInstruction, phase)
       firstState = state
         .withPendingCompaction(Some(pending))
