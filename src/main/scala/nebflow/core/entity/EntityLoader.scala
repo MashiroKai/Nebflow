@@ -199,6 +199,31 @@ object EntityLoader:
       }
     yield inferred
 
+  /**
+   * List team-local agent entries under `teams/<teamName>/agents/`.
+   *
+   * Keys cover BOTH reference forms — the directory name (how loadTeamAgent
+   * resolves) and the resolved agent.json name (how findAgentByName matches)
+   * — so team validation accepts either. Team-local agents are invisible to
+   * listAgents(); this scan is what makes them resolvable for validation.
+   */
+  def listTeamAgents(teamName: String): IO[Map[String, AgentEntry]] =
+    IO.blocking {
+      val agentsSubDir = teamsDir / teamName / "agents"
+      if !os.exists(agentsSubDir) then Map.empty[String, AgentEntry]
+      else
+        os.list(agentsSubDir)
+          .filter(os.isDir)
+          .toList
+          .flatMap { agentDir =>
+            loadAgentFromDir(agentDir).map { entry =>
+              if entry.name == agentDir.last then Map(agentDir.last -> entry)
+              else Map(agentDir.last -> entry, entry.name -> entry)
+            }
+          }
+          .foldLeft(Map.empty[String, AgentEntry])(_ ++ _)
+    }
+
   /** Infer agent category from team/flow membership. */
   def classifyAgent(name: String, teams: Map[String, TeamDef], flows: Map[String, FlowDagDef]): String =
     val inTeam = teams.values.exists(t => t.lead == name || t.members.contains(name))
