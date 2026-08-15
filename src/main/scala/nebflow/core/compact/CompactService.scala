@@ -237,6 +237,12 @@ object CompactService:
       |- Preserve all decisions, trade-offs, and user preferences stated
       |- If the user gave explicit instructions, quote them verbatim
       |- Keep the summary focused and information-dense
+      |- Image attachments: for every image in the history (marked `[用户附加图片: path]`),
+      |  keep one line in the summary in this exact format:
+      |  [图片: <path> | <one-sentence description of the image, or 未描述>]
+      |  Describe the content if you can see the image; otherwise write 未描述.
+      |  Images are dropped from context after compaction — this line is the only
+      |  way to remember them and re-Read them later.
       |</system-reminder>""".stripMargin
 
   /**
