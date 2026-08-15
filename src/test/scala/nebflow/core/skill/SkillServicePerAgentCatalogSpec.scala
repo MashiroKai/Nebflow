@@ -78,4 +78,18 @@ class SkillServicePerAgentCatalogSpec extends FunSuite:
     writeSkill("eco-only-hidden", "Hidden", disableModelInvocation = true)
     val catalog = SkillService.buildPerAgentCatalog(List("eco-only-hidden")).unsafeRunSync()
     assertEquals(catalog, "")
+
+  test("wildcard * subscribes to every model-invocable skill in the library"):
+    writeSkill("eco-a", "Alpha")
+    writeSkill("eco-hidden", "Hidden from model", disableModelInvocation = true)
+    writeSkill("eco-b", "Beta")
+    val catalog = SkillService.buildPerAgentCatalog(List("*")).unsafeRunSync()
+    assert(catalog.contains("- eco-a: Alpha"), s"eco-a: $catalog")
+    assert(catalog.contains("- eco-b: Beta"), s"eco-b: $catalog")
+    assert(!catalog.contains("eco-hidden"), s"hidden must stay out even under wildcard: $catalog")
+
+  test("wildcard with only hidden skills yields empty catalog"):
+    writeSkill("eco-only-hidden", "Hidden", disableModelInvocation = true)
+    val catalog = SkillService.buildPerAgentCatalog(List("*")).unsafeRunSync()
+    assertEquals(catalog, "")
 end SkillServicePerAgentCatalogSpec

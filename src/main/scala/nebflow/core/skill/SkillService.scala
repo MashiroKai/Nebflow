@@ -175,6 +175,8 @@ object SkillService:
   /**
    * Build a skill catalog containing only the skills declared by the agent.
    * Empty list → empty string (no injection, no global fallback).
+   * The wildcard "*" subscribes to every skill in the library (same semantics as
+   * the flows whitelist) — used by orchestrators that need the full index.
    *
    * Mirrors the modelInvocable rule of the (removed) global catalog: skills
    * marked `disable-model-invocation: true` are slash-command-only and stay
@@ -186,12 +188,13 @@ object SkillService:
     if skillNames.isEmpty then IO.pure("")
     else
       listSkills().map { allSkills =>
-        val skillMap = allSkills.map(s => s.name -> s).toMap
-        val visible = skillNames.flatMap(skillMap.get)
-          .filter(s => s.modelInvocable && s.description.nonEmpty)
-        if visible.isEmpty then ""
+        val visibleIn: SkillInfo => Boolean = s => s.modelInvocable && s.description.nonEmpty
+        val declared =
+          if skillNames.contains("*") then allSkills.filter(visibleIn)
+          else skillNames.flatMap(allSkills.map(s => s.name -> s).toMap.get).filter(visibleIn)
+        if declared.isEmpty then ""
         else
-          val entries = visible.map { s =>
+          val entries = declared.map { s =>
             val when = s.whenToUse.filter(_.nonEmpty).map(w => s" [when: $w]").getOrElse("")
             s"- ${s.name}: ${s.description.take(200)}$when"
           }.mkString("\n")
