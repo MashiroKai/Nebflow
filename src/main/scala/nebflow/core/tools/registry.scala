@@ -15,6 +15,7 @@ object ToolRegistry:
       "Read" -> ReadTool,
       "Write" -> WriteTool,
       "Edit" -> EditTool,
+      "MultiEdit" -> MultiEditTool,
       // Search
       "Glob" -> GlobTool,
       "Grep" -> GrepTool,
