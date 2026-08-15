@@ -1,6 +1,7 @@
 package nebflow.core.skill
 
 import cats.effect.unsafe.implicits.global
+import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.core.PathUtil
 
@@ -76,4 +77,27 @@ class SkillServiceNamespaceSpec extends FunSuite:
     assert(os.exists(skillsDir / "nebflow"))
     assertEquals(SkillService.deleteSkill("../agents").unsafeRunSync(), false, "traversal refused")
     assertEquals(SkillService.deleteSkill("nebflow/ghost").unsafeRunSync(), false, "missing refused")
+  test("frontmatter governance fields (audience/last_verified/status/replaced_by) are parsed and encoded"):
+    writeSkillFile(
+      skillsDir / "governed",
+      "name: governed\ndescription: Governed skill\naudience: nebflow\nlast_verified: 2026-08-14\nstatus: deprecated\nreplaced_by: nebflow/visual-style"
+    )
+    val skill = SkillService.listSkills().unsafeRunSync().find(_.name == "governed").getOrElse(fail("governed not loaded"))
+    assertEquals(skill.audience, Some("nebflow"))
+    assertEquals(skill.lastVerified, Some("2026-08-14"))
+    assertEquals(skill.status, Some("deprecated"))
+    assertEquals(skill.replacedBy, Some("nebflow/visual-style"))
+    // Encoder carries the fields (REST getSkills / audit JSON consumers)
+    assertEquals(skill.asJson.hcursor.downField("audience").as[Option[String]], Right(Some("nebflow")))
+    assertEquals(skill.asJson.hcursor.downField("lastVerified").as[Option[String]], Right(Some("2026-08-14")))
+    assertEquals(skill.asJson.hcursor.downField("status").as[Option[String]], Right(Some("deprecated")))
+    assertEquals(skill.asJson.hcursor.downField("replacedBy").as[Option[String]], Right(Some("nebflow/visual-style")))
+
+  test("governance fields default to None and encode as null (backward compatible)"):
+    writeSkillFile(skillsDir / "plain", "name: plain\ndescription: Plain skill")
+    val skill = SkillService.listSkills().unsafeRunSync().find(_.name == "plain").getOrElse(fail("plain not loaded"))
+    assertEquals(skill.audience, None)
+    assertEquals(skill.lastVerified, None)
+    assertEquals(skill.status, None)
+    assertEquals(skill.replacedBy, None)
 end SkillServiceNamespaceSpec
