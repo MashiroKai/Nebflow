@@ -353,15 +353,40 @@ object EntityLoader:
       os.move.over(tmp, path)
     }
 
-  /** Write `teams/<name>/team.json`. */
+  /**
+   * Write `teams/<name>/team.json`.
+   *
+   * @deprecated W3 decision (2026-08-15): the entity write path is retired —
+   *   after the flow-creator team was archived no production caller remains
+   *   (verified by grep: zero call sites in src/main). EntityLoader is
+   *   read-only now; entity files are written by their owning creation
+   *   surfaces (REST routes / user editing on disk). Do not add new callers;
+   *   slated for removal.
+   */
+  @deprecated("W3: entity write path retired — EntityLoader is read-only; teams are created via their owning surfaces", "since 2026-08-15")
   def writeTeam(team: TeamDef): IO[Unit] =
     writeJson(teamsDir / team.name / "team.json", team.asJson.noSpaces)
 
-  /** Write `flows/<name>.json`. */
+  /**
+   * Write `flows/<name>.json`.
+   *
+   * @deprecated W3 decision (2026-08-15): same retirement as [[writeTeam]] —
+   *   no production caller; flows are created/edited as flow.json files by
+   *   their owning surfaces. Do not add new callers; slated for removal.
+   */
+  @deprecated("W3: entity write path retired — EntityLoader is read-only; flows are created via their owning surfaces", "since 2026-08-15")
   def writeFlow(flow: FlowDagDef): IO[Unit] =
     writeJson(flowsDir / s"${flow.name}.json", flow.asJson.noSpaces)
 
-  /** Write `agents/<name>/agent.json` + `system.md`. */
+  /**
+   * Write `agents/<name>/agent.json` + `system.md`.
+   *
+   * @deprecated W3 decision (2026-08-15): same retirement as [[writeTeam]] —
+   *   no production caller; agent definitions are written by their owning
+   *   surfaces (AgentLibrary update methods, REST PUT endpoints). Do not add
+   *   new callers; slated for removal.
+   */
+  @deprecated("W3: entity write path retired — EntityLoader is read-only; agents are created via their owning surfaces", "since 2026-08-15")
   def writeAgent(entry: AgentEntry): IO[Unit] =
     IO.blocking {
       val dir = agentsDir / entry.name
