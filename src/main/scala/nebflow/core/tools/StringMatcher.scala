@@ -132,6 +132,81 @@ object StringMatcher:
     if oldRaw == oldActual then newStr
     else applyCurlyQuotes(newStr, oldActual)
 
+  // ---------------------------------------------------------------------------
+  // Closest-candidate line hint (match-failure self-healing)
+  // ---------------------------------------------------------------------------
+
+  /** Hint about the content line most similar to a failed search string. */
+  final case class LineHint(line: Int, similarityPct: Int, excerpt: String)
+
+  /** Minimum similarity for reporting a hint — below this, silence beats noise. */
+  private val MinHintSimilarity = 60
+
+  /**
+   * Heuristic: locate the content line most similar to the first non-blank
+   * line of `search` (the anchor). Compares quote- and whitespace-normalized
+   * forms with Levenshtein similarity; a content line containing the whole
+   * anchor gets a floor of 85 (the anchor survives line-wrapping/extra text).
+   *
+   * Returns None when no line reaches [[MinHintSimilarity]] — a missing hint
+   * is better than a misleading one.
+   */
+  def closestLineHint(content: String, search: String): Option[LineHint] =
+    val anchorOpt = DiffUtil.splitLines(search).find(_.trim.nonEmpty)
+    anchorOpt.flatMap { anchor =>
+      val normAnchor = normalizeWhitespace(normalizeQuotes(anchor)).text
+      if normAnchor.isBlank then None
+      else
+        var bestLine = 0
+        var bestSim = -1
+        var bestExcerpt = ""
+        val lines = DiffUtil.splitLines(content)
+        var i = 0
+        while i < lines.length do
+          val normLine = normalizeWhitespace(normalizeQuotes(lines(i))).text
+          if normLine.nonEmpty then
+            val lev = similarityPct(normLine, normAnchor)
+            val sim =
+              if normLine.contains(normAnchor) then math.max(lev, 85)
+              else lev
+            if sim > bestSim then
+              bestSim = sim
+              bestLine = i + 1 // 1-based
+              bestExcerpt = lines(i).trim
+          i += 1
+        end while
+        if bestSim >= MinHintSimilarity then Some(LineHint(bestLine, bestSim, bestExcerpt))
+        else None
+    }
+
+  /** Levenshtein-based similarity in percent (100 = identical). */
+  private def similarityPct(a: String, b: String): Int =
+    if a.isEmpty && b.isEmpty then 100
+    else if a.isEmpty || b.isEmpty then 0
+    else
+      val dist = levenshtein(a, b)
+      (100.0 * (1.0 - dist.toDouble / math.max(a.length, b.length)).max(0.0)).round.toInt
+
+  /** Compact two-row Levenshtein DP. Only called on match failure. */
+  private def levenshtein(a: String, b: String): Int =
+    var prev = Array.tabulate(b.length + 1)(identity)
+    var cur = new Array[Int](b.length + 1)
+    var i = 1
+    while i <= a.length do
+      cur(0) = i
+      var j = 1
+      while j <= b.length do
+        val cost = if a.charAt(i - 1) == b.charAt(j - 1) then 0 else 1
+        cur(j) = math.min(math.min(cur(j - 1) + 1, prev(j) + 1), prev(j - 1) + cost)
+        j += 1
+      val tmp = prev
+      prev = cur
+      cur = tmp
+      i += 1
+    end while
+    prev(b.length)
+  end levenshtein
+
   /**
    * Detect curly-quote pattern in reference text and apply the same
    * pattern to the target. Uses a simple open/close toggle heuristic.
