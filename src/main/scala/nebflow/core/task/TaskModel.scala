@@ -9,6 +9,19 @@ enum TaskStatus:
 
 object TaskStatus:
 
+  /**
+   * Wire-format status name — the SINGLE source for every string form
+   * (codec, index, tools, filters). `toString.toLowerCase` loses the
+   * underscore (InProgress -> "inprogress") and MUST NOT be used for
+   * user/agent-visible strings or filters (qa toolopt-task-20260816).
+   */
+  def wireName(s: TaskStatus): String = s match
+    case TaskStatus.Pending => "pending"
+    case TaskStatus.InProgress => "in_progress"
+    case TaskStatus.Completed => "completed"
+    case TaskStatus.Failed => "failed"
+    case TaskStatus.Dismissed => "dismissed"
+
   given Codec[TaskStatus] = io.circe.Codec.from(
     io.circe.Decoder.decodeString.emap {
       case "pending" => Right(TaskStatus.Pending)

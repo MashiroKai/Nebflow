@@ -109,6 +109,32 @@ class TaskQueryToolSpec extends FunSuite:
     assert(out50.contains("40 shown"))
   }
 
+  test("scope=session status=in_progress filter WORKS with the underscore wire name") {
+    // regression (qa toolopt-task-20260816): toString.toLowerCase turned
+    // InProgress into "inprogress" so the schema-promised value never matched
+    seedSession("s1", "wip task", TaskStatus.InProgress)
+    seedSession("s1", "done task", TaskStatus.Completed)
+    val out = run(obj("scope" -> "session".asJson, "status" -> "in_progress".asJson))
+    assert(out.contains("wip task"))
+    assert(out.contains("[in_progress] wip task"), s"rendered status must keep the underscore:\n$out")
+    assert(!out.contains("done task"))
+  }
+
+  test("scope=recent status=in_progress filter works against the index") {
+    seedSession("sa", "indexed wip", TaskStatus.InProgress)
+    seedSession("sb", "indexed done", TaskStatus.Completed)
+    TaskArchive.rebuildIndex(_ => TaskArchive.Unclassified).unsafeRunSync()
+    val entries = TaskArchive.loadIndex().unsafeRunSync()
+    // the index itself must carry the wire name with underscore
+    assertEquals(
+      entries.find(_.subject == "indexed wip").map(_.status),
+      Some("in_progress")
+    )
+    val out = run(obj("scope" -> "recent".asJson, "status" -> "in_progress".asJson))
+    assert(out.contains("indexed wip"))
+    assert(!out.contains("indexed done"))
+  }
+
   test("parseSince handles today / yesterday / Nd / ISO date") {
     val zone = java.time.ZoneId.systemDefault()
     assert(TaskQueryTool.parseSince("today").isDefined)

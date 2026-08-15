@@ -161,7 +161,7 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
                 case Some(updated) =>
                   TaskToolHelper
                     .emitTaskListUpdate(store, sessionId, ctx)
-                    .as(Right(s"${updated.subject} → ${updated.status.toString.toLowerCase}"))
+                    .as(Right(s"${updated.subject} → ${TaskStatus.wireName(updated.status)}"))
                 case None => IO.pure(Left(ToolError(s"Task #$single not found")))
               }
               .handleErrorWith {
@@ -180,7 +180,7 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
                   case (id, Left(e)) => s"$id (${e.getClass.getSimpleName})"
                 }
                 TaskToolHelper.emitTaskListUpdate(store, sessionId, ctx).as {
-                  val statusStr = statusOpt.map(s => s" → ${s.toString.toLowerCase}").getOrElse("")
+                  val statusStr = statusOpt.map(s => s" → ${TaskStatus.wireName(s)}").getOrElse("")
                   (successCount, notFoundIds, errorIds) match
                     case (0, _, errs) if errs.nonEmpty =>
                       Left(ToolError(s"All ${multiple.size} tasks failed. Errors: ${errs.mkString("; ")}"))

@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.task.{Task, TaskArchive}
+import nebflow.core.task.{Task, TaskArchive, TaskStatus}
 
 import java.time.{Instant, LocalDate, ZoneId}
 
@@ -103,7 +103,7 @@ Find by keyword:              {"keyword": "registry", "scope": "session"}"""
           case "session" =>
             store.list(sessionId).map { tasks =>
               val filtered = tasks
-                .filter(t => statusFilter.forall(_ == t.status.toString.toLowerCase))
+                .filter(t => statusFilter.forall(_ == TaskStatus.wireName(t.status)))
                 .filter(t => keyword.forall(k =>
                   t.subject.toLowerCase.contains(k) || t.description.toLowerCase.contains(k)))
               Right(render(toEntries(filtered, sessionId), limit, s"session $sessionId"))
@@ -149,7 +149,7 @@ Find by keyword:              {"keyword": "registry", "scope": "session"}"""
                                   statusFilter: Option[String], keyword: Option[String], limit: Int): IO[Either[ToolError, String]] =
     store.list(sessionId).map { tasks =>
       val filtered = tasks
-        .filter(t => statusFilter.forall(_ == t.status.toString.toLowerCase))
+        .filter(t => statusFilter.forall(_ == TaskStatus.wireName(t.status)))
         .filter(t => keyword.forall(k =>
           t.subject.toLowerCase.contains(k) || t.description.toLowerCase.contains(k)))
       Right("[archive index unavailable — showing current session only]\n" +
@@ -164,7 +164,7 @@ Find by keyword:              {"keyword": "registry", "scope": "session"}"""
       sessionName = None,
       taskId = t.id,
       subject = t.subject,
-      status = t.status.toString.toLowerCase,
+      status = TaskStatus.wireName(t.status),
       createdAt = t.createdAt,
       updatedAt = t.updatedAt,
       completedAt = t.completedAt,
