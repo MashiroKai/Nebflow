@@ -24,8 +24,15 @@ trait TaskStore:
 
 object FileTaskStore extends TaskStore:
   private val logger = NebflowLogger.forName("nebflow.taskstore")
-  private val root = PathUtil.dataRoot / "tasks"
+
+  /** `def` on purpose: PathUtil.dataRoot may be swapped after this object's
+    * first use (tests inject a temp root) — a `val` would freeze the path at
+    * class-init time (same trap as UsageTracker, 2026-08-14). */
+  private def root: os.Path = PathUtil.dataRoot / "tasks"
   private val hwmFile = ".highwatermark"
+
+  /** Cap on per-task event history — oldest entries are dropped beyond this. */
+  private val MaxEvents = 50
 
   // Atomic high-water mark per session (Issue #1)
   private val hwmRef: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
@@ -103,7 +110,8 @@ object FileTaskStore extends TaskStore:
         status = TaskStatus.Pending,
         parentId = input.parentTaskId,
         createdAt = Some(now),
-        updatedAt = Some(now)
+        updatedAt = Some(now),
+        events = List(TaskEvent("created", None, Some(now)))
       )
       _ <- writeTask(sessionId, task)
     yield newId
@@ -141,6 +149,14 @@ object FileTaskStore extends TaskStore:
         }
         .map(_.filter(_ != null))
     }
+
+  /** Wire-format status name (enum toString loses the underscore in in_progress). */
+  private def statusName(s: TaskStatus): String = s match
+    case TaskStatus.Pending => "pending"
+    case TaskStatus.InProgress => "in_progress"
+    case TaskStatus.Completed => "completed"
+    case TaskStatus.Failed => "failed"
+    case TaskStatus.Dismissed => "dismissed"
 
   // Issue #2: State transition validation matrix
   private def isValidTransition(from: TaskStatus, to: TaskStatus): Boolean =
@@ -206,6 +222,40 @@ object FileTaskStore extends TaskStore:
             val newBlockedBy = (existing.blockedBy ++ updates.addBlockedBy.getOrElse(Nil)).distinct
               .filterNot(updates.removeBlockedBy.getOrElse(Nil).contains)
 
+            val now = Instant.now().toString
+
+            // C2: completedAt = the moment the task enters a terminal state
+            // (completed or failed). Preserved once set (dismiss keeps it).
+            val newStatus2 = newStatus
+            val entersTerminal =
+              (newStatus2 == TaskStatus.Completed || newStatus2 == TaskStatus.Failed) &&
+                existing.status != TaskStatus.Completed && existing.status != TaskStatus.Failed
+            val newCompletedAt =
+              if entersTerminal then Some(now) else existing.completedAt
+
+            // C2 event stream: append one event per kind of change, cap at MaxEvents
+            val evBuilder = List.newBuilder[TaskEvent]
+            if updates.status.exists(_ != existing.status) then
+              evBuilder += TaskEvent(
+                "status",
+                Some(s"${statusName(existing.status)}→${statusName(newStatus2)}"),
+                Some(now)
+              )
+            if updates.subject.exists(_ != existing.subject) then
+              evBuilder += TaskEvent("subject", Some(s"was: ${existing.subject.take(120)}"), Some(now))
+            if updates.description.exists(_ != existing.description) then
+              evBuilder += TaskEvent("description", Some(s"was: ${existing.description.take(120)}"), Some(now))
+            if newBlocks != existing.blocks || newBlockedBy != existing.blockedBy then
+              evBuilder += TaskEvent("dependency", Some(s"blocks=${newBlocks.mkString(",")} blockedBy=${newBlockedBy.mkString(",")}"), Some(now))
+            if updates.note.exists(_.nonEmpty) then
+              evBuilder += TaskEvent("note", updates.note.map(_.take(120)), Some(now))
+            val newEvents = (existing.events ++ evBuilder.result()).takeRight(MaxEvents)
+
+            // C2 notes: append-only
+            val newNotes = updates.note.filter(_.nonEmpty) match
+              case Some(text) => existing.notes :+ TaskNote(text, updates.noteLinks.getOrElse(Nil), Some(now))
+              case None       => existing.notes
+
             val updated = existing.copy(
               subject = updates.subject.getOrElse(existing.subject),
               description = updates.description.getOrElse(existing.description),
@@ -213,7 +263,10 @@ object FileTaskStore extends TaskStore:
               status = newStatus,
               blocks = newBlocks,
               blockedBy = newBlockedBy,
-              updatedAt = Some(Instant.now().toString)
+              updatedAt = Some(now),
+              completedAt = newCompletedAt,
+              notes = newNotes,
+              events = newEvents
             )
 
             // Issue #3: Check for cycles after dependency changes

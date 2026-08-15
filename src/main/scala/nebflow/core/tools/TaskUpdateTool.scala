@@ -24,6 +24,12 @@ object TaskUpdateTool extends Tool:
 - Set status to `in_progress` when starting work on a task
 - Use `addBlockedBy`/`removeBlockedBy` to manage dependencies
 
+**Record outcomes (notes):**
+- When marking `completed` (or `failed`), attach a `note` summarizing what was
+  done, key results and where artifacts landed (commit hash / file paths).
+  `noteLinks` lists clickable references (file paths, URLs, task IDs).
+- Notes are append-only and preserved in the task archive for later retrieval.
+
 ## Batch Update
 
 Pass comma-separated task IDs to apply the same update to multiple tasks at once:
@@ -46,8 +52,8 @@ Terminal states: `completed` and `failed` cannot transition to any other state.
 ## Examples
 
 Mark as in progress: {"taskId": "1", "status": "in_progress"}
-Mark as completed:  {"taskId": "1", "status": "completed"}
-Mark as failed:     {"taskId": "1", "status": "failed"}
+Mark as completed:  {"taskId": "1", "status": "completed", "note": "Implemented X, tests green, commit abc1234", "noteLinks": ["/tmp/report.md"]}
+Mark as failed:     {"taskId": "1", "status": "failed", "note": "blocked by upstream API outage"}
 Batch complete:     {"taskId": "1,2,3", "status": "completed"}
 Set dependency:     {"taskId": "2", "addBlockedBy": ["1"]}
 Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
@@ -96,6 +102,15 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
           "type" -> "array".asJson,
           "items" -> Json.obj("type" -> "string".asJson),
           "description" -> "Task IDs to remove from blockedBy".asJson
+        ),
+        "note" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Append a durable outcome note to this task (what was done, results, artifact locations). Recommended whenever marking completed/failed.".asJson
+        ),
+        "noteLinks" -> Json.obj(
+          "type" -> "array".asJson,
+          "items" -> Json.obj("type" -> "string".asJson),
+          "description" -> "Clickable references attached to the note (file paths, URLs, task IDs)".asJson
         )
       ),
       "required" -> Json.arr("taskId".asJson)
@@ -130,7 +145,9 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
           addBlocks = input("addBlocks").flatMap(_.as[List[String]].toOption),
           addBlockedBy = input("addBlockedBy").flatMap(_.as[List[String]].toOption),
           removeBlocks = input("removeBlocks").flatMap(_.as[List[String]].toOption),
-          removeBlockedBy = input("removeBlockedBy").flatMap(_.as[List[String]].toOption)
+          removeBlockedBy = input("removeBlockedBy").flatMap(_.as[List[String]].toOption),
+          note = input("note").flatMap(_.asString),
+          noteLinks = input("noteLinks").flatMap(_.as[List[String]].toOption)
         )
 
         taskIds match
