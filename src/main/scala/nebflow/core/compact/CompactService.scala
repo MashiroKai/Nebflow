@@ -184,10 +184,20 @@ object CompactService:
       |2. EFFECTIVE PRACTICES — approaches that worked in this domain (tests, build, layout)
       |3. TOOL BEHAVIOR — non-obvious tool semantics you discovered (output formats,
       |   gotchas, failure modes) that cost you time
-      |4. REUSABLE CAPABILITIES — if this conversation produced a repeatable procedure
-      |   (seen 2+ times or clearly generalizable), organize it as a skill following the
-      |   skill-creator spec: ~/.nebflow/skills/<kebab-case-name>/SKILL.md with frontmatter
-      |   (name + description: what AND when). One skill = one purpose; no one-off skills.
+      |4. USER RULINGS — if the user corrected you, vetoed your work, or stated a
+      |   preference this session: record the ruling in your memory FIRST (quote their
+      |   exact words + date), THEN report it upward via Mail with the tag
+      |   "[RESULT] [USER-RULING]" (to your Manager, or to Nebula if you are the lead),
+      |   attaching the user's original words. Never let a ruling live only in this
+      |   conversation. If you already reported it in the turn it happened, just make
+      |   sure it is now in memory.
+      |5. REUSABLE CAPABILITIES — if the same kind of ruling or procedure has now been
+      |   seen 2+ times (counting across sessions) or is clearly generalizable, draft it
+      |   as a skill following the skill-creator spec: ~/.nebflow/skills/<name>/SKILL.md
+      |   (team-specific skills use a namespace dir like skills/<namespace>/<name>/,
+      |   with the user's original words quoted in an Evidence section). One skill = one
+      |   purpose; no one-off skills. Registration & subscription (agent.json skills) is
+      |   finalized at review — report the draft in a [USER-RULING] mail.
       |
       |VERIFY & CLEAR — worker profile:
       |- Pitfalls: confirm the fix is still in the code before keeping the entry — a
