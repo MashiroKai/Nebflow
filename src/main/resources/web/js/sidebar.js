@@ -306,6 +306,11 @@ export function renderSettings() {
         <span class="settings-label">${t('settings.language')}</span>
         <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
       </div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.autostart')}</span>
+        <div class="toggle ${state.autostartStatus?.enabled ? 'on' : ''} ${state.autostartStatus && !state.autostartStatus.supported ? 'disabled' : ''}" id="toggle-autostart"></div>
+      </div>
+      <div class="cfg-hint" id="autostart-hint" style="display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'};margin-top:-4px">${escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported'))}</div>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.providers')}</div>
@@ -682,6 +687,40 @@ function showPresetModal(existing, onSaved) {
 }
 
 
+// ---------- Autostart (开机自启动) ----------
+// Target `enabled` while an autostartSet request is in flight; null when idle.
+// The result handler compares the reported state against this to toast
+// success/failure — the toggle itself is never flipped optimistically.
+let autostartPendingSet = null;
+
+onMessage('autostartStatusResult', (msg) => {
+  state.autostartStatus = {
+    enabled: !!msg.enabled,
+    supported: msg.supported !== false,
+    reason: msg.reason || '',
+  };
+  const toggle = document.getElementById('toggle-autostart');
+  if (toggle) {
+    toggle.classList.toggle('on', state.autostartStatus.enabled);
+    toggle.classList.toggle('disabled', !state.autostartStatus.supported);
+  }
+  const hint = document.getElementById('autostart-hint');
+  if (hint) {
+    const show = !state.autostartStatus.supported;
+    hint.style.display = show ? 'block' : 'none';
+    if (show) hint.textContent = state.autostartStatus.reason || t('settings.autostartUnsupported');
+  }
+  if (autostartPendingSet !== null) {
+    if (state.autostartStatus.enabled === autostartPendingSet) {
+      window.__showToast?.(t(autostartPendingSet ? 'settings.autostartOn' : 'settings.autostartOff'), 'success');
+    } else {
+      window.__showToast?.(state.autostartStatus.reason || t('settings.autostartFailed'), 'error');
+    }
+    autostartPendingSet = null;
+  }
+});
+
+
 function bindSettingsEvents(content, cfg) {
   // Thinking toggle
   document.getElementById('toggle-thinking')?.addEventListener('click', function() {
@@ -716,6 +755,19 @@ function bindSettingsEvents(content, cfg) {
     setLocale(this.value);
     renderSettings();
   });
+
+  // Autostart toggle — server-authoritative: the toggle is only flipped by the
+  // autostartStatusResult response (never optimistically), so a failed enable
+  // (launchctl/schtasks error) leaves the UI showing the real state.
+  document.getElementById('toggle-autostart')?.addEventListener('click', function() {
+    const cur = state.autostartStatus;
+    if (!cur || !cur.supported || autostartPendingSet !== null) return;
+    autostartPendingSet = !cur.enabled;
+    sendWs({ type: 'autostartSet', enabled: autostartPendingSet });
+  });
+  // Refresh status every time settings render (cheap; keeps toggle in sync
+  // with CLI-side `nebflow autostart enable/disable`).
+  sendWs({ type: 'autostartStatus' });
 
   // --- Provider add/edit/remove ---
   document.getElementById('btn-add-provider')?.addEventListener('click', () => {
