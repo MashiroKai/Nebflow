@@ -36,49 +36,15 @@ object PopTool extends Tool:
   /** Matches the src attribute value of an <img> tag (single or double quoted). */
   private val ImgSrcPattern = """(?i)<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']""".r
 
-  /** Extensions that the frontend fetches via /api/nf-file (binary viewers). */
-  private val BinaryExtensions = Set(
-    "png",
-    "jpg",
-    "jpeg",
-    "gif",
-    "svg",
-    "webp",
-    "bmp",
-    "ico",
-    "avif",
-    "tiff",
-    "tif",
-    "pdf",
-    "doc",
-    "docx",
-    "xls",
-    "xlsx",
-    "xlsm",
-    "ppt",
-    "pptx",
-    "epub"
-  )
-
   private def fileExtension(path: String): String =
     path.lastIndexOf('.') match
       case -1 => ""
       case i => path.substring(i + 1).toLowerCase
 
-  /** Map file extension to frontend viewer itemType. Mirrors WebSocketRoutes.readFile logic. */
-  private def detectItemType(ext: String): String = ext match
-    case "md" | "markdown" => "markdown"
-    case "html" | "htm" => "html"
-    case "json" => "json"
-    case "yaml" | "yml" => "yaml"
-    case "csv" | "tsv" => "csv"
-    case "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "tiff" | "tif" => "image"
-    case "pdf" => "pdf"
-    case "doc" | "docx" => "docx"
-    case "xls" | "xlsx" | "xlsm" => "xlsx"
-    case "ppt" | "pptx" => "pptx"
-    case "epub" => "epub"
-    case _ => "code"
+  // Binary-extension + itemType mapping now lives in a single source of
+  // truth (F3): core/workspace/FileTypeRegistry — shared with the WS
+  // readFile / pop.readFile routes. The local BinaryExtensions set and
+  // detectItemType match were removed as duplicate #1/#2.
 
   /** Resolve a path string (supports ~ expansion) to a normalized Path. */
   private def resolvePath(s: String): Option[Path] =
@@ -229,11 +195,12 @@ Example: {"filePath": "https://example.com"}"""
             else if !Files.isRegularFile(path) then Left(ToolError(s"Not a regular file: $path"))
             else
               val ext = fileExtension(path.toString)
-              val itemType = detectItemType(ext)
+              val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
+              val itemType = entry.itemType
               val fileName = path.getFileName.toString
               val tabTitle = if customTitle.nonEmpty then customTitle else fileName
               val size = Files.size(path)
-              val isBinary = BinaryExtensions.contains(ext)
+              val isBinary = entry.binary
 
               // For text files under MaxTextSize: read content and send via WS.
               // For binary files or large text: send metadata only, frontend fetches via /api/nf-file.
