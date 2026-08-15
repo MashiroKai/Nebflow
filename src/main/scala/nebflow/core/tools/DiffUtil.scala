@@ -36,9 +36,14 @@ object DiffUtil:
   /**
    * Write file content as UTF-8, preserving original line separator.
    *  Uses Files.write (byte array) to avoid windows cross-drive decoder issues.
+   *
+   * Isolated `\r` (not part of `\r\n`) is normalized to a line break: CR-only
+   * line endings and stray carriage returns otherwise survive every write
+   * while splitLines (`\r?\n`) treats them as ordinary characters — breaking
+   * diff line counts and prompt line numbers. One write pass cleans them.
    */
   def writeFile(path: Path, content: String, lineSep: String): Unit =
-    val normalized = content.replace("\r\n", "\n")
+    val normalized = content.replace("\r\n", "\n").replace("\r", "\n")
     val finalContent = if lineSep != "\n" then normalized.replace("\n", lineSep) else normalized
     Files.write(path, finalContent.getBytes(StandardCharsets.UTF_8))
 
