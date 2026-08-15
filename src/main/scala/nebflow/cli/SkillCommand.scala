@@ -84,7 +84,7 @@ object SkillCommand extends CliCommand:
         s" (${r.agentsWithDeclarations} with skills declarations)"
 
       val mapTitle = "\n[1] Skill → subscribers"
-      val padWidth = r.skills.map(_.name.length).foldLeft(20)(math.max)
+      val padWidth = r.skills.map(_.name.length).foldLeft(20)((a, b) => math.max(a, b))
       val mapLines = r.skills.map { s =>
         val subs = r.subscribersBySkill.get(s.name).getOrElse(Nil)
         val right = if subs.isEmpty then "(no subscribers)" else subs.map(_.display).mkString(", ")
