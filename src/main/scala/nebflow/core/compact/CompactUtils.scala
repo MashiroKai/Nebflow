@@ -8,18 +8,6 @@ object CompactUtils:
 
   private val logger = NebflowLogger.forName("nebflow.compact")
 
-  /** Replace Image blocks with placeholder text to avoid sending base64 to SubAgent. */
-  def stripImages(messages: List[Message]): List[Message] =
-    messages.map {
-      case msg @ Message(_, Right(blocks), _, _) =>
-        val stripped = blocks.map {
-          case ContentBlock.Image(_, mediaType) => ContentBlock.Text(s"[image: $mediaType]")
-          case other => other
-        }
-        msg.copy(content = Right(stripped))
-      case other => other
-    }
-
   // Placeholder for stripped tool results
   private val ToolResultPlaceholder = "[Output removed to free context space]"
 
