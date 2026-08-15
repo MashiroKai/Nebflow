@@ -97,10 +97,22 @@ Use this after writing or editing team.json / flow.json files. Always loads the 
 
   end loadTeam
 
+  /**
+   * Agent-name set a team's references may resolve against: global agents ∪
+   * the team's own local agents (teams/<name>/agents/). Team-local agents are
+   * invisible to listAgents() — validating against the global set alone made
+   * every Load(team=...) fail with "lead/member agent not found" for teams
+   * whose agents live under the team directory.
+   */
+  private[tools] def teamValidationNames(team: TeamDef): IO[Set[String]] =
+    for
+      global <- EntityLoader.listAgents()
+      local <- EntityLoader.listTeamAgents(team.name)
+    yield global.keySet ++ local.keySet
+
   private def validateAndMount(team: TeamDef, ctx: ToolContext): IO[Either[ToolError, String]] =
     for
-      agents <- EntityLoader.listAgents()
-      agentNames = agents.keySet
+      agentNames <- teamValidationNames(team)
       errors = EntityLoader.validateTeam(team, agentNames)
       result <-
         if errors.nonEmpty then
