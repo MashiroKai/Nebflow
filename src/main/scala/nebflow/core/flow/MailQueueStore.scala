@@ -26,7 +26,14 @@ object MailQueueStore:
     message: String,
     /** Advisory type tag (INFO / RESULT etc.), same vocabulary as MailTool type. */
     `type`: String,
-    timestamp: Long
+    timestamp: Long,
+    /**
+     * G3: image attachment paths. The queue persists paths (not base64 — queue
+     * files stay small); paths are re-read and re-compressed at drain time via
+     * ImageInject.drainImagePaths. A file that vanished between send and drain
+     * degrades to an `[attachment lost: path]` placeholder.
+     */
+    imagePaths: List[String] = Nil
   )
 
   given Encoder[MailQueueItem] = Encoder.instance { item =>
@@ -36,7 +43,10 @@ object MailQueueStore:
       "fromSession" -> item.fromSession.asJson,
       "message" -> item.message.asJson,
       "type" -> item.`type`.asJson,
-      "timestamp" -> item.timestamp.asJson
+      "timestamp" -> item.timestamp.asJson,
+      // G3 attachment paths — old decoders ignore unknown fields (hand-written
+      // downField readers), so this is forward compatible.
+      "imagePaths" -> item.imagePaths.asJson
     )
   }
 
@@ -48,7 +58,8 @@ object MailQueueStore:
       message <- c.downField("message").as[String]
       itemType <- c.downField("type").as[String].orElse(Right("INFO"))
       timestamp <- c.downField("timestamp").as[Option[Long]].map(_.getOrElse(0L))
-    yield MailQueueItem(id, from, fromSession, message, itemType, timestamp)
+      imagePaths <- c.downField("imagePaths").as[List[String]].orElse(Right(Nil))
+    yield MailQueueItem(id, from, fromSession, message, itemType, timestamp, imagePaths)
   }
 
   private def sessionDir(sessionId: String): os.Path =
