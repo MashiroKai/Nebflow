@@ -1943,12 +1943,14 @@ class WebSocketRoutes(
             // sessionBgAgents incrementally from realtime agentStart/agentDone
             // events, which are not replayed after a browser refresh. Read the
             // unified AgentRegistry (sessionId -> AgentRecord) and filter to
-            // active sub-agents (Delegate/Ephemeral/Flow — root agents excluded).
+            // active sub-agents (Delegate/Ephemeral/Flow/Team/SubTask — root agents excluded).
+            // Team included: Mail-activated team agents appear in the header
+            // dropdown and must survive a browser refresh (F1-3).
             // agentId == sessionId (nodeSessionId) so restored entries match
             // subsequent realtime events (agentToolStart/agentDone key on it).
             sharedResources.agentRegistry.get.flatMap { registry =>
               val active = registry.values.toList.filter(r =>
-                r.kind == AgentKind.Delegate || r.kind == AgentKind.Ephemeral || r.kind == AgentKind.Flow || r.kind == AgentKind.SubTask
+                r.kind == AgentKind.Delegate || r.kind == AgentKind.Ephemeral || r.kind == AgentKind.Flow || r.kind == AgentKind.Team || r.kind == AgentKind.SubTask
               )
               active
                 .traverse { rec =>
