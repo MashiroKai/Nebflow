@@ -158,7 +158,7 @@ class TaskArchiveCompatSpec extends FunSuite:
     val afterNote = FileTaskStore.get(sid, id).unsafeRunSync().get
     assert(afterNote.events.map(_.kind).contains("note"))
     assertEquals(afterNote.notes.length, 1)
-    assertEquals(afterNote.notes.head.text, "done, see commit abc")
+    assertEquals(afterNote.notes.head.content, "done, see commit abc")
   }
 
   test("R4: notes are append-only across updates") {
@@ -169,7 +169,7 @@ class TaskArchiveCompatSpec extends FunSuite:
     )).unsafeRunSync()
     FileTaskStore.update(sid, id, TaskUpdateInput(note = Some("second"))).unsafeRunSync()
     val t = FileTaskStore.get(sid, id).unsafeRunSync().get
-    assertEquals(t.notes.map(_.text), List("first", "second"))
+    assertEquals(t.notes.map(_.content), List("first", "second"))
     assertEquals(t.notes.head.links, List("/tmp/a.md", "abc123"))
   }
 

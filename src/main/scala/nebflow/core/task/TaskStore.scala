@@ -245,8 +245,8 @@ object FileTaskStore extends TaskStore:
 
             // C2 notes: append-only
             val newNotes = updates.note.filter(_.nonEmpty) match
-              case Some(text) => existing.notes :+ TaskNote(text, updates.noteLinks.getOrElse(Nil), Some(now))
-              case None       => existing.notes
+              case Some(content) => existing.notes :+ TaskNote(content, updates.noteLinks.getOrElse(Nil), Some(now))
+              case None          => existing.notes
 
             val updated = existing.copy(
               subject = updates.subject.getOrElse(existing.subject),
