@@ -540,19 +540,34 @@ private[agent] trait AgentCore:
     replyTo: Option[ActorRef[AgentEvent]],
     processing: ProcessingFn
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val allowedTools = buildAllowedToolSet(agentDef, depth, state.isSubTaskWorker)
-    val (filteredCalls, droppedCalls) = result.toolCalls.partition(tc => allowedTools.contains(tc.name))
-    if droppedCalls.nonEmpty then
-      NebflowLogger
-        .forName("nebflow.agent")
-        .warn(s"Tool calls filtered (not in allowed set): ${droppedCalls.map(_.name).distinct.mkString(", ")}")
     val nextTurnIdx = state.turnIdx + 1
     val permissionDeferredRef = cats.effect.Ref.unsafe[IO, Option[cats.effect.Deferred[IO, Boolean]]](None)
     val isSubagent = depth > 0
     val sessionIdOpt = state.sessionId
 
     val io = for
-      freshProjectRoot <- ContextRefresher.resolveProjectRootForTool(state, resources, agentDef)
+      // Executor gate reads the CURRENT def — the same refresh source the
+      // per-turn schema build uses (ContextRefresher.loadCurrentDef) — so
+      // panel edits to agent.json (flows whitelist, tools) take effect on
+      // the running actor instead of waiting for an actor rebuild. This
+      // closes the 2026-08-15 follow-up: mid-session flows edits were still
+      // gated by the actor-startup snapshot ("Allowed: <stale list>").
+      teamNameOpt <- state.sessionId match
+        case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
+        case None => IO.pure(None)
+      currentDefOpt <- ContextRefresher.loadCurrentDef(teamNameOpt, resources, agentDef)
+      effectiveDef = currentDefOpt.getOrElse(agentDef)
+      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker)
+      (filteredCalls, droppedCalls) =
+        val (kept, dropped) = result.toolCalls.partition(tc => allowedTools.contains(tc.name))
+        // warnSync: this is a synchronous code path — the plain IO-returning
+        // warn would be discarded silently (it was, before 2026-08-15).
+        if dropped.nonEmpty then
+          NebflowLogger
+            .forName("nebflow.agent")
+            .warnSync(s"Tool calls filtered (not in allowed set): ${dropped.map(_.name).distinct.mkString(", ")}")
+        (kept, dropped)
+      freshProjectRoot <- ContextRefresher.resolveProjectRootForTool(state, resources, effectiveDef)
       effectiveProjectRoot = freshProjectRoot.getOrElse(resources.projectRoot.toString)
       toolCtx = ToolContext(
         projectRoot = effectiveProjectRoot,
@@ -568,7 +583,7 @@ private[agent] trait AgentCore:
         fileHistory = state.fileHistory,
         parentRef = parentRef,
         depth = depth,
-        agentDef = Some(agentDef),
+        agentDef = Some(effectiveDef),
         agentLibrary = Some(resources.agentLibrary),
         askSemaphore = Some(resources.askSemaphore),
         fileLockManager = Some(resources.fileLockManager),

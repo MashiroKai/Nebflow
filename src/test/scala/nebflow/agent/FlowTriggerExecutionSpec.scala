@@ -194,6 +194,61 @@ class FlowTriggerExecutionSpec extends CatsEffectSuite:
         assert(joined.contains("not found"), s"FlowTriggerTool must have executed: $joined")
     }
 
+  // ===== Mid-session flows whitelist edit takes effect on the running actor =====
+
+  test("flows whitelist edit on disk gates FlowTrigger by the CURRENT def, not the actor snapshot"):
+    val llm = new RecordingLlm(Vector(
+      _ => flowTriggerCall("other-flow"), // turn 1: call a flow added AFTER spawn
+      _ => textAnswer("done")             // turn 2: wrap up after the tool result
+    ))
+    withEnv(llm) { (resources, system, tmp) =>
+      // Actor-startup snapshot: spawned with the ORIGINAL whitelist
+      // (["demo-flow"]) — simulating an actor that predates the panel edit.
+      val startupDef = AgentDef(
+        name = "Restored",
+        description = "flows-declaring agent",
+        tools = List("Read"),
+        systemPrompt = "",
+        category = "standalone",
+        flows = List("demo-flow")
+      )
+      for
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = startupDef,
+            resources = resources,
+            wsSend = _ => IO.unit,
+            depth = 0,
+            sessionId = Some(s"ftf-midedit-${UUID.randomUUID().toString.take(6)}"),
+            sessionName = Some("Restored")
+          ),
+          "ftf-midedit-agent"
+        )
+        // Mid-session panel edit: extend the whitelist on disk (the running
+        // actor is NOT restarted — 2026-08-15 live repro: flows 4→6 still
+        // gated by the stale actor snapshot).
+        _ <- IO.delay {
+          os.write.over(
+            tmp / "agents" / "Restored" / "agent.json",
+            """{"name":"Restored","description":"flows-declaring agent","tools":["Read"],"flows":["demo-flow","other-flow"]}"""
+          )
+        }
+        _ <- ref ! AgentCommand.UserInput("trigger the newly whitelisted flow")
+        _ <- waitUntil(30.seconds)(llm.requests.get.map(_.size >= 2))
+        reqs <- llm.requests.get.map(_.reverse)
+        results = toolResults(reqs(1))
+      yield
+        // The executor gate must read the CURRENT def (ContextRefresher.
+        // loadCurrentDef): "other-flow" is whitelisted on disk, so the call
+        // reaches FlowTriggerTool itself ("not found" — no such flow json)
+        // instead of being rejected by the stale snapshot ("not allowed …
+        // Allowed: demo-flow").
+        assert(results.nonEmpty, "second request must carry the tool result")
+        val joined = results.mkString("\n")
+        assert(!joined.contains("not allowed"), s"stale actor snapshot gated the call: $joined")
+        assert(joined.contains("not found"), s"FlowTriggerTool must have executed: $joined")
+    }
+
   // ===== Restart-restore lifecycle invariant =====
 
   test("restored session rebuilds systemStable from the CURRENT def on its first turn"):
