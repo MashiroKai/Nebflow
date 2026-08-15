@@ -6,7 +6,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
-import nebflow.shared.{Message, MessageRole}
+import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 /**
  * DelegateTool — Nebula/调度器专用 sub-agent delegation.
@@ -106,7 +106,8 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
 **Rules:**
 - Prompt must be self-contained (the sub-agent starts with a clean context). Set fork=true to pass your conversation history.
 - State what "done" looks like (e.g. "Report findings — do not modify files").
-- Do NOT duplicate the sub-agent's work — work on non-overlapping files or topics."""
+- Do NOT duplicate the sub-agent's work — work on non-overlapping files or topics.
+- Images: optional `images` parameter attaches up to 5 absolute local image paths to the prompt — the sub-agent sees them directly. For other files, reference paths in the prompt text."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -142,6 +143,13 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
         "flow" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Flow name to trigger (e.g. \"code-review\", \"release-beta\"). When specified, triggers a flow DAG pipeline. The flow result is delivered via ExternalEvent when complete. Cannot be combined with \"agent\" parameter.".asJson
+        ),
+        "images" -> io.circe.Json.obj(
+          "type" -> "array".asJson,
+          "items" -> io.circe.Json.obj("type" -> "string".asJson).asJson,
+          "maxItems" -> 5.asJson,
+          "description" -> "Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5) attached to the prompt — the sub-agent sees the images directly. Not supported with the flow parameter.".asJson,
+          "default" -> io.circe.Json.arr()
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)
@@ -172,6 +180,10 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if flowName.isDefined && targetAgentName.isDefined then
       IO.pure(Left(ToolError("Cannot specify both 'agent' and 'flow' parameters")))
+    else if flowName.isDefined && ImageInject.parseImagesParam(input).toOption.exists(_.nonEmpty) then
+      IO.pure(
+        Left(ToolError("images are not supported when triggering a flow — reference image paths in the prompt text instead."))
+      )
     else if flowName.isDefined then
       // Validate: agent must declare this flow in its flows list
       ctx.agentDef match
@@ -213,103 +225,114 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-agent depth ($MaxDepth) reached. Cannot delegate further.")))
     else
-      // Resolve the effective agent def: either a target standalone agent
-      // or a clone of the calling agent. Done before the ActorSystem check so
-      // that invalid agent names are reported even without a live actor system.
-      val resolveAgent: IO[Either[ToolError, (AgentDef, List[Message])]] =
-        targetAgentName match
-          case Some(agentName) =>
-            ctx.agentLibrary match
-              case Some(lib) =>
-                lib.get(agentName).map {
-                  case Some(targetDef) if targetDef.category == "standalone" =>
-                    Right((targetDef, Nil)) // no fork for cross-agent
-                  case Some(_) =>
-                    Left(ToolError(s"'$agentName' is not a standalone agent"))
-                  case None =>
-                    Left(ToolError(s"Agent '$agentName' not found"))
-                }
-              case None =>
-                IO.pure(Left(ToolError("No agent library available")))
-          case None =>
-            ctx.agentDef match
-              case Some(parentAgentDef) =>
-                IO.pure(Right((parentAgentDef, if fork then ctx.messages else Nil)))
-              case None =>
-                IO.pure(Left(ToolError("No agent definition available")))
-
-      resolveAgent.flatMap {
+      // G3: resolve optional image attachments before spawning — fail fast on
+      // invalid paths (nothing is spawned).
+      ImageInject.parseImagesParam(input) match
         case Left(err) => IO.pure(Left(err))
-        case Right((agentDef, initialMessages)) =>
-          (ctx.actorSystem, ctx.sharedResources) match
-            case (Some(system), Some(resources)) =>
-              val agentName = agentDef.name
-              val adjustedPrompt =
-                if fork && targetAgentName.isEmpty then
-                  s"""<system-reminder>
+        case Right(imagePaths) =>
+          ImageInject.resolveImages(imagePaths).flatMap {
+            case Left(err) => IO.pure(Left(err))
+            case Right(attachments) =>
+              // Resolve the effective agent def: either a target standalone agent
+              // or a clone of the calling agent. Done before the ActorSystem check so
+              // that invalid agent names are reported even without a live actor system.
+              val resolveAgent: IO[Either[ToolError, (AgentDef, List[Message])]] =
+                targetAgentName match
+                  case Some(agentName) =>
+                    ctx.agentLibrary match
+                      case Some(lib) =>
+                        lib.get(agentName).map {
+                          case Some(targetDef) if targetDef.category == "standalone" =>
+                            Right((targetDef, Nil)) // no fork for cross-agent
+                          case Some(_) =>
+                            Left(ToolError(s"'$agentName' is not a standalone agent"))
+                          case None =>
+                            Left(ToolError(s"Agent '$agentName' not found"))
+                        }
+                      case None =>
+                        IO.pure(Left(ToolError("No agent library available")))
+                  case None =>
+                    ctx.agentDef match
+                      case Some(parentAgentDef) =>
+                        IO.pure(Right((parentAgentDef, if fork then ctx.messages else Nil)))
+                      case None =>
+                        IO.pure(Left(ToolError("No agent definition available")))
+
+              resolveAgent.flatMap {
+                case Left(err) => IO.pure(Left(err))
+                case Right((agentDef, initialMessages)) =>
+                  (ctx.actorSystem, ctx.sharedResources) match
+                    case (Some(system), Some(resources)) =>
+                      val agentName = agentDef.name
+                      val adjustedPrompt =
+                        if fork && targetAgentName.isEmpty then
+                          s"""<system-reminder>
 You are a sub-agent working on a delegated task. Your parent agent has forked this conversation to give you background context.
 
 Focus ONLY on the specific task described below. Do not work on other topics from the conversation history — those are your parent's responsibilities.
 </system-reminder>
 
 $prompt"""
-                else prompt
+                        else prompt
 
-              // Query parent session's safety mode so sub-agent inherits it
-              val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
-                case (Some(store), Some(sid)) => store.getSafetyMode(sid)
-                case _ => IO.pure("confirm-edits")
-              // P2: resolve the caller's permission-policy bucket (root session)
-              // so the delegate inherits the same policy as the caller — the
-              // whole tree anchors to one rootSessionId.
-              val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
-                case (Some(res), Some(sid)) =>
-                  res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
-                case _ => IO.pure(ctx.sessionId.getOrElse(""))
-              for
-                safetyMode <- safetyModeIO
-                rootSid <- callerRootIO
-                result <-
-                  if lifecycle == "persistent" then
-                    spawnPersistent(
-                      agentDef = agentDef,
-                      prompt = adjustedPrompt,
-                      description = description,
-                      taskDescription = taskDescription,
-                      agentName = agentName,
-                      initialMessages = initialMessages,
-                      system = system,
-                      resources = resources,
-                      parentDepth = ctx.depth,
-                      parentRef = ctx.agentActorRef,
-                      wsSend = ctx.wsSend,
-                      projectRoot = ctx.projectRoot,
-                      parentSessionId = ctx.sessionId,
-                      safetyMode = safetyMode,
-                      rootSessionId = rootSid
-                    )
-                  else
-                    spawnBackground(
-                      agentDef = agentDef,
-                      prompt = adjustedPrompt,
-                      description = description,
-                      agentName = agentName,
-                      initialMessages = initialMessages,
-                      system = system,
-                      resources = resources,
-                      parentDepth = ctx.depth,
-                      parentRef = ctx.agentActorRef,
-                      wsSend = ctx.wsSend,
-                      projectRoot = ctx.projectRoot,
-                      parentSessionId = ctx.sessionId,
-                      safetyMode = safetyMode,
-                      rootSessionId = rootSid
-                    )
-              yield result
-              end for
-            case _ =>
-              IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
-      }
+                      // Query parent session's safety mode so sub-agent inherits it
+                      val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
+                        case (Some(store), Some(sid)) => store.getSafetyMode(sid)
+                        case _ => IO.pure("confirm-edits")
+                      // P2: resolve the caller's permission-policy bucket (root session)
+                      // so the delegate inherits the same policy as the caller — the
+                      // whole tree anchors to one rootSessionId.
+                      val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
+                        case (Some(res), Some(sid)) =>
+                          res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+                        case _ => IO.pure(ctx.sessionId.getOrElse(""))
+                      for
+                        safetyMode <- safetyModeIO
+                        rootSid <- callerRootIO
+                        result <-
+                          if lifecycle == "persistent" then
+                            spawnPersistent(
+                              agentDef = agentDef,
+                              prompt = adjustedPrompt,
+                              attachments = attachments,
+                              description = description,
+                              taskDescription = taskDescription,
+                              agentName = agentName,
+                              initialMessages = initialMessages,
+                              system = system,
+                              resources = resources,
+                              parentDepth = ctx.depth,
+                              parentRef = ctx.agentActorRef,
+                              wsSend = ctx.wsSend,
+                              projectRoot = ctx.projectRoot,
+                              parentSessionId = ctx.sessionId,
+                              safetyMode = safetyMode,
+                              rootSessionId = rootSid
+                            )
+                          else
+                            spawnBackground(
+                              agentDef = agentDef,
+                              prompt = adjustedPrompt,
+                              attachments = attachments,
+                              description = description,
+                              agentName = agentName,
+                              initialMessages = initialMessages,
+                              system = system,
+                              resources = resources,
+                              parentDepth = ctx.depth,
+                              parentRef = ctx.agentActorRef,
+                              wsSend = ctx.wsSend,
+                              projectRoot = ctx.projectRoot,
+                              parentSessionId = ctx.sessionId,
+                              safetyMode = safetyMode,
+                              rootSessionId = rootSid
+                            )
+                      yield result
+                      end for
+                    case _ =>
+                      IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
+              }
+          }
     end if
   end call
 
@@ -320,6 +343,7 @@ $prompt"""
   private def spawnBackground(
     agentDef: AgentDef,
     prompt: String,
+    attachments: List[ContentBlock],
     description: String,
     agentName: String,
     initialMessages: List[Message],
@@ -423,7 +447,13 @@ $prompt"""
           )
         )
         .handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}")))
-      _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
+      // G3: blocks carry attachments with the prompt text as the first Text
+      // block (UserInput drops `text` when blocks are present).
+      _ <- subagentRef ! AgentCommand.UserInput(
+        prompt,
+        Some(adapterRef),
+        blocks = ImageInject.messageBlocks(prompt, attachments)
+      )
     yield Right(
       s"""Sub-agent '$agentName' started in background for: $description.
 You will be notified when it completes via a system message.
@@ -516,6 +546,7 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
   private def spawnPersistent(
     agentDef: AgentDef,
     prompt: String,
+    attachments: List[ContentBlock],
     description: String,
     taskDescription: String,
     agentName: String,
@@ -573,7 +604,13 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
         )
       )
       _ <- parentRef.fold(IO.unit)(ref => ref ! AgentCommand.SessionStarted(address, agentName, taskDescription))
-      _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
+      // G3: blocks carry attachments with the prompt text as the first Text
+      // block (UserInput drops `text` when blocks are present).
+      _ <- subagentRef ! AgentCommand.UserInput(
+        prompt,
+        Some(adapterRef),
+        blocks = ImageInject.messageBlocks(prompt, attachments)
+      )
     yield Right(
       s"""Persistent session started: $agentName for: $taskDescription
 Session address: $address

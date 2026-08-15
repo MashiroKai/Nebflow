@@ -587,11 +587,15 @@ object AgentActor extends AgentCore with AgentSession:
         val sid = state.sessionId.getOrElse("")
         for
           _ <- nebflow.core.flow.MailQueueStore.removeHead(sid).void
+          // G3: re-read attachment paths at drain time (D6 — queue persists
+          // paths, not base64). Lost files degrade to placeholder text.
+          attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
+          blocks = nebflow.core.tools.ImageInject.messageBlocks(item.message, attBlocks)
           _ <- ctx.self ! AgentCommand.UserInput(
             item.message,
             None,
             None,
-            None,
+            blocks,
             0,
             source = Some("mail-queue"),
             sender = Some(item.from),
@@ -2074,16 +2078,24 @@ object AgentActor extends AgentCore with AgentSession:
         headOpt = items.headOption
         result <- headOpt match
           case Some(item) =>
-            val queueMessage =
-              Message(MessageRole.User, Left(item.message)).copy(source = Some("mail-queue"))
-            val messagesWithQueue = newMessages ++ List(queueMessage)
-            val updatedState = state.copy(execution =
-              ExecutionContext
-                .idle(messagesWithQueue, state.execution.turnIdx)
-                .copy(pendingMailQueueCount = state.execution.pendingMailQueueCount - 1,
-                      pendingUserInputs = state.execution.pendingUserInputs)
-            )
             for
+              // G3: re-read attachment paths at drain time (D6). Lost files
+              // degrade to placeholder text instead of failing the turn.
+              attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
+              queueMessage = (attBlocks match
+                case Nil => Message(MessageRole.User, Left(item.message))
+                case blocks =>
+                  // Message text MUST be the first Text block — blocks replace
+                  // the string content entirely.
+                  Message(MessageRole.User, Right(ContentBlock.Text(item.message) :: blocks))
+              ).copy(source = Some("mail-queue"))
+              messagesWithQueue = newMessages ++ List(queueMessage)
+              updatedState = state.copy(execution =
+                ExecutionContext
+                  .idle(messagesWithQueue, state.execution.turnIdx)
+                  .copy(pendingMailQueueCount = state.execution.pendingMailQueueCount - 1,
+                        pendingUserInputs = state.execution.pendingUserInputs)
+              )
               _ <- nebflow.core.flow.MailQueueStore.removeHead(sid)
               _ <-
                 if !isSubagent then emitSessionBusy(state.wsSend, sid, busy = true)
