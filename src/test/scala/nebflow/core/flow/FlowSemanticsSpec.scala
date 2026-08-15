@@ -128,7 +128,7 @@ class FlowSemanticsSpec extends FunSuite:
     val decoded = decode[NodeRoute](json)
     assert(decoded.isRight, s"should decode: $decoded")
     decoded.foreach {
-      case NodeRoute.Switch(expr, cases, default) =>
+      case NodeRoute.Switch(expr, cases, default, _) =>
         assertEquals(expr, "$reviewer.verdict")
         assertEquals(cases.keySet, Set("pass", "fix"))
         assertEquals(default, Some(NodeRoute.Return))
@@ -144,7 +144,7 @@ class FlowSemanticsSpec extends FunSuite:
     val decoded = decode[NodeRoute](json)
     assert(decoded.isRight, s"should decode: $decoded")
     decoded.foreach {
-      case NodeRoute.Switch(expr, cases, default) =>
+      case NodeRoute.Switch(expr, cases, default, _) =>
         assertEquals(expr, "$scanner.status")
         assertEquals(cases.keySet, Set("ok", "error"))
         assertEquals(default, None)

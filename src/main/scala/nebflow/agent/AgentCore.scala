@@ -957,7 +957,18 @@ private[agent] trait AgentCore:
     isSubTaskWorker: Boolean = false
   ): Option[List[ToolDefinition]] =
     val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker)
-    Some(ToolRegistry.ALL_TOOLS.filter(t => allowedSet.contains(t.name)))
+    Some(ToolRegistry.ALL_TOOLS.flatMap { td =>
+      if !allowedSet.contains(td.name) then None
+      // R8-P1: flow node agents get their per-node contract (verdict enum +
+      // slots schema) appended to the FlowReport description, so the agent
+      // knows its allowed values BEFORE the first call instead of discovering
+      // them via ToolError round-trips.
+      else if td.name == "FlowReport" then
+        agentDef.flowContract match
+          case Some(contract) => Some(td.copy(description = td.description + "\n\n" + contract.describe))
+          case None           => Some(td)
+      else Some(td)
+    })
 
   protected def emitStream(
     wsSend: io.circe.Json => IO[Unit],

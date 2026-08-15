@@ -119,7 +119,12 @@ object NodeRoute:
   case class Switch(
     switchExpr: String,
     cases: Map[String, NodeRoute],
-    default: Option[NodeRoute] = None // conservative route when no case matches (e.g. $return)
+    default: Option[NodeRoute] = None, // conservative route when no case matches (e.g. $return)
+    // R8-P1: legacy guess fallback (JSON field → regex → substring) only runs
+    // when the flow has strictVerdict=true AND this switch opts in via
+    // "lenient": true. strictVerdict=false flows keep the legacy pipeline
+    // regardless (backward compat).
+    lenient: Boolean = false
   ) extends NodeRoute
 
   /** Terminate the flow, return result. */
@@ -138,20 +143,22 @@ object NodeRoute:
       case Left(_) =>
         for
           switchExpr <- c.downField("switch").as[String]
-          casesRaw <- c.downField("cases").as[Map[String, Json]]
-          cases <- casesRaw.toList.traverse { (k, v) => v.as[NodeRoute].map(k -> _) }
-          default <- c.downField("default").as[Option[NodeRoute]]
-        yield Switch(switchExpr, cases.toMap, default)
+              casesRaw <- c.downField("cases").as[Map[String, Json]]
+              cases <- casesRaw.toList.traverse { (k, v) => v.as[NodeRoute].map(k -> _) }
+              default <- c.downField("default").as[Option[NodeRoute]]
+              lenient <- c.downField("lenient").as[Option[Boolean]]
+            yield Switch(switchExpr, cases.toMap, default, lenient.getOrElse(false))
   }
 
   given Encoder[NodeRoute] = Encoder.instance {
     case Goto(id) => Json.fromString(id)
     case Return => Json.fromString("$return")
-    case Switch(expr, cases, default) =>
+    case Switch(expr, cases, default, lenient) =>
       Json.obj(
         "switch" -> Json.fromString(expr),
         "cases" -> cases.asJson,
-        "default" -> default.asJson
+        "default" -> default.asJson,
+        "lenient" -> (if lenient then Json.fromBoolean(true) else Json.Null)
       )
   }
 end NodeRoute
@@ -186,7 +193,11 @@ case class FlowNode(
   input: String, // input template: "$task", "$scanner.output"
   onComplete: NodeRoute, // completion route
   onError: Option[OnError] = None, // failure strategy (default stop)
-  maxRetries: Int = 0 // max retry count
+  maxRetries: Int = 0, // max retry count
+  // R8-P1: structured output contract — slot name → "string" | "array".
+  // Flow agents report values via FlowReport's `slots` parameter; downstream
+  // nodes reference them with $<nodeId>.slots.<field>.
+  outputs: Map[String, String] = Map.empty
 )
 
 object FlowNode:
@@ -198,7 +209,18 @@ object FlowNode:
       onComplete <- c.downField("onComplete").as[NodeRoute]
       onError <- c.downField("onError").as[Option[OnError]]
       maxRetries <- c.downField("maxRetries").as[Option[Int]]
-    yield FlowNode(agent, input, onComplete, onError, maxRetries.getOrElse(0))
+      outputs <- c.downField("outputs").as[Option[Map[String, String]]]
+      _ <-
+        // Reject unknown slot types at parse time — a typo'd "strng" would
+        // otherwise silently pass every runtime check.
+        outputs match
+          case Some(m) =>
+            m.values.filterNot(t => t == "string" || t == "array") match
+              case Nil => Right(())
+              case bad =>
+                Left(DecodingFailure(s"outputs slot types must be \"string\" or \"array\", got: ${bad.mkString(", ")}", c.history))
+          case None => Right(())
+    yield FlowNode(agent, input, onComplete, onError, maxRetries.getOrElse(0), outputs.getOrElse(Map.empty))
   }
 
   given Encoder[FlowNode] = Encoder.instance { n =>
@@ -207,7 +229,8 @@ object FlowNode:
       "input" -> n.input.asJson,
       "onComplete" -> n.onComplete.asJson,
       "onError" -> n.onError.asJson,
-      "maxRetries" -> n.maxRetries.asJson
+      "maxRetries" -> n.maxRetries.asJson,
+      "outputs" -> (if n.outputs.isEmpty then Json.Null else n.outputs.asJson)
     )
   }
 
@@ -219,7 +242,11 @@ case class FlowDagDef(
   description: String,
   nodes: Map[String, FlowNode],
   entry: String, // entry node ID
-  maxLoop: Int = 10 // loop protection (no timeout)
+  maxLoop: Int = 10, // loop protection (no timeout)
+  // R8-P1: require structured FlowReport verdicts on switch nodes. Default
+  // false (transition period — legacy flows keep the guess pipeline until
+  // migrated; flipped to true by explicit "strictVerdict": true).
+  strictVerdict: Boolean = false
 )
 
 object FlowDagDef:
@@ -231,7 +258,8 @@ object FlowDagDef:
       nodes <- c.downField("nodes").as[Map[String, FlowNode]]
       entry <- c.downField("entry").as[String]
       maxLoop <- c.downField("maxLoop").as[Option[Int]]
-    yield FlowDagDef(name, description, nodes, entry, maxLoop.getOrElse(10))
+      strictVerdict <- c.downField("strictVerdict").as[Option[Boolean]]
+    yield FlowDagDef(name, description, nodes, entry, maxLoop.getOrElse(10), strictVerdict.getOrElse(false))
   }
 
   given Encoder[FlowDagDef] = Encoder.instance { f =>
@@ -240,7 +268,8 @@ object FlowDagDef:
       "description" -> f.description.asJson,
       "nodes" -> f.nodes.asJson,
       "entry" -> f.entry.asJson,
-      "maxLoop" -> f.maxLoop.asJson
+      "maxLoop" -> f.maxLoop.asJson,
+      "strictVerdict" -> (if f.strictVerdict then Json.fromBoolean(true) else Json.Null)
     )
   }
 end FlowDagDef
@@ -265,7 +294,10 @@ case class NodeResult(
   success: Boolean,
   error: Option[String] = None,
   attemptCount: Int = 1,
-  verdict: Option[String] = None
+  verdict: Option[String] = None,
+  // R8-P1: structured slot values reported via FlowReport (per the node's
+  // `outputs` declaration). Referenced downstream via $<nodeId>.slots.<field>.
+  slots: Map[String, Json] = Map.empty
 )
 
 /** Runtime context for a flow execution. */
@@ -273,6 +305,7 @@ case class FlowExecContext(
   flowName: String,
   taskInput: String,
   nodeOutputs: Map[String, String] = Map.empty, // nodeId -> output
+  nodeSlots: Map[String, Map[String, Json]] = Map.empty, // nodeId -> slot name -> value
   loopCounts: Map[String, Int] = Map.empty, // edge -> traversal count
   totalLoops: Int = 0
 )
