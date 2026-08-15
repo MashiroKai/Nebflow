@@ -2637,11 +2637,75 @@ class WebSocketRoutes(
           case "getConfig" =>
             configService.isConfigured.flatMap { configured =>
               configService.getConfig.flatMap { cfg =>
+                nebflow.core.OnboardingService.readState().flatMap { onboarding =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "configData".asJson,
+                      "config" -> cfg.asJson,
+                      "configured" -> configured.asJson,
+                      // null = no marker yet (fresh install); frontend shows the wizard
+                      "onboarding" -> onboarding.map(_.name).asJson
+                    )
+                  )
+                }
+              }
+            }
+
+          case "setOnboardingState" =>
+            // F3 onboarding state machine: pending | done | skipped.
+            val stJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val stStr = stJson.hcursor.downField("state").as[String].getOrElse("")
+            nebflow.core.OnboardingService.OnboardingState.fromString(stStr) match
+              case Some(st) =>
+                nebflow.core.OnboardingService.writeState(st) *>
+                  wsSend(io.circe.Json.obj("type" -> "onboardingStateSet".asJson, "state" -> st.name.asJson))
+              case None =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"invalid onboarding state: $stStr".asJson))
+
+          case "probeLlm" =>
+            // Onboarding HARD GATE (user ruling 2026-08-15): one real LLM call
+            // through the global chain. The welcome message may only be sent
+            // after this returns ok=true.
+            nebflow.core.OnboardingService.probeLlm(sharedResources.llm).flatMap { pr =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "probeResult".asJson,
+                  "ok" -> pr.ok.asJson,
+                  "provider" -> pr.provider.asJson,
+                  "error" -> pr.error.asJson
+                )
+              )
+            }
+
+          case "autostartStatus" =>
+            // Settings panel "start on login" toggle (F2) — shared logic with
+            // the `nebflow autostart` CLI via AutoStartService.
+            nebflow.core.AutoStartService.status().flatMap { st =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "autostartStatusResult".asJson,
+                  "enabled" -> st.enabled.asJson,
+                  "supported" -> st.supported.asJson,
+                  "reason" -> st.reason.asJson
+                )
+              )
+            }
+
+          case "autostartSet" =>
+            val asJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val enable = asJson.hcursor.downField("enabled").as[Boolean].getOrElse(false)
+            val op = if enable then nebflow.core.AutoStartService.enable() else nebflow.core.AutoStartService.disable()
+            op.flatMap { res =>
+              // Always answer with the authoritative post-op status; attach
+              // the op message on failure so the UI can toast + revert the toggle.
+              nebflow.core.AutoStartService.status().flatMap { st =>
                 wsSend(
                   io.circe.Json.obj(
-                    "type" -> "configData".asJson,
-                    "config" -> cfg.asJson,
-                    "configured" -> configured.asJson
+                    "type" -> "autostartStatusResult".asJson,
+                    "enabled" -> st.enabled.asJson,
+                    "supported" -> st.supported.asJson,
+                    "reason" -> st.reason.asJson,
+                    "error" -> (if res.ok then None else Some(res.message)).asJson
                   )
                 )
               }
