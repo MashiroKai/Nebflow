@@ -57,6 +57,65 @@ class OnboardingServiceSpec extends FunSuite:
       os.remove.all(other)
   }
 
+  // ===== probeOkAt hard gate (qa follow-up, server-side) =====
+
+  test("gate: setState(done) without probeOkAt is HARD-rejected, file stays pending") {
+    import OnboardingService.OnboardingState
+    OnboardingService.writeState(OnboardingState.Pending).unsafeRunSync()
+    OnboardingService.setState(OnboardingState.Done).unsafeRunSync() match
+      case Left(reason) =>
+        assert(reason.contains("probe"))
+      case Right(_) => fail("done without probe must be rejected")
+    // state on disk untouched
+    assertEquals(OnboardingService.readStored().unsafeRunSync().map(_.state), Some(OnboardingState.Pending))
+  }
+
+  test("gate: successful probeLlm records probeOkAt, then done passes") {
+    import OnboardingService.OnboardingState
+    val ok = OnboardingService.probeLlm(fakeLlm(Right(okResponse("prov-a")))).unsafeRunSync()
+    assert(ok.ok)
+    val stored = OnboardingService.readStored().unsafeRunSync().get
+    assertEquals(stored.state, OnboardingState.Pending) // probe does not change state
+    assert(stored.probeOkAt.isDefined)
+    // done now goes through
+    OnboardingService.setState(OnboardingState.Done).unsafeRunSync() match
+      case Right(applied) => assertEquals(applied, OnboardingState.Done)
+      case Left(err) => fail(s"done after probe must pass: $err")
+    // probeOkAt survives the done write (read-modify-write)
+    assertEquals(OnboardingService.readStored().unsafeRunSync().flatMap(_.probeOkAt), stored.probeOkAt)
+  }
+
+  test("gate: any setState never erases a recorded probeOkAt") {
+    import OnboardingService.OnboardingState
+    OnboardingService.probeLlm(fakeLlm(Right(okResponse("p")))).unsafeRunSync()
+    val probeOkAt = OnboardingService.readStored().unsafeRunSync().flatMap(_.probeOkAt)
+    assert(probeOkAt.isDefined)
+    // write pending, then skipped — probeOkAt must persist through each
+    OnboardingService.setState(OnboardingState.Pending).unsafeRunSync()
+    assertEquals(OnboardingService.readStored().unsafeRunSync().flatMap(_.probeOkAt), probeOkAt)
+    OnboardingService.setState(OnboardingState.Skipped).unsafeRunSync()
+    assertEquals(OnboardingService.readStored().unsafeRunSync().flatMap(_.probeOkAt), probeOkAt)
+    // skipped -> done also allowed once probe is on record
+    assertEquals(OnboardingService.setState(OnboardingState.Done).unsafeRunSync().isRight, true)
+  }
+
+  test("gate: invalid-state-value JSON degrades to Pending but keeps parseable probeOkAt") {
+    os.write(OnboardingService.statePath, """{"state":"garbage","probeOkAt":123456}""")
+    val stored = OnboardingService.readStored().unsafeRunSync().get
+    assertEquals(stored.state, OnboardingService.OnboardingState.Pending)
+    assertEquals(stored.probeOkAt, Some(123456L))
+    // and done still passes because the gate record survived
+    assertEquals(OnboardingService.setState(OnboardingService.OnboardingState.Done).unsafeRunSync().isRight, true)
+  }
+
+  test("gate: failed probeLlm does NOT record probeOkAt") {
+    import OnboardingService.OnboardingState
+    val bad = OnboardingService.probeLlm(fakeLlm(Left(new RuntimeException("boom")))).unsafeRunSync()
+    assert(!bad.ok)
+    assertEquals(OnboardingService.readStored().unsafeRunSync().flatMap(_.probeOkAt), None)
+    assertEquals(OnboardingService.setState(OnboardingState.Done).unsafeRunSync().isLeft, true)
+  }
+
   // ===== probeLlm contract shape =====
 
   private def fakeLlm(result: Either[Throwable, LlmResponse]): LlmHandle[IO] = new LlmHandle[IO]:
