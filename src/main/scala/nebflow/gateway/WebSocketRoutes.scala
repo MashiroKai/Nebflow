@@ -622,29 +622,27 @@ class WebSocketRoutes(
 
   private val inputHistoryPath = PathUtil.dataRoot / "input_history.jsonl"
 
-  private def logInputHistory(content: String, attachments: List[io.circe.Json]): IO[Unit] =
+  private def logInputHistory(
+    content: String,
+    attachments: List[io.circe.Json],
+    sessionId: String,
+    sessionName: String,
+    agentName: String
+  ): IO[Unit] =
     val filtered = content.trim.toLowerCase
     if (filtered == "quit" || filtered == "exit") && attachments.isEmpty then IO.unit
     else if content.trim.isEmpty && attachments.isEmpty then IO.unit
     else
       IO.blocking {
-        val inputType =
-          if attachments.nonEmpty then "file"
-          else if content.length > 200 then "paste"
-          else "input"
-        val files = attachments.flatMap(_.hcursor.downField("name").as[String].toOption)
-        val entry = io.circe.Json.obj(
-          "text" -> io.circe.Json.fromString(content.take(2000)),
-          "ts" -> io.circe.Json.fromString(
-            java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
-          ),
-          "type" -> io.circe.Json.fromString(inputType)
+        val entry = InputHistory.buildEntry(
+          content,
+          attachments,
+          sessionId,
+          sessionName,
+          agentName,
+          java.time.LocalDateTime.now()
         )
-        val withFiles =
-          if files.nonEmpty then
-            entry.mapObject(_.add("files", io.circe.Json.fromValues(files.map(io.circe.Json.fromString))))
-          else entry
-        os.write.append(inputHistoryPath, withFiles.noSpaces + "\n", createFolders = true)
+        os.write.append(inputHistoryPath, entry.noSpaces + "\n", createFolders = true)
       }
 
     end if
@@ -2892,9 +2890,10 @@ class WebSocketRoutes(
                     }
 
                     val sessionName = metaOpt.map(_.name).getOrElse("-")
+                    val agentName = metaOpt.flatMap(_.agentName).getOrElse("")
                     logger.info(s"${logger.hl(sessionName)} User message: ${content
                         .take(60)}${if content.length > 60 then "..." else ""}") *>
-                      logInputHistory(content, attachments) *>
+                      logInputHistory(content, attachments, msgSessionId, sessionName, agentName) *>
                       // Record user message as UiMessage for history
                       (if msgSessionId.nonEmpty then
                          val attJson = attachments.zipWithIndex.map { case (att, idx) =>
