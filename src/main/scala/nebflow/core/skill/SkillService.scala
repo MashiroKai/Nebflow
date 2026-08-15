@@ -245,20 +245,25 @@ object SkillService:
   }
 
   /**
-   * Delete a user-level skill by name.
+   * Delete a user-level skill by its identifier ("name" or "ns/name").
    * Only skills under ~/.nebflow/skills/ can be deleted (source = "user").
    * Project-level and legacy command skills are managed via version control.
    * Returns true if the skill was found and deleted, false otherwise.
    */
   def deleteSkill(name: String): IO[Boolean] = IO.delay {
-    val skillDir = userSkillsDir / name
-    if os.isDir(skillDir) then
-      os.remove.all(skillDir)
-      logger.info(s"Deleted skill '$name' from $skillDir")
-      true
-    else
-      logger.warn(s"Cannot delete skill '$name': directory $skillDir not found or not a user-level skill")
-      false
+    val segments = name.split('/').map(_.trim).filter(_.nonEmpty).toList
+    // Namespaced ids resolve to nested dirs; refuse traversal segments
+    val skillDir =
+      if segments.exists(s => s == "." || s == "..") then None
+      else Some(segments.foldLeft(userSkillsDir)((d, seg) => d / seg))
+    skillDir match
+      case Some(dir) if os.isDir(dir) =>
+        os.remove.all(dir)
+        logger.info(s"Deleted skill '$name' from $dir")
+        true
+      case _ =>
+        logger.warn(s"Cannot delete skill '$name': directory not found or not a user-level skill")
+        false
   }
 
   /** Load full skill content from a skill file path. */
@@ -304,6 +309,13 @@ object SkillService:
   // Directory format: skill-name/SKILL.md or skill-name/skill.md
   // ============================================================
 
+  /**
+   * Scan a skills directory two levels deep:
+   *   - flat:      <dir>/<name>/SKILL.md         → identifier = frontmatter name (fallback dir name)
+   *   - namespace: <dir>/<ns>/<name>/SKILL.md    → identifier = relative path "<ns>/<name>"
+   * A namespace directory may itself contain a SKILL.md (then it is ALSO a flat skill) —
+   * both load. Deeper nesting is ignored, matching the previous single-level behavior.
+   */
   private def loadFromSkillsDir(dir: os.Path, source: String): List[SkillInfo] =
     if !os.isDir(dir) then Nil
     else
@@ -311,10 +323,20 @@ object SkillService:
         .filter(sub => os.isDir(sub) && sub.baseName != "_example")
         .flatMap { subDir =>
           // Prefer SKILL.md (Claude Code convention), fall back to skill.md (Nebflow convention)
-          val skillFile = resolveSkillFile(subDir)
-          skillFile.map { f =>
-            parseSkillFile(f, source, Some(subDir.baseName))
+          val flat = resolveSkillFile(subDir).map { f =>
+            parseSkillFile(f, source, Some(subDir.baseName), relativeName = None)
           }
+          // Namespaced skills: the relative path is the authoritative identifier —
+          // a mismatched frontmatter name must not break subscription by path.
+          val nested = os.list(subDir)
+            .filter(nameDir => os.isDir(nameDir) && nameDir.baseName != "_example")
+            .flatMap { nameDir =>
+              val relName = s"${subDir.baseName}/${nameDir.baseName}"
+              resolveSkillFile(nameDir).map { f =>
+                parseSkillFile(f, source, Some(relName), relativeName = Some(relName))
+              }
+            }
+          flat ++ nested
         }
         .toList
 
@@ -349,13 +371,20 @@ object SkillService:
   // Frontmatter parsing
   // ============================================================
 
-  private def parseSkillFile(filePath: os.Path, source: String, nameOverride: Option[String]): SkillInfo =
+  private def parseSkillFile(
+    filePath: os.Path,
+    source: String,
+    nameOverride: Option[String],
+    relativeName: Option[String] = None
+  ): SkillInfo =
     val content = os.read(filePath)
     val fm = extractFrontmatter(content)
 
-    val name = extractField(fm, "name")
-      .orElse(nameOverride)
-      .getOrElse(filePath.baseName)
+    // Consistency rule: flat skill name = frontmatter name (fallback: dir name);
+    // namespaced skill name = relative path "<ns>/<name>" (frontmatter cannot override).
+    val name = relativeName match
+      case Some(rel) => rel
+      case None => extractField(fm, "name").orElse(nameOverride).getOrElse(filePath.baseName)
 
     val description = extractField(fm, "description").getOrElse("")
     val whenToUse = extractField(fm, "when_to_use").orElse(extractField(fm, "when-to-use"))
