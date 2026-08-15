@@ -155,6 +155,11 @@ object CompactService:
       |   task types; routing lessons reusable across flows (not one-off status reports)
       |4. ARTIFACT LOCATIONS — files agents produced (path + what it is), so you can
       |   point users/agents at results without re-searching
+      |5. PERIOD SELF-CHECK — count [USER-RULING] mails in your team's flow-mailbox
+      |   (~/.nebflow/sessions/*/flow-mailbox/ — Grep pattern:"[USER-RULING]") since
+      |   your last save turn, and summarize direct member-to-member collaboration
+      |   (pairing/handoff/review) in one line. Record counts and one-liners ONLY —
+      |   never full mail bodies.
       |
       |VERIFY & CLEAR — manager profile:
       |- Statuses: verify done/failed claims against actual artifacts before keeping
