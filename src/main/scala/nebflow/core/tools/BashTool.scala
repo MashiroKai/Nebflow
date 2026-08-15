@@ -51,9 +51,6 @@ Do not use Bash when a dedicated tool exists:
 | Find files by name | `Glob` | `find`, `ls` |
 | Edit a file | `Edit` | `sed`, `awk` |
 | Create a file | `Write` | `echo >` |
-| Emit card / JSON payload | `Card` | `echo` |
-
-Never use Bash `echo` to emit card JSON or structured UI payloads. Always use the `Card` tool — it bypasses shell escaping issues and is recognized by the frontend renderer.
 
 Git safety:
 - NEVER update the git config (`git config`).

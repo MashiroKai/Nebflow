@@ -7,7 +7,7 @@ import nebflow.shared.*
  * the main agent to consolidate and prune its memory.
  *
  * Unlike compaction (which disables tools and is reactive), maintenance keeps
- * tools available — the agent uses Edit/Write/RemoveUnnecessary to actively
+ * tools available — the agent uses Edit/Write to actively
  * curate its memory.
  */
 object MaintenanceService:
@@ -39,7 +39,6 @@ object MaintenanceService:
        |   entries (or long entries with detail files) to the appropriate memory level.
        |2. Prune: Review existing memory entries. Delete or update anything outdated,
        |   contradicted, or no longer relevant. Merge duplicates.
-       |3. Reduce: If context is growing, use RemoveUnnecessary on old tool results.
        |
        |After maintenance, briefly report what you updated.
        |</system-reminder>""".stripMargin

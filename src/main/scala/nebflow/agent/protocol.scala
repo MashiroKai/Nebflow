@@ -102,12 +102,6 @@ object AgentCommand:
 
   case class UpdateContextWindow(window: Int) extends AgentCommand
 
-  case class ReplaceToolResults(
-    rounds: Int,
-    summary: String,
-    replyTo: cats.effect.Deferred[IO, Either[String, Int]]
-  ) extends AgentCommand
-
   /** Frontend → agent: update safety mode for this session. */
   case class SetSafetyMode(mode: nebflow.core.SafetyMode) extends AgentCommand
 

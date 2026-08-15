@@ -1230,8 +1230,7 @@ object AgentCore:
     "Glob",
     "Grep",
     "Bash",
-    "Issue",
-    "RemoveUnnecessary"
+    "Issue"
   )
 
   /**

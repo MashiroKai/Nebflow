@@ -703,32 +703,6 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           row.appendChild(card);
           fragment.appendChild(row);
         } else {
-        // RemoveUnnecessary tool: dedicated rendering (shared with live renderTool)
-        const _tn = m.label ? m.label.split('(')[0].split('\n')[0].trim() : '';
-        if (_tn === 'RemoveUnnecessary' && m.input) {
-          const icon2 = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                               : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
-          const ruLabel = localizeToolLabel(m.label);
-          const ruLabelParts = ruLabel.split('\n', 2);
-          const ruLabelHtml = esc(ruLabelParts[0])
-            + (ruLabelParts.length > 1 ? '<br><span class="tool-detail">' + esc(ruLabelParts[1]) + '</span>' : '');
-          let ruSummaryBody = '';
-          try {
-            const ruInp = typeof m.input === 'string' ? JSON.parse(m.input) : m.input;
-            const userSummary = ruInp.summary || '';
-            if (userSummary) {
-              ruSummaryBody = '<div class="tool-removeunnecessary-summary">' + renderMarkdownWithMath(userSummary) + '</div>';
-            }
-          } catch {}
-          const ruResultText = m.content ? m.content.replace(/Summary:.*$/s, '').trim() : '';
-          card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon2 + '</span>' +
-            '<div class="content"><div class="label">' + ruLabelHtml + '</div>' +
-            (ruResultText ? '<div class="tool-result-badge">' + esc(ruResultText) + '</div>' : '') +
-            (ruSummaryBody ? '<div class="body">' + ruSummaryBody + '</div>' : '') + '</div>';
-          row.appendChild(card);
-          fragment.appendChild(row);
-          if (ruSummaryBody) attachToolClick(card);
-        } else {
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const detailHtml = buildToolDetail(m.input, m.label);
@@ -749,7 +723,6 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         row.appendChild(card);
         fragment.appendChild(row);
         if (hasBody) attachToolClick(card);
-        }
         }
       }
     } else if (m.type === 'askUser') {

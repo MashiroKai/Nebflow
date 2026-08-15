@@ -316,7 +316,6 @@ export default {
   'tool.WebSearch': 'WebSearch',
   'tool.WebFetch': 'WebFetch',
   'tool.Curl': 'Curl',
-  'tool.RemoveUnnecessary': 'RemoveUnnecessary',
   'tool.MCP': 'MCP',
 
   // === Tool result summaries ===

@@ -1452,33 +1452,6 @@ class WebSocketRoutes(
             else IO.unit
             end if
 
-          case "saveWorkspaceItem" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val svSessionId = hc.downField("sessionId").as[String].getOrElse("")
-            val svTitle = hc.downField("title").as[String].getOrElse("")
-            val svType = hc.downField("itemType").as[String].getOrElse("markdown")
-            val svContent = hc.downField("content").as[String].getOrElse("")
-            if svSessionId.nonEmpty && svTitle.nonEmpty then
-              val item = nebflow.core.workspace.WorkspaceItem.create(svSessionId, svTitle, svType, svContent)
-              sharedResources.knowledgeStore.addItem(item).flatMap { _ =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "workspaceItemSaved".asJson,
-                    "item" -> io.circe.Json.obj(
-                      "id" -> item.id.asJson,
-                      "sessionId" -> item.sessionId.asJson,
-                      "title" -> item.title.asJson,
-                      "itemType" -> item.itemType.asJson,
-                      "content" -> item.content.asJson,
-                      "createdAt" -> item.createdAt.asJson
-                    )
-                  )
-                )
-              }
-            else IO.unit
-            end if
-
           case "deleteWorkspaceItem" =>
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val delSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")

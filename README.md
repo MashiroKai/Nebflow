@@ -22,7 +22,7 @@ Nebflow is a self-hosted AI coding assistant that runs entirely on your machine.
 - **Inline Card Rendering** — Agents render rich HTML cards (diagrams, charts, tables, animations) directly in the chat, not just text
 - **Web UI & CLI** — Browser-based interface with streaming, syntax highlighting, and file editing; plus a terminal REPL mode
 - **Multi-Provider LLM** — Zhipu GLM, DeepSeek, Qwen, Baichuan, and all OpenAI/Anthropic-compatible APIs, with automatic fallback chains
-- **19 Built-in Tools** — Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch, Curl, Card, Delegate, ExecuteFlow, Mail, TransferFile, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, RemoveUnnecessary
+- **18 Built-in Tools** — Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch, Curl, Card, Delegate, ExecuteFlow, Mail, TransferFile, TaskCreate, TaskUpdate, TaskList, AskUserQuestion
 - **Multi-Agent System** — Named agents with per-agent system prompts, tool whitelists, isolated project workspaces, and inter-agent delegation
 - **NebLink** — Connect multiple devices (macOS, Linux, Windows) over a synchronized mesh; execute commands and transfer files across devices
 - **Skills** — Reusable prompt templates with YAML frontmatter; compatible with Claude Code, Codex, and OpenClaw ecosystems
