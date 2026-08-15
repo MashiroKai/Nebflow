@@ -438,6 +438,53 @@ class WebSocketRoutes(
       if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
       else handleInject(req)
 
+    // --- Task archive (C2) ---
+    // GET /api/nf-tasks?folderId=&since=&status=&keyword=&limit=
+    // Cross-session task archive for the frontend archive view. Reads the
+    // tasks/_index.json aggregate (refreshed incrementally by task tools);
+    // folderName/group come from the index join. Empty result is 200 + [].
+    case req @ GET -> Root / "api" / "nf-tasks" =>
+      val provided = extractToken(req)
+      if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
+      else
+        val folderId = req.params.get("folderId").getOrElse("")
+        val sinceOpt = req.params.get("since").flatMap(nebflow.core.tools.TaskQueryTool.parseSince)
+        val status = req.params.get("status").getOrElse("")
+        val keyword = req.params.get("keyword").getOrElse("").toLowerCase
+        val limit = req.params.get("limit").flatMap(_.toIntOption).getOrElse(100).max(1).min(500)
+        nebflow.core.task.TaskArchive.loadIndex().flatMap { entries =>
+          val filtered = entries
+            .filter(e => folderId.isEmpty || e.folderId.contains(folderId))
+            .filter(e => status.isEmpty || e.status == status)
+            .filter(e => keyword.isEmpty || e.subject.toLowerCase.contains(keyword))
+            .filter { e =>
+              sinceOpt.forall { cutoff =>
+                val anchor = e.completedAt.orElse(e.createdAt).getOrElse("")
+                scala.util.Try(java.time.Instant.parse(anchor).toEpochMilli).toOption.exists(_ >= cutoff)
+              }
+            }
+            .sortBy(e => e.completedAt.orElse(e.updatedAt).getOrElse(""))(Ordering[String].reverse)
+            .take(limit)
+          val arr = filtered.map { e =>
+            io.circe.Json.obj(
+              "sessionId" -> e.sessionId.asJson,
+              "sessionName" -> e.sessionName.asJson,
+              "taskId" -> e.taskId.asJson,
+              "subject" -> e.subject.asJson,
+              "status" -> e.status.asJson,
+              "folderId" -> e.folderId.asJson,
+              "folderName" -> e.folderName.asJson,
+              "group" -> e.folderName.getOrElse("未分类").asJson,
+              "createdAt" -> e.createdAt.asJson,
+              "updatedAt" -> e.updatedAt.asJson,
+              "completedAt" -> e.completedAt.asJson,
+              "noteCount" -> e.noteCount.asJson,
+              "hasLinks" -> e.hasLinks.asJson
+            )
+          }
+          Ok(io.circe.Json.arr(arr*).noSpaces, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
+        }
+
     // --- Local file serving for card iframes ---
     // GET /api/nf-file?path=xxx&token=xxx — serves whitelisted media files from disk.
     // Used by card iframes to display local images/videos/audio without base64 embedding.

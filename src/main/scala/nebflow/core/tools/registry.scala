@@ -32,6 +32,7 @@ object ToolRegistry:
       // Task management
       "TaskCreate" -> TaskCreateTool,
       "TaskUpdate" -> TaskUpdateTool,
+      "TaskQuery" -> TaskQueryTool,
       // Scheduled tasks
       "Schedule" -> ScheduleTool,
       // Unified agent communication (message + ask modes)
