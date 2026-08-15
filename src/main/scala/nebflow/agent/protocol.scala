@@ -734,7 +734,18 @@ case class AgentState(
   compaction: CompactionState,
   agentSessions: List[AgentSessionInfo],
   planMode: Option[PlanModeState],
-  /** Last built systemStable string — reused on non-lifecycle turns. */
+  /**
+   * Last built systemStable string — reused on non-lifecycle turns.
+   *
+   * Restart invariant (2026-08-15 FlowTrigger outage audit): AgentState is
+   * NEVER persisted — a JVM restart produces a fresh actor whose cache is
+   * None, so the first restored turn always takes the isLifecycleRebuild
+   * path and rebuilds systemStable from the CURRENT AgentDef (tools, flows,
+   * skills sections). That is what makes "restart" a lifecycle node per the
+   * cache-optimization design. If AgentState ever becomes persisted, the
+   * restore path MUST clear cachedSystemStable (invalidateSystemStableCache)
+   * or the restored session keeps advertising pre-restart tool sections.
+   */
   cachedSystemStable: Option[String],
   /** Dynamic values at the time systemStable was last built (change detection). */
   stableSnapshot: Option[SystemStableSnapshot]
