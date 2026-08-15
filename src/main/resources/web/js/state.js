@@ -21,6 +21,8 @@ export default {
   // Session
   activeSessionId: null,
   activeFolderId: null,
+  // Autostart status from backend (autostartStatusResult): {enabled, supported, reason}
+  autostartStatus: null,
   sessions: [],
   folders: [],
   expandedFolders: new Set(safeParse(localStorage.getItem('nebflow_expanded_folders'), [])),
