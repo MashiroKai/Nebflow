@@ -1588,23 +1588,9 @@ class WebSocketRoutes(
               yield (content, basePath.toString, fileSize))
                 .flatMap { case (content, absPath, fileSize) =>
                   val ext = filePath.split('.').lastOption.getOrElse("").toLowerCase
-                  val itemType = ext match
-                    case "md" | "markdown" => "markdown"
-                    case "html" | "htm" => "html"
-                    case "json" => "json"
-                    case "yaml" | "yml" => "yaml"
-                    case "csv" | "tsv" => "csv"
-                    case "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "tiff" | "tif" =>
-                      "image"
-                    case "pdf" => "pdf"
-                    case "doc" | "docx" => "docx"
-                    case "xls" | "xlsx" | "xlsm" => "xlsx"
-                    case "ppt" | "pptx" => "pptx"
-                    case "epub" => "epub"
-                    case _ => "code"
-                  val isBinary = itemType match
-                    case "image" | "pdf" | "docx" | "xlsx" | "pptx" | "epub" => true
-                    case _ => false
+                  val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
+                  val itemType = entry.itemType
+                  val isBinary = entry.binary
                   if isBinary then
                     // Binary files: don't send content via WS — frontend fetches via /api/nf-file
                     wsSend(
@@ -1667,23 +1653,9 @@ class WebSocketRoutes(
               yield (content, basePath.toString, fileSize, popFilePath))
                 .flatMap { case (content, absPath, fileSize, origPath) =>
                   val ext = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
-                  val itemType = ext match
-                    case "md" | "markdown" => "markdown"
-                    case "html" | "htm" => "html"
-                    case "json" => "json"
-                    case "yaml" | "yml" => "yaml"
-                    case "csv" | "tsv" => "csv"
-                    case "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "tiff" | "tif" =>
-                      "image"
-                    case "pdf" => "pdf"
-                    case "doc" | "docx" => "docx"
-                    case "xls" | "xlsx" | "xlsm" => "xlsx"
-                    case "ppt" | "pptx" => "pptx"
-                    case "epub" => "epub"
-                    case _ => "code"
-                  val isBinary = itemType match
-                    case "image" | "pdf" | "docx" | "xlsx" | "pptx" | "epub" => true
-                    case _ => false
+                  val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
+                  val itemType = entry.itemType
+                  val isBinary = entry.binary
                   if isBinary then
                     wsSend(
                       io.circe.Json.obj(
