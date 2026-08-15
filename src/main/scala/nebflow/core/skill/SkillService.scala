@@ -189,6 +189,14 @@ object SkillService:
   // ============================================================
 
   /**
+   * Skills that are always appended to any injected catalog, even when no agent
+   * declared them (R3 §3.3-1: the discovery/creation meta entry point). Only
+   * takes effect when a catalog is produced at all — an agent with an empty
+   * skills declaration still gets no catalog section.
+   */
+  val alwaysVisible: List[String] = List("skill-creator")
+
+  /**
    * Build a skill catalog containing only the skills declared by the agent.
    * Empty list → empty string (no injection, no global fallback).
    * The wildcard "*" subscribes to every skill in the library (same semantics as
@@ -208,9 +216,14 @@ object SkillService:
         val declared =
           if skillNames.contains("*") then allSkills.filter(visibleIn)
           else skillNames.flatMap(allSkills.map(s => s.name -> s).toMap.get).filter(visibleIn)
-        if declared.isEmpty then ""
+        // Bootstrap entry points are appended unconditionally (dedup when declared)
+        val appended = allSkills
+          .filter(s => alwaysVisible.contains(s.name) && visibleIn(s))
+          .filterNot(s => declared.exists(_.name == s.name))
+        val visible = declared ++ appended
+        if visible.isEmpty then ""
         else
-          val entries = declared.map { s =>
+          val entries = visible.map { s =>
             val when = s.whenToUse.filter(_.nonEmpty).map(w => s" [when: $w]").getOrElse("")
             s"- ${s.name}: ${s.description.take(200)}$when"
           }.mkString("\n")
