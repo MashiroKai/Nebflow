@@ -5,6 +5,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
 .explorer-header {
   padding: 10px 14px 4px;
@@ -151,6 +152,72 @@
 }
 .explorer-item:hover {
   background: rgba(128, 128, 128, 0.07);
+}
+
+/* ── Multi-select selection state (aligned with .session-item.selected) ── */
+.explorer-item.selected {
+  background: rgba(128, 128, 128, 0.08);
+}
+.explorer-item.selected .explorer-label {
+  color: var(--color-frame-text-bright);
+}
+.explorer-item.selected:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+/* ── Floating selection action bar (tree top, ≥2 items selected) ── */
+.explorer-selection-bar {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px 5px 12px;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.92));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
+  border: 1px solid var(--glass-border, var(--color-frame-border));
+  border-radius: 10px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.20), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  z-index: 100;
+  white-space: nowrap;
+  pointer-events: none; /* bar floats over top rows — don't block tree clicks */
+  animation: explorerBarIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes explorerBarIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.96); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+.explorer-selection-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-frame-text);
+}
+.explorer-selection-delete {
+  pointer-events: auto; /* only the button is clickable inside the bar */
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-error);
+  background: transparent;
+  border: 1px solid var(--glass-border, var(--color-frame-border));
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.explorer-selection-delete:hover {
+  background: var(--color-error);
+  color: var(--color-surface);
+}
+@media (prefers-color-scheme: dark) {
+  .explorer-selection-bar {
+    background: var(--glass-bg, rgba(28, 31, 39, 0.85));
+  }
+  .explorer-selection-delete:hover {
+    color: var(--color-text);
+  }
 }
 .explorer-item.explorer-file {
   color: var(--color-text-muted);

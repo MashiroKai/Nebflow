@@ -228,6 +228,11 @@ function ensureStepView(sessionId) {
   view.sessionId = sessionId;
   // Hidden until the popup opens — ws.js gates DOM rendering while false.
   view.visible = false;
+  // Register in the global view registry so findViewBySessionId() can route
+  // live events here even while hidden (streamDispatchView then marks
+  // dirtyWhileHidden → reopen forces a history refresh). This is what makes
+  // the team branch (ws.js "team-" prefix) reach an open team popup at all.
+  chatViews[view.id] = view;
 
   const entry = { view, container, meta: { agentName: '', task: '', status: '' }, historyLoaded: false };
   stepViews.set(sessionId, entry);
@@ -332,9 +337,11 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   popupResizeObs.observe(modal);
 
   // Load session history from backend via WS getHistory (same as main chat).
-  // This uses the exact same pipeline as session switching — the backend
-  // responds with historyPage, which restoreFromBackendHistory renders.
-  if (nodeSessionId && !entry.historyLoaded && entry.container.children.length === 0) {
+  // Flow/team sessions are real sessions persisted live on disk, so always
+  // re-pull on open — cheap (disk read, 100-msg cap) and guarantees fresh
+  // content even if events streamed in while the popup was closed or the
+  // same session was shown in the main window meanwhile.
+  if (nodeSessionId) {
     entry.historyLoaded = true;
     setActiveView(entry.view);
     entry.view.pagination.pendingInitialLoad = true;
@@ -452,6 +459,7 @@ export function removeStepView(sessionId) {
       clearTimeout(removalTimers.get(sessionId));
       removalTimers.delete(sessionId);
     }
+    delete chatViews[entry.view.id];
     entry.container.remove();
     stepViews.delete(sessionId);
   }

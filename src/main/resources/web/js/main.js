@@ -22,6 +22,7 @@ import {
   persistUnread, createNewFolder, getCurrentFolderId,
   resetChatForActiveSession
 } from './sidebar.js';
+import { initOnboarding } from './onboarding.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
   showDeleteModal, confirmDeleteSession,
@@ -41,7 +42,7 @@ import { initDaemons } from './daemons.js';
 import { initChatSearch } from './chatSearch.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
-import { handleFlowAgentHistory } from './flowAgentPopup.js';
+import { handleFlowAgentHistory, openStepPopup as openFlowStepPopup } from './flowAgentPopup.js';
 import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
 import { initNeblink } from './neblink.js';
 import { initDropbox } from './dropbox.js';
@@ -1272,11 +1273,10 @@ function renderBgAgentDropdown() {
     const status = info.done ? '<span class="bgagent-done">done</span>' : '<span class="bgagent-running">running</span>';
     const displayName = info.name || id;
     const label = info.task ? displayName + ' · ' + escapeHtml(info.task) : displayName;
-    // The sub-agent's OWN session id — agentStart carries it as msg.sessionId
-    // (rootSessionId is the host). For delegate-*/subtask-* entries it equals
-    // the entry id; for team-member/flow-agent entries (keyed by name) it is
-    // the agent's real session id. getHistory reads ui.json from disk, so any
-    // session id works — every row is clickable.
+    // The sub-agent's OWN session id — agentStart carries it as
+    // msg.nodeSessionId (delegate-*/subtask-*/team-<sid>/dag-*). Every row
+    // is clickable; the click handler strips the team- prefix and routes
+    // dag-*/bare sids to the flow popup (same view the Flow panel uses).
     const sessionId = info.sessionId || (isBgAgentId(id) ? id : '');
     const clickAttr = sessionId
       ? `data-bg-key="${escapeHtml(id)}" data-node-session-id="${escapeHtml(sessionId)}" style="cursor:pointer"`
@@ -1293,12 +1293,26 @@ function renderBgAgentDropdown() {
   listEl.querySelectorAll('[data-node-session-id]').forEach(row => {
     row.addEventListener('click', (e) => {
       e.stopPropagation();
-      const sessionId = row.getAttribute('data-node-session-id');
+      const rawSessionId = row.getAttribute('data-node-session-id');
       const info = bgAgents[row.getAttribute('data-bg-key')];
-      if (info && sessionId) {
-        openBgAgentPopup(sessionId, info.name, info.task);
-        // Close the dropdown
+      if (info && rawSessionId) {
+        // Capture the dropdown BEFORE opening the popup — openStepPopup
+        // switches activeView to the popup view whose fakeDom has no dropdown.
         const dropdown = activeView.dom.bgagentDropdownEl;
+        // team-<sid> wraps the agent's bare session id (its ui.json key) —
+        // strip it, matching the Flow/Team panel entry (flowTeams.js).
+        const sessionId = rawSessionId.replace(/^team-/, '');
+        if (isBgAgentId(rawSessionId)) {
+          // delegate-*/subtask-* → bg-agent popup (ephemeral sessions,
+          // live-rendered; history only persists at completion).
+          openBgAgentPopup(rawSessionId, info.name, info.task);
+        } else {
+          // dag-*/bare sid → flow popup — the SAME entry the Flow/Team panel
+          // uses, so live events flow into one shared view instead of
+          // building a duplicate hidden view per popup module.
+          openFlowStepPopup(row.getAttribute('data-bg-key'), info.name, info.name, '', sessionId);
+        }
+        // Close the dropdown
         if (dropdown) dropdown.classList.add('hidden');
       }
     });
@@ -1346,10 +1360,11 @@ onMessage('agentStart', (msg, view) => {
   state.sessionBgAgents[sid][aid] = {
     name: msg.name || aid,
     task: msg.taskDescription || '',
-    // msg.sessionId is the sub-agent's OWN session (rootSessionId is the
-    // host) — stored so every dropdown row can open its chat popup,
-    // including team-member/flow agents whose entry key is just a name.
-    sessionId: msg.sessionId || '',
+    // nodeSessionId is the sub-agent's OWN session id (delegate-*/subtask-*/
+    // team-<sid>/dag-*; AgentStart carries no sessionId field of its own —
+    // msg.sessionId on delegate/subtask events is the PARENT session (injected
+    // by routeWsSend), so using it here loaded the host's history (串台).
+    sessionId: msg.nodeSessionId || '',
     currentTool: null,
     done: false,
   };
@@ -1624,6 +1639,9 @@ onMessage('configData', (msg, view) => {
   if (settingsOverlay && settingsOverlay.classList.contains('on')) {
     renderSettings();
   }
+  // First-run onboarding: fixed wizard (new user) or one-time greeting offer
+  // (returning user). Triggers once per boot — configData re-fires on save.
+  initOnboarding(msg);
 });
 
 onMessage('configUpdated', (msg, view) => {

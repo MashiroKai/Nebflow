@@ -60,6 +60,10 @@ function ensureStepView(sessionId) {
   view.sessionId = sessionId;
   // Hidden until the popup opens — ws.js gates DOM rendering while false.
   view.visible = false;
+  // Register in the global view registry so findViewBySessionId() can route
+  // live events here even while hidden (streamDispatchView then marks
+  // dirtyWhileHidden → reopen forces a history refresh).
+  chatViews[view.id] = view;
 
   const entry = { view, container, meta: { agentName: '', task: '', status: '' }, historyLoaded: false };
   stepViews.set(sessionId, entry);
@@ -180,6 +184,7 @@ export function closeStepPopup() {
 export function removeStepView(sessionId) {
   const entry = stepViews.get(sessionId);
   if (entry) {
+    delete chatViews[entry.view.id];
     entry.container.remove();
     stepViews.delete(sessionId);
   }

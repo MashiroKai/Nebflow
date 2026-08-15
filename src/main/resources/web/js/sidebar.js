@@ -306,6 +306,11 @@ export function renderSettings() {
         <span class="settings-label">${t('settings.language')}</span>
         <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
       </div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.autostart')}</span>
+        <div class="toggle ${state.autostartStatus?.enabled ? 'on' : ''} ${state.autostartStatus && !state.autostartStatus.supported ? 'disabled' : ''}" id="toggle-autostart"></div>
+      </div>
+      <div class="cfg-hint" id="autostart-hint" style="display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'};margin-top:-4px">${escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported'))}</div>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.providers')}</div>
@@ -330,6 +335,7 @@ export function renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
       <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
+      <button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:8px">${t('settings.rerunOnboarding')}</button>
     </div>
     <div class="settings-section" id="json-editor-section" style="display:${state.settingsShowJson ? 'block' : 'none'}">
       <div class="config-editor-wrap">
@@ -682,6 +688,40 @@ function showPresetModal(existing, onSaved) {
 }
 
 
+// ---------- Autostart (开机自启动) ----------
+// Target `enabled` while an autostartSet request is in flight; null when idle.
+// The result handler compares the reported state against this to toast
+// success/failure — the toggle itself is never flipped optimistically.
+let autostartPendingSet = null;
+
+onMessage('autostartStatusResult', (msg) => {
+  state.autostartStatus = {
+    enabled: !!msg.enabled,
+    supported: msg.supported !== false,
+    reason: msg.reason || '',
+  };
+  const toggle = document.getElementById('toggle-autostart');
+  if (toggle) {
+    toggle.classList.toggle('on', state.autostartStatus.enabled);
+    toggle.classList.toggle('disabled', !state.autostartStatus.supported);
+  }
+  const hint = document.getElementById('autostart-hint');
+  if (hint) {
+    const show = !state.autostartStatus.supported;
+    hint.style.display = show ? 'block' : 'none';
+    if (show) hint.textContent = state.autostartStatus.reason || t('settings.autostartUnsupported');
+  }
+  if (autostartPendingSet !== null) {
+    if (state.autostartStatus.enabled === autostartPendingSet) {
+      window.__showToast?.(t(autostartPendingSet ? 'settings.autostartOn' : 'settings.autostartOff'), 'success');
+    } else {
+      window.__showToast?.(state.autostartStatus.reason || t('settings.autostartFailed'), 'error');
+    }
+    autostartPendingSet = null;
+  }
+});
+
+
 function bindSettingsEvents(content, cfg) {
   // Thinking toggle
   document.getElementById('toggle-thinking')?.addEventListener('click', function() {
@@ -717,25 +757,23 @@ function bindSettingsEvents(content, cfg) {
     renderSettings();
   });
 
+  // Autostart toggle — server-authoritative: the toggle is only flipped by the
+  // autostartStatusResult response (never optimistically), so a failed enable
+  // (launchctl/schtasks error) leaves the UI showing the real state.
+  document.getElementById('toggle-autostart')?.addEventListener('click', function() {
+    const cur = state.autostartStatus;
+    if (!cur || !cur.supported || autostartPendingSet !== null) return;
+    autostartPendingSet = !cur.enabled;
+    sendWs({ type: 'autostartSet', enabled: autostartPendingSet });
+  });
+  // Refresh status every time settings render (cheap; keeps toggle in sync
+  // with CLI-side `nebflow autostart enable/disable`).
+  sendWs({ type: 'autostartStatus' });
+
   // --- Provider add/edit/remove ---
   document.getElementById('btn-add-provider')?.addEventListener('click', () => {
     showProviderModal(null, null, (name, data) => {
-      if (!state.parsedConfig) state.parsedConfig = {llm: {providers: {}, model: {default: ''}}};
-      if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}, model: {default: ''}};
-      if (!state.parsedConfig.llm.providers) state.parsedConfig.llm.providers = {};
-      if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {default: '', fallbacks: []};
-      state.parsedConfig.llm.providers[name] = data;
-      // Auto-set default model if it's empty or points to a non-existent provider
-      const currentDefault = state.parsedConfig.llm.model.default || '';
-      const defaultProvider = currentDefault.split('/')[0];
-      if (!currentDefault || !state.parsedConfig.llm.providers[defaultProvider]) {
-        const firstModel = (data.models || [])[0];
-        if (firstModel) {
-          state.parsedConfig.llm.model.default = `${name}/${firstModel.id}`;
-        }
-      }
-      state.configDirty = true;
-      flushConfigToServer();
+      saveNewProvider(name, data);
     });
   });
 
@@ -786,6 +824,13 @@ function bindSettingsEvents(content, cfg) {
     state.settingsShowJson = !state.settingsShowJson;
     const sec = document.getElementById('json-editor-section');
     if (sec) sec.style.display = state.settingsShowJson ? 'block' : 'none';
+  });
+
+  // Re-run onboarding: reset the marker to pending and reload — the boot
+  // sequence picks it up and shows the wizard (or returning-user prompt).
+  document.getElementById('btn-rerun-onboarding')?.addEventListener('click', () => {
+    sendWs({ type: 'setOnboardingState', state: 'pending' });
+    setTimeout(() => location.reload(), 300);
   });
 
   document.getElementById('btn-save-config')?.addEventListener('click', () => {
@@ -1048,6 +1093,37 @@ function wireProviderModelFetch() {
 }
 
 // --- Provider modal ---
+/** Persist a newly added provider: mutate parsedConfig + auto-default model + flush. */
+function saveNewProvider(name, data) {
+  if (!state.parsedConfig) state.parsedConfig = {llm: {providers: {}, model: {default: ''}}};
+  if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}, model: {default: ''}};
+  if (!state.parsedConfig.llm.providers) state.parsedConfig.llm.providers = {};
+  if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {default: '', fallbacks: []};
+  state.parsedConfig.llm.providers[name] = data;
+  // Auto-set default model if it's empty or points to a non-existent provider
+  const currentDefault = state.parsedConfig.llm.model.default || '';
+  const defaultProvider = currentDefault.split('/')[0];
+  if (!currentDefault || !state.parsedConfig.llm.providers[defaultProvider]) {
+    const firstModel = (data.models || [])[0];
+    if (firstModel) {
+      state.parsedConfig.llm.model.default = `${name}/${firstModel.id}`;
+    }
+  }
+  state.configDirty = true;
+  flushConfigToServer();
+}
+
+/**
+ * Onboarding wizard entry: run the same add-provider modal outside the
+ * settings panel. onSaved fires after the config has been flushed.
+ */
+export function openProviderWizard(onSaved) {
+  showProviderModal(null, null, (name, data) => {
+    saveNewProvider(name, data);
+    if (typeof onSaved === 'function') onSaved(name);
+  });
+}
+
 function showProviderModal(existingName, existingData, onSave) {
   const isEdit = !!existingName;
   const p = existingData || {baseUrl: '', apiKey: '', protocol: 'anthropic', models: []};
