@@ -10,7 +10,7 @@ import nebflow.core.NebflowLogger
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.presets.PresetStore
-import nebflow.shared.{Message, MessageRole}
+import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 import scala.concurrent.duration.*
 
@@ -51,6 +51,11 @@ The address depends on your team context:
   specific member from anywhere.
 
 For triggering flows or spawning standalone agents, use the Delegate tool instead.
+
+Images (optional `images` parameter): up to 5 absolute local image paths
+(PNG/JPG/JPEG/GIF/WEBP/BMP) sent as attachments — the recipient sees the images
+directly (vision models) plus their paths as text. For any other file, reference
+its path in the message text and ask the recipient to Read it.
 
 Default mode (ask omitted or false):
   Async send. If the recipient is idle, delivered immediately. If busy, queued
@@ -104,6 +109,13 @@ Message type (optional, default "INFO"):
           "enum" -> Json.arr("ask".asJson, "queue".asJson, "immediate".asJson),
           "description" -> "Delivery mode: 'ask' = sync fork (wait for answer); 'queue' = serialized FIFO (survives restart, processed one at a time after current task completes); 'immediate' = inject like user input (merged into current turn at next boundary). Default: 'immediate'.".asJson,
           "default" -> "immediate".asJson
+        ),
+        "images" -> Json.obj(
+          "type" -> "array".asJson,
+          "items" -> Json.obj("type" -> "string".asJson).asJson,
+          "maxItems" -> 5.asJson,
+          "description" -> "Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5) to attach — the recipient sees the images directly plus their paths as text. For other files, reference the path in the message text.".asJson,
+          "default" -> Json.arr()
         )
       ),
       "required" -> Json.arr("address".asJson, "message".asJson)
@@ -141,19 +153,32 @@ Message type (optional, default "INFO"):
     if address.isEmpty then IO.pure(Left(ToolError("Missing required parameter: address")))
     else if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
     else
-      ctx.actorSystem match
-        case None =>
-          IO.pure(Left(ToolError("No actor system available")))
-        case Some(system) =>
-          delivery match
-            case "ask" => forkAndAsk(address, message, ctx)
-            case "queue" =>
-              if address.contains("://") then
-                IO.pure(Left(ToolError("Queue mode is only for team agents (short names), not URLs.")))
-              else deliverQueue(address, message, mailType, ctx, system)
-            case _ =>
-              if address.contains("://") then deliverToAddress(address, message, mailType, ctx, system)
-              else deliverToShortName(address, message, mailType, ctx, system)
+      ImageInject.parseImagesParam(input) match
+        case Left(err) => IO.pure(Left(err))
+        case Right(imagePaths) =>
+          // G3: resolve attachments BEFORE any delivery side effect (fail fast
+          // at the point of action — actor activation / queue persist must not
+          // happen for an invalid attachment). Queue mode persists the paths
+          // and re-reads at drain time (D6), so only the validation result is
+          // used there.
+          ImageInject.resolveImages(imagePaths).flatMap {
+            case Left(err) => IO.pure(Left(err))
+            case Right(attachments) =>
+              val blocks = ImageInject.messageBlocks(message, attachments)
+              ctx.actorSystem match
+                case None =>
+                  IO.pure(Left(ToolError("No actor system available")))
+                case Some(system) =>
+                  delivery match
+                    case "ask" => forkAndAsk(address, message, blocks, ctx)
+                    case "queue" =>
+                      if address.contains("://") then
+                        IO.pure(Left(ToolError("Queue mode is only for team agents (short names), not URLs.")))
+                      else deliverQueue(address, message, mailType, imagePaths, ctx, system)
+                    case _ =>
+                      if address.contains("://") then deliverToAddress(address, message, blocks, mailType, ctx, system)
+                      else deliverToShortName(address, message, blocks, mailType, ctx, system)
+          }
   end call
 
   // ============================================================
@@ -165,10 +190,11 @@ Message type (optional, default "INFO"):
     "Agents outside a team mail TEAM names only (e.g. \"nebflow-project\") — the team Manager dispatches to members. Team members use short names internally. Or use explicit \"team/agent\" (e.g. \"nebflow-project/Backend\")."
 
   private def forkAndAsk(
-    address: String,
-    question: String,
-    ctx: ToolContext
-  ): IO[Either[ToolError, String]] =
+      address: String,
+      question: String,
+      blocks: Option[List[ContentBlock]],
+      ctx: ToolContext
+    ): IO[Either[ToolError, String]] =
     (ctx.actorSystem, ctx.sharedResources, ctx.sessionId) match
       case (Some(system), Some(resources), Some(senderSid)) =>
         for
@@ -177,7 +203,7 @@ Message type (optional, default "INFO"):
             case Some(team) =>
               // Team name — fork the team's lead (Manager).
               TeamSessionRegistry.findTeamAgent(address, team.lead).flatMap {
-                case Some(leadSid) => forkToSession(system, resources, leadSid, address, question, ctx)
+                case Some(leadSid) => forkToSession(system, resources, leadSid, address, question, blocks, ctx)
                 case None =>
                   IO.pure(
                     Left(
@@ -207,7 +233,7 @@ Message type (optional, default "INFO"):
                           )
                         )
                       case Right(Some(targetSid)) =>
-                        forkToSession(system, resources, targetSid, address, question, ctx)
+                        forkToSession(system, resources, targetSid, address, question, blocks, ctx)
                   yield result
               }
         yield result
@@ -216,13 +242,14 @@ Message type (optional, default "INFO"):
 
   /** Fork an already-resolved session: load its def, spawn a temp agent, ask. */
   private def forkToSession(
-    system: ActorSystem,
-    resources: SharedResources,
-    targetSid: String,
-    address: String,
-    question: String,
-    ctx: ToolContext
-  ): IO[Either[ToolError, String]] =
+      system: ActorSystem,
+      resources: SharedResources,
+      targetSid: String,
+      address: String,
+      question: String,
+      blocks: Option[List[ContentBlock]],
+      ctx: ToolContext
+    ): IO[Either[ToolError, String]] =
     TeamSessionRegistry.instanceAndAgentOfSession(targetSid).flatMap {
       case Some((instance, agentName)) =>
         EntityLoader.loadTeamAgent(instance, agentName).flatMap {
@@ -240,7 +267,7 @@ Message type (optional, default "INFO"):
                 model = Some(resolvedModel),
                 preset = entry.preset
               )
-            doFork(system, resources, agentDef, Some(targetSid), question, address, ctx)
+            doFork(system, resources, agentDef, Some(targetSid), question, blocks, address, ctx)
           case None =>
             IO.pure(Left(ToolError(s"Agent '$address' definition not found.")))
         }
@@ -249,14 +276,15 @@ Message type (optional, default "INFO"):
     }
 
   private def doFork(
-    system: ActorSystem,
-    resources: SharedResources,
-    agentDef: AgentDef,
-    agentSessionId: Option[String],
-    question: String,
-    address: String,
-    ctx: ToolContext
-  ): IO[Either[ToolError, String]] =
+      system: ActorSystem,
+      resources: SharedResources,
+      agentDef: AgentDef,
+      agentSessionId: Option[String],
+      question: String,
+      blocks: Option[List[ContentBlock]],
+      address: String,
+      ctx: ToolContext
+    ): IO[Either[ToolError, String]] =
     for
       history <- agentSessionId match
         case Some(sid) => resources.sessionStore.loadMessagesForSession(sid)
@@ -315,7 +343,9 @@ Message type (optional, default "INFO"):
         s"fork-${agentDef.name}-${java.util.UUID.randomUUID().toString.take(8)}"
       )
 
-      _ <- agentRef ! AgentCommand.UserInput(question, Some(adapterRef), delivery = Some("ask"))
+      // blocks carry the attachments with the message text as the first Text
+      // block (UserInput drops `text` when blocks are present).
+      _ <- agentRef ! AgentCommand.UserInput(question, Some(adapterRef), blocks = blocks, delivery = Some("ask"))
 
       result <- waitForForkAnswer(
         system,
@@ -473,12 +503,13 @@ Message type (optional, default "INFO"):
   // ============================================================
 
   private def deliverQueue(
-    address: String,
-    message: String,
-    mailType: String,
-    ctx: ToolContext,
-    system: ActorSystem
-  ): IO[Either[ToolError, String]] =
+      address: String,
+      message: String,
+      mailType: String,
+      imagePaths: List[String],
+      ctx: ToolContext,
+      system: ActorSystem
+    ): IO[Either[ToolError, String]] =
     val senderSessionId = ctx.sessionId.getOrElse("")
     val senderName = ctx.agentDef.map(_.name).getOrElse("")
 
@@ -486,30 +517,31 @@ Message type (optional, default "INFO"):
       case None =>
         if address == "Nebula" && senderName != "Nebula" then
           canMailNebula(senderName, senderSessionId).flatMap { canMail =>
-            if canMail then resolveAndQueue(address, message, mailType, ctx, system, senderSessionId)
+            if canMail then resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
             else
               IO.pure(
                 Left(ToolError("Cannot mail Nebula directly. You are a team worker. Report to your Manager via Mail."))
               )
           }
-        else resolveAndQueue(address, message, mailType, ctx, system, senderSessionId)
+        else resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
       case Some(teamName) =>
         checkTeamScope(address, teamName, senderSessionId, senderName).flatMap {
           case Some(error) => IO.pure(Left(ToolError(error)))
-          case None        => resolveAndQueue(address, message, mailType, ctx, system, senderSessionId)
+          case None        => resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
         }
     }
   end deliverQueue
 
   /** Resolve target session (team name → lead, or short name) then queue the mail. */
   private def resolveAndQueue(
-    address: String,
-    message: String,
-    mailType: String,
-    ctx: ToolContext,
-    system: ActorSystem,
-    senderSessionId: String
-  ): IO[Either[ToolError, String]] =
+      address: String,
+      message: String,
+      mailType: String,
+      imagePaths: List[String],
+      ctx: ToolContext,
+      system: ActorSystem,
+      senderSessionId: String
+    ): IO[Either[ToolError, String]] =
     for
       teamOpt <- EntityLoader.loadTeam(address)
       result <- teamOpt match
@@ -517,7 +549,7 @@ Message type (optional, default "INFO"):
           for
             leadSidOpt <- TeamSessionRegistry.findTeamAgent(address, team.lead)
             r <- leadSidOpt match
-              case Some(targetSid) => queueToSession(targetSid, team.lead, message, mailType, ctx, system, senderSessionId)
+              case Some(targetSid) => queueToSession(targetSid, team.lead, message, mailType, imagePaths, ctx, system, senderSessionId)
               case None =>
                 IO.pure(Left(ToolError(s"Team '$address' is not mounted. Use Load(type: \"team\", name: \"$address\") first.")))
           yield r
@@ -535,7 +567,7 @@ Message type (optional, default "INFO"):
                   sr2 <- targetRes match
                     case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
                     case Right(Some(targetSid)) =>
-                      queueToSession(targetSid, address, message, mailType, ctx, system, senderSessionId)
+                      queueToSession(targetSid, address, message, mailType, imagePaths, ctx, system, senderSessionId)
                     case Right(None) => mailNotFound(address)
                 yield sr2
           yield sr
@@ -543,14 +575,15 @@ Message type (optional, default "INFO"):
 
   /** Persist to MailQueueStore, activate target, send MailQueued command. */
   private def queueToSession(
-    sessionId: String,
-    shortName: String,
-    message: String,
-    mailType: String,
-    ctx: ToolContext,
-    system: ActorSystem,
-    senderSessionId: String
-  ): IO[Either[ToolError, String]] =
+      sessionId: String,
+      shortName: String,
+      message: String,
+      mailType: String,
+      imagePaths: List[String],
+      ctx: ToolContext,
+      system: ActorSystem,
+      senderSessionId: String
+    ): IO[Either[ToolError, String]] =
     val senderName = ctx.agentDef.map(_.name).getOrElse("Nebula")
     val item = MailQueueStore.MailQueueItem(
       id = s"mail-q-${java.util.UUID.randomUUID().toString.take(8)}",
@@ -558,7 +591,9 @@ Message type (optional, default "INFO"):
       fromSession = senderSessionId,
       message = message,
       `type` = mailType,
-      timestamp = System.currentTimeMillis()
+      timestamp = System.currentTimeMillis(),
+      // D6: persist paths (not base64) — re-read + re-compress at drain time
+      imagePaths = imagePaths
     )
     (ctx.sharedResources, ctx.actorSystem) match
       case (Some(resources), Some(actorSystem)) =>
@@ -600,24 +635,26 @@ Message type (optional, default "INFO"):
   // ============================================================
 
   private def deliverToAddress(
-    address: String,
-    message: String,
-    mailType: String,
-    ctx: ToolContext,
-    system: ActorSystem
-  ): IO[Either[ToolError, String]] =
+      address: String,
+      message: String,
+      blocks: Option[List[ContentBlock]],
+      mailType: String,
+      ctx: ToolContext,
+      system: ActorSystem
+    ): IO[Either[ToolError, String]] =
     system.resolve[AgentCommand](address).attempt.flatMap {
-      case Right(ref) => sendMail(ref, address, message, mailType, ctx, system)
+      case Right(ref) => sendMail(ref, address, message, blocks, mailType, ctx, system)
       case Left(err) => IO.pure(Left(ToolError(s"Failed to resolve address '$address': ${err.getMessage}")))
     }
 
   private def deliverToShortName(
-    address: String,
-    message: String,
-    mailType: String,
-    ctx: ToolContext,
-    system: ActorSystem
-  ): IO[Either[ToolError, String]] =
+      address: String,
+      message: String,
+      blocks: Option[List[ContentBlock]],
+      mailType: String,
+      ctx: ToolContext,
+      system: ActorSystem
+    ): IO[Either[ToolError, String]] =
     val senderSessionId = ctx.sessionId.getOrElse("")
     val senderName = ctx.agentDef.map(_.name).getOrElse("")
 
@@ -625,7 +662,7 @@ Message type (optional, default "INFO"):
       case None =>
         if address == "Nebula" && senderName != "Nebula" then
           canMailNebula(senderName, senderSessionId).flatMap { canMail =>
-            if canMail then deliverShortNameUnscoped(address, message, mailType, ctx, system, senderSessionId)
+            if canMail then deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
             else
               IO.pure(
                 Left(
@@ -635,12 +672,12 @@ Message type (optional, default "INFO"):
                 )
               )
           }
-        else deliverShortNameUnscoped(address, message, mailType, ctx, system, senderSessionId)
+        else deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
       case Some(teamName) =>
         checkTeamScope(address, teamName, senderSessionId, senderName).flatMap {
           case Some(error) => IO.pure(Left(ToolError(error)))
           case None =>
-            deliverShortNameUnscoped(address, message, mailType, ctx, system, senderSessionId)
+            deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
         }
     }
   end deliverToShortName
@@ -666,6 +703,7 @@ Message type (optional, default "INFO"):
   private def deliverShortNameUnscoped(
     address: String,
     message: String,
+    blocks: Option[List[ContentBlock]],
     mailType: String,
     ctx: ToolContext,
     system: ActorSystem,
@@ -680,7 +718,7 @@ Message type (optional, default "INFO"):
             r <- leadSidOpt match
               case Some(targetSid) =>
                 for
-                  res <- deliverToSession(targetSid, team.lead, message, mailType, ctx, system)
+                  res <- deliverToSession(targetSid, team.lead, message, blocks, mailType, ctx, system)
                   _ <- res match
                     case Right(_) => onMailDelivered(senderSessionId, targetSid, team.lead, message, ctx)
                     case Left(_) => IO.unit
@@ -713,7 +751,7 @@ Message type (optional, default "INFO"):
                     case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
                     case Right(Some(targetSid)) =>
                       for
-                        res <- deliverToSession(targetSid, address, message, mailType, ctx, system)
+                        res <- deliverToSession(targetSid, address, message, blocks, mailType, ctx, system)
                         _ <- res match
                           case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
                           case Left(_) => IO.unit
@@ -728,12 +766,12 @@ Message type (optional, default "INFO"):
                           // session's actor in the unified AgentRegistry.
                           parentActorOpt <- TeamSessionRegistry.getParentActor(senderSessionId)
                           res <- parentActorOpt match
-                            case Some(ref) => sendMail(ref, "Nebula", message, mailType, ctx, system)
+                            case Some(ref) => sendMail(ref, "Nebula", message, blocks, mailType, ctx, system)
                             case None =>
                               ctx.sharedResources match
                                 case Some(res) =>
                                   resolveNebulaRef(res).flatMap {
-                                    case Some(ref) => sendMail(ref, "Nebula", message, mailType, ctx, system)
+                                    case Some(ref) => sendMail(ref, "Nebula", message, blocks, mailType, ctx, system)
                                     case None => mailNotFound(address)
                                   }
                                 case None => mailNotFound(address)
@@ -770,6 +808,7 @@ Message type (optional, default "INFO"):
     sessionId: String,
     shortName: String,
     message: String,
+    blocks: Option[List[ContentBlock]],
     mailType: String,
     ctx: ToolContext,
     system: ActorSystem
@@ -785,10 +824,10 @@ Message type (optional, default "INFO"):
               // Activate agent from session
               activateAgent(sessionId, resources, actorSystem, ctx)
           result <- refOpt match
-            case Some(ref) => sendMail(ref, shortName, message, mailType, ctx, system)
+            case Some(ref) => sendMail(ref, shortName, message, blocks, mailType, ctx, system)
             case None =>
               TeamSessionRegistry.getParentActor(sessionId).flatMap {
-                case Some(ref) => sendMail(ref, shortName, message, mailType, ctx, system)
+                case Some(ref) => sendMail(ref, shortName, message, blocks, mailType, ctx, system)
                 case None => mailNotFound(shortName)
               }
         yield result
@@ -913,6 +952,7 @@ Message type (optional, default "INFO"):
     ref: ActorRef[AgentCommand],
     label: String,
     message: String,
+    blocks: Option[List[ContentBlock]],
     mailType: String,
     ctx: ToolContext,
     system: ActorSystem
@@ -924,6 +964,9 @@ Message type (optional, default "INFO"):
       teamOpt <- TeamSessionRegistry.teamOfSession(senderSid)
       _ <- ref ! AgentCommand.ImmediateInput(
         message,
+        // G3 attachments: blocks already contain the message text as the first
+        // Text block (AgentActor drops `text` when blocks are present).
+        blocks = blocks,
         source = Some("mail"),
         eventType = Some(mailType.toLowerCase),
         sender = Some(senderName),
