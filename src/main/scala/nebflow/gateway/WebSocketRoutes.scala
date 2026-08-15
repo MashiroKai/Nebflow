@@ -1561,23 +1561,9 @@ class WebSocketRoutes(
               yield (content, basePath.toString, fileSize))
                 .flatMap { case (content, absPath, fileSize) =>
                   val ext = filePath.split('.').lastOption.getOrElse("").toLowerCase
-                  val itemType = ext match
-                    case "md" | "markdown" => "markdown"
-                    case "html" | "htm" => "html"
-                    case "json" => "json"
-                    case "yaml" | "yml" => "yaml"
-                    case "csv" | "tsv" => "csv"
-                    case "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "tiff" | "tif" =>
-                      "image"
-                    case "pdf" => "pdf"
-                    case "doc" | "docx" => "docx"
-                    case "xls" | "xlsx" | "xlsm" => "xlsx"
-                    case "ppt" | "pptx" => "pptx"
-                    case "epub" => "epub"
-                    case _ => "code"
-                  val isBinary = itemType match
-                    case "image" | "pdf" | "docx" | "xlsx" | "pptx" | "epub" => true
-                    case _ => false
+                  val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
+                  val itemType = entry.itemType
+                  val isBinary = entry.binary
                   if isBinary then
                     // Binary files: don't send content via WS — frontend fetches via /api/nf-file
                     wsSend(
@@ -1640,23 +1626,9 @@ class WebSocketRoutes(
               yield (content, basePath.toString, fileSize, popFilePath))
                 .flatMap { case (content, absPath, fileSize, origPath) =>
                   val ext = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
-                  val itemType = ext match
-                    case "md" | "markdown" => "markdown"
-                    case "html" | "htm" => "html"
-                    case "json" => "json"
-                    case "yaml" | "yml" => "yaml"
-                    case "csv" | "tsv" => "csv"
-                    case "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "tiff" | "tif" =>
-                      "image"
-                    case "pdf" => "pdf"
-                    case "doc" | "docx" => "docx"
-                    case "xls" | "xlsx" | "xlsm" => "xlsx"
-                    case "ppt" | "pptx" => "pptx"
-                    case "epub" => "epub"
-                    case _ => "code"
-                  val isBinary = itemType match
-                    case "image" | "pdf" | "docx" | "xlsx" | "pptx" | "epub" => true
-                    case _ => false
+                  val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
+                  val itemType = entry.itemType
+                  val isBinary = entry.binary
                   if isBinary then
                     wsSend(
                       io.circe.Json.obj(
@@ -1852,6 +1824,45 @@ class WebSocketRoutes(
             else IO.unit
             end if
 
+          // F1 file-explorer multi-select: batch delete in ONE round trip.
+          // Per-path guards identical to deletePath; failures are aggregated
+          // per item so a partial failure never blocks the rest.
+          case "deletePaths" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val dpsSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            val dpsPaths = hc.downField("paths").as[List[String]].getOrElse(Nil)
+            if dpsSessionId.nonEmpty && dpsPaths.nonEmpty then
+              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+              (for
+                pr <- overrideRoot match
+                  case Some(root) => IO.pure(root)
+                  case None =>
+                    for
+                      metaOpt <- sessionStore.getSessionMeta(dpsSessionId)
+                      folderId = metaOpt.flatMap(_.folderId)
+                      prOpt <- sessionStore.resolveProjectRoot(folderId)
+                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+                (deleted, failed) <- WebSocketRoutes.deletePathsSafely(dpsPaths, os.Path(pr))
+              yield (deleted, failed))
+                .flatMap { case (deleted, failed) =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "pathsDeleted".asJson,
+                      "deleted" -> deleted.asJson,
+                      "failed" -> failed.map { case (p, err) =>
+                        io.circe.Json.obj("path" -> p.asJson, "error" -> err.asJson)
+                      }.asJson
+                    )
+                  )
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"deletePaths failed: ${e.getMessage}")
+                  wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
+                }
+            else IO.unit
+            end if
+
           case "writeFile" =>
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val hc = json.hcursor
@@ -1916,12 +1927,14 @@ class WebSocketRoutes(
             // sessionBgAgents incrementally from realtime agentStart/agentDone
             // events, which are not replayed after a browser refresh. Read the
             // unified AgentRegistry (sessionId -> AgentRecord) and filter to
-            // active sub-agents (Delegate/Ephemeral/Flow — root agents excluded).
+            // active sub-agents (Delegate/Ephemeral/Flow/Team/SubTask — root agents excluded).
+            // Team included: Mail-activated team agents appear in the header
+            // dropdown and must survive a browser refresh (F1-3).
             // agentId == sessionId (nodeSessionId) so restored entries match
             // subsequent realtime events (agentToolStart/agentDone key on it).
             sharedResources.agentRegistry.get.flatMap { registry =>
               val active = registry.values.toList.filter(r =>
-                r.kind == AgentKind.Delegate || r.kind == AgentKind.Ephemeral || r.kind == AgentKind.Flow || r.kind == AgentKind.SubTask
+                r.kind == AgentKind.Delegate || r.kind == AgentKind.Ephemeral || r.kind == AgentKind.Flow || r.kind == AgentKind.Team || r.kind == AgentKind.SubTask
               )
               active
                 .traverse { rec =>
@@ -2608,11 +2621,88 @@ class WebSocketRoutes(
           case "getConfig" =>
             configService.isConfigured.flatMap { configured =>
               configService.getConfig.flatMap { cfg =>
+                nebflow.core.OnboardingService.readState().flatMap { onboarding =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "configData".asJson,
+                      "config" -> cfg.asJson,
+                      "configured" -> configured.asJson,
+                      // null = no marker yet (fresh install); frontend shows the wizard
+                      "onboarding" -> onboarding.map(_.name).asJson
+                    )
+                  )
+                }
+              }
+            }
+
+          case "setOnboardingState" =>
+            // F3 onboarding state machine: pending | done | skipped.
+            // HARD GATE (server-side, user ruling 2026-08-15): done is
+            // rejected unless a successful probeLlm is on record — the WS
+            // surface can no longer bypass the gate the frontend enforces.
+            val stJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val stStr = stJson.hcursor.downField("state").as[String].getOrElse("")
+            nebflow.core.OnboardingService.OnboardingState.fromString(stStr) match
+              case Some(st) =>
+                nebflow.core.OnboardingService.setState(st).flatMap {
+                  case Right(applied) =>
+                    wsSend(io.circe.Json.obj("type" -> "onboardingStateSet".asJson, "state" -> applied.name.asJson))
+                  case Left(reason) =>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "error".asJson,
+                        "code" -> "probe_required".asJson,
+                        "message" -> reason.asJson
+                      )
+                    )
+                }
+              case None =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"invalid onboarding state: $stStr".asJson))
+
+          case "probeLlm" =>
+            // Onboarding HARD GATE (user ruling 2026-08-15): one real LLM call
+            // through the global chain. The welcome message may only be sent
+            // after this returns ok=true.
+            nebflow.core.OnboardingService.probeLlm(sharedResources.llm).flatMap { pr =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "probeResult".asJson,
+                  "ok" -> pr.ok.asJson,
+                  "provider" -> pr.provider.asJson,
+                  "error" -> pr.error.asJson
+                )
+              )
+            }
+
+          case "autostartStatus" =>
+            // Settings panel "start on login" toggle (F2) — shared logic with
+            // the `nebflow autostart` CLI via AutoStartService.
+            nebflow.core.AutoStartService.status().flatMap { st =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "autostartStatusResult".asJson,
+                  "enabled" -> st.enabled.asJson,
+                  "supported" -> st.supported.asJson,
+                  "reason" -> st.reason.asJson
+                )
+              )
+            }
+
+          case "autostartSet" =>
+            val asJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val enable = asJson.hcursor.downField("enabled").as[Boolean].getOrElse(false)
+            val op = if enable then nebflow.core.AutoStartService.enable() else nebflow.core.AutoStartService.disable()
+            op.flatMap { res =>
+              // Always answer with the authoritative post-op status; attach
+              // the op message on failure so the UI can toast + revert the toggle.
+              nebflow.core.AutoStartService.status().flatMap { st =>
                 wsSend(
                   io.circe.Json.obj(
-                    "type" -> "configData".asJson,
-                    "config" -> cfg.asJson,
-                    "configured" -> configured.asJson
+                    "type" -> "autostartStatusResult".asJson,
+                    "enabled" -> st.enabled.asJson,
+                    "supported" -> st.supported.asJson,
+                    "reason" -> st.reason.asJson,
+                    "error" -> (if res.ok then None else Some(res.message)).asJson
                   )
                 )
               }
@@ -3714,6 +3804,44 @@ class WebSocketRoutes(
 end WebSocketRoutes
 
 object WebSocketRoutes:
+
+  /**
+    * F1 batch delete — pure, testable core for the `deletePaths` WS case.
+    * Per-path guards are IDENTICAL to the single `deletePath` case:
+    * resolve under root, canonical-path containment check, root itself
+    * protected. Each path is attempted independently; failures (guard
+    * rejection OR io error) land in `failed` without aborting the batch.
+    * Returns (deletedPaths, failedPairs).
+    */
+  def deletePathsSafely(
+      paths: List[String],
+      root: os.Path
+  ): IO[(List[String], List[(String, String)])] =
+    paths.foldLeftM((List.empty[String], List.empty[(String, String)])) { (acc, p) =>
+      resolveGuardedForDelete(p, root) match
+        case Left(err) => IO.pure((acc._1, acc._2 :+ (p -> err)))
+        case Right(basePath) =>
+          // remove.all: batch delete from the file explorer explicitly covers
+          // non-empty directories (F1 acceptance), unlike the single-file
+          // deletePath case.
+          IO.blocking { if os.exists(basePath) then os.remove.all(basePath) }
+            .attempt
+            .map {
+              case Right(_)   => (acc._1 :+ p, acc._2)
+              case Left(e)    => (acc._1, acc._2 :+ (p -> Option(e.getMessage).getOrElse(e.toString)))
+            }
+    }
+
+  /** Resolve + guard one delete candidate (mirror of deletePath's checks). */
+  private[gateway] def resolveGuardedForDelete(path: String, root: os.Path): Either[String, os.Path] =
+    try
+      val basePath = PathUtil.resolvePath(path, root)
+      val canonicalBase = basePath.toIO.getCanonicalPath
+      val canonicalRoot = root.toIO.getCanonicalPath
+      if !canonicalBase.startsWith(canonicalRoot) then Left("path outside project root")
+      else if canonicalBase == canonicalRoot then Left("cannot delete project root")
+      else Right(basePath)
+    catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
 
   /**
     * G1: serve user-uploaded attachments from

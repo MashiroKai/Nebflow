@@ -285,6 +285,44 @@ object ContextRefresher:
    * All sources are resolved fresh from disk (mtime-cached so unchanged
    * files cost only a stat() syscall). Returns TurnContext with current values.
    */
+  /**
+   * Load the CURRENT AgentDef for a running actor — the single refresh
+   * source shared by the schema layer (refreshTurn → request.tools) and the
+   * executor gate (AgentCore.pipeToolExecutions → call filtering +
+   * ToolContext.agentDef). Keeping both layers on this one source is what
+   * makes panel edits (flows whitelist, tools) take effect on the running
+   * actor mid-session.
+   *
+   * Team agents resolve from the team dir, global agents from the agents
+   * dir; presentation fields (avatar/displayName/voiceEnabled) are carried
+   * over from the actor-startup def because AgentEntry doesn't carry them.
+   * Returns None when neither disk source has the agent — callers fall back
+   * to the actor-startup snapshot.
+   */
+  def loadCurrentDef(
+    teamNameOpt: Option[String],
+    resources: SharedResources,
+    agentDef: AgentDef
+  ): IO[Option[AgentDef]] =
+    // Team agents reload their def from the team dir every turn so panel
+    // edits (e.g. PUT /api/agents/:name/model) take effect on the running
+    // actor. agentLibrary.get only scans the GLOBAL agents dir — for team
+    // agents it returns None and the code would silently keep using the
+    // actor-startup snapshot (MailTool/FlowTreeActor loadTeamAgent result).
+    // loadTeamAgent checks teams/<team>/agents/<name>/ first, then global.
+    teamNameOpt match
+      case Some(teamName) =>
+        EntityLoader.loadTeamAgent(teamName, agentDef.name).map { entryOpt =>
+          entryOpt.map(_.toAgentDef.copy(
+            // AgentEntry doesn't carry presentation fields — keep whatever
+            // the running actor already resolved (avatar from panel config).
+            avatar = agentDef.avatar,
+            displayName = agentDef.displayName,
+            voiceEnabled = agentDef.voiceEnabled
+          ))
+        }
+      case None => resources.agentLibrary.get(agentDef.name)
+
   def refreshTurn(
     state: AgentState,
     resources: SharedResources,
@@ -296,24 +334,7 @@ object ContextRefresher:
       teamNameOpt <- state.sessionId match
         case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
         case None => IO.pure(None)
-      // Team agents reload their def from the team dir every turn so panel
-      // edits (e.g. PUT /api/agents/:name/model) take effect on the running
-      // actor. agentLibrary.get only scans the GLOBAL agents dir — for team
-      // agents it returns None and the code would silently keep using the
-      // actor-startup snapshot (MailTool/FlowTreeActor loadTeamAgent result).
-      // loadTeamAgent checks teams/<team>/agents/<name>/ first, then global.
-      freshDefOpt <- teamNameOpt match
-        case Some(teamName) =>
-          EntityLoader.loadTeamAgent(teamName, agentDef.name).map { entryOpt =>
-            entryOpt.map(_.toAgentDef.copy(
-              // AgentEntry doesn't carry presentation fields — keep whatever
-              // the running actor already resolved (avatar from panel config).
-              avatar = agentDef.avatar,
-              displayName = agentDef.displayName,
-              voiceEnabled = agentDef.voiceEnabled
-            ))
-          }
-        case None => resources.agentLibrary.get(agentDef.name)
+      freshDefOpt <- loadCurrentDef(teamNameOpt, resources, agentDef)
       globalDef = freshDefOpt.getOrElse(agentDef)
       // SubTask workers are leaf task-execution pipelines: strip all team /
       // manager / memory context — the prompt is their only context source.
