@@ -151,6 +151,15 @@ docs/
 
 Version bumped to 1.4.1-beta.39.
 
+### 2026-08-15: G3 — Mail/Delegate/SubTask image attachments
+
+**Structured image passing channel** (spec: `~/.nebflow/plan/Nebflow/20260815_g3-structured-image-mail-delegate.md`, option A):
+- **`ImageInject` (tools/)**: shared image pipeline — G6 compression extracted from ReadTool (ReadTool keeps delegating aliases, behavior unchanged) + G3 attachment resolution. `resolveImages` (send-time, fail-fast: absolute/exists/extension whitelist/10MB/compression guards mirror ReadTool) / `drainImagePaths` (queue-drain re-read, lost file → `[attachment lost: path]` placeholder) / `messageBlocks` (message text must be the FIRST Text block — UserInput drops `text` when blocks are present)
+- **Mail/Delegate/SubTask `images` param** (≤5 absolute local image paths): dual-channel injection `[Mail 附件图片: <path>]` Text + Image block — non-vision recipients keep the path via existing stripImages. Delegate flow-mode rejects images explicitly
+- **Delivery mode threading**: immediate → `ImmediateInput.blocks`; ask/fork → `UserInput.blocks`; queue → `MailQueueItem.imagePaths` (paths persisted, NOT base64 — re-read + re-compress at drain; D6). Receiver-side zero changes (blocks channel, persistence, vision degradation all pre-existing)
+
+**Files changed:** new `ImageInject.scala`, `ReadTool.scala` (alias delegation), `MailTool.scala`, `DelegateTool.scala`, `SubTaskTool.scala`, `MailQueueStore.scala`, `AgentActor.scala` (2 queue-drain sites), new test: `ImageAttachSpec.scala`
+
 ### 2026-08-06: Beta 1.4.1-beta.38 — 10 changes
 
 **Bug fixes:**

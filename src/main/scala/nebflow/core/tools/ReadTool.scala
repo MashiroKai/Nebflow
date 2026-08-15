@@ -12,27 +12,22 @@ import java.util.Base64
 object ReadTool extends Tool:
   val MAX_LINE_COUNT = 2000
   val MAX_FILE_BYTES = 512 * 1024 // 512KB — approx 128k tokens, well within context
-  val MAX_IMAGE_BYTES = 10 * 1024 * 1024 // 10MB — images can be larger than text files
 
-  // Image compression — mirrors the frontend policy (input.js compressImage):
-  // long edge <= 1920, JPEG quality 0.8. Applied when the long edge exceeds
-  // 1920px OR the raw bytes exceed 2MB (covers small-but-heavy images).
-  val COMPRESS_MAX_EDGE = 1920
-  val COMPRESS_TRIGGER_BYTES = 2 * 1024 * 1024
-  // Post-compression hard cap (GLM single-image limit). Above this even after
-  // downsampling, reading is rejected with guidance instead of sending a
-  // request the provider will refuse.
-  val POST_COMPRESS_MAX_BYTES = 5 * 1024 * 1024
+  // G3: image preparation logic lives in ImageInject (shared with the
+  // Mail/Delegate/SubTask attachment channel). Aliases keep the public
+  // surface stable — behavior is unchanged.
+  val MAX_IMAGE_BYTES = ImageInject.MAX_IMAGE_BYTES
+  val COMPRESS_MAX_EDGE = ImageInject.COMPRESS_MAX_EDGE
+  val COMPRESS_TRIGGER_BYTES = ImageInject.COMPRESS_TRIGGER_BYTES
+  val POST_COMPRESS_MAX_BYTES = ImageInject.POST_COMPRESS_MAX_BYTES
+  private[tools] type ImagePrep = ImageInject.ImagePrep
+  private[tools] val Prepared = ImageInject.Prepared
+  private[tools] val TooLarge = ImageInject.TooLarge
+  private[tools] def prepareImage(bytes: Array[Byte], mediaType: String, fileName: String): ImagePrep =
+    ImageInject.prepareImage(bytes, mediaType, fileName)
 
   /** Supported image extensions → MIME type mapping. */
-  private val imageExtensions: Map[String, String] = Map(
-    ".png" -> "image/png",
-    ".jpg" -> "image/jpeg",
-    ".jpeg" -> "image/jpeg",
-    ".gif" -> "image/gif",
-    ".webp" -> "image/webp",
-    ".bmp" -> "image/bmp"
-  )
+  private def imageExtensions: Map[String, String] = ImageInject.imageExtensions
 
   val name = "Read"
 
@@ -102,86 +97,7 @@ Guidelines:
 
   /** Check if a file path has a supported image extension. Returns the MIME type if so. */
   private def imageMimeType(fileName: String): Option[String] =
-    val lower = fileName.toLowerCase
-    imageExtensions.collectFirst {
-      case (ext, mime) if lower.endsWith(ext) => mime
-    }
-
-  /** Result of preparing an image for LLM injection. */
-  private[tools] sealed trait ImagePrep
-  /** Bytes ready to send — either the originals or a compressed JPEG re-encode. */
-  private[tools] final case class Prepared(
-    bytes: Array[Byte],
-    mediaType: String,
-    note: Option[String]
-  ) extends ImagePrep
-  /** Still above the post-compression cap — caller must surface an error. */
-  private[tools] final case class TooLarge(detail: String) extends ImagePrep
-
-  /**
-   * Compress an image for LLM injection when oversized (long edge > 1920 or
-   * bytes > 2MB), matching the frontend upload policy. Falls back to the
-   * original bytes when the image cannot be decoded — a failed compression
-   * must never block a read. GIF is exempt (JPEG re-encode would drop
-   * animation); PNG transparency is flattened onto white (JPEG has no alpha).
-   */
-  private[tools] def prepareImage(bytes: Array[Byte], mediaType: String, fileName: String): ImagePrep =
-    if mediaType == "image/gif" then Prepared(bytes, mediaType, None) // GIF: JPEG re-encode loses animation
-    else
-      try
-        val src = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(bytes))
-        if src == null then
-          // Undecodable by ImageIO (e.g. webp without a plugin) — inject original
-          Prepared(bytes, mediaType, None)
-        else
-          val longSide = math.max(src.getWidth, src.getHeight)
-          val needByDim = longSide > COMPRESS_MAX_EDGE
-          val needByBytes = bytes.length > COMPRESS_TRIGGER_BYTES
-          if !needByDim && !needByBytes then Prepared(bytes, mediaType, None)
-          else
-            // Never upscale: a small-but-heavy image only needs the JPEG re-encode
-            val scale = math.min(1.0, COMPRESS_MAX_EDGE.toDouble / longSide)
-            val w = math.max(1, (src.getWidth * scale).round.toInt)
-            val h = math.max(1, (src.getHeight * scale).round.toInt)
-            // TYPE_INT_RGB + white fill: JPEG has no alpha channel; a PNG with
-            // transparency would otherwise render its transparent pixels black
-            val out = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB)
-            val g = out.createGraphics()
-            try
-              g.setColor(java.awt.Color.WHITE)
-              g.fillRect(0, 0, w, h)
-              g.setRenderingHint(
-                java.awt.RenderingHints.KEY_INTERPOLATION,
-                java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR
-              )
-              g.drawImage(src, 0, 0, w, h, null)
-            finally g.dispose()
-            val encoded = encodeJpeg(out, 0.8f)
-            if encoded.length > POST_COMPRESS_MAX_BYTES then
-              TooLarge(
-                s"$fileName is still ${f"${encoded.length / 1024.0 / 1024.0}%.1f"}MB after compression " +
-                  s"(${longSide}px → ${math.max(w, h)}px JPEG). Limit is ${POST_COMPRESS_MAX_BYTES / 1024 / 1024}MB. " +
-                  s"Please downscale or re-save the image manually, then Read it again."
-              )
-            else
-              val note = s"compressed ${bytes.length / 1024}KB→${encoded.length / 1024}KB, ${longSide}px→${math.max(w, h)}px"
-              Prepared(encoded, "image/jpeg", Some(note))
-      catch case _: Exception =>
-        // Compression failed for any reason — inject the original bytes
-        Prepared(bytes, mediaType, None)
-
-  /** Encode a BufferedImage as JPEG at the given quality (0..1). */
-  private def encodeJpeg(img: java.awt.image.BufferedImage, quality: Float): Array[Byte] =
-    val baos = new java.io.ByteArrayOutputStream()
-    val writer = javax.imageio.ImageIO.getImageWritersByFormatName("jpeg").next()
-    try
-      val param = writer.getDefaultWriteParam()
-      param.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT)
-      param.setCompressionQuality(quality)
-      writer.setOutput(new javax.imageio.stream.MemoryCacheImageOutputStream(baos))
-      writer.write(null, new javax.imageio.IIOImage(img, null, null), param)
-    finally writer.dispose()
-    baos.toByteArray
+    ImageInject.imageMimeType(fileName)
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
