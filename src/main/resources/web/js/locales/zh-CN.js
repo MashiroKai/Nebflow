@@ -301,6 +301,15 @@ export default {
   'task.inProgress': '{count} 进行中',
   'task.open': '{count} 待处理',
   'task.more': '+{count} 个',
+  'task.completedToday': '今日完成 {count}',
+  'task.viewAll': '查看全部',
+  'task.archiveTitle': '任务档案',
+  'task.allProjects': '全部项目',
+  'task.uncategorized': '未分类',
+  'task.notes': '记录',
+  'task.events': '事件',
+  'task.archiveEmpty': '暂无归档任务',
+  'task.archiveError': '任务档案加载失败',
 
   // === Tool names (label first line) ===
   'tool.Read': '读取',
