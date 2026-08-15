@@ -690,9 +690,12 @@ function startCreateNode(isDir, dirPath) {
 /** Delete a file or folder. */
 function deleteNode(path) {
   const name = path.split('/').pop();
-  window.__showConfirm?.('Delete File', `Delete "${name}"? This cannot be undone.`, () => {
-    sendWs({ type: 'deletePath', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
-  }) ?? sendWs({ type: 'deletePath', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
+  const send = () => sendWs({ type: 'deletePath', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
+  if (typeof window.__showConfirm === 'function') {
+    window.__showConfirm('Delete File', `Delete "${name}"? This cannot be undone.`, send);
+  } else {
+    send();
+  }
 }
 
 /** Batch-delete every path in the current selection — one confirm, one WS message. */
