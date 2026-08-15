@@ -18,10 +18,17 @@ enum CompactionProfile:
 object CompactionProfile:
 
   /**
-   * Infer profile from agent depth.
-   *  depth 0 = Nebula (root), depth 1 = flow manager, depth 2+ = worker agent.
+   * Infer profile from agent depth and lead role (B5).
+   *  depth 0 = Nebula (root)
+   *  depth 1 = one level below the root — a team lead (Manager) gets Manager,
+   *            everyone else at this depth (team members, flow agents,
+   *            delegate sub-agents) gets Worker
+   *  depth 2+ = worker agent
+   *
+   * `isLead` matters only at depth 1: team members and the team Manager sit
+   * at the same depth, so depth alone cannot tell them apart.
    */
-  def fromDepth(depth: Int): CompactionProfile = depth match
+  def fromDepth(depth: Int, isLead: Boolean = false): CompactionProfile = depth match
     case 0 => Root
-    case 1 => Manager
+    case 1 => if isLead then Manager else Worker
     case _ => Worker
