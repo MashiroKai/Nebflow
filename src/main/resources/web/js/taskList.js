@@ -1,5 +1,6 @@
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
+import { openTaskArchive } from './taskArchive.js';
 
 const MAX_VISIBLE = 20;
 const COLLAPSED_KEY = 'nebflow-task-collapsed';
@@ -12,6 +13,88 @@ const iconMap = {
 };
 
 const activeStatuses = new Set(['pending', 'in_progress']);
+
+// ── 今日完成 (completedToday) ─────────────────────────────
+// 口径(Manager 裁定 2026-08-16): N = status==='completed' 且 completedAt 存在
+// 且日期为今天(用户本地时区)。failed/dismissed 均不计入——failed 在档案视图
+// 照常展示带失败标注,但绝不能混进「完成 N」误导用户。
+
+function isTodayLocal(iso) {
+  if (!iso) return false;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return false;
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() &&
+         d.getMonth() === now.getMonth() &&
+         d.getDate() === now.getDate();
+}
+
+function todayCompleted(tasks) {
+  return (tasks || [])
+    .filter(task => task.status === 'completed' && isTodayLocal(task.completedAt))
+    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
+}
+
+function fmtTimeHM(iso) {
+  const d = new Date(iso);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+/** Render the「今日完成 N」folded bar below the task card (or standalone when
+ *  no active tasks). Re-render safe: replaces any existing bar, preserves the
+ *  expanded flag on the container across re-renders. */
+function renderTodayBar(container, today, sessionId) {
+  container.querySelector('.task-today-wrap')?.remove();
+  // #task-list 无 .has-tasks 时 max-height:0 折叠——独立展示折叠条必须给容器
+  // 单独放行(.has-today),否则 bar 会被 overflow:hidden 裁掉。
+  container.classList.toggle('has-today', !!(today && today.length));
+  if (!today || today.length === 0) { container._todayTasks = null; return; }
+  container._todayTasks = today;
+  container._todaySessionId = sessionId;
+
+  const expanded = container._todayExpanded === true;
+  const wrap = document.createElement('div');
+  wrap.className = 'task-today-wrap';
+
+  let html = `<div class="task-today-bar" role="button" tabindex="0">` +
+    `<i data-lucide="${expanded ? 'chevron-down' : 'chevron-right'}"></i>` +
+    `<span class="task-today-count">${escapeHtml(t('task.completedToday', { count: today.length }))}</span>` +
+    `</div>`;
+
+  if (expanded) {
+    html += '<div class="task-today-list">';
+    today.slice(0, 10).forEach(task => {
+      const note = (task.notes && task.notes[0] && task.notes[0].content) || '';
+      html += `<div class="task-today-item">` +
+        `<div class="task-today-item-main">` +
+          `<span class="task-today-subject">${escapeHtml(task.subject || '')}</span>` +
+          `<span class="task-today-time">${escapeHtml(fmtTimeHM(task.completedAt))}</span>` +
+        `</div>` +
+        (note ? `<div class="task-today-note">${escapeHtml(note)}</div>` : '') +
+        `</div>`;
+    });
+    html += `<div class="task-today-all" role="button" tabindex="0">${escapeHtml(t('task.viewAll'))}</div>`;
+    html += '</div>';
+  }
+
+  wrap.innerHTML = html;
+  container.appendChild(wrap);
+  if (typeof lucide !== 'undefined') createIconsIn(wrap);
+
+  const bar = wrap.querySelector('.task-today-bar');
+  const toggle = () => {
+    container._todayExpanded = !container._todayExpanded;
+    renderTodayBar(container, container._todayTasks, container._todaySessionId);
+  };
+  bar.addEventListener('click', toggle);
+  bar.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+
+  const allBtn = wrap.querySelector('.task-today-all');
+  if (allBtn) {
+    allBtn.addEventListener('click', (e) => { e.stopPropagation(); openTaskArchive(); });
+    allBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTaskArchive(); } });
+  }
+}
 
 function isCollapsed() {
   try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
@@ -32,17 +115,21 @@ export function renderTaskList(tasks, container, sessionId) {
   const active = isEmpty ? [] : tasks.filter(t => activeStatuses.has(t.status));
 
   if (active.length === 0) {
+    // 「今日完成」折叠条在没有活跃任务时仍独立展示——这正是用户想看
+    // 「今天干成了什么」的时刻。
+    const today = todayCompleted(tasks);
+    const finishClear = () => {
+      container.innerHTML = '';
+      container.classList.remove('has-tasks');
+      renderTodayBar(container, today, sessionId);
+    };
     // Fade out existing card before clearing
     const card = container.querySelector('.task-card');
     if (card && Object.keys(prevSnapshot).length > 0) {
       card.classList.add('task-card-leaving');
-      setTimeout(() => {
-        container.innerHTML = '';
-        container.classList.remove('has-tasks');
-      }, 300);
+      setTimeout(finishClear, 300);
     } else {
-      container.innerHTML = '';
-      container.classList.remove('has-tasks');
+      finishClear();
     }
     container._taskSnapshot = {};
     return;
@@ -155,6 +242,9 @@ function doRender(container, allTasks, active, sessionId, prevSnapshot, newSnaps
   container.innerHTML = html;
 
   if (typeof lucide !== 'undefined') createIconsIn(container);
+
+  // 「今日完成 N」折叠条——卡片底部追加(独立于卡片折叠态)
+  renderTodayBar(container, todayCompleted(allTasks), sessionId);
 
   // Toggle handler
   const toggleBtn = container.querySelector('.task-toggle');

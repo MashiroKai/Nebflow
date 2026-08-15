@@ -325,6 +325,15 @@ export default {
   'task.inProgress': '{count} in progress',
   'task.open': '{count} open',
   'task.more': '+{count} more',
+  'task.completedToday': 'Completed today: {count}',
+  'task.viewAll': 'View all',
+  'task.archiveTitle': 'Task Archive',
+  'task.allProjects': 'All Projects',
+  'task.uncategorized': 'Uncategorized',
+  'task.notes': 'notes',
+  'task.events': 'Events',
+  'task.archiveEmpty': 'No archived tasks',
+  'task.archiveError': 'Failed to load task archive',
 
   // === Tool names (label first line) ===
   'tool.Read': 'Read',
