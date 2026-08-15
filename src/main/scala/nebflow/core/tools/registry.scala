@@ -33,10 +33,6 @@ object ToolRegistry:
       "TaskUpdate" -> TaskUpdateTool,
       // Scheduled tasks
       "Schedule" -> ScheduleTool,
-      // Workspace knowledge
-      "SaveWorkspaceItem" -> SaveWorkspaceItemTool,
-      // Agent lifecycle — always available, no tool whitelist filtering
-      "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Unified agent communication (message + ask modes)
       "Mail" -> MailTool,
       // Sub-agent delegation (background + persistent modes) — Nebula/调度器专用

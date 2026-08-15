@@ -574,7 +574,7 @@ object AgentActor extends AgentCore with AgentSession:
         }
 
       case _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
-          _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults =>
+          _: AgentCommand.SetPermissionDeferred =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
@@ -1283,16 +1283,6 @@ object AgentActor extends AgentCore with AgentSession:
             .invalidateSystemStableCache
             .resetToIdle(Nil)
           idle(agentDef, resources, depth, parentRef, resetState)
-
-      // --- ReplaceToolResults ---
-      case AgentCommand.ReplaceToolResults(rounds, summary, replyTo) =>
-        replaceToolResults(state.messages, rounds, summary) match
-          case Right((updatedMessages, count)) =>
-            replyTo.complete(Right(count)).void.handleErrorWith(_ => IO.unit) *>
-              IO.pure(processing(agentDef, resources, depth, parentRef, state.withMessages(updatedMessages), pending))
-          case Left(err) =>
-            replyTo.complete(Left(err)).void.handleErrorWith(_ => IO.unit) *>
-              IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
       // --- Compaction completed ---
       case AgentCommand.CompactionComplete(result) =>
@@ -2708,39 +2698,5 @@ object AgentActor extends AgentCore with AgentSession:
       end if
     end if
   end handleEmptyResponse
-
-  // ============================================================
-  // Tool result replacement
-  // ============================================================
-
-  private def replaceToolResults(
-    messages: List[Message],
-    rounds: Int,
-    summary: String
-  ): Either[String, (List[Message], Int)] =
-    val allToolUseIds = messages.flatMap {
-      case Message(MessageRole.Assistant, Right(blocks), _, _) =>
-        blocks.collect { case ContentBlock.ToolUse(id, _, _) => id }
-      case _ => Nil
-    }.reverse
-    if allToolUseIds.isEmpty then Left("No tool call results found in conversation")
-    else
-      val selectedIds = allToolUseIds.take(rounds).toSet
-      if selectedIds.isEmpty then Left("Selected rounds exceed available tool calls")
-      else
-        val (updated, count) = messages.foldLeft((Vector.empty[Message], 0)) {
-          case ((acc, c), msg @ Message(MessageRole.User, Right(blocks), _, _)) =>
-            val (newBlocks, nc) = blocks.foldLeft((Vector.empty[ContentBlock], c)) {
-              case ((ba, bc), tr: ContentBlock.ToolResult) if selectedIds.contains(tr.toolUseId) =>
-                (ba :+ tr.copy(content = s"[Replaced — see RemoveUnnecessary result above]"), bc + 1)
-              case ((ba, bc), other) => (ba :+ other, bc)
-            }
-            (acc :+ msg.copy(content = Right(newBlocks.toList)), nc)
-          case ((acc, c), other) => (acc :+ other, c)
-        }
-        if count == 0 then Left("No matching tool results found")
-        else Right((updated.toList, count))
-    end if
-  end replaceToolResults
 
 end AgentActor

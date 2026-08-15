@@ -35,7 +35,7 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(defn)
     assertEquals(
       allowed,
-      Set("Read", "Glob", "Grep", "Write", "Edit", "Bash", "Issue", "RemoveUnnecessary", "Mail")
+      Set("Read", "Glob", "Grep", "Write", "Edit", "Bash", "Issue", "Mail")
     )
 
   test("standalone agent gets base fixed tools but NOT Mail"):
@@ -71,7 +71,6 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!standaloneAllowed.contains("Mail"), "standalone does not get Mail")
     assert(standaloneAllowed.contains("Issue"), "Issue is a base tool")
     assert(standaloneAllowed.contains("Write"), "Write is a base tool")
-    assert(standaloneAllowed.contains("RemoveUnnecessary"), "RemoveUnnecessary is a base tool")
 
     val teamDefn = mkDef("teammate", List("Read")).copy(category = "team")
     val teamAllowed = CoreProbe.allowed(teamDefn)

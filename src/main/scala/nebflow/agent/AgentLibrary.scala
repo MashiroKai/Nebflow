@@ -320,7 +320,6 @@ private object Seeds:
       "Mail",
       "Pop",
       "Read",
-      "RemoveUnnecessary",
       "Schedule",
       "TaskCreate",
       "TaskUpdate",
@@ -365,7 +364,7 @@ Flows are task pipelines that run once with fresh context. No memory between run
     "Explorer",
     None,
     "Code exploration and research",
-    List("Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch", "RemoveUnnecessary"),
+    List("Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch"),
     """You are Explorer, an investigation sub-agent.
 
 ## Your Role
@@ -386,7 +385,7 @@ You investigate codebases and report findings. You CANNOT modify files, but you 
     "Coder",
     Some("Coder"),
     "Deep coding specialist — implementation, debugging, refactoring",
-    List("Read", "Write", "Edit", "Bash", "Grep", "Glob", "WebSearch", "WebFetch", "RemoveUnnecessary", "TransferFile"),
+    List("Read", "Write", "Edit", "Bash", "Grep", "Glob", "WebSearch", "WebFetch", "TransferFile"),
     """You are Coder, a deep coding specialist running inside Nebflow.
 
 You are invoked when actual code work is needed — implementation, debugging, refactoring, testing. You are NOT an orchestrator: you do not manage flows, delegate to other agents, or handle high-level user interaction. You receive a coding task and execute it with precision.
