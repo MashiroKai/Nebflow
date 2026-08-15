@@ -38,7 +38,13 @@ case class ProviderConfig(
   baseUrl: String,
   apiKey: String,
   protocol: LlmProtocol,
-  models: List[ModelConfig] = Nil
+  models: List[ModelConfig] = Nil,
+  // Anthropic-protocol only: replay unsigned thinking blocks from assistant
+  // history back to the API. DeepSeek's Anthropic-compatible endpoint REQUIRES
+  // thinking blocks to be passed back in thinking mode (even without a
+  // signature), while real Anthropic REJECTS them without one. Defaults per
+  // providerId in ProviderRegistry; explicit config wins.
+  requireThinkingPassback: Option[Boolean] = None
 )
 
 object ProviderConfig:

@@ -14,8 +14,17 @@ import sttp.client4.*
 
 import scala.concurrent.duration.*
 
-class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, Fs2Streams[IO]])
-    extends ProviderAdapter[IO]:
+class AnthropicAdapter(
+  baseUrl: String,
+  apiKey: String,
+  backend: StreamBackend[IO, Fs2Streams[IO]],
+  // When true, unsigned thinking blocks from assistant history are replayed
+  // (without a signature field) instead of dropped. DeepSeek's Anthropic-
+  // compatible endpoint requires thinking blocks to be passed back in thinking
+  // mode; real Anthropic rejects them without a signature. Set per provider
+  // in ProviderRegistry.createAdapter.
+  requireThinkingPassback: Boolean = false
+) extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
   /** Full endpoint URL: use base as-is if it already points to /v1/messages, otherwise append. */
@@ -25,7 +34,8 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
   // Holds (inputTokens, cacheReadTokens, cacheCreationTokens) from message_start
   private case class Tokens(input: Int, cacheRead: Option[Int], cacheWrite: Option[Int])
 
-  private def toAnthropicMessages(messages: List[Message]): List[Json] =
+  // private[providers] for spec access (pure JSON mapping, no backend needed)
+  private[providers] def toAnthropicMessages(messages: List[Message]): List[Json] =
     mergeConsecutive(messages.filterNot(_.role == MessageRole.System)).map { msg =>
       val role = msg.role match
         case MessageRole.User => "user"
@@ -74,7 +84,16 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
                     "signature" -> sig.asJson
                   )
                 case None =>
-                  Json.Null
+                  // Unsigned thinking: replay it only for providers that demand
+                  // passback (DeepSeek). Dropping it was the root cause of the
+                  // recurring deepseek DOWN cycles on 2026-08-15 — its thinking
+                  // mode rejects history that omits thinking blocks.
+                  if requireThinkingPassback then
+                    Json.obj(
+                      "type" -> "thinking".asJson,
+                      "thinking" -> thinking.asJson
+                    )
+                  else Json.Null
           }
           val filtered = content.filterNot(_ == Json.Null)
           if filtered.isEmpty then Json.obj("role" -> Json.fromString(role), "content" -> Json.fromString(" "))

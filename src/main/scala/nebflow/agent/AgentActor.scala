@@ -998,6 +998,35 @@ object AgentActor extends AgentCore with AgentSession:
                 )
               }
               _ <- replyTo.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
+              // Mail team members have no replyTo (their turns are driven by
+              // UserInput(replyTo=None)), so the notification above is a no-op
+              // for them and a fatal LLM failure evaporated silently — the
+              // Manager kept waiting for a [RESULT] that would never come
+              // (2026-08-15: 53-minute mutual-wait deadlock). Route the same
+              // "failed" external event to the parent (team lead) instead,
+              // mirroring BackoffSupervisor's notifyParentAndStop metadata
+              // contract (failedSessionId / retryable / failureType) so the
+              // parent's re-delegate system-reminder kicks in.
+              _ <- (replyTo, parentRef) match
+                case (None, Some(parent)) =>
+                  val sid = cleanedState.sessionId.getOrElse("")
+                  val sessionInfo = if sid.nonEmpty then s" [session=$sid]" else ""
+                  // ActorRef.! returns IO[Unit] — return it directly.
+                  parent ! AgentCommand.ExternalEvent(
+                    source = "team",
+                    eventType = "failed",
+                    payload =
+                      s""""${agentDef.name}" (team member) hit a fatal LLM failure: """ +
+                        s"${Option(error.getMessage).getOrElse("unknown").take(200)}$sessionInfo",
+                    metadata = JsonObject(
+                      "failedSessionId" -> sid.asJson,
+                      "retryable" -> true.asJson,
+                      "failureType" -> agentError.errorType.toString.asJson,
+                      "agentName" -> agentDef.name.asJson
+                    ),
+                    correlationId = Some(sid).filter(_.nonEmpty)
+                  )
+                case _ => IO.unit
               // A pending CompactionJob whose LLM call died fatally must not
               // survive into idle (zombie): the next normal reply would be
               // misrouted as the compact summary and replace all messages.

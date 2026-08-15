@@ -253,10 +253,18 @@ object LlmInterface:
                                   fs2.Stream
                                     .eval(
                                       notifyDown *> healthMonitor.probeNow(down) *> healthMonitor
-                                        .waitForAnyUp()
+                                        .waitForAnyUp(candidates)
                                         // All candidates Down and none recovered within one probe
                                         // cycle — surface the failure instead of blocking forever.
+                                        // Re-mapped to AllProvidersDownTimeout (Transient) so the
+                                        // agent-level llm-fail retry fires; a raw TimeoutException
+                                        // is classified Permanent and would kill the turn.
                                         .timeout(ProviderHealthMonitor.ProbeIntervalSec.seconds)
+                                        .adaptError { case _: java.util.concurrent.TimeoutException =>
+                                          new AllProvidersDownTimeout(
+                                            ProviderHealthMonitor.ProbeIntervalSec * 1000L
+                                          )
+                                        }
                                     )
                                     .flatMap { _ =>
                                       val notifyUp = onAttempt.traverse_(

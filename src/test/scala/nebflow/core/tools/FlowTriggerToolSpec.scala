@@ -81,6 +81,28 @@ class FlowTriggerToolSpec extends CatsEffectSuite:
         assert(!msg.contains("not allowed"), s"must not be a whitelist rejection: $msg")
       }
 
+  test("wildcard flows=['*'] passes the gate for any named flow"):
+    FlowTriggerTool
+      .call(flowInput("nebflow-review-merge"), ctxWith(List("*")))
+      .map { result =>
+        // Gate must pass; failure (if any) must be the missing-resources one,
+        // never a whitelist rejection. '*' used to be matched literally,
+        // blocking every named flow for agents configured with the wildcard.
+        val msgOpt = result.swap.toOption.map(_.message)
+        msgOpt.foreach { msg =>
+          assert(!msg.contains("not allowed"), s"'*' must match any named flow: $msg")
+        }
+      }
+
+  test("specific flows list still rejects non-declared flow even with wildcard elsewhere in ecosystem"):
+    FlowTriggerTool
+      .call(flowInput("some-other-flow"), ctxWith(List("code-review")))
+      .map { result =>
+        assert(result.isLeft, "must be rejected")
+        val msg = result.swap.toOption.get.message
+        assert(msg.contains("not allowed"), s"$msg")
+      }
+
   test("summarize shows the flow target"):
     val summary = FlowTriggerTool.summarize(flowInput("code-review"))
     assert(summary.contains("flow:code-review"), s"summary: $summary")

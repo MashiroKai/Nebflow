@@ -112,22 +112,84 @@ class HealthMonitorSpec extends CatsEffectSuite:
     for
       _ <- monitor.markDown("glm", "glm-5", "down")
       // Race: waitForAnyUp vs 500ms timeout — timeout should win (still blocked)
-      result1 <- monitor.waitForAnyUp().timeoutTo(500.millis, IO.pure("timeout"))
+      result1 <- monitor.waitForAnyUp(cs).timeoutTo(500.millis, IO.pure("timeout"))
       _ = assertEquals(result1, "timeout")
       // Mark up — now waitForAnyUp should complete
       _ <- monitor.markUp("glm", "glm-5")
       // Race again — wait should return immediately now
-      result2 <- monitor.waitForAnyUp().timeoutTo(500.millis, IO.pure("timeout"))
+      result2 <- monitor.waitForAnyUp(cs).timeoutTo(500.millis, IO.pure("timeout"))
     yield assert(result2 == (), s"expected unit, got $result2")
   }
 
   test("waitForAnyUp returns immediately if a signal was already fired") {
     val monitor = newMonitor
+    val cs = List(candidate("glm", "glm-5"))
 
     for
       _ <- monitor.markDown("glm", "glm-5", "down")
       _ <- monitor.markUp("glm", "glm-5") // fires signal
-      _ <- monitor.waitForAnyUp() // should not block
+      _ <- monitor.waitForAnyUp(cs) // should not block
+    yield ()
+  }
+
+  // ============================================================
+  // waitForAnyUp — multi-waiter recovery race (2026-08-15 incident)
+  // ============================================================
+
+  test("late waiter after an early waiter consumed the signal must not hang") {
+    val monitor = newMonitor
+    val cs = List(candidate("glm", "glm-5"))
+
+    // Exact reproduction of the dual-DOWN ghost timeout: waiter A enters after
+    // the signal fired (old code: tryGet=Some -> refresh Deferred -> return),
+    // then waiter B enters and finds a FRESH EMPTY Deferred with every
+    // provider already Up — old code blocked B for the full 120s timeout.
+    // New code re-checks health state on entry/wake, so B returns instantly.
+    for
+      _ <- monitor.markDown("glm", "glm-5", "timeout")
+      _ <- monitor.markUp("glm", "glm-5") // signal fires before any waiter
+      _ <- monitor.waitForAnyUp(cs) // waiter A consumes the signal path
+      r <- monitor.waitForAnyUp(cs).timeout(2.seconds).attempt // waiter B, late
+    yield assert(r.isRight, s"late waiter must pass via state re-check, got $r")
+  }
+
+  test("two parked waiters both released by one markUp signal") {
+    val monitor = newMonitor
+    val cs = List(candidate("glm", "glm-5"))
+
+    for
+      _ <- monitor.markDown("glm", "glm-5", "down")
+      dA <- IO.deferred[Unit]
+      dB <- IO.deferred[Unit]
+      fibA <- (monitor.waitForAnyUp(cs) *> dA.complete(())).start
+      fibB <- (monitor.waitForAnyUp(cs) *> dB.complete(())).start
+      _ <- IO.sleep(200.millis) // both parked on the signal or a tick
+      _ <- monitor.markUp("glm", "glm-5")
+      _ <- dA.get.timeout(2.seconds) // both must be released promptly
+      _ <- dB.get.timeout(2.seconds)
+      _ <- fibA.join *> fibB.join
+    yield ()
+  }
+
+  test("waiter blocked on an orphaned Deferred escapes via tick re-check") {
+    val monitor = newMonitor
+    val cs = List(candidate("glm", "glm-5"))
+
+    // Anti-spin path: a waiter woken without recovery replaces the signal
+    // Deferred; another waiter still parked on the old Deferred is orphaned
+    // (nothing will ever complete it) — it must escape via the periodic tick
+    // re-check once its candidates recover, not hang forever.
+    for
+      _ <- monitor.markDown("glm", "glm-5", "down")
+      dOrphan <- IO.deferred[Unit]
+      fibOrphan <- (monitor.waitForAnyUp(cs) *> dOrphan.complete(())).start
+      _ <- IO.sleep(200.millis) // orphan parked on D1
+      // Simulate another waiter's anti-spin Deferred replacement by forcing
+      // the replacement directly (refresh signalRef to a fresh empty one).
+      _ <- IO.deferred[Unit].flatMap(fresh => monitor.replaceSignalForTest(fresh))
+      _ <- monitor.markUp("glm", "glm-5") // completes the NEW Deferred only
+      _ <- dOrphan.get.timeout(ProviderHealthMonitor.RecheckIntervalSec.seconds + 2.seconds)
+      _ <- fibOrphan.join
     yield ()
   }
 
