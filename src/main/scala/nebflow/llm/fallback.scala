@@ -17,6 +17,20 @@ class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Except
       .mkString("\n")
     s"All providers failed:\n$summary"
 
+/**
+ * Raised when the all-Down gate ([[ProviderHealthMonitor.waitForAnyUp]]) timed
+ * out waiting for any provider to recover. Deliberately NOT a
+ * `java.util.concurrent.TimeoutException`: that type is classified Permanent
+ * (stream-first-token timeouts skip retries by design, 0bf832c0), which would
+ * kill the agent's llm-fail retry loop exactly when providers are recovering.
+ * This error means "waited, none recovered yet" — the canonical transient
+ * case, so [[Fallback.classifyError]] maps it to Transient and the 3-attempt
+ * llm-fail-retry backstop fires.
+ */
+class AllProvidersDownTimeout(val waitedMs: Long) extends RuntimeException(
+  s"all providers down: none recovered within ${waitedMs}ms"
+)
+
 case class FallbackResult[T](
   data: T,
   attempts: List[FallbackAttempt],
@@ -55,6 +69,8 @@ object Fallback:
           case 401 | 403 | 404 | 400 => ErrorPermanence.Permanent
           case _ => ErrorPermanence.Transient
         ErrorClassification(reason, permanence, Some(c), Some(error.getMessage))
+      case e: AllProvidersDownTimeout =>
+        ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(e.getMessage))
       case _: java.util.concurrent.TimeoutException =>
         ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Permanent, message = Some("timeout"))
       case _ =>

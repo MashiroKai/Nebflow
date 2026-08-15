@@ -24,10 +24,19 @@ class ProviderRegistry(
 ):
   private val adaptersRef: Ref[IO, Map[String, ProviderAdapter[IO]]] = Ref.unsafe(Map.empty)
 
-  private def createAdapter(provider: ProviderConfig): ProviderAdapter[IO] =
+  private def createAdapter(providerId: String, provider: ProviderConfig): ProviderAdapter[IO] =
     provider.protocol match
       case LlmProtocol.OpenAI => OpenAiAdapter(provider.baseUrl, provider.apiKey, backend)
-      case LlmProtocol.Anthropic => AnthropicAdapter(provider.baseUrl, provider.apiKey, backend)
+      case LlmProtocol.Anthropic =>
+        AnthropicAdapter(
+          provider.baseUrl,
+          provider.apiKey,
+          backend,
+          // DeepSeek's thinking mode rejects history replay that omits unsigned
+          // thinking blocks (400 invalid_request → provider marked DOWN); real
+          // Anthropic is the opposite. Explicit config overrides the default.
+          requireThinkingPassback = provider.requireThinkingPassback.getOrElse(providerId == "deepseek")
+        )
 
   def getAdapter(providerId: String): IO[ProviderAdapter[IO]] =
     adaptersRef.get.map(_.get(providerId)).flatMap {
@@ -36,7 +45,7 @@ class ProviderRegistry(
         configRef.get.flatMap { config =>
           config.llm.providers.get(providerId) match
             case Some(provider) =>
-              val adapter = createAdapter(provider)
+              val adapter = createAdapter(providerId, provider)
               adaptersRef.update(_ + (providerId -> adapter)).as(adapter)
             case None =>
               IO.raiseError(new RuntimeException(s"Unknown provider: $providerId"))

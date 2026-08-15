@@ -74,9 +74,12 @@ object FlowTriggerTool extends Tool:
     if flowName.isEmpty then IO.pure(Left(ToolError("Missing required parameter: flow")))
     else if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else
-      // Whitelist: agent must declare this flow in its flows list
+      // Whitelist: agent must declare this flow in its flows list.
+      // "*" is a wildcard matching any named flow — mirrors the skills layer
+      // semantics (skills:["*"] = full catalog injection).
       val whitelistError: Option[ToolError] = ctx.agentDef match
-        case Some(ad) if !ad.flows.contains(flowName.get) =>
+        case Some(ad)
+            if !(ad.flows.contains(flowName.get) || ad.flows.contains("*")) =>
           val allowed = if ad.flows.isEmpty then "(none — no flows declared)" else ad.flows.mkString(", ")
           Some(ToolError(s"Flow '${flowName.get}' not allowed for agent '${ad.name}'. Allowed: $allowed"))
         case _ => None

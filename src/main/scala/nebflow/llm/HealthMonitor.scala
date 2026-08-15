@@ -20,6 +20,14 @@ object ProviderHealthMonitor:
   /** Timeout for a single probe request (30 seconds — thinking models are slow). */
   val ProbeTimeoutSec = 30
 
+  /**
+   * How often a [[ProviderHealthMonitor.waitForAnyUp]] waiter re-checks health
+   * state when woken by a signal that did not bring its candidates Up (stale
+   * or foreign-provider signal). Also the worst-case extra delay a waiter pays
+   * when its blocking Deferred got replaced underneath it by another waiter.
+   */
+  val RecheckIntervalSec = 5
+
 /**
  * Tracks the health of every provider+model in the candidate chain.
  *
@@ -90,27 +98,52 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
     }
 
   /**
-   * Block until at least one Down provider recovers.
+   * Block until at least one of the given candidates is Up again.
    *
-   * Uses tryGet to avoid a race where markUp fires between the caller's
-   * filterCandidates check and this call — the signal would already be
-   * completed, so tryGet sees Some(()) and returns immediately instead of
-   * blocking on a stale Deferred.
+   * Design (fixed after the 2026-08-15 dual-DOWN incident): health state in
+   * [[statesRef]] is the source of truth; the signal Deferred is only a
+   * wake-up *hint*. The old implementation consumed a one-shot Deferred —
+   * the first woken waiter refreshed it, so a second concurrent waiter
+   * blocked on a fresh empty Deferred even though every provider was already
+   * Up, riding a ghost 120s timeout (err=120 seconds). Now every wake (signal
+   * or periodic tick) re-checks [[filterCandidates]] directly: a waiter whose
+   * candidates are already Up returns immediately no matter which waiter
+   * consumed the signal.
+   *
+   * Anti-spin: when woken without our candidates being Up, we replace the
+   * (possibly completed) Deferred with a fresh one and sleep one recheck
+   * interval before looping — a completed Deferred would make `.get` return
+   * instantly and spin the loop.
    */
-  def waitForAnyUp(): IO[Unit] =
-    signalRef.get.flatMap { current =>
-      current.tryGet.flatMap {
-        case Some(()) =>
-          // Already signaled — refresh Deferred for future waiters, return now
-          Deferred[IO, Unit].flatMap { fresh =>
-            signalRef.tryModify {
-              case `current` => (fresh, ())
-              case other => (other, ())
-            }.void
-          }
-        case None => current.get
+  def waitForAnyUp(candidates: List[ModelCandidate]): IO[Unit] =
+    def anyUp: IO[Boolean] =
+      filterCandidates(candidates).map(_._1.nonEmpty)
+
+    def loop: IO[Unit] =
+      anyUp.flatMap {
+        case true => IO.unit
+        case false =>
+          IO
+            .race(
+              signalRef.get.flatMap(_.get),
+              IO.sleep(ProviderHealthMonitor.RecheckIntervalSec.seconds)
+            )
+            .flatMap { _ =>
+              anyUp.ifM(
+                IO.unit,
+                Deferred[IO, Unit]
+                  .flatMap(fresh => signalRef.tryModify(_ => (fresh, ())).void)
+                  *> IO.sleep(ProviderHealthMonitor.RecheckIntervalSec.seconds)
+                  *> loop
+              )
+            }
       }
-    }
+    loop
+  end waitForAnyUp
+
+  /** Test seam: force-replace the signal Deferred (simulates anti-spin refresh orphaning a parked waiter). */
+  private[llm] def replaceSignalForTest(fresh: Deferred[IO, Unit]): IO[Unit] =
+    signalRef.set(fresh)
 
   /** Snapshot of all health states (for UI / logging). */
   def getStates: IO[Map[String, HealthState]] =
@@ -145,7 +178,9 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
    * down to ~`ProbeTimeoutSec`.
    */
   def probeNow(candidates: List[ModelCandidate]): IO[Unit] =
-    candidates.traverse_(probe)
+    // Parallel: serial probing of N candidates cost N x ProbeTimeoutSec worst
+    // case (two Down providers = up to 60s) before waiters even start waiting.
+    candidates.parTraverse_(probe)
 
   /** Probe a single candidate with a minimal completion request. */
   private[llm] def probe(candidate: ModelCandidate): IO[Unit] =
