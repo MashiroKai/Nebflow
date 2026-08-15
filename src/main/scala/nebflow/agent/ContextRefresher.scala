@@ -3,7 +3,6 @@ package nebflow.agent
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.entity.{EntityLoader, TeamCatalog}
-import nebflow.core.presets.PresetStore
 import nebflow.core.skill.SkillService
 import nebflow.core.{PathUtil, SystemReminder, SystemReminders}
 import nebflow.service.{MemoryStore, RulesStore}
@@ -306,24 +305,13 @@ object ContextRefresher:
       freshDefOpt <- teamNameOpt match
         case Some(teamName) =>
           EntityLoader.loadTeamAgent(teamName, agentDef.name).map { entryOpt =>
-            entryOpt.map { entry =>
-              val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
-              AgentDef(
-                name = entry.name,
-                description = entry.description,
-                tools = entry.tools,
-                systemPrompt = entry.systemPrompt,
-                category = entry.category,
-                mcpServers = entry.mcpServers,
-                model = Some(resolvedModel),
-                preset = entry.preset,
-                skills = entry.skills,
-                flows = entry.flows,
-                avatar = agentDef.avatar,
-                displayName = agentDef.displayName,
-                voiceEnabled = agentDef.voiceEnabled
-              )
-            }
+            entryOpt.map(_.toAgentDef.copy(
+              // AgentEntry doesn't carry presentation fields — keep whatever
+              // the running actor already resolved (avatar from panel config).
+              avatar = agentDef.avatar,
+              displayName = agentDef.displayName,
+              voiceEnabled = agentDef.voiceEnabled
+            ))
           }
         case None => resources.agentLibrary.get(agentDef.name)
       globalDef = freshDefOpt.getOrElse(agentDef)

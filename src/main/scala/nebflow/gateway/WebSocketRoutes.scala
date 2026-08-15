@@ -10,7 +10,6 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorSystem as NebulaActorSystem
 import nebflow.agent.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.presets.PresetStore
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.skill.SkillService
@@ -65,22 +64,8 @@ class WebSocketRoutes(
             metaOpt.flatMap(_.flowName) match
               case Some(fn) =>
                 nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
-                  case Some(entry) =>
-                    val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
-                    IO.pure(
-                      AgentDef(
-                        name = entry.name,
-                        description = entry.description,
-                        tools = entry.tools,
-                        systemPrompt = entry.systemPrompt,
-                        voiceEnabled = entry.voice,
-                        category = entry.category,
-                        mcpServers = entry.mcpServers,
-                        model = Some(resolvedModel),
-                        preset = entry.preset
-                      )
-                    )
-                  case None => nebulaFallback(agentName)
+                  case Some(entry) => IO.pure(entry.toAgentDef)
+                  case None        => nebulaFallback(agentName)
                 }
               case None => nebulaFallback(agentName)
         }

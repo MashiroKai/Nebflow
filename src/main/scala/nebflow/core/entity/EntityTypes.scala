@@ -3,6 +3,8 @@ package nebflow.core.entity
 import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
+import nebflow.agent.AgentDef
+import nebflow.core.presets.PresetStore
 import nebflow.shared.AgentModelConfig
 
 // ============================================================
@@ -69,6 +71,37 @@ object AgentEntry:
       "flows" -> a.flows.asJson
     )
   }
+
+  /**
+   * Single-source AgentEntry → AgentDef conversion (2026-08-15 FlowTrigger
+   * outage fix). Every spawn path (WebSocketRoutes root agents, MailTool
+   * activations, FlowTreeActor, FlowDagExecutor nodes, ContextRefresher
+   * per-turn refresh, EntityLoader.findAgentByName) must go through this
+   * method — hand-copied field maps at spawn sites drifted out of sync with
+   * this decoder (six copies, only two carried `flows`/`skills`), which made
+   * the LLM schema advertise FlowTrigger while the executor's snapshot
+   * AgentDef lacked it ("Tool not available: FlowTrigger").
+   *
+   * Site-specific extras are applied via `.copy(...)` at the call site
+   * (flowContract for flow nodes, avatar/displayName/voiceEnabled carried
+   * over from the running actor in ContextRefresher).
+   */
+  extension (a: AgentEntry)
+    def toAgentDef: AgentDef =
+      val (resolvedModel, _) = PresetStore().resolve(a.preset, a.model)
+      AgentDef(
+        name = a.name,
+        description = a.description,
+        tools = a.tools,
+        systemPrompt = a.systemPrompt,
+        voiceEnabled = a.voice,
+        category = a.category,
+        mcpServers = a.mcpServers,
+        model = Some(resolvedModel),
+        preset = a.preset,
+        skills = a.skills,
+        flows = a.flows
+      )
 end AgentEntry
 
 // ============================================================

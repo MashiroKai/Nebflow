@@ -164,7 +164,9 @@ class AgentLibrary(
               model = Some(resolvedModel),
               preset = j.preset,
               category = j.category.getOrElse("standalone"),
-              mcpServers = j.mcpServers.getOrElse(Nil)
+              mcpServers = j.mcpServers.getOrElse(Nil),
+              skills = j.skills.getOrElse(Nil),
+              flows = j.flows.getOrElse(Nil)
             )
           )
         case None =>
@@ -222,7 +224,9 @@ private case class AgentJson(
   voice: Option[Boolean] = None,
   model: Option[AgentModelConfig] = None,
   preset: Option[String] = None,
-  category: Option[String] = None
+  category: Option[String] = None,
+  skills: Option[List[String]] = None,
+  flows: Option[List[String]] = None
 )
 
 private object AgentJson:
@@ -247,7 +251,9 @@ private object AgentJson:
       voice = c.downField("voice").as[Option[Boolean]].toOption.flatten,
       model = c.downField("model").as[Option[AgentModelConfig]].toOption.flatten,
       preset = c.downField("preset").as[Option[String]].toOption.flatten,
-      category = c.downField("category").as[Option[String]].toOption.flatten
+      category = c.downField("category").as[Option[String]].toOption.flatten,
+      skills = c.downField("skills").as[Option[List[String]]].toOption.flatten,
+      flows = c.downField("flows").as[Option[List[String]]].toOption.flatten
     )
   }
 
@@ -266,6 +272,8 @@ private object AgentJson:
       .deepMerge(j.model.map(m => Json.obj("model" -> m.asJson)).getOrElse(Json.obj()))
       .deepMerge(j.preset.map(p => Json.obj("preset" -> p.asJson)).getOrElse(Json.obj()))
       .deepMerge(j.category.map(c => Json.obj("category" -> c.asJson)).getOrElse(Json.obj()))
+      .deepMerge(j.skills.map(s => Json.obj("skills" -> s.asJson)).getOrElse(Json.obj()))
+      .deepMerge(j.flows.map(f => Json.obj("flows" -> f.asJson)).getOrElse(Json.obj()))
   }
 end AgentJson
 

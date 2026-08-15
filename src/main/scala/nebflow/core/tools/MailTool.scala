@@ -9,7 +9,6 @@ import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
-import nebflow.core.presets.PresetStore
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 import scala.concurrent.duration.*
@@ -254,19 +253,7 @@ Message type (optional, default "INFO"):
       case Some((instance, agentName)) =>
         EntityLoader.loadTeamAgent(instance, agentName).flatMap {
           case Some(entry) =>
-            val agentDef =
-              val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
-              AgentDef(
-                name = entry.name,
-                description = entry.description,
-                tools = entry.tools,
-                systemPrompt = entry.systemPrompt,
-                voiceEnabled = entry.voice,
-                category = entry.category,
-                mcpServers = entry.mcpServers,
-                model = Some(resolvedModel),
-                preset = entry.preset
-              )
+            val agentDef = entry.toAgentDef
             doFork(system, resources, agentDef, Some(targetSid), question, blocks, address, ctx)
           case None =>
             IO.pure(Left(ToolError(s"Agent '$address' definition not found.")))
@@ -893,18 +880,7 @@ Message type (optional, default "INFO"):
             case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
             case None => EntityLoader.loadAgent(agentName)
           _ <- entryOpt.traverse_ { entry =>
-            val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
-            val agentDef = AgentDef(
-              name = entry.name,
-              description = entry.description,
-              tools = entry.tools,
-              systemPrompt = entry.systemPrompt,
-              voiceEnabled = entry.voice,
-              category = entry.category,
-              mcpServers = entry.mcpServers,
-              model = Some(resolvedModel),
-              preset = entry.preset
-            )
+            val agentDef = entry.toAgentDef
             // Route team agent events with a "team-" prefixed nodeSessionId so
             // the frontend can distinguish Mail-activated team agents from flow
             // agents (whose nodeSessionId is "dag-..."). Without this prefix,
