@@ -78,4 +78,39 @@ class SkillServicePerAgentCatalogSpec extends FunSuite:
     writeSkill("eco-only-hidden", "Hidden", disableModelInvocation = true)
     val catalog = SkillService.buildPerAgentCatalog(List("eco-only-hidden")).unsafeRunSync()
     assertEquals(catalog, "")
+
+  test("wildcard * subscribes to every model-invocable skill in the library"):
+    writeSkill("eco-a", "Alpha")
+    writeSkill("eco-hidden", "Hidden from model", disableModelInvocation = true)
+    writeSkill("eco-b", "Beta")
+    val catalog = SkillService.buildPerAgentCatalog(List("*")).unsafeRunSync()
+    assert(catalog.contains("- eco-a: Alpha"), s"eco-a: $catalog")
+    assert(catalog.contains("- eco-b: Beta"), s"eco-b: $catalog")
+    assert(!catalog.contains("eco-hidden"), s"hidden must stay out even under wildcard: $catalog")
+
+  test("wildcard with only hidden skills yields empty catalog"):
+    writeSkill("eco-only-hidden", "Hidden", disableModelInvocation = true)
+    val catalog = SkillService.buildPerAgentCatalog(List("*")).unsafeRunSync()
+    assertEquals(catalog, "")
+
+  test("skill-creator is appended to an injected catalog even when not declared"):
+    writeSkill("eco-x", "X skill")
+    writeSkill("skill-creator", "Create and update skills")
+    val catalog = SkillService.buildPerAgentCatalog(List("eco-x")).unsafeRunSync()
+    assert(catalog.contains("- eco-x: X skill"), s"declared: $catalog")
+    assert(catalog.contains("- skill-creator: Create and update skills"), s"bootstrap entry: $catalog")
+
+  test("skill-creator is not duplicated when already declared"):
+    writeSkill("eco-y", "Y skill")
+    writeSkill("skill-creator", "Create and update skills")
+    val catalog = SkillService.buildPerAgentCatalog(List("skill-creator", "eco-y")).unsafeRunSync()
+    val creatorLines = catalog.linesIterator.count(_.startsWith("- skill-creator:"))
+    assertEquals(creatorLines, 1, s"catalog: $catalog")
+
+  test("skill-creator keeps an otherwise-empty catalog alive (declared skill all hidden)"):
+    writeSkill("eco-hidden", "Hidden", disableModelInvocation = true)
+    writeSkill("skill-creator", "Create and update skills")
+    val catalog = SkillService.buildPerAgentCatalog(List("eco-hidden")).unsafeRunSync()
+    assert(catalog.contains("- skill-creator:"), s"catalog: $catalog")
+    assert(!catalog.contains("eco-hidden"), s"hidden must stay out: $catalog")
 end SkillServicePerAgentCatalogSpec
