@@ -9,6 +9,7 @@ import state from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { openPathPickerCallback } from './sidebar.js';
 import { createIconsIn } from './utils.js';
+import { t } from './i18n.js';
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -56,6 +57,155 @@ let currentDir = '';
 /** Loading indicator set — prevents double-fetching the same dir. */
 const loadingDirs = new Set();
 
+// ── Selection model (multi-select) ──────────────────────────────────────
+
+/** Selected item paths (relative to explorer root). */
+const selectedPaths = new Set();
+/** Anchor path for shift-range selection (last plain-clicked / cmd-added item). */
+let anchorPath = null;
+
+/** Re-apply `.selected` classes to match selectedPaths (after render/refresh). */
+function applySelectionClasses() {
+  const tree = document.getElementById('explorer-tree');
+  if (!tree) return;
+  tree.querySelectorAll('.explorer-item.selected').forEach(el => {
+    if (!selectedPaths.has(el.dataset.path)) el.classList.remove('selected');
+  });
+  for (const p of selectedPaths) {
+    const el = tree.querySelector(`.explorer-item[data-path="${CSS.escape(p)}"]`);
+    if (el) el.classList.add('selected');
+  }
+}
+
+/** Replace selection with a single path and make it the anchor. */
+function selectSingle(path) {
+  selectedPaths.clear();
+  selectedPaths.add(path);
+  anchorPath = path;
+  applySelectionClasses();
+  updateSelectionBar();
+}
+
+/** Cmd/Ctrl+click — toggle path in/out of the selection. */
+function toggleSelection(path) {
+  if (selectedPaths.has(path)) {
+    selectedPaths.delete(path);
+    if (anchorPath === path) anchorPath = null;
+  } else {
+    selectedPaths.add(path);
+    anchorPath = path;
+  }
+  applySelectionClasses();
+  updateSelectionBar();
+}
+
+/** Ordered visible sibling rows of a directory's children container. */
+function getSiblingPaths(parentDir) {
+  const container = parentDir
+    ? document.querySelector(`.explorer-dir-wrapper[data-path="${CSS.escape(parentDir)}"] > .explorer-children`)
+    : document.querySelector('.explorer-root > .explorer-children');
+  if (!container) return null;
+  const out = [];
+  for (const child of container.children) {
+    const item = child.classList.contains('explorer-item')
+      ? child
+      : child.querySelector(':scope > .explorer-item');
+    if (item && item.dataset.path !== undefined) out.push(item.dataset.path);
+  }
+  return out;
+}
+
+/** Shift+click — range-select visible siblings from anchor to target.
+ *  Cross-level (different parent dir) degenerates to single-select of target. */
+function rangeSelect(from, to) {
+  if (getTargetDir(from) !== getTargetDir(to)) {
+    selectSingle(to);
+    return;
+  }
+  const sibs = getSiblingPaths(getTargetDir(to));
+  const i = sibs ? sibs.indexOf(from) : -1;
+  const j = sibs ? sibs.indexOf(to) : -1;
+  if (i === -1 || j === -1) {
+    selectSingle(to);
+    return;
+  }
+  selectedPaths.clear();
+  for (let k = Math.min(i, j); k <= Math.max(i, j); k++) selectedPaths.add(sibs[k]);
+  applySelectionClasses();
+  updateSelectionBar();
+}
+
+/** Clear selection + anchor (Esc, blank click, root/session switch). */
+function clearSelection() {
+  if (!selectedPaths.size && !anchorPath) return;
+  selectedPaths.clear();
+  anchorPath = null;
+  applySelectionClasses();
+  updateSelectionBar();
+}
+
+/** Remove a deleted path from the selection model. */
+function pruneSelection(path) {
+  const had = selectedPaths.delete(path);
+  if (anchorPath === path) anchorPath = null;
+  if (had) {
+    applySelectionClasses();
+    updateSelectionBar();
+  }
+}
+
+/** Floating action bar (appears when ≥2 items selected), pinned to tree top. */
+function updateSelectionBar() {
+  const section = document.getElementById('explorer-section');
+  if (!section) return;
+  let bar = document.getElementById('explorer-selection-bar');
+  if (selectedPaths.size < 2) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'explorer-selection-bar';
+    bar.className = 'explorer-selection-bar';
+
+    const count = document.createElement('span');
+    count.className = 'explorer-selection-count';
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'explorer-selection-delete';
+    delBtn.textContent = t('explorer.delete');
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteSelected();
+    });
+
+    bar.appendChild(count);
+    bar.appendChild(delBtn);
+    section.appendChild(bar);
+  }
+  bar.querySelector('.explorer-selection-count').textContent =
+    t('explorer.selectedCount', { count: selectedPaths.size });
+}
+
+/** Shared click routing for tree rows.
+ *  @returns {boolean} true if the click was consumed as a selection op
+ *                     (caller must NOT run its default open/toggle behavior). */
+function handleSelectClick(e, path) {
+  if (e.metaKey || e.ctrlKey) {
+    e.preventDefault();
+    toggleSelection(path);
+    return true;
+  }
+  if (e.shiftKey && anchorPath && anchorPath !== path) {
+    e.preventDefault();
+    rangeSelect(anchorPath, path);
+    return true;
+  }
+  // Plain click — single-select + anchor; default behavior continues.
+  selectSingle(path);
+  return false;
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function $(sel) { return document.querySelector(sel); }
@@ -99,6 +249,7 @@ function shouldHide(name, isDir) {
 function renderTree() {
   const body = $('#explorer-tree');
   if (!body) return;
+  clearSelection();
   body.innerHTML = '';
   // Root-level listing — path "" means project root
   body.appendChild(buildDirNode('', true, 0));
@@ -147,6 +298,8 @@ function buildDirNode(path, isRoot, depth) {
 
   row.addEventListener('click', (e) => {
     e.stopPropagation();
+    // Cmd/Ctrl or Shift click = selection only — never expand/collapse
+    if (handleSelectClick(e, path)) return;
     toggleDir(path, chevron, children, depth);
   });
 
@@ -175,8 +328,10 @@ function buildFileNode(path, depth) {
   node.appendChild(label);
 
   // Single click → open as preview tab (italic, temporary)
+  // Cmd/Ctrl or Shift click = selection only — no open
   node.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (handleSelectClick(e, path)) return;
     openFile(path, name);
   });
 
@@ -309,6 +464,9 @@ onMessage('dirListing', (msg) => {
     pending.container.innerHTML = '<div class="explorer-empty">Empty</div>';
   }
 
+  // Directory re-rendered — restore .selected classes from the selection model
+  applySelectionClasses();
+
   if (typeof lucide !== 'undefined') createIconsIn(pending.container);
 });
 
@@ -389,7 +547,26 @@ export function initExplorer() {
       if (item) {
         e.preventDefault();
         e.stopPropagation();
-        showContextMenu(e.clientX, e.clientY, item.dataset.path, item.classList.contains('explorer-folder'));
+        const p = item.dataset.path;
+        // Right-click on an unselected item → make it the sole selection
+        // (menu falls back to single-path actions). Right-click on a selected
+        // item keeps the selection (menu offers batch actions).
+        if (!selectedPaths.has(p)) selectSingle(p);
+        showContextMenu(e.clientX, e.clientY, p, item.classList.contains('explorer-folder'));
+      }
+    });
+    // Click on blank tree area → clear selection
+    tree.addEventListener('click', (e) => {
+      if (!e.target.closest('.explorer-item')) clearSelection();
+    });
+  }
+
+  // Esc clears the selection (unless an inline create input has focus)
+  if (!window.__explorerEscBound) {
+    window.__explorerEscBound = true;
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && selectedPaths.size && !e.target.closest?.('.explorer-creating')) {
+        clearSelection();
       }
     });
   }
@@ -513,9 +690,24 @@ function startCreateNode(isDir, dirPath) {
 /** Delete a file or folder. */
 function deleteNode(path) {
   const name = path.split('/').pop();
-  window.__showConfirm?.('Delete File', `Delete "${name}"? This cannot be undone.`, () => {
-    sendWs({ type: 'deletePath', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
-  }) ?? sendWs({ type: 'deletePath', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
+  const send = () => sendWs({ type: 'deletePath', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
+  if (typeof window.__showConfirm === 'function') {
+    window.__showConfirm('Delete File', `Delete "${name}"? This cannot be undone.`, send);
+  } else {
+    send();
+  }
+}
+
+/** Batch-delete every path in the current selection — one confirm, one WS message. */
+function deleteSelected() {
+  const paths = [...selectedPaths];
+  if (!paths.length) return;
+  const send = () => sendWs({ type: 'deletePaths', sessionId: state.activeSessionId, paths, rootPath: explorerRoot });
+  if (typeof window.__showConfirm === 'function') {
+    window.__showConfirm(t('explorer.deleteTitle'), t('explorer.deleteConfirmN', { count: paths.length }), send);
+  } else {
+    send();
+  }
 }
 
 // ── Context Menu ──────────────────────────────────────────────────────
@@ -524,15 +716,25 @@ let ctxMenuEl = null;
 
 function showContextMenu(x, y, path, isDir) {
   hideContextMenu();
+  // Selection-aware: right-clicked item is part of a ≥2 selection → batch menu
+  const batch = path && selectedPaths.size >= 2 && selectedPaths.has(path);
   ctxMenuEl = document.createElement('div');
   ctxMenuEl.className = 'explorer-context-menu';
   ctxMenuEl.style.left = x + 'px';
   ctxMenuEl.style.top = y + 'px';
-  ctxMenuEl.innerHTML = `
-    <button data-action="new-file">New File</button>
-    <button data-action="new-folder">New Folder</button>
-    ${path ? `<hr><button data-action="delete" class="danger">Delete</button>` : ''}
-  `;
+  if (batch) {
+    const btn = document.createElement('button');
+    btn.dataset.action = 'delete-selected';
+    btn.className = 'danger';
+    btn.textContent = t('explorer.deleteN', { count: selectedPaths.size });
+    ctxMenuEl.appendChild(btn);
+  } else {
+    ctxMenuEl.innerHTML = `
+      <button data-action="new-file">New File</button>
+      <button data-action="new-folder">New Folder</button>
+      ${path ? `<hr><button data-action="delete" class="danger">Delete</button>` : ''}
+    `;
+  }
   document.body.appendChild(ctxMenuEl);
 
   // Adjust position if off-screen
@@ -548,6 +750,7 @@ function showContextMenu(x, y, path, isDir) {
       if (action === 'new-file') startCreateNode(false, isDir ? path : getTargetDir(path));
       else if (action === 'new-folder') startCreateNode(true, isDir ? path : getTargetDir(path));
       else if (action === 'delete') deleteNode(path);
+      else if (action === 'delete-selected') deleteSelected();
     });
   });
 }
@@ -565,10 +768,38 @@ onMessage('dirCreated', (msg) => {
   refreshDirOf(msg.path);
 });
 onMessage('pathDeleted', (msg) => {
-  refreshDirOf(msg.path);
-  // Also close any open tab for this file
-  window.dispatchEvent(new CustomEvent('canvas-close-tab', { detail: { id: `file:${msg.path}` } }));
+  handlePathDeleted(msg.path);
 });
+
+/** Batch delete response: { type:'pathsDeleted', deleted:[...], failed:[{path,error}] }
+ *  Each deleted path reuses the single-path cleanup; failures are summarized
+ *  into a single toast. */
+onMessage('pathsDeleted', (msg) => {
+  const deleted = msg.deleted || [];
+  const failed = msg.failed || [];
+  for (const p of deleted) handlePathDeleted(p);
+  if (failed.length) {
+    const f = failed[0];
+    window.__showToast?.(
+      t('explorer.deleteResult', {
+        ok: deleted.length,
+        fail: failed.length,
+        path: f.path,
+        error: f.error || '',
+      }),
+      'error'
+    );
+  }
+});
+
+/** Shared cleanup for a deleted path (single or batch): refresh parent dir,
+ *  close its tab, drop it from the selection model. */
+function handlePathDeleted(path) {
+  refreshDirOf(path);
+  // Also close any open tab for this file
+  window.dispatchEvent(new CustomEvent('canvas-close-tab', { detail: { id: `file:${path}` } }));
+  pruneSelection(path);
+}
 onMessage('fileOpError', (msg) => {
   console.error('File operation error:', msg.error);
   window.__showToast?.(msg.error || 'File operation failed', 'error');
@@ -598,6 +829,7 @@ export function refreshExplorer(sessionId) {
   expandedDirs.clear();
   loadingDirs.clear();
   pendingLoads.clear();
+  clearSelection();
   if (sessionId) {
     renderTree();
   } else {

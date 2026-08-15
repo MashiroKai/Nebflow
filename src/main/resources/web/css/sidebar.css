@@ -720,6 +720,7 @@
   transition: left 0.2s;
 }
 .toggle.on::after { left: 18px; }
+.toggle.disabled { opacity: 0.45; pointer-events: none; }
 /* Config editor */
 .config-editor-wrap {
   margin-top: 8px;
