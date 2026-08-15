@@ -196,7 +196,10 @@ function showReturningPrompt() {
     }
   });
   overlayEl.querySelector('#ob-no').addEventListener('click', () => {
-    setOnboardingState('done'); // asked once, declined — never ask again
+    // 'skipped' not 'done': the backend probe gate (probeOkAt) rejects 'done'
+    // without a successful probeLlm on record — 'skipped' is exempt and is
+    // also the more accurate semantic for "declined".
+    setOnboardingState('skipped');
     closeOverlay();
   });
 }
