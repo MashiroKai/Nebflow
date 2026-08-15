@@ -150,14 +150,6 @@ object FileTaskStore extends TaskStore:
         .map(_.filter(_ != null))
     }
 
-  /** Wire-format status name (enum toString loses the underscore in in_progress). */
-  private def statusName(s: TaskStatus): String = s match
-    case TaskStatus.Pending => "pending"
-    case TaskStatus.InProgress => "in_progress"
-    case TaskStatus.Completed => "completed"
-    case TaskStatus.Failed => "failed"
-    case TaskStatus.Dismissed => "dismissed"
-
   // Issue #2: State transition validation matrix
   private def isValidTransition(from: TaskStatus, to: TaskStatus): Boolean =
     (from, to) match
@@ -238,7 +230,7 @@ object FileTaskStore extends TaskStore:
             if updates.status.exists(_ != existing.status) then
               evBuilder += TaskEvent(
                 "status",
-                Some(s"${statusName(existing.status)}→${statusName(newStatus2)}"),
+                Some(s"${TaskStatus.wireName(existing.status)}→${TaskStatus.wireName(newStatus2)}"),
                 Some(now)
               )
             if updates.subject.exists(_ != existing.subject) then

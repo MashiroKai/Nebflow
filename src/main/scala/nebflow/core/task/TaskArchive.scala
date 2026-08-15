@@ -90,7 +90,7 @@ object TaskArchive:
               sessionName = j.sessionName,
               taskId = t.id,
               subject = t.subject,
-              status = t.status.toString.toLowerCase,
+              status = TaskStatus.wireName(t.status),
               createdAt = t.createdAt,
               updatedAt = t.updatedAt,
               completedAt = t.completedAt,
