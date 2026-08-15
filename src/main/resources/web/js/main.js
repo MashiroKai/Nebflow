@@ -22,6 +22,7 @@ import {
   persistUnread, createNewFolder, getCurrentFolderId,
   resetChatForActiveSession
 } from './sidebar.js';
+import { initOnboarding } from './onboarding.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
   showDeleteModal, confirmDeleteSession,
@@ -1638,6 +1639,9 @@ onMessage('configData', (msg, view) => {
   if (settingsOverlay && settingsOverlay.classList.contains('on')) {
     renderSettings();
   }
+  // First-run onboarding: fixed wizard (new user) or one-time greeting offer
+  // (returning user). Triggers once per boot — configData re-fires on save.
+  initOnboarding(msg);
 });
 
 onMessage('configUpdated', (msg, view) => {
