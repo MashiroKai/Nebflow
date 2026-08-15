@@ -421,16 +421,10 @@ object EntityLoader:
       .map(a => s"agent '$a' not found")
       .toList
     val badRoutes = flow.nodes.toList.flatMap { (id, node) =>
-      node.onComplete match
-        case NodeRoute.Goto(target) if !flow.nodes.contains(target) =>
-          List(s"node '$id' routes to unknown node '$target'")
-        case NodeRoute.Switch(_, cases, _, _) =>
-          cases.toList.flatMap {
-            case (_, NodeRoute.Goto(target)) if !flow.nodes.contains(target) =>
-              List(s"node '$id' switch case routes to unknown node '$target'")
-            case _ => Nil
-          }
-        case _ => Nil
+      FlowStructure.routeTargets(node.onComplete).collect {
+        case (target, _) if target != FlowStructure.ReturnNode && !flow.nodes.contains(target) =>
+          s"node '$id' routes to unknown node '$target'"
+      }.distinct
     }
     entryMissing ++ missingAgents.distinct ++ badRoutes
 
@@ -453,7 +447,16 @@ object EntityLoader:
     jsonParse(s).flatMap(_.as[TeamDef]).left.map(_.getMessage)
 
   private def parseFlowJson(s: String): Either[String, FlowDagDef] =
-    jsonParse(s).flatMap(_.as[FlowDagDef]).left.map(_.getMessage)
+    jsonParse(s).flatMap(_.as[FlowDagDef]).left.map(_.getMessage).flatMap { fd =>
+      // R8-P2 structural validation at load time — reject structurally broken
+      // flows (pure cycles, single nodes, uncovered joins, mid-branch returns,
+      // fanout over cap) with a clear reason instead of letting them fail at
+      // runtime in confusing ways. Agent-existence checks stay in validateFlow.
+      FlowStructure.validate(fd) match
+        case Nil   => Right(fd)
+        case errs => Left(s"invalid flow structure: ${errs.mkString("; ")}")
+      end match
+    }
 
   private def parseAgentJson(s: String): Either[String, AgentEntry] =
     jsonParse(s).flatMap(_.as[AgentEntry]).left.map(_.getMessage)

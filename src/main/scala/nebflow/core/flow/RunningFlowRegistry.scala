@@ -45,6 +45,32 @@ object RunningFlowRegistry:
   // The cancelledFlows flag stays: it covers the between-nodes check.
   private val cancelSignals: Ref[IO, Map[String, Deferred[IO, Unit]]] = Ref.unsafe(Map.empty)
 
+  // R8-P2 internal fail-fast signal: a parallel branch failed under
+  // onFail=abort — pierce sibling agents exactly like a user cancel, but the
+  // flow's final status is Failed (NOT Cancelled), so it is tracked separately
+  // from the user-cancel flag.
+  private val abortedFlows: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
+  private val abortSignals: Ref[IO, Map[String, Deferred[IO, Unit]]] = Ref.unsafe(Map.empty)
+
+  /** Internal fail-fast: stop sibling branch agents (idempotent). */
+  def failFast(instanceId: String): IO[Unit] =
+    abortedFlows.update(_ + instanceId) *>
+      abortSignals.get.flatMap(_.get(instanceId).traverse_(_.complete(())))
+
+  /** Check whether fail-fast fired for this instance. */
+  def isAborted(instanceId: String): IO[Boolean] =
+    abortedFlows.get.map(_.contains(instanceId))
+
+  /** The internal fail-fast signal (created on demand like cancelSignal). */
+  def abortSignal(instanceId: String): IO[Deferred[IO, Unit]] =
+    Deferred[IO, Unit].flatMap { fresh =>
+      abortSignals.modify { m =>
+        m.get(instanceId) match
+          case Some(existing) => (m, existing)
+          case None           => (m + (instanceId -> fresh), fresh)
+      }
+    }
+
   /**
    * Mark a flow as cancelled. Sets the between-nodes flag and completes the
    * per-instance cancel signal (idempotent — Deferred.complete on an
@@ -61,11 +87,14 @@ object RunningFlowRegistry:
 
   /**
    * Clear the cancel flag and drop the cancel signal (called after flow
-   * execution ends so the signal map doesn't grow unboundedly).
+   * execution ends so the signal map doesn't grow unboundedly). Also clears
+   * the internal fail-fast state.
    */
   def clearCancelled(instanceId: String): IO[Unit] =
     cancelledFlows.update(_ - instanceId) *>
-      cancelSignals.update(_ - instanceId)
+      cancelSignals.update(_ - instanceId) *>
+      abortedFlows.update(_ - instanceId) *>
+      abortSignals.update(_ - instanceId)
 
   /**
    * The per-instance cancel signal. Creates one if absent (register normally
@@ -82,7 +111,8 @@ object RunningFlowRegistry:
 
   def register(flow: RunningFlow): IO[Unit] =
     flows.update(_ + (flow.instanceId -> flow)) *>
-      cancelSignal(flow.instanceId).void
+      cancelSignal(flow.instanceId).void *>
+      abortSignal(flow.instanceId).void
 
   def update(instanceId: String)(f: RunningFlow => RunningFlow): IO[Unit] =
     flows.update(m => m.get(instanceId).map(f).map(rf => m + (instanceId -> rf)).getOrElse(m))
