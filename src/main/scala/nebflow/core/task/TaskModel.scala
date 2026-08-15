@@ -45,9 +45,12 @@ end TaskStatus
 /**
  * A note attached to a task — durable outcome/summary text an agent wants to
  * keep for later retrieval (C2). Append-only via TaskUpdate(note=...).
+ * Wire field names follow the design doc (/tmp/tool-opt-task-inventory.md B1):
+ * content / links / at. The doc's `by` field is NOT implemented (P1, doc
+ * erratum pending) — see the fix commit for the ruling.
  */
 case class TaskNote(
-  text: String,
+  content: String,
   links: List[String] = Nil,
   at: Option[String] = None
 )
