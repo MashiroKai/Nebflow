@@ -782,7 +782,41 @@ Message type (optional, default "INFO"):
           yield sr
     yield result
 
-  private def checkTeamScope(
+  /** Marker a team's rules.md can set to opt in to cross-team explicit Mail. */
+  private val CrossTeamMailMarker = "allow-cross-team-mail: true"
+
+  /**
+   * Explicit "team/agent" addresses targeting another team are blocked by
+   * default for non-lead senders (decision 20) — the escalation path is
+   * Manager → Nebula. A team opts in by writing
+   * `<!-- allow-cross-team-mail: true -->` in its rules.md. Leads (any team
+   * Manager / lead — same judgment as canMailNebula) always pass.
+   *
+   * Unaffected: same-team explicit routes, short names, and the Nebula root
+   * (no team context — it never reaches checkTeamScope).
+   */
+  private def checkCrossTeamExplicitRoute(
+    address: String,
+    senderTeam: String,
+    isLead: Boolean
+  ): IO[Option[String]] =
+    if !address.contains("/") then IO.pure(None)
+    else
+      val targetTeam = address.substring(0, address.indexOf('/'))
+      if targetTeam == senderTeam || isLead then IO.pure(None)
+      else
+        EntityLoader.loadTeamRules(senderTeam).map { rules =>
+          if rules.contains(CrossTeamMailMarker) then None
+          else
+            Some(
+              s"Cross-team Mail to '$address' is blocked by default. You are in team '$senderTeam'. " +
+                "Ask your Manager to escalate to Nebula, or have the team opt in via its rules.md " +
+                "(allow-cross-team-mail: true)."
+            )
+        }
+
+  /** Visible for tests (package-private). */
+  private[tools] def checkTeamScope(
     address: String,
     teamName: String,
     senderSessionId: String,
@@ -791,6 +825,7 @@ Message type (optional, default "INFO"):
     for
       teamOpt <- EntityLoader.loadTeam(address)
       canNebula <- canMailNebula(senderName, senderSessionId)
+      crossTeam <- checkCrossTeamExplicitRoute(address, teamName, canNebula)
     yield teamOpt match
       case Some(_) if address == teamName =>
         None
@@ -801,7 +836,7 @@ Message type (optional, default "INFO"):
       case None if address == "Nebula" =>
         Some("Cannot mail Nebula directly. Use Mail(\"manager\", ...) to report to your Team Lead.")
       case None =>
-        None
+        crossTeam
 
   /** Deliver to a session — ensure actor exists, then send Mail. */
   private def deliverToSession(
