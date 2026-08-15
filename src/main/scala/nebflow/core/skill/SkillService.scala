@@ -20,7 +20,7 @@ final case class SkillInfo(
   userInvocable: Boolean = true,
   modelInvocable: Boolean = true,
   version: Option[String] = None,
-  /** Team namespace this skill semantically belongs to (frontmatter `audience`). */
+  /** Owning team (frontmatter `audience`): real team name, e.g. nebflow-project — not a namespace. */
   audience: Option[String] = None,
   /** Last date the content was verified against reality (frontmatter `last_verified`, YYYY-MM-DD). */
   lastVerified: Option[String] = None,
@@ -147,7 +147,7 @@ object SkillService:
       || `disable-model-invocation` | No | false | When true, skill is hidden from agent catalog (slash-command only) |
       || `version` | No | — | Semantic version string |
       || `when_to_use` | No | — | Additional context for when to use this skill |
-      || `audience` | No | — | Team namespace this skill belongs to (e.g. `nebflow`) — organizational hint; subscription stays per-agent |
+      || `audience` | No | — | Team this skill semantically belongs to — real team name (e.g. `nebflow-project`), not a namespace; subscription stays per-agent |
       || `last_verified` | No | — | Date (YYYY-MM-DD) the content was last verified against reality; audited when older than 90 days |
       || `status` | No | active | Lifecycle state: `draft` / `active` / `deprecated` |
       || `replaced_by` | No | — | Successor skill identifier, shown to subscribers when this skill is deprecated |
@@ -182,6 +182,14 @@ object SkillService:
       |- **Scripts do real work** — bundle executable scripts in `scripts/` rather than describing steps in prose.
       |- **References for deep context** — put large docs in `references/` that the agent can Read on demand, keeping SKILL.md concise.
       |- **One skill = one purpose** — don't combine unrelated workflows.
+      |
+      |## Evidence (user-ruling provenance)
+      |
+      |When a skill originates from a user correction, add a `## Evidence` section:
+      |
+      |- Quote the user **verbatim**, one entry per ruling, with source and timestamp — e.g. `("以后弹窗都用毛玻璃" — input_history.jsonl, 2026-08-14)`
+      |- The practice itself belongs in the body (Steps/Rules), never inside Evidence — Evidence is provenance, not instruction
+      |- Nebula's final review spot-checks Evidence against the recorded user input; missing or paraphrased entries fail the audit
       |""".stripMargin
 
   // ============================================================
