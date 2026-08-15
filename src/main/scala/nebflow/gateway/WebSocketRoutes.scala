@@ -1879,6 +1879,45 @@ class WebSocketRoutes(
             else IO.unit
             end if
 
+          // F1 file-explorer multi-select: batch delete in ONE round trip.
+          // Per-path guards identical to deletePath; failures are aggregated
+          // per item so a partial failure never blocks the rest.
+          case "deletePaths" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val dpsSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            val dpsPaths = hc.downField("paths").as[List[String]].getOrElse(Nil)
+            if dpsSessionId.nonEmpty && dpsPaths.nonEmpty then
+              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+              (for
+                pr <- overrideRoot match
+                  case Some(root) => IO.pure(root)
+                  case None =>
+                    for
+                      metaOpt <- sessionStore.getSessionMeta(dpsSessionId)
+                      folderId = metaOpt.flatMap(_.folderId)
+                      prOpt <- sessionStore.resolveProjectRoot(folderId)
+                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+                (deleted, failed) <- WebSocketRoutes.deletePathsSafely(dpsPaths, os.Path(pr))
+              yield (deleted, failed))
+                .flatMap { case (deleted, failed) =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "pathsDeleted".asJson,
+                      "deleted" -> deleted.asJson,
+                      "failed" -> failed.map { case (p, err) =>
+                        io.circe.Json.obj("path" -> p.asJson, "error" -> err.asJson)
+                      }.asJson
+                    )
+                  )
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"deletePaths failed: ${e.getMessage}")
+                  wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
+                }
+            else IO.unit
+            end if
+
           case "writeFile" =>
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val hc = json.hcursor
@@ -3807,6 +3846,44 @@ class WebSocketRoutes(
 end WebSocketRoutes
 
 object WebSocketRoutes:
+
+  /**
+    * F1 batch delete — pure, testable core for the `deletePaths` WS case.
+    * Per-path guards are IDENTICAL to the single `deletePath` case:
+    * resolve under root, canonical-path containment check, root itself
+    * protected. Each path is attempted independently; failures (guard
+    * rejection OR io error) land in `failed` without aborting the batch.
+    * Returns (deletedPaths, failedPairs).
+    */
+  def deletePathsSafely(
+      paths: List[String],
+      root: os.Path
+  ): IO[(List[String], List[(String, String)])] =
+    paths.foldLeftM((List.empty[String], List.empty[(String, String)])) { (acc, p) =>
+      resolveGuardedForDelete(p, root) match
+        case Left(err) => IO.pure((acc._1, acc._2 :+ (p -> err)))
+        case Right(basePath) =>
+          // remove.all: batch delete from the file explorer explicitly covers
+          // non-empty directories (F1 acceptance), unlike the single-file
+          // deletePath case.
+          IO.blocking { if os.exists(basePath) then os.remove.all(basePath) }
+            .attempt
+            .map {
+              case Right(_)   => (acc._1 :+ p, acc._2)
+              case Left(e)    => (acc._1, acc._2 :+ (p -> Option(e.getMessage).getOrElse(e.toString)))
+            }
+    }
+
+  /** Resolve + guard one delete candidate (mirror of deletePath's checks). */
+  private[gateway] def resolveGuardedForDelete(path: String, root: os.Path): Either[String, os.Path] =
+    try
+      val basePath = PathUtil.resolvePath(path, root)
+      val canonicalBase = basePath.toIO.getCanonicalPath
+      val canonicalRoot = root.toIO.getCanonicalPath
+      if !canonicalBase.startsWith(canonicalRoot) then Left("path outside project root")
+      else if canonicalBase == canonicalRoot then Left("cannot delete project root")
+      else Right(basePath)
+    catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
 
   /**
     * G1: serve user-uploaded attachments from
