@@ -1001,6 +1001,14 @@ class RestApiRoutes(
               val route: Json = node.onComplete match
                 case nebflow.core.entity.NodeRoute.Goto(t) => Json.fromString(t)
                 case nebflow.core.entity.NodeRoute.Return => Json.fromString("$return")
+                case p: nebflow.core.entity.NodeRoute.Parallel =>
+                  Json.obj(
+                    "parallel" -> p.fan.asJson,
+                    "onFail" -> (p.onFail match
+                      case nebflow.core.entity.NodeRoute.OnFailMode.Collect => Json.fromString("collect")
+                      case _ => Json.fromString("abort")
+                    )
+                  )
                 case nebflow.core.entity.NodeRoute.Switch(expr, cases, _, _) =>
                   val casesObj = io.circe.JsonObject.fromIterable(cases.map { (k, v) =>
                     val target: String = v match
@@ -1392,14 +1400,15 @@ class RestApiRoutes(
             node.onComplete match
               case NodeRoute.Goto(target) => List((nodeId, target, None))
               case NodeRoute.Return => List((nodeId, "$return", None))
+              case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, None))
               case NodeRoute.Switch(_, cases, _, _) =>
                 cases.toList.map { (cond, route) =>
-                  val target = route match
-                    case NodeRoute.Goto(t) => t
-                    case NodeRoute.Return => "$return"
-                    case _ => "?"
-                  (nodeId, target, Some(cond))
-                }
+                  route match
+                    case NodeRoute.Goto(t)     => List((nodeId, t, Some(cond)))
+                    case NodeRoute.Return      => List((nodeId, "$return", Some(cond)))
+                    case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, Some(cond)))
+                    case _                     => List((nodeId, "?", Some(cond)))
+                }.flatten
           }
           Json.obj(
             "name" -> f.name.asJson,

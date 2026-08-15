@@ -1,6 +1,6 @@
 package nebflow.core.entity
 
-import cats.effect.{Deferred, IO}
+import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.given
@@ -26,9 +26,82 @@ import scala.concurrent.duration.*
  *  - resume: log warning, continue routing
  *  - restart: re-execute node (up to maxRetries)
  *  - stop: abort flow, return error
+ *
+ *  R8-P2 execution model: runNode is reused as a branch WALKER. A Parallel
+ *  route forks one fiber per fan target; all walkers share the Ref-backed
+ *  execution state (outputs/slots/loop counts merged via Ref.update).
+ *  Multi-in-edge nodes are counting barriers: each parallel round arms every
+ *  join reachable from its branches with the number of expected arrivals;
+ *  each arrival decrements, the last one activates the join exactly once
+ *  (dynamic indegree — a revise back-edge re-arms the barriers per round).
  */
 object FlowDagExecutor:
   private val logger = NebflowLogger.forName("nebflow.entity.executor")
+
+  /** Error text marking a failure that is merely a SYMPTOM of fail-fast (not a root cause). */
+  private val AbortSentinel = "Flow aborted: sibling parallel branch failed"
+
+  /**
+   * Terminal outcome of one branch walk. Serial flows only ever produce
+   * Returned; parallel branch fibers may end Converged (their barrier
+   * contribution is done — the join's activation walk continues on the
+   * last-arriving fiber) or Failed.
+   */
+  private enum WalkEnd:
+    case Returned(output: String)
+    case Converged
+    case Failed(nodeId: String, error: String)
+
+  /** Barrier arrival classification (see advance). */
+  private enum Arrival:
+    case Serial // target not barrier-armed — run it directly
+    case Wait // decremented; siblings still pending — this fiber ends
+    case Activate // last arrival — this fiber runs the join node
+
+  /**
+   * Merge parallel branch-fiber outcomes into the dispatch result:
+   * root-cause failure (a fail-fast sibling reports "Flow aborted: ..." —
+   * prefer the original branch failure when one exists), else the first
+   * $return reached by an activation walk, else a barrier deadlock error.
+   */
+  private def mergeOutcomes(
+    from: String,
+    rawOutcomes: List[Either[Throwable, Either[WalkEnd.Failed, WalkEnd]]]
+  ): Either[WalkEnd.Failed, WalkEnd] =
+    val outcomes: List[Either[WalkEnd.Failed, WalkEnd]] = rawOutcomes.map {
+      case Right(w)  => w
+      case Left(err) => Left(WalkEnd.Failed(from, s"branch fiber crashed: ${err.getMessage}"))
+    }
+    val failures: List[WalkEnd.Failed] = outcomes.collect { case Left(f) => f }
+    val rootCause: Option[WalkEnd.Failed] =
+      failures.find(f => !f.error.contains(AbortSentinel)).orElse(failures.headOption)
+    rootCause match
+      case Some(f) => Left(f)
+      case None =>
+        val firstReturn: Option[String] = outcomes.collectFirst { case Right(WalkEnd.Returned(o)) => o }
+        firstReturn match
+          case Some(output) =>
+            val returns = outcomes.count {
+              case Right(WalkEnd.Returned(_)) => true
+              case _                          => false
+            }
+            if returns > 1 then
+              logger.warnSync(s"parallel round from '$from' produced $returns returns — taking the first")
+            Right(WalkEnd.Returned(output))
+          case None =>
+            Left(
+              WalkEnd.Failed(
+                from,
+                s"parallel branches of '$from' all converged but no join activated — barrier deadlock"
+              )
+            )
+
+  /** Per-execution shared state. Ref.unsafe is fine: refs are local to one execute() run. */
+  private final class ExecState:
+    val outputs: Ref[IO, Map[String, String]] = Ref.unsafe(Map.empty)
+    val slots: Ref[IO, Map[String, Map[String, Json]]] = Ref.unsafe(Map.empty)
+    val loopCounts: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
+    val pendingJoins: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
 
   /**
    * Execute a flow DAG.
@@ -64,6 +137,19 @@ object FlowDagExecutor:
       ) ++ extra
       emitWs(Json.obj(fields*))
 
+    val st = new ExecState
+
+    // ---- static graph analysis (immutable per execution) ----
+    val joins: Set[String] = FlowStructure.joinNodes(flow)
+    // For each node: the barrier joins reachable from it WITHOUT crossing
+    // another join — i.e. the joins a walker from that node is expected to
+    // arrive at. Arms barriers when a parallel fan fires; settles them when
+    // a collect-mode branch dies before arriving.
+    val expectedJoins: Map[String, Set[String]] =
+      flow.nodes.keys
+        .map(n => n -> FlowStructure.reachFrom(flow, n, joins)._1.filter(joins.contains))
+        .toMap
+
     /**
      * Resolve template variables: $task -> task input, $<nodeId>.output -> node
      * output, $<nodeId>.slots.<field> -> structured slot value (string slots
@@ -72,27 +158,31 @@ object FlowDagExecutor:
      *  Uses quoteReplacement to prevent $ and \ in agent output from being
      * interpreted as regex group references (Illegal group reference error).
      */
-    def resolveInput(template: String, ctx: FlowExecContext): String =
-      val withTask = template.replace("$task", ctx.taskInput)
-      val slotsPattern = "\\$([a-zA-Z0-9_-]+)\\.slots\\.([a-zA-Z0-9_-]+)".r
-      val withSlots = slotsPattern.replaceAllIn(
-        withTask,
-        m =>
-          java.util.regex.Matcher.quoteReplacement(
-            ctx.nodeSlots.get(m.group(1)).flatMap(_.get(m.group(2))) match
-              case Some(json) if json.isString => json.asString.getOrElse("")
-              case Some(json)                  => json.noSpaces
-              case None => s"[slots.${m.group(2)} of ${m.group(1)} not found]"
-          )
-      )
-      val pattern = "\\$([a-zA-Z0-9_-]+)\\.output".r
-      pattern.replaceAllIn(
-        withSlots,
-        m =>
-          java.util.regex.Matcher.quoteReplacement(
-            ctx.nodeOutputs.getOrElse(m.group(1), s"[output of ${m.group(1)} not found]")
-          )
-      )
+    def resolveInput(template: String): IO[String] =
+      for
+        outs <- st.outputs.get
+        slotsAll <- st.slots.get
+      yield
+        val withTask = template.replace("$task", taskInput)
+        val slotsPattern = "\\$([a-zA-Z0-9_-]+)\\.slots\\.([a-zA-Z0-9_-]+)".r
+        val withSlots = slotsPattern.replaceAllIn(
+          withTask,
+          m =>
+            java.util.regex.Matcher.quoteReplacement(
+              slotsAll.get(m.group(1)).flatMap(_.get(m.group(2))) match
+                case Some(json) if json.isString => json.asString.getOrElse("")
+                case Some(json)                  => json.noSpaces
+                case None => s"[slots.${m.group(2)} of ${m.group(1)} not found]"
+            )
+        )
+        val pattern = "\\$([a-zA-Z0-9_-]+)\\.output".r
+        pattern.replaceAllIn(
+          withSlots,
+          m =>
+            java.util.regex.Matcher.quoteReplacement(
+              outs.getOrElse(m.group(1), s"[output of ${m.group(1)} not found]")
+            )
+        )
 
     /**
      * The node's output contract (R8-P1): Switch case keys + outputs slot
@@ -107,16 +197,13 @@ object FlowDagExecutor:
       else Some(FlowNodeContract(caseKeys, node.outputs))
 
     /** Execute a single DAG node: spawn agent, send input, collect output. */
-    def executeNode(
-      nodeId: String,
-      ctx: FlowExecContext
-    ): IO[(NodeResult, FlowExecContext)] =
+    def executeNode(nodeId: String): IO[NodeResult] =
       flow.nodes.get(nodeId) match
         case None =>
-          IO.pure((NodeResult(nodeId, "", false, Some(s"Unknown node: $nodeId")), ctx))
+          IO.pure(NodeResult(nodeId, "", false, Some(s"Unknown node: $nodeId")))
         case Some(node) =>
-          val inputText = resolveInput(node.input, ctx)
           for
+            inputText <- resolveInput(node.input)
             agentEntryOpt <- nebflow.core.entity.EntityLoader.loadFlowAgent(flow.name, node.agent)
             result <- agentEntryOpt match
               case None =>
@@ -151,121 +238,40 @@ object FlowDagExecutor:
                   parentAgentRef,
                   rootSessionId
                 )
-            updatedCtx = ctx.copy(
-              nodeOutputs = ctx.nodeOutputs + (nodeId -> result.output),
-              nodeSlots = ctx.nodeSlots + (nodeId -> result.slots)
-            )
-          yield (result, updatedCtx)
+            _ <- st.outputs.update(_ + (nodeId -> result.output))
+            _ <- st.slots.update(_ + (nodeId -> result.slots))
+          yield result
           end for
 
     /** Error handling + retry logic. */
-    def handleResult(
-      nodeId: String,
-      result: NodeResult,
-      ctx: FlowExecContext
-    ): IO[Either[String, (NodeResult, FlowExecContext)]] =
-      if result.success then IO.pure(Right((result, ctx)))
+    def handleResult(nodeId: String, result: NodeResult): IO[Either[WalkEnd.Failed, NodeResult]] =
+      if result.success then IO.pure(Right(result))
       else
         flow.nodes.get(nodeId) match
-          case None => IO.pure(Left(s"Unknown node '$nodeId' in error handler"))
+          case None => IO.pure(Left(WalkEnd.Failed(nodeId, s"Unknown node '$nodeId' in error handler")))
           case Some(node) =>
             node.onError.getOrElse(OnError.Stop) match
               case OnError.Resume =>
-                for _ <- logger.warn(s"Node '$nodeId' failed, resuming")
-                yield Right((result, ctx))
+                logger.warn(s"Node '$nodeId' failed, resuming").map(_ => Right(result))
               case OnError.Restart =>
                 val retryCount = result.attemptCount
                 if retryCount <= node.maxRetries then
                   for
                     _ <- logger.info(s"Node '$nodeId' retry ${retryCount}/${node.maxRetries}")
-                    (newResult, newCtx) <- executeNode(nodeId, ctx)
-                    handled <- handleResult(nodeId, newResult.copy(attemptCount = retryCount + 1), newCtx)
+                    newResult <- executeNode(nodeId)
+                    handled <- handleResult(nodeId, newResult.copy(attemptCount = retryCount + 1))
                   yield handled
                 else
                   IO.pure(
-                    Left(s"Node '$nodeId' failed after $retryCount retries: ${result.error.getOrElse("unknown")}")
-                  )
-              case OnError.Stop =>
-                IO.pure(Left(s"Node '$nodeId' failed: ${result.error.getOrElse("unknown")}"))
-
-    /** Route to next node based on onComplete rules. */
-    def route(
-      result: NodeResult,
-      ctx: FlowExecContext
-    ): IO[Either[String, String]] =
-      flow.nodes.get(result.nodeId) match
-        case None => IO.pure(Left(s"Unknown node '${result.nodeId}' in routing"))
-        case Some(node) =>
-          node.onComplete match
-            case NodeRoute.Return =>
-              IO.pure(Right(result.output))
-            case NodeRoute.Goto(target) =>
-              val loopKey = s"${result.nodeId}->$target"
-              val newCount = ctx.loopCounts.getOrElse(loopKey, 0) + 1
-              if newCount > flow.maxLoop then IO.pure(Left(s"Max loop (${flow.maxLoop}) exceeded at edge $loopKey"))
-              else
-                val newCtx = ctx.copy(
-                  loopCounts = ctx.loopCounts + (loopKey -> newCount),
-                  totalLoops = ctx.totalLoops + 1
-                )
-                runNode(target, newCtx)
-            case NodeRoute.Switch(switchExpr, cases, default, lenient) =>
-              // Verdict priority: FlowReport verdict (structured, trustworthy) →
-              // extract from output via the legacy pipeline — but ONLY when the
-              // flow is not strict, or this switch explicitly opts back in via
-              // lenient. strictVerdict=true + no verdict = routing failure
-              // (normally already caught at the node level in runNode; this is
-              // the backstop for onError=resume paths).
-              val rawValueOpt: Option[String] = result.verdict.orElse {
-                if flow.strictVerdict && !lenient then None
-                else Some(extractSwitchValue(switchExpr, result.output, ctx, cases))
-              }
-              rawValueOpt match
-                case None =>
-                  IO.pure(
                     Left(
-                      s"Switch '$switchExpr' received no FlowReport verdict (flow '${flow.name}' " +
-                        s"strictVerdict=true, switch lenient=false). Expected verdict one of: " +
-                        s"${cases.keys.toList.sorted.mkString(", ")}"
+                      WalkEnd.Failed(
+                        nodeId,
+                        s"Node '$nodeId' failed after $retryCount retries: ${result.error.getOrElse("unknown")}"
+                      )
                     )
                   )
-                case Some(rawValue) =>
-                  // Normalize: exact → same-family → substring (warn). flow.json
-                  // declares only standard keys; aliases (pass/success/done → ok,
-                  // fail/error → error) are the engine's responsibility.
-                  val matchedKey = VerdictFamily.matchCase(rawValue, cases.keySet)
-                  def routeTo(route: NodeRoute): IO[Either[String, String]] =
-                    route match
-                      case NodeRoute.Return =>
-                        IO.pure(Right(result.output))
-                      case NodeRoute.Goto(target) =>
-                        val loopKey = s"${result.nodeId}->$target"
-                        val newCount = ctx.loopCounts.getOrElse(loopKey, 0) + 1
-                        if newCount > flow.maxLoop then
-                          IO.pure(Left(s"Max loop (${flow.maxLoop}) exceeded at edge $loopKey"))
-                        else
-                          val newCtx = ctx.copy(
-                            loopCounts = ctx.loopCounts + (loopKey -> newCount),
-                            totalLoops = ctx.totalLoops + 1
-                          )
-                          runNode(target, newCtx)
-                      case NodeRoute.Switch(_, _, _, _) =>
-                        IO.pure(Left(s"Nested switch not supported in routing"))
-                  matchedKey match
-                    case Some(key) => routeTo(cases(key))
-                    case None =>
-                      // No case matched — conservative `default` route, else a clear
-                      // error listing the available cases (replaces bare "matched no case").
-                      default match
-                        case Some(route) => routeTo(route)
-                        case None =>
-                          IO.pure(
-                            Left(
-                              s"Switch '$switchExpr' value '$rawValue' matched no case. " +
-                                s"Available cases: ${cases.keys.toList.sorted.mkString(", ")}"
-                            )
-                          )
-              end match
+              case OnError.Stop =>
+                IO.pure(Left(WalkEnd.Failed(nodeId, s"Node '$nodeId' failed: ${result.error.getOrElse("unknown")}")))
 
     /**
      * R8-P1 strict verdict, second line of defense: a switch node that ended
@@ -288,19 +294,32 @@ object FlowDagExecutor:
             case _ => None
         }
 
-    /** Run a node: execute -> handleResult -> route. */
-    def runNode(nodeId: String, ctx: FlowExecContext): IO[Either[String, String]] =
+    /** Count one traversal of an edge; Left when the loop cap is exceeded. */
+    def tickEdge(from: String, to: String): IO[Either[String, Unit]] =
+      st.loopCounts.modify { m =>
+        val key = s"$from->$to"
+        val n = m.getOrElse(key, 0) + 1
+        if n > flow.maxLoop then (m, Left(s"Max loop (${flow.maxLoop}) exceeded at edge $key"))
+        else (m + (key -> n), Right(()))
+      }
+
+    /** Run a node: execute -> handleResult -> route (one step of a branch walk). */
+    def walk(nodeId: String): IO[Either[WalkEnd.Failed, WalkEnd]] =
       for
-        // Check cancellation before executing each node
+        // Check cancellation (user) and internal fail-fast (sibling branch
+        // failure under onFail=abort) before executing each node.
         cancelled <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)
+        aborted <- nebflow.core.flow.RunningFlowRegistry.isAborted(instanceId)
         result <-
-          if cancelled then IO.pure(Left[String, String]("Flow cancelled by user"))
+          if cancelled then IO.pure(Left[WalkEnd.Failed, WalkEnd](WalkEnd.Failed(nodeId, "Flow cancelled by user")))
+          else if aborted then
+            IO.pure(Left[WalkEnd.Failed, WalkEnd](WalkEnd.Failed(nodeId, AbortSentinel)))
           else
             for
               _ <- logger.info(s"Flow '${flow.name}': executing node '$nodeId'")
               _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, NodeStatus.Running)
               _ <- emitProgress(nodeId, NodeStatus.Running)
-              (result0, ctx2) <- executeNode(nodeId, ctx)
+              result0 <- executeNode(nodeId)
               result = strictVerdictFailure(nodeId, result0) match
                 case Some(msg) => result0.copy(success = false, error = Some(msg))
                 case None      => result0
@@ -332,12 +351,226 @@ object FlowDagExecutor:
                     result.error.getOrElse("unknown")
                   ) *>
                     emitProgress(nodeId, status, "error" -> result.error.getOrElse("unknown").asJson)
-              handled <- handleResult(nodeId, result, ctx2)
+              handled <- handleResult(nodeId, result)
               finalResult <- handled match
-                case Left(err) => IO.pure(Left(err))
-                case Right((nr, ctx3)) => route(nr, ctx3)
+                case Left(f)  => IO.pure(Left(f))
+                case Right(nr) => route(nr)
             yield finalResult
       yield result
+
+    /** Loop-check the edge, then arrive at the target (barrier-aware). */
+    def advance(from: String, target: String): IO[Either[WalkEnd.Failed, WalkEnd]] =
+      tickEdge(from, target).flatMap {
+        case Left(err) => IO.pure(Left(WalkEnd.Failed(from, err)))
+        case Right(()) =>
+          if !joins.contains(target) then walk(target)
+          else
+            st.pendingJoins
+              .modify { m =>
+                m.get(target) match
+                  case Some(n) if n > 1 => (m + (target -> (n - 1)), Arrival.Wait)
+                  case Some(_)          => (m - target, Arrival.Activate)
+                  case None             => (m, Arrival.Serial)
+              }
+              .flatMap {
+                case Arrival.Serial =>
+                  walk(target)
+                case Arrival.Wait =>
+                  logger.info(s"Flow '${flow.name}': barrier '$target' waiting for remaining arrivals") *>
+                    IO.pure(Right(WalkEnd.Converged))
+                case Arrival.Activate =>
+                  logger.info(s"Flow '${flow.name}': barrier '$target' released — activating join") *>
+                    walk(target)
+              }
+      }
+
+    /** Route to next node based on onComplete rules. */
+    def route(result: NodeResult): IO[Either[WalkEnd.Failed, WalkEnd]] =
+      flow.nodes.get(result.nodeId) match
+        case None =>
+          IO.pure(Left(WalkEnd.Failed(result.nodeId, s"Unknown node '${result.nodeId}' in routing")))
+        case Some(node) =>
+          def routeTo(r: NodeRoute): IO[Either[WalkEnd.Failed, WalkEnd]] =
+            r match
+              case NodeRoute.Return        => IO.pure(Right(WalkEnd.Returned(result.output)))
+              case NodeRoute.Goto(target)  => advance(result.nodeId, target)
+              case p: NodeRoute.Parallel   => parallelDispatch(result.nodeId, p.fan, p.onFail)
+              case NodeRoute.Switch(_, _, _, _) =>
+                IO.pure(Left(WalkEnd.Failed(result.nodeId, "Nested switch not supported in routing")))
+          node.onComplete match
+            case NodeRoute.Return       => IO.pure(Right(WalkEnd.Returned(result.output)))
+            case NodeRoute.Goto(target) => advance(result.nodeId, target)
+            case p: NodeRoute.Parallel  => parallelDispatch(result.nodeId, p.fan, p.onFail)
+            case NodeRoute.Switch(switchExpr, cases, default, lenient) =>
+              // Verdict priority: FlowReport verdict (structured, trustworthy) →
+              // extract from output via the legacy pipeline — but ONLY when the
+              // flow is not strict, or this switch explicitly opts back in via
+              // lenient. strictVerdict=true + no verdict = routing failure
+              // (normally already caught at the node level in walk; this is
+              // the backstop for onError=resume paths).
+              st.outputs.get.flatMap { outs =>
+                val rawValueOpt: Option[String] = result.verdict.orElse {
+                  if flow.strictVerdict && !lenient then None
+                  else Some(extractSwitchValue(switchExpr, result.output, outs, cases))
+                }
+                rawValueOpt match
+                  case None =>
+                    IO.pure(
+                      Left(
+                        WalkEnd.Failed(
+                          result.nodeId,
+                          s"Switch '$switchExpr' received no FlowReport verdict (flow '${flow.name}' " +
+                            s"strictVerdict=true, switch lenient=false). Expected verdict one of: " +
+                            s"${cases.keys.toList.sorted.mkString(", ")}"
+                        )
+                      )
+                    )
+                  case Some(rawValue) =>
+                    // Normalize: exact → same-family → substring (warn). flow.json
+                    // declares only standard keys; aliases (pass/success/done → ok,
+                    // fail/error → error) are the engine's responsibility.
+                    val matchedKey = VerdictFamily.matchCase(rawValue, cases.keySet)
+                    def routeTo(r: NodeRoute): IO[Either[WalkEnd.Failed, WalkEnd]] =
+                      r match
+                        case NodeRoute.Return       => IO.pure(Right(WalkEnd.Returned(result.output)))
+                        case NodeRoute.Goto(target) => advance(result.nodeId, target)
+                        case p: NodeRoute.Parallel  => parallelDispatch(result.nodeId, p.fan, p.onFail)
+                        case NodeRoute.Switch(_, _, _, _) =>
+                          IO.pure(Left(WalkEnd.Failed(result.nodeId, "Nested switch not supported in routing")))
+                    matchedKey match
+                      case Some(key) => routeTo(cases(key))
+                      case None =>
+                        // No case matched — conservative `default` route, else a clear
+                        // error listing the available cases.
+                        default match
+                          case Some(r) => routeTo(r)
+                          case None =>
+                            IO.pure(
+                              Left(
+                                WalkEnd.Failed(
+                                  result.nodeId,
+                                  s"Switch '$switchExpr' value '$rawValue' matched no case. " +
+                                    s"Available cases: ${cases.keys.toList.sorted.mkString(", ")}"
+                                )
+                              )
+                            )
+                  end match
+              }
+
+    /**
+     * Fork one fiber per fan target, all walking the DAG concurrently; arm
+     * counting barriers for every join reachable from the branches; wait for
+     * all fibers to end and merge their outcomes.
+     *
+     *  - abort (default): the first branch failure fires RunningFlowRegistry
+     *    .failFast — sibling agents are pierced exactly like a user cancel —
+     *    and the failure propagates as the flow's failure.
+     *  - collect: a failed branch writes a placeholder output for the failed
+     *    node, settles the barriers it will never arrive at (the join still
+     *    releases once every expected arrival is accounted for), and the
+     *    round continues; the join/verifier sees annotated partial results
+     *    and decides via its verdict.
+     *
+     * The join's activation walk runs on the LAST-ARRIVING fiber (advance),
+     * so this dispatch's merged outcome carries the continuation result.
+     */
+    def parallelDispatch(
+      from: String,
+      fan: List[String],
+      onFail: NodeRoute.OnFailMode
+    ): IO[Either[WalkEnd.Failed, WalkEnd]] =
+
+      /** Settle barriers a dead branch will never arrive at; returns joins to activate now. */
+      def settleJoins(expected: Set[String]): IO[List[String]] =
+        expected.toList.foldLeft(IO.pure(List.empty[String])) { (acc, j) =>
+          acc.flatMap { fired =>
+            st.pendingJoins
+              .modify { m =>
+                m.get(j) match
+                  case Some(n) if n > 1 => (m + (j -> (n - 1)), Nil)
+                  case Some(_)          => (m - j, j :: Nil)
+                  case None             => (m, Nil) // never armed — nothing owed
+              }
+              .map(fired ++ _)
+          }
+        }
+
+      /** Run fired activations sequentially on this fiber; first failure/return wins. */
+      def activateAll(activations: List[String]): IO[Either[WalkEnd.Failed, WalkEnd]] =
+        activations.foldLeftM[IO, Either[WalkEnd.Failed, WalkEnd]](Right(WalkEnd.Converged)) { (acc, j) =>
+          acc match
+            case Left(_)                  => IO.pure(acc)
+            case Right(WalkEnd.Returned(_)) => IO.pure(acc)
+            case Right(_)                 => walk(j)
+        }
+
+      /** A branch walk failed — apply the fan's on-fail policy (in the failing fiber). */
+      def onBranchFailure(failed: WalkEnd.Failed, branch: String): IO[Either[WalkEnd.Failed, WalkEnd]] =
+        nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId).flatMap { userCancelled =>
+          if userCancelled then IO.pure(Left(failed)) // user cancel outranks the policy
+          else
+            onFail match
+              case NodeRoute.OnFailMode.Abort =>
+                for
+                  _ <- logger.warn(
+                    s"Flow '${flow.name}': parallel branch '$branch' failed at '${failed.nodeId}' " +
+                      s"(${failed.error.take(200)}) — fail-fast, stopping sibling branches"
+                  )
+                  _ <- nebflow.core.flow.RunningFlowRegistry.failFast(instanceId)
+                yield Left(failed)
+              case NodeRoute.OnFailMode.Collect =>
+                for
+                  _ <- logger.warn(
+                    s"Flow '${flow.name}': parallel branch '$branch' failed at '${failed.nodeId}' — " +
+                      s"collecting placeholder into outputs"
+                  )
+                  _ <- st.outputs.update(_ + (failed.nodeId -> s"[node ${failed.nodeId} failed: ${failed.error}]"))
+                  activations <- settleJoins(expectedJoins.getOrElse(branch, Set.empty))
+                  result <- activateAll(activations)
+                yield result
+        }
+
+      /** Fork one fiber per fan target, join them all, merge outcomes. */
+      def forkJoinMerge(): IO[Either[WalkEnd.Failed, WalkEnd]] =
+        fan.traverse(t => tickEdge(from, t)).flatMap { ticks =>
+          ticks.collectFirst { case Left(err) => err } match
+            case Some(err) =>
+              IO.pure(Left[WalkEnd.Failed, WalkEnd](WalkEnd.Failed(from, err)))
+            case None =>
+              // Arm barriers: each join gets += (number of branches expected to arrive)
+              val armCounts: Map[String, Int] =
+                fan.flatMap(b => expectedJoins.getOrElse(b, Set.empty).toList)
+                  .groupBy(identity)
+                  .view.mapValues(_.size).toMap
+              st.pendingJoins
+                .update(m => armCounts.foldLeft(m) { case (mm, (j2, c)) => mm.updated(j2, mm.getOrElse(j2, 0) + c) })
+                .flatMap { _ =>
+                  logger
+                    .info(
+                      s"Flow '${flow.name}': parallel fan-out from '$from' → ${fan.mkString(", ")}" +
+                        (if armCounts.isEmpty then ""
+                         else s" (barriers armed: ${armCounts.map((j2, c) => s"$j2=$c").mkString(", ")})")
+                    )
+                    .flatMap { _ =>
+                      fan
+                        .traverse { target =>
+                          walk(target)
+                            .flatMap {
+                              case Left(failed) => onBranchFailure(failed, target)
+                              case ok           => IO.pure(ok)
+                            }
+                            .start
+                        }
+                        .flatMap { fibers =>
+                          fibers.traverse(f => f.joinWithNever.attempt).map { rawOutcomes =>
+                            mergeOutcomes(from, rawOutcomes)
+                          }
+                        }
+                    }
+                }
+        }
+
+      forkJoinMerge()
 
     // Register the running flow, execute, then clean up
     for
@@ -360,28 +593,25 @@ object FlowDagExecutor:
               )
             }
             .asJson,
-          "edges" -> flow.nodes.toList.flatMap { (nodeId, node) =>
-            node.onComplete match
-              case NodeRoute.Goto(target) =>
-                List(Json.obj("from" -> nodeId.asJson, "to" -> target.asJson, "condition" -> Json.Null))
-              case NodeRoute.Return =>
-                List(Json.obj("from" -> nodeId.asJson, "to" -> "$return".asJson, "condition" -> Json.Null))
-              case NodeRoute.Switch(_, cases, _, _) =>
-                cases.toList.map { (cond, route) =>
-                  val target = route match
-                    case NodeRoute.Goto(t) => t
-                    case NodeRoute.Return => "$return"
-                    case _ => "?"
-                  Json.obj("from" -> nodeId.asJson, "to" -> target.asJson, "condition" -> cond.asJson)
-                }
-          }.asJson
+          "edges" -> FlowStructure
+            .displayEdges(flow)
+            .map { (from, to, cond) =>
+              Json.obj("from" -> from.asJson, "to" -> to.asJson, "condition" -> cond.asJson)
+            }
+            .asJson
         )
       )
       // No global wall-clock timeout: flow termination is event-driven —
       // routing to $return, onError Stop, or user cancel. The routing loop
       // itself is bounded by maxLoop. Node lifetime is governed by agent-
       // internal timeouts (LLM first-token / stream-idle, per-tool timeouts).
-      result <- runNode(flow.entry, FlowExecContext(flow.name, taskInput))
+      walkResult <- walk(flow.entry)
+      finalResult = walkResult match
+        case Right(WalkEnd.Returned(output)) => Right(output)
+        case Right(WalkEnd.Converged) =>
+          Left(s"Flow '${flow.name}' ended at a join barrier without reaching $$return (barrier deadlock)")
+        case Right(WalkEnd.Failed(n, e)) => Left(s"Node '$n' failed: $e") // defensive — Failed is a Left
+        case Left(f)                      => Left(f.error)
       // Update final status (preserve "cancelled" if it was cancelled)
       cancelled <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)
       _ <-
@@ -389,7 +619,7 @@ object FlowDagExecutor:
         else
           nebflow.core.flow.RunningFlowRegistry.update(instanceId)(rf =>
             rf.copy(
-              status = if result.isRight then NodeStatus.Completed else NodeStatus.Failed,
+              status = if finalResult.isRight then NodeStatus.Completed else NodeStatus.Failed,
               completedAt = Some(System.currentTimeMillis())
             )
           )
@@ -399,10 +629,10 @@ object FlowDagExecutor:
           "type" -> "flowCompleted".asJson,
           "instanceId" -> instanceId.asJson,
           "flowName" -> flow.name.asJson,
-          "success" -> result.isRight.asJson
+          "success" -> finalResult.isRight.asJson
         )
       )
-    yield result
+    yield finalResult
     end for
 
   end execute
@@ -417,20 +647,8 @@ object FlowDagExecutor:
       )
     }.toMap
 
-    // Build edges from onComplete routing
-    val edges = flow.nodes.toList.flatMap { (nodeId, node) =>
-      node.onComplete match
-        case NodeRoute.Goto(target) => List((nodeId, target, None))
-        case NodeRoute.Return => List((nodeId, "$return", None))
-        case NodeRoute.Switch(_, cases, _, _) =>
-          cases.toList.map { (cond, route) =>
-            val target = route match
-              case NodeRoute.Goto(t) => t
-              case NodeRoute.Return => "$return"
-              case _ => "?"
-            (nodeId, target, Some(cond))
-          }
-    }
+    // Build edges from onComplete routing (parallel fan edges included)
+    val edges = FlowStructure.displayEdges(flow)
 
     nebflow.core.flow.RunningFlowRegistry.register(
       nebflow.core.flow.RunningFlowRegistry.RunningFlow(
@@ -546,22 +764,28 @@ object FlowDagExecutor:
         replyTo = Some(bridgeRef)
       )).void
       // Wait for completion — no wall-clock timeout (see method doc). The only
-      // competing event is the user's cancel signal.
+      // competing events are the user's cancel signal and the internal
+      // fail-fast signal (a sibling parallel branch failed under onFail=abort).
       cancelSig <- nebflow.core.flow.RunningFlowRegistry.cancelSignal(instanceId)
-      raceResult <- IO.race(resultDeferred.get, cancelSig.get)
-      // Cancel pierce: tell the agent to abandon its in-flight turn first
+      abortSig <- nebflow.core.flow.RunningFlowRegistry.abortSignal(instanceId)
+      raceResult <- IO.race(resultDeferred.get, IO.race(cancelSig.get, abortSig.get))
+      // Pierce: tell the agent to abandon its in-flight turn first
       // (Stop → cancelCurrentTurn aborts the turn fiber), then fall through
       // to the shared cleanup below — stop(ref)'s guarantee cancels whatever
       // remains. A cancelled node never retries: the completed signal makes
       // any Restart retry of this node fail instantly with the same error.
       _ <- raceResult match
-        case Right(_) =>
+        case Right(Left(_)) =>
           logger.info(s"Flow '$flowName' node '$nodeId' cancelled by user — stopping agent")
           (ref ! AgentCommand.Stop("Flow cancelled by user")).void
+        case Right(Right(_)) =>
+          logger.info(s"Flow '$flowName' node '$nodeId' aborted (sibling branch failed) — stopping agent")
+          (ref ! AgentCommand.Stop(AbortSentinel)).void
         case Left(_) => IO.unit
       eventResult = raceResult match
-        case Left(r)  => r
-        case Right(_) => Left("Flow cancelled by user")
+        case Left(r)         => r
+        case Right(Left(_))  => Left("Flow cancelled by user")
+        case Right(Right(_)) => Left(AbortSentinel)
       _ <- resources.agentRegistry.update(_ - sessionId)
       _ <- actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
       _ <- actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
@@ -637,13 +861,13 @@ object FlowDagExecutor:
   private def extractSwitchValue(
     switchExpr: String,
     currentNodeOutput: String,
-    ctx: FlowExecContext,
+    outputs: Map[String, String],
     cases: Map[String, NodeRoute]
   ): String =
     val pattern = "\\$([a-zA-Z0-9_-]+)\\.([a-zA-Z0-9_-]+)".r
     switchExpr match
       case pattern(nodeId, field) =>
-        val output = ctx.nodeOutputs.getOrElse(nodeId, currentNodeOutput)
+        val output = outputs.getOrElse(nodeId, currentNodeOutput)
         // ① JSON field extraction
         val fromJson = io.circe.parser
           .parse(output)

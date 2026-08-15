@@ -115,6 +115,25 @@ object NodeRoute:
   /** Route to a specific node. */
   case class Goto(nodeId: String) extends NodeRoute
 
+  /** Partial-failure policy of a parallel fan-out. */
+  sealed trait OnFailMode
+  object OnFailMode:
+    /** One branch fails → pierce sibling agents (fail-fast), flow fails. Default. */
+    case object Abort extends OnFailMode
+    /** Failed branch yields a placeholder result; the barrier still releases. */
+    case object Collect extends OnFailMode
+
+    given Decoder[OnFailMode] = Decoder.decodeString.emap {
+      case "abort"   => Right(Abort)
+      case "collect" => Right(Collect)
+      case other     => Left(s"Unknown onFail: '$other' (expected \"abort\" or \"collect\")")
+    }
+    given Encoder[OnFailMode] = Encoder.instance {
+      case Abort   => Json.fromString("abort")
+      case Collect => Json.fromString("collect")
+    }
+  end OnFailMode
+
   /** Conditional branch: match switch expression against cases. */
   case class Switch(
     switchExpr: String,
@@ -127,13 +146,27 @@ object NodeRoute:
     lenient: Boolean = false
   ) extends NodeRoute
 
+  /**
+   * Parallel fan-out: every fan target starts concurrently (branch fibers
+   * walking the existing runNode recursion). Multi-in-edge nodes downstream
+   * are counting barriers — each upstream arrival decrements; the last one
+   * activates the join exactly once. Fan targets converge at a join before
+   * $return (enforced at load time).
+   */
+  case class Parallel(
+    fan: List[String],
+    onFail: OnFailMode = OnFailMode.Abort
+  ) extends NodeRoute
+
   /** Terminate the flow, return result. */
   case object Return extends NodeRoute
 
   /**
-   * Parse NodeRoute from JSON. Supports two formats:
+   * Parse NodeRoute from JSON. Supports three formats:
    *  - string: "reviewer" -> Goto("reviewer"), "$return" -> Return
-   *  - object: { "switch": "...", "cases": { ... } } -> Switch
+   *  - switch object: { "switch": "...", "cases": { ... } } -> Switch
+   *    (case values recursively accept all three forms — a case may fan out)
+   *  - parallel object: { "parallel": ["r1","r2"], "onFail": "collect" } -> Parallel
    */
   given Decoder[NodeRoute] = Decoder.instance { c =>
     c.as[String] match
@@ -141,8 +174,13 @@ object NodeRoute:
         if s == "$return" then Right(Return)
         else Right(Goto(s))
       case Left(_) =>
-        for
-          switchExpr <- c.downField("switch").as[String]
+        c.downField("parallel").as[Option[List[String]]] match
+          case Right(Some(fan)) =>
+            for onFail <- c.downField("onFail").as[Option[OnFailMode]]
+            yield Parallel(fan, onFail.getOrElse(OnFailMode.Abort))
+          case _ =>
+            for
+              switchExpr <- c.downField("switch").as[String]
               casesRaw <- c.downField("cases").as[Map[String, Json]]
               cases <- casesRaw.toList.traverse { (k, v) => v.as[NodeRoute].map(k -> _) }
               default <- c.downField("default").as[Option[NodeRoute]]
@@ -153,6 +191,11 @@ object NodeRoute:
   given Encoder[NodeRoute] = Encoder.instance {
     case Goto(id) => Json.fromString(id)
     case Return => Json.fromString("$return")
+    case Parallel(fan, onFail) =>
+      Json.obj(
+        "parallel" -> fan.asJson,
+        "onFail" -> (if onFail == OnFailMode.Collect then Json.fromString("collect") else Json.Null)
+      )
     case Switch(expr, cases, default, lenient) =>
       Json.obj(
         "switch" -> Json.fromString(expr),
@@ -246,7 +289,9 @@ case class FlowDagDef(
   // R8-P1: require structured FlowReport verdicts on switch nodes. Default
   // false (transition period — legacy flows keep the guess pipeline until
   // migrated; flipped to true by explicit "strictVerdict": true).
-  strictVerdict: Boolean = false
+  strictVerdict: Boolean = false,
+  // R8-P2: parallel fan-out cap (cost guardrail now that timeouts are gone).
+  maxFanout: Int = 4
 )
 
 object FlowDagDef:
@@ -259,7 +304,11 @@ object FlowDagDef:
       entry <- c.downField("entry").as[String]
       maxLoop <- c.downField("maxLoop").as[Option[Int]]
       strictVerdict <- c.downField("strictVerdict").as[Option[Boolean]]
-    yield FlowDagDef(name, description, nodes, entry, maxLoop.getOrElse(10), strictVerdict.getOrElse(false))
+      maxFanout <- c.downField("maxFanout").as[Option[Int]]
+    yield FlowDagDef(
+      name, description, nodes, entry,
+      maxLoop.getOrElse(10), strictVerdict.getOrElse(false), maxFanout.getOrElse(4)
+    )
   }
 
   given Encoder[FlowDagDef] = Encoder.instance { f =>
@@ -269,7 +318,8 @@ object FlowDagDef:
       "nodes" -> f.nodes.asJson,
       "entry" -> f.entry.asJson,
       "maxLoop" -> f.maxLoop.asJson,
-      "strictVerdict" -> (if f.strictVerdict then Json.fromBoolean(true) else Json.Null)
+      "strictVerdict" -> (if f.strictVerdict then Json.fromBoolean(true) else Json.Null),
+      "maxFanout" -> (if f.maxFanout != 4 then f.maxFanout.asJson else Json.Null)
     )
   }
 end FlowDagDef
