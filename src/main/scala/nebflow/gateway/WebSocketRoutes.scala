@@ -2664,12 +2664,25 @@ class WebSocketRoutes(
 
           case "setOnboardingState" =>
             // F3 onboarding state machine: pending | done | skipped.
+            // HARD GATE (server-side, user ruling 2026-08-15): done is
+            // rejected unless a successful probeLlm is on record — the WS
+            // surface can no longer bypass the gate the frontend enforces.
             val stJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val stStr = stJson.hcursor.downField("state").as[String].getOrElse("")
             nebflow.core.OnboardingService.OnboardingState.fromString(stStr) match
               case Some(st) =>
-                nebflow.core.OnboardingService.writeState(st) *>
-                  wsSend(io.circe.Json.obj("type" -> "onboardingStateSet".asJson, "state" -> st.name.asJson))
+                nebflow.core.OnboardingService.setState(st).flatMap {
+                  case Right(applied) =>
+                    wsSend(io.circe.Json.obj("type" -> "onboardingStateSet".asJson, "state" -> applied.name.asJson))
+                  case Left(reason) =>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "error".asJson,
+                        "code" -> "probe_required".asJson,
+                        "message" -> reason.asJson
+                      )
+                    )
+                }
               case None =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"invalid onboarding state: $stStr".asJson))
 

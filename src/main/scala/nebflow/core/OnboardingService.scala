@@ -10,13 +10,22 @@ import scala.concurrent.duration.*
 /**
  * First-run onboarding state machine (F3, backend slice).
  *
- * State lives in `<dataRoot>/onboarding.json` as `{"state":"pending|done|skipped"}`:
+ * State lives in `<dataRoot>/onboarding.json`:
+ *   {"state":"pending|done|skipped", "probeOkAt":<epoch-millis>?}
  *  - no file  -> None (frontend treats as pending for new users)
- *  - bad JSON -> treated as pending (corrupt state must never brick the wizard)
+ *  - unparseable JSON -> (Pending, no probeOkAt) — nothing recoverable
+ *  - parseable JSON with an INVALID state value -> Pending but probeOkAt
+ *    is preserved (degradation must not erase the probe gate record)
  *
- * probeLlm is the HARD GATE for the guided flow (user ruling 2026-08-15):
- * the welcome message may only be sent after a REAL LLM call succeeds —
- * a configured-but-broken provider must not produce a dead first chat.
+ * probeLlm is the HARD GATE for the guided flow (user ruling 2026-08-15),
+ * now enforced SERVER-SIDE (qa follow-up): a successful probe records
+ * probeOkAt, and setOnboardingState(done) is rejected unless probeOkAt
+ * exists. The frontend wizard flow alone can no longer bypass the gate —
+ * a raw WS setOnboardingState(done) without a prior successful probe is
+ * refused.
+ *
+ * P0 semantics: "a probe succeeded at SOME point" is sufficient; detecting
+ * config changes after the probe (config-mtime vs probeOkAt) is P1.
  */
 object OnboardingService:
 
@@ -36,26 +45,67 @@ object OnboardingService:
       case "skipped" => Some(Skipped)
       case _         => None
 
+  /** Full persisted record. probeOkAt = epoch millis of the last successful LLM probe. */
+  final case class StoredState(state: OnboardingState, probeOkAt: Option[Long])
+
   /** `def` on purpose: PathUtil.dataRoot may be swapped (tests) after object init. */
   def statePath: os.Path = PathUtil.dataRoot / "onboarding.json"
 
-  /**
-   * Read the persisted state. None = no marker yet (fresh install).
-   * Unreadable/corrupt file degrades to Some(Pending) rather than failing —
-   * the wizard is recoverable, a crash is not.
-   */
-  def readState(): IO[Option[OnboardingState]] = IO.blocking {
+  /** Read the persisted state. None = no marker yet (fresh install). */
+  def readState(): IO[Option[OnboardingState]] = readStored().map(_.map(_.state))
+
+  /** Read the full record incl. probe gate timestamp. */
+  def readStored(): IO[Option[StoredState]] = IO.blocking {
     if !os.exists(statePath) then None
     else
-      val parsed = io.circe.parser.parse(os.read(statePath)).toOption
-      val stateStr = parsed.flatMap(_.hcursor.downField("state").as[String].toOption)
-      stateStr.flatMap(OnboardingState.fromString).orElse(Some(OnboardingState.Pending))
+      io.circe.parser.parse(os.read(statePath)).toOption match
+        case None => Some(StoredState(OnboardingState.Pending, None))
+        case Some(json) =>
+          val stateStr = json.hcursor.downField("state").as[String].toOption
+          val probeOkAt = json.hcursor.downField("probeOkAt").as[Long].toOption
+          // invalid/missing state degrades to Pending, but a parseable
+          // probeOkAt survives the degradation
+          Some(StoredState(stateStr.flatMap(OnboardingState.fromString).getOrElse(OnboardingState.Pending), probeOkAt))
   }
 
-  def writeState(state: OnboardingState): IO[Unit] = IO.blocking {
+  /**
+   * Persist a state transition (read-modify-write: probeOkAt is NEVER
+   * erased by a state write). HARD GATE: Done requires a recorded
+   * successful probe; returns Left with a user-actionable reason otherwise.
+   */
+  def setState(next: OnboardingState): IO[Either[String, OnboardingState]] =
+    readStored().flatMap { current =>
+      val currentProbe = current.flatMap(_.probeOkAt)
+      if next == OnboardingState.Done && currentProbe.isEmpty then
+        IO.pure(Left(
+          "onboarding not complete: no successful LLM probe on record — call probeLlm and succeed first (配置未生效，拒绝完成引导)"
+        ))
+      else
+        writeStored(StoredState(next, currentProbe)).as(Right(next))
+    }
+
+  /** Legacy direct write kept for internal use / tests; preserves probeOkAt. */
+  def writeState(state: OnboardingState): IO[Unit] =
+    readStored().flatMap { current =>
+      writeStored(StoredState(state, current.flatMap(_.probeOkAt)))
+    }
+
+  private def writeStored(stored: StoredState): IO[Unit] = IO.blocking {
     os.makeDir.all(statePath / os.up)
-    os.write.over(statePath, io.circe.Json.obj("state" -> state.name.asJson).noSpaces)
+    os.write.over(
+      statePath,
+      io.circe.Json.obj(
+        "state" -> stored.state.name.asJson,
+        "probeOkAt" -> stored.probeOkAt.asJson
+      ).noSpaces
+    )
   }
+
+  /** Record a successful probe timestamp without touching the state field. */
+  def recordProbeOk(): IO[Unit] =
+    readStored().flatMap { current =>
+      writeStored(StoredState(current.map(_.state).getOrElse(OnboardingState.Pending), Some(System.currentTimeMillis())))
+    }
 
   // ===== LLM probe (hard gate) =====
 
@@ -63,7 +113,9 @@ object OnboardingService:
 
   /**
    * One real, minimal LLM call through the global LlmHandle chain (NOT an
-   * agent actor turn). Success = the configured provider actually answers.
+   * agent actor turn). Success = the configured provider actually answers,
+   * and records probeOkAt server-side (backend-only write; the frontend
+   * needs no change and no extra call).
    * Failure = attribute per provider attempt so the user knows WHAT to fix
    * (auth key / wrong model name / unreachable endpoint).
    */
@@ -76,7 +128,9 @@ object OnboardingService:
     )
     llm
       .send(req)
-      .map(resp => ProbeResult(ok = true, provider = Some(resp.meta.providerId), error = None))
+      .flatMap { resp =>
+        recordProbeOk().as(ProbeResult(ok = true, provider = Some(resp.meta.providerId), error = None))
+      }
       .handleErrorWith(e => IO.pure(probeFailure(e)))
       .timeoutTo(15.seconds, IO.pure(ProbeResult(ok = false, provider = None, error = Some("timeout_15s"))))
 
