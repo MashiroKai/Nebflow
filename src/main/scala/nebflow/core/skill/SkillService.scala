@@ -20,6 +20,14 @@ final case class SkillInfo(
   userInvocable: Boolean = true,
   modelInvocable: Boolean = true,
   version: Option[String] = None,
+  /** Team namespace this skill semantically belongs to (frontmatter `audience`). */
+  audience: Option[String] = None,
+  /** Last date the content was verified against reality (frontmatter `last_verified`, YYYY-MM-DD). */
+  lastVerified: Option[String] = None,
+  /** Lifecycle state: draft / active / deprecated (frontmatter `status`). */
+  status: Option[String] = None,
+  /** Successor skill for a deprecated one (frontmatter `replaced_by`). */
+  replacedBy: Option[String] = None,
   /** Where this skill was loaded from: "user" | "project" | "commands" */
   source: String = "user"
 )
@@ -38,6 +46,10 @@ object SkillInfo:
       "userInvocable" -> s.userInvocable.asJson,
       "modelInvocable" -> s.modelInvocable.asJson,
       "version" -> s.version.asJson,
+      "audience" -> s.audience.asJson,
+      "lastVerified" -> s.lastVerified.asJson,
+      "status" -> s.status.asJson,
+      "replacedBy" -> s.replacedBy.asJson,
       "source" -> s.source.asJson
     )
   }
@@ -120,7 +132,7 @@ object SkillService:
       |└── assets/               # Optional — output files (templates, icons, fonts, etc.)
       |```
       |
-      |Skills live at `~/.nebflow/skills/<skill-name>/`. The `name` field in frontmatter must match the directory name.
+      |Skills live at `~/.nebflow/skills/<skill-name>/`. The `name` field in frontmatter must match the directory name. Namespaced skills live two levels deep: `~/.nebflow/skills/<ns>/<name>/SKILL.md` — their identifier is the relative path (`<ns>/<name>`, e.g. `nebflow/visual-style`), and agent.json `skills` entries must use the full path.
       |
       |## Frontmatter (YAML)
       |
@@ -135,6 +147,10 @@ object SkillService:
       || `disable-model-invocation` | No | false | When true, skill is hidden from agent catalog (slash-command only) |
       || `version` | No | — | Semantic version string |
       || `when_to_use` | No | — | Additional context for when to use this skill |
+      || `audience` | No | — | Team namespace this skill belongs to (e.g. `nebflow`) — organizational hint; subscription stays per-agent |
+      || `last_verified` | No | — | Date (YYYY-MM-DD) the content was last verified against reality; audited when older than 90 days |
+      || `status` | No | active | Lifecycle state: `draft` / `active` / `deprecated` |
+      || `replaced_by` | No | — | Successor skill identifier, shown to subscribers when this skill is deprecated |
       || `allowed-tools` | No | all | Comma-separated tool allowlist |
       || `arguments` | No | — | Argument names (YAML block list or comma-separated) |
       |
@@ -403,6 +419,12 @@ object SkillService:
     val allowedTools = extractListField(fm, "allowed-tools")
     val argumentNames = extractListField(fm, "arguments")
 
+    // Lifecycle / governance metadata (optional, consumed by skill audit)
+    val audience = extractField(fm, "audience")
+    val lastVerified = extractField(fm, "last_verified")
+    val status = extractField(fm, "status")
+    val replacedBy = extractField(fm, "replaced_by")
+
     SkillInfo(
       name = name,
       description = description,
@@ -414,6 +436,10 @@ object SkillService:
       userInvocable = userInvocable,
       modelInvocable = modelInvocable,
       version = version,
+      audience = audience,
+      lastVerified = lastVerified,
+      status = status,
+      replacedBy = replacedBy,
       source = source
     )
 
