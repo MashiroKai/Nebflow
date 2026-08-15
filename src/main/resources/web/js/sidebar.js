@@ -335,6 +335,7 @@ export function renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
       <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
+      <button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:8px">${t('settings.rerunOnboarding')}</button>
     </div>
     <div class="settings-section" id="json-editor-section" style="display:${state.settingsShowJson ? 'block' : 'none'}">
       <div class="config-editor-wrap">
@@ -772,22 +773,7 @@ function bindSettingsEvents(content, cfg) {
   // --- Provider add/edit/remove ---
   document.getElementById('btn-add-provider')?.addEventListener('click', () => {
     showProviderModal(null, null, (name, data) => {
-      if (!state.parsedConfig) state.parsedConfig = {llm: {providers: {}, model: {default: ''}}};
-      if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}, model: {default: ''}};
-      if (!state.parsedConfig.llm.providers) state.parsedConfig.llm.providers = {};
-      if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {default: '', fallbacks: []};
-      state.parsedConfig.llm.providers[name] = data;
-      // Auto-set default model if it's empty or points to a non-existent provider
-      const currentDefault = state.parsedConfig.llm.model.default || '';
-      const defaultProvider = currentDefault.split('/')[0];
-      if (!currentDefault || !state.parsedConfig.llm.providers[defaultProvider]) {
-        const firstModel = (data.models || [])[0];
-        if (firstModel) {
-          state.parsedConfig.llm.model.default = `${name}/${firstModel.id}`;
-        }
-      }
-      state.configDirty = true;
-      flushConfigToServer();
+      saveNewProvider(name, data);
     });
   });
 
@@ -838,6 +824,13 @@ function bindSettingsEvents(content, cfg) {
     state.settingsShowJson = !state.settingsShowJson;
     const sec = document.getElementById('json-editor-section');
     if (sec) sec.style.display = state.settingsShowJson ? 'block' : 'none';
+  });
+
+  // Re-run onboarding: reset the marker to pending and reload — the boot
+  // sequence picks it up and shows the wizard (or returning-user prompt).
+  document.getElementById('btn-rerun-onboarding')?.addEventListener('click', () => {
+    sendWs({ type: 'setOnboardingState', state: 'pending' });
+    setTimeout(() => location.reload(), 300);
   });
 
   document.getElementById('btn-save-config')?.addEventListener('click', () => {
@@ -1100,6 +1093,37 @@ function wireProviderModelFetch() {
 }
 
 // --- Provider modal ---
+/** Persist a newly added provider: mutate parsedConfig + auto-default model + flush. */
+function saveNewProvider(name, data) {
+  if (!state.parsedConfig) state.parsedConfig = {llm: {providers: {}, model: {default: ''}}};
+  if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}, model: {default: ''}};
+  if (!state.parsedConfig.llm.providers) state.parsedConfig.llm.providers = {};
+  if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {default: '', fallbacks: []};
+  state.parsedConfig.llm.providers[name] = data;
+  // Auto-set default model if it's empty or points to a non-existent provider
+  const currentDefault = state.parsedConfig.llm.model.default || '';
+  const defaultProvider = currentDefault.split('/')[0];
+  if (!currentDefault || !state.parsedConfig.llm.providers[defaultProvider]) {
+    const firstModel = (data.models || [])[0];
+    if (firstModel) {
+      state.parsedConfig.llm.model.default = `${name}/${firstModel.id}`;
+    }
+  }
+  state.configDirty = true;
+  flushConfigToServer();
+}
+
+/**
+ * Onboarding wizard entry: run the same add-provider modal outside the
+ * settings panel. onSaved fires after the config has been flushed.
+ */
+export function openProviderWizard(onSaved) {
+  showProviderModal(null, null, (name, data) => {
+    saveNewProvider(name, data);
+    if (typeof onSaved === 'function') onSaved(name);
+  });
+}
+
 function showProviderModal(existingName, existingData, onSave) {
   const isEdit = !!existingName;
   const p = existingData || {baseUrl: '', apiKey: '', protocol: 'anthropic', models: []};
