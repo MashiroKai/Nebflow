@@ -172,29 +172,29 @@ object SkillService:
   // Skill Catalog (for progressive disclosure)
   // ============================================================
 
-  /** Simple TTL cache to avoid rebuilding the catalog every turn. */
-  @volatile private var catalogCache: (Long, String) = (0L, "")
-  private val CatalogTtlMs = 3000L
-
-  /**
-   * Build a compact skill catalog string for system prompt injection.
-   * Only skills with `modelInvocable = true` and a non-empty description are included.
-   * The catalog tells the agent what skills exist and where to find them;
-   * the agent reads the full skill file when it decides a skill is relevant.
-   */
   /**
    * Build a skill catalog containing only the skills declared by the agent.
    * Empty list → empty string (no injection, no global fallback).
+   *
+   * Mirrors the modelInvocable rule of the (removed) global catalog: skills
+   * marked `disable-model-invocation: true` are slash-command-only and stay
+   * out even when the agent declares them. when_to_use frontmatter is kept
+   * in the entry — it is the anti-misuse metadata the author wrote for
+   * exactly this moment.
    */
   def buildPerAgentCatalog(skillNames: List[String]): IO[String] =
     if skillNames.isEmpty then IO.pure("")
     else
       listSkills().map { allSkills =>
         val skillMap = allSkills.map(s => s.name -> s).toMap
-        val visible = skillNames.flatMap(skillMap.get).filter(_.description.nonEmpty)
+        val visible = skillNames.flatMap(skillMap.get)
+          .filter(s => s.modelInvocable && s.description.nonEmpty)
         if visible.isEmpty then ""
         else
-          val entries = visible.map(s => s"- ${s.name}: ${s.description.take(200)}").mkString("\n")
+          val entries = visible.map { s =>
+            val when = s.whenToUse.filter(_.nonEmpty).map(w => s" [when: $w]").getOrElse("")
+            s"- ${s.name}: ${s.description.take(200)}$when"
+          }.mkString("\n")
           s"""# Skills
              |
              |Skills live at ~/.nebflow/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
@@ -220,32 +220,6 @@ object SkillService:
              |
              |$entries""".stripMargin
       }
-
-  def buildSkillCatalog(currentDelegateCount: Int): IO[String] =
-    val now = System.currentTimeMillis()
-    if now - catalogCache._1 < CatalogTtlMs then IO.pure(catalogCache._2)
-    else
-      listSkills().map { skills =>
-        val visible = skills
-          .filter(s => s.modelInvocable && s.description.nonEmpty)
-        val catalog =
-          if visible.isEmpty then ""
-          else
-            val entries = visible
-              .map { s =>
-                s"- ${s.name}: ${s.description.take(200)}"
-              }
-              .mkString("\n")
-            s"""# Skills
-               |
-               |Skills live at ~/.nebflow/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
-               |
-               |$entries""".stripMargin
-        catalogCache = (now, catalog)
-        catalog
-      }
-    end if
-  end buildSkillCatalog
 
   // ============================================================
   // Public API
