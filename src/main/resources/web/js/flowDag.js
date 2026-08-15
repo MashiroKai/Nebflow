@@ -292,7 +292,10 @@ function computeDepths(rf) {
   function visit(nodeId, depth) {
     if (depths[nodeId] !== undefined && depths[nodeId] >= depth) return;
     depths[nodeId] = depth;
-    (childrenMap.get(nodeId) || []).forEach(child => visit(child, depth + 1));
+    (childrenMap.get(nodeId) || []).forEach(child => {
+      if (child === '$return') return; // pseudo-target, not a real node
+      visit(child, depth + 1);
+    });
   }
   if (rf.entry) visit(rf.entry, 0);
   return depths;
@@ -306,11 +309,14 @@ function layoutStellarNodes(rf) {
     nodesAtDepth[depth].push(nodeId);
   });
   const V_SPACING = 160;
+  const H_SPACING = 200; // horizontal spread for same-depth (parallel branch) nodes
   const positions = {};
   Object.entries(nodesAtDepth).forEach(([depth, nodeIds]) => {
     const y = Number(depth) * V_SPACING + 80;
-    nodeIds.forEach((nodeId) => {
-      positions[nodeId] = { x: 0, y };
+    // Center each depth row around x=0 so parallel siblings don't stack.
+    const total = (nodeIds.length - 1) * H_SPACING;
+    nodeIds.forEach((nodeId, i) => {
+      positions[nodeId] = { x: i * H_SPACING - total / 2, y };
     });
   });
   return positions;
@@ -322,9 +328,10 @@ function buildStellarEdges(rf, positions) {
     const from = positions[e.from];
     const to = positions[e.to];
     if (!from || !to) return;
-    const cond = e.condition ? `<text x="60" y="${(from.y + to.y) / 2}" class="flow-edge-label" text-anchor="middle">${esc(e.condition)}</text>` : '';
+    const midX = (from.x + to.x) / 2;
     const midY = (from.y + to.y) / 2;
-    svgPaths.push(`<path d="M 0 ${from.y + 55} C 0 ${midY}, 0 ${midY}, 0 ${to.y - 55}" class="flow-edge" fill="none"/>${cond}`);
+    const cond = e.condition ? `<text x="${midX}" y="${midY}" class="flow-edge-label" text-anchor="middle">${esc(e.condition)}</text>` : '';
+    svgPaths.push(`<path d="M ${from.x} ${from.y + 55} C ${from.x} ${midY}, ${to.x} ${midY}, ${to.x} ${to.y - 55}" class="flow-edge" fill="none"/>${cond}`);
   });
   return svgPaths.join('');
 }
@@ -334,7 +341,7 @@ function orbitNodeHtml(node, pos) {
   const agent = node.agent || '';
   const nodeId = node.nodeId || '';
   const icon = st === 'completed' ? '✓' : st === 'failed' ? '✗' : '';
-  return `<div class="flow-orbit-node ${st}" style="left:50%; top:${pos.y}px;" data-agent="${esc(agent)}" data-node="${esc(nodeId)}">
+  return `<div class="flow-orbit-node ${st}" style="left:calc(50% + ${pos.x}px); top:${pos.y}px;" data-agent="${esc(agent)}" data-node="${esc(nodeId)}">
     <div class="flow-ring outer"><div class="flow-dot"></div></div>
     <div class="flow-ring middle"><div class="flow-dot"></div></div>
     <div class="flow-ring inner"><div class="flow-dot"></div></div>
@@ -353,7 +360,8 @@ export function renderStellarSystem(container, runningFlows) {
   }
   container.innerHTML = runningFlows.map(rf => {
     const positions = layoutStellarNodes(rf);
-    const nodes = Object.entries(rf.nodes || {}).map(([id, n]) => orbitNodeHtml(n, positions[id] || { x: 0, y: 0 }));
+    // rf.nodes is an array (WS/REST data contract) — key positions by nodeId.
+    const nodes = (rf.nodes || []).map(n => orbitNodeHtml(n, positions[n.nodeId] || { x: 0, y: 0 }));
     const edgesSvg = buildStellarEdges(rf, positions);
     const maxDepth = Math.max(0, ...Object.values(computeDepths(rf)));
     const svgHeight = (maxDepth + 1) * 160 + 100;
