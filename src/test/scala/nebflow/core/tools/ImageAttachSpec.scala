@@ -307,23 +307,7 @@ class ImageAttachSpec extends CatsEffectSuite:
   // ============================================================
   // Dual-channel degradation — non-vision recipients keep the path
   // ============================================================
-
-  test("stripImages self-consistency: Image → placeholder, path Text survives"):
-    val path = writePng("strip.png")
-    val blocks = ImageInject.messageBlocks("look at this", ImageInject.resolveImages(List(path)).unsafeRunSync() match
-      case Right(att) => att
-      case Left(err)  => fail(s"resolve failed: ${err.message}")
-    ).get
-    val msg = Message(MessageRole.User, Right(blocks))
-    val stripped = nebflow.core.compact.CompactUtils.stripImages(List(msg)).head
-    stripped.content match
-      case Right(bl) =>
-        val texts = bl.collect { case ContentBlock.Text(t) => t }
-        // message text AND path label survive; Image became a placeholder
-        assert(texts.exists(_ == "look at this"))
-        assert(texts.exists(_ == s"[Mail 附件图片: $path]"))
-        assert(texts.exists(_.contains("[image:"))) // CompactUtils placeholder: [image: <mime>]
-        assert(!bl.exists(_.isInstanceOf[ContentBlock.Image]))
-      case Left(t) => fail(s"unexpected plain content: $t")
+  // (stripImages self-consistency test removed with G5: CompactUtils.stripImages
+  //  was dead code and is gone — compaction summaries now keep image references.)
 
 end ImageAttachSpec
