@@ -216,6 +216,8 @@ object SkillService:
           val entries = visible.map(f => s"- ${f.name}: ${f.description.take(200)}").mkString("\n")
           s"""# Available Flows
              |
+             |Trigger via FlowTrigger(flow="<name>", prompt="<task input>"). The flow runs in the background; its result is delivered to you when it completes.
+             |
              |$entries""".stripMargin
       }
 

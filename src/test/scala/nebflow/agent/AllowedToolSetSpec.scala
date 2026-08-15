@@ -14,8 +14,10 @@ import nebflow.core.tools.ToolRegistry
  *   - Mail is team-only (auto-injected for team agents, never for flow/standalone)
  *   - FlowReport is flow-only
  *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate)
+ *   - FlowTrigger is whitelist-driven: present iff agentDef.flows is non-empty
+ *     (not Nebula-exclusive); SubTask workers never get it
  *   - SubTask workers (isSubTaskWorker=true) are leaf agents: no Mail /
- *     SubTask / Delegate regardless of their tools list
+ *     SubTask / Delegate / FlowTrigger regardless of their tools list
  */
 class AllowedToolSetSpec extends FunSuite:
 
@@ -195,4 +197,42 @@ class AllowedToolSetSpec extends FunSuite:
     // block is flow-only (flow nodes report via FlowReport).
     val solo = mkDef("solo", List("Read", "Mail"))
     assert(CoreProbe.allowed(solo).contains("Mail"), "standalone agent explicitly listing Mail keeps it")
+
+  // ===== FlowTrigger: whitelist-driven (R1 split) =====
+
+  test("FlowTrigger injected iff the agent declares flows"):
+    val withFlows = mkDef("scheduler", List("Read")).copy(flows = List("code-review"))
+    val without = mkDef("plain", List("Read"))
+    assert(CoreProbe.allowed(withFlows).contains("FlowTrigger"), "flows declared → tool injected")
+    assert(!CoreProbe.allowed(without).contains("FlowTrigger"), "no flows → no tool")
+
+  test("FlowTrigger stripped from flow-less agents even when listed or via wildcard"):
+    val listed = mkDef("sneaky", List("Read", "FlowTrigger"))
+    assert(!CoreProbe.allowed(listed).contains("FlowTrigger"), "explicit listing without flows is stripped")
+    val wildcard = mkDef("omni", List("*"))
+    assert(!CoreProbe.allowed(wildcard).contains("FlowTrigger"), "wildcard without flows is stripped")
+    val wildcardWithFlows = mkDef("omni-flow", List("*")).copy(flows = List("release-beta"))
+    assert(CoreProbe.allowed(wildcardWithFlows).contains("FlowTrigger"), "wildcard WITH flows keeps the tool")
+
+  test("FlowTrigger is NOT Nebula-exclusive — team member with flows gets it"):
+    val teamMember = mkDef("backend", List("Read")).copy(category = "team", flows = List("code-review"))
+    assert(
+      CoreProbe.allowed(teamMember).contains("FlowTrigger"),
+      "FlowTrigger availability follows the flows whitelist, not the Nebula filter"
+    )
+    val nebula = mkDef("Nebula", List("Read")).copy(flows = List("code-review"))
+    assert(CoreProbe.allowed(nebula).contains("FlowTrigger"), "Nebula with flows keeps it")
+    val nebulaNoFlows = mkDef("Nebula", List("Read", "FlowTrigger"))
+    assert(!CoreProbe.allowed(nebulaNoFlows).contains("FlowTrigger"), "even Nebula needs flows declared")
+
+  test("SubTask workers never get FlowTrigger even with flows declared"):
+    val worker = mkDef("backend", List("*")).copy(flows = List("code-review"))
+    assert(
+      !CoreProbe.allowed(worker, isSubTaskWorker = true).contains("FlowTrigger"),
+      "workers are leaf agents — no pipeline triggering"
+    )
+    assert(
+      CoreProbe.allowed(worker, isSubTaskWorker = false).contains("FlowTrigger"),
+      "same def as a normal agent would keep it (sanity)"
+    )
 end AllowedToolSetSpec

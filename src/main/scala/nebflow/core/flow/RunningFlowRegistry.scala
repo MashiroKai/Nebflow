@@ -8,7 +8,7 @@ import io.circe.{Json, JsonObject}
 /**
  * Tracks running flow DAG instances for the frontend.
  *
- * Each entry represents a one-shot flow triggered via Mail.
+ * Each entry represents a one-shot flow triggered via the FlowTrigger tool.
  * The frontend polls or receives WS events to render the DAG + progress.
  */
 object RunningFlowRegistry:

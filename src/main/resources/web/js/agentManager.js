@@ -343,7 +343,7 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
 
       <div class="agent-detail-section">
         <div class="agent-detail-label">Flows</div>
-        <div class="agent-detail-sub-hint">此 agent 可通过 Delegate(flow=…) 触发的 flow</div>
+        <div class="agent-detail-sub-hint">此 agent 可通过 FlowTrigger(flow=…) 触发的 flow</div>
         <div class="agent-detail-flows-grid" id="agent-detail-flows-grid"><span class="agent-detail-chips-loading">Loading…</span></div>
       </div>
 
