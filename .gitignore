@@ -65,3 +65,4 @@ swarm/
 
 # Internal handover doc (contains server credentials)
 NEBLINK_HANDOVER.md
+build/
