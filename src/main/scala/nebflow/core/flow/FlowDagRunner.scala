@@ -11,8 +11,8 @@ import nebflow.core.entity.{FlowDagDef, FlowDagExecutor}
 /**
  * One-shot actor that runs a Flow DAG and delivers the result to the caller.
  *
- *  Spawned by MailTool when a Mail targets a flow name that has a flow.json DAG.
- *  Executes the DAG (synchronous, node-by-node) and Mails the result back to
+ *  Spawned by FlowTriggerTool when an agent triggers a flow via the FlowTrigger tool.
+ *  Executes the DAG (synchronous, node-by-node) and delivers the result back to
  *  the calling agent via ImmediateInput. Stops itself after completion.
  */
 object FlowDagRunner:

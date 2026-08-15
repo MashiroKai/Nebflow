@@ -29,8 +29,9 @@ private[agent] trait AgentCore:
   /**
    * Nebula-exclusive tools: only available when agentName == "Nebula".
    * - Schedule: session-scoped scheduled tasks
-   * - Delegate: 调度器/根 agent 专用——指派 standalone agent 或触发 flow。
+   * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
    *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
+   *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
    */
   private val NebulaExclusiveTools = AgentCore.NebulaExclusiveTools
 
@@ -886,8 +887,14 @@ private[agent] trait AgentCore:
     // need to be listed in agent.json. Mail is team-only; FlowReport is
     // flow-only; all agents get base tools (file ops, search, shell, feedback).
     val withBuiltin = base ++ AgentCore.fixedToolsFor(agentDef)
+    // FlowTrigger is whitelist-driven (R1 split, NOT Nebula-exclusive): any
+    // agent declaring flows in agent.json gets the tool; everyone else is
+    // stripped of it (even via "*" or explicit listing — every call would
+    // fail the whitelist check anyway).
+    val withFlowTrigger =
+      if agentDef.flows.nonEmpty then withBuiltin + "FlowTrigger" else withBuiltin - "FlowTrigger"
     val isNebula = agentDef.name == "Nebula"
-    val nebulaFiltered = if isNebula then withBuiltin else withBuiltin -- NebulaExclusiveTools
+    val nebulaFiltered = if isNebula then withFlowTrigger else withFlowTrigger -- NebulaExclusiveTools
     // Task tools: available to Nebula and Team Lead, NOT workers
     val taskFiltered = agentDef.tools match
       case List("*") =>
@@ -908,10 +915,11 @@ private[agent] trait AgentCore:
         taskFiltered.filter(t =>
           !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith)
         )
-    // SubTask workers are leaf agents: no Mail / no further delegation.
-    // Delegate is Nebula-exclusive (filtered above for everyone else); this
-    // also defends against a worker whose agent.json explicitly lists them.
-    if isSubTaskWorker then mcpFiltered -- Set("Mail", "SubTask", "Delegate")
+    // SubTask workers are leaf agents: no Mail / no further delegation, and
+    // no FlowTrigger (workers don't trigger pipelines). Delegate is
+    // Nebula-exclusive (filtered above for everyone else); these strips also
+    // defend against a worker whose agent.json explicitly lists the tools.
+    if isSubTaskWorker then mcpFiltered -- Set("Mail", "SubTask", "Delegate", "FlowTrigger")
     // Flow agents have no Mail — flow nodes report via FlowReport, not Mail.
     // Structurally defends against the 08-14 P0 root cause: a flow agent
     // whose agent.json lists Mail (or uses "*") could block forever on a
@@ -1166,8 +1174,9 @@ object AgentCore:
   /**
    * Nebula-exclusive tools: only available when agentName == "Nebula".
    * - Schedule: session-scoped scheduled tasks
-   * - Delegate: 调度器/根 agent 专用——指派 standalone agent 或触发 flow。
+   * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
    *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
+   *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
    */
   val NebulaExclusiveTools = Set(
     "Schedule",

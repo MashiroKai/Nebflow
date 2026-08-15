@@ -149,6 +149,27 @@ class DelegateToolSpec extends CatsEffectSuite:
     val summary = DelegateTool.summarize(input)
     assert(!summary.contains("→"), s"summarize should not include arrow without agent: $summary")
 
+  test("flow parameter returns FlowTrigger guidance error (R1 split)"):
+    for
+      _ <- reset()
+      input = JsonObject(
+        "prompt" -> "do work".asJson,
+        "description" -> "task".asJson,
+        "flow" -> "code-review".asJson
+      )
+      result <- DelegateTool.call(input, ctxWith())
+    yield
+      assert(result.isLeft, "flow= must be rejected — Delegate no longer triggers flows")
+      assert(
+        result.swap.toOption.get.message.contains("FlowTrigger"),
+        s"error must point to FlowTrigger: ${result.swap.toOption.get.message}"
+      )
+
+  test("inputSchema no longer includes the flow parameter"):
+    val props = DelegateTool.inputSchema("properties").flatMap(_.asObject)
+    assert(props.isDefined, "properties should be an object")
+    assert(!props.get.contains("flow"), "flow parameter must be gone from the schema")
+
   test("inputSchema includes agent parameter"):
     val schema = DelegateTool.inputSchema
     val props = schema("properties").flatMap(_.asObject)

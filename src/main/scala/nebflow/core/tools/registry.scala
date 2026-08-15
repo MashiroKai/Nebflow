@@ -41,6 +41,9 @@ object ToolRegistry:
       "Mail" -> MailTool,
       // Sub-agent delegation (background + persistent modes) — Nebula/调度器专用
       "Delegate" -> DelegateTool,
+      // Flow DAG pipeline triggering — whitelist-driven via agent.json flows
+      // (injected by buildAllowedToolSet for agents declaring flows)
+      "FlowTrigger" -> FlowTriggerTool,
       // Team-member task delegation (self-clone + ephemeral worker, no Mail identity)
       "SubTask" -> SubTaskTool,
       // Cross-device file transfer

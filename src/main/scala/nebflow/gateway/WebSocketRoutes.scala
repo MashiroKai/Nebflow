@@ -3625,7 +3625,8 @@ class WebSocketRoutes(
     sessionId: String,
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
-    // Check if it's a flow first — if so, instruct agent to Mail the flow
+    // Check if it's a flow first — if so, instruct the agent to trigger it
+    // via FlowTrigger (agent-mediated: the agent can refine the prompt).
     EntityLoader.loadFlow(skillName).flatMap {
       case Some(_) =>
         val safeInput = input.replace("\"", "\\\"").replace("\n", " ")
@@ -3635,8 +3636,8 @@ class WebSocketRoutes(
             input,
             sessionId,
             s"""Trigger the "$skillName" flow:
-               |Mail("$skillName", "$safeInput")
-               |Wait for the flow's reply and report the results.""".stripMargin,
+               |FlowTrigger(flow="$skillName", prompt="$safeInput")
+               |Wait for the flow's result and report it when it arrives.""".stripMargin,
             ""
           )
         }

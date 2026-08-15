@@ -12,9 +12,10 @@ import nebflow.shared.{ContentBlock, Message, MessageRole}
  * DelegateTool — Nebula/调度器专用 sub-agent delegation.
  *
  * Only available to the Nebula root agent (NebulaExclusiveTools). Lets Nebula
- * spawn a sub-agent for a subtask, either targeting a standalone agent or
- * triggering a flow pipeline. Team members delegate via SubTaskTool instead
- * (self-clone + ephemeral worker, no Mail identity).
+ * spawn a sub-agent for a subtask, targeting a standalone agent or cloning
+ * the caller. Team members delegate via SubTaskTool instead (self-clone +
+ * ephemeral worker, no Mail identity). Flow pipelines are triggered via
+ * FlowTriggerTool (R1 split, 2026-08-15) — this tool no longer handles flows.
  *
  * Two modes:
  *   - **Background** (default): returns immediately. The sub-agent's result
@@ -89,18 +90,16 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
 - A task splits into independent parts (e.g. "implement the API and write its tests" → Delegate one, do the other)
 - A new Mail arrives while you're mid-task → Delegate it instead of interrupting
 - A subtask needs deep focus without cluttering your main context
-- Trigger a flow pipeline: Delegate(flow="code-review", prompt="review branch feature-x")
 
 **When NOT to use:**
 - Steps depend on each other (Step B needs Step A's result) — do serially
 - Trivial — faster to just do it yourself
 - Subtasks touch the same files — conflict risk
+- You want a flow pipeline (multi-agent DAG) — use FlowTrigger instead
 
 **Targeting:**
 - Default: spawns a copy of the calling agent (self-clone)
 - With `agent` parameter: spawns the specified standalone agent (e.g. Coder, Explorer)
-- With `flow` parameter: triggers a flow DAG pipeline (e.g. code-review)
-- `agent` and `flow` are mutually exclusive
 - Cannot target team agents — those require Mail
 
 **Rules:**
@@ -140,15 +139,11 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
           "type" -> "string".asJson,
           "description" -> "Target standalone agent name (e.g. 'Coder', 'Explorer'). If omitted, clones the calling agent. Only standalone agents can be targeted.".asJson
         ),
-        "flow" -> io.circe.Json.obj(
-          "type" -> "string".asJson,
-          "description" -> "Flow name to trigger (e.g. \"code-review\", \"release-beta\"). When specified, triggers a flow DAG pipeline. The flow result is delivered via ExternalEvent when complete. Cannot be combined with \"agent\" parameter.".asJson
-        ),
         "images" -> io.circe.Json.obj(
           "type" -> "array".asJson,
           "items" -> io.circe.Json.obj("type" -> "string".asJson).asJson,
           "maxItems" -> 5.asJson,
-          "description" -> "Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5) attached to the prompt — the sub-agent sees the images directly. Not supported with the flow parameter.".asJson,
+          "description" -> "Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5) attached to the prompt — the sub-agent sees the images directly.".asJson,
           "default" -> io.circe.Json.arr()
         )
       ),
@@ -160,8 +155,7 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     val desc = input("description").flatMap(_.asString).getOrElse("")
     val forked = input("fork").flatMap(_.asBoolean).getOrElse(false)
     val agent = input("agent").flatMap(_.asString).getOrElse("")
-    val flow = input("flow").flatMap(_.asString).getOrElse("")
-    val target = if agent.nonEmpty then s"→ $agent" else if flow.nonEmpty then s"→ flow:$flow" else ""
+    val target = if agent.nonEmpty then s"→ $agent" else ""
     if forked then s"Delegate($desc [fork] $target)".trim
     else s"Delegate($desc $target)".trim
 
@@ -178,50 +172,11 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     val flowName = input("flow").flatMap(_.asString).filter(_.nonEmpty)
 
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
-    else if flowName.isDefined && targetAgentName.isDefined then
-      IO.pure(Left(ToolError("Cannot specify both 'agent' and 'flow' parameters")))
-    else if flowName.isDefined && ImageInject.parseImagesParam(input).toOption.exists(_.nonEmpty) then
-      IO.pure(
-        Left(ToolError("images are not supported when triggering a flow — reference image paths in the prompt text instead."))
-      )
     else if flowName.isDefined then
-      // Validate: agent must declare this flow in its flows list
-      ctx.agentDef match
-        case Some(ad) if !ad.flows.contains(flowName.get) =>
-          val allowed = if ad.flows.isEmpty then "(none — no flows declared)" else ad.flows.mkString(", ")
-          IO.pure(Left(ToolError(s"Flow '${flowName.get}' not allowed for agent '${ad.name}'. Allowed: $allowed")))
-        case _ =>
-      // Trigger flow via FlowDagRunner
-      (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
-        case (Some(resources), Some(sys), Some(callerRef)) =>
-          for
-            // P2: resolve the caller's root session so flow nodes inherit the
-            // same permission policy and render interactions in the Nebula window.
-            callerRoot <- ctx.sessionId match
-              case Some(sid) =>
-                resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
-              case None => IO.pure("")
-            flowOpt <- nebflow.core.entity.EntityLoader.loadFlow(flowName.get)
-            r <- flowOpt match
-              case Some(flowDef) =>
-                for
-                  runnerRef <- sys.spawn(
-                    nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
-                    s"dag-runner-${flowName.get.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
-                  )
-                  _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(
-                    flowDef,
-                    prompt,
-                    callerRef,
-                    callerRoot
-                  )).void
-                yield Right(s"Flow '${flowName.get}' started. Result will be delivered when complete.")
-              case None =>
-                IO.pure(Left(ToolError(s"Flow '${flowName.get}' not found")))
-          yield r
-        case _ =>
-          IO.pure(Left(ToolError("Cannot start flow: missing resources")))
-      end match
+      // R1 split: flow triggering moved to FlowTriggerTool — guide old callers.
+      IO.pure(
+        Left(ToolError("Delegate no longer triggers flows. Use FlowTrigger(flow=\"<name>\", prompt=\"...\") instead — Delegate only spawns sub-agents."))
+      )
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-agent depth ($MaxDepth) reached. Cannot delegate further.")))
     else

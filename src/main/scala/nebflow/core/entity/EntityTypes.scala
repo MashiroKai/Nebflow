@@ -22,7 +22,7 @@ case class AgentEntry(
   model: Option[AgentModelConfig] = None,
   preset: Option[String] = None, // references a named preset in model-presets.json
   skills: List[String] = Nil, // skill names this agent can see (frontmatter injection)
-  flows: List[String] = Nil // flow names this agent can trigger via Delegate(flow=...)
+  flows: List[String] = Nil // flow names this agent can trigger via FlowTrigger (drives tool injection)
 )
 
 object AgentEntry:

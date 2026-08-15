@@ -17,7 +17,7 @@ import nebflow.shared.{Message, MessageRole}
 //
 // In the unified model, this actor only manages Team agent sessions.
 // Flow DAG execution is handled entirely by FlowDagExecutor/FlowDagRunner
-// via Delegate(flow=...).
+// via the FlowTrigger tool.
 //
 // Responsibilities:
 //   1. Mount/unmount: create/remove team agent sessions
