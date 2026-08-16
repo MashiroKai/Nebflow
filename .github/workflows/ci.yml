@@ -11,6 +11,22 @@ env:
   COURSIER_REPOSITORIES: "ivy2Local|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2"
 
 jobs:
+  js-types:
+    name: JS Types (checkJs gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install TypeScript
+        run: npm install --no-save --no-package-lock typescript@5.5
+      - name: checkJs vs baseline
+        # A1 gate: any new file with errors, any (file, code) count increase,
+        # or any total increase above tests/type-baseline.json fails the job.
+        run: node scripts/check-js-types.mjs
+
   compile:
     name: Compile (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
