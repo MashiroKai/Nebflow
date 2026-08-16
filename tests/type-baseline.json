@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/check-js-types.mjs --update",
-  "total": 372,
+  "total": 371,
   "files": {
     "src/main/resources/web/js/activityBar.js": {
       "TS2345": 1,
@@ -74,9 +74,6 @@
     },
     "src/main/resources/web/js/lightbox.js": {
       "TS2339": 1
-    },
-    "src/main/resources/web/js/locales/zh-CN.js": {
-      "TS1117": 1
     },
     "src/main/resources/web/js/main.js": {
       "TS2339": 16,

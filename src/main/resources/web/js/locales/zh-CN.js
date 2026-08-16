@@ -375,7 +375,6 @@ export default {
   'tool.result.sandboxBypassed': '沙箱已绕过',
   'tool.result.autoBackground': '自动转入后台',
   'tool.result.taskCreated': '任务 #{id} 已创建',
-  'tool.result.created': '已创建',
   'tool.result.ofLines': '{current} / {total} 行',
 
   // === Scheduled Tasks ===

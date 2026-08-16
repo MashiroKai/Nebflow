@@ -11,6 +11,15 @@ lazy val root = (project in file("."))
     organization := "nebflow",
     // Include VERSION file in JAR so runtime version detection works from any directory
     Compile / unmanagedResources += baseDirectory.value / "VERSION",
+    // P1 web bundle: mount build/ (containing web-dist/) as a resource dir ONLY
+    // when explicitly requested via -Dnebflow.webdist=1 (CI: sbt -Dnebflow.webdist=1
+    // assembly). A dev machine that once ran scripts/build-web.mjs must not have
+    // `sbt run` silently serve the stale dist tree instead of the live sources.
+    Compile / unmanagedResourceDirectories ++= {
+      val d = baseDirectory.value / "build"
+      if (sys.props.contains("nebflow.webdist") && (d / "web-dist" / "index.html").exists()) Seq(d)
+      else Seq.empty
+    },
     scalaVersion := "3.5.2",
 
     libraryDependencies ++= Seq(
