@@ -1399,27 +1399,43 @@ onMessage('agentDone', (msg, view) => {
   const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
-  if (aid && state.sessionBgAgents[sid]) {
-    if (state.sessionBgAgents[sid][aid]) state.sessionBgAgents[sid][aid].done = true;
-    if (view) renderBgAgentDropdown();
+  // W1-d dual-key cleanup: live events key sessionBgAgents entries on the
+  // actor-path agentId, but entries rebuilt from the activeAgents snapshot
+  // after a refresh key on the agent's SESSION id (backend pins agentId ==
+  // sessionId for restored rows — WebSocketRoutes getActiveAgents). An
+  // agentDone carrying the actor-path key can never clear a sessionId-keyed
+  // restored row, so an agent that was mid-turn during a refresh ghosted as
+  // "running" until the next refresh. Resolve the session-id key from
+  // nodeSessionId (strip the team- routing prefix) and clear BOTH keys.
+  const sessionKey = (msg.nodeSessionId || '').replace(/^team-/, '');
+  const keys = [...new Set([aid, sessionKey].filter(Boolean))];
+  if (keys.length && state.sessionBgAgents[sid]) {
+    let touched = false;
+    for (const k of keys) {
+      if (state.sessionBgAgents[sid][k]) { state.sessionBgAgents[sid][k].done = true; touched = true; }
+    }
+    if (touched && view) renderBgAgentDropdown();
     // Clean up bg-agent popup view after a delay
-    if (isBgAgentId(aid)) cleanupBgAgentView(aid);
+    if (aid && isBgAgentId(aid)) cleanupBgAgentView(aid);
     // Remove after 2s — always runs, even if the parent session isn't displayed
     setTimeout(() => {
-      if (state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
-        delete state.sessionBgAgents[sid][aid];
-        // Clean up empty session entries
-        if (Object.keys(state.sessionBgAgents[sid]).length === 0) {
-          delete state.sessionBgAgents[sid];
-        }
-        // Update indicator if the affected view is currently displayed
-        const targetView = findViewBySessionId(sid);
-        if (targetView) {
-          const saved = activeView;
-          setActiveView(targetView);
-          updateBgAgentIndicator();
-          setActiveView(saved);
-        }
+      if (!state.sessionBgAgents[sid]) return;
+      let removedAny = false;
+      for (const k of keys) {
+        if (state.sessionBgAgents[sid][k]) { delete state.sessionBgAgents[sid][k]; removedAny = true; }
+      }
+      if (!removedAny) return;
+      // Clean up empty session entries
+      if (Object.keys(state.sessionBgAgents[sid]).length === 0) {
+        delete state.sessionBgAgents[sid];
+      }
+      // Update indicator if the affected view is currently displayed
+      const targetView = findViewBySessionId(sid);
+      if (targetView) {
+        const saved = activeView;
+        setActiveView(targetView);
+        updateBgAgentIndicator();
+        setActiveView(saved);
       }
     }, 2000);
   }
