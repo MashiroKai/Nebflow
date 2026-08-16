@@ -37,7 +37,8 @@ test.beforeEach(async ({ page }) => {
     if (resp.status() === 403) page._forbiddenUrls.add(resp.url());
     if (resp.status() === 404) {
       const path = new URL(resp.url()).pathname;
-      if (path.startsWith('/js/') || path.startsWith('/vendor/')) page._asset404s.push(resp.url());
+      // /assets/ = P1 bundle chunks; /js/ + /vendor/ = source-tree modules.
+      if (path.startsWith('/js/') || path.startsWith('/vendor/') || path.startsWith('/assets/')) page._asset404s.push(resp.url());
     }
   });
   page.on('console', (msg) => {
@@ -61,6 +62,14 @@ function filterBenignErrors(page, errors) {
     return false;
   };
   return errors.filter(e => !isBenign(e));
+}
+
+/** True when the instance serves the P1 bundle (entry script under /assets/). */
+async function isBundled(page) {
+  return page.evaluate(() => {
+    const s = document.querySelector('script[type="module"]');
+    return !!(s && s.src.includes('/assets/'));
+  });
 }
 
 /** Dismiss the first-boot onboarding overlay if present — it intercepts
@@ -260,36 +269,65 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
     // WS open = send button no longer marked disconnected
     await expect(page.locator('#send-btn')).not.toHaveClass(/disconnected/, { timeout: 10000 });
 
-    // Drive the REAL chain: WS readFile → fileContent → workspace-open-item →
-    // openWorkspaceItem → dynamic import('./fileViewers.js') → viewers/*.js.
-    // No DOM mocking — a broken static route or import path fails here.
-    await page.evaluate(async (root) => {
-      const { sendWs } = await import('/js/ws.js');
-      const state = (await import('/js/state.js')).default;
-      sendWs({ type: 'readFile', sessionId: state.activeSessionId || 'smoke', path: 'README.md', rootPath: root });
-    }, process.cwd());
+    const bundled = await isBundled(page);
+    if (!bundled) {
+      // Source mode: drive the REAL chain — WS readFile → fileContent →
+      // workspace-open-item → openWorkspaceItem → dynamic import → viewers/*.
+      // No DOM mocking — a broken static route or import path fails here.
+      await page.evaluate(async (root) => {
+        const { sendWs } = await import('/js/ws.js');
+        const state = (await import('/js/state.js')).default;
+        sendWs({ type: 'readFile', sessionId: state.activeSessionId || 'smoke', path: 'README.md', rootPath: root });
+      }, process.cwd());
+    } else {
+      // Bundle mode (P1): /js/*.js module URLs no longer exist — the entry is
+      // a hashed /assets/ chunk and viewers are lazy chunks. Drive the canvas
+      // through its DOM event contract (workspace-open-item) with content from
+      // the REST file endpoint, and assert BEHAVIOR (rendered DOM), never a
+      // specific chunk URL.
+      const content = await (await page.request.get(
+        `${BASE}/api/nf-file?path=${encodeURIComponent(join(process.cwd(), 'README.md'))}&token=${encodeURIComponent(TOKEN)}`
+      )).text();
+      await page.evaluate(([content, absPath]) => {
+        document.dispatchEvent(new CustomEvent('workspace-open-item', {
+          detail: { id: `file:${absPath}`, itemType: 'markdown', title: 'README.md', content, absPath, pinned: false },
+        }));
+      }, [content, join(process.cwd(), 'README.md')]);
+    }
 
     await page.locator('.canvas-tab', { hasText: 'README.md' }).waitFor({ timeout: 8000 });
+    // Behavior assertion (both modes): the markdown viewer actually rendered.
     await page.waitForFunction(() => {
       for (const p of document.querySelectorAll('.canvas-tab-pane')) {
         if (/nebflow/i.test(p.textContent)) return true;
       }
       return false;
     }, { timeout: 8000 });
-    expect(
-      assetReqs.some(r => r.startsWith('200') && r.includes('/js/viewers/markdown.js')),
-      `markdown viewer module must load 200:\n${assetReqs.join('\n')}`
-    ).toBe(true);
+    if (!bundled) {
+      // Source mode keeps the concrete module-URL assertion.
+      expect(
+        assetReqs.some(r => r.startsWith('200') && r.includes('/js/viewers/markdown.js')),
+        `markdown viewer module must load 200:\n${assetReqs.join('\n')}`
+      ).toBe(true);
+    }
 
     // Binary image: content does NOT arrive via WS — the image viewer fetches
     // /api/nf-file itself. Assert both the render and the fetch.
     // (Opened after the markdown assertions: a second preview tab REPLACES
     // the first — VS Code semantics, canvas.js previewKeyOf.)
-    await page.evaluate(async (root) => {
-      const { sendWs } = await import('/js/ws.js');
-      const state = (await import('/js/state.js')).default;
-      sendWs({ type: 'readFile', sessionId: state.activeSessionId || 'smoke', path: 'tests/fixtures/pic.png', rootPath: root });
-    }, process.cwd());
+    if (!bundled) {
+      await page.evaluate(async (root) => {
+        const { sendWs } = await import('/js/ws.js');
+        const state = (await import('/js/state.js')).default;
+        sendWs({ type: 'readFile', sessionId: state.activeSessionId || 'smoke', path: 'tests/fixtures/pic.png', rootPath: root });
+      }, process.cwd());
+    } else {
+      await page.evaluate((absPath) => {
+        document.dispatchEvent(new CustomEvent('workspace-open-item', {
+          detail: { id: `file:${absPath}`, itemType: 'image', title: 'pic.png', absPath, pinned: false },
+        }));
+      }, join(process.cwd(), 'tests', 'fixtures', 'pic.png'));
+    }
     await page.locator('.canvas-tab', { hasText: 'pic.png' }).waitFor({ timeout: 8000 });
     await page.waitForSelector('.canvas-image-viewer img', { timeout: 8000 });
     expect(
@@ -313,6 +351,13 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
     await page.waitForLoadState('networkidle');
     await expect(page.locator('#send-btn')).not.toHaveClass(/disconnected/, { timeout: 10000 });
     await dismissOnboarding(page);
+
+    // Bundle mode (P1): seeding calls renderTaskList via a module URL, which
+    // does not exist once bundled (no /js/*.js, no REST write endpoint for
+    // tasks). The lazy-chunk coverage this test provides is carried in bundle
+    // mode by the canvas viewer test (same dynamic-import mechanism through
+    // the workspace-open-item contract).
+    test.skip(await isBundled(page), 'task seeding needs source-mode module access; bundle lazy coverage via canvas test');
 
     // A fresh instance has no tasks, so the collapse bar never appears on its
     // own. Feed the same entry point the WS taskListUpdate handler uses
@@ -357,5 +402,49 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
     const realErrors = filterBenignErrors(page, page._consoleErrors);
     expect(realErrors, `Console errors:\n${realErrors.join('\n')}`).toEqual([]);
     expect(page._pageErrors, `Page errors:\n${page._pageErrors.join('\n')}`).toEqual([]);
+  });
+});
+
+test.describe('Smoke — P1 bundle & compression', () => {
+
+  test('static text assets are gzip-compressed (P0 backend middleware)', async ({ page }) => {
+    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await page.waitForLoadState('networkidle');
+    // Probe the module entry (mode-agnostic: /js/main.js or /assets/app-*.js)
+    // with an explicit Accept-Encoding and inspect the network-stack numbers.
+    const entry = await page.evaluate(() => document.querySelector('script[type="module"]')?.src);
+    expect(entry, 'module entry script must exist').toBeTruthy();
+    const r = await page.evaluate(async (url) => {
+      const resp = await fetch(url, { headers: { 'Accept-Encoding': 'gzip' }, cache: 'no-store' });
+      const enc = resp.headers.get('content-encoding');
+      await resp.arrayBuffer();
+      const entries = performance.getEntriesByName(url);
+      const last = entries[entries.length - 1];
+      return { enc, transfer: last?.transferSize ?? 0, decoded: last?.decodedBodySize ?? 0 };
+    }, entry);
+    expect(r.enc, 'entry must be served with Content-Encoding: gzip (P0 middleware)').toBe('gzip');
+    expect(
+      r.transfer < r.decoded && r.transfer > 0,
+      `compressed on the wire: transfer ${r.transfer} < decoded ${r.decoded}`
+    ).toBe(true);
+  });
+
+  test('design-system CSS order: sapphire last wins (glass-control backdrop-filter)', async ({ page }) => {
+    // Highest-risk P1 item: the CSS bundle must keep sapphire.css LAST. This
+    // assertion is computed-style based and mode-agnostic — it fails in BOTH
+    // modes if the design-system override layer ever loses final say.
+    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await page.waitForLoadState('networkidle');
+    const r = await page.evaluate(() => {
+      const b = document.createElement('button');
+      b.className = 'glass-control';
+      document.body.appendChild(b);
+      const cs = getComputedStyle(b);
+      const out = { backdropFilter: cs.backdropFilter, bg: cs.backgroundColor };
+      b.remove();
+      return out;
+    });
+    expect(r.backdropFilter, 'glass-control must carry the sapphire glass backdrop-filter').toContain('blur');
+    expect(r.bg, 'glass-control must be semi-transparent glass, not a solid panel').toMatch(/rgba?\(/);
   });
 });
