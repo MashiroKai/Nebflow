@@ -361,7 +361,8 @@ class WebSocketRoutes(
     if sessionId.isEmpty then IO.unit
     else ensureAgent(sessionId)(ref => ref ! command)
 
-  def routes: HttpRoutes[IO] = WebSocketRoutes.uploadsRoutes(token) <+> HttpRoutes.of[IO] {
+  def routes: HttpRoutes[IO] =
+    WebSocketRoutes.uploadsRoutes(token) <+> WebSocketRoutes.viewersRoutes <+> HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
       // Cookie takes priority to avoid token leakage in browser history/logs/Referer.
       // Query param kept as fallback for cross-origin or first-load scenarios.
@@ -3931,4 +3932,24 @@ object WebSocketRoutes:
             else NotFound()
         end if
       end if
+  }
+
+  /** Serves the Canvas viewer plugin modules from the web/js/viewers
+    * directory — the dynamic import targets of fileViewers.js. The in-class
+    * /js route only matches single-segment paths, so /js/viewers/<name>.js
+    * fell through to 404 after the viewers were plugin-ized.
+    *
+    * Standalone (zero class deps) so it is directly unit-testable
+    * (ViewersRoutesSpec); composed ahead of the instance routes like
+    * uploadsRoutes.
+    */
+  def viewersRoutes: HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case req @ GET -> Root / "js" / "viewers" / file =>
+      // no-cache, same as the in-class /js route: revalidate (Last-Modified)
+      // every time so the browser picks up the rebuilt classpath resources
+      // during development instead of a stale heuristic-cached copy.
+      StaticFile
+        .fromResource(s"web/js/viewers/$file", Some(req))
+        .map(_.putHeaders("Cache-Control" -> "no-cache"))
+        .getOrElseF(NotFound())
   }
