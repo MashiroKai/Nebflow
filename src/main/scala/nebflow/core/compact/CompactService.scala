@@ -98,9 +98,12 @@ object CompactService:
       |LANGUAGE RULE — write your memory entries in the SAME language as the user's messages.
       |
       |Your ONLY task this turn is to run this cycle with the Write/Edit tools.
-      |When the cycle is done, END THIS TURN directly — do not output any extra text.
-      |Ending the turn is the completion signal; the system will proceed to compaction
-      |automatically.
+      |When the cycle is done, simply STOP — call no more tools and write no
+      |more text. Stopping is itself the completion signal: the system detects
+      |that you have stopped and proceeds to compaction automatically. No
+      |extra action is needed or allowed to "signal" the end — in particular,
+      |do NOT run no-op commands (e.g. `true`) and do not output filler text:
+      |a no-op command only pollutes the execution record and wastes a turn.
       |
       |Already-saved information does not need to be repeated in the compaction
       |summary afterwards.
