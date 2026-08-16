@@ -362,7 +362,7 @@ class WebSocketRoutes(
     else ensureAgent(sessionId)(ref => ref ! command)
 
   def routes: HttpRoutes[IO] =
-    WebSocketRoutes.uploadsRoutes(token) <+> WebSocketRoutes.viewersRoutes <+> HttpRoutes.of[IO] {
+    WebSocketRoutes.uploadsRoutes(token) <+> WebSocketRoutes.jsRoutes <+> HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
       // Cookie takes priority to avoid token leakage in browser history/logs/Referer.
       // Query param kept as fallback for cross-origin or first-load scenarios.
@@ -556,17 +556,9 @@ class WebSocketRoutes(
         .map(_.putHeaders("Cache-Control" -> "no-cache"))
         .getOrElseF(NotFound())
 
-    case req @ GET -> Root / "js" / "locales" / file =>
-      StaticFile.fromResource(s"web/js/locales/$file", Some(req)).getOrElseF(NotFound())
-
-    case req @ GET -> Root / "js" / file =>
-      // no-cache: revalidate (Last-Modified) every time so the browser picks up
-      // the rebuilt classpath resources during development instead of serving a
-      // stale heuristic-cached copy.
-      StaticFile
-        .fromResource(s"web/js/$file", Some(req))
-        .map(_.putHeaders("Cache-Control" -> "no-cache"))
-        .getOrElseF(NotFound())
+    // /js/** (any depth) is served by WebSocketRoutes.jsRoutes in the
+    // companion — see its scaladoc for why the DSL single-segment routes
+    // (and the per-directory cases they grew over time) were replaced.
 
     case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/monaco/") =>
       // Serve monaco editor files from bundled resources (supports nested paths).
@@ -3934,24 +3926,43 @@ object WebSocketRoutes:
       end if
   }
 
-  /** Serves the Canvas viewer plugin modules from the web/js/viewers
-    * directory — the dynamic import targets of fileViewers.js. The in-class
-    * /js route only matches single-segment paths, so /js/viewers/<name>.js
-    * fell through to 404 after the viewers were plugin-ized.
+  /** Serves everything under web/js at ANY depth. The frontend's ES modules
+    * live at /js/<file>.js, /js/locales/<lang>.js and /js/viewers/<name>.js,
+    * and any future subdirectory — this closes the "add a js subdirectory →
+    * every dynamic import 404s" outage class for good. The per-path routes
+    * it replaces (in-class single-segment /js, the /js/locales case, and the
+    * viewers-only route from 4281f720) each fixed one symptom after the
+    * fact: http4s DSL matches single path segments, so every new directory
+    * needed its own hand-written case.
+    *
+    * Manual segment parsing (same pattern and guard style as the monaco
+    * route): ".." and backslash segments are rejected; everything else is
+    * joined and looked up as a classpath resource. no-cache at EVERY depth —
+    * rebuilt classpath resources must be picked up by the browser during
+    * development (this also fixes locales, which used to ship without it).
     *
     * Standalone (zero class deps) so it is directly unit-testable
-    * (ViewersRoutesSpec); composed ahead of the instance routes like
+    * (JsStaticRoutesSpec); composed ahead of the instance routes like
     * uploadsRoutes.
     */
-  def viewersRoutes: HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ GET -> Root / "js" / "viewers" / file =>
-      // no-cache, same as the in-class /js route: revalidate (Last-Modified)
-      // every time so the browser picks up the rebuilt classpath resources
-      // during development instead of a stale heuristic-cached copy.
-      StaticFile
-        .fromResource(s"web/js/viewers/$file", Some(req))
-        .map(_.putHeaders("Cache-Control" -> "no-cache"))
-        .getOrElseF(NotFound())
+  def jsRoutes: HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case req @ GET -> _ if req.uri.path.renderString.startsWith("/js/") =>
+      // Trailing slash = directory request (e.g. /js/viewers/) — this route
+      // serves files only; without the guard StaticFile happily serves the
+      // classpath directory entry itself (200 with junk).
+      if req.uri.path.endsWithSlash then NotFound()
+      else
+        val relParts = req.uri.path.segments.map(_.encoded).toList.drop(1) // drop "js"
+        if relParts.isEmpty || relParts.last.isEmpty then NotFound()
+        else if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+        else
+          val path = relParts.mkString("/")
+          StaticFile
+            .fromResource(s"web/js/$path", Some(req))
+            .map(_.putHeaders("Cache-Control" -> "no-cache"))
+            .getOrElseF(NotFound())
+        end if
+      end if
   }
 
   /** Which AgentRegistry entries getActiveAgents should report as running.
