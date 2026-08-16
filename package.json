@@ -1,0 +1,11 @@
+{
+  "name": "nebflow-web",
+  "private": true,
+  "description": "Nebflow web frontend build tooling (P1 esbuild pipeline). Runtime is vanilla JS served from src/main/resources/web; this package exists ONLY for the production bundle build (scripts/build-web.mjs). Dev workflow needs no npm install.",
+  "scripts": {
+    "build": "node scripts/build-web.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.9"
+  }
+}
