@@ -56,6 +56,13 @@ if (appCss.length === 0) throw new Error('no app css/ links found in index.html'
 if (appCss[appCss.length - 1] !== 'css/sapphire.css') {
   throw new Error(`sapphire.css must be the last app css link in index.html (found: ${appCss[appCss.length - 1]})`);
 }
+// CSS orphan guard: every web/css/*.css must be linked from index.html -
+// an unlinked stylesheet would be silently dropped from the bundle.
+const cssOnDisk = readdirSync(join(SRC, 'css')).filter(f => f.endsWith('.css')).map(f => `css/${f}`);
+const cssOrphans = cssOnDisk.filter(f => !appCss.includes(f));
+if (cssOrphans.length > 0) {
+  throw new Error(`unlinked stylesheets (would vanish from the bundle): ${cssOrphans.join(', ')} - link them in index.html or delete them`);
+}
 
 // ── 3. JS bundle (splitting preserves lazy boundaries) ─────────
 const result = await esbuild.build({
