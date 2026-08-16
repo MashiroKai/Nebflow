@@ -313,7 +313,30 @@ export async function fetchRunningFlows() {
   } catch (e) { /* non-critical */ }
 }
 
-export async function autoRestore() {
+// Single-flight + short-window coalescing (W1-d): boot fans out several
+// autoRestore() callers (openTeams / onSessionChange / reconnect callbacks),
+// which fired up to 6 identical GET /api/teams/mounted — and they arrive in
+// WAVES, not one concurrent burst, so pure in-flight dedup still leaves ~3.
+// Rules: concurrent callers join the in-flight promise; a call within
+// COALESCE_MS of a successful fetch reuses that data (a status snapshot
+// 1.5s stale is fresh enough); anything later fetches fresh. refresh() has
+// no force semantics — every caller is WS-event/boot-driven (teamList,
+// treeBranchMounted/Unmounted/Updated), so there is no user-gesture caller
+// that would need to bypass the coalesce window.
+let autoRestoreInFlight = null;
+let autoRestoreOkAt = 0;
+const COALESCE_MS = 1500;
+
+export function autoRestore() {
+  if (autoRestoreInFlight) return autoRestoreInFlight;
+  if (Date.now() - autoRestoreOkAt < COALESCE_MS) return Promise.resolve();
+  autoRestoreInFlight = autoRestoreFetch()
+    .then((ok) => { if (ok) autoRestoreOkAt = Date.now(); })
+    .finally(() => { autoRestoreInFlight = null; });
+  return autoRestoreInFlight;
+}
+
+async function autoRestoreFetch() {
   try {
     const resp = await fetch('/api/teams/mounted', { headers: authHeaders() });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -337,6 +360,7 @@ export async function autoRestore() {
     teamsLoaded = true;
     autoRestoreRetryCount = 0;
     if (isCanvasOpen()) renderOpenTabs();
+    return true;
   } catch (e) {
     console.warn('[flowCanvas] autoRestore failed:', e.message);
     if (autoRestoreRetryCount < 3 && isCanvasOpen()) {
@@ -344,6 +368,7 @@ export async function autoRestore() {
       const delays = [1000, 2000, 4000];
       setTimeout(() => autoRestore(), delays[autoRestoreRetryCount - 1]);
     }
+    return false;
   }
 }
 
