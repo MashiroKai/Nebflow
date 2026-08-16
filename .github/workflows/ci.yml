@@ -91,6 +91,16 @@ jobs:
           distribution: temurin
           java-version: 17
           cache: sbt
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Build web bundle (P1)
+        # esbuild bundle -> build/web-dist (orphan-guarded, warning-free).
+        run: |
+          npm ci
+          node scripts/build-web.mjs
       - name: Setup sbt
         shell: bash
         run: |
@@ -100,7 +110,9 @@ jobs:
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Build assembly
-        run: sbt assembly
+        # -Dnebflow.webdist=1 mounts build/web-dist into the jar (opt-in so a
+        # dev machine's plain `sbt run` never serves a stale dist tree).
+        run: sbt -Dnebflow.webdist=1 assembly
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -230,6 +242,15 @@ jobs:
         # Token comes from the fresh instance's own ~/.nebflow/auth.json —
         # smoke.spec.mjs reads it when NEBFLOW_TOKEN is not set.
         run: npx playwright test tests/smoke.spec.mjs
+      - name: Verify web assets (C1, dist tree)
+        shell: bash
+        # The CI jar contains the P1 bundle — guard the PUBLISHED tree.
+        # Rebuild locally (deterministic) purely to get the dist tree for
+        # traversal; the running instance serves its jar-embedded copy.
+        run: |
+          npm ci
+          node scripts/build-web.mjs
+          node scripts/verify-web-assets.mjs --root build/web-dist http://localhost:8080
       - name: Stop server
         if: always()
         shell: bash
