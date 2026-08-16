@@ -13,7 +13,9 @@ case class AskItem(
   options: List[AskOption],
   allowOther: Boolean = true,
   id: Option[String] = None,
-  dependsOn: Option[QuestionDependency] = None
+  dependsOn: Option[QuestionDependency] = None,
+  /** true = 多选题（可勾选多个选项，答案为数组）；缺省 false = 单选，行为不变 */
+  multiple: Boolean = false
 )
 
 case class AskOption(
