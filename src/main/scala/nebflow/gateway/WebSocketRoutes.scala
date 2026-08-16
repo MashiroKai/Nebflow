@@ -10,7 +10,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorSystem as NebulaActorSystem
 import nebflow.agent.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry}
+import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.skill.SkillService
 import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
@@ -1975,35 +1975,35 @@ class WebSocketRoutes(
             // sessionBgAgents incrementally from realtime agentStart/agentDone
             // events, which are not replayed after a browser refresh. Read the
             // unified AgentRegistry (sessionId -> AgentRecord) and filter to
-            // active sub-agents (Delegate/Ephemeral/Flow/Team/SubTask — root agents excluded).
-            // Team included: Mail-activated team agents appear in the header
-            // dropdown and must survive a browser refresh (F1-3).
+            // active sub-agents (root agents excluded). Team agents are
+            // included only while BUSY — they are long-lived in the registry
+            // (see filterActiveAgents), so registry presence alone would
+            // report idle team agents as running ghosts.
             // agentId == sessionId (nodeSessionId) so restored entries match
             // subsequent realtime events (agentToolStart/agentDone key on it).
             sharedResources.agentRegistry.get.flatMap { registry =>
-              val active = registry.values.toList.filter(r =>
-                r.kind == AgentKind.Delegate || r.kind == AgentKind.Ephemeral || r.kind == AgentKind.Flow || r.kind == AgentKind.Team || r.kind == AgentKind.SubTask
-              )
-              active
-                .traverse { rec =>
-                  sessionStore.getSessionMeta(rec.sessionId).map { meta =>
-                    io.circe.Json.obj(
-                      "sessionId" -> rec.sessionId.asJson,
-                      "agentId" -> rec.sessionId.asJson,
-                      "agentName" -> meta.flatMap(_.agentName).getOrElse(rec.sessionId).asJson,
-                      "rootSessionId" -> rec.rootSessionId.asJson,
-                      "kind" -> rec.kind.toString.asJson
+              WebSocketRoutes.filterActiveAgents(registry).flatMap { active =>
+                active
+                  .traverse { rec =>
+                    sessionStore.getSessionMeta(rec.sessionId).map { meta =>
+                      io.circe.Json.obj(
+                        "sessionId" -> rec.sessionId.asJson,
+                        "agentId" -> rec.sessionId.asJson,
+                        "agentName" -> meta.flatMap(_.agentName).getOrElse(rec.sessionId).asJson,
+                        "rootSessionId" -> rec.rootSessionId.asJson,
+                        "kind" -> rec.kind.toString.asJson
+                      )
+                    }
+                  }
+                  .flatMap { agents =>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "activeAgents".asJson,
+                        "agents" -> agents.asJson
+                      )
                     )
                   }
-                }
-                .flatMap { agents =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "activeAgents".asJson,
-                      "agents" -> agents.asJson
-                    )
-                  )
-                }
+              }
             }
 
           case "cancelBackgroundJob" =>
@@ -3953,3 +3953,29 @@ object WebSocketRoutes:
         .map(_.putHeaders("Cache-Control" -> "no-cache"))
         .getOrElseF(NotFound())
   }
+
+  /** Which AgentRegistry entries getActiveAgents should report as running.
+    *
+    * Task-lifecycle kinds (Delegate/Ephemeral/Flow/SubTask) are reported
+    * as-is: their presence in the registry means the task is in flight
+    * (they unregister on completion).
+    *
+    * Team agents are LONG-LIVED: activateAgent registers them on the first
+    * Mail and they stay in the registry while idle, waiting for the next
+    * Mail. "In the registry" says nothing about running — gate them on the
+    * same busy signal /api/teams/mounted uses (markBusy/markIdle around each
+    * team turn), otherwise every browser refresh reports idle team agents
+    * back as running ghosts in the bg-agent dropdown.
+    *
+    * Standalone (zero class deps) so it is directly unit-testable
+    * (ActiveAgentsFilterSpec).
+    */
+  def filterActiveAgents(registry: Map[String, AgentRecord]): IO[List[AgentRecord]] =
+    val taskKinds = Set(AgentKind.Delegate, AgentKind.Ephemeral, AgentKind.Flow, AgentKind.SubTask)
+    val inFlight = registry.values.toList.filter(r => taskKinds.contains(r.kind))
+    val teamAgents = registry.values.toList.filter(_.kind == AgentKind.Team)
+    teamAgents
+      .traverseFilter(rec =>
+        TeamSessionRegistry.isBusy(rec.sessionId).map(busy => if busy then Some(rec) else None)
+      )
+      .map(_ ++ inFlight)
