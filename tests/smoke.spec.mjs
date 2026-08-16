@@ -289,7 +289,7 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
         `${BASE}/api/nf-file?path=${encodeURIComponent(join(process.cwd(), 'README.md'))}&token=${encodeURIComponent(TOKEN)}`
       )).text();
       await page.evaluate(([content, absPath]) => {
-        document.dispatchEvent(new CustomEvent('workspace-open-item', {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', {
           detail: { id: `file:${absPath}`, itemType: 'markdown', title: 'README.md', content, absPath, pinned: false },
         }));
       }, [content, join(process.cwd(), 'README.md')]);
@@ -323,7 +323,7 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
       }, process.cwd());
     } else {
       await page.evaluate((absPath) => {
-        document.dispatchEvent(new CustomEvent('workspace-open-item', {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', {
           detail: { id: `file:${absPath}`, itemType: 'image', title: 'pic.png', absPath, pinned: false },
         }));
       }, join(process.cwd(), 'tests', 'fixtures', 'pic.png'));
