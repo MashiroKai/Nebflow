@@ -5,7 +5,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.ActorRef
 import nebflow.agent.AgentCommand
-import nebflow.core.{AskItem, AskOption, QuestionDependency}
+import nebflow.core.{AskItem, AskOption, HeadlessMode, QuestionDependency}
 
 object AskUserQuestionTool extends Tool:
   val name = "AskUserQuestion"
@@ -125,7 +125,27 @@ Behavior:
       end if
     }.toList
 
+  /** Error text returned when headless mode blocks an AskUser call. */
+  val HeadlessErrorMessage =
+    "Headless mode: no interactive user available — decide autonomously and continue with your best judgment."
+
+  /** Headless guard: NEBFLOW_HEADLESS=1 (benchmark mode) means no interactive
+    * user — dispatching AgentCommand.AskUser would park the run on a reply
+    * that never arrives. Returning a ToolError instead tells the agent to
+    * decide autonomously and continue. Pure (flag passed in) so both branches
+    * are spec-covered; the call touchpoint binds HeadlessMode.enabled.
+    */
+  def askGuard(headless: Boolean = HeadlessMode.enabled): Option[ToolError] =
+    if headless then Some(ToolError(HeadlessErrorMessage)) else None
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    // Headless benchmark mode: fail fast at the entry — no AskUser dispatch,
+    // no wait; the error message pushes the agent to proceed on its own.
+    askGuard() match
+      case Some(err) => IO.pure(Left(err))
+      case None      => askUser(input, ctx)
+
+  private def askUser(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val questionsJson = input("questions").flatMap(_.asArray).getOrElse(Nil)
 
     if questionsJson.isEmpty then IO.pure(Left(ToolError("No valid questions provided")))
@@ -149,7 +169,7 @@ Behavior:
             IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
       end if
     end if
-  end call
+  end askUser
 
   /** Normalize a multi-select answer for the LLM: canonical compact JSON array
     * (`["A","B"]`). The frontend serializes a multi-select answer as a JSON

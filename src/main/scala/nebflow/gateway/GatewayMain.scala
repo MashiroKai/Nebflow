@@ -505,7 +505,8 @@ object GatewayMain extends IOApp.Simple:
                                                         neblinkService = Some(neblinkService),
                                                         ttsService = ttsService,
                                                         neblinkDiscovery = Some(tsDiscovery),
-                                                        gatewayPort = cfg.port.value
+                                                        gatewayPort = cfg.port.value,
+                                                        wsHub = wsHub
                                                       )
 
                                                       Router(
@@ -546,7 +547,10 @@ object GatewayMain extends IOApp.Simple:
                                                         // --- Background: LLM provider health monitoring ---
                                                         _ <- healthMonitor.start().void.start
                                                         _ <-
-                                                          if GatewayConfig.noBrowser then IO.unit else openBrowser(url)
+                                                          if GatewayConfig.noBrowser ||
+                                                            nebflow.core.HeadlessMode.enabled
+                                                          then IO.unit
+                                                          else openBrowser(url)
                                                         // --- Background init: skills dir, MCP servers ---
                                                         _ <- SkillService
                                                           .ensureDefaults()
