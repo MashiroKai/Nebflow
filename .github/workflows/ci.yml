@@ -26,6 +26,10 @@ jobs:
         # A1 gate: any new file with errors, any (file, code) count increase,
         # or any total increase above tests/type-baseline.json fails the job.
         run: node scripts/check-js-types.mjs
+      - name: Circular deps (static imports)
+        # P2-4 gate: static-import SCC analysis - any cycle fails. Dynamic
+        # import() is the sanctioned escape hatch and is not counted.
+        run: node scripts/check-circular.mjs
 
   compile:
     name: Compile (${{ matrix.os }})

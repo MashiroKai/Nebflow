@@ -1,5 +1,4 @@
 import state from './state.js';
-import { activeView } from './chatView.js';
 import { t, getLocale } from './i18n.js';
 
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
@@ -68,12 +67,12 @@ export function initSpinner() {
 }
 
 export function playSpinner() {
-  const id = activeView?.dom?.lottieSpinnerEl?.id;
+  const id = state.getActiveView?.()?.dom?.lottieSpinnerEl?.id;
   if (id && _spinners[id]) _spinners[id].play();
 }
 
 export function stopSpinner() {
-  const id = activeView?.dom?.lottieSpinnerEl?.id;
+  const id = state.getActiveView?.()?.dom?.lottieSpinnerEl?.id;
   if (id && _spinners[id]) _spinners[id].stop();
 }
 
@@ -421,9 +420,10 @@ export function attachToolClick(card) {
 
 // === Scroll helpers ===
 export function smartScroll() {
-  if (!activeView) return;
-  const chat = activeView.dom.chat;
-  const snapped = activeView.stream.scrollSnapped;
+  const view = state.getActiveView ? state.getActiveView() : null;
+  if (!view) return;
+  const chat = view.dom.chat;
+  const snapped = view.stream.scrollSnapped;
   requestAnimationFrame(() => {
     const threshold = 60;
     if (snapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold) {
