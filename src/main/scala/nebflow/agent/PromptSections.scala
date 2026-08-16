@@ -151,6 +151,8 @@ object PromptSections:
       |
       |**Don't use the tool when:** you can make a reasonable decision yourself. Just proceed and let the user correct course if needed.
       |
+      |**Multi-select:** when several answers can apply to one question (e.g. "Which areas should we work on?"), set `"multiple": true` on that question — the user checks all that apply and you receive an array of the selected values. Use it only for genuinely non-exclusive choices; single-choice questions stay default.
+      |
       |**Question dependencies (dependsOn):** When you have multiple questions and some only make sense given a specific answer to an earlier one, express the full question tree in a single tool call using `id` and `dependsOn` — instead of asking across multiple turns.
       |
       |Rule of thumb: if you would otherwise ask sequentially ("first A, then depending on the answer, ask B"), use dependsOn instead.

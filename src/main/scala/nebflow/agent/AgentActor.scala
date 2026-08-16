@@ -250,6 +250,8 @@ object AgentActor extends AgentCore with AgentSession:
       item.dependsOn.foreach { dep =>
         base += "dependsOn" -> Json.obj("ref" -> dep.ref.asJson, "equals" -> dep.equals.asJson)
       }
+      // multiple is emitted only when true — every pre-multiple payload stays byte-identical
+      if item.multiple then base += "multiple" -> true.asJson
       Json.obj(base.toList*)
     })
     Json.obj(fields.toList*)
