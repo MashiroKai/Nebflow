@@ -181,6 +181,12 @@ export default {
   // DOM refs (populated in main.js)
   dom: {},
 
+  // Active ChatView accessor - set once by chatView.js at module init. Lets
+  // utils.js / cardRegistry.js read the active view WITHOUT a static import
+  // of chatView.js (P2-4 cycle cut: chatView <-> cardRegistry <-> utils).
+  /** @type {null | (() => any)} */
+  getActiveView: null,
+
   // Background tasks update helper
   updateBgTasksUI: null,
 

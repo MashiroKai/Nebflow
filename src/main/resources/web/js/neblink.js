@@ -6,7 +6,8 @@ import state from './state.js';
 import { escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
-import { openDropbox } from './dropbox.js';
+// NOTE: dropbox.js is dynamically imported at the click site - P2-4 cycle cut
+// (neblink <-> dropbox mutual import).
 
 /** Transient success banner shown after NebLink pairing completes. */
 function showLoginSuccessBanner(message) {
@@ -399,13 +400,14 @@ export function bindNeblinkEvents(rerender) {
   // Device name click → open device modal (all devices, including local)
   document.querySelectorAll('.dropbox-clickable').forEach(el => {
     el.addEventListener('click', () => {
-      openDropbox({
+      // Dynamic import - P2-4 cycle cut (neblink <-> dropbox).
+      import('./dropbox.js').then(({ openDropbox }) => openDropbox({
         deviceId: el.dataset.deviceId,
         deviceName: el.dataset.deviceName,
         platform: el.dataset.platform,
         userDescription: el.dataset.desc,
         isLocal: el.dataset.isLocal === '1'
-      });
+      }));
     });
   });
 }

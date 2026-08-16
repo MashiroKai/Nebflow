@@ -20,6 +20,10 @@ export let activeView = null;
 
 export function setActiveView(v) { activeView = v; }
 
+// P2-4 cycle cut: utils.js and cardRegistry.js read the active view through
+// this state.js accessor instead of statically importing this module.
+state.getActiveView = () => activeView;
+
 // ── ChatView class ──────────────────────────────────────────────────────
 
 export class ChatView {

@@ -2,7 +2,11 @@
 
 import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
 import { sendWs, onMessage } from './ws.js';
-import { showAgentModal, showBatchDeleteModal } from './modal.js';
+// Lazy wrapper - P2-4 cycle cut (sidebar <-> modal): modal.js statically
+// imports sidebar.js, so this module must not statically import modal.js.
+function showBatchDeleteModalLazy() {
+  import('./modal.js').then(({ showBatchDeleteModal }) => showBatchDeleteModal());
+}
 import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn } from './utils.js';
 import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
@@ -2068,7 +2072,7 @@ function showBatchCtxMenu(x, y) {
   });
   menu.querySelector('[data-action="batch-delete"]').addEventListener('click', () => {
     if (state.selectedSessionIds.size > 0) {
-      showBatchDeleteModal();
+      showBatchDeleteModalLazy();
     }
     dismissCtxMenu();
   });
@@ -2186,7 +2190,7 @@ function showDeleteZone() {
     if (ids.length > 0) {
       // If already in selection mode, show batch delete confirmation
       if (state.selectedSessionIds.size > 1) {
-        showBatchDeleteModal();
+        showBatchDeleteModalLazy();
       } else {
         // Single drag — confirm delete
         const sid = ids[0];
@@ -2234,7 +2238,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Delete' && state.selectedSessionIds.size > 0) {
     e.preventDefault();
-    showBatchDeleteModal();
+    showBatchDeleteModalLazy();
   }
 });
 

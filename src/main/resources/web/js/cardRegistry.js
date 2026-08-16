@@ -3,7 +3,6 @@
 // Theme CSS variables are injected into iframes for dark mode support.
 
 import state from './state.js';
-import { activeView } from './chatView.js';
 import { smartScroll } from './utils.js';
 
 let _iframeId = 0;
@@ -100,12 +99,15 @@ window.addEventListener('message', (e) => {
     // If height changed, ensure scroll position still shows the card bottom.
     // Works for first measurement (oldHeight == '' → heightChanged = true) and subsequent resizes.
     if (heightChanged) {
-      const chat = activeView.dom.chat;
+      const view = state.getActiveView ? state.getActiveView() : null;
+      const chat = view && view.dom.chat;
+      if (!chat) return;
       const nearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 100;
       if (nearBottom) {
         requestAnimationFrame(() => {
           chat.scrollTop = chat.scrollHeight;
-          if (activeView) activeView.stream.scrollSnapped = true;
+          const v = state.getActiveView ? state.getActiveView() : null;
+          if (v) v.stream.scrollSnapped = true;
         });
       } else {
         smartScroll();
