@@ -878,14 +878,21 @@ class WebSocketRoutes(
             val immJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val immSessionId = immJson.hcursor.downField("sessionId").as[String].getOrElse("")
             val immContent = immJson.hcursor.downField("content").as[String].getOrElse("")
-            if immSessionId.nonEmpty && immContent.nonEmpty then
-              logger.info(s"Immediate input for session $immSessionId (${immContent.length} chars)") *>
-                sessionStore.appendUiMessages(
-                  immSessionId,
-                  List(UiMessage.User(immContent, Nil, timestamp = System.currentTimeMillis()))
-                ) *>
-                ensureAgent(immSessionId)(ref => ref ! AgentCommand.ImmediateInput(immContent))
-            else IO.unit
+            handleUserText(immSessionId, immContent, source = "immediateInput")
+
+          // Protocol alias for immediateInput, sent by the CLI (ChatSend).
+          // Before this case existed the payload fell through to the silent
+          // `case _ => IO.unit` below — the CLI received "status: ok" while
+          // nothing was dispatched (the headless one-shot chain was broken).
+          // NOTE: ScheduledTaskActor also emits a "userMessage" broadcast, but
+          // that is a server-to-client display event (task routing goes
+          // through routeToAgent directly) — it never enters handleMessage
+          // and is unaffected by this case.
+          case "userMessage" =>
+            val umJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val umSessionId = umJson.hcursor.downField("sessionId").as[String].getOrElse("")
+            val umContent = umJson.hcursor.downField("content").as[String].getOrElse("")
+            handleUserText(umSessionId, umContent, source = "userMessage")
 
           case "command" =>
             val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
@@ -3058,6 +3065,32 @@ class WebSocketRoutes(
       end for
     end if
   end handleMessage
+
+  /**
+    * Shared body for the user-text input cases ("immediateInput" from the
+    * frontend, "userMessage" from the CLI). Persists the user message as a
+    * UiMessage bubble, then dispatches ImmediateInput to the session's agent.
+    * The headless turn endpoint (POST /api/sessions/:id/turn) mirrors this
+    * same sequence via [dispatchUserText] — keep the two in sync.
+    */
+  private def handleUserText(sessionId: String, content: String, source: String): IO[Unit] =
+    if sessionId.nonEmpty && content.nonEmpty then
+      logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
+        sessionStore.appendUiMessages(
+          sessionId,
+          List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
+        ) *>
+        ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
+    else IO.unit
+  end handleUserText
+
+  /**
+    * Headless turn entry (P0 benchmark): dispatch a user text into a session
+    * exactly like the WS "immediateInput"/"userMessage" cases do. Exposed for
+    * RestApiRoutes' synchronous turn endpoint.
+    */
+  def dispatchUserText(sessionId: String, content: String): IO[Unit] =
+    handleUserText(sessionId, content, source = "rest-turn")
 
   // ============================================================
   // Local file search for smart attachment resolution

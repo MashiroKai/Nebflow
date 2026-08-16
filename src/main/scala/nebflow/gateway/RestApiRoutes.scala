@@ -41,7 +41,8 @@ class RestApiRoutes(
   neblinkService: Option[NeblinkService] = None,
   ttsService: Option[TtsService] = None,
   neblinkDiscovery: Option[nebflow.neblink.NeblinkDiscovery] = None,
-  gatewayPort: Int = 8080
+  gatewayPort: Int = 8080,
+  wsHub: WsHub = new WsHub
 ):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.rest-api")
 
@@ -82,6 +83,29 @@ class RestApiRoutes(
               case None => Ok(Json.obj("status" -> "ok".asJson))
             }
           }
+        }
+      }
+
+    // Headless synchronous turn (P0 benchmark): send user text into a session
+    // and block until the turn completes, returning the final assistant
+    // message and tool trace. Logic lives in TurnEndpoint (testable);
+    // this route adds auth + session validation.
+    case req @ POST -> Root / "sessions" / sessionId / "turn" =>
+      withAuth(req) {
+        req.as[Json].flatMap { body =>
+          val content = body.hcursor.downField("content").as[String].getOrElse("")
+          val timeoutSec =
+            body.hcursor.downField("timeoutSec").as[Int].getOrElse(1800).min(7200).max(1)
+          if content.isEmpty then BadRequest(Json.obj("error" -> "content is required".asJson))
+          else
+            sessionStore.getSessionMeta(sessionId).flatMap {
+              case None => NotFound(Json.obj("error" -> s"session not found: $sessionId".asJson))
+              case Some(_) =>
+                TurnEndpoint.gated(sessionId) {
+                  TurnEndpoint.runTurn(
+                    wsHub, sessionStore, wsRoutes.dispatchUserText, sessionId, content, timeoutSec)
+                }
+            }
         }
       }
 
@@ -2263,4 +2287,5 @@ class RestApiRoutes(
               case None => IO.pure("https://neblink.nebflow.space")
             }
           case None => IO.pure("https://neblink.nebflow.space")
+
 end RestApiRoutes

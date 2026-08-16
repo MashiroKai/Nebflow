@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.entity.{EntityLoader, TeamCatalog}
 import nebflow.core.skill.SkillService
-import nebflow.core.{PathUtil, SystemReminder, SystemReminders}
+import nebflow.core.{HeadlessMode, PathUtil, SystemReminder, SystemReminders}
 import nebflow.service.{MemoryStore, RulesStore}
 
 /**
@@ -242,6 +242,24 @@ object ContextRefresher:
   // ============================================================
 
   /**
+   * Memory injection gate — pure so both branches are spec-covered
+   * (HeadlessModeSpec); the refreshTurn touchpoint binds HeadlessMode.enabled.
+   *
+   * Headless (NEBFLOW_HEADLESS=1, benchmark mode) skips the WHOLE memory
+   * block: User/Agent memory accumulates across runs, and injecting
+   * previous-run state into a fresh benchmark session breaks determinism.
+   * With headless off the legacy gate (SubTask workers excluded; Nebula and
+   * team agents eligible) is unchanged.
+   */
+  def shouldInjectMemory(
+    isWorker: Boolean,
+    isTeamAgent: Boolean,
+    agentName: String,
+    headless: Boolean = HeadlessMode.enabled
+  ): Boolean =
+    !headless && !isWorker && (isTeamAgent || agentName == "Nebula")
+
+  /**
    * Build a memory block string for system prompt injection.
    *
    * Reads memory levels and formats them into a single Markdown block:
@@ -379,9 +397,10 @@ object ContextRefresher:
       // Memory: only Nebula (standalone, name="Nebula") and team agents get memory.
       // Team agents get memory; standalone agents (Coder/Explorer/etc) don't.
       // SubTask workers get none — clean context, prompt is the only input.
+      // Headless (NEBFLOW_HEADLESS=1): none at all — benchmark determinism.
       isTeamAgent = teamNameOpt.isDefined
       memoryBlock =
-        if !isWorker && (isTeamAgent || globalDef.name == "Nebula") then buildMemoryBlock(globalDef.name, teamNameOpt)
+        if shouldInjectMemory(isWorker, isTeamAgent, globalDef.name) then buildMemoryBlock(globalDef.name, teamNameOpt)
         else ""
     yield TurnContext(
       globalDef,
