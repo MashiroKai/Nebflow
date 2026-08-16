@@ -511,7 +511,9 @@ object GatewayMain extends IOApp.Simple:
                                                       Router(
                                                         "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
                                                           .presenceWsRoutes(wsb)),
-                                                        "/" -> wsRoutes.routes
+                                                        // Static tree only — gzip must never wrap the
+                                                        // "/api" tree (SSE stream, presence WS).
+                                                        "/" -> GzipMiddleware(wsRoutes.routes)
                                                       ).orNotFound
                                                     }
                                                     .build
