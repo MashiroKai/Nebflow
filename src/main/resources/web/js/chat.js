@@ -1378,7 +1378,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     const dep = item.dependsOn;
     const refIdx = questions.findIndex(q => q.id === dep.ref);
     if (refIdx === -1) return true;
-    return answers[refIdx] === dep.equals;
+    const a = answers[refIdx];
+    // Multi-select ref question: the dependency matches when equals is among the selections
+    return Array.isArray(a) ? a.includes(dep.equals) : a === dep.equals;
   }
 
   function updateVisibility() {
@@ -1392,6 +1394,23 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         if (input) input.value = '';
       }
     });
+  }
+
+  // --- Multi-select: recompute answers[qi] from the DOM picked state ---
+  // answers[qi] is an array of selected option labels (plus Other text when
+  // typed) or null when nothing is picked. Serialized as a JSON array string
+  // on submit — the answers wire stays one string slot per question.
+  function syncMulti(qi) {
+    const wrapper = questionWrappers[qi];
+    if (!wrapper) return;
+    const labels = [];
+    wrapper.querySelectorAll('.option-btn.picked').forEach(el => {
+      if (el.dataset.other !== '1' && el.dataset.label) labels.push(el.dataset.label);
+    });
+    const otherPicked = wrapper.querySelector('.option-btn[data-other="1"].picked');
+    const input = wrapper.querySelector('.option-custom-input');
+    if (otherPicked && input && input.value.trim()) labels.push(input.value.trim());
+    answers[qi] = labels.length ? labels : null;
   }
 
   // --- Build question DOM ---
@@ -1408,6 +1427,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     const optsDiv = document.createElement('div');
     optsDiv.className = 'option-opts';
     const hasOptions = item.options && item.options.length > 0;
+    // Multi-select question: checkbox group, confirm when done
+    const isMulti = hasOptions && item.multiple === true;
+    if (isMulti) optsDiv.classList.add('multi');
 
     if (hasOptions) {
       item.options.forEach((opt, oi) => {
@@ -1416,20 +1438,32 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         const isStr = typeof opt === 'string';
         const label = isStr ? opt : opt.label;
         const desc = isStr ? '' : (opt.desc || opt.description || '');
-        btn.innerHTML = escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '');
-        btn.onclick = () => {
-          answers[qi] = label;
-          optsDiv.querySelectorAll('.option-btn').forEach((el, i) => {
-            el.classList.toggle('picked', i === oi);
-          });
-          if (customInput) {
-            customInput.style.display = 'none';
-            customInput.value = '';
-          }
-          if (askSessionId) saveAskDraft(askSessionId, qi, '');
-          updateVisibility();
-          checkAllAnswered();
-        };
+        if (isMulti) {
+          btn.dataset.label = label;
+          btn.innerHTML = '<span class="option-check"></span><span class="option-text">' +
+            escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '') + '</span>';
+          btn.onclick = () => {
+            btn.classList.toggle('picked');
+            syncMulti(qi);
+            updateVisibility();
+            checkAllAnswered();
+          };
+        } else {
+          btn.innerHTML = escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '');
+          btn.onclick = () => {
+            answers[qi] = label;
+            optsDiv.querySelectorAll('.option-btn').forEach((el, i) => {
+              el.classList.toggle('picked', i === oi);
+            });
+            if (customInput) {
+              customInput.style.display = 'none';
+              customInput.value = '';
+            }
+            if (askSessionId) saveAskDraft(askSessionId, qi, '');
+            updateVisibility();
+            checkAllAnswered();
+          };
+        }
         optsDiv.appendChild(btn);
       });
     }
@@ -1441,7 +1475,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     customInput.rows = 2;
 
     const savedVal = saved[qi];
-    if (savedVal) {
+    if (savedVal && !isMulti) {
       customInput.value = savedVal;
       answers[qi] = savedVal;
     }
@@ -1452,24 +1486,50 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     if (hasOptions && allowOther) {
       otherBtn = document.createElement('button');
       otherBtn.className = 'option-btn';
-      otherBtn.textContent = t('chat.other');
-      if (savedVal && !item.options.some(o => (typeof o === 'string' ? o : o.label) === savedVal)) {
-        otherBtn.classList.add('picked');
-        customInput.style.display = '';
-      } else {
-        customInput.style.display = 'none';
-      }
-      otherBtn.onclick = () => {
-        optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
-        otherBtn.classList.add('picked');
-        customInput.style.display = '';
-        customInput.focus();
-        if (customInput.value.trim()) {
-          answers[qi] = customInput.value.trim();
+      if (isMulti) {
+        otherBtn.dataset.other = '1';
+        otherBtn.innerHTML = '<span class="option-check"></span><span class="option-text">' + escapeHtml(t('chat.other')) + '</span>';
+        if (savedVal) {
+          otherBtn.classList.add('picked');
+          customInput.style.display = '';
+          customInput.value = savedVal;
+        } else {
+          customInput.style.display = 'none';
         }
-        updateVisibility();
-        checkAllAnswered();
-      };
+        otherBtn.onclick = () => {
+          otherBtn.classList.toggle('picked');
+          if (otherBtn.classList.contains('picked')) {
+            customInput.style.display = '';
+            customInput.focus();
+          } else {
+            customInput.style.display = 'none';
+            customInput.value = '';
+            if (askSessionId) saveAskDraft(askSessionId, qi, '');
+          }
+          syncMulti(qi);
+          updateVisibility();
+          checkAllAnswered();
+        };
+      } else {
+        otherBtn.textContent = t('chat.other');
+        if (savedVal && !item.options.some(o => (typeof o === 'string' ? o : o.label) === savedVal)) {
+          otherBtn.classList.add('picked');
+          customInput.style.display = '';
+        } else {
+          customInput.style.display = 'none';
+        }
+        otherBtn.onclick = () => {
+          optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
+          otherBtn.classList.add('picked');
+          customInput.style.display = '';
+          customInput.focus();
+          if (customInput.value.trim()) {
+            answers[qi] = customInput.value.trim();
+          }
+          updateVisibility();
+          checkAllAnswered();
+        };
+      }
       optsDiv.appendChild(otherBtn);
     } else if (hasOptions) {
       customInput.style.display = 'none';
@@ -1479,7 +1539,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 
     customInput.oninput = () => {
       const val = customInput.value.trim();
-      if (val) {
+      if (isMulti) {
+        syncMulti(qi);
+      } else if (val) {
         answers[qi] = val;
         if (hasOptions) {
           optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
@@ -1497,6 +1559,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     optsDiv.appendChild(customInput);
     wrapper.appendChild(optsDiv);
     box.appendChild(wrapper);
+    if (isMulti) syncMulti(qi); // pick up restored Other text, if any (needs the DOM in place)
   });
 
   // Apply initial visibility after all questions are in DOM
@@ -1529,11 +1592,15 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 
     const ansDiv = document.createElement('div');
     ansDiv.className = 'option-answer';
-    ansDiv.textContent = '-> ' + answers.filter(a => a).join(', ');
+    ansDiv.textContent = '-> ' + answers
+      .filter(a => a)
+      .map(a => Array.isArray(a) ? '[' + a.join(', ') + ']' : a)
+      .join(', ');
     box.appendChild(ansDiv);
 
     if (askSessionId) clearAskDrafts(askSessionId);
-    const finalAnswers = answers.map(a => a !== null ? a : '');
+    // Multi-select answers serialize as JSON array strings; the wire stays one string slot per question.
+    const finalAnswers = answers.map(a => Array.isArray(a) ? JSON.stringify(a) : (a !== null ? a : ''));
     if (onConfirm) onConfirm(finalAnswers);
   };
   btnRow.appendChild(cancelBtn);

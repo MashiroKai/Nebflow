@@ -1313,6 +1313,52 @@
   cursor: default;
   pointer-events: none;
 }
+/* Multi-select questions (multiple: true): checkboxes stacked vertically,
+   full-width rows — stays clean at narrow chat widths (~490px). */
+.option-opts.multi {
+  flex-direction: column;
+  align-items: stretch;
+}
+.option-opts.multi .option-btn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  border-radius: 10px;
+  padding: 7px 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.option-opts.multi .option-btn .option-text {
+  flex: 1;
+  min-width: 0;
+}
+.option-check {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  border: 1.5px solid rgba(145, 170, 210, 0.45);
+  border-radius: 4px;
+  position: relative;
+  background: transparent;
+  transition: all 0.2s ease;
+}
+.option-btn.picked .option-check {
+  border-color: #fff;
+  background: var(--color-primary);
+}
+.option-btn.picked .option-check::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
 .option-custom-input {
   display: block;
   width: 100%;
