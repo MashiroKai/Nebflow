@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // verify-web-assets.mjs — static asset contract test (C1).
 //
-// Walks EVERY file under src/main/resources/web, maps it to the URL the
+// Walks EVERY file under the published web tree, maps it to the URL the
 // production http4s router (src/main/scala/nebflow/gateway/WebSocketRoutes.scala)
 // serves it at, and asserts HTTP 200 against a running instance.
 //
@@ -10,21 +10,34 @@
 // failure — the fix is explicit (add a route, or add an exemption below with
 // a reason), never silent.
 //
-// TODO(W1-a): Backend is generalizing the static routes to js/** wildcards
-// (/tmp/nb-jsroute-general). Once merged, the per-subdirectory js/ mapping
-// below collapses to a single recursive rule — simplify then.
+// Two tree modes (P1): the gate guards whatever is PUBLISHED.
+//   source mode (default): traverse src/main/resources/web/ — the dev tree.
+//   dist mode (--root):    traverse a built tree (build/web-dist/) — the prod
+//                          tree. URL mapping differs: assets/** is served by
+//                          the /assets/** wildcard route (Backend P1 piece).
 //
 // Usage:
-//   node scripts/verify-web-assets.mjs [baseUrl]
+//   node scripts/verify-web-assets.mjs [baseUrl]            # source tree
+//   node scripts/verify-web-assets.mjs --root <dir> [baseUrl]  # built tree
 //   baseUrl defaults to $BASE_URL, then http://localhost:8080.
 // Exit code 0 = all assets served; 1 = any unreachable file or non-200.
 
 import { readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const WEB_ROOT = fileURLToPath(new URL('../src/main/resources/web/', import.meta.url));
-const BASE = (process.argv[2] ?? process.env.BASE_URL ?? 'http://localhost:8080').replace(/\/$/, '');
+const SOURCE_ROOT = fileURLToPath(new URL('../src/main/resources/web/', import.meta.url));
+
+// Parse args: positional = baseUrl, or --root <dir> [baseUrl].
+const args = process.argv.slice(2);
+let rootDir = SOURCE_ROOT;
+let baseArg = null;
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--root') { rootDir = resolve(args[++i]); }
+  else baseArg = args[i];
+}
+const DIST_MODE = rootDir !== SOURCE_ROOT;
+const BASE = (baseArg ?? process.env.BASE_URL ?? 'http://localhost:8080').replace(/\/$/, '');
 
 // Root-level files the router serves at /<name>
 // (WebSocketRoutes.scala `Root / fileName` whitelist).
@@ -41,31 +54,25 @@ const EXEMPTIONS = new Map([
 ]);
 
 /**
- * Map a web/-relative path to its served URL, or null when no route covers it.
- * Derived from WebSocketRoutes.scala static route table at the time of writing:
+ * Map a tree-relative path to its served URL, or null when no route covers it.
+ * Derived from WebSocketRoutes.scala static route table:
  *   index.html              → /
  *   <root whitelist>        → /<name>
  *   css/<f>                 → /css/<f>            (single segment)
- *   js/<f>                  → /js/<f>             (single segment)
- *   js/locales/<f>          → /js/locales/<f>     (single segment)
- *   js/viewers/<f>          → /js/viewers/<f>     (single segment)
+ *   js/<deep…>              → /js/<deep…>         (any depth, jsRoutes wildcard)
  *   vendor/<f>              → /vendor/<f>         (single segment)
  *   vendor/fonts/<f>        → /vendor/fonts/<f>   (single segment)
  *   vendor/monaco/<deep…>   → /vendor/monaco/<deep…> (multi-segment, manual parse)
+ *   assets/<deep…>          → /assets/<deep…>     (dist mode only, P1 route)
  */
 function toUrl(rel) {
   if (rel === 'index.html') return '/';
   const segs = rel.split('/');
   if (segs.length === 1) return ROOT_WHITELIST.has(rel) ? `/${rel}` : null;
   const [top, second] = segs;
+  if (top === 'assets' && DIST_MODE) return `/assets/${segs.slice(1).join('/')}`;
   if (top === 'css') return segs.length === 2 ? `/css/${second}` : null;
-  if (top === 'js') {
-    if (segs.length === 2) return `/js/${second}`;
-    if (segs.length === 3 && (second === 'locales' || second === 'viewers')) {
-      return `/js/${second}/${segs[2]}`;
-    }
-    return null;
-  }
+  if (top === 'js') return `/js/${segs.slice(1).join('/')}`;
   if (top === 'vendor') {
     if (segs.length === 2) return `/vendor/${second}`;
     if (second === 'fonts') return segs.length === 3 ? `/vendor/fonts/${segs[2]}` : null;
@@ -83,11 +90,11 @@ function* walk(dir) {
   }
 }
 
-const files = [...walk(WEB_ROOT)]
-  .map(p => relative(WEB_ROOT, p).replaceAll('\\', '/'))
+const files = [...walk(rootDir)]
+  .map(p => relative(rootDir, p).replaceAll('\\', '/'))
   .sort();
 
-console.log(`C1 asset contract: ${files.length} files under web/, verifying against ${BASE}`);
+console.log(`C1 asset contract (${DIST_MODE ? 'dist tree' : 'source tree'}): ${files.length} files under ${relative(process.cwd(), rootDir) || '.'}, verifying against ${BASE}`);
 
 const failures = [];
 let checked = 0;
@@ -105,7 +112,7 @@ await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
         skipped++;
         console.log(`  SKIP (exempt): ${rel} — ${EXEMPTIONS.get(rel)}`);
       } else {
-        failures.push(`UNREACHABLE: ${rel} — exists in web/ but no static route serves it ` +
+        failures.push(`UNREACHABLE: ${rel} — exists in the ${DIST_MODE ? 'dist' : 'web/'} tree but no static route serves it ` +
           `(add a route in WebSocketRoutes.scala or an explicit exemption in scripts/verify-web-assets.mjs)`);
       }
       continue;
