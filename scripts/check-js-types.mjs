@@ -29,10 +29,10 @@ const TSC_LOCAL = join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
 // P2-3: core contract files must have ZERO checkJs errors. Baseline rows for
 // these files are ignored; any error here fails the gate outright.
 const ZERO_ERROR_FILES = [
-  // populated by the P2-3 commit:
-  // 'src/main/resources/web/js/state.js',
-  // 'src/main/resources/web/js/ws.js',
-  // 'src/main/resources/web/js/utils.js',
+  // P2-3 core contracts — typed, and must never regress:
+  'src/main/resources/web/js/state.js',
+  'src/main/resources/web/js/ws.js',
+  'src/main/resources/web/js/utils.js',
 ];
 
 function runTsc() {

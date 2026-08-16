@@ -3,6 +3,29 @@ import { findViewBySessionId, setActiveView, activeView, chatViews } from './cha
 import { isBgAgentId } from './utils.js';
 import { addNotification } from './notificationBanner.js';
 
+// ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
+
+/**
+ * Incoming WS event from the backend (protocol.scala). `type` discriminates;
+ * events carry session routing keys plus event-specific payloads - the index
+ * signature keeps the protocol permissive while the named fields pin the
+ * routing contract every event shares.
+ * @typedef {{ type: string, sessionId?: string, rootSessionId?: string, nodeSessionId?: string, agentId?: string, delta?: string } & Record<string, any>} WSIncomingMessage
+ */
+
+/**
+ * Outgoing WS message sent via sendWs. `type` is the command discriminator -
+ * but NOTE: plain user-input messages deliberately OMIT it (the backend
+ * treats a type-less message with `content` as user input; see input.js).
+ * @typedef {{ type?: string } & Record<string, any>} WSOutgoingMessage
+ */
+
+/**
+ * Handler registered via onMessage for a specific incoming event type.
+ * `view` is the ChatView owning msg.sessionId (null when hidden-gated).
+ * @typedef {(msg: WSIncomingMessage, view: any) => void} WSMessageHandler
+ */
+
 // ── Flow-step interceptor (registered by flowAgentPopup.js) ─────────────
 // ws.js must NOT import flowAgentPopup.js directly: that creates a circular
 // dependency (flowAgentPopup.js imports onMessage/sendWs from ws.js) which
@@ -14,7 +37,7 @@ export function setFlowStepInterceptor(fn) { flowStepInterceptor = fn; }
 
 // ── Background-agent step interceptor (registered by bgAgentPopup.js) ────
 // Same pattern as flowStepInterceptor. Checked FIRST so background sub-agent
-// events (nodeSessionId starts with "delegate-"/"subtask-" — backend protocol) don't get
+// events (nodeSessionId starts with "delegate-"/"subtask-" - backend protocol) don't get
 // swallowed by the flowStepInterceptor which claims all nodeSessionId events.
 let bgAgentStepInterceptor = null;
 export function setBgAgentStepInterceptor(fn) { bgAgentStepInterceptor = fn; }
@@ -22,12 +45,12 @@ export function setBgAgentStepInterceptor(fn) { bgAgentStepInterceptor = fn; }
 // ── Hidden-view render gating ─────────────────────────────────────────────
 // Popup ChatViews (flow / bg-agent / team) have visible === false while their
 // popup is closed. Streaming events for hidden views are dispatched with
-// view=null so chat.js handlers skip DOM rendering entirely — the global
+// view=null so chat.js handlers skip DOM rendering entirely - the global
 // per-session buffers in state.js (sessionTexts/sessionThinkingBuffers/...)
 // still accumulate, so nothing is lost; the popup re-renders from backend
 // history when opened (dirtyWhileHidden forces the refresh).
 // Interactive events (askUser/askPermission) are exempt: they keep the real
-// view and render into the hidden container immediately — low frequency,
+// view and render into the hidden container immediately - low frequency,
 // negligible cost, and the prompt must exist when the popup opens.
 function streamDispatchView(view) {
   if (view && view.visible === false) {
@@ -120,6 +143,10 @@ const STREAM_MSG_TYPES = new Set([
   'flowMail', 'flowStarted', 'flowProgress', 'flowCompleted', 'teamList'
 ]);
 
+/**
+ * @param {string} type - incoming event name (TERMINAL_MSG_TYPES / STREAM_MSG_TYPES)
+ * @param {WSMessageHandler} handler
+ */
 export function onMessage(type, handler) {
   if (!handlers[type]) handlers[type] = [];
   handlers[type].push(handler);
@@ -137,7 +164,7 @@ export function onReconnect(callback) {
 }
 
 // ---------- Reconnection state ----------
-// No hard limit on attempts — this is a desktop app; the connection should
+// No hard limit on attempts - this is a desktop app; the connection should
 // always recover from sleep / wake, network changes, or server restarts.
 let reconnectAttempts = 0;
 let reconnectTimer = null;
@@ -163,7 +190,7 @@ function scheduleReconnect() {
 export function forceReconnect() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   reconnectAttempts = 0;
-  // Close the old connection cleanly before opening a new one — prevents orphan sockets.
+  // Close the old connection cleanly before opening a new one - prevents orphan sockets.
   if (state.ws) {
     try { state.ws.onclose = null; state.ws.close(); } catch (_) {}
     state.ws = null;
@@ -172,6 +199,7 @@ export function forceReconnect() {
 }
 
 // ---------- Send ----------
+/** @param {WSOutgoingMessage | string} msg */
 export function sendWs(msg) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     state.ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
@@ -181,7 +209,7 @@ export function sendWs(msg) {
 // ---------- Connect ----------
 // Cookie auth is preferred (token stays out of URLs). But some setups block
 // cookies on localhost (Safari "block all cookies", restrictive private
-// modes) — the WS handshake then 403s forever even though the token is in
+// modes) - the WS handshake then 403s forever even though the token is in
 // localStorage, and every rejected handshake logs an unsuppressible native
 // browser error line. So instead of blindly trying cookie-only first, probe
 // cookie reachability once with a cheap same-origin fetch before the first
@@ -196,7 +224,7 @@ let authParamFallback = false;
 let authProbePromise = null;
 let authProbeSettled = false;
 
-// Probe target: GET /api/nf-tasks — lightweight (reads the task index),
+// Probe target: GET /api/nf-tasks - lightweight (reads the task index),
 // authenticated via extractToken (param → Authorization header → cookie), so
 // a bare same-origin fetch exercises exactly the cookie path the WS handshake
 // relies on. Verified: 403 without credentials, 200 with a valid cookie.
@@ -209,7 +237,7 @@ function probeCookieAuth() {
     if (resp.status === 401 || resp.status === 403) {
       authParamFallback = true;
     }
-  }).catch(() => { /* inconclusive — proceed cookie-first */ });
+  }).catch(() => { /* inconclusive - proceed cookie-first */ });
 }
 
 export function connect() {
@@ -225,7 +253,7 @@ export function connect() {
   if (storedToken) {
     // Skip the rewrite when the cookie already holds the right value: every
     // document.cookie op is a separate async message to the network service,
-    // so a purge+set immediately followed by new WebSocket() can race — the
+    // so a purge+set immediately followed by new WebSocket() can race - the
     // handshake may be evaluated in the empty-jar window between the purge
     // and the set → spurious 403 (observed in smoke tests). No rewrite, no
     // window.
@@ -234,7 +262,7 @@ export function connect() {
     if (current !== desired) {
       // Purge stale variants first: a cookie written by an older build with
       // different attributes (Secure / domain=) is a SEPARATE jar entry that a
-      // plain document.cookie write cannot replace — the server would keep
+      // plain document.cookie write cannot replace - the server would keep
       // seeing the stale value win the cookie race.
       const gone = '; expires=Thu, 01 Jan 1970 00:00:00 GMT';
       document.cookie = `nebflow_token=; path=/${gone}`;
@@ -255,7 +283,7 @@ export function connect() {
     }
     return;
   }
-  // Connect without token in URL — relies on cookie auth. After a rejected
+  // Connect without token in URL - relies on cookie auth. After a rejected
   // handshake (likely cookie blocked), retry with the ?token= fallback.
   const qs = (authParamFallback && storedToken) ? `?token=${encodeURIComponent(storedToken)}` : '';
   const wsUrl = `${proto}//${location.host}/ws${qs}`;
@@ -309,7 +337,7 @@ export function connect() {
       // Handshake rejected (e.g. 403) before the socket ever opened.
       if (!authParamFallback && storedToken) {
         authParamFallback = true;
-        console.info('[ws] handshake rejected — retrying with ?token= fallback (cookie may be blocked)');
+        console.info('[ws] handshake rejected - retrying with ?token= fallback (cookie may be blocked)');
       } else {
         const hint = storedToken
           ? 'token 无效或服务端已更换 token，请用启动日志中的带 token 地址重新打开'
@@ -330,7 +358,7 @@ export function connect() {
     try {
       const msg = JSON.parse(e.data);
 
-      // Pong reply — clear pending flag (used by heartbeat + wake detection)
+      // Pong reply - clear pending flag (used by heartbeat + wake detection)
       if (msg.type === 'pong') { state.pendingPong = false; return; }
 
       // ── BUG 6 fix: save/restore activeView ────────────────────────────
@@ -364,7 +392,7 @@ export function connect() {
 
       // ── Background-agent popup: intercept events with nodeSessionId ─────
       // Delegate sub-agent events carry nodeSessionId (injected by DelegateTool's
-      // routeWsSend — the "delegate-" prefix is backend protocol). Route them
+      // routeWsSend - the "delegate-" prefix is backend protocol). Route them
       // to the bg-agent popup's ChatView.
       // Checked BEFORE flowStepInterceptor because both use nodeSessionId —
       // bg-agent IDs start with "delegate-"/"subtask-" so we can distinguish.
@@ -373,7 +401,7 @@ export function connect() {
         if (converted) {
           const convList = handlers[converted.type];
           // Gating EXEMPT (regression fix): Delegate/SubTask sessions are
-          // ephemeral — the backend only persists their ui.json at completion,
+          // ephemeral - the backend only persists their ui.json at completion,
           // so getHistory returns empty while the sub-agent is still running.
           // Before hidden-view gating, live events rendered into the hidden
           // popup container and masked that gap; gating made the popup blank.
@@ -399,12 +427,12 @@ export function connect() {
       // ── Team agent events: convert + route to the agent's popup ──
       // MailTool.activateAgent stamps Mail-activated team agent events with
       // nodeSessionId = "team-<sessionId>". Convert them to standard chat
-      // events (agentTextDelta → textDelta, etc. — same as the flow/delegate
+      // events (agentTextDelta → textDelta, etc. - same as the flow/delegate
       // branches below) and route them to the popup ChatView. The popup is
       // registered under the BARE sessionId (openStepPopup keys team popups
       // with the unprefixed sid from /api/teams/mounted), so strip the
       // prefix before converting/looking up. Must NOT fall through to the
-      // flow interceptor below — its ensureStepView would key on the
+      // flow interceptor below - its ensureStepView would key on the
       // prefixed id and never match the popup.
       if (msg.nodeSessionId && msg.nodeSessionId.startsWith('team-')) {
         const bareSid = msg.nodeSessionId.replace(/^team-/, '');
@@ -497,14 +525,14 @@ onMessage('llmLogState', (msg) => {
 
 // ---------- Wake-up / network recovery ----------
 // When the OS sleeps, the browser suspends timers and the WebSocket dies at the
-// TCP level. On wake, detect this immediately and reconnect — don't wait for
+// TCP level. On wake, detect this immediately and reconnect - don't wait for
 // the exponential backoff timer (which may not fire for a while).
 function checkConnection() {
   if (!state.ws || state.ws.readyState === WebSocket.CLOSED || state.ws.readyState === WebSocket.CLOSING) {
-    // Connection is dead — reconnect immediately
+    // Connection is dead - reconnect immediately
     forceReconnect();
   } else if (state.ws.readyState === WebSocket.OPEN) {
-    // Connection looks alive — send a ping and verify with pong within 2s.
+    // Connection looks alive - send a ping and verify with pong within 2s.
     // Mac lid-open can leave the TCP connection in a half-open state where
     // the browser hasn't fired onclose yet.
     state.pendingPong = true;
@@ -523,6 +551,6 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('online', () => {
-  // Network came back — give it a moment then check
+  // Network came back - give it a moment then check
   setTimeout(checkConnection, 500);
 });

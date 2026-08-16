@@ -1,4 +1,4 @@
-// fileViewers.js — Pluggable file viewer registry for Canvas tabs.
+// fileViewers.js - Pluggable file viewer registry for Canvas tabs.
 //
 // Each viewer is a protocol object (see js/viewers/*.js):
 //   { name, label, extensions, binary, priority, render(pane, ctx) }
@@ -6,7 +6,7 @@
 //
 // The registry maps itemType → viewer object. Built-in viewers are statically
 // imported and registered at module load (P1: no lazy loading, zero risk).
-// 'url' intentionally stays out of the registry — it is handled inline by
+// 'url' intentionally stays out of the registry - it is handled inline by
 // canvas.js (no file-extension semantics).
 
 import { escapeHtml } from './viewers/shared.js';
@@ -23,7 +23,10 @@ import epubViewer from './viewers/epub.js';
 
 const registry = new Map();  // itemType → viewer protocol object
 
-/** Register (or overwrite) a viewer. name = itemType it handles. */
+/**
+ * Register (or overwrite) a viewer. name = itemType it handles.
+ * @param {import('./utils.js').ViewerProtocol} viewer
+ */
 export function registerViewer(viewer) {
   registry.set(viewer.name, viewer);
 }
@@ -34,7 +37,10 @@ function registerBuiltIns() {
     markdownViewer, yamlViewer, htmlViewer,
     imageViewer, pdfViewer, docxViewer, xlsxViewer, pptxViewer, epubViewer,
   ]) {
-    registerViewer(viewer);
+    // The built-in viewer modules predate the ViewerProtocol typedef and
+    // destructure ctx fields with locally-required shapes — cast at this
+    // boundary; new viewers should conform to ViewerProtocol directly.
+    registerViewer(/** @type {import('./utils.js').ViewerProtocol} */ (viewer));
   }
 }
 registerBuiltIns();
@@ -42,8 +48,8 @@ registerBuiltIns();
 /**
  * Render file content into a Canvas tab pane using the appropriate viewer.
  * Falls back to the code viewer if no viewer matches.
- * @param {HTMLElement} pane — the tab content pane
- * @param {Object} ctx — { itemType, content, absPath, fileName, size }
+ * @param {HTMLElement} pane - the tab content pane
+ * @param {import('./utils.js').ViewerContext} ctx
  */
 export async function renderFile(pane, ctx) {
   const viewer = registry.get(ctx.itemType) || registry.get('code');

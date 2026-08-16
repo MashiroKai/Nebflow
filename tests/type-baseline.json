@@ -1,9 +1,8 @@
 {
   "generatedBy": "scripts/check-js-types.mjs --update",
-  "total": 420,
+  "total": 372,
   "files": {
     "src/main/resources/web/js/activityBar.js": {
-      "TS2304": 1,
       "TS2345": 1,
       "TS2339": 9
     },
@@ -37,7 +36,6 @@
       "TS2339": 2
     },
     "src/main/resources/web/js/daemons.js": {
-      "TS2304": 2,
       "TS2339": 7,
       "TS2345": 1
     },
@@ -46,14 +44,12 @@
     },
     "src/main/resources/web/js/explorer.js": {
       "TS2339": 31,
-      "TS2304": 1,
       "TS2554": 2
     },
     "src/main/resources/web/js/flowAgentPopup.js": {
       "TS2339": 1
     },
     "src/main/resources/web/js/flowCanvas.js": {
-      "TS2304": 4,
       "TS2339": 9
     },
     "src/main/resources/web/js/flowDag.js": {
@@ -84,7 +80,6 @@
     },
     "src/main/resources/web/js/main.js": {
       "TS2339": 16,
-      "TS2304": 10,
       "TS2554": 3,
       "TS2345": 3
     },
@@ -115,30 +110,21 @@
     "src/main/resources/web/js/scheduled-task.js": {
       "TS2362": 1,
       "TS2363": 1,
-      "TS2304": 3,
       "TS2339": 8
     },
     "src/main/resources/web/js/sidebar.js": {
       "TS2339": 108,
-      "TS2304": 2,
       "TS2345": 1
     },
     "src/main/resources/web/js/taskArchive.js": {
       "TS2339": 1,
       "TS2362": 3,
-      "TS2363": 3,
-      "TS2304": 1
+      "TS2363": 3
     },
     "src/main/resources/web/js/taskList.js": {
       "TS2362": 1,
       "TS2363": 1,
-      "TS2304": 3,
       "TS2339": 4
-    },
-    "src/main/resources/web/js/utils.js": {
-      "TS2304": 19,
-      "TS1117": 1,
-      "TS2339": 1
     },
     "src/main/resources/web/js/viewers/docx.js": {
       "TS2339": 4

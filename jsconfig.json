@@ -11,5 +11,5 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": []
   },
-  "include": ["src/main/resources/web/js/**/*.js"]
+  "include": ["src/main/resources/web/js/**/*.js", "src/main/resources/web/js/**/*.d.ts"]
 }

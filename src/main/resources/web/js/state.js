@@ -1,3 +1,38 @@
+// ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
+// These are the cross-module data shapes other files should reference via
+// import('./state.js').<Name> in JSDoc, instead of re-declaring them ad hoc.
+
+/**
+ * A chat session as returned by /api/sessions and the sessionList WS event.
+ * @typedef {Object} Session
+ * @property {string} id
+ * @property {string} [title]
+ * @property {string} [name]
+ * @property {string} [agentName]
+ * @property {string|null} [folderId]
+ * @property {number} [createdAt] - epoch ms
+ * @property {number} [updatedAt] - epoch ms
+ * @property {boolean} [enabled]
+ * @property {boolean} [hasUnread]
+ */
+
+/**
+ * Background sub-agent row tracked in sessionBgAgents.
+ * @typedef {Object} BgAgent
+ * @property {string} name
+ * @property {string} [task]
+ * @property {string} [currentTool]
+ * @property {boolean} [done]
+ */
+
+/**
+ * Per-session model info (sessionModelInfo map values).
+ * @typedef {Object} SessionModelInfo
+ * @property {string} model
+ * @property {number} [contextWindow]
+ * @property {number} [inputTokens]
+ */
+
 // Constants
 export const LS_KEY = 'nebflow_v3';
 export const LS_SESSIONS_KEY = 'nebflow_sessions';
@@ -42,7 +77,7 @@ export default {
   // Per-session safety mode: "confirm-edits" | "auto-edits" | "auto-all"
   safetyModes: {},  // sessionId → mode string
 
-  // Chat streaming (per-session status sets — view-level state lives on ChatView)
+  // Chat streaming (per-session status sets - view-level state lives on ChatView)
   busySessionIds: new Set(),
   sessionBusyTimeouts: {},
   compactingSessionIds: new Set(),
@@ -50,7 +85,7 @@ export default {
   // Timestamp of the last textDelta/thinkingDelta received (ms).
   lastStreamActivity: 0,
 
-  // Multi-agent (global color assignment — per-view bubbles live on ChatView)
+  // Multi-agent (global color assignment - per-view bubbles live on ChatView)
   agentColors: {},
   agentColorIdx: 0,
   activeDelegates: 0,
