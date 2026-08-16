@@ -362,7 +362,7 @@ class WebSocketRoutes(
     else ensureAgent(sessionId)(ref => ref ! command)
 
   def routes: HttpRoutes[IO] =
-    WebSocketRoutes.uploadsRoutes(token) <+> WebSocketRoutes.jsRoutes <+> HttpRoutes.of[IO] {
+    WebSocketRoutes.uploadsRoutes(token) <+> WebSocketRoutes.jsRoutes <+> WebSocketRoutes.assetsRoutes <+> HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
       // Cookie takes priority to avoid token leakage in browser history/logs/Referer.
       // Query param kept as fallback for cross-origin or first-load scenarios.
@@ -545,8 +545,17 @@ class WebSocketRoutes(
       end if
 
     case req @ GET -> Root =>
+      // P1 single switch point: when the esbuild dist is packed on the
+      // classpath (sbt -Dnebflow.webdist=1 assembly), "/" serves the bundled
+      // dist entry; otherwise the dev source tree entry. Everything else the
+      // dist index references is either under /assets (assetsRoutes) or a
+      // byte-identical passthrough (vendor, fonts, icons) served by the
+      // existing web/ routes — no fallback logic, the entry and its hashed
+      // deps come from one atomic build-web.mjs run.
+      val indexResource =
+        if WebSocketRoutes.hasBundledDist then "web-dist/index.html" else "web/index.html"
       StaticFile
-        .fromResource("web/index.html", Some(req))
+        .fromResource(indexResource, Some(req))
         .map(_.putHeaders("Cache-Control" -> "no-cache"))
         .getOrElseF(NotFound())
 
@@ -3882,6 +3891,49 @@ object WebSocketRoutes:
       else if canonicalBase == canonicalRoot then Left("cannot delete project root")
       else Right(basePath)
     catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
+
+  /**
+    * P1: true when the esbuild production bundle is packed on the classpath
+    * (sbt -Dnebflow.webdist=1 assembly mounts build/ as a resource dir).
+    * Lazy — the classpath is fixed for the JVM's lifetime, so this resolves
+    * once. Single switch point for the static tree: only the "/" entry
+    * chooses between dist and dev sources; all other static routes keep
+    * serving the web/ source tree (vendor passthrough is byte-identical in
+    * both trees, and the C1 source-mode contract requires web/ paths to stay
+    * green on prod instances too).
+    */
+  lazy val hasBundledDist: Boolean =
+    getClass.getClassLoader.getResource("web-dist/index.html") != null
+
+  /**
+    * P1: serve the bundled asset tree (any depth under the /assets prefix —
+    * hashed entry and lazy chunks produced by build-web.mjs). Guard pattern
+    * copied from jsRoutes: trailing-slash (directory request) is rejected,
+    * path traversal (`..` and backslash) is rejected, and the lookup is a
+    * plain classpath resource join. Serves ONLY the web-dist tree — the
+    * hashed names are a dist-build artifact and never exist in dev sources.
+    * In dev every /assets request 404s; harmless, the dev index never
+    * references the /assets prefix.
+    *
+    * Standalone (zero class deps) so it is directly unit-testable; composed
+    * ahead of the instance routes like jsRoutes.
+    */
+  def assetsRoutes: HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case req @ GET -> _ if req.uri.path.renderString.startsWith("/assets/") =>
+      if req.uri.path.endsWithSlash then NotFound()
+      else
+        val relParts = req.uri.path.segments.map(_.encoded).toList.drop(1) // drop "assets"
+        if relParts.isEmpty || relParts.last.isEmpty then NotFound()
+        else if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+        else
+          val path = relParts.mkString("/")
+          StaticFile
+            .fromResource(s"web-dist/assets/$path", Some(req))
+            .map(_.putHeaders("Cache-Control" -> "no-cache"))
+            .getOrElseF(NotFound())
+        end if
+      end if
+  }
 
   /**
     * G1: serve user-uploaded attachments from
