@@ -20,6 +20,7 @@ object CommandRegistry:
       AutoStartCommand,
       // Gateway commands
       ChatCommand,
+      RunCommand,
       AskCommand,
       InterruptCommand,
       SessionCommand,

@@ -4,7 +4,7 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.NebflowLogger
+import nebflow.core.{HeadlessMode, NebflowLogger}
 
 import java.util.UUID
 
@@ -143,7 +143,11 @@ object TelemetryReporter:
     endpoint: String = DefaultEndpoint,
     sender: TelemetrySender = HttpTelemetrySender
   ): IO[Option[TelemetryReporter]] =
-    if !isEnabled then IO.pure(None)
+    // Headless (NEBFLOW_HEADLESS=1): benchmark mode disables telemetry —
+    // deterministic runs, no background network traffic. Same None path as
+    // the existing opt-out; callers treat None as "no reporter" and skip
+    // record/flush entirely.
+    if !isEnabled || HeadlessMode.enabled then IO.pure(None)
     else
       for
         clientId <- loadOrCreateClientId
