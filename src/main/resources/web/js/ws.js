@@ -182,9 +182,35 @@ export function sendWs(msg) {
 // Cookie auth is preferred (token stays out of URLs). But some setups block
 // cookies on localhost (Safari "block all cookies", restrictive private
 // modes) — the WS handshake then 403s forever even though the token is in
-// localStorage. Track pre-open handshake failures and fall back to ?token=
-// on the WS URL, which the server accepts as a secondary credential.
+// localStorage, and every rejected handshake logs an unsuppressible native
+// browser error line. So instead of blindly trying cookie-only first, probe
+// cookie reachability once with a cheap same-origin fetch before the first
+// WebSocket attempt:
+//   200      → cookie rides along → connect cookie-first (token out of URL)
+//   401/403  → cookie blocked → connect with ?token= on the FIRST attempt,
+//              so the doomed cookie-only handshake never happens
+//   fetch error (server restarting, network down) → inconclusive → fall
+//              through to cookie-first; the onclose fallback chain below
+//              stays as the last line of defense.
 let authParamFallback = false;
+let authProbePromise = null;
+let authProbeSettled = false;
+
+// Probe target: GET /api/nf-tasks — lightweight (reads the task index),
+// authenticated via extractToken (param → Authorization header → cookie), so
+// a bare same-origin fetch exercises exactly the cookie path the WS handshake
+// relies on. Verified: 403 without credentials, 200 with a valid cookie.
+function probeCookieAuth() {
+  return fetch('/api/nf-tasks?limit=1', {
+    credentials: 'same-origin',
+    cache: 'no-store',
+    signal: AbortSignal.timeout(3000),
+  }).then(resp => {
+    if (resp.status === 401 || resp.status === 403) {
+      authParamFallback = true;
+    }
+  }).catch(() => { /* inconclusive — proceed cookie-first */ });
+}
 
 export function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -197,14 +223,37 @@ export function connect() {
   // Set auth cookie so the WebSocket connection authenticates via cookie
   // instead of exposing the token in the URL (history/logs/Referer leakage).
   if (storedToken) {
-    // Purge stale variants first: a cookie written by an older build with
-    // different attributes (Secure / domain=) is a SEPARATE jar entry that a
-    // plain document.cookie write cannot replace — the server would keep
-    // seeing the stale value win the cookie race.
-    const gone = '; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-    document.cookie = `nebflow_token=; path=/${gone}`;
-    document.cookie = `nebflow_token=; path=/; domain=${location.hostname}${gone}`;
-    document.cookie = `nebflow_token=${encodeURIComponent(storedToken)}; path=/; SameSite=Strict`;
+    // Skip the rewrite when the cookie already holds the right value: every
+    // document.cookie op is a separate async message to the network service,
+    // so a purge+set immediately followed by new WebSocket() can race — the
+    // handshake may be evaluated in the empty-jar window between the purge
+    // and the set → spurious 403 (observed in smoke tests). No rewrite, no
+    // window.
+    const desired = encodeURIComponent(storedToken);
+    const current = document.cookie.match(/(?:^|;\s*)nebflow_token=([^;]*)/)?.[1];
+    if (current !== desired) {
+      // Purge stale variants first: a cookie written by an older build with
+      // different attributes (Secure / domain=) is a SEPARATE jar entry that a
+      // plain document.cookie write cannot replace — the server would keep
+      // seeing the stale value win the cookie race.
+      const gone = '; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      document.cookie = `nebflow_token=; path=/${gone}`;
+      document.cookie = `nebflow_token=; path=/; domain=${location.hostname}${gone}`;
+      document.cookie = `nebflow_token=${desired}; path=/; SameSite=Strict`;
+    }
+  }
+  // First connect: probe cookie reachability before opening the WebSocket so
+  // a cookie-blocked browser goes straight to ?token= (zero rejected
+  // handshakes, zero native browser error lines). Deferred connects while the
+  // probe is in flight simply wait for it to settle.
+  if (!authProbeSettled) {
+    if (!authProbePromise) {
+      authProbePromise = probeCookieAuth().finally(() => {
+        authProbeSettled = true;
+        connect();
+      });
+    }
+    return;
   }
   // Connect without token in URL — relies on cookie auth. After a rejected
   // handshake (likely cookie blocked), retry with the ?token= fallback.
@@ -260,7 +309,7 @@ export function connect() {
       // Handshake rejected (e.g. 403) before the socket ever opened.
       if (!authParamFallback && storedToken) {
         authParamFallback = true;
-        console.warn('[ws] handshake rejected — retrying with ?token= fallback (cookie may be blocked)');
+        console.info('[ws] handshake rejected — retrying with ?token= fallback (cookie may be blocked)');
       } else {
         const hint = storedToken
           ? 'token 无效或服务端已更换 token，请用启动日志中的带 token 地址重新打开'
