@@ -325,10 +325,10 @@ export async function autoRestore() {
         const restStatus = (a.status || 'idle').toLowerCase() === 'running' ? 'running' : 'idle';
         const liveStatus = agentStatus.get(a.sessionId);
         // Live agentStart/agentDone events are the source of truth; the
-        // server's /api/teams/mounted status is only a fallback. Never let a
-        // stale "idle" from the server demote a live "running" — the backend
-        // busyMap (FlowTreeActor.markBusy/markIdle) has no callers and always
-        // reports idle, so a demote here would erase the running state the
+        // server's /api/teams/mounted status (backed by the backend busyMap —
+        // AgentActor markTeamBusy/markIdle, verified with 5 call sites) is
+        // only a fallback. Never let a stale "idle" REST snapshot demote a
+        // live "running" — a demote here would erase the running state the
         // moment the Teams tab is re-opened.
         if (!liveStatus) agentStatus.set(a.sessionId, restStatus);
         else if (restStatus === 'running' && liveStatus !== 'running') agentStatus.set(a.sessionId, 'running');

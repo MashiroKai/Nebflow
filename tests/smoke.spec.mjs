@@ -7,12 +7,21 @@
 // - DOM structure issues
 //
 // Run: npx playwright test tests/smoke.spec.mjs
-// Requires: server running on localhost:8080 (override via BASE_URL / NEBFLOW_TOKEN)
+// Requires: a running Nebflow server. Defaults to localhost:8080; override
+// with BASE_URL. Token resolution: NEBFLOW_TOKEN env first, then the running
+// instance's own ~/.nebflow/auth.json — no hardcoded token (that hardcode is
+// what historically kept this suite out of CI).
 
 import { test, expect } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:8080';
-const TOKEN = process.env.NEBFLOW_TOKEN ?? 'Oh5y80hS3xs1RyENe4PVK46mrWtRh_uo6YuwnTBQoyA';
+const TOKEN = process.env.NEBFLOW_TOKEN ?? (() => {
+  try { return JSON.parse(readFileSync(join(homedir(), '.nebflow', 'auth.json'), 'utf8')); }
+  catch { return ''; }
+})();
 
 test.beforeEach(async ({ page }) => {
   // Capture all console errors for later assertion
@@ -20,8 +29,16 @@ test.beforeEach(async ({ page }) => {
   page._pageErrors = [];
   // Track which URLs are 403 so we can filter known-benign ones
   page._forbiddenUrls = new Set();
+  // Whole-session asset watch: any /js/ or /vendor/ 404 at ANY point (not
+  // just the networkidle window) means a static-route contract break — the
+  // exact failure mode of the viewer plugin 404 incident.
+  page._asset404s = [];
   page.on('response', (resp) => {
     if (resp.status() === 403) page._forbiddenUrls.add(resp.url());
+    if (resp.status() === 404) {
+      const path = new URL(resp.url()).pathname;
+      if (path.startsWith('/js/') || path.startsWith('/vendor/')) page._asset404s.push(resp.url());
+    }
   });
   page.on('console', (msg) => {
     if (msg.type() === 'error') page._consoleErrors.push(msg.text());
@@ -44,6 +61,18 @@ function filterBenignErrors(page, errors) {
     return false;
   };
   return errors.filter(e => !isBenign(e));
+}
+
+/** Dismiss the first-boot onboarding overlay if present — it intercepts
+ *  pointer events page-wide and would block every click-based test on a
+ *  fresh instance (CI). Clicks the real 跳过 button (sends 'skipped', which
+ *  is exempt from the backend probe gate). */
+async function dismissOnboarding(page) {
+  const skip = page.locator('#ob-skip');
+  if (await skip.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await skip.click();
+    await expect(page.locator('.onboarding-overlay')).toHaveCount(0, { timeout: 5000 });
+  }
 }
 
 test.describe('Smoke — page load', () => {
@@ -83,6 +112,7 @@ test.describe('Smoke — Flow Canvas', () => {
     await page.goto(`${BASE}/?token=${TOKEN}`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
+    await dismissOnboarding(page);
 
     // Click the flow toggle button
     const flowBtn = page.locator('#flow-toggle-btn');
@@ -212,5 +242,120 @@ test.describe('Smoke — WS auth probe-first', () => {
       /WebSocket connection .* failed/i.test(e) || /handshake rejected/i.test(e)
     );
     expect(wsErrors, `WS errors:\n${wsErrors.join('\n')}`).toEqual([]);
+  });
+});
+
+test.describe('Smoke — lazy-load paths (real backend)', () => {
+
+  test('Canvas renders files via the real readFile chain (lazy viewer modules)', async ({ page }) => {
+    const assetReqs = [];
+    page.on('response', (r) => {
+      if (r.url().includes('/js/viewers/') || r.url().includes('/api/nf-file')) {
+        assetReqs.push(`${r.status()} ${r.url()}`);
+      }
+    });
+
+    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await page.waitForLoadState('networkidle');
+    // WS open = send button no longer marked disconnected
+    await expect(page.locator('#send-btn')).not.toHaveClass(/disconnected/, { timeout: 10000 });
+
+    // Drive the REAL chain: WS readFile → fileContent → workspace-open-item →
+    // openWorkspaceItem → dynamic import('./fileViewers.js') → viewers/*.js.
+    // No DOM mocking — a broken static route or import path fails here.
+    await page.evaluate(async (root) => {
+      const { sendWs } = await import('/js/ws.js');
+      const state = (await import('/js/state.js')).default;
+      sendWs({ type: 'readFile', sessionId: state.activeSessionId || 'smoke', path: 'README.md', rootPath: root });
+    }, process.cwd());
+
+    await page.locator('.canvas-tab', { hasText: 'README.md' }).waitFor({ timeout: 8000 });
+    await page.waitForFunction(() => {
+      for (const p of document.querySelectorAll('.canvas-tab-pane')) {
+        if (/nebflow/i.test(p.textContent)) return true;
+      }
+      return false;
+    }, { timeout: 8000 });
+    expect(
+      assetReqs.some(r => r.startsWith('200') && r.includes('/js/viewers/markdown.js')),
+      `markdown viewer module must load 200:\n${assetReqs.join('\n')}`
+    ).toBe(true);
+
+    // Binary image: content does NOT arrive via WS — the image viewer fetches
+    // /api/nf-file itself. Assert both the render and the fetch.
+    // (Opened after the markdown assertions: a second preview tab REPLACES
+    // the first — VS Code semantics, canvas.js previewKeyOf.)
+    await page.evaluate(async (root) => {
+      const { sendWs } = await import('/js/ws.js');
+      const state = (await import('/js/state.js')).default;
+      sendWs({ type: 'readFile', sessionId: state.activeSessionId || 'smoke', path: 'tests/fixtures/pic.png', rootPath: root });
+    }, process.cwd());
+    await page.locator('.canvas-tab', { hasText: 'pic.png' }).waitFor({ timeout: 8000 });
+    await page.waitForSelector('.canvas-image-viewer img', { timeout: 8000 });
+    expect(
+      assetReqs.some(r => r.startsWith('200') && r.includes('/api/nf-file')),
+      `image viewer must fetch /api/nf-file 200:\n${assetReqs.join('\n')}`
+    ).toBe(true);
+
+    expect(page._asset404s, `asset 404s:\n${page._asset404s.join('\n')}`).toEqual([]);
+    const realErrors = filterBenignErrors(page, page._consoleErrors);
+    expect(realErrors, `Console errors:\n${realErrors.join('\n')}`).toEqual([]);
+    expect(page._pageErrors, `Page errors:\n${page._pageErrors.join('\n')}`).toEqual([]);
+  });
+
+  test('task list collapse bar → 查看全部 → archive tab (real /api/nf-tasks)', async ({ page }) => {
+    const nfTaskReqs = [];
+    page.on('response', (r) => {
+      if (r.url().includes('/api/nf-tasks')) nfTaskReqs.push(r.status());
+    });
+
+    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('#send-btn')).not.toHaveClass(/disconnected/, { timeout: 10000 });
+    await dismissOnboarding(page);
+
+    // A fresh instance has no tasks, so the collapse bar never appears on its
+    // own. Feed the same entry point the WS taskListUpdate handler uses
+    // (renderTaskList) with one completed-today task, then click through the
+    // real UI: bar → expand → 查看全部 → archive Canvas tab.
+    await page.evaluate(async () => {
+      const { renderTaskList } = await import('/js/taskList.js');
+      renderTaskList([{
+        id: 'smoke-task-1',
+        subject: 'Smoke completed task',
+        status: 'completed',
+        completedAt: new Date().toISOString(),
+        notes: [],
+      }], null, 'smoke');
+    });
+    await page.locator('.task-today-bar').click();
+    await page.locator('.task-today-all').click();
+
+    // Archive opens as a Canvas tab and fetches the real /api/nf-tasks.
+    await page.locator('.canvas-tab', { hasText: /任务档案|Task Archive/ }).waitFor({ timeout: 8000 });
+    await expect.poll(() => nfTaskReqs.length, { timeout: 8000 }).toBeGreaterThan(0);
+    expect(nfTaskReqs[0], '/api/nf-tasks must be 200').toBe(200);
+
+    expect(page._asset404s, `asset 404s:\n${page._asset404s.join('\n')}`).toEqual([]);
+    const realErrors = filterBenignErrors(page, page._consoleErrors);
+    expect(realErrors, `Console errors:\n${realErrors.join('\n')}`).toEqual([]);
+    expect(page._pageErrors, `Page errors:\n${page._pageErrors.join('\n')}`).toEqual([]);
+  });
+
+  test('settings modal opens and closes', async ({ page }) => {
+    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('#send-btn')).not.toHaveClass(/disconnected/, { timeout: 10000 });
+    await dismissOnboarding(page);
+
+    await page.locator('#settings-btn').click();
+    await expect(page.locator('#settings-overlay')).toHaveClass(/on/, { timeout: 5000 });
+    await page.locator('#settings-modal-close').click();
+    await expect(page.locator('#settings-overlay')).not.toHaveClass(/on/, { timeout: 5000 });
+
+    expect(page._asset404s, `asset 404s:\n${page._asset404s.join('\n')}`).toEqual([]);
+    const realErrors = filterBenignErrors(page, page._consoleErrors);
+    expect(realErrors, `Console errors:\n${realErrors.join('\n')}`).toEqual([]);
+    expect(page._pageErrors, `Page errors:\n${page._pageErrors.join('\n')}`).toEqual([]);
   });
 });
