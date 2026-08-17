@@ -856,8 +856,9 @@ Message type (optional, default "INFO"):
       case _ =>
         IO.pure(Left(ToolError(s"Cannot activate session for '$shortName': missing resources")))
 
-  /** Activate a team agent session by spawning an AgentActor (replaces FlowAgentActivator). */
-  private def activateAgent(
+  /** Activate a team agent session by spawning an AgentActor (replaces FlowAgentActivator).
+    * Package-visible for the lifecycle spec (respawn history + death watch). */
+  private[tools] def activateAgent(
     sessionId: String,
     resources: SharedResources,
     actorSystem: ActorSystem,
@@ -914,7 +915,19 @@ Message type (optional, default "INFO"):
                     .map(obj => Json.fromJsonObject(obj.add("nodeSessionId", s"team-${session.id}".asJson)))
                     .getOrElse(json)
               underlying(stamped)
+            // Session history for the (re)spawn: team agents are LONG-LIVED
+            // and their sessions persist across activations — a respawn
+            // without the stored messages is an amnesiac agent (turn counts
+            // reset, prior context lost). Same pattern as doFork and the
+            // root-agent restore (WebSocketRoutes.ensureRootAgent).
+            val historyIo: IO[List[Message]] = resources.sessionStore
+              .loadMessagesForSession(session.id)
+              .handleError { e =>
+                logger.warn(s"activateAgent: history load failed for ${session.id}: ${e.getMessage}")
+                List.empty[Message]
+              }
             for
+              history <- historyIo
               // Actor name = session.id pins the event contract
               // "agentId == sessionId" (documented at the getActiveAgents
               // reply: restored bg-agent entries key by sessionId so they
@@ -936,6 +949,7 @@ Message type (optional, default "INFO"):
                   parentRef = ctx.agentActorRef,
                   sessionId = Some(session.id),
                   sessionName = Some(session.name),
+                  initialMessages = history,
                   projectRoot = Some(ctx.projectRoot),
                   safetyMode = safetyMode,
                   rootSessionId = rootSid,
