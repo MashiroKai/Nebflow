@@ -60,6 +60,12 @@ jobs:
         if: steps.check.outputs.skipped == 'false'
         run: sbt -Dmunit.failOnFlaky=false test
 
+      - name: Brand values from brand.conf
+        # L2 rebrand: single source — every brand string below flows from here.
+        run: |
+          bv() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" brand.conf | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1; }
+          echo "LOWER_NAME=$(bv lowerName)" >> $GITHUB_ENV
+          echo "COS_BUCKET=$(bv cosBucket)" >> $GITHUB_ENV
       - name: Build assembly
         if: steps.check.outputs.skipped == 'false'
         run: sbt assembly
@@ -79,7 +85,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "v${{ steps.version.outputs.version }}"
-          files: target/scala-3.5.2/nebflow-assembly-*.jar
+          files: target/scala-3.5.2/${{ env.LOWER_NAME }}-assembly-*.jar
           prerelease: true
           generate_release_notes: true
 
@@ -90,8 +96,8 @@ jobs:
           COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
         run: |
           pip install coscmd 2>/dev/null
-          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b nebflow-releases-1411212853 -e cos.accelerate.myqcloud.com
-          JAR=$(ls target/scala-3.5.2/nebflow-assembly-*.jar | head -1)
+          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b "$COS_BUCKET" -e cos.accelerate.myqcloud.com
+          JAR=$(ls target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar | head -1)
           coscmd upload "$JAR" "$(basename "$JAR")" -f
           echo "  Uploaded $(basename "$JAR") to COS"
           echo -n "${{ steps.version.outputs.version }}" > /tmp/latest-beta-version.txt
