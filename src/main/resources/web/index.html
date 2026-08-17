@@ -342,14 +342,21 @@
       <div class="search-controls">
         <input id="search-keyword" type="text" placeholder="Keyword…" autocomplete="off"
                role="combobox" aria-expanded="true" aria-controls="search-results">
+        <div class="search-tabs" role="tablist" aria-label="Search categories">
+          <button type="button" class="search-tab" id="search-tab-all" role="tab" aria-selected="true" data-tab="all"></button>
+          <button type="button" class="search-tab" id="search-tab-images" role="tab" aria-selected="false" data-tab="images"></button>
+          <button type="button" class="search-tab" id="search-tab-files" role="tab" aria-selected="false" data-tab="files"></button>
+          <button type="button" class="search-tab" id="search-tab-cards" role="tab" aria-selected="false" data-tab="cards"></button>
+          <button type="button" class="search-tab" id="search-tab-date" role="tab" aria-selected="false"
+                  aria-haspopup="dialog" aria-expanded="false" data-tab="date"></button>
+        </div>
         <div class="search-filters">
           <select id="search-scope" class="cfg-select"></select>
           <select id="search-agent" class="cfg-select"></select>
           <select id="search-tool" class="cfg-select"></select>
-          <input id="search-date-from" class="cfg-input" type="date">
-          <input id="search-date-to" class="cfg-input" type="date">
           <button id="search-go" class="glass-control cfg-btn cfg-btn-sm">Search</button>
         </div>
+        <div id="search-date-popover" role="dialog" hidden></div>
       </div>
       <div id="search-status" aria-live="polite"></div>
       <div id="search-results" role="listbox"></div>
