@@ -3,6 +3,7 @@
 // Theme CSS variables are injected into iframes for dark mode support.
 
 import state from './state.js';
+import { key } from './branding.js';
 import { smartScroll } from './utils.js';
 
 let _iframeId = 0;
@@ -153,7 +154,7 @@ window.addEventListener('message', (e) => {
 });
 /** Read the nebflow auth token from localStorage (set by ws.js on connect). */
 function getNfToken() {
-  return localStorage.getItem('nebflow_token') || '';
+  return localStorage.getItem(key('token')) || '';
 }
 
 /** Inject auth token into /api/nf-file URLs so the sandboxed iframe can fetch them.

@@ -1,3 +1,4 @@
+import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
 import state from './state.js';
 import { initBranding } from './brand.js';
 
@@ -2393,7 +2394,7 @@ onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
 
 // Sidebar collapse toggle
 (function initSidebarToggle() {
-  const LS_KEY = 'nebflow_sidebar_collapsed';
+  const LS_KEY = key('sidebar_collapsed');
   const btn = document.getElementById('sidebar-toggle');
   if (!btn) return;
   const collapsed = localStorage.getItem(LS_KEY) === 'true';
@@ -2515,7 +2516,7 @@ onMessage('activeAgents', (msg) => {
     if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
     state.sessionBgAgents[sid][a.agentId] = {
       name: a.agentName || a.agentId,
-      task: '',
+      task: a.task || '',
       sessionId: a.sessionId || '',
       currentTool: null,
       done: false,

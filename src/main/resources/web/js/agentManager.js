@@ -2,13 +2,14 @@
 // The Agents tab lists compact agent cards. Click opens a Canvas detail tab.
 
 import state from './state.js';
+import { key } from './branding.js';
 import { sendWs } from './ws.js';
 import { openTab, getTabPane, hasTab, setActiveTab } from './canvas.js';
 import { t } from './i18n.js';
 import * as presets from './presets.js';
 
 // ── Helpers ────────────────────────────────────────────────
-function getToken() { return localStorage.getItem('nebflow_token') || ''; }
+function getToken() { return localStorage.getItem(key('token')) || ''; }
 function authHeaders() {
   const tok = getToken();
   return tok ? { Authorization: `Bearer ${tok}` } : {};

@@ -1,5 +1,7 @@
 // flowHelpers.js — Shared utilities for flow visualization modules.
 
+import { key } from './branding.js';
+
 export function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -7,7 +9,7 @@ export function esc(s) {
 }
 
 export function authHeaders() {
-  const token = localStorage.getItem('nebflow_token') || '';
+  const token = localStorage.getItem(key('token')) || '';
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 

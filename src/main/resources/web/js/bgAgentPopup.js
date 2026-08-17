@@ -12,6 +12,7 @@ import { sendWs, onMessage, setBgAgentStepInterceptor } from './ws.js';
 import { restoreFromBackendHistory } from './persistence.js';
 import { isBgAgentId } from './utils.js';
 import state from './state.js';
+import { key } from './branding.js';
 
 // ── Per-sub-agent state ────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -352,7 +353,7 @@ function esc(str) {
 /** Fetch agent model config and render a badge in the popup header. */
 async function fetchAgentModelBadge(agentName) {
   try {
-    const token = localStorage.getItem('nebflow_token') || '';
+    const token = localStorage.getItem(key('token')) || '';
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const resp = await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers });
     if (!resp.ok) return;

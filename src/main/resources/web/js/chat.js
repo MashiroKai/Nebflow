@@ -2,6 +2,7 @@
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';
+import { key } from './branding.js';
 import { activeView, setActiveView } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
@@ -9,7 +10,9 @@ import { t } from './i18n.js';
 import { sendWs } from './ws.js';
 
 // ---------- Time format preference (12h / 24h toggle) ----------
-const TIME_FORMAT_KEY = 'nebflow:timeFormat';
+// Legacy spelling 'nebflow:timeFormat' is normalized into this key by
+// branding.js at module init (see LEGACY_IRREGULAR there).
+const TIME_FORMAT_KEY = key('time_format');
 let _timeFormat = localStorage.getItem(TIME_FORMAT_KEY) || '24h';
 
 function refreshAllTimestamps() {
@@ -1339,7 +1342,7 @@ export function renderCompactFailCard(view = activeView, text) {
 
 // ---------- Universal Option Box ----------
 // Renders an inline option picker. Used by AskUser tool, /thinking, permission prompts.
-const ASKUSER_DRAFTS_KEY = 'nebflow_askuser_drafts';
+const ASKUSER_DRAFTS_KEY = key('askuser_drafts');
 
 function loadAskDrafts(sid) {
   try { return JSON.parse(localStorage.getItem(ASKUSER_DRAFTS_KEY))?.[sid] || {}; } catch { return {}; }

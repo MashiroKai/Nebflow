@@ -2,6 +2,7 @@
 // All send logic, keyboard/input events, slash commands, attachments, drag/drop, voice.
 
 import state, { LS_HISTORY_KEY } from './state.js';
+import { key } from './branding.js';
 import { activeView, setActiveView, chatViews, findViewBySessionId } from './chatView.js';
 import { sendWs } from './ws.js';
 import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble, cancelToolStreamRAF, refreshSendButtonState } from './chat.js';
@@ -714,7 +715,7 @@ export function send() {
 // ---------- Input Queue (messages typed while LLM is busy) ----------
 
 let queueCounter = 0;
-const LS_QUEUE_KEY = 'nebflow_message_queue';
+const LS_QUEUE_KEY = key('message_queue');
 
 /** Persist message queue to localStorage so it survives browser refresh. */
 function persistQueue() {
@@ -1336,7 +1337,7 @@ export function initInput(view) {
     voiceBtn.classList.add('recording');
     input.classList.add('voice-dictating');
     input.focus();
-    try { localStorage.setItem('nebflow_voice_used', '1'); } catch {}
+    try { localStorage.setItem(key('voice_used'), '1'); } catch {}
     await startDictation(makeVoiceCallbacks());
   }
 

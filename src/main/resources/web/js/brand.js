@@ -11,6 +11,10 @@
  * @property {string} productName  Display name, e.g. "Nebflow"
  * @property {string} lowerName    Lowercase identifier, e.g. "nebflow"
  * @property {string} domain       Primary web domain, e.g. "nebflow.space"
+ * @property {string} [homeDirName] User home directory name, e.g. ".nebflow".
+ *   Optional: injected by the gateway from batch 3 onward; absent in older
+ *   gateways and static-server contexts, so call sites must fall back to
+ *   the legacy literal '.nebflow'.
  */
 
 /** @type {Brand} */
