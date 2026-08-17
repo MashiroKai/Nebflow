@@ -47,6 +47,9 @@ Multiple SubTask calls in one response run concurrently — use this to parallel
 - A subtask needs deep focus without cluttering your main context
 - You want to hand off a self-contained piece of work and keep your own turn going
 
+**Spotting parallelizable work (every agent — members AND Managers dispatching):**
+A task with 2+ independent parts — different file domains, or different natures (research + implementation, multi-module changes, generation + verification) — should run as concurrent SubTasks (back-to-back calls in one response), not serial work or one-at-a-time dispatch. Canonical: 2026-08-16, Frontend spawned two workers in one response (file-browser batch ops + Canvas viewer pluginization) — same worktree, non-overlapping files, workers don't commit (parent integrates). Sequentially dependent steps (B needs A's output) stay serial. Workers have no fork mechanism — each prompt must stand alone.
+
 **When NOT to use:**
 - Steps depend on each other (Step B needs Step A's output) — do serially
 - Trivial — faster to just do it yourself
