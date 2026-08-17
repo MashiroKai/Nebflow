@@ -68,7 +68,9 @@ GH_REPO="$(brand_value githubRepo)"
 HOME_DIR="$(brand_value homeDirName)"
 ENV_PREFIX="$(brand_value envPrefix)"
 COS_BUCKET="$(brand_value cosBucket)"
-for v in PRODUCT_NAME LOWER_NAME FULL_NAME DOMAIN GH_ORG GH_REPO HOME_DIR ENV_PREFIX COS_BUCKET; do
+INSTALL_URL="$(brand_value installUrl)"
+SERVER_URL="$(brand_value serverUrl)"
+for v in PRODUCT_NAME LOWER_NAME FULL_NAME DOMAIN GH_ORG GH_REPO HOME_DIR ENV_PREFIX COS_BUCKET INSTALL_URL SERVER_URL; do
   val="${!v}"
   [[ -n "$val" ]] || die "brand.conf incomplete: $v is empty/missing"
 done
@@ -84,7 +86,11 @@ LEGACY_PASCAL="Nebflow"
 echo "== rebrand: $LEGACY_PASCAL -> $PRODUCT_NAME (lower: $LEGACY_LOWER -> $LOWER_NAME) =="
 
 no_op_run() {
-  [[ "$LOWER_NAME" == "$LEGACY_LOWER" ]] && { echo "(brand.conf still carries the current values — every step below would no-op)"; }
+  # if-form (not [[ ]] && { }): a bare && chain returns 1 when the condition
+  # is false, which set -e turns into a silent exit on rename-day dry-runs.
+  if [[ "$LOWER_NAME" == "$LEGACY_LOWER" ]]; then
+    echo "(brand.conf still carries the current values — every step below would no-op)"
+  fi
 }
 
 # ── the replacement manifest (shared by --dry-run and --apply) ─────────────
@@ -101,7 +107,7 @@ DIR_RENAME|src/test/scala/nebflow|src/test/scala/@LOWER@
 #    anchors and dotted contexts are exact enough.
 SED|**/*.scala|s/^package nebflow/package @LOWER@/
 SED|**/*.scala|s/^import nebflow/import @LOWER@/
-SED|**/*.scala|s/nebflow\./@LOWER@./g
+SED|**/*.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/nebflow\.space/@@HOST@@/g; s/nebflow\./@LOWER@./g; s/"@@CFG@@"/"nebflow.json"/g; s/@@HOST@@/@HOST@/g
 SED|**/*.scala|s/private\[nebflow\]/private[@LOWER@]/g
 SED|**/*.scala|s/"nebflow is /"@LOWER@ is /g
 SED|build.sbt|s/nebflow\.Main/@LOWER@.Main/g
@@ -117,6 +123,17 @@ SED|src/main/resources/web/**|s/nebflowLoginIn/@CAMEL@LoginIn/g
 # 4. window.Nebflow: definition moves to the new PascalCase global; a
 #    permanent alias assignment keeps old embeds working (frontend ruling).
 SPECIAL|window-global|src/main/resources/web/js/main.js
+# 4b. Brand-guard specs ("current brand" assertions follow the rename;
+#     the compat-layer fallback literals they assert — "nebflow.json",
+#     ".nebflow", "NEBFLOW_" — are again protected and restored).
+#     Context-anchored rules only: broad quote-anchored seds would also hit
+#     parser fixtures whose brand strings are DATA (write/read pairs that
+#     must stay self-consistent), and escaped literals (\"Nebflow\") need
+#     backslash-quoted patterns.
+SED|src/test/scala/@LOWER@/core/BrandingSpec.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/Branding\.productName, "Nebflow"/Branding.productName, "@PRODUCT@"/; s/Branding\.lowerName, "nebflow"/Branding.lowerName, "@LOWER@"/; s/Branding\.fullName, "Nebflow"/Branding.fullName, "@FULL@"/; s/neblink\.example/@DOMAIN@/g; s/Branding\.githubOrg, "MashiroKai"/Branding.githubOrg, "@ORG@"/; s/Branding\.githubRepo, "Nebflow"/Branding.githubRepo, "@REPO@"/; s/Branding\.homeDirName, "\.nebflow"/Branding.homeDirName, ".@LOWER@"/; s/Branding\.envPrefix, "NEBFLOW"/Branding.envPrefix, "@ENV@"/; s/Branding\.cosBucket, "nebflow-releases-1411212853"/Branding.cosBucket, "@COS@"/; s|https://neblink\.@HOST@|@SERVER@|g; s|Nebflow/academic-search|@PRODUCT@/academic-search|; s/"@@CFG@@"/"nebflow.json"/g
+SED|src/test/scala/@LOWER@/core/RebrandCompatSpec.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/"@@CFG@@"/"nebflow.json"/g
+SED|src/test/scala/@LOWER@/gateway/BrandInjectionSpec.scala|s/"Nebflow"/"@PRODUCT@"/g; s/"nebflow"/"@LOWER@"/g; s/"\.nebflow"/".@LOWER@"/g; s/neblink\.example/@DOMAIN@/g
+SED|src/test/scala/@LOWER@/gateway/IndexWithBrandServeSpec.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/\\"Nebflow\\"/\\"@PRODUCT@\\"/g; s/neblink\.example/@DOMAIN@/g; s/"@@CFG@@"/"nebflow.json"/g
 # 5. Docs: brand words + command examples
 SED|README.md|s/nebflow/@LOWER@/g
 SED|README.md|s/Nebflow/@PRODUCT@/g
@@ -125,7 +142,12 @@ SED|CODEBASE.md|s/Nebflow/@PRODUCT@/g
 MANIFEST
 }
 
-expand() { sed -e "s/@LOWER@/$LOWER_NAME/g" -e "s/@CAMEL@/$CAMEL/g" -e "s/@PRODUCT@/$PRODUCT_NAME/g"; }
+INSTALL_BASE="${INSTALL_URL%/*}"  # installUrl minus the script basename
+SITE_HOST="${INSTALL_BASE#*://}"  # scheme-stripped host — the bare-domain form
+                                  # for scheme-less "nebflow.space" substring
+                                  # swaps (a full-base replacement there would
+                                  # double the scheme: https://https://...)
+expand() { sed -e "s/@LOWER@/$LOWER_NAME/g" -e "s/@CAMEL@/$CAMEL/g" -e "s/@PRODUCT@/$PRODUCT_NAME/g" -e "s|@SITE@|$INSTALL_BASE|g" -e "s/@DOMAIN@/$DOMAIN/g" -e "s/@HOST@/$SITE_HOST/g" -e "s|@SERVER@|$SERVER_URL|g" -e "s/@ENV@/$ENV_PREFIX/g" -e "s/@COS@/$COS_BUCKET/g" -e "s/@ORG@/$GH_ORG/g" -e "s/@REPO@/$GH_REPO/g" -e "s/@FULL@/$FULL_NAME/g"; }
 
 # ── --dry-run: manifest + affected-file preview, no writes ────────────────
 if [[ "$MODE" == "dry" ]]; then
@@ -176,20 +198,30 @@ done
 # 1b. sed passes (find-based so the renamed tree is covered)
 while IFS='|' read -r kind glob expr; do
   [[ "$kind" == "SED" ]] || continue
-  pat="${glob#**/}"   # we resolve globs ourselves per root below
   case "$glob" in
-    **/*.scala) roots=("$ROOT/src" "$ROOT/project");;
-    src/main/resources/web/**) roots=("$ROOT/src/main/resources/web");;
+    # Quoted patterns = LITERAL comparison. Unquoted `**/*.scala` would
+    # glob-match ANY "*.scala" path (case globs cross `/`), stealing the
+    # exact-path whitelist lines into this branch — where the slash-bearing
+    # pat makes `find -name` match nothing and the sed silently no-ops.
+    '**/*.scala') roots=("$ROOT/src" "$ROOT/project"); pat='*.scala';;
+    'src/main/resources/web/**') roots=("$ROOT/src/main/resources/web"); pat='*';;
     *) roots=("$(dirname "$ROOT/$glob")"); pat="$(basename "$glob")";;
   esac
+  n=0
   for r in "${roots[@]}"; do
     [[ -e "$r" ]] || continue
-    find "$r" -name "$pat" -type f 2>/dev/null | while read -r f; do
+    # process substitution (not `find | while`): the match counter must
+    # survive the loop — a pipe would fork a subshell and reset n to 0.
+    while read -r f; do
+      n=$((n+1))
       if LC_ALL=C sed "${SED_I[@]}" "$expr" "$f" 2>/dev/null; then :; else
         die "sed failed on $f: $expr"
       fi
-    done
+    done < <(find "$r" -name "$pat" -type f 2>/dev/null)
   done
+  # fail-loud: a rule that matched no files means the glob/branch logic
+  # broke — without this a stolen branch is a silent no-op (round-4 bug).
+  [[ $n -gt 0 ]] || die "manifest rule matched no files: $glob"
 done < <(manifest | expand | grep '^SED|')
 
 # 1c. window global: rename definition, append permanent alias
@@ -240,13 +272,27 @@ if [[ $SKIP_SMOKE -eq 0 ]]; then
     curl -sf "http://localhost:$PORT/api/health" >/dev/null 2>&1 && { ok=1; break; }; sleep 1
   done
   [[ -n "$ok" ]] || { cat "$SMOKE_DIR/boot.log" | tail -20; kill "$(cat "$SMOKE_DIR/pid")" 2>/dev/null || true; die "smoke: server did not become healthy"; }
-  BODY="$(curl -s "http://localhost:$PORT/")"
-  FIRST15="$(printf '%s' "$BODY" | head -c 15)"
-  [[ "$FIRST15" == "<!DOCTYPE html" ]] || { kill "$(cat "$SMOKE_DIR/pid")" 2>/dev/null || true; die "smoke: index is not raw HTML (encoder regression?)"; }
-  printf '%s' "$BODY" | grep -q "\"productName\":\"$PRODUCT_NAME\"" || { kill "$(cat "$SMOKE_DIR/pid")" 2>/dev/null || true; die "smoke: brand contract not injected with the new productName"; }
+  # Index assertions are retried: the first request(s) right after the
+  # health endpoint comes up can still observe a transient (observed once
+  # in round-5 testing: health OK, then an empty/short body once, raw HTML
+  # from the same server a second later). 3 attempts, 2s apart.
+  BODY=""
+  for attempt in 1 2 3; do
+    BODY="$(curl -s "http://localhost:$PORT/")"
+    FIRST15="$(printf '%s' "$BODY" | head -c 15)"
+    # note: "<!DOCTYPE html>" is 15 bytes (the angle bracket included) —
+    # comparing a 15-byte head against the 14-char prefix never matches.
+    [[ "$FIRST15" == "<!DOCTYPE html>" ]] && break
+    [[ "$attempt" == 3 ]] && { kill -9 "$(cat "$SMOKE_DIR/pid")" 2>/dev/null || true
+      lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
+      die "smoke: index is not raw HTML (encoder regression?) first15=[$FIRST15] len=${#BODY} boot-tail: $(tail -3 "$SMOKE_DIR/boot.log" 2>/dev/null | tr '\n' ' ')"; }
+    sleep 2
+  done
+  printf '%s' "$BODY" | grep -q "\"productName\":\"$PRODUCT_NAME\"" || { kill -9 "$(cat "$SMOKE_DIR/pid")" 2>/dev/null || true; lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true; die "smoke: brand contract not injected with the new productName"; }
   TOKEN="$(cat "$HOME_DIR_FX/$LEGACY_LOWER/auth.json" | tr -d '"')"
   CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "http://localhost:$PORT/api/sessions")"
-  kill "$(cat "$SMOKE_DIR/pid")" 2>/dev/null || true
+  kill -9 "$(cat "$SMOKE_DIR/pid")" 2>/dev/null || true
+  lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
   [[ "$CODE" == "200" ]] || die "smoke: legacy fixture token rejected ($CODE) — compat layer broken"
   echo "   boot OK / health OK / index bytes OK / brand injected / legacy fixture auth OK"
 else
