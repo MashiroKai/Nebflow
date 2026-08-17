@@ -13,6 +13,8 @@ Self-hosted AI coding assistant with multi-agent orchestration and cross-device 
 
 ---
 
+> **Brand configuration:** all brand values (product name, lowercase name, domains, URLs, packaging identifiers) are defined single-source in [`brand.conf`](brand.conf) — runtime code reads them through `nebflow.core.Branding`, and the frontend through the injected `window.__BRAND__`. Brand strings in this README describe the current brand only: when the project is renamed, `scripts/rebrand.sh` rewrites the docs from `brand.conf`. Do not hand-edit brand strings scattered in code or docs — change `brand.conf`.
+
 Nebflow is a self-hosted AI coding assistant that runs entirely on your machine. It features a browser-based chat interface with streaming responses, native HTML card rendering, multi-agent orchestration, and cross-device collaboration — all in a single JAR with no external dependencies beyond Java.
 
 > **Migration Notice:** Nebflow is migrating from Scala to Rust. The Rust implementation lives in [`nebflow-rs/`](nebflow-rs/) and is functionally complete (749 tests passing). The Scala version remains the running production build; the Rust version will eventually replace it. See [Migration Status](#migration-status-scala--rust) below.
