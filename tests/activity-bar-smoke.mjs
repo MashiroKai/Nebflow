@@ -151,7 +151,10 @@ for (const id of ['#explorer-new-file-btn', '#explorer-new-folder-btn', '#explor
 check('A11 #explorer-tree inside active panel',
   await page.locator('#sidebar-panel .panel.active #explorer-tree').count() === 1);
 
-// A10: 375px — incremental: open-panel scrollWidth === collapsed baseline; bar subtree ≤ 48
+// A10: 375px — Manager ruling (2026-08-17, per msg-search B12 precedent):
+// open-panel scrollWidth ≤ collapsed baseline + 300px panel budget (both
+// states' overflow contributors — .header-right / offscreen #canvas-panel —
+// are pre-existing backlog, not gated on this feature); bar subtree ≤ 48.
 await page.setViewportSize({ width: 375, height: 812 });
 await page.waitForTimeout(100);
 const openSw = await page.evaluate(() => document.documentElement.scrollWidth);
@@ -159,14 +162,7 @@ await page.click('#files-btn'); // collapse
 await page.waitForTimeout(400); // let collapse animation settle
 const collapsedSw = await page.evaluate(() => document.documentElement.scrollWidth);
 const barSw = await page.locator('#activity-bar').evaluate(el => el.scrollWidth);
-// SPEC-CONFLICT (escalated to Manager → design-engineer): the equality clause
-// cannot hold — at 375px the open-state overflow comes from .header-right
-// (chat header buttons) and the collapsed-state overflow from the offscreen
-// #canvas-panel; both are pre-existing (identical 650px baseline documented
-// since msg-search case 001) and fixing them requires chat.css/split.css,
-// which are outside this spec's allowed change surface. Measured, not gated.
-check('A10 375px [ESCALATED spec-conflict]: open vs collapsed scrollWidth', openSw === collapsedSw, `${openSw} vs ${collapsedSw}`);
-checks[checks.length - 1].escalated = true;
+check('A10 375px: open scrollWidth ≤ collapsed + 300px budget', openSw <= collapsedSw + 300, `${openSw} vs ${collapsedSw}+300`);
 check('A10 375px: bar subtree scrollWidth ≤ 48', barSw <= 48, String(barSw));
 await page.setViewportSize({ width: 1440, height: 900 });
 await page.click('#files-btn'); // expand for the i18n checks
@@ -221,9 +217,7 @@ await ctxRm.close();
 
 check('no page errors', pageErrors.length === 0, pageErrors.join('; '));
 
-const failed = checks.filter(c => !c.ok && !c.escalated);
-const escalated = checks.filter(c => c.escalated && !c.ok);
-console.log(`\n${checks.length - failed.length - escalated.length}/${checks.length - escalated.length} passed` +
-  (escalated.length ? ` (+${escalated.length} escalated spec-conflict, not gated)` : ''));
+const failed = checks.filter(c => !c.ok);
+console.log(`\n${checks.length - failed.length}/${checks.length} passed`);
 await browser.close();
 process.exit(failed.length ? 1 : 0);
