@@ -90,6 +90,11 @@ object Branding:
   /** Env var prefix — L3 batch 3 uses this for dual-prefix reads. */
   val envPrefix: String = get("envPrefix")
 
+  /** Config file name — L3 batch 3 dual-read: read prefers this name, falls
+    * back to the hardcoded legacy "nebflow.json"; writes always use this
+    * name (first read-modify-write completes the rename migration). */
+  val configFileName: String = get("configFileName")
+
   /** Release mirror bucket (COS). */
   val cosBucket: String = get("cosBucket")
 
@@ -97,6 +102,42 @@ object Branding:
   val subsystemName: String = get("subsystemName")
 
   // ── Derived helpers ──────────────────────────────────────────────────────
+
+  /** Dual-prefix env read (L3): try the brand prefix (brand.conf envPrefix)
+    * first, then fall back to the HARDCODED legacy "NEBFLOW_" prefix — the
+    * legacy prefix is a historical fact, not a brand value, so it never
+    * derives from conf (a derived fallback could never miss). When envPrefix
+    * is NEBFLOW (current), both lookups name the same variable: zero
+    * behavior change. On rename day, old scripts / launchd units / CI
+    * exports that still set NEBFLOW_* keep working.
+    *
+    * `name` is the bare suffix without prefix, e.g. "HOME", "GATEWAY_PORT". */
+  def env(name: String): Option[String] =
+    dualEnv(sys.env, envPrefix, name)
+
+  /** Pure core of `env` (parameterized for the spec — the live prefix is a
+    * compile-time constant baked from brand.conf and cannot be varied). */
+  private[core] def dualEnv(env: Map[String, String], prefix: String, name: String): Option[String] =
+    env.get(s"${prefix}_$name").orElse(env.get(s"NEBFLOW_$name"))
+
+  /** install.ps1 companion of installUrl, derived by swapping the install.sh
+    * basename (same host and dir — current true values travel together).
+    * Returns installUrl unchanged when the basename doesn't match, so a
+    * differently-shaped installUrl degrades to serving the .sh everywhere
+    * instead of inventing a broken URL. */
+  def installPs1Url: String =
+    swapInstallScript(installUrl, "install.ps1")
+
+  /** uninstall.sh companion of installUrl (see installPs1Url). */
+  def uninstallUrl: String =
+    swapInstallScript(installUrl, "uninstall.sh")
+
+  /** uninstall.ps1 companion of installUrl (see installPs1Url). */
+  def uninstallPs1Url: String =
+    swapInstallScript(installUrl, "uninstall.ps1")
+
+  private def swapInstallScript(url: String, replacement: String): String =
+    if url.endsWith("/install.sh") then url.dropRight("install.sh".length) + replacement else url
 
   /** Politeness User-Agent for academic-search APIs (Crossref etiquette asks
     * for a mailto contact). The contact address follows the install host —

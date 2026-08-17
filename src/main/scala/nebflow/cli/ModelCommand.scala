@@ -131,7 +131,7 @@ object ThinkingCommand extends CliCommand:
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
           IO.blocking {
-            val configPath = PathUtil.dataRoot / "nebflow.json"
+            val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
             if os.exists(configPath) then
               io.circe.parser
                 .parse(os.read(configPath))

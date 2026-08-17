@@ -11,4 +11,4 @@ package nebflow.core
   * granularity (design doc "Headless 一次性执行入口" §3.4 / §D5).
   */
 object HeadlessMode:
-  val enabled: Boolean = sys.env.get("NEBFLOW_HEADLESS").contains("1")
+  val enabled: Boolean = Branding.env("HEADLESS").contains("1")

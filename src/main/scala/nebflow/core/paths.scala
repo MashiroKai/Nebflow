@@ -100,7 +100,9 @@ object PathUtil:
 
   /**
    * The root data directory for Nebflow state (sessions, tasks, memory, config, etc.).
-   * Override priority: CLI --home flag > NEBFLOW_HOME env var > ~/.nebflow default.
+   * Override priority: CLI --home flag > <PREFIX>_HOME env var (dual-prefix
+   * read, see Branding.env) > default directory (dual-read + one-time
+   * migration, see resolveDefaultDataRoot).
    */
   private var _dataRootOverride: Option[os.Path] = None
 
@@ -108,9 +110,95 @@ object PathUtil:
 
   def dataRoot: os.Path =
     _dataRootOverride.getOrElse(
-      sys.env.get("NEBFLOW_HOME") match
+      Branding.env("HOME") match
         case Some(home) => os.Path(home, os.pwd)
-        case None => os.home / ".nebflow"
+        case None => resolvedDefaultRoot
     )
+
+  /** Marker file placed in the LEGACY directory after a one-time migration,
+    * so a later "new dir missing + legacy present" state (user deleted the
+    * new dir) resolves to the legacy dir instead of re-migrating. Fixed
+    * name — an internal fact, not a brand value. */
+  private val MigrationMarker = ".rebrand-migrated"
+
+  /** Resolved default root — lazy so the (side-effecting) migration runs at
+    * most once per JVM, on first dataRoot access, thread-safely. */
+  private lazy val resolvedDefaultRoot: os.Path =
+    resolveDefaultDataRoot(os.home, Branding.homeDirName)
+
+  /**
+   * Default data root resolution (L3 rebrand compat). Parameterized over
+   * home and the brand directory name so the spec can exercise rename-day
+   * behavior; production passes os.home and brand.conf homeDirName.
+   *
+   * The legacy name ".nebflow" is HARDCODED — it is a historical fact, not
+   * a configuration; deriving it from brand.conf would make the fallback
+   * unreachable. With the current brand value (homeDirName == ".nebflow")
+   * every branch collapses to the same directory: zero behavior change.
+   *
+   * Resolution order (rename day, homeDirName == ".newbrand"):
+   *  1. same name               → use it (current value; nothing to do)
+   *  2. ~/.newbrand exists      → use it (already migrated, or fresh install
+   *                               that started on the new name)
+   *  3. ~/.nebflow missing      → use ~/.newbrand (fresh install)
+   *  4. legacy already migrated → fall back to ~/.nebflow and warn (the new
+   *    (marker present)           dir disappeared — respect the deletion,
+   *                               never re-copy over a user's rollback)
+   *  5. legacy present, no      → ONE-TIME MIGRATION: copy (not move — the
+   *     marker                    legacy tree stays intact for rollback),
+   *                               drop the marker into the legacy dir, then
+   *                               use ~/.newbrand. Any copy failure falls
+   *                               back to the legacy dir (availability over
+   *                               migration).
+   */
+  private[core] def resolveDefaultDataRoot(home: os.Path, homeDirName: String): os.Path =
+    val newDir = home / homeDirName
+    val legacyDir = home / ".nebflow"
+    if newDir == legacyDir then newDir
+    else if os.exists(newDir) then newDir
+    else if !os.exists(legacyDir) then newDir
+    else if os.exists(legacyDir / MigrationMarker) then
+      System.err.println(
+        s"[${Branding.productName}] data directory $newDir is missing but $legacyDir was already migrated; using $legacyDir"
+      )
+      legacyDir
+    else
+      try
+        os.copy(legacyDir, newDir, createFolders = true, mergeFolders = true, replaceExisting = false)
+        os.write.over(legacyDir / MigrationMarker, s"migrated to $newDir\n")
+        System.err.println(
+          s"[${Branding.productName}] migrated data directory $legacyDir -> $newDir (copied; original kept for rollback)"
+        )
+        newDir
+      catch
+        case e: Exception =>
+          System.err.println(
+            s"[${Branding.productName}] data directory migration $legacyDir -> $newDir failed (${e.getMessage}); continuing with $legacyDir"
+          )
+          legacyDir
+
+  /**
+   * Config file path for READS (L3 rebrand compat): prefer the brand name
+   * (brand.conf configFileName), fall back to the HARDCODED legacy
+   * "nebflow.json" when only the legacy file exists. When neither exists
+   * the NEW name is returned — initializers (Main's first-run "{}" write)
+   * then create the new name. Current brand value collapses all branches
+   * to the same file: zero behavior change.
+   */
+  def configJsonReadPath(dir: os.Path): os.Path =
+    resolveConfigJson(dir, Branding.configFileName)
+
+  /** Pure core of configJsonReadPath (parameterized for the spec). */
+  private[core] def resolveConfigJson(dir: os.Path, fileName: String): os.Path =
+    if fileName == "nebflow.json" then dir / fileName
+    else if os.exists(dir / fileName) then dir / fileName
+    else if os.exists(dir / "nebflow.json") then dir / "nebflow.json"
+    else dir / fileName
+
+  /** Config file path for WRITES: always the brand name. A read-modify-write
+    * cycle (existing from configJsonReadPath, output to here) completes the
+    * file rename migration on first write. */
+  def configJsonWritePath(dir: os.Path): os.Path =
+    dir / Branding.configFileName
 
 end PathUtil

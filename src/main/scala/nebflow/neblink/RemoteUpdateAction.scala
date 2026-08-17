@@ -20,10 +20,10 @@ object RemoteUpdateAction:
     val script =
       if beta then
         if isWindows then
-          """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
-        else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
-      else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
-      else "curl -fsSL https://nebflow.space/install.sh | sh"
+          """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.core.Branding.installPs1Url + """ | iex" """
+        else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh -s -- --beta"
+      else if isWindows then """powershell -Command "& { iwr """ + nebflow.core.Branding.installPs1Url + """ | iex }" """
+      else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh"
 
     IO.blocking {
       import sys.process.*

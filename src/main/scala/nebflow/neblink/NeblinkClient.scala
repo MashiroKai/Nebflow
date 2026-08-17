@@ -181,7 +181,7 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
       (path, body) = config.deviceToken match
         case Some(token) =>
           (
-            "/api/device/session",
+            Protocol.DeviceApi.session,
             Json
               .obj(
                 "networkId" -> config.networkId.asJson,
@@ -195,7 +195,7 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
           )
         case None =>
           (
-            "/api/device/login",
+            Protocol.DeviceApi.login,
             Json
               .obj(
                 "networkId" -> config.networkId.asJson,

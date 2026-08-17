@@ -725,8 +725,10 @@ class WebSocketRoutes(
   /** Persist thinking config to nebflow.json — targeted field update. */
   private def persistThinkingConfig(tc: ThinkingConfig): IO[Unit] =
     IO.blocking {
-      val path = nebflow.llm.Config.DefaultConfigPath
-      val existing = if os.exists(path) then os.read(path) else "{}"
+      // Read through the dual-read path (legacy fallback), write the brand
+      // name — the first write completes the config-file rename migration.
+      val existing = if os.exists(nebflow.llm.Config.DefaultConfigPath) then os.read(nebflow.llm.Config.DefaultConfigPath) else "{}"
+      val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
       parse(existing).foreach { json =>
         val updated = json.mapObject { obj =>
           obj.add("thinkingConfig", tc.asJson)
@@ -740,8 +742,10 @@ class WebSocketRoutes(
   /** Persist MCP server enabled state to nebflow.json — targeted field update. */
   private def persistMcpServerEnabled(serverId: String, enabled: Boolean): IO[Unit] =
     IO.blocking {
-      val path = nebflow.llm.Config.DefaultConfigPath
-      val existing = if os.exists(path) then os.read(path) else "{}"
+      // Read through the dual-read path (legacy fallback), write the brand
+      // name — the first write completes the config-file rename migration.
+      val existing = if os.exists(nebflow.llm.Config.DefaultConfigPath) then os.read(nebflow.llm.Config.DefaultConfigPath) else "{}"
+      val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
       parse(existing).foreach { json =>
         val updated = json.mapObject { obj =>
           val mcpObj = obj("mcpServers").flatMap(_.asObject).getOrElse(JsonObject.empty)
@@ -1750,7 +1754,7 @@ class WebSocketRoutes(
                   wsSend(
                     io.circe.Json.obj(
                       "type" -> "transcription".asJson,
-                      "error" -> "STT not configured. Create ~/.nebflow/stt-config.json".asJson
+                      "error" -> s"STT not configured. Create ~/${Branding.homeDirName}/stt-config.json".asJson
                     )
                   )
                 case Some(svc) =>
@@ -2542,13 +2546,15 @@ class WebSocketRoutes(
               IO.blocking {
                 import sys.process.*
                 val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
+                // String concat (not s"") — the powershell snippets contain
+                // $env: which an interpolator would try to resolve.
                 val script =
                   if beta then
                     if isWindows then
-                      """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
-                    else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
-                  else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
-                  else "curl -fsSL https://nebflow.space/install.sh | sh"
+                      """powershell -Command "$env:CHANNEL='beta'; iwr """ + Branding.installPs1Url + """ | iex" """
+                    else "curl -fsSL " + Branding.installUrl + " | sh -s -- --beta"
+                  else if isWindows then """powershell -Command "& { iwr """ + Branding.installPs1Url + """ | iex }" """
+                  else "curl -fsSL " + Branding.installUrl + " | sh"
                 val exitCode = script.!
                 if exitCode == 0 then
                   wsSend(io.circe.Json.obj("type" -> "updateCompleted".asJson, "success" -> true.asJson))
@@ -3119,6 +3125,9 @@ class WebSocketRoutes(
     ".idea",
     ".vscode",
     ".nebflow",
+    // L3 rebrand compat: the brand data dir name must be ignored too
+    // (identical to ".nebflow" today; duplicate entries are harmless here)
+    Branding.homeDirName,
     "Library",
     "Applications",
     "Trash",
@@ -3951,9 +3960,10 @@ object WebSocketRoutes:
   /**
     * L1 rebrand: the frontend brand contract. window.__BRAND__ is the only
     * brand source web/ may read; fields are append-only across rebrand
-    * batches (initial contract: productName, lowerName, domain). `domain`
-    * carries the placeholder value — display-only, never consumed to build
-    * a URL.
+    * batches (initial contract: productName, lowerName, domain; L3 batch 3
+    * appended homeDirName for the frontend's own legacy-path messaging).
+    * `domain` carries the placeholder value — display-only, never consumed
+    * to build a URL.
     *
     * circe handles JSON string escaping; the serialized blob additionally
     * escapes the forward slash of "</" because it is inlined inside a
@@ -3964,17 +3974,24 @@ object WebSocketRoutes:
       Branding.productName,
       Branding.lowerName,
       Branding.domain,
+      Branding.homeDirName,
     )};</script>"""
   end brandScriptTag
 
   /** Serialize the contract JSON (values injected for testability of the
     * escaping hardening). */
-  private[gateway] def brandScriptJson(productName: String, lowerName: String, domain: String): String =
+  private[gateway] def brandScriptJson(
+    productName: String,
+    lowerName: String,
+    domain: String,
+    homeDirName: String
+  ): String =
     Json
       .obj(
         "productName" -> Json.fromString(productName),
         "lowerName"   -> Json.fromString(lowerName),
         "domain"      -> Json.fromString(domain),
+        "homeDirName" -> Json.fromString(homeDirName),
       )
       .noSpaces
       .replace("</", "<\\/")

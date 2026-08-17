@@ -366,7 +366,7 @@ class RemoteExecutor(
         val resp = basicRequest
           .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/remote-exec"))
           .contentType("application/json")
-          .header("X-Neblink-Device", selfDeviceId)
+          .header(nebflow.neblink.Protocol.DeviceHeader, selfDeviceId)
           .body(body.noSpaces)
           .readTimeout(timeout)
           .response(asStringAlways)

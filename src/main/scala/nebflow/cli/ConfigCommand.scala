@@ -106,7 +106,7 @@ object ConfigCommand extends CliCommand:
     def params = Nil
 
     def run(ctx: CliContext): IO[CliResult] =
-      val configPath = PathUtil.dataRoot / "nebflow.json"
+      val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
       val editor = sys.env.getOrElse("EDITOR", sys.env.getOrElse("VISUAL", "vi"))
       IO.blocking {
         val pb = new ProcessBuilder((editor.split("\\s+").toList :+ configPath.toString)*)

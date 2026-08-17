@@ -9,7 +9,9 @@ import nebflow.core.PathUtil
 import nebflow.llm.Config
 
 object ConfigService:
-  private val configPath = PathUtil.dataRoot / "nebflow.json"
+  // def (not val): dual-read resolves per access; a val would freeze the
+  // first-touched dataRoot (test isolation) and skip the legacy fallback.
+  private def configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
 
   def isConfigured: IO[Boolean] = IO.blocking {
     if !os.exists(configPath) then false
@@ -127,7 +129,10 @@ object ConfigService:
               // Renames: the merged chain may still carry the old name when the
               // incoming payload omitted llm.model entirely (partial update).
               val merged = renames.foldLeft(merged1)((acc, r) => rewriteChainRefs(acc, r._1, r._2))
-              os.write.over(configPath, merged, createFolders = true)
+              // Write path: always the brand config name — the first
+              // read-modify-write after a rename completes the file
+              // migration (existing was read through the legacy fallback).
+              os.write.over(PathUtil.configJsonWritePath(PathUtil.dataRoot), merged, createFolders = true)
             }
             .attempt
             .flatMap {
