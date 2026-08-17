@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/check-js-types.mjs --update",
-  "total": 371,
+  "total": 359,
   "files": {
     "src/main/resources/web/js/activityBar.js": {
       "TS2345": 1,
@@ -28,9 +28,6 @@
     "src/main/resources/web/js/chatQueue.js": {
       "TS2739": 1,
       "TS2339": 1
-    },
-    "src/main/resources/web/js/chatSearch.js": {
-      "TS2339": 12
     },
     "src/main/resources/web/js/colResizer.js": {
       "TS2339": 2
