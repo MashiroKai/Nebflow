@@ -2,6 +2,7 @@
 
 import zhCN from './locales/zh-CN.js';
 import en from './locales/en.js';
+import { brand } from './brand.js';
 
 const LOCALES = { 'zh-CN': zhCN, en };
 const STORAGE_KEY = 'nebflow_locale';
@@ -14,6 +15,7 @@ if (!LOCALES[current]) current = 'zh-CN';
  * Get translated text for a key.
  * Supports nested keys via dot notation: 'settings.runtime'
  * Falls back to key itself if not found.
+ * '{brand}' is always interpolated from brand.js (no need to pass it).
  */
 export function t(key, params) {
   const dict = LOCALES[current] || zhCN;
@@ -23,8 +25,9 @@ export function t(key, params) {
     val = en[key];
   }
   if (val === undefined) return key;
-  if (params) {
-    return val.replace(/\{(\w+)\}/g, (_, k) => params[k] ?? '');
+  if (params || val.indexOf('{brand}') !== -1) {
+    const p = { brand: brand.productName, ...params };
+    return val.replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
   }
   return val;
 }
