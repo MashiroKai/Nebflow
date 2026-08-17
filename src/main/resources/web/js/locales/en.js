@@ -443,6 +443,19 @@ export default {
   'search.typeUser': 'User',
   'search.typeAi': 'AI',
   'search.typeTool': 'Tool',
+  // v3.1 tabs + date anchor (spec §6.2)
+  'search.tabAll': 'All',
+  'search.tabImages': 'Images',
+  'search.tabFiles': 'Files',
+  'search.tabCards': 'Cards',
+  'search.tabDate': 'Date',
+  'search.emptyCategory': 'Nothing in this category yet',
+  'search.datePickTitle': 'Pick a date',
+  'search.dateClear': 'Clear date',
+  'search.dateConfirm': 'OK',
+  'search.dateCancel': 'Cancel',
+  'search.toolDisabledHint': 'Tool filter not applicable in this tab',
+  'search.dateDisabledInCards': 'Date anchor not applicable in Cards tab',
 
   // === Daemons (Dev Servers) ===
   'daemons.title': 'Dev Servers',
