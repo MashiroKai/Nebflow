@@ -443,6 +443,19 @@ export default {
   'search.typeUser': '用户',
   'search.typeAi': 'AI',
   'search.typeTool': '工具',
+  // v3.1 tabs + date anchor (spec §6.2)
+  'search.tabAll': '全部',
+  'search.tabImages': '图片',
+  'search.tabFiles': '文件',
+  'search.tabCards': 'Card',
+  'search.tabDate': '日期',
+  'search.emptyCategory': '该栏目下暂无内容',
+  'search.datePickTitle': '选择日期',
+  'search.dateClear': '清除日期',
+  'search.dateConfirm': '确定',
+  'search.dateCancel': '取消',
+  'search.toolDisabledHint': '当前栏目下不适用工具筛选',
+  'search.dateDisabledInCards': 'Card 栏目下不可用日期定位',
 
   // === Daemons (Dev Servers) ===
   'daemons.title': '开发服务器',
