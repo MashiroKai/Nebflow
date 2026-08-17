@@ -437,15 +437,24 @@ object ContextRefresher:
           teamNameOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
           result <- teamNameOpt match
             case Some(teamName) =>
-              // Team agent: show team-specific catalog
+              // Team agent: show team-specific catalog. The agents map MUST
+              // cover team-local definitions (teams/<name>/agents/): lead and
+              // members live there, and listAgents() only scans the GLOBAL
+              // agents dir — passing it alone rendered "(agent not found)"
+              // leads and empty member lists, which team Managers read as
+              // "my members don't exist" and reported activation failures
+              // without ever trying to Mail them. Mirror the runtime
+              // resolution order (loadTeamAgent: team-local first, global
+              // fallback) so the catalog shows exactly what Mail can reach.
               for
                 team <- EntityLoader.loadTeam(teamName)
-                agents <- EntityLoader.listAgents()
+                globalAgents <- EntityLoader.listAgents()
+                teamAgents <- EntityLoader.listTeamAgents(teamName)
                 flows <- EntityLoader.listFlows()
                 rules <- EntityLoader.loadTeamRules(teamName)
               yield team
                 .map { t =>
-                  val catalog = TeamCatalog.buildCatalog(t, agents, flows)
+                  val catalog = TeamCatalog.buildCatalog(t, globalAgents ++ teamAgents, flows)
                   if rules.nonEmpty then s"$catalog\n\n=== Team Rules: ${t.name} ===\n$rules\n=== End Team Rules ==="
                   else catalog
                 }
