@@ -834,6 +834,16 @@ private[agent] trait AgentCore:
   end sendPermissionRequest
 
   protected def executeTool(call: ToolCall, ctx: ToolContext): IO[ToolExecResult] =
+    // Issue #18: adapters mark tool calls whose arguments JSON could not be
+    // parsed (rescued past repair). Executing them would surface a misleading
+    // "parameter is required" error — report the parse failure itself instead,
+    // with the raw arguments, so the LLM can correct its JSON and retry.
+    nebflow.llm.providers.ToolInputJson.malformedDetails(call.input, call.name) match
+      case Some(msg) => IO.pure(ToolExecResult(msg, isError = true))
+      case None =>
+        executeToolInner(call, ctx)
+
+  private def executeToolInner(call: ToolCall, ctx: ToolContext): IO[ToolExecResult] =
     ToolRegistry.TOOL_MAP.get(call.name) match
       case Some(tool) =>
         val summary = tool.summarize(call.input)

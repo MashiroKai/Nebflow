@@ -32,7 +32,8 @@ class AnthropicAdapter(
     if base.endsWith("/v1/messages") then base else s"$base/v1/messages"
 
   // Holds (inputTokens, cacheReadTokens, cacheCreationTokens) from message_start
-  private case class Tokens(input: Int, cacheRead: Option[Int], cacheWrite: Option[Int])
+  // private[providers] so specs can drive processAnthropicEvent.
+  private[providers] case class Tokens(input: Int, cacheRead: Option[Int], cacheWrite: Option[Int])
 
   // private[providers] for spec access (pure JSON mapping, no backend needed)
   private[providers] def toAnthropicMessages(messages: List[Message]): List[Json] =
@@ -233,7 +234,11 @@ class AnthropicAdapter(
     val toolCalls = toolUseBlocks.map { b =>
       val id = b.hcursor.downField("id").as[String].getOrElse("")
       val name = b.hcursor.downField("name").as[String].getOrElse("")
-      val input = b.hcursor.downField("input").as[JsonObject].getOrElse(JsonObject.empty)
+      // Non-streaming responses carry `input` as a JSON object; a non-object
+      // input goes through the shared marker path instead of silently {}.
+      val input = b.hcursor.downField("input").as[JsonObject] match
+        case Right(obj) => obj
+        case Left(_)    => ToolInputJson.malformedInput(b.hcursor.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces)
       ToolCall(id, name, input)
     }
 
@@ -334,7 +339,7 @@ class AnthropicAdapter(
         .flatMap(cs => if cs.nonEmpty then Stream.emits(cs) else Stream.empty)
     }
 
-  private def processAnthropicEvent(
+  private[providers] def processAnthropicEvent(
     eventType: String,
     data: String,
     toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
@@ -344,7 +349,14 @@ class AnthropicAdapter(
     if data == "[DONE]" then IO.pure(Nil)
     else
       parse(data) match
-        case Left(_) => IO.pure(Nil)
+        case Left(err) =>
+          // Observability (issue #18 follow-up): dropped SSE data used to be
+          // invisible; log so malformed provider frames are diagnosable.
+          IO.delay(
+            nebflow.core.NebflowLogger
+              .forName("nebflow.llm.anthropic")
+              .warn(s"dropped unparseable SSE data (${err.message}): ${data.take(120)}")
+          ).as(Nil)
         case Right(json) =>
           eventType match
             case "message_start" =>
@@ -403,8 +415,11 @@ class AnthropicAdapter(
               toolCallState.modify { m =>
                 m.get(idx) match
                   case Some((id, name, sb)) =>
-                    val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
-                    (m - idx, List(StreamChunk.ToolCallChunk(ToolCall(id, name, input))))
+                    // Issue #18: an unparseable argument stream (e.g. GLM's
+                    // unquoted ISO-8601 triggerAt) used to be coerced to {}
+                    // here, silently. ToolInputJson repairs what it can and
+                    // marks the rest so executeTool reports it to the LLM.
+                    (m - idx, List(StreamChunk.ToolCallChunk(ToolCall(id, name, ToolInputJson.parseToolInput(name, sb.toString)))))
                   case None => (m, Nil)
               }
             case "message_delta" =>
