@@ -1,6 +1,22 @@
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
+# -- Brand values (L2 rebrand): rendered from repo-root brand.conf at -------
+# -- release time (scripts/render-brand.sh); do not edit by hand. -----------
+# The runtime dual-reads legacy names (L3), so rendering NEW values here
+# keeps existing user data working - old dirs/env/config fall back.
+$ProductName = "Nebflow"
+$LowerName = "nebflow"
+$CosBucket = "nebflow-releases-1411212853"
+$GhOrg = "MashiroKai"
+$GhRepo = "Nebflow"
+$HomeDir = ".nebflow"
+$ConfigFile = "nebflow.json"
+$WrapperName = "nebflow"
+$CosBaseCn = "https://$CosBucket.cos.ap-nanjing.myqcloud.com"
+$GhRepoUrl = "https://github.com/$GhOrg/$GhRepo"
+$GhApiUrl = "https://api.github.com/repos/$GhOrg/$GhRepo"
+
 # Parse flags
 $Channel = if ($env:CHANNEL) { $env:CHANNEL } else { "stable" }
 $Region = ""
@@ -17,18 +33,18 @@ if ($Channel -eq "beta") {
         $Version = $env:VERSION
     } else {
         try {
-            $BetaVersion = (Invoke-WebRequest -Uri "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/latest-beta-version.txt" -UseBasicParsing -TimeoutSec 10).Content.Trim()
+            $BetaVersion = (Invoke-WebRequest -Uri "$CosBaseCn/latest-beta-version.txt" -UseBasicParsing -TimeoutSec 10).Content.Trim()
         } catch {}
         if (-not $BetaVersion) {
             try {
-                $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/MashiroKai/Nebflow/releases" -TimeoutSec 15
+                $releases = Invoke-RestMethod -Uri "$GhApiUrl/releases" -TimeoutSec 15
                 $beta = $releases | Where-Object { $_.prerelease -eq $true } | Select-Object -First 1
                 if ($beta) { $BetaVersion = $beta.tag_name -replace '^v', '' }
             } catch {}
         }
         if (-not $BetaVersion) {
             Write-Host "ERROR: Could not find a beta release." -ForegroundColor Red
-            Write-Host "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability." -ForegroundColor Yellow
+            Write-Host "       Visit ${GhRepoUrl}/releases to check availability." -ForegroundColor Yellow
             exit 1
         }
         $Version = $BetaVersion
@@ -39,27 +55,27 @@ if ($Channel -eq "beta") {
         $Version = $env:VERSION
     } else {
         try {
-            $LatestVersion = (Invoke-WebRequest -Uri "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/latest-version.txt" -UseBasicParsing -TimeoutSec 10).Content.Trim()
+            $LatestVersion = (Invoke-WebRequest -Uri "$CosBaseCn/latest-version.txt" -UseBasicParsing -TimeoutSec 10).Content.Trim()
         } catch {}
         if (-not $LatestVersion) {
             try {
-                $release = Invoke-RestMethod -Uri "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest" -TimeoutSec 15
+                $release = Invoke-RestMethod -Uri "$GhApiUrl/releases/latest" -TimeoutSec 15
                 $LatestVersion = $release.tag_name -replace '^v', ''
             } catch {}
         }
         if (-not $LatestVersion) {
             Write-Host "ERROR: Could not resolve latest version." -ForegroundColor Red
-            Write-Host "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability." -ForegroundColor Yellow
+            Write-Host "       Visit ${GhRepoUrl}/releases to check availability." -ForegroundColor Yellow
             exit 1
         }
         $Version = $LatestVersion
     }
 }
 
-$InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\Nebflow" }
-$JarName = "nebflow-assembly-$Version.jar"
-$CosUrl = "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/$JarName"
-$GhUrl = "https://github.com/MashiroKai/Nebflow/releases/download/v$Version/$JarName"
+$InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\$ProductName" }
+$JarName = "$LowerName-assembly-$Version.jar"
+$CosUrl = "$CosBaseCn/$JarName"
+$GhUrl = "$GhRepoUrl/releases/download/v$Version/$JarName"
 
 Write-Host ""
 Write-Host "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗" -ForegroundColor Cyan
@@ -69,7 +85,7 @@ Write-Host "  ██║╚██╗██║██╔══╝  ██╔══�
 Write-Host "  ██║ ╚████║███████╗██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝" -ForegroundColor Cyan
 Write-Host "  ╚═╝  ╚═══╝╚══════╝╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Nebflow v$Version Installer ($Channel)" -ForegroundColor DarkGray
+Write-Host "  $ProductName v$Version Installer ($Channel)" -ForegroundColor DarkGray
 Write-Host ""
 
 # --- Check Java ---
@@ -293,14 +309,14 @@ if (Test-GitBash) {
     }
 }
 
-# --- Download Nebflow ---
-Write-Host "[3/5] Downloading Nebflow v$Version..." -ForegroundColor Yellow
+# --- Download $ProductName ---
+Write-Host "[3/5] Downloading $ProductName v$Version..." -ForegroundColor Yellow
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $jarPath = Join-Path $InstallDir $JarName
 
 # Clean up old versions (keep .nebflow user data untouched)
-$oldJars = Get-ChildItem (Join-Path $InstallDir "nebflow-assembly-*.jar") -ErrorAction SilentlyContinue
+$oldJars = @(Get-ChildItem (Join-Path $InstallDir "$LowerName-assembly-*.jar") -ErrorAction SilentlyContinue) + @(Get-ChildItem (Join-Path $InstallDir "nebflow-assembly-*.jar") -ErrorAction SilentlyContinue)
 foreach ($old in $oldJars) {
     if ($old.FullName -ne $jarPath) {
         Remove-Item $old.FullName -Force -ErrorAction SilentlyContinue
@@ -322,7 +338,7 @@ if (Test-Path $jarPath) {
             # Quick connectivity test: compare latency
             try {
                 $cosTime = (Measure-Command {
-                    Invoke-WebRequest -Uri "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/" -UseBasicParsing -TimeoutSec 3 | Out-Null
+                    Invoke-WebRequest -Uri "$CosBaseCn/" -UseBasicParsing -TimeoutSec 3 | Out-Null
                 }).TotalMilliseconds
             } catch { $cosTime = 9999 }
             try {
@@ -396,7 +412,7 @@ if (Get-Command "rg" -ErrorAction SilentlyContinue) {
 
 # --- Download Whisper voice model ---
 Write-Host "[5/6] Voice model (Whisper, ~75MB one-time)..." -ForegroundColor Yellow
-$modelDir = Join-Path $env:USERPROFILE ".nebflow\voice-models\onnx-community\whisper-base"
+$modelDir = Join-Path $env:USERPROFILE "$HomeDir\voice-models\onnx-community\whisper-base"
 $onnxEncPath = Join-Path $modelDir "onnx\encoder_model_quantized.onnx"
 
 if (Test-Path $onnxEncPath) {
@@ -443,11 +459,11 @@ if (Test-Path $onnxEncPath) {
 Write-Host "[6/6] Creating launcher..." -ForegroundColor Yellow
 
 # PowerShell wrapper
-$wrapperPath = Join-Path $InstallDir "nebflow.ps1"
+$wrapperPath = Join-Path $InstallDir "$WrapperName.ps1"
 $wrapperContent = @"
-`$jar = Get-ChildItem "`$PSScriptRoot\nebflow-assembly-*.jar" | Sort-Object Name | Select-Object -Last 1
+`$jar = @(Get-ChildItem "`$PSScriptRoot\nebflow-assembly-*.jar") + @(Get-ChildItem "`$PSScriptRoot\$LowerName-assembly-*.jar") | Sort-Object Name | Select-Object -Last 1
 if (-not `$jar) {
-    Write-Host "ERROR: nebflow JAR not found in `$PSScriptRoot" -ForegroundColor Red
+    Write-Host "ERROR: $ProductName JAR not found in `$PSScriptRoot" -ForegroundColor Red
     exit 1
 }
 & java --add-opens java.base/java.lang=ALL-UNNAMED -jar `$jar.FullName `$args
@@ -455,13 +471,13 @@ if (-not `$jar) {
 Set-Content -Path $wrapperPath -Value $wrapperContent -Encoding UTF8
 
 # CMD wrapper
-$cmdPath = Join-Path $InstallDir "nebflow.cmd"
+$cmdPath = Join-Path $InstallDir "$WrapperName.cmd"
 $cmdContent = @"
 @echo off
 set "PATH=%PATH%;C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot\bin;C:\Program Files\Temurin\jdk-17*\bin;C:\Program Files\Java\jdk-17*\bin"
-for %%f in ("%~dp0nebflow-assembly-*.jar") do set JAR=%%f
+for %%f in ("%~dp0nebflow-assembly-*.jar" "%~dp0$LowerName-assembly-*.jar") do set JAR=%%f
 if "%JAR%"=="" (
-    echo ERROR: nebflow JAR not found in %~dp0
+    echo ERROR: %~dp0 JAR not found
     exit /b 1
 )
 java --add-opens java.base/java.lang=ALL-UNNAMED -jar "%JAR%" %*
@@ -478,8 +494,8 @@ if ($userPath -notlike "*$InstallDir*") {
 # --- Config ---
 Write-Host "[5/5] Setting up config..." -ForegroundColor Yellow
 
-$configDir = Join-Path $env:USERPROFILE ".nebflow"
-$configFile = Join-Path $configDir "nebflow.json"
+$configDir = Join-Path $env:USERPROFILE "$HomeDir"
+$configFile = Join-Path $configDir "$ConfigFile"
 if (-not (Test-Path $configFile)) {
     New-Item -ItemType Directory -Force -Path $configDir | Out-Null
     $configContent = "{}"
@@ -493,14 +509,14 @@ if (-not (Test-Path $configFile)) {
 # --- Done ---
 Write-Host ""
 Write-Host "=====================================" -ForegroundColor Green
-Write-Host "  Nebflow v$Version installed!" -ForegroundColor Green
+Write-Host "  $ProductName v$Version installed!" -ForegroundColor Green
 Write-Host "=====================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Commands:" -ForegroundColor White
-Write-Host "    nebflow --help" -ForegroundColor Cyan
-Write-Host "    nebflow start" -ForegroundColor Cyan
+Write-Host "    $WrapperName --help" -ForegroundColor Cyan
+Write-Host "    $WrapperName start" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Config: $env:USERPROFILE\.nebflow\nebflow.json" -ForegroundColor DarkGray
+Write-Host "  Config: $env:USERPROFILE\$HomeDir\$ConfigFile" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  NOTE: Restart your terminal for PATH to take effect." -ForegroundColor Yellow
 Write-Host ""

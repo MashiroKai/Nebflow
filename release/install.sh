@@ -1,6 +1,22 @@
 #!/bin/bash
 set -e
 
+# -- Brand values (L2 rebrand): rendered from repo-root brand.conf at -------
+# -- release time (scripts/render-brand.sh); do not edit by hand. -----------
+# The runtime dual-reads legacy names (L3), so rendering NEW values here
+# keeps existing user data working - old dirs/env/config fall back.
+PRODUCT_NAME=Nebflow
+LOWER_NAME=nebflow
+COS_BUCKET=nebflow-releases-1411212853
+GH_ORG=MashiroKai
+GH_REPO=Nebflow
+HOME_DIR=.nebflow
+CONFIG_FILE=nebflow.json
+WRAPPER_NAME=nebflow
+COS_BASE_CN="https://${COS_BUCKET}.cos.ap-nanjing.myqcloud.com"
+GH_REPO_URL="https://github.com/${GH_ORG}/${GH_REPO}"
+GH_API_URL="https://api.github.com/repos/${GH_ORG}/${GH_REPO}"
+
 # Parse flags
 CHANNEL="stable"
 for arg in "$@"; do
@@ -16,15 +32,15 @@ if [ "$CHANNEL" = "beta" ]; then
     echo "==> Resolving latest beta version..."
     if [ -z "$VERSION" ]; then
         BETA_TAG=$(curl -fsSL --connect-timeout 5 --max-time 10 \
-            "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/latest-beta-version.txt" 2>/dev/null || true)
+            "${COS_BASE_CN}/latest-beta-version.txt" 2>/dev/null || true)
         if [ -z "$BETA_TAG" ]; then
             BETA_TAG=$(curl -fsSL --connect-timeout 10 --max-time 15 \
-                "https://api.github.com/repos/MashiroKai/Nebflow/releases" \
+                "${GH_API_URL}/releases" \
                 2>/dev/null | grep -m1 '"tag_name".*beta' | sed 's/.*"v\(.*beta[^"]*\)".*/\1/')
         fi
         if [ -z "$BETA_TAG" ]; then
             echo "ERROR: Could not find a beta release."
-            echo "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability."
+            echo "       Visit ${GH_REPO_URL}/releases to check availability."
             exit 1
         fi
         VERSION="$BETA_TAG"
@@ -33,25 +49,25 @@ else
     echo "==> Resolving latest stable version..."
     if [ -z "$VERSION" ]; then
         LATEST_VERSION=$(curl -fsSL --connect-timeout 5 --max-time 10 \
-            "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/latest-version.txt" 2>/dev/null || true)
+            "${COS_BASE_CN}/latest-version.txt" 2>/dev/null || true)
         if [ -z "$LATEST_VERSION" ]; then
             LATEST_VERSION=$(curl -fsSL --connect-timeout 10 --max-time 15 \
-                "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest" \
+                "${GH_API_URL}/releases/latest" \
                 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/')
         fi
         if [ -z "$LATEST_VERSION" ]; then
             echo "ERROR: Could not resolve latest version."
-            echo "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability."
+            echo "       Visit ${GH_REPO_URL}/releases to check availability."
             exit 1
         fi
         VERSION="$LATEST_VERSION"
     fi
 fi
 
-INSTALL_DIR="${INSTALL_DIR:-${HOME}/.nebflow/bin}"
-JAR_NAME="nebflow-assembly-${VERSION}.jar"
-COS_URL="https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/${JAR_NAME}"
-GH_URL="https://github.com/MashiroKai/Nebflow/releases/download/v${VERSION}/${JAR_NAME}"
+INSTALL_DIR="${INSTALL_DIR:-${HOME}/${HOME_DIR}/bin}"
+JAR_NAME="${LOWER_NAME}-assembly-${VERSION}.jar"
+COS_URL="${COS_BASE_CN}/${JAR_NAME}"
+GH_URL="${GH_REPO_URL}/releases/download/v${VERSION}/${JAR_NAME}"
 
 echo ""
 echo "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗"
@@ -61,7 +77,7 @@ echo "  ██║╚██╗██║██╔══╝  ██╔══██�
 echo "  ██║ ╚████║███████╗██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝"
 echo "  ╚═╝  ╚═══╝╚══════╝╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝"
 echo ""
-echo "  Nebflow v${VERSION} Installer (${CHANNEL})"
+echo "  ${PRODUCT_NAME} v${VERSION} Installer (${CHANNEL})"
 echo ""
 
 # Check Java version — auto-install if missing or too old
@@ -147,13 +163,13 @@ check_java() {
                     aarch64|arm64) jdk_arch="aarch64" ;;
                 esac
                 local jdk_url="https://api.adoptium.net/v3/binary/latest/21/ga/linux/${jdk_arch}/jdk/hotspot/normal/eclipse"
-                local jdk_dir="${HOME}/.nebflow/jdk-21"
-                mkdir -p "${HOME}/.nebflow"
-                local tmp_tar=$(mktemp /tmp/nebflow-jdk-XXXXXX.tar.gz)
+                local jdk_dir="${HOME}/${HOME_DIR}/jdk-21"
+                mkdir -p "${HOME}/${HOME_DIR}"
+                local tmp_tar=$(mktemp /tmp/${LOWER_NAME}-jdk-XXXXXX.tar.gz)
                 if curl -fsSL --connect-timeout 10 --max-time 120 "$jdk_url" -o "$tmp_tar"; then
-                    tar xzf "$tmp_tar" -C "${HOME}/.nebflow" 2>/dev/null
+                    tar xzf "$tmp_tar" -C "${HOME}/${HOME_DIR}" 2>/dev/null
                     rm -f "$tmp_tar"
-                    local extracted=$(ls -d "${HOME}"/.nebflow/jdk-21* 2>/dev/null | head -1)
+                    local extracted=$(ls -d "${HOME}"/${HOME_DIR}/jdk-21* 2>/dev/null | head -1)
                     if [ -n "$extracted" ]; then
                         mv "$extracted" "$jdk_dir" 2>/dev/null || true
                         export PATH="$jdk_dir/bin:$PATH"
@@ -223,7 +239,7 @@ detect_region() {
     local cos_ms=99999 gh_ms=99999
     if command -v curl &> /dev/null; then
         cos_ms=$(curl -o /dev/null -s -w '%{time_total}' --connect-timeout 2 --max-time 3 \
-            "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/" 2>/dev/null | \
+            "${COS_BASE_CN}/" 2>/dev/null | \
             awk '{printf "%d", $1 * 1000}')
         gh_ms=$(curl -o /dev/null -s -w '%{time_total}' --connect-timeout 2 --max-time 3 \
             "https://github.com/favicon.ico" 2>/dev/null | \
@@ -245,12 +261,12 @@ download_jar() {
 
     echo "==> Downloading ${JAR_NAME}..."
 
-    # Remove old JAR files (keep .nebflow user data untouched)
+    # Remove old JAR files (keep user data untouched)
     local old_jars
-    old_jars=$(ls "${INSTALL_DIR}"/nebflow-assembly-*.jar 2>/dev/null || true)
+    old_jars=$(ls "${INSTALL_DIR}"/${LOWER_NAME}-assembly-*.jar "${INSTALL_DIR}"/nebflow-assembly-*.jar 2>/dev/null || true)
     if [ -n "$old_jars" ]; then
         echo "    Removing old version(s)..."
-        rm -f "${INSTALL_DIR}"/nebflow-assembly-*.jar
+        rm -f "${INSTALL_DIR}"/${LOWER_NAME}-assembly-*.jar "${INSTALL_DIR}"/nebflow-assembly-*.jar
     fi
 
     detect_region
@@ -345,14 +361,14 @@ install_rg() {
 
 # Create wrapper script
 create_wrapper() {
-    local wrapper="${INSTALL_DIR}/nebflow"
+    local wrapper="${INSTALL_DIR}/${WRAPPER_NAME}"
     echo "==> Creating wrapper script..."
     cat > "${wrapper}" << 'WRAPPER'
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-JAR=$(ls -1 "${SCRIPT_DIR}"/nebflow-assembly-*.jar 2>/dev/null | head -n1)
+JAR=$(ls -1 "${SCRIPT_DIR}"/${LOWER_NAME}-assembly-*.jar 2>/dev/null | head -n1)
 if [ -z "$JAR" ]; then
-    echo "ERROR: nebflow JAR not found in ${SCRIPT_DIR}"
+    echo "ERROR: ${PRODUCT_NAME} JAR not found in ${SCRIPT_DIR}"
     exit 1
 fi
 exec java --add-opens java.base/java.lang=ALL-UNNAMED -jar "$JAR" "$@"
@@ -362,14 +378,14 @@ WRAPPER
 
 # Create config template
 create_config() {
-    local config_dir="${HOME}/.nebflow"
-    local config_file="${config_dir}/nebflow.json"
+    local config_dir="${HOME}/${HOME_DIR}"
+    local config_file="${config_dir}/${CONFIG_FILE}"
     if [ ! -f "${config_file}" ]; then
         echo "==> Creating default config at ${config_file}..."
         mkdir -p "${config_dir}"
         echo '{}' > "${config_file}"
         echo "    Config created: ${config_file}"
-        echo "    Run 'nebflow' to start using the CLI."
+        echo "    Run '${WRAPPER_NAME}' to start using the CLI."
     fi
 }
 
@@ -385,15 +401,15 @@ setup_path() {
     fi
     if [ -n "$profile" ] && ! grep -q "\.nebflow/bin" "$profile" 2>/dev/null; then
         echo "" >> "$profile"
-        echo "# Added by nebflow installer" >> "$profile"
-        echo "export PATH=\"\$HOME/.nebflow/bin:\$PATH\"" >> "$profile"
-        echo "    Added ~/.nebflow/bin to PATH in $profile"
+        echo "# Added by ${PRODUCT_NAME} installer" >> "$profile"
+        echo "export PATH=\"\$HOME/${HOME_DIR}/bin:\$PATH\"" >> "$profile"
+        echo "    Added ~/${HOME_DIR}/bin to PATH in $profile"
     fi
 }
 
 # Download Whisper voice model for offline speech recognition
 install_voice_model() {
-    local model_dir="${HOME}/.nebflow/voice-models/onnx-community/whisper-base"
+    local model_dir="${HOME}/${HOME_DIR}/voice-models/onnx-community/whisper-base"
     if [ -f "$model_dir/onnx/encoder_model_quantized.onnx" ]; then
         echo "    Voice model already installed."
         return 0
@@ -436,7 +452,7 @@ create_config
 setup_path
 
 echo ""
-echo "==> Done! Nebflow v${VERSION} installed."
-echo "    Run: nebflow --help"
-echo "    Config: ~/.nebflow/nebflow.json"
-echo "    Please restart your terminal or run: export PATH=\"\$HOME/.nebflow/bin:\$PATH\""
+echo "==> Done! ${PRODUCT_NAME} v${VERSION} installed."
+echo "    Run: ${WRAPPER_NAME} --help"
+echo "    Config: ~/${HOME_DIR}/${CONFIG_FILE}"
+echo "    Please restart your terminal or run: export PATH=\"\$HOME/${HOME_DIR}/bin:\$PATH\""
