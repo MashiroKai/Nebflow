@@ -11,6 +11,10 @@ lazy val root = (project in file("."))
     organization := "nebflow",
     // Include VERSION file in JAR so runtime version detection works from any directory
     Compile / unmanagedResources += baseDirectory.value / "VERSION",
+    // L1 rebrand: repo-root brand.conf is the ONLY edit point for brand values;
+    // package it into the JAR so runtime Branding reads it from the classpath.
+    // No second copy under src/main/resources — single source, no drift.
+    Compile / unmanagedResources += baseDirectory.value / "brand.conf",
     // P1 web bundle: mount build/ (containing web-dist/) as a resource dir ONLY
     // when explicitly requested via -Dnebflow.webdist=1 (CI: sbt -Dnebflow.webdist=1
     // assembly). A dev machine that once ran scripts/build-web.mjs must not have
