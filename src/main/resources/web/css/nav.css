@@ -183,6 +183,11 @@ body.sidebar-collapsed #activity-bar {
   opacity: 1;
   margin: 16px 4px 10px;
 }
+/* prefers-reduced-motion: squash the Side Bar collapse animation
+   (transition itself lives in base.css with the --panel-* tokens). */
+@media (prefers-reduced-motion: reduce) {
+  #sidebar { transition-duration: 0.01s; }
+}
 
 /* ── Avatar (top) — login affordance ─────────────────────── */
 .activity-avatar {
@@ -259,7 +264,7 @@ body.sidebar-collapsed #activity-bar {
   justify-content: center;
   position: relative;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.1s;
   padding: 0;
 }
 .activity-btn:hover {
@@ -273,7 +278,15 @@ body.sidebar-collapsed #activity-bar {
     inset 0 -1px 0 var(--glass-control-underedge);
 }
 .activity-btn:focus { outline: none; }
+/* Visible keyboard focus ring (outline is suppressed above). */
+.activity-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
+.activity-btn:active { transform: scale(0.97); }
 .activity-btn { -webkit-tap-highlight-color: transparent; }
+/* C1: active state is background + inset shadow only — no left-edge bar of
+   any kind. The base 1px border is a transparent reservation for the glass
+   hover; drop its left edge in the active state (box-sizing: border-box
+   keeps the 36px size; flex centering keeps the icon stable). */
+.activity-btn.active { border-left-width: 0; }
 .activity-btn.active {
   color: var(--color-frame-text-bright);
   background: var(--color-frame-active);
