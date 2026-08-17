@@ -1,4 +1,8 @@
 import state from './state.js';
+import { initBranding } from './brand.js';
+
+// Branding first: correct the tab title before any other module body runs.
+initBranding();
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
 import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath } from './utils.js';
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
