@@ -11,6 +11,8 @@ export default {
   'sidebar.edgeToggle': '展开或收起侧边栏',
   'sidebar.settingsTitle': '设置',
   'sidebar.folderDelete': '删除文件夹',
+  'activity.files': '文件',
+  'panel.explorer': '文件浏览器',
   'header.memory': '记忆',
   'header.bgTasks': '后台任务',
   'input.placeholder': '输入消息...',

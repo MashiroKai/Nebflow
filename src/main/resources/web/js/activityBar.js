@@ -4,12 +4,14 @@
 //   • Avatar — the NebLink login entry. Tap when logged out → opens the
 //     NebLink device-flow login modal (GitHub OAuth). Tap when logged in →
 //     opens the profile page on nebflow.space in a new tab.
+//   • Side Bar panel switch buttons (Files; future panels register the same way).
 //   • (spacer)
-//   • Settings.
+//   • Teams / Flows / Agents (Canvas tabs) and Settings.
 //
-// Device management (list, rename, cross-device messaging) lives in the Settings
-// panel's NebLink section — this bar is intentionally minimal: avatar + login
-// entry only.
+// This module also owns the Side Bar panel registry: the single source of
+// truth for Side Bar visibility + the active panel. Panel buttons, the header
+// #sidebar-toggle and ⌘B all drive the same API (setSideBarCollapsed /
+// toggleSideBar) — nothing else toggles the sidebar-collapsed class.
 //
 // The bar is an independent glass card (see nav.css #activity-bar). It is NOT
 // part of the 3-column layout — order:-1 keeps it leftmost, and it
@@ -20,6 +22,8 @@ import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, c
 import { openAgents } from './agentManager.js';
 import { createIconsIn, escapeHtml } from './utils.js';
 import { brand } from './brand.js';
+import { t } from './i18n.js';
+import { key } from './branding.js';
 
 let initialized = false;
 let statusPollTimer = null;
@@ -28,6 +32,7 @@ export function initActivityBar() {
   if (initialized) return;
   initialized = true;
 
+  initSidePanels();
   bindSettingsButton();
   bindAgentsButton();
   bindAvatar();
@@ -40,6 +45,128 @@ export function initActivityBar() {
   observeSettingsModal();
 
   if (typeof lucide !== 'undefined') createIconsIn(document.getElementById('activity-bar'));
+}
+
+// ── Side Bar panel registry ──────────────────────────────
+// State:
+//   body.sidebar-collapsed — visibility, persisted as key('sidebar_collapsed')
+//   activePanelId          — last active panel id, persisted as
+//                            key('sidebar_active_panel'); kept while collapsed
+//                            so the next expand restores it
+// Collapsed ⇔ no panel active. The inline pre-paint script in index.html
+// restores the classes before first paint; this module re-syncs on init.
+const LS_COLLAPSED = key('sidebar_collapsed');
+const LS_PANEL = key('sidebar_active_panel');
+
+/** @type {Map<string, {id: string, buttonId: string, panelId: string, i18nKey: string|undefined}>} */
+const sidePanels = new Map();
+/** Last active panel id (survives collapse so expand restores it). */
+let activePanelId = 'files';
+
+/**
+ * Register a Side Bar panel + its Activity Bar switch button.
+ * Adding a future panel is a registration — no layout code changes.
+ * @param {{id: string, buttonId: string, panelId: string, i18nKey?: string}} def
+ */
+export function registerSidePanel(def) {
+  const { id, buttonId, panelId, i18nKey } = def;
+  if (!id || sidePanels.has(id)) return;
+  sidePanels.set(id, { id, buttonId, panelId, i18nKey });
+  const btn = document.getElementById(buttonId);
+  if (!btn) return;
+  if (i18nKey) btn.title = t(i18nKey);
+  btn.addEventListener('click', () => onPanelButtonClick(id));
+}
+
+/** true when the Side Bar is collapsed (the Activity Bar stays visible). */
+export function isSideBarCollapsed() {
+  return document.body.classList.contains('sidebar-collapsed');
+}
+
+/** Collapse/expand the Side Bar. Expanding restores the last active panel. */
+export function setSideBarCollapsed(collapsed) {
+  document.body.classList.toggle('sidebar-collapsed', collapsed);
+  localStorage.setItem(LS_COLLAPSED, String(collapsed));
+  if (!collapsed) {
+    if (!sidePanels.has(activePanelId)) activePanelId = 'files';
+    localStorage.setItem(LS_PANEL, activePanelId);
+  }
+  syncPanelDom();
+}
+
+/** ⌘B / header #sidebar-toggle entry point. */
+export function toggleSideBar() {
+  setSideBarCollapsed(!isSideBarCollapsed());
+}
+
+function onPanelButtonClick(id) {
+  if (!sidePanels.has(id)) return;
+  if (!isSideBarCollapsed() && activePanelId === id) {
+    // Re-click the active icon → collapse the Side Bar (VSCode semantics).
+    setSideBarCollapsed(true);
+    return;
+  }
+  // Switch panel (instant — no width animation) and/or expand.
+  activePanelId = id;
+  localStorage.setItem(LS_PANEL, id);
+  setSideBarCollapsed(false);
+}
+
+/** Mirror state onto panel/button classes + aria-pressed. */
+function syncPanelDom() {
+  const collapsed = isSideBarCollapsed();
+  for (const p of sidePanels.values()) {
+    const on = !collapsed && p.id === activePanelId;
+    const panel = document.getElementById(p.panelId);
+    const btn = document.getElementById(p.buttonId);
+    if (panel) panel.classList.toggle('active', on);
+    if (btn) {
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+  }
+}
+
+function initSidePanels() {
+  registerSidePanel({
+    id: 'files',
+    buttonId: 'files-btn',
+    panelId: 'panel-sessions',
+    i18nKey: 'activity.files',
+  });
+  // Restore the persisted panel; unregistered ids fall back to files.
+  const stored = localStorage.getItem(LS_PANEL);
+  activePanelId = stored && sidePanels.has(stored) ? stored : 'files';
+  // Classes were already restored pre-paint by the inline script; this
+  // re-sync is authoritative for the runtime (aria-pressed included).
+  syncPanelDom();
+  // Button titles follow the language.
+  window.addEventListener('locale-changed', () => {
+    for (const p of sidePanels.values()) {
+      if (!p.i18nKey) continue;
+      const btn = document.getElementById(p.buttonId);
+      if (btn) btn.title = t(p.i18nKey);
+    }
+  });
+  bridgeExplorerTitle();
+}
+
+// explorer.js (zero-change file) owns the explorer header title: it shows the
+// root folder name when a folder is open, and the hardcoded literal
+// 'Explorer' otherwise. Bridge the no-root case to i18n: whenever the title
+// carries no root path (its title tooltip attr is empty), show the localized
+// panel name. Self-heals after every explorer.js rewrite via observer.
+function bridgeExplorerTitle() {
+  const el = document.getElementById('panel-title-explorer');
+  if (!el) return;
+  const apply = () => {
+    if (el.title) return; // a root folder name is shown — leave it
+    const localized = t('panel.explorer');
+    if (el.textContent !== localized) el.textContent = localized;
+  };
+  apply();
+  new MutationObserver(apply).observe(el, { childList: true, characterData: true, subtree: true });
+  window.addEventListener('locale-changed', apply);
 }
 
 // ── Settings ─────────────────────────────────────────────
