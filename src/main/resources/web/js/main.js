@@ -57,7 +57,7 @@ import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initLightbox } from './lightbox.js';
 import * as flowCanvas from './flowCanvas.js';
 import { initColResizers } from './colResizer.js';
-import { initActivityBar } from './activityBar.js';
+import { initActivityBar, toggleSideBar } from './activityBar.js';
 
 // ---------- Live thinking timer ----------
 let _thinkingTimerInterval = null;
@@ -2392,25 +2392,19 @@ onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
   }
 })();
 
-// Sidebar collapse toggle
+// Sidebar collapse toggle — visibility is owned by the activityBar panel
+// registry (single state source); both entries below call the same API.
 (function initSidebarToggle() {
-  const LS_KEY = key('sidebar_collapsed');
   const btn = document.getElementById('sidebar-toggle');
   if (!btn) return;
-  const collapsed = localStorage.getItem(LS_KEY) === 'true';
-  if (collapsed) document.body.classList.add('sidebar-collapsed');
-  btn.addEventListener('click', () => {
-    document.body.classList.toggle('sidebar-collapsed');
-    localStorage.setItem(LS_KEY, document.body.classList.contains('sidebar-collapsed'));
-  });
+  btn.addEventListener('click', () => toggleSideBar());
   // Keyboard shortcut: Cmd/Ctrl+B
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
       const tag = document.activeElement?.tagName;
       if (tag === 'TEXTAREA' || tag === 'INPUT') return;
       e.preventDefault();
-      document.body.classList.toggle('sidebar-collapsed');
-      localStorage.setItem(LS_KEY, document.body.classList.contains('sidebar-collapsed'));
+      toggleSideBar();
     }
   });
 })();

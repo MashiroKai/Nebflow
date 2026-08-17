@@ -11,6 +11,8 @@ export default {
   'sidebar.edgeToggle': 'Toggle sidebar — expand or collapse',
   'sidebar.settingsTitle': 'Settings',
   'sidebar.folderDelete': 'Delete folder',
+  'activity.files': 'Files',
+  'panel.explorer': 'Explorer',
   'header.memory': 'Memory',
   'header.bgTasks': 'Background tasks',
   'input.placeholder': 'Type a message...',
