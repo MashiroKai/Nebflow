@@ -957,6 +957,18 @@ Message type (optional, default "INFO"):
                 ),
                 session.id
               )
+              // Death watch: Mail-spawned team agents live OUTSIDE
+              // FlowTreeActor's watch system, so their death was completely
+              // silent — actorMap kept the dead ref (Mails to it vanished),
+              // agentRegistry kept the record, busyMap kept the last turn's
+              // busy flag, and getActiveAgents reported a running ghost for
+              // hours. This watcher fires the cleanup FlowTreeActor runs for
+              // its own spawns: unregister + clear busy + leave a log trail
+              // (the silent death itself was the observability gap).
+              _ <- actorSystem.spawn(
+                MailTool.teamAgentDeathWatch(session.id, entry.name, ref, resources),
+                s"deathwatch-${session.id.take(8)}"
+              )
               _ <- TeamSessionRegistry.registerActor(session.id, ref)
               _ <- resources.agentRegistry.update(
                 _ + (
@@ -984,6 +996,49 @@ Message type (optional, default "INFO"):
       }
       ref <- TeamSessionRegistry.getRunningActor(sessionId)
     yield ref
+
+  /**
+    * Death watch for Mail-activated team agents (deep follow-up #1,
+    * 2026-08-17): MailTool spawns these actors outside FlowTreeActor's
+    * watch system, so their death was completely silent — actorMap kept
+    * the dead ref (subsequent Mails to it vanished into a dead queue),
+    * agentRegistry kept the record, busyMap kept the last turn's busy
+    * flag, and getActiveAgents reported a running ghost for hours
+    * (the snapshot source of the Teams panel bare running rows).
+    *
+    * The watcher mirrors the cleanup FlowTreeActor runs for its own
+    * spawns (unregisterActor + resume scheduling) plus the piece that
+    * handler lacks — clearing the busy flag — and leaves a log trail:
+    * silent death was itself the observability defect.
+    *
+    * Package-visible for the deathwatch spec.
+    */
+  private[tools] def teamAgentDeathWatch(
+      sessionId: String,
+      agentName: String,
+      watched: ActorRef[AgentCommand],
+      resources: SharedResources
+  ): Behavior[SystemSignal] =
+    Behaviors.setup { wctx =>
+      wctx.watch(watched).map { _ =>
+        new Behavior[SystemSignal]:
+          def receive(ctx: ActorContext[SystemSignal], msg: SystemSignal): IO[Behavior[SystemSignal]] =
+            IO.pure(this)
+
+          override def onSignal(
+              ctx: ActorContext[SystemSignal],
+              signal: SystemSignal
+          ): IO[Behavior[SystemSignal]] =
+            signal match
+              case SystemSignal.Terminated(_) =>
+                TeamSessionRegistry.unregisterActor(sessionId, resources) *>
+                  TeamSessionRegistry.markIdle(sessionId) *>
+                  IO(logger.info(
+                    s"team agent actor stopped: agent=$agentName session=$sessionId — registry unregistered, busy cleared"
+                  )).as(Behaviors.stopped[SystemSignal])
+      }
+    }
+  end teamAgentDeathWatch
 
   private def sendMail(
     ref: ActorRef[AgentCommand],

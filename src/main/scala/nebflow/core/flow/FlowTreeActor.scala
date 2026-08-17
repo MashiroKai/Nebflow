@@ -315,6 +315,10 @@ object FlowTreeActor:
               _ <- sidOpt.traverse_ { sid =>
                 for
                   _ <- TeamSessionRegistry.unregisterActor(sid, cfg.resources)
+                  _ <- TeamSessionRegistry.markIdle(sid)
+                  _ = logger.info(
+                    s"team agent actor stopped: agent='${deadRef.path.name}' session=$sid — registry unregistered, busy cleared"
+                  )
                   _ <- watchedAgentsRef.update(_ - sid)
                   turnStateOpt <- TurnStateStore.load(sid)
                   _ <- turnStateOpt.filter(_.inProgress).traverse_ { ts =>
