@@ -156,6 +156,27 @@ const futureDisabled = await page.locator('.cal-day[aria-disabled="true"]').eval
   els.every(e => +e.textContent > new Date().getDate()));
 check('B5 future days aria-disabled', futureDisabled);
 
+// N1 (design review, spec §6.1 supplement): the modal must not clip the date
+// popover — overflow:visible lets it hang below the card in short-modal
+// states; confirm stays clickable and the popover's bottom edge is hittable.
+await page.waitForTimeout(300);   // let the 0.12s fade-in finish (N2 note)
+const n1 = await page.evaluate(() => {
+  const modal = document.getElementById('search-modal');
+  const pop = document.getElementById('search-date-popover');
+  const p = pop.getBoundingClientRect();
+  const hit = document.elementFromPoint(p.x + p.width / 2, p.bottom - 3);
+  const confirm = document.querySelector('.cal-confirm').getBoundingClientRect();
+  const cHit = document.elementFromPoint(confirm.x + confirm.width / 2, confirm.y + confirm.height / 2);
+  return {
+    overflow: getComputedStyle(modal).overflow,
+    edgeHit: hit ? (hit.id || hit.className.toString().slice(0, 30)) : 'null',
+    confirmHit: cHit ? (cHit.id || cHit.className.toString().slice(0, 30)) : 'null',
+  };
+});
+check('N1 modal overflow visible (popover not clipped)', n1.overflow === 'visible', n1.overflow);
+check('N1 popover bottom edge hittable', /search-date-popover|cal-/.test(n1.edgeHit), n1.edgeHit);
+check('N1 confirm button clickable', n1.confirmHit.includes('cal-confirm'), n1.confirmHit);
+
 // B8: staging — pick yesterday then Cancel → no anchor, no new fetch
 let fetchCount = 0;
 page.on('request', (r) => { if (r.url().includes('/history')) fetchCount++; });

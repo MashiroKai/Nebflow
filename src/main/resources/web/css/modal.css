@@ -627,7 +627,11 @@
   max-width: calc(100vw - 48px);
   max-height: 85vh;
   padding: 0;
-  overflow: hidden;
+  /* N1: visible, not hidden — in short-modal states (0-2 results) the date
+     popover is taller than the modal interior and must hang below the card
+     instead of being clipped. Backgrounds are corner-clipped by border-radius
+     regardless; no flow child paints outside the box. */
+  overflow: visible;
   animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #search-overlay.on #search-modal {
