@@ -170,7 +170,7 @@ class PresetStore(
    * `llm.model.fallbacks`).
    */
   private def readGlobalChain(): List[String] =
-    val nebflowJson = PathUtil.dataRoot / "nebflow.json"
+    val nebflowJson = PathUtil.configJsonReadPath(PathUtil.dataRoot)
     if !os.exists(nebflowJson) then Nil
     else
       decode[NebflowServiceConfig](os.read(nebflowJson)) match

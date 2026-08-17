@@ -151,7 +151,7 @@ object NeblinkConfig:
       enabled <- c.downField("enabled").as[Option[Boolean]].map(_.getOrElse(false))
       syncIntervalSec <- c.downField("syncIntervalSec").as[Option[Int]].map(_.getOrElse(45))
       // Backward compat: try "neblinkServer" first, fall back to "coordinator"
-      neblinkServer <- c.downField("neblinkServer").as[Option[NeblinkServerConfig]].flatMap {
+      neblinkServer <- c.downField(Protocol.neblinkServerField).as[Option[NeblinkServerConfig]].flatMap {
         case Some(config) => Right(Some(config))
         case None => c.downField("coordinator").as[Option[NeblinkServerConfig]]
       }

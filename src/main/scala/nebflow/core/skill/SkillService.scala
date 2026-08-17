@@ -81,7 +81,10 @@ object SkillService:
   }
 
   private val exampleSkillMd: String =
-    """---
+    // s-interpolation: documents the REAL data dir (brand.conf homeDirName;
+    // the "nebflow/visual-style" example stays — it is a live namespace
+    // skill, a data fact rather than a brand string).
+    s"""---
       |name: example
       |description: An example skill — copy this folder to create your own
       |language: zh
@@ -132,7 +135,7 @@ object SkillService:
       |└── assets/               # Optional — output files (templates, icons, fonts, etc.)
       |```
       |
-      |Skills live at `~/.nebflow/skills/<skill-name>/`. The `name` field in frontmatter must match the directory name. Namespaced skills live two levels deep: `~/.nebflow/skills/<ns>/<name>/SKILL.md` — their identifier is the relative path (`<ns>/<name>`, e.g. `nebflow/visual-style`), and agent.json `skills` entries must use the full path.
+      |Skills live at `~/${nebflow.core.Branding.homeDirName}/skills/<skill-name>/`. The `name` field in frontmatter must match the directory name. Namespaced skills live two levels deep: `~/${nebflow.core.Branding.homeDirName}/skills/<ns>/<name>/SKILL.md` — their identifier is the relative path (`<ns>/<name>`, e.g. `nebflow/visual-style`), and agent.json `skills` entries must use the full path.
       |
       |## Frontmatter (YAML)
       |
@@ -237,7 +240,7 @@ object SkillService:
           }.mkString("\n")
           s"""# Skills
              |
-             |Skills live at ~/.nebflow/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
+             |Skills live at ~/${nebflow.core.Branding.homeDirName}/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
              |
              |$entries""".stripMargin
       }
@@ -323,21 +326,27 @@ object SkillService:
   // Multi-source loading
   // ============================================================
 
-  /** Project-level skill directories to scan, in priority order. */
+  /** Project-level skill directories to scan, in priority order. Both the
+    * brand dir name and the hardcoded legacy ".nebflow" are listed — project
+    * dirs belong to the user's repo and are never migrated, so rename-day
+    * projects on either name keep loading (distinct collapses the current
+    * identical pair). */
   private def projectSkillPaths: List[os.Path] =
     val cwd = os.pwd
     List(
+      cwd / nebflow.core.Branding.homeDirName / "skills",
       cwd / ".nebflow" / "skills",
       cwd / ".claude" / "skills"
-    )
+    ).distinct
 
   /** Project-level legacy command directories to scan. */
   private def projectCommandPaths: List[os.Path] =
     val cwd = os.pwd
     List(
+      cwd / nebflow.core.Branding.homeDirName / "commands",
       cwd / ".nebflow" / "commands",
       cwd / ".claude" / "commands"
-    )
+    ).distinct
 
   private def loadProjectSkills(): List[SkillInfo] =
     projectSkillPaths.flatMap(dir => loadFromSkillsDir(dir, "project"))

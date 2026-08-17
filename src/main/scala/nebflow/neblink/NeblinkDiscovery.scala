@@ -136,7 +136,7 @@ final class NeblinkDiscovery(
         case None =>
           IO.pure(Json.obj("configured" -> false.asJson))
     yield Json.obj(
-      "neblinkServer" -> clientStatus,
+      Protocol.neblinkServerField -> clientStatus,
       "currentPeers" -> currentPeers.map(_.deviceName).asJson
     )
 

@@ -124,7 +124,7 @@ object GatewayClient:
 
   /** Read the Gateway port from env or default */
   def readPort: IO[Int] = IO.blocking {
-    sys.env.get("NEBFLOW_GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
+    nebflow.core.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
   }
 
   /** Create a client if Gateway is running and accessible */

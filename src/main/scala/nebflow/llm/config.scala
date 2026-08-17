@@ -143,8 +143,11 @@ object NebflowServiceConfig:
   given Decoder[NebflowServiceConfig] = deriveDecoder[NebflowServiceConfig]
 
 object Config:
-  val NebflowHome: os.Path = PathUtil.dataRoot
-  val DefaultConfigPath: os.Path = NebflowHome / "nebflow.json"
+  // def (not val): PathUtil.dataRoot and the config-file dual-read must be
+  // resolved per access — an object val would freeze the first-touched
+  // dataRoot and break test isolation (setDataRoot after first access).
+  def NebflowHome: os.Path = PathUtil.dataRoot
+  def DefaultConfigPath: os.Path = PathUtil.configJsonReadPath(NebflowHome)
 
   private val envVarLogger = nebflow.core.NebflowLogger.forName("nebflow.config")
 

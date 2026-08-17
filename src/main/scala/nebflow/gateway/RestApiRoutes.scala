@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.AgentCore
 import nebflow.agent.SharedResources
+import nebflow.core.Branding
 import nebflow.core.PathUtil
 import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.{EntityLoader, NodeRoute}
@@ -592,7 +593,7 @@ class RestApiRoutes(
                   "platform" -> identity.platform.asJson
                 )
                 .noSpaces
-              result <- proxyPost(serverUrl, "/api/device/code", body)
+              result <- proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.code, body)
               resp <- result match
                 case Right(json) => Ok(json)
                 case Left(err) => BadRequest(Json.obj("error" -> s"Failed to start device flow: $err".asJson))
@@ -619,7 +620,7 @@ class RestApiRoutes(
                 for
                   resolvedUrl <- neblinkServerUrl(serverUrl)
                   pollBody = Json.obj("deviceCode" -> deviceCode.asJson).noSpaces
-                  result <- proxyPost(resolvedUrl, "/api/device/token", pollBody)
+                  result <- proxyPost(resolvedUrl, nebflow.neblink.Protocol.DeviceApi.token, pollBody)
                   resp <- result match
                     case Right(json) =>
                       // Success — persist credential + update config + hot-swap.
@@ -2144,7 +2145,7 @@ class RestApiRoutes(
    * so direct LAN access works.
    */
   private def enrollWithServer(serverUrl: String, body: String): IO[Either[String, Json]] =
-    proxyPost(serverUrl, "/api/device/enroll", body)
+    proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.enroll, body)
 
   /**
    * SSRF guard for provider model discovery: only absolute http(s) URLs with a
@@ -2284,8 +2285,8 @@ class RestApiRoutes(
           case Some(ms) =>
             ms.neblinkConfig.map(_.neblinkServer.map(_.url)).flatMap {
               case Some(url) => IO.pure(url)
-              case None => IO.pure("https://neblink.nebflow.space")
+              case None => IO.pure(Branding.serverUrl)
             }
-          case None => IO.pure("https://neblink.nebflow.space")
+          case None => IO.pure(Branding.serverUrl)
 
 end RestApiRoutes
