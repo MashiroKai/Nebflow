@@ -22,6 +22,7 @@
 // scrolls to the message.
 
 import state from './state.js';
+import { key } from './branding.js';
 import { chatViews } from './chatView.js';
 import { switchToSession } from './sidebar.js';
 import { t } from './i18n.js';
@@ -306,7 +307,7 @@ function triggerSearch() {
 
 // ── Data fetching ──────────────────────────────────────────
 function authHeaders() {
-  const tok = localStorage.getItem('nebflow_token') || '';
+  const tok = localStorage.getItem(key('token')) || '';
   return tok ? { Authorization: `Bearer ${tok}` } : {};
 }
 
