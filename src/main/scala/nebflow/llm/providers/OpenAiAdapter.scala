@@ -7,6 +7,7 @@ import fs2.Stream
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.core.NebflowLogger
 import nebflow.llm.{AdapterResponse, ProviderAdapter, SendMessageParams}
 import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
@@ -151,7 +152,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         val id = tc.hcursor.downField("id").as[String].getOrElse("")
         val name = tc.hcursor.downField("function").downField("name").as[String].getOrElse("")
         val args = tc.hcursor.downField("function").downField("arguments").as[String].getOrElse("{}")
-        val input = parse(args).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
+        val input = ToolInputJson.parseToolInput(name, args)
         ToolCall(id, name, input)
       }
 
@@ -342,7 +343,14 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       durationMs = 0
     )
     parse(data) match
-      case Left(_) => IO.pure(Nil)
+      case Left(err) =>
+        // Observability (issue #18 follow-up): dropped SSE data used to be
+        // invisible; log so malformed provider frames are diagnosable.
+        IO.delay(
+          NebflowLogger
+            .forName("nebflow.llm.openai")
+            .warn(s"dropped unparseable SSE data (${err.message}): ${data.take(120)}")
+        ).as(Nil)
       case Right(json) =>
         // Check for usage-only chunk (stream_options.include_usage sends a final chunk with empty choices)
         val usageOpt = json.hcursor.downField("usage").as[Json].toOption.map { u =>
@@ -391,7 +399,20 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                       (id, name) match
                         case (Some(toolId), Some(toolName)) =>
                           toolCallState
-                            .update(_ + (index -> (toolId, toolName, new StringBuilder(args.getOrElse("")))))
+                            .modify { m =>
+                              // Some OpenAI-compatible providers repeat id+name
+                              // in every fragment chunk. Resetting the builder
+                              // per chunk kept only the LAST fragment, so the
+                              // accumulated JSON no longer parsed and arguments
+                              // were silently lost (same class as issue #18).
+                              // Accumulate instead when the entry is the same call.
+                              m.get(index) match
+                                case Some((id0, name0, sb)) if id0 == toolId && name0 == toolName =>
+                                  args.foreach(sb.append)
+                                  (m.updated(index, (toolId, toolName, sb)), ())
+                                case _ =>
+                                  (m.updated(index, (toolId, toolName, new StringBuilder(args.getOrElse("")))), ())
+                            }
                             .as {
                               val start = StreamChunk.ToolCallStart(toolName)
                               val argChunks =
@@ -416,7 +437,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                       if finishReason.contains("tool_calls") || finishReason.contains("function_call") then
                         toolCallState.getAndSet(Map.empty).map { m =>
                           val toolChunks = m.values.toList.map { case (id, name, sb) =>
-                            val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
+                            val input = ToolInputJson.parseToolInput(name, sb.toString)
                             StreamChunk.ToolCallChunk(ToolCall(id, name, input))
                           }
                           // Include any text/thinking deltas from this chunk AND a Done chunk,
@@ -438,7 +459,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                   if finishReason.exists(fr => fr.contains("tool_calls") || fr.contains("function_call")) then
                     toolCallState.getAndSet(Map.empty).map { m =>
                       val toolChunks = m.values.toList.map { case (id, name, sb) =>
-                        val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
+                        val input = ToolInputJson.parseToolInput(name, sb.toString)
                         StreamChunk.ToolCallChunk(ToolCall(id, name, input))
                       }
                       allTextDeltas ++ toolChunks :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None)
