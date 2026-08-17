@@ -6,11 +6,12 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
 import munit.FunSuite
-import nebflow.actor.ActorSystem
+import nebflow.actor.{ActorSystem, Behaviors}
 import nebflow.agent.*
 import nebflow.core.FileChangeTracker
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
+import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.task.FileTaskStore
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
@@ -19,8 +20,8 @@ import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole,
 import scala.concurrent.duration.*
 
 /**
-  * Lifecycle spec for Mail-activated team agents — deep follow-up #2 of the
-  * 2026-08-17 Teams ghost investigation:
+  * Lifecycle spec for Mail-activated team agents — the two deep follow-ups
+  * of the 2026-08-17 Teams ghost investigation:
   *
   * #2 respawn amnesia: MailTool.activateAgent used to spawn the actor with
   * initialMessages = Nil even when the session had hundreds of persisted
@@ -28,6 +29,13 @@ import scala.concurrent.duration.*
   * context lost; live evidence: 19:16 respawn msgs=0 while disk held 230+,
   * 19:24 turn-complete msgs=62 all-fresh). The fix loads the persisted
   * messages through the same pattern as doFork / ensureRootAgent.
+  *
+  * #1 silent death + busy leak: Mail-spawned team agents lived outside
+  * FlowTreeActor's watch system, so their death left actorMap holding a
+  * dead ref (later Mails vanished), agentRegistry holding the record, and
+  * busyMap holding the last turn's busy flag — getActiveAgents then
+  * reported a running ghost. The fix spawns a death watcher that
+  * unregisters + clears busy + logs.
   */
 class MailActivateLifecycleSpec extends FunSuite:
 
@@ -161,6 +169,37 @@ class MailActivateLifecycleSpec extends FunSuite:
     assert(clue(texts).exists(_.contains("fresh mail after respawn")))
     // metadata intact: the session keeps its team association
     assertEquals(refOpt.isDefined, true)
+  }
+
+  test("#1 death watch clears actorMap, agentRegistry and busy on victim death") {
+    val system = ActorSystem(s"mail-dw-${java.util.UUID.randomUUID().toString.take(6)}")
+    val tmp = os.temp.dir(prefix = "mail-deathwatch")
+    val llm = new RecordingLlm
+
+    val io = for
+      sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
+      resources <- mkResources(system, tmp, llm, sessionStore)
+      sid = s"dw-sid-${java.util.UUID.randomUUID().toString.take(6)}"
+      // A victim that stops as soon as it receives any message
+      victim <- system.spawn(
+        Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.stopped[AgentCommand])),
+        s"victim-$sid"
+      )
+      _ <- TeamSessionRegistry.registerActor(sid, victim, resources, rootSessionId = sid)
+      _ <- TeamSessionRegistry.markBusy(sid)
+      _ <- system.spawn(
+        MailTool.teamAgentDeathWatch(sid, "victim", victim, resources),
+        s"watcher-$sid"
+      )
+      _ <- victim ! AgentCommand.Interrupt()
+      _ <- waitUntil(10.seconds)(TeamSessionRegistry.getRunningActor(sid).map(_.isEmpty))
+      busy <- TeamSessionRegistry.isBusy(sid)
+      registryEntry <- resources.agentRegistry.get.map(_.get(sid))
+    yield (busy, registryEntry)
+
+    val (busy, registryEntry) = io.unsafeRunSync()
+    assert(!busy, "busy flag leaked past actor death")
+    assert(registryEntry.isEmpty, "agentRegistry entry leaked past actor death")
   }
 
 end MailActivateLifecycleSpec
