@@ -140,8 +140,29 @@ end PeerInfo
 case class NeblinkConfig(
   enabled: Boolean = false,
   syncIntervalSec: Int = 45,
-  neblinkServer: Option[NeblinkServerConfig] = None
+  neblinkServer: Option[NeblinkServerConfig] = None,
+  /** External OIDC provider for device-flow authentication (Logto stage 1).
+    * When set, the gateway's device-flow start and poll routes talk to the
+    * provider's RFC 8628 endpoints instead of neblink-server's self-hosted
+    * ones. */
+  logto: Option[LogtoConfig] = None
 )
+
+/** Logto (OIDC provider) connection settings — a Native app (public client,
+  * no secret). */
+case class LogtoConfig(
+  endpoint: String,
+  clientId: String
+)
+
+object LogtoConfig:
+  given Encoder[LogtoConfig] = deriveEncoder
+  given Decoder[LogtoConfig] = Decoder.instance { c =>
+    for
+      endpoint <- c.downField("endpoint").as[String]
+      clientId <- c.downField("clientId").as[String]
+    yield LogtoConfig(endpoint, clientId)
+  }
 
 object NeblinkConfig:
   given Encoder[NeblinkConfig] = deriveEncoder
@@ -155,7 +176,8 @@ object NeblinkConfig:
         case Some(config) => Right(Some(config))
         case None => c.downField("coordinator").as[Option[NeblinkServerConfig]]
       }
-    yield NeblinkConfig(enabled, syncIntervalSec, neblinkServer)
+      logto <- c.downField("logto").as[Option[LogtoConfig]]
+    yield NeblinkConfig(enabled, syncIntervalSec, neblinkServer, logto)
   }
 
   private val configPath = PathUtil.dataRoot / "neblink" / "config.json"

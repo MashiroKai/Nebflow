@@ -572,8 +572,10 @@ class RestApiRoutes(
 
     // ===== Device authorization flow (Tailscale-style) =====
 
-    // Start device flow: proxy to neblink-server's /api/device/code.
-    // Returns {deviceCode, userCode, verificationUri} for the frontend.
+    // Start device flow. Dual-mode (Logto stage 1): with a provider
+    // configured, start its RFC 8628 /oidc/device/auth; otherwise proxy to
+    // neblink-server's /api/device/code. Both map onto the same frontend
+    // contract {deviceCode, userCode, verificationUri, interval, expiresIn}.
     case req @ POST -> Root / "neblink" / "device-flow" / "start" =>
       if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
       else
@@ -581,19 +583,27 @@ class RestApiRoutes(
           case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
           case Some(ms) =>
             for
-              identity <- ms.identity
-              // The neblink-server URL: read from existing config, or use the
-              // public default. For device flow the server must be reachable
-              // from both the browser (for OAuth) and the device (for polling).
-              serverUrl <- neblinkServerUrl(None)
-              body = Json
-                .obj(
-                  "deviceId" -> identity.deviceId.asJson,
-                  "deviceName" -> identity.deviceName.asJson,
-                  "platform" -> identity.platform.asJson
-                )
-                .noSpaces
-              result <- proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.code, body)
+              logto <- ms.neblinkConfig.map(_.logto)
+              result <- logto match
+                case Some(lc) =>
+                  LogtoDeviceFlow
+                    .start(LogtoDeviceFlow.jdkSend)(lc.endpoint, lc.clientId)
+                case None =>
+                  for
+                    identity <- ms.identity
+                    // The neblink-server URL: read from existing config, or use the
+                    // public default. For device flow the server must be reachable
+                    // from both the browser (for OAuth) and the device (for polling).
+                    serverUrl <- neblinkServerUrl(None)
+                    body = Json
+                      .obj(
+                        "deviceId" -> identity.deviceId.asJson,
+                        "deviceName" -> identity.deviceName.asJson,
+                        "platform" -> identity.platform.asJson
+                      )
+                      .noSpaces
+                    result <- proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.code, body)
+                  yield result
               resp <- result match
                 case Right(json) => Ok(json)
                 case Left(err) => BadRequest(Json.obj("error" -> s"Failed to start device flow: $err".asJson))
@@ -601,6 +611,11 @@ class RestApiRoutes(
 
     // Poll device flow: proxy to neblink-server's /api/device/token.
     // On success, persist the device credential + update config + hot-swap client.
+    // Poll device flow. Dual-mode (Logto stage 1): with a provider
+    // configured, poll its /oidc/token (RFC 8628 grant) and on success
+    // exchange the access token via /api/device/register; otherwise proxy to
+    // neblink-server's /api/device/token. Both success paths converge on the
+    // same persist-credential + hot-swap completion.
     case req @ POST -> Root / "neblink" / "device-flow" / "poll" =>
       if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
       else
@@ -619,47 +634,43 @@ class RestApiRoutes(
               case Some(ms) =>
                 for
                   resolvedUrl <- neblinkServerUrl(serverUrl)
-                  pollBody = Json.obj("deviceCode" -> deviceCode.asJson).noSpaces
-                  result <- proxyPost(resolvedUrl, nebflow.neblink.Protocol.DeviceApi.token, pollBody)
+                  logto <- ms.neblinkConfig.map(_.logto)
+                  result <- logto match
+                    case Some(lc) =>
+                      LogtoDeviceFlow
+                        .pollOnce(LogtoDeviceFlow.jdkSend)(lc.endpoint, lc.clientId, deviceCode)
+                        .flatMap {
+                          case LogtoDeviceFlow.PollOutcome.Success(accessToken) =>
+                            ms.identity.flatMap { identity =>
+                              LogtoDeviceFlow
+                                .register(LogtoDeviceFlow.jdkSend)(
+                                  resolvedUrl,
+                                  accessToken,
+                                  identity.deviceId,
+                                  identity.deviceName,
+                                  identity.platform
+                                )
+                                .map {
+                                  case Right(json) => Right(json)
+                                  case Left(err)   => Left(err)
+                                }
+                            }
+                          // Pending (incl. slow_down, normalized) and terminal
+                          // failures surface as error strings exactly like the
+                          // legacy proxy path — the frontend's
+                          // authorization_pending polling contract is unchanged.
+                          case LogtoDeviceFlow.PollOutcome.Pending(err) =>
+                            IO.pure(Left(err))
+                          case LogtoDeviceFlow.PollOutcome.Failed(err) =>
+                            IO.pure(Left(err))
+                        }
+                    case None =>
+                      val pollBody = Json.obj("deviceCode" -> deviceCode.asJson).noSpaces
+                      proxyPost(resolvedUrl, nebflow.neblink.Protocol.DeviceApi.token, pollBody)
                   resp <- result match
                     case Right(json) =>
                       // Success — persist credential + update config + hot-swap.
-                      val deviceToken = json.hcursor.downField("deviceToken").as[String].toOption
-                      val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
-                      // Extract user info from neblink-server response (if available).
-                      val avatarUrl = json.hcursor.downField("avatarUrl").as[Option[String]].toOption.flatten
-                      // neblink-server serializes github_username as "githubUsername" (camelCase)
-                      val githubLogin = json.hcursor.downField("githubUsername").as[Option[String]].toOption.flatten
-                      deviceToken match
-                        case Some(tok) =>
-                          for
-                            identity <- ms.identity
-                            cred = DeviceCredential(resolvedUrl, networkId, identity.deviceId, tok)
-                            _ <- DeviceCredential.save(cred)
-                            newConfig = NeblinkServerConfig(
-                              url = resolvedUrl,
-                              networkId = networkId,
-                              secret = "",
-                              deviceToken = Some(tok)
-                            )
-                            _ <- ms.updateConfig(cfg => cfg.copy(enabled = true, neblinkServer = Some(newConfig)))
-                            // Hot-swap the client in the discovery service.
-                            _ <- neblinkDiscovery
-                              .fold(IO.unit)(d => d.setClient(Some(new NeblinkClient(newConfig, gatewayPort))))
-                            // Trigger immediate re-discovery.
-                            _ <- ms.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
-                            // Persist GitHub user info (avatar + login) from server response.
-                            _ <- ms.updateDeviceInfo(avatarUrl = avatarUrl, githubLogin = githubLogin)
-                            r <- Ok(
-                              Json.obj(
-                                "ok" -> true.asJson,
-                                "networkId" -> networkId.asJson
-                              )
-                            )
-                          yield r
-                        case None =>
-                          BadRequest(Json.obj("error" -> "Server did not return a device token".asJson))
-                      end match
+                      completeDeviceEnrollment(ms, resolvedUrl, json)
                     case Left(err) =>
                       // authorization_pending is expected during polling — pass through.
                       BadRequest(Json.obj("error" -> err.asJson))
@@ -2232,6 +2243,54 @@ class RestApiRoutes(
    * Generic POST proxy to the NebLink Server. Returns the parsed JSON on
    * success (2xx) or an error message on failure. Bypasses the system proxy.
    */
+  /**
+    * Shared completion for BOTH device-flow paths (self-hosted token poll
+    * and Logto register): read the EnrollResponse fields, persist the
+    * credential, switch the config, hot-swap the client, and record the
+    * user's profile info.
+    */
+  private def completeDeviceEnrollment(
+    ms: NeblinkService,
+    resolvedUrl: String,
+    json: Json
+  ): IO[org.http4s.Response[IO]] =
+    val deviceToken = json.hcursor.downField("deviceToken").as[String].toOption
+    val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
+    // Extract user info from neblink-server response (if available).
+    val avatarUrl = json.hcursor.downField("avatarUrl").as[Option[String]].toOption.flatten
+    // neblink-server serializes github_username as "githubUsername" (camelCase)
+    val githubLogin = json.hcursor.downField("githubUsername").as[Option[String]].toOption.flatten
+    deviceToken match
+      case Some(tok) =>
+        for
+          identity <- ms.identity
+          cred = DeviceCredential(resolvedUrl, networkId, identity.deviceId, tok)
+          _ <- DeviceCredential.save(cred)
+          newConfig = NeblinkServerConfig(
+            url = resolvedUrl,
+            networkId = networkId,
+            secret = "",
+            deviceToken = Some(tok)
+          )
+          _ <- ms.updateConfig(cfg => cfg.copy(enabled = true, neblinkServer = Some(newConfig)))
+          // Hot-swap the client in the discovery service.
+          _ <- neblinkDiscovery
+            .fold(IO.unit)(d => d.setClient(Some(new NeblinkClient(newConfig, gatewayPort))))
+          // Trigger immediate re-discovery.
+          _ <- ms.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
+          // Persist GitHub user info (avatar + login) from server response.
+          _ <- ms.updateDeviceInfo(avatarUrl = avatarUrl, githubLogin = githubLogin)
+          r <- Ok(
+            Json.obj(
+              "ok" -> true.asJson,
+              "networkId" -> networkId.asJson
+            )
+          )
+        yield r
+      case None =>
+        BadRequest(Json.obj("error" -> "Server did not return a device token".asJson))
+  end completeDeviceEnrollment
+
   private def proxyPost(serverUrl: String, path: String, body: String): IO[Either[String, Json]] =
     IO.blocking {
       // Force HTTP/1.1 + bypass system proxy. The JDK HttpClient's HTTP/2
