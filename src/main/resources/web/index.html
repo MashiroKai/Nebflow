@@ -311,7 +311,8 @@
         <button id="search-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>
       </div>
       <div class="search-controls">
-        <input id="search-keyword" type="text" placeholder="Keyword…" autocomplete="off">
+        <input id="search-keyword" type="text" placeholder="Keyword…" autocomplete="off"
+               role="combobox" aria-expanded="true" aria-controls="search-results">
         <div class="search-filters">
           <select id="search-scope" class="cfg-select"></select>
           <select id="search-agent" class="cfg-select"></select>
@@ -321,8 +322,8 @@
           <button id="search-go" class="cfg-btn cfg-btn-primary">Search</button>
         </div>
       </div>
-      <div id="search-status"></div>
-      <div id="search-results"></div>
+      <div id="search-status" aria-live="polite"></div>
+      <div id="search-results" role="listbox"></div>
     </div>
   </div>
   <script src="vendor/lucide.min.js"></script>
