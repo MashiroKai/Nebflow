@@ -558,38 +558,47 @@ function renderResults(container, kw) {
       `${escapeHtml(t('search.noResultsSuggestion'))}</div>`;
     return;
   }
-  // scope=all groups hits per session (time-desc groups, time-desc within).
+  // scope=all aggregates hits per session: ONE header per session, items
+  // time-desc within the group. lastResults is globally time-desc, so Map
+  // insertion order already gives groups ordered by their newest hit.
   const grouped = (selectById('search-scope')?.value || 'current') === 'all';
-  const counts = new Map();
-  if (grouped) {
-    for (const r of lastResults) counts.set(r.sessionId, (counts.get(r.sessionId) || 0) + 1);
-  }
   let html = '';
-  let lastSid = null;
-  lastResults.forEach((r, i) => {
-    if (grouped && r.sessionId !== lastSid) {
-      lastSid = r.sessionId;
+  if (grouped) {
+    const groups = new Map();
+    lastResults.forEach((r, i) => {
+      let g = groups.get(r.sessionId);
+      if (!g) { g = { name: r.sessionName, items: [] }; groups.set(r.sessionId, g); }
+      g.items.push({ r, i });
+    });
+    for (const g of groups.values()) {
       html += `<div class="search-group-header">` +
-        `<span class="search-result-session">${escapeHtml(r.sessionName)}</span>` +
-        ` (${counts.get(r.sessionId)})</div>`;
+        `<span class="search-result-session">${escapeHtml(g.name)}</span>` +
+        ` (${g.items.length})</div>`;
+      for (const { r, i } of g.items) html += resultHtml(r, i, kw);
     }
-    const typeBadge = r.kind === 'tool'
-      ? `${escapeHtml(t('search.typeTool'))} · ${escapeHtml(cleanToolName(r.tool))}`
-      : r.kind === 'user'
-        ? escapeHtml(t('search.typeUser'))
-        : escapeHtml(t('search.typeAi'));
-    const time = r.ts ? formatTime(r.ts) : '';
-    html += `<div class="search-result" id="search-result-${i}" data-idx="${i}" role="option" aria-selected="false" tabindex="-1">
-      <div class="search-result-head">
-        <span class="search-result-session">${escapeHtml(r.sessionName)}</span>
-        <span class="search-result-type type-${r.kind}">${typeBadge}</span>
-        <span class="search-result-time">${escapeHtml(time)}</span>
-      </div>
-      <div class="search-result-preview">${highlightPreview(r.text, kw)}</div>
-    </div>`;
-  });
+  } else {
+    lastResults.forEach((r, i) => { html += resultHtml(r, i, kw); });
+  }
   container.innerHTML = html;
   setActive(0);   // first result is pre-selected (Spotlight Top Hit)
+}
+
+/** One result row. `i` is the index into lastResults (click/keyboard target). */
+function resultHtml(r, i, kw) {
+  const typeBadge = r.kind === 'tool'
+    ? `${escapeHtml(t('search.typeTool'))} · ${escapeHtml(cleanToolName(r.tool))}`
+    : r.kind === 'user'
+      ? escapeHtml(t('search.typeUser'))
+      : escapeHtml(t('search.typeAi'));
+  const time = r.ts ? formatTime(r.ts) : '';
+  return `<div class="search-result" id="search-result-${i}" data-idx="${i}" role="option" aria-selected="false" tabindex="-1">
+    <div class="search-result-head">
+      <span class="search-result-session">${escapeHtml(r.sessionName)}</span>
+      <span class="search-result-type type-${r.kind}">${typeBadge}</span>
+      <span class="search-result-time">${escapeHtml(time)}</span>
+    </div>
+    <div class="search-result-preview">${highlightPreview(r.text, kw)}</div>
+  </div>`;
 }
 
 /** Preview snippet centered on the first keyword match, with <mark> highlights. */
