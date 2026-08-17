@@ -144,6 +144,16 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
     assertEquals(tcs.head.input("file_path").flatMap(_.asString), Some("/t.txt"))
   }
 
+  test("extractToolCalls: unquoted ISO-8601 literal in arguments is rescued (issue #18)") {
+    val args = """{"content":"report","triggerAt":2026-08-18T00:00:00+08:00}"""
+    val json = parse(s"""{"choices":[{"message":{"tool_calls":[
+      {"id":"call_1","type":"function","function":{"name":"Schedule","arguments":"${args.replace("\\", "\\\\").replace("\"", "\\\"")}"}}
+    ]}}]}""").toOption.get
+    val tcs = adapter.extractToolCalls(json)
+    assertEquals(tcs.size, 1)
+    assertEquals(tcs.head.input("triggerAt").flatMap(_.asString), Some("2026-08-18T00:00:00+08:00"))
+  }
+
   test("extractToolCalls: multiple tool calls") {
     val json = parse("""{"choices":[{"message":{"tool_calls":[
       {"id":"c1","type":"function","function":{"name":"Read","arguments":"{}"}},
@@ -234,6 +244,37 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
     yield
       assertEquals(chunks.size, 1)
       assertEquals(chunks.head.asInstanceOf[StreamChunk.ThinkingDelta].delta, "thinking...")
+  }
+
+  // ====== Streaming: issue #18 regressions ======
+
+  test("processOpenAiData: unquoted ISO arguments rescued at finish flush (issue #18)") {
+    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](
+      Map(0 -> ("call_1", "Schedule", new StringBuilder("""{"content":"x","triggerAt":2026-08-18T00:00:00+08:00}""")))
+    )
+    val data = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
+    val params = SendMessageParams(Nil, "glm-5.3")
+    for chunks <- adapter.processOpenAiData(data, state, params)
+    yield
+      val tc = chunks.collect { case StreamChunk.ToolCallChunk(tc) => tc }.head
+      assertEquals(tc.input("triggerAt").flatMap(_.asString), Some("2026-08-18T00:00:00+08:00"))
+      assert(tc.input(ToolInputJson.RawArgsKey).isEmpty)
+  }
+
+  test("processOpenAiData: providers repeating id+name per fragment accumulate all fragments") {
+    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](Map.empty)
+    val params = SendMessageParams(Nil, "gpt-4o")
+    val frag1 = """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Schedule","arguments":"{\"content\":\"x\","}}]},"finish_reason":null}]}"""
+    val frag2 = """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Schedule","arguments":"\"triggerAt\":\"in 2 hours\"}"}}]},"finish_reason":null}]}"""
+    val finish = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
+    for
+      _ <- adapter.processOpenAiData(frag1, state, params)
+      _ <- adapter.processOpenAiData(frag2, state, params)
+      chunks <- adapter.processOpenAiData(finish, state, params)
+    yield
+      val tc = chunks.collect { case StreamChunk.ToolCallChunk(tc) => tc }.head
+      assertEquals(tc.input("content").flatMap(_.asString), Some("x"))
+      assertEquals(tc.input("triggerAt").flatMap(_.asString), Some("in 2 hours"))
   }
 
   // ====== hasReasoningContent (thinking-only non-streaming responses) ======
