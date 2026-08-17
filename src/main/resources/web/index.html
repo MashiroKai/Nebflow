@@ -33,9 +33,10 @@
 </head>
 <body>
   <script>document.documentElement.classList.add('ui-init');</script>
-  <script>/* Classic script: cannot import branding.js. Read the brand-namespaced key first, fall back to the legacy nebflow_ spelling. */var __b=(window.__BRAND__&&window.__BRAND__.lowerName)||'nebflow';if(localStorage.getItem(__b+'_sidebar_collapsed')==='true'||localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');</script>
+  <script>/* Classic script: cannot import branding.js. Read the brand-namespaced key first, fall back to the legacy nebflow_ spelling. */var __b=(window.__BRAND__&&window.__BRAND__.lowerName)||'nebflow';if(localStorage.getItem(__b+'_sidebar_collapsed')==='true'||localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');window.__sidebarRestore={collapsed:document.body.classList.contains('sidebar-collapsed'),panel:localStorage.getItem(__b+'_sidebar_active_panel')||localStorage.getItem('nebflow_sidebar_active_panel')||'files'};</script>
   <!-- Activity Bar — vertical icon strip (independent glass card).
-       Top: avatar (tap to log in to NebLink). Bottom: settings.
+       Top: avatar (tap to log in to NebLink), then the Side Bar panel
+       switch buttons (Files). Bottom: Teams/Flows/Agents + Settings.
        Device management lives in the Settings panel (NebLink section). -->
   <div id="activity-bar">
     <button id="activity-avatar" class="activity-avatar" title="Login">
@@ -43,6 +44,7 @@
       <img class="activity-avatar-photo" alt="" hidden>
       <span class="activity-avatar-letter" hidden>N</span>
     </button>
+    <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
     <div class="activity-spacer"></div>
     <button id="teams-btn" class="activity-btn" title="Teams"><i data-lucide="network"></i></button>
     <button id="flows-btn" class="activity-btn" title="Flows"><i data-lucide="git-branch"></i></button>
@@ -50,17 +52,17 @@
     <button id="settings-btn" class="activity-btn" title="Settings"><i data-lucide="settings"></i></button>
   </div>
 
-  <!-- Sidebar — file explorer -->
+  <!-- Sidebar — switchable panels (explorer today; registry-driven) -->
   <div id="sidebar">
     <div id="sidebar-panel">
-      <div id="panel-sessions" class="panel active">
+      <div id="panel-sessions" class="panel active" data-panel-id="files">
         <!-- Sidebar top bar -->
         <div class="sidebar-topbar"></div>
 
         <!-- Explorer Section -->
         <div id="explorer-section">
           <div class="explorer-header">
-            <span class="explorer-title">Explorer</span>
+            <span class="explorer-title" id="panel-title-explorer">Explorer</span>
             <div class="explorer-actions">
               <button class="explorer-action-btn" id="explorer-new-file-btn" title="New File">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 12v6"/><path d="M9 15h6"/></svg>
@@ -80,6 +82,32 @@
       </div>
     </div>
   </div>
+  <script>
+  /* Pre-paint Side Bar panel restore (classic script — runs before the module
+     graph). The body class was set at parse start; here we resolve the
+     persisted active panel so the FIRST FRAME already shows the correct
+     panel/button state (no flicker). Unknown persisted ids fall back to
+     'files'. Collapsed → nothing is active (activityBar.js re-activates the
+     stored panel on expand). */
+  (function () {
+    var r = window.__sidebarRestore || { collapsed: false, panel: 'files' };
+    var panels = document.querySelectorAll('#sidebar-panel .panel');
+    var target = null;
+    for (var i = 0; i < panels.length; i++) {
+      if (panels[i].getAttribute('data-panel-id') === r.panel) target = panels[i];
+    }
+    if (!target) target = document.querySelector('#sidebar-panel .panel[data-panel-id="files"]');
+    for (var j = 0; j < panels.length; j++) {
+      panels[j].classList.toggle('active', !r.collapsed && panels[j] === target);
+    }
+    var pid = target ? target.getAttribute('data-panel-id') : 'files';
+    var btn = document.querySelector('#activity-bar [data-panel-btn="' + pid + '"]');
+    if (btn) {
+      btn.classList.toggle('active', !r.collapsed);
+      btn.setAttribute('aria-pressed', r.collapsed ? 'false' : 'true');
+    }
+  })();
+  </script>
 
   <!-- Column resizer — drag to adjust sidebar / main widths -->
   <div class="col-resizer" data-left="sidebar" data-right="main"></div>

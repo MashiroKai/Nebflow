@@ -63,6 +63,7 @@ export function applyLocaleToHtml() {
     'new-agent-btn': ['title', 'nav.newAgent'],
     'nav-settings-btn': null, // handled by data-tab
     'panel-title-sessions': ['text', 'sidebar.sessions'],
+    'panel-title-explorer': ['text', 'panel.explorer'],
     'new-folder-btn': ['title', 'sidebar.newFolder'],
     'sidebar-toggle': ['title', 'sidebar.toggle'],
     'search-input': ['placeholder', 'sidebar.searchPlaceholder'],
