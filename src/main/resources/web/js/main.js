@@ -1361,6 +1361,17 @@ onMessage('agentStart', (msg, view) => {
   const aid = msg.agentId || msg.name;
   if (view) view.stream.activeAgentId = aid;
   if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
+  // Cross-keyspace dedupe: snapshot-restored entries (activeAgents handler)
+  // key on the bare sessionId (getActiveAgents pins agentId == sessionId),
+  // while live events key on the actor-path agentId (mail-*). Without this,
+  // the same agent renders twice in the dropdown whenever a snapshot row
+  // coexists with a live turn (e.g. page refresh while a team agent is busy,
+  // then its next turn starts). The live row is richer (carries
+  // taskDescription) — drop the stale snapshot-keyed twin.
+  const sessionKey = (msg.nodeSessionId || '').replace(/^team-/, '');
+  if (sessionKey && sessionKey !== aid && state.sessionBgAgents[sid][sessionKey]) {
+    delete state.sessionBgAgents[sid][sessionKey];
+  }
   state.sessionBgAgents[sid][aid] = {
     name: msg.name || aid,
     task: msg.taskDescription || '',
