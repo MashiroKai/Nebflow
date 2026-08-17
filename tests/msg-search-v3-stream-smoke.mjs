@@ -155,6 +155,42 @@ const dayOf = (ts) => new Date(+ts).toDateString();
 const daysPresent = new Set(tsSeqAfter.map(dayOf));
 check('B13① cross-day coexistence (>=2 days in one container)', daysPresent.size >= 2, [...daysPresent].join(' | '));
 
+// ── B13 path-(a) regression (design review F-1): fresh anchor → wheel-up at
+// the born-at-top list WITHOUT any prior downward scroll must fire the
+// after-cursor request and prepend the newer day. Reopen the modal and park
+// the list at scrollTop=0 first — a deep pre-anchor scrollTop is numerically
+// clamped to the new content's maxScroll on the synchronous re-render, which
+// would land mid-list instead of the born-at-top state under test. ──
+await page.click('#search-modal-close');
+await page.waitForTimeout(300);
+await page.click('#search-btn');
+await page.waitForSelector('#search-results .search-result', { timeout: 3000 });
+await page.waitForTimeout(400);
+await page.locator('#search-results').evaluate(el => { el.scrollTop = 0; });
+await page.waitForTimeout(300);
+const anchorDay2 = new Date(today0 - 1 * DAY);   // D-1; D0 (today) is newer
+await page.click('#search-tab-date');
+await page.waitForSelector('#search-date-popover:not([hidden])');
+await page.click(`.cal-day[data-y="${anchorDay2.getFullYear()}"][data-m0="${anchorDay2.getMonth()}"][data-d="${anchorDay2.getDate()}"]`);
+await page.click('.cal-confirm');
+await page.waitForTimeout(800);
+const topAfterAnchor = await page.locator('#search-results').evaluate(el => el.scrollTop);
+check('B13-F1 anchored list born at top (scrollTop ≤ 2)', topAfterAnchor <= 2, `scrollTop=${topAfterAnchor}`);
+const reqsBeforeWheel = historyReqs.length;
+const d1RowsBefore = await page.locator('#search-results .search-result').evaluateAll(els => els.map(e => e.dataset.ts));
+// Direct wheel-up gesture at the top (no scroll event is produced at
+// scrollTop=0 — this is the dead-zone path).
+await page.hover('#search-results');
+for (let i = 0; i < 3; i++) { await page.mouse.wheel(0, -300); await page.waitForTimeout(200); }
+await page.waitForTimeout(700);
+const wheelAfterReqs = historyReqs.slice(reqsBeforeWheel).filter(r => r.after);
+check('B13-F1 direct wheel-up fires after-cursor request', wheelAfterReqs.length >= 1, JSON.stringify(wheelAfterReqs));
+const tsSeqWheel = await page.locator('#search-results .search-result').evaluateAll(els => els.map(e => e.dataset.ts));
+const todayStr = new Date(today0).toDateString();
+check('B13-F1 newer day (today) prepended into DOM', tsSeqWheel.some(ts => dayOf(ts) === todayStr));
+check('B13-F1 D-1 entries preserved in place', tsSeqWheel.join(',').includes(d1RowsBefore.join(',')), `old=${d1RowsBefore.length} new=${tsSeqWheel.length}`);
+check('B13-F1 scroll position preserved after prepend', await page.locator('#search-results').evaluate(el => el.scrollTop) > 2);
+
 check('no page errors', pageErrors.length === 0, pageErrors.join('; '));
 
 const failed = checks.filter(c => !c.ok);

@@ -168,6 +168,27 @@ export function initChatSearch() {
     if ((resultsEl?.scrollTop ?? 1) <= 2) loadAfterPages();
   });
 
+  // Anchor dead-zone fallback (design review F-1): the anchored list is born
+  // at scrollTop=0, where a wheel-up (or upward touch drag) produces NO
+  // scroll event and the listener above never fires - R1's "slide from the
+  // anchor day into the next" was unreachable without a down-then-up detour.
+  // An upward gesture at the top IS the reached-the-top signal: fire the
+  // newer-page load directly.
+  resultsEl?.addEventListener('wheel', (e) => {
+    if (streamMode !== 'anchor' || pageInFlight) return;
+    if (e.deltaY < 0 && (resultsEl?.scrollTop ?? 1) <= 2) loadAfterPages();
+  }, { passive: true });
+  let anchorTouchY = null;
+  resultsEl?.addEventListener('touchstart', (e) => {
+    anchorTouchY = e.touches[0]?.clientY ?? null;
+  }, { passive: true });
+  resultsEl?.addEventListener('touchmove', (e) => {
+    if (anchorTouchY === null || streamMode !== 'anchor' || pageInFlight) return;
+    // Finger moving down over a topped-out list = user wants newer content.
+    const dy = (e.touches[0]?.clientY ?? anchorTouchY) - anchorTouchY;
+    if (dy > 12 && (resultsEl?.scrollTop ?? 1) <= 2) loadAfterPages();
+  }, { passive: true });
+
   // Lazy rendering: the sentinel at the list end renders the next batch, and
   // once the rendered batches are exhausted it fires the before-cursor page.
   sentinelObserver = new IntersectionObserver((entries) => {
@@ -357,7 +378,10 @@ function closeCalendar(refocus) {
 }
 
 /** Anchor the popover under the Date tab; keep it inside the panel on
- *  narrow layouts (left edge ≥ 12px handled by CSS at ≤768px). */
+ *  narrow layouts (left edge ≥ 12px handled by CSS at ≤768px). Vertical
+ *  overflow is handled by #search-modal's overflow:visible (N1: in short
+ *  modal states the popover is taller than the modal interior and must
+ *  escape the modal's box rather than be clipped by it). */
 function positionCalendar(pop, tab) {
   const controls = pop.parentElement;
   if (!controls) return;
