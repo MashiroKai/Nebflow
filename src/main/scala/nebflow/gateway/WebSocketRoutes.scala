@@ -21,11 +21,13 @@ import nebflow.service.*
 import nebflow.shared.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
+import org.http4s.headers.`Content-Type`
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
-import org.http4s.{HttpRoutes, StaticFile}
+import org.http4s.{Charset, HttpRoutes, MediaType, Response, StaticFile}
 
 import scala.concurrent.duration.*
+import scala.io.Source
 
 class WebSocketRoutes(
   wsb: WebSocketBuilder2[IO],
@@ -544,7 +546,7 @@ class WebSocketRoutes(
         end if
       end if
 
-    case req @ GET -> Root =>
+    case GET -> Root =>
       // P1 single switch point: when the esbuild dist is packed on the
       // classpath (sbt -Dnebflow.webdist=1 assembly), "/" serves the bundled
       // dist entry; otherwise the dev source tree entry. Everything else the
@@ -552,12 +554,16 @@ class WebSocketRoutes(
       // byte-identical passthrough (vendor, fonts, icons) served by the
       // existing web/ routes — no fallback logic, the entry and its hashed
       // deps come from one atomic build-web.mjs run.
+      //
+      // L1 rebrand: both entries go through indexWithBrand, which injects
+      // the window.__BRAND__ contract before the closing head tag. The
+      // served body therefore differs from the classpath bytes, which is
+      // why this route no longer uses StaticFile's conditional-request
+      // handling (a jar-entry Last-Modified must not vouch for content we
+      // mutated) — the response stays no-cache with no validators.
       val indexResource =
         if WebSocketRoutes.hasBundledDist then "web-dist/index.html" else "web/index.html"
-      StaticFile
-        .fromResource(indexResource, Some(req))
-        .map(_.putHeaders("Cache-Control" -> "no-cache"))
-        .getOrElseF(NotFound())
+      WebSocketRoutes.indexWithBrand(indexResource)
 
     case req @ GET -> Root / "css" / file =>
       StaticFile
@@ -3937,6 +3943,79 @@ object WebSocketRoutes:
     */
   lazy val hasBundledDist: Boolean =
     getClass.getClassLoader.getResource("web-dist/index.html") != null
+
+  /**
+    * L1 rebrand: the frontend brand contract. window.__BRAND__ is the only
+    * brand source web/ may read; fields are append-only across rebrand
+    * batches (initial contract: productName, lowerName, domain). `domain`
+    * carries the placeholder value — display-only, never consumed to build
+    * a URL.
+    *
+    * circe handles JSON string escaping; the serialized blob additionally
+    * escapes the forward slash of "</" because it is inlined inside a
+    * script element (script-tag breakout hardening; JSON permits `\/`).
+    */
+  private[gateway] def brandScriptTag: String =
+    s"""<script>window.__BRAND__=${brandScriptJson(
+      Branding.productName,
+      Branding.lowerName,
+      Branding.domain,
+    )};</script>"""
+  end brandScriptTag
+
+  /** Serialize the contract JSON (values injected for testability of the
+    * escaping hardening). */
+  private[gateway] def brandScriptJson(productName: String, lowerName: String, domain: String): String =
+    Json
+      .obj(
+        "productName" -> Json.fromString(productName),
+        "lowerName"   -> Json.fromString(lowerName),
+        "domain"      -> Json.fromString(domain),
+      )
+      .noSpaces
+      .replace("</", "<\\/")
+
+  /**
+    * Insert `snippet` directly before the LAST closing head tag — the one
+    * structural anchor every index variant (dev source, esbuild dist) is
+    * guaranteed to carry, emitted lowercase. None when the tag is absent:
+    * callers serve the original bytes rather than guessing a fallback
+    * position (a broken template should be visible, not papered over).
+    */
+  private[gateway] def injectBeforeHeadClose(html: String, snippet: String): Option[String] =
+    val idx = html.lastIndexOf("</head>")
+    if idx < 0 then None
+    else Some(html.substring(0, idx) + snippet + html.substring(idx))
+  end injectBeforeHeadClose
+
+  /**
+    * L1 rebrand: serve the index entry with the brand script injected.
+    * Blocking classpath read of a tiny resource (a few KB) per request —
+    * the same order of cost as the StaticFile.fromResource lookup it
+    * replaces. Response contract: no-cache, no validators (the body is
+    * content-generated, not a static file), text/html in UTF-8. The gzip
+    * middleware wraps this route from the Router "/" mount, so it sees the
+    * final injected bytes — compression order is correct by construction.
+    */
+  def indexWithBrand(indexResource: String): IO[Response[IO]] =
+    IO.blocking(readClasspathResourceUtf8(indexResource)).flatMap {
+      case None => NotFound()
+      case Some(html) =>
+        val served = injectBeforeHeadClose(html, brandScriptTag).getOrElse(html)
+        Ok(served)
+          .map(
+            _.withContentType(`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
+              .putHeaders("Cache-Control" -> "no-cache")
+          )
+    }
+  end indexWithBrand
+
+  private def readClasspathResourceUtf8(name: String): Option[String] =
+    Option(getClass.getClassLoader.getResourceAsStream(name)).map { in =>
+      val source = Source.fromInputStream(in, "UTF-8")
+      try source.mkString
+      finally in.close()
+    }
 
   /**
     * P1: serve the bundled asset tree (any depth under the /assets prefix —
