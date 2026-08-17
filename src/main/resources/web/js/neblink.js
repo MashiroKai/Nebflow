@@ -6,6 +6,7 @@ import state from './state.js';
 import { escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
+import { brand } from './brand.js';
 // NOTE: dropbox.js is dynamically imported at the click site - P2-4 cycle cut
 // (neblink <-> dropbox mutual import).
 
@@ -130,7 +131,7 @@ export function checkPairingRedirect() {
         neblinkState.pairing = false;
         const err = data.error || '配对失败';
         neblinkState.pairError = err === 'Unauthorized'
-          ? '认证失败。请从 Nebflow 终端重新打开浏览器页面，然后重试登录。'
+          ? `认证失败。请从 ${brand.productName} 终端重新打开浏览器页面，然后重试登录。`
           : err;
       }
       _rerender?.();

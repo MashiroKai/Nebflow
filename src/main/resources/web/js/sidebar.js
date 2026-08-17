@@ -1,6 +1,7 @@
 // sidebar.js — Left panel management: nav tabs, agent list, settings, session sidebar
 
 import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
+import { brand } from './brand.js';
 import { sendWs, onMessage } from './ws.js';
 // Lazy wrapper - P2-4 cycle cut (sidebar <-> modal): modal.js statically
 // imports sidebar.js, so this module must not statically import modal.js.
@@ -353,7 +354,7 @@ export function renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.about')}</div>
       <div class="about-info">
-        <div>Nebflow v${state.serverVersion || '...'}</div>
+        <div>${brand.productName} v${state.serverVersion || '...'}</div>
         <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.connected ? '#4caf50' : '#f44336'}">${state.connected ? t('settings.connected') : t('settings.disconnected')}</span></div>
         <div style="margin-top:10px">
           <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>

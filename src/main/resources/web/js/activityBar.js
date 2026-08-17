@@ -19,6 +19,7 @@ import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './
 import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow } from './neblink.js';
 import { openAgents } from './agentManager.js';
 import { createIconsIn, escapeHtml } from './utils.js';
+import { brand } from './brand.js';
 
 let initialized = false;
 let statusPollTimer = null;
@@ -82,8 +83,8 @@ function bindAvatar() {
     const st = getNeblinkState();
     if (st.pairing) return; // pairing in progress — ignore
     if (st.loggedIn) {
-      // Logged in → open the profile page on nebflow.space
-      window.open('https://nebflow.space/profile', '_blank');
+      // Logged in → open the profile page on the product domain
+      window.open(`https://${brand.domain}/profile`, '_blank');
     } else {
       // Not logged in → open the NebLink device-flow login modal (GitHub OAuth)
       showLoginModal();

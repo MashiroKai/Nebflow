@@ -2,6 +2,7 @@ import state from './state.js';
 import { findViewBySessionId, setActiveView, activeView, chatViews } from './chatView.js';
 import { isBgAgentId } from './utils.js';
 import { addNotification } from './notificationBanner.js';
+import { brand } from './brand.js';
 
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
 
@@ -343,7 +344,7 @@ export function connect() {
           ? 'token 无效或服务端已更换 token，请用启动日志中的带 token 地址重新打开'
           : '页面缺少 token，请通过启动时打印的带 token 地址打开（token 在 ~/.nebflow/auth.json）';
         console.warn('[ws] connect failed:', hint);
-        addNotification('conn', `无法连接 nebflow：${hint}`);
+        addNotification('conn', `无法连接 ${brand.lowerName}：${hint}`);
       }
     }
     scheduleReconnect();
