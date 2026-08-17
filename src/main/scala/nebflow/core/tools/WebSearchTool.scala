@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{JsonObject, parser}
+import nebflow.core.Branding
 import nebflow.shared.{HttpUtils, SharedBackend}
 import sttp.client4.*
 
@@ -254,7 +255,7 @@ Usage:
             s"${engine.url}?query=$encoded&rows=8&select=DOI,title,author,published-print,container-title,abstract"
           val resp = basicRequest
             .get(uri"$url")
-            .header("User-Agent", "Nebflow/academic-search (mailto:research@nebflow.space)")
+            .header("User-Agent", Branding.academicSearchUserAgent)
             .readTimeout(20_000.millis)
             .response(asStringAlways)
             .send(backend)
