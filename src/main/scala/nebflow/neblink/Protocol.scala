@@ -25,7 +25,15 @@ object Protocol:
     val enroll: String = "/api/device/enroll"
     val session: String = "/api/device/session"
     val login: String = "/api/device/login"
+    /** Logto stage 1: provider-token exchange for a device credential. */
+    val register: String = "/api/device/register"
   end DeviceApi
+
+  /** Standard OIDC endpoints on the external provider (Logto), RFC 8628. */
+  object LogtoOidc:
+    val deviceAuth: String = "/oidc/device/auth"
+    val token: String = "/oidc/token"
+  end LogtoOidc
 
   /** Config field under the neblink block of the config file
     * ("neblinkServer"; legacy alias "coordinator" is handled at the decoder). */
