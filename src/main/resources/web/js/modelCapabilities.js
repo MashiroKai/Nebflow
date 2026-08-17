@@ -1,6 +1,8 @@
 // modelCapabilities.js — Vision capability readouts for provider model cards.
 // Renders a read-only Vision pill inline within provider cards in Settings.
 // Fetches /api/models/capabilities. Toggles are retired (B3): vision is
+
+import { key } from './branding.js';
 // tri-state server-side (true/false/null=unknown), unknown resolves
 // optimistically to true, and runtime errors auto-disable vision.
 
@@ -9,7 +11,7 @@ let loading = false;
 let onReadyCb = null;
 
 // ── Helpers ────────────────────────────────────────────────
-function getToken() { return localStorage.getItem('nebflow_token') || ''; }
+function getToken() { return localStorage.getItem(key('token')) || ''; }
 function authHeaders() {
   const tok = getToken();
   return tok ? { Authorization: `Bearer ${tok}` } : {};

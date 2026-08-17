@@ -14,10 +14,12 @@
 // JS sets a CSS custom property (--canvas-width) and toggles body.canvas-open;
 // CSS handles all transitions via flex-basis.
 
+import { key } from './branding.js';
+
 const MIN_CANVAS_WIDTH = 320;
 const MAX_CANVAS_WIDTH = 1200;
-const LS_KEY = 'nebflow_col_widths';
-const LS_TABS_KEY = 'nebflow_canvas_tabs';
+const LS_KEY = key('col_widths');
+const LS_TABS_KEY = key('canvas_tabs');
 
 // Track pending close timeout so openCanvas can cancel it (rapid toggle safety).
 let closeTimeout = null;

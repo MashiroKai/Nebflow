@@ -1,8 +1,9 @@
 // viewers/shared.js — utilities shared by multiple built-in file viewers.
 // Migrated verbatim from fileViewers.js (behavior unchanged).
 
+import { key } from '../branding.js';
 export function getToken() {
-  return localStorage.getItem('nebflow_token') || '';
+  return localStorage.getItem(key('token')) || '';
 }
 
 export function escapeHtml(s) {

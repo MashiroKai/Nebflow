@@ -2,6 +2,7 @@
 
 import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
 import { brand } from './brand.js';
+import { key } from './branding.js';
 import { sendWs, onMessage } from './ws.js';
 // Lazy wrapper - P2-4 cycle cut (sidebar <-> modal): modal.js statically
 // imports sidebar.js, so this module must not statically import modal.js.
@@ -953,7 +954,7 @@ onMessage('error', (data) => {
 let providerModelChoices = null;
 
 function providerAuthHeaders() {
-  const tok = localStorage.getItem('nebflow_token') || '';
+  const tok = localStorage.getItem(key('token')) || '';
   return tok ? { Authorization: `Bearer ${tok}` } : {};
 }
 
@@ -1935,13 +1936,13 @@ function getSessionStatusClass(sessionId) {
 
 function persistMarkedUnread() {
   try {
-    localStorage.setItem('nebflow_marked_unread', JSON.stringify([...state.markedUnreadSessions]));
+    localStorage.setItem(key('marked_unread'), JSON.stringify([...state.markedUnreadSessions]));
   } catch(e) {}
 }
 
 function persistUnread() {
   try {
-    localStorage.setItem('nebflow_unread', JSON.stringify([...state.unreadSessions]));
+    localStorage.setItem(key('unread'), JSON.stringify([...state.unreadSessions]));
   } catch(e) {}
 }
 
@@ -1949,7 +1950,7 @@ export { persistUnread };
 
 function persistPinned() {
   try {
-    localStorage.setItem('nebflow_pinned', JSON.stringify([...state.pinnedSessions]));
+    localStorage.setItem(key('pinned'), JSON.stringify([...state.pinnedSessions]));
   } catch(e) {}
 }
 
@@ -2481,13 +2482,13 @@ export function createNewFolder(parentFolderId) {
 
 function persistExpandedFolders() {
   try {
-    localStorage.setItem('nebflow_expanded_folders', JSON.stringify([...state.expandedFolders]));
+    localStorage.setItem(key('expanded_folders'), JSON.stringify([...state.expandedFolders]));
   } catch(e) {}
 }
 
 function persistPinnedFolders() {
   try {
-    localStorage.setItem('nebflow_pinned_folders', JSON.stringify([...state.pinnedFolders]));
+    localStorage.setItem(key('pinned_folders'), JSON.stringify([...state.pinnedFolders]));
   } catch(e) {}
 }
 

@@ -3,9 +3,10 @@
 import zhCN from './locales/zh-CN.js';
 import en from './locales/en.js';
 import { brand } from './brand.js';
+import { key } from './branding.js';
 
 const LOCALES = { 'zh-CN': zhCN, en };
-const STORAGE_KEY = 'nebflow_locale';
+const STORAGE_KEY = key('locale');
 
 let current = localStorage.getItem(STORAGE_KEY) || 'zh-CN';
 // Fallback if invalid

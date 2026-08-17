@@ -3,6 +3,7 @@
 // for optimistic display during streaming, and a fallback when backend is unreachable.
 
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
+import { key } from './branding.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
@@ -136,7 +137,7 @@ function sanitizeForCache(entry) {
  *  {name, type, path}) into a served URL for the backend's
  *  GET /uploads/<sid>/<file> route. Auth: same-origin cookie usually
  *  suffices; the ?token= query is the stale-cookie fallback (token from the
- *  frontend's existing store — localStorage key 'nebflow_token', same one
+ *  frontend's existing store — localStorage key('token'), same one
  *  the WS connect uses). Returns null when the path isn't under an
  *  uploads dir or is otherwise unusable. */
 export function attachmentImageUrl(path) {
@@ -147,7 +148,7 @@ export function attachmentImageUrl(path) {
   const rel = norm.slice(idx + '/uploads/'.length); // <sid>/<file>
   if (!rel || rel.includes('..')) return null;
   const encoded = rel.split('/').map(encodeURIComponent).join('/');
-  const tok = localStorage.getItem('nebflow_token') || '';
+  const tok = localStorage.getItem(key('token')) || '';
   return `/uploads/${encoded}` + (tok ? `?token=${encodeURIComponent(tok)}` : '');
 }
 
