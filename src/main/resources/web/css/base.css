@@ -21,7 +21,7 @@
   --color-modal-bg: #fff;
   --color-frame-text: #3a3d45;
   --color-frame-text-bright: #1b1e26;
-  --color-frame-text-muted: #9a9da5;
+  --color-frame-text-muted: #717379;
   --color-frame-text-dim: #aaacb3;
   --color-frame-border: #e0e1e4;
   --color-frame-border-light: #eeeff1;
@@ -60,7 +60,7 @@ body {
     --color-modal-bg: #1c1f27;
     --color-frame-text: #c8cad0;
     --color-frame-text-bright: #e8eaed;
-    --color-frame-text-muted: #656870;
+    --color-frame-text-muted: #81838a;
     --color-frame-text-dim: #7b7e88;
     --color-frame-border: #282b33;
     --color-frame-border-light: #1c1f27;
