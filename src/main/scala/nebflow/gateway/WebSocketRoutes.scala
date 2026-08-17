@@ -24,7 +24,7 @@ import org.http4s.dsl.io.*
 import org.http4s.headers.`Content-Type`
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
-import org.http4s.{Charset, HttpRoutes, MediaType, Response, StaticFile}
+import org.http4s.{Charset, HttpRoutes, MediaType, Response, Status, StaticFile}
 
 import scala.concurrent.duration.*
 import scala.io.Source
@@ -564,6 +564,15 @@ class WebSocketRoutes(
       val indexResource =
         if WebSocketRoutes.hasBundledDist then "web-dist/index.html" else "web/index.html"
       WebSocketRoutes.indexWithBrand(indexResource)
+
+    case HEAD -> Root =>
+      // Headers-only parity with the pre-rebrand StaticFile route (curl -I,
+      // health/link checkers). The GET case above does not match HEAD
+      // requests, and the body-stripped variant must go through the same
+      // content generation so validators never diverge between the verbs.
+      val headIndexResource =
+        if WebSocketRoutes.hasBundledDist then "web-dist/index.html" else "web/index.html"
+      WebSocketRoutes.indexWithBrand(headIndexResource).map(_.withBodyStream(Stream.empty))
 
     case req @ GET -> Root / "css" / file =>
       StaticFile
@@ -3991,17 +4000,32 @@ object WebSocketRoutes:
     * content-generated, not a static file), text/html in UTF-8. The gzip
     * middleware wraps this route from the Router "/" mount, so it sees the
     * final injected bytes — compression order is correct by construction.
+    *
+    * The entity is written as a raw byte stream with an explicit
+    * Content-Length — deliberately NOT Ok(String)/withEntity(String):
+    * this file imports org.http4s.circe.CirceEntityCodec.* for the JSON
+    * endpoints, and that import's String entity encoder (lexical scope)
+    * wins over http4s' built-in one (implicit scope), silently encoding
+    * the whole HTML as a JSON string literal (body starts with '"',
+    * quotes escaped throughout — the page never boots). Raw bytes bypass
+    * entity-encoder resolution entirely; pinned at the HTTP response
+    * layer by IndexWithBrandServeSpec.
     */
   def indexWithBrand(indexResource: String): IO[Response[IO]] =
     IO.blocking(readClasspathResourceUtf8(indexResource)).flatMap {
       case None => NotFound()
       case Some(html) =>
         val served = injectBeforeHeadClose(html, brandScriptTag).getOrElse(html)
-        Ok(served)
-          .map(
-            _.withContentType(`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
-              .putHeaders("Cache-Control" -> "no-cache")
-          )
+        val bytes = served.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        IO.pure(
+          Response[IO](Status.Ok)
+            .withBodyStream(Stream.emits(bytes))
+            .withContentType(`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
+            .putHeaders(
+              "Content-Length" -> bytes.length.toString,
+              "Cache-Control"  -> "no-cache",
+            )
+        )
     }
   end indexWithBrand
 
