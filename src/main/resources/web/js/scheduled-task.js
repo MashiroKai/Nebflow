@@ -1,5 +1,6 @@
 // scheduled-task.js — Session Scheduled Tasks UI (iPhone Reminders style)
 import state from './state.js';
+import { key } from './branding.js';
 import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
 import { addNotification } from './notificationBanner.js';
@@ -18,8 +19,8 @@ let panelOpen = false;
 // ── Persistence ────────────────────────────────────────────────────────
 // Cache tasks per-session in localStorage so the panel shows instantly
 // on page reload or session switch, before the WS response arrives.
-const TASKS_CACHE_PREFIX = 'nebflow_tasks_';
-const PANEL_OPEN_KEY = 'nebflow_reminder_panel_open';
+const TASKS_CACHE_PREFIX = key('tasks_');
+const PANEL_OPEN_KEY = key('reminder_panel_open');
 
 function loadCachedTasks(sessionId) {
   if (!sessionId) return [];

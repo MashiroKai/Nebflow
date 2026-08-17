@@ -3,6 +3,12 @@ import { findViewBySessionId, setActiveView, activeView, chatViews } from './cha
 import { isBgAgentId } from './utils.js';
 import { addNotification } from './notificationBanner.js';
 import { brand } from './brand.js';
+import { key } from './branding.js';
+
+// Auth token cookie name follows the brand namespace (branding.js copies the
+// legacy cookie across on rename day; the backend accepts both names during
+// the transition).
+const TOKEN_COOKIE = key('token');
 
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
 
@@ -246,9 +252,9 @@ export function connect() {
   const urlParams = new URLSearchParams(location.search);
   const token = urlParams.get('token') || '';
   if (token) {
-    localStorage.setItem('nebflow_token', token);
+    localStorage.setItem(key('token'), token);
   }
-  const storedToken = localStorage.getItem('nebflow_token') || token;
+  const storedToken = localStorage.getItem(key('token')) || token;
   // Set auth cookie so the WebSocket connection authenticates via cookie
   // instead of exposing the token in the URL (history/logs/Referer leakage).
   if (storedToken) {
@@ -259,16 +265,16 @@ export function connect() {
     // and the set → spurious 403 (observed in smoke tests). No rewrite, no
     // window.
     const desired = encodeURIComponent(storedToken);
-    const current = document.cookie.match(/(?:^|;\s*)nebflow_token=([^;]*)/)?.[1];
+    const current = document.cookie.match(new RegExp(`(?:^|;\\s*)${TOKEN_COOKIE}=([^;]*)`))?.[1];
     if (current !== desired) {
       // Purge stale variants first: a cookie written by an older build with
       // different attributes (Secure / domain=) is a SEPARATE jar entry that a
       // plain document.cookie write cannot replace - the server would keep
       // seeing the stale value win the cookie race.
       const gone = '; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-      document.cookie = `nebflow_token=; path=/${gone}`;
-      document.cookie = `nebflow_token=; path=/; domain=${location.hostname}${gone}`;
-      document.cookie = `nebflow_token=${desired}; path=/; SameSite=Strict`;
+      document.cookie = `${TOKEN_COOKIE}=; path=/${gone}`;
+      document.cookie = `${TOKEN_COOKIE}=; path=/; domain=${location.hostname}${gone}`;
+      document.cookie = `${TOKEN_COOKIE}=${desired}; path=/; SameSite=Strict`;
     }
   }
   // First connect: probe cookie reachability before opening the WebSocket so

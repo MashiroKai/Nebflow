@@ -18,7 +18,9 @@
 //  • Main/canvas resizer — only relevant when the canvas is open. When the
 //    canvas closes, Main's pinned width is cleared so it fills the space.
 
-const LS_KEY = 'nebflow_col_widths';
+import { key } from './branding.js';
+
+const LS_KEY = key('col_widths');
 
 // Fixed layout order — panels are NOT reorderable; the order below matches
 // the DOM (Sidebar | resizer | Main | resizer | Canvas). Resizer i separates

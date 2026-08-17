@@ -1,9 +1,12 @@
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import { openTaskArchive } from './taskArchive.js';
+import { key } from './branding.js';
 
 const MAX_VISIBLE = 20;
-const COLLAPSED_KEY = 'nebflow-task-collapsed';
+// Legacy spelling 'nebflow-task-collapsed' is normalized into this key by
+// branding.js at module init (see LEGACY_IRREGULAR there).
+const COLLAPSED_KEY = key('task_collapsed');
 
 const iconMap = {
   pending: 'square',

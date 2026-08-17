@@ -3,6 +3,7 @@
  * Also serves as the device info / description editor modal for ALL devices (including local).
  */
 import state from './state.js';
+import { key } from './branding.js';
 import { escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
@@ -23,7 +24,7 @@ let pendingFileSelection = null;
 let pendingUploads = {};
 
 function getAuthToken() {
-  return localStorage.getItem('nebflow_token') || '';
+  return localStorage.getItem(key('token')) || '';
 }
 
 function formatSize(bytes) {

@@ -2,6 +2,11 @@
 // These are the cross-module data shapes other files should reference via
 // import('./state.js').<Name> in JSDoc, instead of re-declaring them ad hoc.
 
+// All storage keys are brand-namespaced via branding.js (rename-day
+// migration lives there too, as a module-init side effect ordered first in
+// main.js so it runs before the reads below).
+import { key } from './branding.js';
+
 /**
  * A chat session as returned by /api/sessions and the sessionList WS event.
  * @typedef {Object} Session
@@ -34,11 +39,11 @@
  */
 
 // Constants
-export const LS_KEY = 'nebflow_v3';
-export const LS_SESSIONS_KEY = 'nebflow_sessions';
-export const LS_HISTORY_KEY = 'nebflow_input_history';
-export const LS_DRAFTS_KEY = 'nebflow_input_drafts';
-export const LS_MODEL_INFO_KEY = 'nebflow_model_info';
+export const LS_KEY = key('v3');
+export const LS_SESSIONS_KEY = key('sessions');
+export const LS_HISTORY_KEY = key('input_history');
+export const LS_DRAFTS_KEY = key('input_drafts');
+export const LS_MODEL_INFO_KEY = key('model_info');
 export const AGENT_PALETTE = ['#6C8EBF', '#D4A574', '#82B366', '#B5739D', '#9678B6', '#D6B656'];
 
 function safeParse(json, fallback) {
@@ -60,12 +65,12 @@ export default {
   autostartStatus: null,
   sessions: [],
   folders: [],
-  expandedFolders: new Set(safeParse(localStorage.getItem('nebflow_expanded_folders'), [])),
-  unreadSessions: new Set(safeParse(localStorage.getItem('nebflow_unread'), [])),
-  markedUnreadSessions: new Set(safeParse(localStorage.getItem('nebflow_marked_unread'), [])),
-  pinnedSessions: new Set(safeParse(localStorage.getItem('nebflow_pinned'), [])),
+  expandedFolders: new Set(safeParse(localStorage.getItem(key('expanded_folders')), [])),
+  unreadSessions: new Set(safeParse(localStorage.getItem(key('unread')), [])),
+  markedUnreadSessions: new Set(safeParse(localStorage.getItem(key('marked_unread')), [])),
+  pinnedSessions: new Set(safeParse(localStorage.getItem(key('pinned')), [])),
   foldersWithRules: new Set(),
-  pinnedFolders: new Set(safeParse(localStorage.getItem('nebflow_pinned_folders'), [])),
+  pinnedFolders: new Set(safeParse(localStorage.getItem(key('pinned_folders')), [])),
   attentionSessions: new Set(),
   /** Tracks sessions whose askPermission has been answered by the user.
    *  Prevents re-creating interactive permission prompts on session switch-back
@@ -130,11 +135,11 @@ export default {
   sessionAgentMap: {},
 
   // Per-session input drafts: sessionId -> { text, attachments }
-  sessionInputDrafts: safeParse(localStorage.getItem('nebflow_input_drafts'), {}),
+  sessionInputDrafts: safeParse(localStorage.getItem(key('input_drafts')), {}),
 
   // Input (view-level state lives on ChatView; only global input state here)
   thinkingMode: null,
-  inputHistory: safeParse(localStorage.getItem('nebflow_input_history'), []),
+  inputHistory: safeParse(localStorage.getItem(key('input_history')), []),
   pendingDeleteId: null,
 
 
@@ -191,7 +196,7 @@ export default {
   updateBgTasksUI: null,
 
   // Per-session model info: sessionId -> { model, contextWindow, inputTokens }
-  sessionModelInfo: safeParse(localStorage.getItem('nebflow_model_info'), {}),
+  sessionModelInfo: safeParse(localStorage.getItem(key('model_info')), {}),
   updateBypassToggle: null,
   updateSafetyToggle: null,
   COMPACT_THRESHOLD: 0.90,

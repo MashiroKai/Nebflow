@@ -4,10 +4,11 @@
 // (agentManager.js), flow/team definition viewer (flowViewers.js).
 
 import state from './state.js';
+import { key } from './branding.js';
 import { t } from './i18n.js';
 
 // ── Helpers ────────────────────────────────────────────────
-function getToken() { return localStorage.getItem('nebflow_token') || ''; }
+function getToken() { return localStorage.getItem(key('token')) || ''; }
 function authHeaders() {
   const tok = getToken();
   return tok ? { Authorization: `Bearer ${tok}` } : {};

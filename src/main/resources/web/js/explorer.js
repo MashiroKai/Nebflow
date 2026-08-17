@@ -6,6 +6,7 @@
 // Folder picker button in the header opens the path picker modal.
 
 import state from './state.js';
+import { key } from './branding.js';
 import { sendWs, onMessage } from './ws.js';
 import { openPathPickerCallback } from './sidebar.js';
 import { createIconsIn } from './utils.js';
@@ -16,7 +17,7 @@ import { t } from './i18n.js';
 /** Explorer root path (absolute). null = default ~/.nebflow/projects/.
  *  Persisted to localStorage so it survives restarts. */
 let explorerRoot = null;
-const EXPLORER_ROOT_KEY = 'nebflow_explorer_root';
+const EXPLORER_ROOT_KEY = key('explorer_root');
 
 function loadPersistedRoot() {
   try {
