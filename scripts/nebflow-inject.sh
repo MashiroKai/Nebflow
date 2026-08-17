@@ -13,8 +13,22 @@
 
 set -euo pipefail
 
-URL="${NEBFLOW_URL:-http://localhost:8080}"
-TOKEN="${NEBFLOW_TOKEN:-}"
+# ── Brand values (L2 rebrand): repo-root brand.conf is the only edit ──────
+# Env reads are dual-prefix (L3 parity): brand prefix first, hardcoded
+# legacy NEBFLOW_ fallback — with the current brand both name the same
+# variables (zero behavior change).
+BRAND_CONF="$(cd "$(dirname "$0")/.." && pwd)/brand.conf"
+brand_value() {
+  sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" "$BRAND_CONF" | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1
+}
+ENV_PREFIX="$(brand_value envPrefix)"
+LOWER_NAME="$(brand_value lowerName)"
+
+# Dual-prefix env read: brand prefix first, hardcoded legacy NEBFLOW_ fallback.
+eval "PFX_URL=\${${ENV_PREFIX}_URL:-}"
+URL="${PFX_URL:-${NEBFLOW_URL:-http://localhost:8080}}"
+eval "PFX_TOKEN=\${${ENV_PREFIX}_TOKEN:-}"
+TOKEN="${PFX_TOKEN:-${NEBFLOW_TOKEN:-}}"
 AGENT=""
 SESSION=""
 MSG=""
@@ -35,8 +49,8 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Optional:"
       echo "  --session,  -s ID     Session ID (new session created if omitted)"
-      echo "  --url       URL       Gateway URL (default: \$NEBFLOW_URL or http://localhost:8080)"
-      echo "  --token,   -t TOKEN  Gateway token (default: \$NEBFLOW_TOKEN)"
+      echo "  --url       URL       Gateway URL (default: \${ENV_PREFIX}_URL or http://localhost:8080)"
+      echo "  --token,   -t TOKEN  Gateway token (default: \${ENV_PREFIX}_TOKEN)"
       echo ""
       echo "Message can be inline text or a file path."
       echo "Use @ prefix to force file read: --message @prompt.md"
@@ -54,7 +68,7 @@ if [[ -z "$MSG" ]]; then
   echo "Error: --message is required" >&2; exit 1
 fi
 if [[ -z "$TOKEN" ]]; then
-  echo "Error: no token. Set NEBFLOW_TOKEN or use --token" >&2; exit 1
+  echo "Error: no token. Set ${ENV_PREFIX}_TOKEN or use --token" >&2; exit 1
 fi
 
 # --- Resolve message: file or text ---
@@ -91,19 +105,19 @@ BODY="$BODY}"
 # --- Send ---
 ENDPOINT="${URL}/api/callbacks/inject"
 
-HTTP_CODE=$(curl -s -o /tmp/nebflow-inject-resp.json -w "%{http_code}" \
+HTTP_CODE=$(curl -s -o /tmp/${LOWER_NAME}-inject-resp.json -w "%{http_code}" \
   -X POST "$ENDPOINT" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d "$BODY" 2>/dev/null || echo "000")
 
 if [[ "$HTTP_CODE" == "200" ]]; then
-  SID=$(python3 -c "import json; print(json.load(open('/tmp/nebflow-inject-resp.json')).get('sessionId','?'))" 2>/dev/null || echo "?")
+  SID=$(python3 -c "import json; print(json.load(open('/tmp/${LOWER_NAME}-inject-resp.json')).get('sessionId','?'))" 2>/dev/null || echo "?")
   echo "OK → agent=$AGENT session=$SID"
 else
-  BODY_PREVIEW=$(cat /tmp/nebflow-inject-resp.json 2>/dev/null | head -c 200)
+  BODY_PREVIEW=$(cat /tmp/${LOWER_NAME}-inject-resp.json 2>/dev/null | head -c 200)
   echo "Error: HTTP $HTTP_CODE $BODY_PREVIEW" >&2
   exit 1
 fi
 
-rm -f /tmp/nebflow-inject-resp.json
+rm -f /tmp/${LOWER_NAME}-inject-resp.json

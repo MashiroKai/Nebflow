@@ -23,6 +23,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Brand values from brand.conf
+        # L2 rebrand: single source — every brand string below flows from here.
+        run: |
+          bv() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" brand.conf | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1; }
+          echo "LOWER_NAME=$(bv lowerName)" >> $GITHUB_ENV
+          echo "PRODUCT_NAME=$(bv productName)" >> $GITHUB_ENV
+          echo "COS_BUCKET=$(bv cosBucket)" >> $GITHUB_ENV
       - name: Read version
         id: version
         run: |
@@ -70,7 +77,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jar
-          path: target/scala-3.5.2/nebflow-assembly-*.jar
+          path: target/scala-3.5.2/${{ env.LOWER_NAME }}-assembly-*.jar
           if-no-files-found: error
 
   package-macos:
@@ -168,12 +175,19 @@ jobs:
         with:
           path: dist
 
+      - name: Brand values from brand.conf
+        # L2 rebrand: single source — every brand string below flows from here.
+        run: |
+          bv() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" brand.conf | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1; }
+          echo "LOWER_NAME=$(bv lowerName)" >> $GITHUB_ENV
+          echo "PRODUCT_NAME=$(bv productName)" >> $GITHUB_ENV
+          echo "COS_BUCKET=$(bv cosBucket)" >> $GITHUB_ENV
       - name: Collect assets
         run: |
           mkdir -p release-assets
-          find dist -name 'nebflow-assembly-*.jar' -exec cp {} release-assets/ \;
-          find dist -name 'Nebflow-*.dmg' -exec cp {} release-assets/ \;
-          find dist -name 'Nebflow-*.msi' -exec cp {} release-assets/ \;
+          find dist -name '${LOWER_NAME}-assembly-*.jar' -exec cp {} release-assets/ \;
+          find dist -name '${PRODUCT_NAME}-*.dmg' -exec cp {} release-assets/ \;
+          find dist -name '${PRODUCT_NAME}-*.msi' -exec cp {} release-assets/ \;
           ls -lh release-assets/
 
       - name: Create tag
@@ -196,7 +210,7 @@ jobs:
           COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
         run: |
           pip install coscmd 2>/dev/null
-          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b nebflow-releases-1411212853 -e cos.accelerate.myqcloud.com
+          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b "$COS_BUCKET" -e cos.accelerate.myqcloud.com
           for f in release-assets/*; do
             coscmd upload "$f" "$(basename "$f")" -f
             echo "  Uploaded $(basename "$f") to COS"

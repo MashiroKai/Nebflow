@@ -2,7 +2,7 @@
 # Build a macOS .dmg of Nebflow from the sbt-assembly fat jar via jpackage.
 #
 # Usage: packaging/build-dmg.sh [--jar-dir DIR] [--out DIR]
-#   --jar-dir  directory containing nebflow-assembly-*.jar (default target/scala-3.5.2)
+#   --jar-dir  directory containing ${LOWER_NAME}-assembly-*.jar (default target/scala-3.5.2)
 #   --out      output directory for the .dmg (default build/dist)
 #
 # Requirements: JDK 17+ with jpackage on PATH (or JAVA_HOME set), fat jar built
@@ -14,6 +14,16 @@
 #   semver       1.4.1[-beta.N]      → 1.4.1       (suffix dropped)
 set -euo pipefail
 
+# ── Brand values (L2 rebrand): repo-root brand.conf is the only edit point ──
+# Parser parity with project/Branding.scala and runtime nebflow.core.Branding:
+# `key = value`, full-line '#' comments, ` # ` starts an inline comment.
+BRAND_CONF="$(cd "$(dirname "$0")/.." && pwd)/brand.conf"
+brand_value() {
+  sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" "$BRAND_CONF" | sed 's/[[:space:]]#.*$//' | head -1
+}
+PRODUCT_NAME="$(brand_value productName)"
+LOWER_NAME="$(brand_value lowerName)"
+
 JAR_DIR="target/scala-3.5.2"
 OUT="build/dist"
 while [[ $# -gt 0 ]]; do
@@ -24,9 +34,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-JAR=$(ls "$JAR_DIR"/nebflow-assembly-*.jar 2>/dev/null | head -1 || true)
+JAR=$(ls "$JAR_DIR"/${LOWER_NAME}-assembly-*.jar 2>/dev/null | head -1 || true)
 if [[ -z "$JAR" ]]; then
-  echo "ERROR: no nebflow-assembly-*.jar in $JAR_DIR — run 'sbt assembly' first." >&2
+  echo "ERROR: no ${LOWER_NAME}-assembly-*.jar in $JAR_DIR — run 'sbt assembly' first." >&2
   exit 1
 fi
 if ! command -v jpackage >/dev/null 2>&1; then
@@ -59,7 +69,7 @@ jlink \
   --output "$RUNTIME"
 
 jpackage \
-  --name Nebflow \
+  --name "$PRODUCT_NAME" \
   --type dmg \
   --input "$STAGE" \
   --main-jar "$(basename "$JAR")" \
@@ -69,11 +79,11 @@ jpackage \
   --java-options "-Xmx1g" \
   --runtime-image "$RUNTIME" \
   --app-version "$APP_VERSION" \
-  --mac-package-name Nebflow \
+  --mac-package-name "$PRODUCT_NAME" \
   --dest "$OUT"
 
 # Normalize arch label for asset naming (uname -m gives x86_64 on Intel macs).
 ARCH=$(uname -m | sed 's/x86_64/x64/')
-FINAL="$OUT/Nebflow-${RAW_VERSION}-${ARCH}.dmg"
-mv "$OUT"/Nebflow-*.dmg "$FINAL"
+FINAL="$OUT/${PRODUCT_NAME}-${RAW_VERSION}-${ARCH}.dmg"
+mv "$OUT"/${PRODUCT_NAME}-*.dmg "$FINAL"
 echo "OK: $FINAL ($(du -h "$FINAL" | cut -f1))"
