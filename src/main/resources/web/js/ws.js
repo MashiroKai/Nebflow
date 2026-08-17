@@ -342,7 +342,7 @@ export function connect() {
       } else {
         const hint = storedToken
           ? 'token 无效或服务端已更换 token，请用启动日志中的带 token 地址重新打开'
-          : '页面缺少 token，请通过启动时打印的带 token 地址打开（token 在 ~/.nebflow/auth.json）';
+          : `页面缺少 token，请通过启动时打印的带 token 地址打开（token 在 ~/${brand.homeDirName ?? '.nebflow'}/auth.json）`;
         console.warn('[ws] connect failed:', hint);
         addNotification('conn', `无法连接 ${brand.lowerName}：${hint}`);
       }

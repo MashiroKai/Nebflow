@@ -2504,7 +2504,7 @@ onMessage('activeAgents', (msg) => {
     if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
     state.sessionBgAgents[sid][a.agentId] = {
       name: a.agentName || a.agentId,
-      task: '',
+      task: a.task || '',
       sessionId: a.sessionId || '',
       currentTool: null,
       done: false,
