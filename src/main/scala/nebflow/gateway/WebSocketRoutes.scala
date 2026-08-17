@@ -1988,19 +1988,14 @@ class WebSocketRoutes(
             // (see filterActiveAgents), so registry presence alone would
             // report idle team agents as running ghosts.
             // agentId == sessionId (nodeSessionId) so restored entries match
-            // subsequent realtime events (agentToolStart/agentDone key on it).
+            // subsequent realtime events (agentToolStart/agentDone key on it)
+            // — pinned by ActiveAgentsEntrySpec, see activeAgentEntryJson.
             sharedResources.agentRegistry.get.flatMap { registry =>
               WebSocketRoutes.filterActiveAgents(registry).flatMap { active =>
                 active
                   .traverse { rec =>
                     sessionStore.getSessionMeta(rec.sessionId).map { meta =>
-                      io.circe.Json.obj(
-                        "sessionId" -> rec.sessionId.asJson,
-                        "agentId" -> rec.sessionId.asJson,
-                        "agentName" -> meta.flatMap(_.agentName).getOrElse(rec.sessionId).asJson,
-                        "rootSessionId" -> rec.rootSessionId.asJson,
-                        "kind" -> rec.kind.toString.asJson
-                      )
+                      WebSocketRoutes.activeAgentEntryJson(rec, meta)
                     }
                   }
                   .flatMap { agents =>
@@ -4075,3 +4070,29 @@ object WebSocketRoutes:
         TeamSessionRegistry.isBusy(rec.sessionId).map(busy => if busy then Some(rec) else None)
       )
       .map(_ ++ inFlight)
+
+  /**
+    * One entry of the getActiveAgents ("activeAgents") restore reply.
+    *
+    * Contract: agentId == sessionId. The frontend keys its bg-agent map by
+    * the agentId of BOTH this restore reply and live agentStart events —
+    * a mismatch files two running rows for one session (the Teams panel
+    * double-entry ghost). Live events carry ctx.self.path.name, so every
+    * subagent spawn path must name its actor by the session id (Mail /
+    * Delegate / SubTask / DAG alike). `task` mirrors the live agentStart's
+    * taskDescription (= the session display name, e.g. "team/agent" for
+    * mounted team sessions) so restored rows render with the same team
+    * attribution as live ones.
+    *
+    * Standalone (zero class deps) so the contract is directly unit-testable
+    * (ActiveAgentsEntrySpec).
+    */
+  def activeAgentEntryJson(rec: AgentRecord, meta: Option[SessionMeta]): Json =
+    Json.obj(
+      "sessionId"      -> rec.sessionId.asJson,
+      "agentId"        -> rec.sessionId.asJson,
+      "agentName"      -> meta.flatMap(_.agentName).getOrElse(rec.sessionId).asJson,
+      "rootSessionId"  -> rec.rootSessionId.asJson,
+      "kind"           -> rec.kind.toString.asJson,
+      "task"           -> meta.map(_.name).getOrElse("").asJson
+    )

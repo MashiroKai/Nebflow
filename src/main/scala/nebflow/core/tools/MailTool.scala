@@ -915,6 +915,18 @@ Message type (optional, default "INFO"):
                     .getOrElse(json)
               underlying(stamped)
             for
+              // Actor name = session.id pins the event contract
+              // "agentId == sessionId" (documented at the getActiveAgents
+              // reply: restored bg-agent entries key by sessionId so they
+              // merge with subsequent realtime events). Live subagent events
+              // key the frontend map by ctx.self.path.name, and the old
+              // "mail-<sid8>" name broke the equality for Mail-activated
+              // team agents: after a browser refresh the restore reply
+              // (agentId=sid) plus the next live agentStart
+              // (agentId=mail-<sid8>) filed TWO running rows for ONE
+              // session — the Teams panel double-entry ghost. Delegate /
+              // SubTask / DAG spawns already name actors by their
+              // nodeSessionId; this aligns the Mail path with them.
               ref <- actorSystem.spawn(
                 AgentActor(
                   agentDef = agentDef,
@@ -929,7 +941,7 @@ Message type (optional, default "INFO"):
                   rootSessionId = rootSid,
                   expectsMail = entry.name != "Manager"
                 ),
-                s"mail-${session.id.take(8)}"
+                session.id
               )
               _ <- TeamSessionRegistry.registerActor(session.id, ref)
               _ <- resources.agentRegistry.update(
