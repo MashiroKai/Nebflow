@@ -32,6 +32,7 @@
   <link rel="stylesheet" href="css/reminder.css">
   <link rel="stylesheet" href="css/neblink.css">
   <link rel="stylesheet" href="css/dropbox.css">
+  <link rel="stylesheet" href="css/friends.css">
   <link rel="stylesheet" href="css/split.css">
   <link rel="stylesheet" href="css/voice.css">
   <link rel="stylesheet" href="css/planMode.css">
@@ -54,6 +55,8 @@
       <img class="activity-avatar-photo" alt="" hidden>
       <span class="activity-avatar-letter" hidden>N</span>
     </button>
+    <button id="messages-btn" class="activity-btn" data-panel-btn="messages" title="Messages" aria-pressed="false"><i data-lucide="message-circle"></i><span class="activity-badge" id="messages-badge" hidden></span></button>
+    <button id="contacts-btn" class="activity-btn" data-panel-btn="contacts" title="Contacts" aria-pressed="false"><i data-lucide="contact-round"></i><span class="activity-badge" id="contacts-badge" hidden></span></button>
     <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
     <div class="activity-spacer"></div>
     <button id="teams-btn" class="activity-btn" title="Teams"><i data-lucide="network"></i></button>
@@ -89,6 +92,14 @@
             <!-- File tree rendered here by explorer.js -->
           </div>
         </div>
+      </div>
+      <div id="panel-messages" class="panel" data-panel-id="messages">
+        <div class="panel-header"><span class="panel-title" data-i18n="panel.messages">Messages</span></div>
+        <div id="fm-conversations" role="listbox" aria-label="Messages"></div>
+      </div>
+      <div id="panel-contacts" class="panel" data-panel-id="contacts">
+        <div class="panel-header"><span class="panel-title" data-i18n="panel.contacts">Contacts</span></div>
+        <div id="fm-contacts-body"></div>
       </div>
     </div>
   </div>
