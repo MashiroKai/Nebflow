@@ -141,8 +141,52 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
   /**
    * Start a daemon process. `restartCount` is carried over from the auto-restart
    *      chain so the crash-loop counter survives process replacements.
+   *
+   * Port pre-flight: when the configured port is already serving — a stale
+   *      process from a previous Nebflow instance that was killed outside the
+   *      JVM shutdown hook window, or a server the user started manually — we
+   *      must NOT spawn a duplicate: it dies instantly with "address already in
+   *      use" (exit 1), burns the auto-restart budget, and the crash-loop
+   *      protection eventually gives up, leaving the daemon dead forever after
+   *      the next restart. Instead the daemon is marked Stopped with portOpen
+   *      = true (frontend open button works; stop is a no-op) and the low-rate
+   *      retry loop (see maybeAutoRestart) picks it up once the port frees.
    */
   private def doStart(config: DaemonConfig, restartCount: Int): IO[DaemonState] =
+    config.port match
+      case Some(port) if probePort(port) =>
+        val entry = DaemonEntry(config = config, status = DaemonStatus.Stopped)
+        logger.info(
+          s"[daemon] '${config.name}' port $port already open — skipping start (externally running); will take over when port frees"
+        ) *> entries.update(_ + (config.id -> entry)) *>
+          // Keep probing at low rate — when the externally-held port frees
+          // (stale previous-instance process exits, user stops the manual
+          // server) we take over so the daemon self-heals without a restart.
+          lowRateTakeover(config.id).start.void *>
+          toStateIO(config.id, entry)
+      case _ => doStartInternal(config, restartCount)
+
+  /**
+   * Low-rate self-heal loop for a daemon whose port was found occupied at
+   *      start time (external process). Probes every MaxBackoffDelay (60s);
+   *      when the port frees, starts the daemon. Runs until the entry leaves
+   *      the Stopped-no-stopRequested state (user stopped it, or we started it).
+   */
+  private def lowRateTakeover(id: String): IO[Unit] =
+    def loop: IO[Unit] =
+      IO.sleep(MaxBackoffDelay) *> entries.get.flatMap(_.get(id) match
+        case Some(e) if e.status == DaemonStatus.Stopped && !e.stopRequested =>
+          e.config.port match
+            case Some(p) if !probePort(p) =>
+              logger.info(s"[daemon] '${e.config.name}' port $p freed — taking over") *>
+                doStartInternal(e.config, 0).void
+                  .handleErrorWith(err => logger.error(s"[daemon] Takeover start failed for '${e.config.name}': ${err.getMessage}") *> loop)
+            case Some(_) => loop // port still held — keep probing
+            case None => IO.unit // no port configured — nothing to wait for
+        case _ => IO.unit // user stopped it, or we started it — done
+      )
+    loop
+  private def doStartInternal(config: DaemonConfig, restartCount: Int): IO[DaemonState] =
     IO.blocking {
       val workDir = config.cwd match
         case Some(dir) => java.io.File(dir)
@@ -310,10 +354,31 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
             val consecutive = if ranStable then 0 else entry.restartCount
             val attempt = consecutive + 1
             if attempt > entry.config.restartMaxAttempts then
-              logger.error(
+              // Crash budget exhausted: do NOT give up permanently. A daemon
+              // that crashed during the Nebflow-restart window (port still held
+              // by the previous instance's process) must self-heal once the
+              // port frees — giving up left it dead until a manual restart
+              // (2026-08-18: all three daemons dead after a restart raced the
+              // old instance's shutdown). Degrade to a low-rate retry: check
+              // every MaxBackoffDelay whether the environment recovered (port
+              // free) and start then. Keeps crash-loop protection from
+              // hammering the port, but never leaves the daemon abandoned.
+              logger.warn(
                 s"[daemon] '${entry.config.name}' crashed ${entry.config.restartMaxAttempts} time(s) in a row; " +
-                  "auto-restart exhausted (crash loop). Manual restart required."
+                  "auto-restart budget exhausted — retrying at low rate for self-heal"
               )
+              IO.sleep(MaxBackoffDelay) *> entries.get.flatMap(_.get(id) match
+                case Some(e) if e.status == DaemonStatus.Crashed && !e.stopRequested =>
+                  e.config.port match
+                    case Some(p) if probePort(p) =>
+                      // Port still held (e.g. stale instance process) — keep the
+                      // low-rate probe alive so we self-heal when it frees.
+                      lowRateTakeover(id).start.void
+                    case _ =>
+                      doStart(e.config, attempt).void.handleErrorWith(err =>
+                        logger.error(s"[daemon] Low-rate retry failed for '${e.config.name}': ${err.getMessage}")
+                      )
+                case _ => IO.unit)
             else
               val delay = backoffDelay(attempt, entry.config.restartBackoffSec)
               logger.info(
