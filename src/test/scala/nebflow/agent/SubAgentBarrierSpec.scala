@@ -1,5 +1,9 @@
 package nebflow.agent
 
+import io.circe.JsonObject
+import io.circe.syntax.*
+import nebflow.core.ToolExecResult
+import nebflow.shared.ToolCall
 import munit.FunSuite
 
 /**
@@ -75,6 +79,45 @@ class SubAgentBarrierSpec extends FunSuite:
   test("empty queue is a no-op") {
     assertEquals(TurnBoundaryDrains.drainBarrier(Nil, compactionPending = false, outstanding = 3), (Nil, Nil))
     assertEquals(TurnBoundaryDrains.drainBarrier(Nil, compactionPending = false, outstanding = 0), (Nil, Nil))
+  }
+
+  // ── Barrier count: persistent Delegate exclusion (qa-backend 2026-08-19) ──
+
+  private def call(name: String, lifecycle: Option[String] = None): ToolCall =
+    val input = lifecycle.map(l => JsonObject("lifecycle" -> l.asJson)).getOrElse(JsonObject.empty)
+    ToolCall("id-" + name + lifecycle.getOrElse(""), name, input)
+
+  private val ok = ToolExecResult("ok", isError = false)
+  private val err = ToolExecResult("err", isError = true)
+
+  test("countBarrierIncrements: ephemeral Delegate counts") {
+    assertEquals(TurnBoundaryDrains.countBarrierIncrements(List(call("Delegate") -> ok)), 1)
+  }
+
+  test("countBarrierIncrements: persistent Delegate does NOT count") {
+    assertEquals(TurnBoundaryDrains.countBarrierIncrements(List(call("Delegate", Some("persistent")) -> ok)), 0)
+  }
+
+  test("countBarrierIncrements: SubTask always counts") {
+    assertEquals(TurnBoundaryDrains.countBarrierIncrements(List(call("SubTask") -> ok)), 1)
+    assertEquals(TurnBoundaryDrains.countBarrierIncrements(List(call("SubTask", Some("persistent")) -> ok)), 1)
+  }
+
+  test("countBarrierIncrements: failed spawns never count") {
+    assertEquals(TurnBoundaryDrains.countBarrierIncrements(List(call("Delegate") -> err)), 0)
+    assertEquals(TurnBoundaryDrains.countBarrierIncrements(List(call("SubTask") -> err)), 0)
+    assertEquals(TurnBoundaryDrains.countBarrierIncrements(List(call("Delegate", Some("persistent")) -> err)), 0)
+  }
+
+  test("countBarrierIncrements: mixed batch counts only ephemeral successes") {
+    val batch = List(
+      call("Delegate") -> ok,                          // 1 (ephemeral)
+      call("Delegate", Some("persistent")) -> ok,      // 0 (persistent excluded)
+      call("SubTask") -> ok,                           // 1
+      call("Delegate") -> err,                         // 0 (failed)
+      call("Read") -> ok                               // 0 (not a sub-agent)
+    )
+    assertEquals(TurnBoundaryDrains.countBarrierIncrements(batch), 2)
   }
 
 end SubAgentBarrierSpec
