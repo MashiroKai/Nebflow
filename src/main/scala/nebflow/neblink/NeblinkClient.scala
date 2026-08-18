@@ -93,6 +93,7 @@ object NeblinkCodecs:
 end NeblinkCodecs
 
 import NeblinkCodecs.{given, *}
+import FriendCodecs.{given, *}
 
 /**
  * Client for the NebLink Server.
@@ -279,6 +280,69 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
         sendRequest("DELETE", s"${config.url}/api/device/logout", "", Some(token))
           .handleErrorWith(_ => IO.unit)
           *> IO { sessionToken = None }
+
+  // ===== A2A 好友与消息 API（spec §6.1，Bearer device session token） =====
+
+  /** 查号：精确匹配 neblink_id（默认=邮箱），大小写不敏感。 */
+  def lookupUser(q: String): IO[Either[String, Json]] =
+    withSession { token =>
+      sendRequest("GET", s"${config.url}/api/users/lookup?q=${java.net.URLEncoder.encode(q, "UTF-8")}", "", Some(token))
+        .map(_.flatMap(body => decode[Json](body).left.map(_.getMessage)))
+    }
+
+  /** 好友列表（accepted + 双向 pending 分组）。 */
+  def listFriends: IO[Either[String, FriendListResponse]] =
+    withSessionJson[FriendListResponse]("GET", "/api/friends", "")
+
+  /** 发好友请求（按 NebLink 号寻址，服务器 get-or-create 会话于首条消息）。 */
+  def sendFriendRequest(query: String, note: Option[String] = None): IO[Either[String, Json]] =
+    withSession { token =>
+      val body = Json.obj("query" -> query.asJson, "note" -> note.asJson).noSpaces
+      sendRequest("POST", s"${config.url}/api/friends/requests", body, Some(token))
+        .map(_.flatMap(resp => decode[Json](resp).left.map(_.getMessage)))
+    }
+
+  def acceptFriendRequest(requestId: String): IO[Either[String, Json]] =
+    withSessionJson[Json]("POST", s"/api/friends/requests/$requestId/accept", "")
+
+  def declineFriendRequest(requestId: String): IO[Either[String, String]] =
+    withSessionRaw("POST", s"/api/friends/requests/$requestId/decline", "")
+
+  def removeFriend(friendUserId: String): IO[Either[String, String]] =
+    withSessionRaw("DELETE", s"/api/friends/$friendUserId", "")
+
+  /** 会话列表（按 last_message_id 倒序，含 unreadCount）。 */
+  def listConversations: IO[Either[String, List[ConversationSummary]]] =
+    withSessionJson[List[ConversationSummary]]("GET", "/api/conversations", "")
+
+  /** keyset 分页拉消息（after=0 全量，limit 默认 50）。 */
+  def listMessages(conversationId: String, after: Long = 0L, limit: Int = 50): IO[Either[String, List[MessageSummary]]] =
+    withSessionJson[List[MessageSummary]]("GET", s"/api/conversations/$conversationId/messages?after=$after&limit=$limit", "")
+
+  /** 发消息（好友寻址，服务器 get-or-create 会话）。 */
+  def sendFriendMessage(friendUserId: String, body: String): IO[Either[String, Json]] =
+    withSession { token =>
+      val payload = Json.obj("body" -> body.asJson).noSpaces
+      sendRequest("POST", s"${config.url}/api/friends/$friendUserId/messages", payload, Some(token))
+        .map(_.flatMap(resp => decode[Json](resp).left.map(_.getMessage)))
+    }
+
+  /** 更新未读 cursor（仅本地角标口径，无回执）。 */
+  def markConversationRead(conversationId: String, lastReadMessageId: Long): IO[Either[String, String]] =
+    withSessionRaw("POST", s"/api/conversations/$conversationId/read", s"""{"lastReadMessageId":$lastReadMessageId}""")
+
+  // ---- helpers ----
+
+  private def withSession[A](f: String => IO[Either[String, A]]): IO[Either[String, A]] =
+    sessionToken match
+      case None => IO.pure(Left("Not logged in"))
+      case Some(token) => f(token)
+
+  private def withSessionRaw(method: String, path: String, body: String): IO[Either[String, String]] =
+    withSession(token => sendRequest(method, s"${config.url}$path", body, Some(token)))
+
+  private def withSessionJson[A](method: String, path: String, body: String)(using d: io.circe.Decoder[A]): IO[Either[String, A]] =
+    withSessionRaw(method, path, body).map(_.flatMap(resp => decode[A](resp).left.map(_.getMessage)))
 
   /**
    * Execute a tool on a remote device via the NebLink Server relay tunnel.
