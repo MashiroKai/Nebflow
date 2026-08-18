@@ -528,4 +528,7 @@
   }
   .fm-sending .fm-msg-time { animation: none; opacity: 0.6; }
   .fm-sending .fm-msg-time::after { content: '…'; }
+  /* A16: chat modal open animation ≤0.01s (overlay fade is sidebar.css's
+     cfg-fade-in 0.15s — squash only our instance, shared class untouched). */
+  #fm-chat-overlay { animation-duration: 0.01s !important; }
 }
