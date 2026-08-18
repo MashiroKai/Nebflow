@@ -115,7 +115,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
       supervisor <- system.spawn(
         BackoffSupervisor(
           childRef = child,
-          childSpawnFn = _ => IO.pure(child),
+          childSpawnFn = (_, _) => IO.pure(child),
           childName = childSid,
           parentRef = None,
           description = "test task",
@@ -157,7 +157,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
       supervisor <- system.spawn(
         BackoffSupervisor(
           childRef = child,
-          childSpawnFn = _ => IO.pure(child),
+          childSpawnFn = (_, _) => IO.pure(child),
           childName = childSid,
           parentRef = None,
           description = "test task",
