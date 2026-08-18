@@ -1,6 +1,6 @@
 package nebflow.gateway
 
-import cats.effect.std.{Dispatcher, Semaphore}
+import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
@@ -61,7 +61,6 @@ class TurnEndpointSpec extends CatsEffectSuite:
       thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
       modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
       voiceMuted <- Ref.of[IO, Boolean](false)
-      askSem <- Semaphore[IO](4)
     yield SharedResources(
       llm = llm,
       dispatcher = dispatcher,
@@ -72,7 +71,6 @@ class TurnEndpointSpec extends CatsEffectSuite:
       fileChangeTracker = tracker,
       contextWindow = 100_000,
       agentLibrary = new AgentLibrary(tmp / "agents"),
-      askSemaphore = askSem,
       taskStore = FileTaskStore,
       historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
       fileLockManager = fileLocks,
