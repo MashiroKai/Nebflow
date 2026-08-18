@@ -79,8 +79,8 @@ object LlmInterface:
    *   In-flight requests are deliberately not covered by queue persistence.
    * - Gate busy: write the full LlmRequest to LlmQueueStore (so a restart
    *   doesn't lose it), then queue. On grant, removeHead — FIFO guarantees
-   *   our item is at the head. On QueueTimeout, removeById — the request has
-   *   fallen through to the next provider.
+   *   our item is at the head. QueueTimeout no longer occurs (acquire waits
+   *   indefinitely — user #296 追加, 2026-08-19).
    * - queuePersist=false: skip persistence entirely (in-memory only).
    */
   private def acquireWithPersistence(
@@ -97,10 +97,6 @@ object LlmInterface:
         val write = if persist then LlmQueueStore.append(providerId, item) else IO.unit
         write *>
           gate.acquire
-            .onError {
-              case _: QueueTimeout =>
-                if persist then LlmQueueStore.removeById(providerId, item.id).void else IO.unit
-            }
             .flatTap { _ =>
               // Permit granted — everyone ahead of us either got granted and
               // removed, or timed out and removed, so our item is at the head.
@@ -564,35 +560,12 @@ object LlmInterface:
                                         }
                                       )
                                       .drain)
-                                    // QueueTimeout (P0 concurrency gate): provider is BUSY
-                                    // (gate saturated), not down — skip to the next provider
-                                    // without retry, markDown, or the all-Down gate loop
-                                    // (re-queueing would just wait again). Exhausted chain
-                                    // raises so the agent-level llm-fail retry (bounded) fires.
-                                    .handleErrorWith { err =>
-                                      if err.isInstanceOf[QueueTimeout] then
-                                        val attempt = FallbackAttempt(
-                                          candidate.providerId,
-                                          candidate.model,
-                                          Some(FailoverReason.RateLimit),
-                                          Some(ErrorPermanence.Transient),
-                                          0,
-                                          maxRetries - retriesLeft,
-                                          java.time.Instant.now().toString,
-                                          Option(err.getMessage)
-                                        )
-                                        val notify = onAttempt.traverse_(_.apply(attempt))
-                                        fs2.Stream.eval(
-                                          failureRef.update(_ :+ attempt) *> notify *> logger.warn(
-                                            s"Stream queue timeout: ${candidate.providerId}/${candidate.model} — skipping to next provider"
-                                          )
-                                        ) *>
-                                          (rest match
-                                            case Nil =>
-                                              fs2.Stream.raiseError[IO](new FallbackExhaustedError(List(attempt)))
-                                            case _ => tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs))
-                                      else fs2.Stream.raiseError[IO](err)
-                                    }
+                                    // QueueTimeout no longer occurs (gate.acquire waits
+                                    // indefinitely — user #296 追加, 2026-08-19): 排队等待
+                                    // 正常，不 fallback。Provider 真故障时 LLM 请求本身的
+                                    // 超时（首 token 90s / 空闲 60s）会触发 fallback，排队层
+                                    // 不需要超时兜底。LLM timeout 从 stream 开始计时（acquire
+                                    // 之后），不受排队影响。
                                     // PostEmptyRecovery: if empty completion with images on non-vision model,
                                     // strip images and retry same candidate before falling through to normal error handling.
                                     .handleErrorWith { err =>

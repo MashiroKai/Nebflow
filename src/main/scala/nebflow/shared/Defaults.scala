@@ -105,11 +105,12 @@ object Defaults:
   val LlmMaxConcurrencyDefault: Int = 3
 
   /**
-   * Default queue timeout for a concurrency-gated LLM request. When the
-   * provider's gate is saturated, the request waits up to this long for a
-   * permit, then fails as Transient and falls back to the next provider.
+   * Queue timeout for a concurrency-gated LLM request. Currently unused —
+   * gate.acquire waits indefinitely (user #296 追加, 2026-08-19): 排队等待
+   * 正常，不 fallback。Provider 真故障时 LLM 请求本身的超时（首 token 90s /
+   * 空闲 60s）会触发 fallback，排队层不需要超时兜底。保留值供未来可选启用。
    */
-  val LlmQueueTimeoutMs: Long = 60_000L
+  val LlmQueueTimeoutMs: Long = 120_000L
 
   /** RPM sliding-window width (seconds) for the per-provider rate limiter. */
   val LlmRpmWindowSec: Int = 60
