@@ -90,7 +90,7 @@ object TaskStuckWatcher:
             s"for ${idleSecs}s > threshold — sending Stop for supervised restart"
         ) *>
           (rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
-            .handleErrorWith(e => IO(logger.warn(s"TaskStuckWatcher: Stop to stuck sub-agent ${rec.sessionId} failed: ${e.getMessage}")))
+            .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: Stop to stuck sub-agent ${rec.sessionId} failed: ${e.getMessage}"))
       case None =>
         logger.warn(
           s"TaskStuckWatcher: root agent ${rec.sessionId} stuck in Processing for ${idleSecs}s " +
@@ -104,6 +104,6 @@ object TaskStuckWatcher:
                 "kind" -> rec.kind.toString.asJson
               )
             )
-            .handleErrorWith(e => IO(logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}")))
+            .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}"))
 
 end TaskStuckWatcher
