@@ -106,19 +106,25 @@ final class ConcurrencyGate private[llm] (
       }
     }
 
-  /** Acquire a permit, queueing (FIFO) until one is free or queueTimeout elapses. */
+  /**
+   * Acquire a permit, queueing (FIFO) until one is free. No queue timeout —
+   * the acquire waits indefinitely for a permit (user #296 追加, 2026-08-19):
+   * 排队等待正常，不 fallback。Provider 真故障时 LLM 请求本身的超时
+   * (首 token 90s / 空闲 60s) 会触发 fallback，排队层不需要超时兜底。
+   * LLM timeout 从 stream 开始计时（acquire 之后），不受排队影响。
+   */
   def acquire: IO[ConcurrencyPermit] =
     if maxConcurrency == 0 then waitForWindow.as(new ConcurrencyPermit(this, limited = false))
     else
       Deferred[IO, Unit].flatMap { d =>
         // Remove a dead waiter. Still queued → drop it from the FIFO; already
         // dequeued by dispatch (we hold the slot but never got out) → restore
-        // the permit. Runs on queue timeout, error, AND fiber cancellation
-        // (Stop/abort while queued or in the RPM wait): without the cancel path
-        // a cancelled acquire leaves a ghost Deferred in `waiting`, and dispatch
-        // keeps handing permits to listeners that never release them — permits
-        // exhaust one per cancelled request. The restored permit dispatches the
-        // next waiter immediately, not on the next release.
+        // the permit. Runs on error AND fiber cancellation (Stop/abort while
+        // queued or in the RPM wait): without the cancel path a cancelled
+        // acquire leaves a ghost Deferred in `waiting`, and dispatch keeps
+        // handing permits to listeners that never release them — permits
+        // exhaust one per cancelled request. The restored permit dispatches
+        // the next waiter immediately, not on the next release.
         val cleanup: IO[Unit] =
           state.update { s =>
             if s.waiting.exists(_ eq d) then s.copy(waiting = s.waiting.filterNot(_ eq d))
@@ -127,17 +133,10 @@ final class ConcurrencyGate private[llm] (
         val body =
           state.update(s => s.copy(waiting = s.waiting.enqueue(d))) *>
             dispatch *>
-            d.get
-              .timeoutTo(
-                queueTimeout,
-                IO.raiseError(new QueueTimeout(providerId, queueTimeout.toMillis))
-              ) *>
+            d.get *>  // No timeout — wait indefinitely for a permit
             waitForWindow
         body
           .onError {
-            case _: QueueTimeout => cleanup
-            // Some callers raise CancellationException as a plain error rather
-            // than cancelling the fiber — clean up for those too.
             case _: CancellationException => cleanup
           }
           .onCancel(cleanup)
