@@ -454,7 +454,7 @@ export default {
   'search.tabAll': '全部',
   'search.tabImages': '图片',
   'search.tabFiles': '文件',
-  'search.tabCards': 'Card',
+  'search.tabPop': 'Pop',
   'search.tabDate': '日期',
   'search.emptyCategory': '该栏目下暂无内容',
   'search.datePickTitle': '选择日期',
@@ -462,7 +462,7 @@ export default {
   'search.dateConfirm': '确定',
   'search.dateCancel': '取消',
   'search.toolDisabledHint': '当前栏目下不适用工具筛选',
-  'search.dateDisabledInCards': 'Card 栏目下不可用日期定位',
+  'search.dateDisabledInPop': 'Pop 栏目下不可用日期定位',
 
   // === Daemons (Dev Servers) ===
   'daemons.title': '开发服务器',

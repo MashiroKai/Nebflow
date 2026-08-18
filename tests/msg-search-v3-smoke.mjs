@@ -20,7 +20,8 @@ const HISTORY = [
   { type: 'user', text: 'yesterday with image', timestamp: NOW - DAY, attachments: [{ type: 'image', name: 'photo.png' }] },
   { type: 'ai', text: 'yesterday ai reply', timestamp: NOW - DAY + 60000 },
   { type: 'user', text: 'three days ago text', timestamp: NOW - 3 * DAY },
-  { type: 'tool', label: 'Card(report)', summary: 'card output html', content: '<html>card</html>' },
+  { type: 'tool', label: 'Pop(report.html)', summary: 'pop output html', content: '<html>pop</html>' },
+  { type: 'tool', label: 'Card(report)', summary: 'legacy card output html', content: '<html>card</html>' },
   { type: 'tool', label: 'Bash\n  (ls)', summary: 'ls output', content: 'file list' },
 ];
 
@@ -90,7 +91,7 @@ check('B1 no legacy search.hint text', !hintText.some(t => t.includes('输入关
 const tabs = page.locator('.search-tabs .search-tab');
 check('B2 exactly 5 tabs', await tabs.count() === 5);
 const tabTexts = await tabs.allTextContents();
-check('B2 tab labels', JSON.stringify(tabTexts) === JSON.stringify(['全部', '图片', '文件', 'Card', '日期']), JSON.stringify(tabTexts));
+check('B2 tab labels', JSON.stringify(tabTexts) === JSON.stringify(['全部', '图片', '文件', 'Pop', '日期']), JSON.stringify(tabTexts));
 check('B2 first tab active', await tabs.nth(0).getAttribute('class') === 'search-tab active' || (await tabs.nth(0).getAttribute('class') || '').includes('active'));
 
 // B3/B4: switch to Images tab — keyword retained, filtering correct
@@ -116,21 +117,22 @@ await page.waitForSelector('#search-results .search-hint', { timeout: 3000 });
 const emptyText = await page.locator('#search-results .search-hint').textContent();
 check('B10 files tab empty state text', emptyText?.trim() === '该栏目下暂无内容', emptyText || '');
 
-// Card tab: all rows tool+Card badge
+// Pop tab: all rows tool+Pop/legacy-Card badge (v3.2: Card tool renamed Pop;
+// legacy Card labels still match for pre-rename history)
 await tabs.nth(3).click();
 await page.waitForSelector('#search-results .search-result', { timeout: 3000 });
 const cardRows = await page.locator('#search-results .search-result').evaluateAll(els => els.map(e => ({ kind: e.dataset.kind, badge: e.querySelector('.search-result-type')?.textContent || '' })));
-check('B4 cards tab: all tool+Card', cardRows.length === 1 && cardRows.every(r => r.kind === 'tool' && r.badge.includes('Card')), JSON.stringify(cardRows));
+check('B4 pop tab: tool rows, Pop + legacy Card compat', cardRows.length === 2 && cardRows.every(r => r.kind === 'tool' && /Pop|Card/.test(r.badge)), JSON.stringify(cardRows));
 
-// Card tab: date tab disabled
+// Pop tab: date tab disabled
 const dateDisabled = await tabs.nth(4).getAttribute('aria-disabled');
-check('§3 Card×Date: date tab aria-disabled', dateDisabled === 'true', String(dateDisabled));
+check('§3 Pop×Date: date tab aria-disabled', dateDisabled === 'true', String(dateDisabled));
 
 // Back to All
 await tabs.nth(0).click();
 await page.waitForTimeout(600);
 const dateEnabled = await tabs.nth(4).getAttribute('aria-disabled');
-check('§3 date tab restored after leaving Cards', dateEnabled === 'false');
+check('§3 date tab restored after leaving Pop', dateEnabled === 'false');
 
 // B11: tool select linkage
 await tabs.nth(1).click();
