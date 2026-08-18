@@ -325,9 +325,15 @@ enum AgentStreamEvent:
     model: Option[String] = None,
     contextWindow: Option[Int] = None,
     inputTokens: Option[Int] = None,
-    compactThreshold: Option[Double] = None
+    compactThreshold: Option[Double] = None,
+    outputTokens: Option[Int] = None
   )
-  case UsageUpdate(inputTokens: Int, contextWindow: Int, compactThreshold: Double)
+  case UsageUpdate(
+    inputTokens: Int,
+    contextWindow: Int,
+    compactThreshold: Double,
+    outputTokens: Option[Int] = None
+  )
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
   case CompactComplete(before: Int, after: Int, reportPath: Option[String] = None)
   case CompactFailed(reason: String, attempt: Int, maxAttempts: Int)
@@ -398,15 +404,16 @@ enum AgentStreamEvent:
         if isSubagent then
           Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
         else Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
-      case Done(model, contextWindow, inputTokens, compactThreshold) =>
+      case Done(model, contextWindow, inputTokens, compactThreshold, outputTokens) =>
         val base =
           if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
           else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
         val withModel = model.fold(base)(m => base.deepMerge(Json.obj("model" -> m.asJson)))
         val withCw = contextWindow.fold(withModel)(cw => withModel.deepMerge(Json.obj("contextWindow" -> cw.asJson)))
         val withIt = inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
-        compactThreshold.fold(withIt)(ct => withIt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
-      case UsageUpdate(inputTokens, contextWindow, compactThreshold) =>
+        val withOt = outputTokens.fold(withIt)(ot => withIt.deepMerge(Json.obj("outputTokens" -> ot.asJson)))
+        compactThreshold.fold(withOt)(ct => withOt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
+      case UsageUpdate(inputTokens, contextWindow, compactThreshold, outputTokens) =>
         if isSubagent then
           Json.obj(
             "type" -> "usageUpdate".asJson,
@@ -415,7 +422,7 @@ enum AgentStreamEvent:
             "inputTokens" -> inputTokens.asJson,
             "contextWindow" -> contextWindow.asJson,
             "compactThreshold" -> compactThreshold.asJson
-          )
+          ).deepMerge(outputTokens.fold(Json.obj())(ot => Json.obj("outputTokens" -> ot.asJson)))
         else
           Json.obj(
             "type" -> "usageUpdate".asJson,
@@ -423,7 +430,7 @@ enum AgentStreamEvent:
             "inputTokens" -> inputTokens.asJson,
             "contextWindow" -> contextWindow.asJson,
             "compactThreshold" -> compactThreshold.asJson
-          )
+          ).deepMerge(outputTokens.fold(Json.obj())(ot => Json.obj("outputTokens" -> ot.asJson)))
       case CompactStart(mode, inputTokens, threshold) =>
         if isSubagent then
           Json.obj(
