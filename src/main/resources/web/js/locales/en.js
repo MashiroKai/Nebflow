@@ -154,6 +154,15 @@ export default {
   'provider.noSpaces': 'Provider ID cannot contain spaces',
   'provider.baseUrlRequired': 'Base URL is required',
   'provider.modelRequired': 'At least one model with a non-empty ID is required',
+  'provider.maxConcurrency': 'Max concurrency',
+  'provider.maxConcurrencyHint': 'default 3 · 0 = unlimited',
+  'provider.rpm': 'RPM limit',
+  'provider.rpmHint': 'blank = unlimited · max requests per 60s',
+  'provider.queueTimeoutMs': 'Queue timeout',
+  'provider.queueTimeoutMsHint': 'default 60000 ms',
+  'provider.invalidMaxConcurrency': 'Max concurrency: non-negative integer (0 = unlimited)',
+  'provider.invalidRpm': 'RPM limit: positive integer (blank = unlimited)',
+  'provider.invalidQueueTimeoutMs': 'Queue timeout: positive integer (milliseconds)',
 
   // Model fields in modal
   'model.idPlaceholder': 'Model ID',
