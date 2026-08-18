@@ -116,4 +116,17 @@ object Defaults:
 
   /** Persist queued LLM requests to disk so they survive a restart. */
   val LlmQueuePersistDefault: Boolean = true
+
+  // ---- Task stuck detection (P0 阶段 3) ----
+
+  /**
+   * Default stuck threshold: an agent in Processing with no turn activity for
+   * this long is considered stuck. 10min is far above the llm-fail retry chain
+   * upper bound (8s×3 + provider probe 120s) — every retry action touches the
+   * activity stamp, so a healthy agent in the retry chain is never misjudged.
+   */
+  val StuckThresholdMs: Long = 10 * 60 * 1000L
+
+  /** TaskStuckWatcher scan interval. */
+  val StuckWatcherIntervalSec: Int = 30
 end Defaults
