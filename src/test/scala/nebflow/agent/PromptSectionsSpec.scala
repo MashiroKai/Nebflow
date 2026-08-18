@@ -247,4 +247,22 @@ class PromptSectionsSpec extends munit.FunSuite:
       PathUtil.setDataRoot(prevRoot)
       os.remove.all(tempRoot)
 
+  // ============================================================
+  // System prompt assembly (provider prefix-cache contract)
+  // ============================================================
+
+  test("shared system prefix stays first in assembled prompt (provider prefix cache)"):
+    // The shared system-prefix-for-all block must be the first bytes of every
+    // agent's system prompt — cross-agent prefix caching depends on it.
+    val prompt = assembleSystemPrompt("SHARED-PREFIX", "AGENT-MD", "CONDITIONAL")
+    assert(prompt.startsWith("SHARED-PREFIX"), "shared prefix must be first")
+    val prefixIdx = prompt.indexOf("SHARED-PREFIX")
+    val agentIdx = prompt.indexOf("AGENT-MD")
+    val condIdx = prompt.indexOf("CONDITIONAL")
+    assert(prefixIdx < agentIdx && agentIdx < condIdx, "order must be prefix → agent.md → conditional")
+
+  test("assembleSystemPrompt omits separator when no conditional blocks"):
+    assertEquals(assembleSystemPrompt("P", "A", ""), "PA")
+    assertEquals(assembleSystemPrompt("P", "A", "C"), "PA\n\nC")
+
 end PromptSectionsSpec
