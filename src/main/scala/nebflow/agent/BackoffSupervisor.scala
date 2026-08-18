@@ -70,7 +70,7 @@ object BackoffSupervisor:
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       ctx.watch(childRef) *>
-        IO(logger.info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)")).as(
+        logger.info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)").as(
           active(
             childRef,
             childSpawnFn,
@@ -180,11 +180,15 @@ object BackoffSupervisor:
               val notifyIO = wsSend match
                 case Some(send) =>
                   send(retryEvent).handleErrorWith(e =>
-                    IO(logger.warn(s"subagentRetry WS event failed: ${e.getMessage}"))
+                    logger.warn(s"subagentRetry WS event failed: ${e.getMessage}")
                   )
                 case None => IO.unit
 
               for
+                _ <- logger.info(
+                  s"BackoffSupervisor: child $childName crashed, restarting " +
+                    s"#$newRestartCount/$maxRestarts after ${delay}ms backoff"
+                )
                 _ <- notifyIO
                 _ <- resources.subAgentTaskStore
                   .updateStatus(
@@ -193,14 +197,14 @@ object BackoffSupervisor:
                     "restarting",
                     retryCount = Some(newRestartCount)
                   )
-                  .handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}")))
+                  .handleErrorWith(e => logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}"))
                 _ <- IO.sleep(delay.millis)
                 _ <- resources.agentRegistry.update(_ - subagentId)
                 newChild <- childSpawnFn(ctx.system)
                 _ <- ctx.watch(newChild)
                 // Re-inject original prompt with self as replyTo
                 _ <- newChild ! AgentCommand.UserInput(initialPrompt, Some(ctx.self))
-                _ <- IO(logger.info(s"BackoffSupervisor: respawned $childName, re-injected prompt"))
+                _ <- logger.info(s"BackoffSupervisor: respawned $childName, re-injected prompt")
               yield active(
                 newChild,
                 childSpawnFn,
@@ -227,16 +231,16 @@ object BackoffSupervisor:
               logger.warn(
                 s"BackoffSupervisor: child $childName exceeded maxRestarts " +
                   s"($maxRestarts in ${withinTimeRange}), giving up"
-              )
-              notifyParentAndStop(
-                "failed",
-                s""""$description": agent crashed and could not recover after $maxRestarts restarts""",
-                JsonObject(
-                  "failedSessionId" -> subagentId.asJson,
-                  "retryable" -> false.asJson,
-                  "failureType" -> "supervision-exhausted".asJson
+              ) *>
+                notifyParentAndStop(
+                  "failed",
+                  s""""$description": agent crashed and could not recover after $maxRestarts restarts""",
+                  JsonObject(
+                    "failedSessionId" -> subagentId.asJson,
+                    "retryable" -> false.asJson,
+                    "failureType" -> "supervision-exhausted".asJson
+                  )
                 )
-              )
             end if
 
       /** Notify parent via ExternalEvent, clean up registry, stop self. */
@@ -260,7 +264,7 @@ object BackoffSupervisor:
             completedAt = Some(System.currentTimeMillis()),
             lastError = if eventType == "failed" then Some(payload) else None
           )
-          .handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}")))
+          .handleErrorWith(e => logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}"))
 
         val notify = parentRef match
           case Some(ref) =>
