@@ -86,6 +86,16 @@ class UsageRecordStore(baseDir: os.Path):
   private val logger = NebflowLogger.forName("nebflow.usage-record")
   private val lock = new ReentrantLock()
 
+  /**
+   * In-memory last-activity index: agent name → timestamp of its most recent
+   * record. Updated on every [[record]]; used by cold-start routing
+   * (ColdStartRouter) to detect >idle-threshold wakes without scanning the
+   * JSONL. Empty after restart → first request of every agent counts as idle
+   * (cache is cold post-restart anyway, so routing it to the free gateway is
+   * the intended behavior).
+   */
+  private val lastSeen = new java.util.concurrent.ConcurrentHashMap[String, Long]()
+
   private def logPath: os.Path = baseDir / "usage-records.jsonl"
 
   private def withLock[A](body: => A): IO[A] = IO.blocking {
@@ -96,8 +106,12 @@ class UsageRecordStore(baseDir: os.Path):
 
   /** Append one record. Atomic per-line write; no read-modify-write race. */
   def record(r: LlmUsageRecord): IO[Unit] = withLock {
+    lastSeen.put(r.agent, r.timestamp)
     os.write.append(logPath, r.asJson.noSpaces + "\n", createFolders = true)
   }
+
+  /** Epoch millis of the agent's most recent record; 0 if never recorded. */
+  def lastActivityMs(agent: String): Long = lastSeen.getOrDefault(agent, 0L)
 
   /** Load all records in file order (oldest first). */
   def loadAll(): IO[List[LlmUsageRecord]] = withLock {
