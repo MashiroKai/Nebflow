@@ -2,7 +2,6 @@ package nebflow.core
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
 
@@ -10,8 +9,9 @@ import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
  * Schedule engine v2 (2026-08-12):
  *   - ScheduledTaskStore.getAllDueTasks returns tasks sorted by triggerAt (FIFO
  *     firing order — simultaneously-due tasks are processed one by one).
- *   - SystemReminders.collectAllIO injects time-context (peak/off-peak + next
- *     idle window) and a summary of the session's pending schedules.
+ *   - SystemReminders.collectAllIO injects a summary of the session's pending
+ *     schedules (plus cache-v2 dynamic reminders; time-context/off-peak was
+ *     removed 2026-08-18, Current tasks is root-agent-only).
  */
 class ScheduleV2Spec extends CatsEffectSuite:
 
@@ -61,24 +61,15 @@ class ScheduleV2Spec extends CatsEffectSuite:
   // P1-2: SystemReminders.collectAllIO
   // ------------------------------------------------------------------
 
-  test("collectAllIO returns time + time-context + schedule on user turns"):
+  test("collectAllIO returns time + schedule on user turns"):
     val later = System.currentTimeMillis() + 3_600_000L
-    val pattern = UsagePattern(
-      hourlyActivity = Vector.fill(24)(0.0),
-      dailyActivity = Vector.fill(7)(0.0),
-      idleWindows = List(TimeWindow(0, 23, 3)),
-      totalRecords = 1000,
-      lastUpdated = System.currentTimeMillis()
-    )
     for
       _ <- reset()
-      _ <- IO.delay(os.write.over(tempRoot / "usage-pattern.json", pattern.asJson.spaces2))
       _ <- taskStore.addTask(ScheduledTask.create("s1", "整理记忆", later))
       reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"))
     yield
       val cats = reminders.map(_.category)
       assert(cats.contains("time"), s"expected time category, got $cats")
-      assert(cats.contains("time-context"), s"expected time-context category, got $cats")
       assert(cats.contains("schedule"), s"expected schedule category, got $cats")
       val sched = reminders.find(_.category == "schedule").get
       assert(sched.content.contains("Pending schedules (1)"), sched.content)
@@ -91,40 +82,13 @@ class ScheduleV2Spec extends CatsEffectSuite:
     yield assertEquals(reminders.size, 0)
 
   test("collectAllIO omits schedule when no pending tasks for this session"):
-    val pattern = UsagePattern(
-      hourlyActivity = Vector.fill(24)(0.0),
-      dailyActivity = Vector.fill(7)(0.0),
-      idleWindows = Nil,
-      totalRecords = 1000,
-      lastUpdated = System.currentTimeMillis()
-    )
     for
       _ <- reset()
-      _ <- IO.delay(os.write.over(tempRoot / "usage-pattern.json", pattern.asJson.spaces2))
       _ <- taskStore.addTask(ScheduledTask.create("other-session", "不属于本会话", System.currentTimeMillis() + 3_600_000L))
       reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"))
     yield
       assert(reminders.exists(_.category == "time"))
-      assert(reminders.exists(_.category == "time-context"))
       assert(!reminders.exists(_.category == "schedule"), "schedule must be empty for session without tasks")
-
-  test("time-context reports next idle window when idleWindows present"):
-    val todayDow = java.time.ZonedDateTime.now().getDayOfWeek.getValue % 7
-    val pattern = UsagePattern(
-      hourlyActivity = Vector.fill(24)(0.0),
-      dailyActivity = Vector.fill(7)(0.0),
-      idleWindows = List(TimeWindow(todayDow, 23, 3)),
-      totalRecords = 1000,
-      lastUpdated = System.currentTimeMillis()
-    )
-    for
-      _ <- reset()
-      _ <- IO.delay(os.write.over(tempRoot / "usage-pattern.json", pattern.asJson.spaces2))
-      reminders <- SystemReminders.collectAllIO(true, taskStore, None)
-    yield
-      val ctx = reminders.find(_.category == "time-context").get
-      assert(ctx.content.contains("Next idle window"), ctx.content)
-      assert(ctx.content.contains("23:00"), ctx.content)
 
   // ------------------------------------------------------------------
   // Cache v2 (2026-08-11): dynamic sections moved out of systemStable
@@ -138,6 +102,7 @@ class ScheduleV2Spec extends CatsEffectSuite:
         true,
         taskStore,
         Some("s1"),
+        isRoot = true,
         deviceInfo = "local (MacBook); Desktop-PC",
         sessionsText = "# Active Sessions\n\naddr-1 — Explorer: investigating (running)",
         taskListText = "## Current Tasks\n\n#1 [pending] Fix the cache bug",
@@ -170,6 +135,20 @@ class ScheduleV2Spec extends CatsEffectSuite:
       assert(!cats.contains("tasks"), cats)
       assert(!cats.contains("language"), cats)
       assert(cats.contains("time"), "time reminder must remain (持久化语义不受影响)")
+
+  test("collectAllIO omits the tasks reminder for non-root agents (isRoot=false)"):
+    for
+      _ <- reset()
+      reminders <- SystemReminders.collectAllIO(
+        true,
+        taskStore,
+        Some("s1"),
+        isRoot = false,
+        taskListText = "## Current Tasks\n\n#1 [pending] Root-only"
+      )
+    yield
+      val cats = reminders.map(_.category)
+      assert(!cats.contains("tasks"), s"team member/worker must NOT get Current tasks, got $cats")
 
   test("collectAllIO suppresses cache-v2 reminders on non-user turns"):
     for
