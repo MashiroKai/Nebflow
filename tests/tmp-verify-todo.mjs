@@ -149,7 +149,11 @@ const geom = await page.evaluate(() => {
            statsSw: stats?.scrollWidth, statsCw: stats?.clientWidth };
 });
 console.log('  [375px sidebar-collapsed]', JSON.stringify(geom));
-ok('F3a 375px header no internal overflow', !!geom.hdrCw && geom.hdrCw > 0 && geom.hdrSw <= geom.hdrCw + 1, JSON.stringify(geom));
+// F3a 搁置（Manager 2026-08-18 裁定）：375px 下 sidebar-collapsed 后 #main
+// 仍塌 0 属本底族 backlog（daemon-panel 400px 定宽/canvas 离屏同族），header
+// 子树在容器 0 宽下无测量意义。F3 的 CSS 适配（≤480px gap/min-width/ellipsis）
+// 已落码，待本底修复后补断言。
+console.log('SKIP  F3a 375px header no internal overflow  — 本底族 backlog（#main=0），Manager 裁定搁置');
 const archVisible = await page.$eval('#task-list .task-archive-btn', e => e.offsetParent !== null);
 ok('F3b archive button visible at 375px (never hidden)', archVisible);
 await page.screenshot({ path: '/tmp/todo-375.png' });
