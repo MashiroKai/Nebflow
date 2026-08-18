@@ -583,6 +583,19 @@ object PromptSections:
       .mkString("\n\n")
 
   /**
+   * Assemble the final system prompt: shared prefix FIRST, then the agent
+   * system.md, then conditional blocks.
+   *
+   * The prefix order is a provider prefix-cache contract — the shared
+   * system-prefix-for-all block must stay at the very front or the common
+   * prefix across agents is lost and every agent's prompt cache is
+   * invalidated. Pinned by PromptSectionsSpec (cache optimization, 2026-08-18).
+   */
+  def assembleSystemPrompt(prefix: String, agentPrompt: String, conditionalBlocks: String): String =
+    val separator = if conditionalBlocks.nonEmpty then "\n\n" else ""
+    s"$prefix$agentPrompt$separator$conditionalBlocks"
+
+  /**
    * Remove a `## Section` block from a prompt string.
    * Matches from the header line up to (but not including) the next `## ` header
    * or end of string. Handles backward compatibility: existing system.md files
