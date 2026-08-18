@@ -83,6 +83,17 @@ final class ConcurrencyGate private[llm] (
           }
         loop
 
+  /**
+   * Non-blocking queue probe: true if a permit is available immediately (an
+   * acquire right now would not queue). Used by the persistence integration
+   * (interface.scala) to decide whether to write the request to LlmQueueStore:
+   * only QUEUED requests must survive a restart; immediate grants need no
+   * persistence. maxConcurrency=0 never queues.
+   */
+  def tryAcquire: IO[Boolean] =
+    if maxConcurrency == 0 then IO.pure(true)
+    else state.get.map(_.permits > 0)
+
   /** Acquire a permit, queueing (FIFO) until one is free or queueTimeout elapses. */
   def acquire: IO[ConcurrencyPermit] =
     if maxConcurrency == 0 then waitForWindow.as(new ConcurrencyPermit(this, limited = false))
