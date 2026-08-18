@@ -1,6 +1,6 @@
 package nebflow.agent
 
-import cats.effect.std.{Dispatcher, Semaphore}
+import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
@@ -52,7 +52,6 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
       thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
       modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
       voiceMuted <- Ref.of[IO, Boolean](false)
-      askSem <- Semaphore[IO](4)
     yield SharedResources(
       llm = fakeLlm,
       dispatcher = dispatcher,
@@ -63,7 +62,6 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
       fileChangeTracker = tracker,
       contextWindow = 100_000,
       agentLibrary = new AgentLibrary(tmp / "agents"),
-      askSemaphore = askSem,
       taskStore = FileTaskStore,
       historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
       fileLockManager = fileLocks,

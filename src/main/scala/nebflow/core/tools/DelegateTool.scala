@@ -468,8 +468,6 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
     resources: SharedResources
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
-      ctx.watch(subagentRef)
-
       def notifyParentAndStop(
         eventType: String,
         payload: String,
@@ -494,7 +492,7 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
       end notifyParentAndStop
 
-      IO.pure(
+      ctx.watch(subagentRef) *> IO.pure(
         new Behavior[AgentEvent]:
           def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
             event match
@@ -627,8 +625,6 @@ You will be notified when the initial task completes."""
     resources: SharedResources
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
-      ctx.watch(subagentRef)
-
       def notifyParentAndStop(eventType: String, payload: String, sessionStatus: String): IO[Behavior[AgentEvent]] =
         val actions = parentRef match
           case Some(ref) =>
@@ -646,7 +642,7 @@ You will be notified when the initial task completes."""
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
       end notifyParentAndStop
 
-      IO.pure(
+      ctx.watch(subagentRef) *> IO.pure(
         new Behavior[AgentEvent]:
           def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
             val (eventType, payload, sessionStatus) = event match

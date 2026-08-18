@@ -111,9 +111,7 @@ object PlanAgent:
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       given system: ActorSystem = ctx.system
-      ctx.watch(planAgentRef)
-
-      IO.pure(
+      ctx.watch(planAgentRef) *> IO.pure(
         new Behavior[AgentEvent]:
           def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
             event match
