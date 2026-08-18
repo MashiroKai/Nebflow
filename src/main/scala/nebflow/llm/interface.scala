@@ -52,6 +52,26 @@ object LlmInterface:
     catch case _: Throwable => ()
 
   /**
+   * Best-effort abort of a JDK HttpClient: calls `shutdownNow()` (JDK 21+)
+   * via reflection, degrading gracefully to `close()` (JDK 11+) on JDK 17.
+   * Without this, `httpClient.shutdownNow()` compiles fine (JDK 23 build) but
+   * throws `NoSuchMethodError` at runtime on JDK 17 (KAI, CI packaging),
+   * swallowed by the shutdown hook's `catch case _: Throwable => ()` →
+   * Ctrl+C inflight-abort silently no-ops.
+   */
+  private def abortHttpClient(client: java.net.http.HttpClient): Unit =
+    try
+      val m = classOf[java.net.http.HttpClient].getMethod("shutdownNow")
+      m.invoke(client)
+    catch
+      case _: NoSuchMethodException =>
+        // JDK < 21: shutdownNow doesn't exist — close() is the best we have
+        client.close()
+      case e: java.lang.reflect.InvocationTargetException =>
+        // shutdownNow exists but threw — still try close()
+        try client.close() catch case _: Throwable => ()
+
+  /**
    * Acquire a gate permit, persisting the request if it has to queue
    * (P0 并发管理阶段 2, design §4.5).
    *
@@ -190,12 +210,18 @@ object LlmInterface:
       //      (usingClient sets closeClient=false → backend.close() is a no-op)
       //      and in-flight FS2/sttp exchanges kept running until the JVM
       //      halted on its own — token spend continued.
+      //      JDK 17 fallback: shutdownNow() is JDK21+. On JDK17 the method
+      //      doesn't exist — reflection probe + degrade to close() (JDK11+,
+      //      AutoCloseable). close() waits for in-flight exchanges to complete
+      //      rather than aborting them, but at least releases resources.
+      //      Without this guard, NoSuchMethodError is swallowed by the
+      //      hook's catch-all → Ctrl+C fix silently no-ops on JDK17 (KAI).
       //   2. httpClient.close() — best-effort close of cached/open connections.
       //   3. backend.close() — no-op for a user-provided client, kept for
       //      symmetry in case a backend-owned client is introduced later.
       //   4. releaseDispatcher — cancels dispatcher fibers.
       val doRelease: IO[Unit] =
-        IO(httpClient.shutdownNow()) *>
+        IO(abortHttpClient(httpClient)) *>
           IO(httpClient.close()) *>
           IO(backend.close()) *>
           releaseDispatcher
