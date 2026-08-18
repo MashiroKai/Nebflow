@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/check-js-types.mjs --update",
-  "total": 359,
+  "total": 357,
   "files": {
     "src/main/resources/web/js/activityBar.js": {
       "TS2345": 1,
@@ -75,7 +75,7 @@
     "src/main/resources/web/js/main.js": {
       "TS2339": 16,
       "TS2554": 3,
-      "TS2345": 3
+      "TS2345": 1
     },
     "src/main/resources/web/js/memory.js": {
       "TS2339": 8
