@@ -70,19 +70,19 @@ class ConcurrencyGateSpec extends CatsEffectSuite:
     yield ()
   }
 
-  test("times out while queued with QueueTimeout (Transient)") {
-    val g = gate(max = 1, timeout = 100.millis)
+  test("queued acquire waits indefinitely — no QueueTimeout (user #296 追加)") {
+    // gate.acquire now waits indefinitely (no queue timeout). Provider failure
+    // is caught by LLM request timeout (first token 90s / inactivity 60s),
+    // not the gate. Verify: a queued acquire stays queued until release.
+    val g = gate(max = 1, timeout = 100.millis) // timeout is now ignored
     for
       p1 <- g.acquire
-      secondResult <- g.acquire.attempt // queues, then times out
-      _ <- IO {
-        assert(secondResult.isLeft, "second acquire should time out")
-        assert(secondResult.swap.toOption.get.isInstanceOf[QueueTimeout], "error type must be QueueTimeout")
-      }
-      _ <- p1.release
-      // After timeout, the gate must not hand the ghost waiter a permit:
-      // a fresh acquire succeeds immediately.
-      p2 <- g.acquire.timeoutTo(150.millis, IO.raiseError(new RuntimeException("gate stuck")))
+      f2 <- g.acquire.start // queues behind p1
+      // f2 should still be waiting after 200ms (timeout was 100ms but no longer fires)
+      stillWaiting <- IO.defer(f2.join.timeoutTo(200.millis, IO.pure(None)))
+      _ <- IO(assert(stillWaiting == None, "queued acquire must NOT time out — waits indefinitely"))
+      _ <- p1.release // now f2 can proceed
+      p2 <- f2.joinWithNever
       _ <- p2.release
     yield ()
   }
@@ -132,17 +132,21 @@ class ConcurrencyGateSpec extends CatsEffectSuite:
     yield ()
   }
 
-  test("repeated queue timeouts do not leak permits or ghost waiters") {
-    val g = gate(max = 1, timeout = 50.millis)
+  test("cancelled queued acquires do not leak permits (cleanup still works without timeout)") {
+    // Previously tested via repeated queue timeouts. Now that timeout is removed,
+    // we test the same cleanup path (no ghost waiters / permit leaks) via cancellation.
+    val g = gate(max = 1, timeout = 50.millis) // timeout ignored
     for
       p1 <- g.acquire
-      // Five waiters all time out while p1 holds the only permit.
-      _ <- (1 to 5).toList.traverse_(_ => g.acquire.attempt.map(_.left.map(_.getClass)))
-      _ <- IO.sleep(20.millis) // let all onError cleanup settle
+      // Five waiters queued, all cancelled while waiting.
+      fibers <- (1 to 5).toList.traverse(_ => g.acquire.start)
+      _ <- IO.sleep(20.millis) // let all fibers enqueue
+      _ <- fibers.traverse_(f => f.cancel)
+      _ <- IO.sleep(50.millis) // let cancel cleanup settle
       _ <- p1.release
       // Capacity must be intact: an immediate acquire succeeds (no ghost
       // waiters holding the slot, no leaked decrements).
-      p2 <- g.acquire.timeoutTo(200.millis, IO.raiseError(new RuntimeException("gate stuck after timeouts")))
+      p2 <- g.acquire.timeoutTo(200.millis, IO.raiseError(new RuntimeException("gate stuck after cancellations")))
       _ <- p2.release
     yield ()
   }
