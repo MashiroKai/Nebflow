@@ -18,8 +18,24 @@ object BashTool extends Tool:
 
   val DEFAULT_TIMEOUT = 30_000L // 30s — fallback for synchronous remote-exec only
   val MAX_TIMEOUT = Defaults.BashMaxTimeoutMs // 60 minutes
-  /** Foreground commands running longer than this are automatically moved to background. */
+  /**
+   * Foreground commands running longer than this are automatically moved to
+   * background. Nebula (depth 0, the orchestrator) keeps the short 30s budget
+   * for snappy tool-loop feedback.
+   */
   val AutoBackgroundThresholdMs = 30_000L
+  /**
+   * Worker foreground budget (2026-08-18, worker blocking semantics): agents
+   * spawned to actually do work — Delegate/SubTask children, team members,
+   * flow nodes (all depth > 0) — get 300s before auto-backgrounding. A 30s
+   * budget there constantly yanks real work (builds, tests, migrations) into
+   * background mode, interrupting the agent's tool loop mid-task.
+   */
+  val WorkerAutoBackgroundThresholdMs = 300_000L
+
+  /** Auto-background threshold for this call site: workers get 300s, Nebula 30s. */
+  def autoBackgroundThresholdMs(depth: Int): Long =
+    if depth > 0 then WorkerAutoBackgroundThresholdMs else AutoBackgroundThresholdMs
 
   val name = "Bash"
 
@@ -28,7 +44,7 @@ object BashTool extends Tool:
 Usage:
 - The working directory persists between commands, but shell state does not persist across Nebflow restarts.
 - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of cd.
-- You may specify an optional timeout in milliseconds (max 3600000) to set a hard deadline. If not specified, commands that exceed 30 seconds are automatically moved to background.
+- You may specify an optional timeout in milliseconds (max 3600000) to set a hard deadline. If not specified, commands that run longer than the foreground budget (30s for orchestrator agents, 300s for worker agents) are automatically moved to background.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
@@ -38,7 +54,7 @@ Background execution (run_in_background):
 - **Use `run_in_background: true`, never `&` or `nohup`.** Shell backgrounding (`&`) bypasses Nebflow's task tracking — you won't be notified when it finishes, and the frontend won't show the background indicator.
 - You will be automatically notified when the job finishes. DO NOT poll or use sleep loops.
 - After starting a background job, continue with other work or finish your turn.
-- If a foreground command exceeds 30 seconds, it is automatically moved to background — same rules apply.
+- If a foreground command exceeds the foreground budget (30s for orchestrator agents, 300s for worker agents), it is automatically moved to background — same rules apply.
 
 Querying background jobs (background_job_id):
 - Only query when you receive a "stuck" notification or the user asks about a job's status.
@@ -441,10 +457,11 @@ Git safety:
     ctx: ToolContext,
     tailN: Option[Int] = None
   ): IO[Either[ToolError, String]] =
-    val threshold = AutoBackgroundThresholdMs.millis
+    val threshold = autoBackgroundThresholdMs(ctx.depth).millis
     // When no explicit timeout, use a duration long enough that .timeout() never fires.
-    // The process is managed by auto-background (30s) for foreground commands,
-    // and stuck detection (30s no output + no CPU) for background tasks.
+    // The process is managed by auto-background (30s for Nebula, 300s for workers)
+    // for foreground commands, and stuck detection (30s no output + no CPU) for
+    // background tasks.
     val processTimeout = explicitTimeoutMs.map(_.millis).getOrElse(365.days)
     val health = new JobHealth()
     for
