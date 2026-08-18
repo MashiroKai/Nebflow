@@ -107,7 +107,8 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
 - Prompt must be self-contained (the sub-agent starts with a clean context). Set fork=true to pass your conversation history.
 - State what "done" looks like (e.g. "Report findings — do not modify files").
 - Do NOT duplicate the sub-agent's work — work on non-overlapping files or topics.
-- Images: optional `images` parameter attaches up to 5 absolute local image paths to the prompt — the sub-agent sees them directly. For other files, reference paths in the prompt text."""
+- Images: optional `images` parameter attaches up to 5 absolute local image paths to the prompt — the sub-agent sees them directly. For other files, reference paths in the prompt text.
+- **Safety**: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance; killing it kills you and the user's session. Process inspection with `ps` (read-only) is fine; any write operation (signals, kills) is strictly forbidden."""
 
   val inputSchema = JsonObject.fromIterable(
     List(

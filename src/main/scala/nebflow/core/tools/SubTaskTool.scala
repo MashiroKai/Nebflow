@@ -61,7 +61,8 @@ A task with 2+ independent parts — different file domains, or different nature
 - The prompt MUST be self-contained — the worker has no history, no memory, no team context. It must include: (1) background & goal, (2) all inputs (file paths, data, references), (3) constraints (files to touch/avoid, style, commit policy), (4) definition of done, (5) the exact report format for the worker's final message.
 - State what "done" looks like (e.g. "Report findings — do not modify files").
 - Do NOT duplicate the worker's work — work on non-overlapping files or topics.
-- Images: optional `images` parameter attaches up to 5 absolute local image paths to the prompt — the worker sees them directly. For other files, reference paths in the prompt text."""
+- Images: optional `images` parameter attaches up to 5 absolute local image paths to the prompt — the worker sees them directly. For other files, reference paths in the prompt text.
+- **Safety**: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance; killing it kills you and the user's session. Process inspection with `ps` (read-only) is fine; any write operation (signals, kills) is strictly forbidden."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
