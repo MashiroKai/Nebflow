@@ -6,6 +6,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
+import nebflow.core.presets.PresetStore
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 /**
@@ -80,6 +81,10 @@ A task with 2+ independent parts — different file domains, or different nature
           "maxItems" -> 5.asJson,
           "description" -> "Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5) attached to the prompt — the worker sees the images directly.".asJson,
           "default" -> io.circe.Json.arr()
+        ),
+        "preset" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Optional named model preset (from model-presets.json, e.g. 'LowCost' for the free 107 gateway, 'Vision' for vision-capable models). Overrides the worker's own preset/model for this spawn. Use 'LowCost' when the task is cheap/not urgent or your default provider is down.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)
@@ -96,6 +101,7 @@ A task with 2+ independent parts — different file domains, or different nature
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val prompt = input("prompt").flatMap(_.asString).getOrElse("")
     val description = input("description").flatMap(_.asString).getOrElse("subtask")
+    val presetName = input("preset").flatMap(_.asString).filter(_.nonEmpty)
 
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if ctx.depth >= MaxDepth then
@@ -114,41 +120,48 @@ A task with 2+ independent parts — different file domains, or different nature
               ctx.agentDef match
                 case None => IO.pure(Left(ToolError("No agent definition available")))
                 case Some(agentDef) =>
-                  (ctx.actorSystem, ctx.sharedResources) match
-                    case (Some(system), Some(resources)) =>
-                      // Query parent session's safety mode so the worker inherits it
-                      val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
-                        case (Some(store), Some(sid)) => store.getSafetyMode(sid)
-                        case _ => IO.pure("confirm-edits")
-                      // P2: resolve the caller's permission-policy bucket (root session)
-                      // so the worker inherits the same policy — interactions (askUser /
-                      // permission) render in the parent's window.
-                      val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
-                        case (Some(res), Some(sid)) =>
-                          res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
-                        case _ => IO.pure(ctx.sessionId.getOrElse(""))
-                      for
-                        safetyMode <- safetyModeIO
-                        rootSid <- callerRootIO
-                        result <- spawnWorker(
-                          agentDef = agentDef,
-                          prompt = prompt,
-                          attachments = attachments,
-                          description = description,
-                          system = system,
-                          resources = resources,
-                          parentDepth = ctx.depth,
-                          parentRef = ctx.agentActorRef,
-                          wsSend = ctx.wsSend,
-                          projectRoot = ctx.projectRoot,
-                          parentSessionId = ctx.sessionId,
-                          safetyMode = safetyMode,
-                          rootSessionId = rootSid
-                        )
-                      yield result
-                      end for
-                    case _ =>
-                      IO.pure(Left(ToolError("SubTask requires ActorSystem and SharedResources")))
+                  // #291: explicit preset param overrides the worker's own
+                  // preset/model — resolve before spawning so the worker's LLM
+                  // requests run on the requested provider chain. Missing
+                  // preset → self-describing error with the available list.
+                  PresetResolver.applyPreset(PresetStore(), agentDef, presetName) match
+                    case Left(err) => IO.pure(Left(ToolError(err)))
+                    case Right(effectiveDef) =>
+                      (ctx.actorSystem, ctx.sharedResources) match
+                        case (Some(system), Some(resources)) =>
+                          // Query parent session's safety mode so the worker inherits it
+                          val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
+                            case (Some(store), Some(sid)) => store.getSafetyMode(sid)
+                            case _ => IO.pure("confirm-edits")
+                          // P2: resolve the caller's permission-policy bucket (root session)
+                          // so the worker inherits the same policy — interactions (askUser /
+                          // permission) render in the parent's window.
+                          val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
+                            case (Some(res), Some(sid)) =>
+                              res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+                            case _ => IO.pure(ctx.sessionId.getOrElse(""))
+                          for
+                            safetyMode <- safetyModeIO
+                            rootSid <- callerRootIO
+                            result <- spawnWorker(
+                              agentDef = effectiveDef,
+                              prompt = prompt,
+                              attachments = attachments,
+                              description = description,
+                              system = system,
+                              resources = resources,
+                              parentDepth = ctx.depth,
+                              parentRef = ctx.agentActorRef,
+                              wsSend = ctx.wsSend,
+                              projectRoot = ctx.projectRoot,
+                              parentSessionId = ctx.sessionId,
+                              safetyMode = safetyMode,
+                              rootSessionId = rootSid
+                            )
+                          yield result
+                          end for
+                        case _ =>
+                          IO.pure(Left(ToolError("SubTask requires ActorSystem and SharedResources")))
           }
 
     end if

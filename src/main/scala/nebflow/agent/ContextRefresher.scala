@@ -337,9 +337,20 @@ object ContextRefresher:
             avatar = agentDef.avatar,
             displayName = agentDef.displayName,
             voiceEnabled = agentDef.voiceEnabled
-          ))
+          )).map(applyModelOverride(agentDef, _))
         }
-      case None => resources.agentLibrary.get(agentDef.name)
+      case None => resources.agentLibrary.get(agentDef.name).map(_.map(applyModelOverride(agentDef, _)))
+
+  /**
+   * Re-apply a tool-level model override (#291: Delegate/SubTask `preset`
+   * param) onto the freshly reloaded def. The override must win over disk /
+   * panel edits for the actor's lifetime — otherwise the child's first turn
+   * would silently revert to its default model.
+   */
+  private def applyModelOverride(running: AgentDef, fresh: AgentDef): AgentDef =
+    running.modelOverride match
+      case Some(cfg) => fresh.copy(model = Some(cfg), preset = running.preset, modelOverride = Some(cfg))
+      case None => fresh
 
   def refreshTurn(
     state: AgentState,

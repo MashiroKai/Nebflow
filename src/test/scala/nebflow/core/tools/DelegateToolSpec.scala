@@ -175,4 +175,48 @@ class DelegateToolSpec extends CatsEffectSuite:
     val props = schema("properties").flatMap(_.asObject)
     assert(props.isDefined, "properties should be an object")
     assert(props.get.contains("agent"), "schema should include 'agent' property")
+
+  test("inputSchema includes preset parameter (#291)"):
+    val schema = DelegateTool.inputSchema
+    val props = schema("properties").flatMap(_.asObject)
+    assert(props.isDefined, "properties should be an object")
+    assert(props.get.contains("preset"), "schema should include 'preset' property")
+
+  test("preset parameter with unknown name returns self-describing error (#291)"):
+    for
+      _ <- reset()
+      input = JsonObject(
+        "prompt" -> "do work".asJson,
+        "description" -> "task".asJson,
+        "preset" -> "Bogus".asJson
+      )
+      result <- DelegateTool.call(input, ctxWith())
+    yield
+      assert(result.isLeft, "unknown preset must fail")
+      val msg = result.swap.toOption.get.message
+      assert(msg.contains("'Bogus' not found"), s"error should mention the preset name: $msg")
+      assert(msg.contains("Available presets:"), s"error should list available presets: $msg")
+
+  test("preset parameter with existing name passes preset resolution (fails later on missing ActorSystem)"):
+    // A valid preset resolves the def; with no ActorSystem the failure must be
+    // about the missing actor system, NOT about the preset.
+    for
+      _ <- reset()
+      _ <- IO.delay {
+        os.write.over(
+          tempRoot / "model-presets.json",
+          """{"defaultPreset":"general","presets":{"general":{"name":"general","description":"","preferred":"mock/mock-model","fallbacks":[]}}}"""
+        )
+      }
+      input = JsonObject(
+        "prompt" -> "do work".asJson,
+        "description" -> "task".asJson,
+        "preset" -> "general".asJson
+      )
+      result <- DelegateTool.call(input, ctxWith())
+    yield
+      assert(result.isLeft, "no ActorSystem → Left")
+      val msg = result.swap.toOption.get.message
+      assert(msg.contains("ActorSystem"), s"valid preset should pass; failure is about ActorSystem: $msg")
+      assert(!msg.contains("not found"), s"valid preset must not be reported missing: $msg")
 end DelegateToolSpec
