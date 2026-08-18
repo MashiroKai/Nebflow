@@ -647,6 +647,22 @@ case class ExecutionContext(
   currentTurnId: Long = 0L,
   interaction: Option[InteractionState] = None,
   pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
+  /**
+   * Sub-agent result barrier (2026-08-18, worker blocking semantics): number of
+   * parallel sub-agent (Delegate/SubTask) results still awaited before their
+   * batch is delivered to the agent. Incremented at ToolsComplete by the count
+   * of Delegate/SubTask calls made that turn; decremented on each ExternalEvent
+   * with source "subtask"/"delegate" (completed OR failed — failures still
+   * count as results, so a crashed worker cannot stall the barrier forever).
+   *
+   * While > 0, subtask/delegate result events are HELD in [[pendingEvents]] —
+   * the agent is NOT interrupted one result at a time. When the counter
+   * reaches 0, ALL held results are injected together in a single turn.
+   *
+   * In-memory only (not persisted across crash recovery, same as
+   * pendingEvents): a crash mid-batch degrades to per-result delivery.
+   */
+  outstandingSubagentResults: Int = 0,
   pendingImmediateInputs: List[AgentCommand.ImmediateInput] = Nil,
   emptyResponseRetries: Int = 0,
   lastDispatch: Option[LastDispatch] = None,
@@ -978,6 +994,11 @@ extension (s: AgentState)
   def withLastMaintenanceDelegateCount(count: Int): AgentState =
     s.copy(execution = s.execution.copy(lastMaintenanceDelegateCount = count))
 
+  def outstandingSubagentResults: Int = s.execution.outstandingSubagentResults
+
+  def withOutstandingSubagentResults(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(outstandingSubagentResults = count))
+
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))
   def withLastModel(model: Option[String]): AgentState = s.copy(compaction = s.compaction.copy(lastModel = model))
@@ -987,10 +1008,17 @@ extension (s: AgentState)
     case _ => s
 
   def resetToIdle(messages: List[Message], turnIdx: Int = s.execution.turnIdx): AgentState =
-    s.copy(execution = ExecutionContext.idle(messages, turnIdx, s.execution.currentTurnId))
+    s.copy(execution = ExecutionContext.idle(messages, turnIdx, s.execution.currentTurnId)
+      // Sub-agent barrier: already-received results held for batch delivery are
+      // still due to the agent — survive the reset (the workers keep running).
+      .copy(pendingEvents = s.execution.pendingEvents,
+            outstandingSubagentResults = s.execution.outstandingSubagentResults))
 
   def resetForInterrupt: AgentState = s.copy(
-    execution = ExecutionContext.idle(s.execution.messages, s.execution.turnIdx, s.execution.currentTurnId),
+    execution = ExecutionContext.idle(s.execution.messages, s.execution.turnIdx, s.execution.currentTurnId)
+      // Sub-agent barrier: held results survive an interrupt — they are still due.
+      .copy(pendingEvents = s.execution.pendingEvents,
+            outstandingSubagentResults = s.execution.outstandingSubagentResults),
     compaction = s.compaction.copy(pendingJob = None)
   )
 end extension

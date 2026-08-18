@@ -35,6 +35,34 @@ object TurnBoundaryDrains:
     if compactionPending then (None, queue)
     else (queue.headOption, if queue.isEmpty then queue else queue.tail)
 
+  /** True for ExternalEvents carrying a Delegate/SubTask result. */
+  def isSubagentResult(e: AgentCommand.ExternalEvent): Boolean =
+    e.source == "subtask" || e.source == "delegate"
+
+  /**
+   * Barrier-aware drain (2026-08-18, worker blocking semantics): while a
+   * parallel sub-agent batch is outstanding (outstanding > 0), subtask/delegate
+   * result events are HELD in the queue — the agent is not interrupted one
+   * result at a time. The first non-subagent event (if any) may still pass,
+   * so mail/background-task keep their existing serial drain. When the batch
+   * is complete (outstanding == 0), ALL held subtask/delegate results are
+   * drained together for one batched injection; other event types keep the
+   * existing one-at-a-time drain. Compaction guard applies as in [[drainHead]].
+   */
+  def drainBarrier(
+    queue: List[AgentCommand.ExternalEvent],
+    compactionPending: Boolean,
+    outstanding: Int
+  ): (List[AgentCommand.ExternalEvent], List[AgentCommand.ExternalEvent]) =
+    if compactionPending then (Nil, queue)
+    else if outstanding > 0 then
+      queue.indexWhere(e => !isSubagentResult(e)) match
+        case -1 => (Nil, queue) // everything held — wait for the batch
+        case i => (List(queue(i)), queue.patch(i, Nil, 1))
+    else
+      val (subtasks, others) = queue.partition(isSubagentResult)
+      (subtasks ::: others.take(1), others.drop(1))
+
 end TurnBoundaryDrains
 
 object AgentActor extends AgentCore with AgentSession:
@@ -109,6 +137,30 @@ object AgentActor extends AgentCore with AgentSession:
     else if source == "subtask" then Some("subtask")
     else if source == "background-task" then Some("background")
     else None
+
+  /**
+   * Build the system-reminder message for one or more external events (sub-agent
+   * results). Single events produce the existing one-payload reminder; a
+   * completed sub-agent batch produces ONE message with all payloads numbered,
+   * so the LLM sees the whole batch in a single turn instead of N interruptions.
+   * Retryable-failure guidance is appended per event, mirroring the single-event
+   * idle path.
+   */
+  private def buildEventReminder(events: List[AgentCommand.ExternalEvent]): Message =
+    val parts = events.zipWithIndex.map { (e, i) =>
+      val hint =
+        if e.eventType == "failed" && e.metadata("retryable").exists(_.asBoolean.getOrElse(false)) then
+          val failureType = e.metadata("failureType").flatMap(_.asString).getOrElse("unknown")
+          val failedSession = e.metadata("failedSessionId").flatMap(_.asString).getOrElse("")
+          val agentName = e.metadata("agentName").flatMap(_.asString).getOrElse("")
+          s"\n<system-reminder>\nA sub-agent task${if agentName.nonEmpty then s" ($agentName)" else ""}" +
+            s"${if failedSession.nonEmpty then s" [session=$failedSession]" else ""} failed" +
+            s" (failure type: $failureType). This is a retryable error — consider re-delegating" +
+            s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
+        else ""
+      s"${i + 1}. ${e.payload}$hint"
+    }
+    Message(MessageRole.User, Left(s"<system-reminder>\n${parts.mkString("\n\n")}\n</system-reminder>"))
 
   /**
    * Emit a `user` WS event so the frontend renders an injected-task bubble
@@ -456,6 +508,7 @@ object AgentActor extends AgentCore with AgentSession:
           "external-event",
           s"source=$source type=$eventType"
         )
+        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
         val sessionBusyIO =
           if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit
@@ -479,31 +532,89 @@ object AgentActor extends AgentCore with AgentSession:
               s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
           else ""
         val injectionText = payload + reminderText
-        for
-          _ <- sessionBusyIO
-          _ <- emitStream(
+        // Receive-time visibility (stream event + bubble) — mirrors the
+        // processing-state path so the UI shows each result arriving even when
+        // the LLM injection is held back by the batch barrier.
+        val receiveVisibility: IO[Unit] =
+          emitStream(
             state.wsSend,
             AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
             isSubagent = depth > 0,
             state.sessionId
-          )
-          _ <- visSource match
+          ) *> (visSource match
             case Some(s) =>
               val agentName = metadata("agentName").flatMap(_.asString)
               emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s, Some(eventType), agentName)
             case None => IO.unit
-          result <- pipeLlmCall(
+          )
+        // ── Sub-agent result barrier (worker blocking semantics) ──────────
+        // Delegate/SubTask results arriving while more of the same parallel
+        // batch is still outstanding are HELD in pendingEvents instead of
+        // interrupting the agent one result at a time. When the batch completes
+        // (outstanding hits 0), ALL held results are injected together in a
+        // single turn. Non-subagent events keep the existing immediate path.
+        val isSubagentResult = TurnBoundaryDrains.isSubagentResult(event)
+        val outstanding = state.execution.outstandingSubagentResults
+        val newOutstanding = if isSubagentResult then math.max(0, outstanding - 1) else outstanding
+        val held = state.execution.pendingEvents
+        if isSubagentResult && newOutstanding > 0 then
+          // Hold: wait for the rest of the batch, stay idle. No sessionBusy —
+          // no turn starts until the batch completes (the completing branch
+          // below marks busy).
+          for
+            _ <- receiveVisibility
+          yield idle(
             agentDef,
             resources,
             depth,
             parentRef,
-            state.withMessages(
-              state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource)
-            ),
-            None
+            state.copy(execution =
+              state.execution.copy(
+                outstandingSubagentResults = newOutstanding,
+                pendingEvents = held :+ event
+              )
+            )
           )
-        yield result
-        end for
+          end for
+        else if isSubagentResult && held.nonEmpty then
+          // Batch complete: inject ALL held results (plus this one) together.
+          val batchMessage = buildEventReminder(held :+ event)
+          for
+            _ <- sessionBusyIO
+            _ <- receiveVisibility
+            result <- pipeLlmCall(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state.copy(execution =
+                state.execution.copy(
+                  outstandingSubagentResults = 0,
+                  pendingEvents = Nil
+                )
+              ).withMessages(state.messages :+ batchMessage),
+              None
+            )
+          yield result
+          end for
+        else
+          // Single immediate result (no batch in flight) or non-subagent event.
+          for
+            _ <- sessionBusyIO
+            _ <- receiveVisibility
+            result <- pipeLlmCall(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state.withMessages(
+                state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource)
+              ),
+              None
+            )
+          yield result
+          end for
+        end if
 
       case AgentCommand.UpdateGitBranch(branch) =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state.withGitBranch(branch)))
@@ -1136,28 +1247,33 @@ object AgentActor extends AgentCore with AgentSession:
           if imageBlocks.nonEmpty then List(Message(MessageRole.User, Right(imageBlocks)))
           else Nil
         val baseMessages = tc.compactedMessages.getOrElse(state.messages)
-        // Inject ONE queued external event alongside tool results (serial
-        // processing, same as pendingImmediateInputs). Multiple simultaneously
-        // due events (e.g. scheduled tasks) are consumed strictly one at a time
-        // — no concurrency, no aggregation — the remainder stays queued for the
-        // next turn boundary. Guarded against a pending compaction job: the
-        // save/compact turn's history is replaced by the summary, so an event
-        // drained here would be consumed from the queue yet discarded with the
-        // pre-compaction messages. CompactionComplete re-drains afterwards.
-        val (eventOpt, remainingEvents) =
-          TurnBoundaryDrains.drainHead(state.execution.pendingEvents, state.pendingCompaction.isDefined)
-        val eventMessages = eventOpt match
-          case Some(e) =>
+        // Drain queued external events alongside tool results (serial processing,
+        // same as pendingImmediateInputs). While a parallel sub-agent batch is
+        // still outstanding, subtask/delegate results are HELD (barrier, worker
+        // blocking semantics) — they are injected ALL together when the batch
+        // completes; other event types keep the existing one-at-a-time drain.
+        // Guarded against a pending compaction job: the save/compact turn's
+        // history is replaced by the summary, so an event drained here would be
+        // consumed from the queue yet discarded with the pre-compaction
+        // messages. CompactionComplete re-drains afterwards.
+        val (drainedEvents, remainingEvents) =
+          TurnBoundaryDrains.drainBarrier(
+            state.execution.pendingEvents,
+            state.pendingCompaction.isDefined,
+            state.execution.outstandingSubagentResults
+          )
+        val eventMessages = drainedEvents match
+          case Nil => Nil
+          case events =>
             logAgentEvent(
               agentDef,
               depth,
               state.sessionId,
               state.sessionName,
               "pending-events-injected-at-tools-complete",
-              s"events=1 remaining=${remainingEvents.size}"
+              s"events=${events.size} remaining=${remainingEvents.size}"
             )
-            List(Message(MessageRole.User, Left(s"<system-reminder>\n${e.payload}\n</system-reminder>")))
-          case None => Nil
+            List(buildEventReminder(events))
         // Inject ONE queued immediate input alongside tool results (serial processing).
         // While compaction is in progress, keep inputs queued — injecting mid-compaction
         // risks the input being lost in the summary. CompactionComplete drains them.
@@ -1196,6 +1312,15 @@ object AgentActor extends AgentCore with AgentSession:
         // Increment delegate count for Delegate/SubTask calls
         val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "SubTask")
         val newDelegateCount = state.delegateCount + delegateIncrement
+        // Sub-agent barrier: each SUCCESSFULLY spawned Delegate/SubTask in this
+        // turn adds one outstanding result slot. Failed spawns (depth limit,
+        // invalid agent, missing ActorSystem) return a ToolError and never
+        // produce an ExternalEvent — counting them would stall the barrier
+        // forever, blocking every later result delivery.
+        val spawnedIncrement = tc.results.count { (call, r) =>
+          (call.name == "Delegate" || call.name == "SubTask") && !r.isError
+        }
+        val newOutstanding = state.execution.outstandingSubagentResults + spawnedIncrement
         val updatedState =
           state.copy(execution =
             state.execution
@@ -1210,6 +1335,7 @@ object AgentActor extends AgentCore with AgentSession:
                 pendingEvents = remainingEvents,
                 pendingImmediateInputs = remainingImmInputs,
                 delegateCount = newDelegateCount,
+                outstandingSubagentResults = newOutstanding,
                 mailUsedThisTurn = state.mailUsedThisTurn ||
                   tc.results.exists((call, r) => call.name == "Mail" && !r.isError)
               )
@@ -1471,29 +1597,33 @@ object AgentActor extends AgentCore with AgentSession:
                               )
                             ))
                         case None =>
-                          // No user inputs either — drain ONE queued external event
+                          // No user inputs either — drain queued external events
                           // (arrived during compaction, held back by the ToolsComplete
-                          // guard). Inject as a system-reminder and dispatch a
-                          // follow-up turn; the tail stays queued for the next turn
-                          // boundary, mirroring finishTurn's event drain.
-                          compactedState.execution.pendingEvents.headOption match
-                            case Some(ev) =>
+                          // guard). Barrier-aware: subtask/delegate results are held
+                          // while the batch is outstanding and injected ALL together
+                          // when it completes; other events drain serially. Mirrors
+                          // finishTurn's event drain.
+                          val (drainedEvents, remainingEvents) =
+                            TurnBoundaryDrains.drainBarrier(
+                              compactedState.execution.pendingEvents,
+                              compactionPending = false,
+                              compactedState.execution.outstandingSubagentResults
+                            )
+                          drainedEvents.headOption match
+                            case Some(_) =>
                               logAgentEvent(
                                 agentDef,
                                 depth,
                                 state.sessionId,
                                 state.sessionName,
                                 "pending-events-injected-after-compaction",
-                                s"events=1 remaining=${compactedState.execution.pendingEvents.tail.size}"
+                                s"events=${drainedEvents.size} remaining=${remainingEvents.size}"
                               )
-                              val eventMessage = Message(
-                                MessageRole.User,
-                                Left(s"<system-reminder>\n${ev.payload}\n</system-reminder>")
-                              )
+                              val eventMessage = buildEventReminder(drainedEvents)
                               val drainedState = compactedState.copy(execution =
                                 compactedState.execution.copy(
                                   messages = compactedState.messages :+ eventMessage,
-                                  pendingEvents = compactedState.execution.pendingEvents.tail
+                                  pendingEvents = remainingEvents
                                 )
                               )
                               pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
@@ -1564,7 +1694,18 @@ object AgentActor extends AgentCore with AgentSession:
           s"source=$source type=$eventType"
         )
         val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
-        val updatedExec = state.execution.copy(pendingEvents = state.execution.pendingEvents :+ event)
+        // Sub-agent barrier: a Delegate/SubTask result (completed or failed)
+        // satisfies one outstanding slot of the parallel batch. The drain at the
+        // turn boundary only releases subtask/delegate events once the counter
+        // hits 0, so a batch completing mid-turn is still injected together.
+        val updatedOutstanding =
+          if TurnBoundaryDrains.isSubagentResult(event) then
+            math.max(0, state.execution.outstandingSubagentResults - 1)
+          else state.execution.outstandingSubagentResults
+        val updatedExec = state.execution.copy(
+          pendingEvents = state.execution.pendingEvents :+ event,
+          outstandingSubagentResults = updatedOutstanding
+        )
         // 任务 Q: emit the visible bubble at receive time (the combined
         // <system-reminder> injected later at finishTurn is for the LLM).
         val visSource = visibleExternalEventSource(source, eventType)
@@ -2021,8 +2162,17 @@ object AgentActor extends AgentCore with AgentSession:
       s"msgs=${state.messages.size} textLen=${text.length} textStreamed=$textAlreadyStreamed " +
         s"thinking=${thinking.map(_.length).getOrElse(0)} model=${model.getOrElse("-")}"
     )
-    val queuedEvents = state.execution.pendingEvents
-    if queuedEvents.nonEmpty then
+    // Barrier-aware drain: while a parallel sub-agent batch is outstanding,
+    // subtask/delegate results stay held (worker blocking semantics) — they are
+    // injected ALL together when the batch completes. Other event types keep
+    // the existing serial one-at-a-time drain.
+    val (drainedEvents, remainingEvents) =
+      TurnBoundaryDrains.drainBarrier(
+        state.execution.pendingEvents,
+        compactionPending = false,
+        state.execution.outstandingSubagentResults
+      )
+    if drainedEvents.nonEmpty then
       val roundCompleteIO: IO[Unit] =
         if !isSubagent then
           state.sessionId.fold(IO.unit)(sid =>
@@ -2035,13 +2185,7 @@ object AgentActor extends AgentCore with AgentSession:
             )
           )
         else IO.unit
-      // Serial processing — consume ONE queued event per turn (chatQueue
-      // semantics), keep the rest queued so they're handled one at a time.
-      val headEvent = queuedEvents.head
-      val remainingEvents = queuedEvents.tail
-      val eventMessages = List(
-        Message(MessageRole.User, Left(s"<system-reminder>\n${headEvent.payload}\n</system-reminder>"))
-      )
+      val eventMessages = List(buildEventReminder(drainedEvents))
       val messagesWithPending = newMessages ++ eventMessages
       logAgentEvent(
         agentDef,
@@ -2049,14 +2193,15 @@ object AgentActor extends AgentCore with AgentSession:
         state.sessionId,
         state.sessionName,
         "pending-messages-injected",
-        s"events=1 remaining=${remainingEvents.size}"
+        s"events=${drainedEvents.size} remaining=${remainingEvents.size}"
       )
       val updatedState = state.copy(execution =
         ExecutionContext
           .idle(messagesWithPending, state.execution.turnIdx)
           .copy(pendingEvents = remainingEvents, pendingImmediateInputs = state.execution.pendingImmediateInputs,
                 pendingMailQueueCount = state.execution.pendingMailQueueCount,
-                pendingUserInputs = state.execution.pendingUserInputs)
+                pendingUserInputs = state.execution.pendingUserInputs,
+                outstandingSubagentResults = state.execution.outstandingSubagentResults)
       )
       for
         _ <- roundCompleteIO
@@ -2111,7 +2256,11 @@ object AgentActor extends AgentCore with AgentSession:
             .idle(messagesWithImmediate, state.execution.turnIdx)
             .copy(pendingImmediateInputs = remainingInputs,
                   pendingMailQueueCount = state.execution.pendingMailQueueCount,
-                  pendingUserInputs = state.execution.pendingUserInputs)
+                  pendingUserInputs = state.execution.pendingUserInputs,
+                  // Sub-agent barrier: held subtask/delegate results and the
+                  // outstanding count survive the turn boundary.
+                  pendingEvents = state.execution.pendingEvents,
+                  outstandingSubagentResults = state.execution.outstandingSubagentResults)
         )
       for
         _ <- roundCompleteIO
@@ -2168,7 +2317,10 @@ object AgentActor extends AgentCore with AgentSession:
                 ExecutionContext
                   .idle(messagesWithQueue, state.execution.turnIdx)
                   .copy(pendingMailQueueCount = state.execution.pendingMailQueueCount - 1,
-                        pendingUserInputs = state.execution.pendingUserInputs)
+                        pendingUserInputs = state.execution.pendingUserInputs,
+                        // Sub-agent barrier: held results survive the turn boundary.
+                        pendingEvents = state.execution.pendingEvents,
+                        outstandingSubagentResults = state.execution.outstandingSubagentResults)
               )
               _ <- nebflow.core.flow.MailQueueStore.removeHead(sid)
               _ <-
@@ -2284,7 +2436,12 @@ object AgentActor extends AgentCore with AgentSession:
                 interaction = keptInteraction,
                 // Preserve queue when compaction is in progress — CompactionComplete drains it.
                 pendingImmediateInputs = state.execution.pendingImmediateInputs,
-                pendingUserInputs = remainingUserInputs
+                pendingUserInputs = remainingUserInputs,
+                // Sub-agent barrier: held subtask/delegate results and the
+                // outstanding count survive the turn boundary (the batch may
+                // still be running — they are injected when it completes).
+                pendingEvents = state.execution.pendingEvents,
+                outstandingSubagentResults = state.execution.outstandingSubagentResults
               )
           )
           .withMailTurnCount(state.mailTurnCount + 1)
