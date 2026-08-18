@@ -106,6 +106,9 @@ function convertAgentEvent(msg) {
 function syncSendButtonConnState() {
   const btn = activeView?.dom?.sendBtn || document.getElementById('send-btn');
   if (btn) btn.classList.toggle('disconnected', !state.connected);
+  // §4 (todo-panel-spec): circle completion controls dim/disable while offline
+  const taskList = document.getElementById('task-list');
+  if (taskList) taskList.classList.toggle('task-ws-down', !state.connected);
 }
 
 // ---------- Handler registry (supports multiple handlers per type) ----------
