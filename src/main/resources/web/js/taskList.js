@@ -67,6 +67,16 @@ function requestComplete(row, task) {
 
   sendWs({ type: 'completeTask', sessionId: state.activeSessionId, taskId: task.id });
 
+  // A4: optimistic -1 on the header non-terminal count — do not wait for the
+  // server push (taskListUpdate re-render is authoritative when it arrives;
+  // rollback via taskError re-renders from restored state, self-healing).
+  const sid0 = row.dataset.sessionId || state.activeSessionId;
+  const arr0 = sid0 && state.sessionTasks ? state.sessionTasks[sid0] : null;
+  const statsEl = document.querySelector('#task-list .task-stats');
+  if (statsEl && Array.isArray(arr0)) {
+    statsEl.textContent = `${Math.max(0, activeCount(arr0) - 1)}${t('task.statsSuffix')}`;
+  }
+
   const finish = () => {
     // Server truth arrives via taskListUpdate; drop the optimistic entry from
     // local state so re-renders cannot resurrect it.
@@ -93,10 +103,14 @@ function requestComplete(row, task) {
 
 // Server-side rejection of a complete → roll back: re-insert at the sorted
 // position (render derives it), replay the entering animation, toast (§7.2).
+// The backend taskError frame is {"type":"taskError","error","taskId"} — no
+// msgType field (WebSocketRoutes.scala:1527-1532, symmetric with dismissTask).
+// We identify completeTask failures by taskId membership in pendingComplete:
+// a taskError for an id we never sent a complete for is not ours — pass
+// through untouched (裁定 F-B1①, qa-frontend 打回修复).
 onMessage('taskError', (msg) => {
-  if (msg.msgType !== 'completeTask') return;
+  if (!msg.taskId || !pendingComplete.has(msg.taskId)) return;
   const task = pendingComplete.get(msg.taskId);
-  if (!task) return;
   pendingComplete.delete(msg.taskId);
   const sid = msg.sessionId || state.activeSessionId;
   const arr = sid && state.sessionTasks ? state.sessionTasks[sid] : null;
@@ -178,7 +192,9 @@ function buildRow(task, sessionId) {
 
 function buildGroupHeader(label) {
   const h = document.createElement('div');
-  h.className = 'task-group-header';
+  // Dual class: .task-group-header is the implementation class (CSS hooks),
+  // .task-section-title is the frozen spec assertion selector (§10 A6).
+  h.className = 'task-group-header task-section-title';
   h.textContent = label;
   return h;
 }

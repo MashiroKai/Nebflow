@@ -118,7 +118,8 @@
   margin-bottom: 0;
 }
 
-/* ── Group headers (§3) — only rendered when both kinds exist ── */
+/* ── Section titles (§3, A6: .task-section-title is the frozen assertion
+   class; .task-group-header carries the styles) — only when both kinds ── */
 .task-group-header {
   font-size: 11px;
   font-weight: 500;
@@ -141,13 +142,14 @@
   line-height: 1.4;
 }
 
-/* Circle completion control — Apple Reminders style */
+/* Circle completion control — Apple Reminders style (§6 frozen: 20×20px
+   hit area, 14px glyph, 1.5px border at 40% alpha) */
 .task-check {
   flex-shrink: 0;
-  width: 15px;
-  height: 15px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
-  border: 1.5px solid var(--color-text-muted, #888);
+  border: 1.5px solid color-mix(in srgb, var(--color-text-muted, #888) 40%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -164,9 +166,11 @@
   transition: opacity 0.12s ease;
 }
 
-.task-check-glyph svg {
-  width: 9px;
-  height: 9px;
+/* lucide replaces the <i> with an <svg> carrying the same class — the
+   selector must target the svg itself, not a descendant. */
+svg.task-check-glyph {
+  width: 14px;
+  height: 14px;
 }
 
 /* Hover previews a faint sapphire check (§5.1) */
@@ -229,8 +233,8 @@
 
 /* in_progress spinner inside the same circle slot */
 .task-check-spinner {
-  width: 9px;
-  height: 9px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   border: 1.5px solid rgb(var(--sapphire) / 0.25);
   border-top-color: rgb(var(--sapphire));
@@ -256,9 +260,10 @@
   color: var(--color-error);
 }
 
-.task-failed-icon svg {
-  width: 9px;
-  height: 9px;
+.task-failed-icon svg,
+svg.task-failed-icon {
+  width: 12px;
+  height: 12px;
 }
 
 .task-failed .task-label {
@@ -316,5 +321,18 @@
   .task-collapsing,
   .task-item.task-entering {
     animation: none;
+  }
+}
+
+/* ── Narrow viewport (§10 A12, 裁定 F3): tighten the header at ≤480px.
+   The archive button is NEVER hidden (archive is the only way back to
+   completed history); the stats count may shrink to ellipsis first. ── */
+@media (max-width: 480px) {
+  .task-header { gap: 4px; }
+  .task-stats {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
