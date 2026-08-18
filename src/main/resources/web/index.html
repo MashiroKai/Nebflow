@@ -1,6 +1,16 @@
 <!DOCTYPE html>
 <html lang="en"><head>
   <meta charset="utf-8">
+  <script>
+  /* Anti-recursion guard (canvas-html embedded boot, 2026-08-18). Sandboxed
+     HTML previews (Canvas/Card srcdoc iframes) can navigate their frame to the
+     app URL — e.g. a slidev deck's hash router resolving against the inherited
+     base URL. A nested boot would share localStorage, restore the same canvas
+     file tab and re-render the same file → infinite nesting. Classic script so
+     it always runs before the module graph; main.js checks the flag and
+     refuses to boot. */
+  if (window.self !== window.top) document.documentElement.dataset.nfEmbedded = '1';
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <!-- Neutral initial title: js/brand.js sets the real one from window.__BRAND__. -->
   <title></title>
