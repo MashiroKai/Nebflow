@@ -19,6 +19,7 @@ trait TaskStore:
   def dismiss(sessionId: String, taskId: String): IO[Option[Task]]
   def renderForPrompt(sessionId: String): IO[String]
   def update(sessionId: String, taskId: String, updates: TaskUpdateInput): IO[Option[Task]]
+  def complete(sessionId: String, taskId: String, by: String): IO[Option[Task]]
   def delete(sessionId: String, taskId: String): IO[Boolean]
   def deleteAll(sessionId: String): IO[Unit]
 
@@ -111,7 +112,8 @@ object FileTaskStore extends TaskStore:
         parentId = input.parentTaskId,
         createdAt = Some(now),
         updatedAt = Some(now),
-        events = List(TaskEvent("created", None, Some(now)))
+        events = List(TaskEvent("created", None, Some(now))),
+        taskKind = Task.normalizeTaskKind(input.taskKind)
       )
       _ <- writeTask(sessionId, task)
     yield newId
@@ -167,6 +169,15 @@ object FileTaskStore extends TaskStore:
       case (TaskStatus.Dismissed, TaskStatus.Dismissed) => true // no-op
       case _ => false
 
+  /** todo-panel §2.2: human tasks have no in-progress state — the user either
+    * completes them via the circle or the agent fails/dismisses them. Guards
+    * the agent path (TaskUpdate) from pushing a human reminder into its own
+    * work pipeline; the dedicated complete() path checks the plain matrix
+    * (pending/in_progress -> completed) because it records completedBy. */
+  private def isValidTransitionFor(task: Task, to: TaskStatus): Boolean =
+    if task.taskKind == "human" && to == TaskStatus.InProgress then false
+    else isValidTransition(task.status, to)
+
   // Issue #3: DFS cycle detection in dependency graph
   private def hasCycle(tasks: List[Task]): Boolean =
     val adj = tasks.map(t => t.id -> t.blockedBy.filter(_.nonEmpty)).toMap
@@ -200,7 +211,7 @@ object FileTaskStore extends TaskStore:
         else
           // Issue #2: Validate status transition
           val newStatus = updates.status.getOrElse(existing.status)
-          val statusValid = updates.status.isEmpty || isValidTransition(existing.status, newStatus)
+          val statusValid = updates.status.isEmpty || isValidTransitionFor(existing, newStatus)
 
           if !statusValid then
             IO.raiseError(
@@ -284,6 +295,43 @@ object FileTaskStore extends TaskStore:
   def dismiss(sessionId: String, taskId: String): IO[Option[Task]] =
     update(sessionId, taskId, TaskUpdateInput(status = Some(TaskStatus.Dismissed)))
 
+  /** todo-panel §7.1: mark a task completed and record WHO completed it
+    * ("user" = user clicked the circle; "agent" = agent flow). Mirrors
+    * update()'s terminal-state bookkeeping (completedAt + status event) —
+    * deliberately NOT routed through update() because TaskUpdateInput is
+    * frozen by the spec and completedBy is not an agent-settable field.
+    * pending/in_progress -> completed are legal; re-completing a terminal
+    * task raises IllegalStateException (caller turns it into taskError). */
+  def complete(sessionId: String, taskId: String, by: String): IO[Option[Task]] =
+    get(sessionId, taskId).flatMap {
+      case None => IO.pure(None)
+      case Some(existing) =>
+        if !isValidTransition(existing.status, TaskStatus.Completed) then
+          IO.raiseError(
+            new IllegalStateException(
+              s"Invalid status transition: ${existing.status} -> completed for task #$taskId"
+            )
+          )
+        else if existing.status == TaskStatus.Completed then
+          // No-op completion (user double-send raced a list refresh): keep
+          // the original completedBy, just return the task.
+          IO.pure(Some(existing))
+        else
+          val now = Instant.now().toString
+          val updated = existing.copy(
+            status = TaskStatus.Completed,
+            updatedAt = Some(now),
+            completedAt = Some(now),
+            completedBy = Some(by),
+            events = (existing.events :+ TaskEvent(
+              "status",
+              Some(s"${TaskStatus.wireName(existing.status)}→completed"),
+              Some(now)
+            )).takeRight(MaxEvents)
+          )
+          writeTask(sessionId, updated).as(Some(updated))
+    }
+
   /**
    * Render tasks as a hierarchical text block for system prompt injection.
    *  Only active (pending + in_progress) tasks are shown, with tree-style indentation.
@@ -304,7 +352,10 @@ object FileTaskStore extends TaskStore:
           val indent = "  " * depth
           val statusIcon = t.status match
             case TaskStatus.InProgress => "[in_progress]"
-            case TaskStatus.Pending => "[pending]"
+            case TaskStatus.Pending =>
+              // todo-panel §2.3: human todos are reminders FOR the user — the
+              // agent must not sweep them into its own work-through loop.
+              if t.taskKind == "human" then "[waiting-user]" else "[pending]"
             case _ => ""
           val activeStr = t.activeForm match
             case Some(a) if t.status == TaskStatus.InProgress => s" — $a"
