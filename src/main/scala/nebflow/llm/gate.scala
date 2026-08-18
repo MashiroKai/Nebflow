@@ -4,6 +4,7 @@ import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import nebflow.shared.Defaults
 
+import java.util.concurrent.CancellationException
 import scala.collection.immutable.Queue
 import scala.concurrent.duration.*
 
@@ -60,9 +61,9 @@ final class ConcurrencyGate private[llm] (
 
   /**
    * Sliding-window RPM check (window = Defaults.LlmRpmWindowSec). Called with a
-   * permit already held; busy-waits in short sleeps until a slot opens in the
-   * window. The timestamp is recorded atomically with the check so concurrent
-   * callers can't exceed the limit.
+   * permit already held; sleeps exactly until the oldest entry slides out of the
+   * window (no busy polling). The timestamp is recorded atomically with the
+   * check so concurrent callers can't exceed the limit.
    */
   private def waitForWindow: IO[Unit] =
     rpm match
@@ -74,31 +75,55 @@ final class ConcurrencyGate private[llm] (
             state
               .modify { s =>
                 val window = s.window.filter(t => now - t < windowMs)
-                if window.length < limit then (s.copy(window = now :: window), true)
-                else (s.copy(window = window), false)
+                if window.length < limit then (s.copy(window = now :: window), None)
+                // Window full: sleep until the oldest entry expires, not a fixed
+                // 250ms poll — one wakeup per RPM wait instead of ~16.
+                else (s.copy(window = window), Some(window.minOption.getOrElse(now) + windowMs - now))
               }
-              .flatMap { ok =>
-                if ok then IO.unit else IO.sleep(250.millis) *> loop
+              .flatMap {
+                case None => IO.unit
+                case Some(sleepMs) => IO.sleep(sleepMs.max(1L).millis) >> loop
               }
           }
         loop
 
   /**
-   * Non-blocking queue probe: true if a permit is available immediately (an
-   * acquire right now would not queue). Used by the persistence integration
-   * (interface.scala) to decide whether to write the request to LlmQueueStore:
-   * only QUEUED requests must survive a restart; immediate grants need no
-   * persistence. maxConcurrency=0 never queues.
+   * Non-blocking queue probe: true if an acquire right now would not queue —
+   * a permit is free AND the RPM window has capacity. Used by the persistence
+   * integration (interface.scala) to decide whether to write the request to
+   * LlmQueueStore: only QUEUED requests must survive a restart; immediate
+   * grants need no persistence. maxConcurrency=0 never queues (RPM still
+   * checked). Best-effort probe: the authoritative enforcement with atomic
+   * timestamp recording stays in waitForWindow.
    */
   def tryAcquire: IO[Boolean] =
-    if maxConcurrency == 0 then IO.pure(true)
-    else state.get.map(_.permits > 0)
+    IO.realTime.map(_.toMillis).flatMap { now =>
+      val windowMs = rpmWindow.toMillis
+      state.get.map { s =>
+        val slotFree = maxConcurrency == 0 || s.permits > 0
+        val rpmOk = rpm.forall(limit => s.window.count(t => now - t < windowMs) < limit)
+        slotFree && rpmOk
+      }
+    }
 
   /** Acquire a permit, queueing (FIFO) until one is free or queueTimeout elapses. */
   def acquire: IO[ConcurrencyPermit] =
     if maxConcurrency == 0 then waitForWindow.as(new ConcurrencyPermit(this, limited = false))
     else
       Deferred[IO, Unit].flatMap { d =>
+        // Remove a dead waiter. Still queued → drop it from the FIFO; already
+        // dequeued by dispatch (we hold the slot but never got out) → restore
+        // the permit. Runs on queue timeout, error, AND fiber cancellation
+        // (Stop/abort while queued or in the RPM wait): without the cancel path
+        // a cancelled acquire leaves a ghost Deferred in `waiting`, and dispatch
+        // keeps handing permits to listeners that never release them — permits
+        // exhaust one per cancelled request. The restored permit dispatches the
+        // next waiter immediately, not on the next release.
+        val cleanup: IO[Unit] =
+          state.update { s =>
+            if s.waiting.exists(_ eq d) then s.copy(waiting = s.waiting.filterNot(_ eq d))
+            else s.copy(permits = s.permits + 1)
+          } *> dispatch
         val body =
           state.update(s => s.copy(waiting = s.waiting.enqueue(d))) *>
             dispatch *>
@@ -110,18 +135,12 @@ final class ConcurrencyGate private[llm] (
             waitForWindow
         body
           .onError {
-            case _: QueueTimeout =>
-              // We timed out while still queued — remove ourselves so a later
-              // release doesn't hand a permit to a ghost waiter. If dispatch
-              // already dequeued us (permits decremented) but hadn't completed
-              // the Deferred yet, we are NOT in the queue anymore: restore the
-              // slot, since we'll never release it. (If d.get already won the
-              // race, the timeout branch is cancelled and onError doesn't run.)
-              state.update { s =>
-                if s.waiting.exists(_ eq d) then s.copy(waiting = s.waiting.filterNot(_ eq d))
-                else s.copy(permits = s.permits + 1)
-              }
+            case _: QueueTimeout => cleanup
+            // Some callers raise CancellationException as a plain error rather
+            // than cancelling the fiber — clean up for those too.
+            case _: CancellationException => cleanup
           }
+          .onCancel(cleanup)
           .as(new ConcurrencyPermit(this, limited = true))
       }
 
