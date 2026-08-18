@@ -540,12 +540,6 @@ function formatTokens(n) {
   return String(n);
 }
 
-function shortModelName(ref) {
-  if (!ref) return '';
-  const i = ref.lastIndexOf('/');
-  return i >= 0 ? ref.slice(i + 1) : ref;
-}
-
 function updateHeaderModelInfo() {
   // The header element lives in the primary window only (popups pass
   // headerModelInfo: null), so always render the PRIMARY view's session —
@@ -555,32 +549,31 @@ function updateHeaderModelInfo() {
   if (!el) return;
   const sid = chatViews.primary?.sessionId || state.activeSessionId;
   const info = sid ? state.sessionModelInfo[sid] : null;
+  // Header shows the context-usage ring only — the model name label was
+  // removed per user request (#313). The model is still surfaced via the
+  // ring's tooltip so the info isn't lost, just no longer visually present.
   const hasRing = !!(info && info.contextWindow);
-  const hasModel = !!(info && info.model);
-  if (!hasRing && !hasModel) {
+  if (!hasRing) {
     el.textContent = '';
     el.style.display = 'none';
     el.dataset.mode = '';
     return;
   }
-  const mode = `${hasRing ? 'r' : ''}${hasModel ? 'm' : ''}`;
+  const mode = 'r';
 
-  const ratio = hasRing && info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
+  const ratio = info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
   const pct = Math.min(Math.round(ratio * 100), 100);
   let barColor = '#4caf50';
   if (ratio > 0.5) barColor = '#d4a030';
   if (ratio > 0.75) barColor = '#e53935';
 
-  const thresholdPct = hasRing ? Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100) : 0;
-  const modelShort = shortModelName(info.model);
+  const thresholdPct = Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
   const outPart = info.outputTokens != null ? ` · +${formatTokens(info.outputTokens)} out` : '';
   const tooltip = [
     info.model || '',
-    hasRing
-      ? (info.inputTokens != null
-        ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%)${outPart} · threshold ${thresholdPct}%`
-        : `${formatTokens(info.contextWindow)} context window`)
-      : '',
+    info.inputTokens != null
+      ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%)${outPart} · threshold ${thresholdPct}%`
+      : `${formatTokens(info.contextWindow)} context window`,
   ].filter(Boolean).join(' · ');
 
   const R = 15;
@@ -605,16 +598,12 @@ function updateHeaderModelInfo() {
       const ringPct = ring.querySelector('.ctx-ring-pct');
       if (ringPct) ringPct.textContent = String(pct);
     }
-    const label = /** @type {HTMLElement|null} */ (el.querySelector('.ctx-model-label'));
-    if (label) { label.textContent = modelShort; label.title = info.model || ''; }
     return;
   }
 
-  // Structure change (ring/model appearing or disappearing) — rebuild.
+  // Structure change (ring appearing or disappearing) — rebuild.
   el.dataset.mode = mode;
   el.innerHTML = `
-    ${hasModel ? `<span class="ctx-model-label" title="${escapeHtml(info.model)}">${escapeHtml(modelShort)}</span>` : ''}
-    ${hasRing ? `
     <div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
       <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
         <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
@@ -628,7 +617,7 @@ function updateHeaderModelInfo() {
               class="ctx-ring-threshold"/>
       </svg>
       <span class="ctx-ring-pct">${pct}</span>
-    </div>` : ''}
+    </div>
   `;
 }
 state.updateHeaderModelInfo = updateHeaderModelInfo;
@@ -2102,7 +2091,7 @@ onMessage('askDone', (msg, view) => {
     // over askAnswerText (only the last bubble segment)
     const answer = (buf ? buf.answer : '') || activeView.stream.askAnswerText || '';
     const question = buf ? buf.question : '';
-    finishAskAnswer(durationMs);
+    finishAskAnswer(durationMs, msg.model);
     if (question || answer) {
       saveMsg({ type: 'ask', question, answer, durationMs, model: msg.model }, msg.sessionId);
     }
