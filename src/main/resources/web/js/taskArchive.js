@@ -5,7 +5,9 @@
 // (口径: dismissed 只是「不想再看到」,显式 status=dismissed 查询才含);
 // failed 默认可见且带失败标注。
 //
-// 打开方式: openTaskArchive()(taskList.js「今日完成」折叠条「查看全部」)。
+// 打开方式: openTaskArchive()——入口在 taskList.js header 右端
+// .task-archive-btn(档案图标钮)。(todo-panel v1.1 起「今日完成」折叠条
+// 已移除,档案是完成历史的唯一回看位。)
 // 恢复: persistTabs 以 panel tab 持久化(absPath=null),reload 后
 // canvas-tab-restore 事件触发重新拉取渲染。
 
