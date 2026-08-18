@@ -15,6 +15,7 @@ let friendsCache = [];          // accepted friends — source of truth for §3.
 let openConvId = null;          // conversation shown in the chat modal
 let modalEls = null;            // {overlay, flow, input, sendBtn, toast}
 let triggeringRow = null;       // for focus return (A18)
+let triggeringConvId = null;    // row may be re-rendered after open (unread clear) — refind by id
 const forwardedIds = new Set(); // session-persistent 「已转发」 chips (§3.3)
 let msgSeq = 0;
 
@@ -160,8 +161,13 @@ function closeChat() {
   }
   openConvId = null;
   renderList(); // refresh aria-selected + any unread changes
-  if (triggeringRow && triggeringRow.isConnected) triggeringRow.focus(); // A18
+  // A18: focus return — the triggering row may have been detached by the
+  // post-open renderList (unread clear), so refind by conversation id.
+  const back = (triggeringRow && triggeringRow.isConnected) ? triggeringRow
+    : (triggeringConvId ? document.querySelector(`#fm-conversations .fm-conv-row[data-conversation-id="${CSS.escape(triggeringConvId)}"]`) : null);
+  if (back) back.focus();
   triggeringRow = null;
+  triggeringConvId = null;
 }
 
 function currentConv() {
@@ -177,6 +183,7 @@ async function openConversation(conversationId, rowEl) {
   const conv = conversations.find(c => c.conversationId === conversationId);
   if (!conv) return;
   triggeringRow = rowEl || null;
+  triggeringConvId = conversationId;
   openConvId = conversationId;
   renderChatModal(conv);
 
@@ -502,6 +509,7 @@ export async function openChatWithFriend(friend) {
     // No conversation yet (never messaged): open an empty modal; the first
     // send creates the conversation server-side (friend-addressed send).
     triggeringRow = null;
+    triggeringConvId = null;
     openConvId = '__pending__' + friend.userId;
     renderChatModal(conv);
     if (modalEls) modalEls.input.focus();
