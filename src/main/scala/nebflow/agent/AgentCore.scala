@@ -10,6 +10,7 @@ import nebflow.agent.PromptSections.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
+import nebflow.core.presets.PresetStore
 import nebflow.core.tools.*
 import nebflow.llm.{Fallback, TurnBudgetExceeded}
 import nebflow.shared.*
@@ -439,6 +440,21 @@ private[agent] trait AgentCore:
             else Nil
           freshTools =
             if isCompactTurn then Some(Nil) else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker)
+          // A: cold-start routing — a stale agent's first request goes to the
+          // free 107 gateway instead of a full-price cache miss on its default
+          // provider. Pure guards first (hot agents incur zero I/O); only the
+          // wake-up path touches the preset file.
+          coldStartModel = ColdStartRouter.evaluate(
+            config = resources.agentLibrary.coldStartConfig,
+            agentName = freshDef.name,
+            depth = depth,
+            category = freshDef.category,
+            now = System.currentTimeMillis(),
+            lastActivityMs = resources.usageRecordStore.lastActivityMs(freshDef.name),
+            messages = stateForLlm.messages,
+            currentModel = freshDef.model,
+            presetStore = PresetStore()
+          )
           request = LlmRequest(
             messages = stateWithReminder.messages ++ contextMsg ++ branchMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
@@ -447,7 +463,7 @@ private[agent] trait AgentCore:
             maxTokens = Some(resources.agentLibrary.globalMaxTokens),
             thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
             systemStable = Some(systemStable),
-            agentModel = freshDef.model
+            agentModel = coldStartModel.orElse(freshDef.model)
           )
         yield (turnCtx, request, stateWithCache)
 
