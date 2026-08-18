@@ -51,7 +51,10 @@ case class ProviderConfig(
   // backward compatibility with existing config files.
   maxConcurrency: Option[Int] = None,
   rpm: Option[Int] = None,
-  queueTimeoutMs: Option[Int] = None
+  queueTimeoutMs: Option[Int] = None,
+  // P0 并发管理阶段 2（2026-08-18）：queued 请求落盘，重启不丢。默认开；
+  // 关闭则排队项仅存内存（重启丢失）。
+  queuePersist: Option[Boolean] = None
 )
 
 object ProviderConfig:

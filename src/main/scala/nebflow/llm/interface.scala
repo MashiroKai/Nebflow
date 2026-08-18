@@ -13,6 +13,45 @@ import scala.concurrent.duration.*
 object LlmInterface:
   private val logger = NebflowLogger.forName("nebflow.llm")
 
+  /**
+   * Acquire a gate permit, persisting the request if it has to queue
+   * (P0 并发管理阶段 2, design §4.5).
+   *
+   * - Gate free (tryAcquire true): acquire immediately — no persistence.
+   *   In-flight requests are deliberately not covered by queue persistence.
+   * - Gate busy: write the full LlmRequest to LlmQueueStore (so a restart
+   *   doesn't lose it), then queue. On grant, removeHead — FIFO guarantees
+   *   our item is at the head. On QueueTimeout, removeById — the request has
+   *   fallen through to the next provider.
+   * - queuePersist=false: skip persistence entirely (in-memory only).
+   */
+  private def acquireWithPersistence(
+    gate: ConcurrencyGate,
+    providerId: String,
+    persist: Boolean,
+    request: LlmRequest
+  ): IO[ConcurrencyPermit] =
+    gate.tryAcquire.flatMap {
+      case true => gate.acquire
+      case false =>
+        val item =
+          LlmQueueStore.QueueItem(java.util.UUID.randomUUID().toString, providerId, request, System.currentTimeMillis())
+        val write = if persist then LlmQueueStore.append(providerId, item) else IO.unit
+        write *>
+          gate.acquire
+            .onError {
+              case _: QueueTimeout =>
+                if persist then LlmQueueStore.removeById(providerId, item.id).void else IO.unit
+            }
+            .flatTap { _ =>
+              // Permit granted — everyone ahead of us either got granted and
+              // removed, or timed out and removed, so our item is at the head.
+              // Remove it so a restart doesn't re-fire this request.
+              if persist then LlmQueueStore.removeHead(providerId).void else IO.unit
+            }
+    }
+
+
   // ── Vision PreCheck helpers ────────────────────────────
 
   /** Check if any message in the list contains an Image content block. */
@@ -147,7 +186,16 @@ object LlmInterface:
                       adapter <- registry.getAdapter(candidate.providerId)
                       // P0 concurrency gate: queue for a permit before firing
                       // (Transient on timeout — falls back to next provider).
-                      permit <- registry.getGate(candidate.providerId).flatMap(_.acquire)
+                      // Queued requests are persisted (stage 2) so a restart
+                      // doesn't lose them.
+                      permit <- registry.getGate(candidate.providerId).flatMap { gate =>
+                        acquireWithPersistence(
+                          gate,
+                          candidate.providerId,
+                          candidate.provider.queuePersist.getOrElse(Defaults.LlmQueuePersistDefault),
+                          req
+                        )
+                      }
                       resp <- adapter.sendMessage(
                         SendMessageParams(
                           effectiveMessages,
@@ -328,7 +376,15 @@ object LlmInterface:
                                       adapter <- registry.getAdapter(candidate.providerId)
                                       // P0 concurrency gate: queue for a permit before
                                       // opening the stream; released when the stream ends.
-                                      permit <- registry.getGate(candidate.providerId).flatMap(_.acquire)
+                                      // Queued requests are persisted (stage 2).
+                                      permit <- registry.getGate(candidate.providerId).flatMap { gate =>
+                                        acquireWithPersistence(
+                                          gate,
+                                          candidate.providerId,
+                                          candidate.provider.queuePersist.getOrElse(Defaults.LlmQueuePersistDefault),
+                                          req
+                                        )
+                                      }
                                     yield adapter.sendMessageStream(
                                       SendMessageParams(
                                         effectiveMessages,
@@ -627,7 +683,31 @@ object LlmInterface:
 
           (handle, registry, healthMonitor, release)
         end result
-        IO(result).onError(_ => release)
+        // Stage 2 (design §4.5): replay persisted LLM queues on startup.
+        // Requests that were waiting for a gate permit when the previous
+        // process died are re-drained in order — each re-acquires a permit
+        // through the gate. Fire-and-forget: startup must not block on slow
+        // providers; results are dropped (the originating turn is gone — the
+        // point is preserving the provider-side request, not the response).
+        IO(result).onError(_ => release).flatTap { case (handle, _, _, _) =>
+          LlmQueueStore.providersWithQueues.flatMap { providers =>
+            providers.traverse_ { providerId =>
+              LlmQueueStore.load(providerId).flatMap { items =>
+                if items.nonEmpty then
+                  logger.info(
+                    s"LLM queue replay: $providerId has ${items.length} persisted request(s) from previous run — re-draining"
+                  ) *>
+                    // Claim all items first: the file is the queue of record, and a
+                    // re-queued item is re-persisted by acquireWithPersistence.
+                    // Clearing avoids stale entries (granted items that didn't
+                    // persist have no removal to perform).
+                    LlmQueueStore.clear(providerId) *>
+                    items.traverse_ { item => handle.send(item.request).attempt.void }
+                else IO.unit
+              }
+            }
+          }.start.void
+        }
       }
     }
   end createLlm

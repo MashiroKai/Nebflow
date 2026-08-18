@@ -113,4 +113,7 @@ object Defaults:
 
   /** RPM sliding-window width (seconds) for the per-provider rate limiter. */
   val LlmRpmWindowSec: Int = 60
+
+  /** Persist queued LLM requests to disk so they survive a restart. */
+  val LlmQueuePersistDefault: Boolean = true
 end Defaults
