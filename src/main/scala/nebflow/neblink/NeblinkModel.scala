@@ -145,8 +145,38 @@ case class NeblinkConfig(
     * When set, the gateway's device-flow start and poll routes talk to the
     * provider's RFC 8628 endpoints instead of neblink-server's self-hosted
     * ones. */
-  logto: Option[LogtoConfig] = None
+  logto: Option[LogtoConfig] = None,
+  /** Agent messaging permissions (A2A 一期, spec §7.2): how the
+    * SendFriendMessage tool may send on the user's behalf. */
+  agentMessaging: AgentMessagingConfig = AgentMessagingConfig()
 )
+
+/**
+ * Agent messaging permission tier (A2A 一期, spec §7.2-7.3). `mode`:
+ *  - auto (default, user ruling 2026-08-17): send directly, no prompt; bounded
+ *    by the two-layer client rate limit (perFriendPerHour / globalPerHour);
+ *    on exceeding, auto-downgrades to ask (confirmation prompt) — never a hard
+ *    failure.
+ *  - ask: every send prompts the user (60s timeout = declined).
+ *  - off: tool returns "user has disabled agent messaging".
+ * Server side enforces an independent 30 msg/min token bucket (§7.3).
+ */
+case class AgentMessagingConfig(
+  mode: String = "auto",
+  perFriendPerHour: Int = 20,
+  globalPerHour: Int = 60
+)
+
+object AgentMessagingConfig:
+  given Encoder[AgentMessagingConfig] = deriveEncoder
+
+  given Decoder[AgentMessagingConfig] = Decoder.instance { c =>
+    for
+      mode <- c.downField("mode").as[Option[String]].map(_.getOrElse("auto"))
+      perFriend <- c.downField("perFriendPerHour").as[Option[Int]].map(_.getOrElse(20))
+      global <- c.downField("globalPerHour").as[Option[Int]].map(_.getOrElse(60))
+    yield AgentMessagingConfig(mode, perFriend, global)
+  }
 
 /** Logto (OIDC provider) connection settings — a Native app (public client,
   * no secret). */
@@ -177,7 +207,8 @@ object NeblinkConfig:
         case None => c.downField("coordinator").as[Option[NeblinkServerConfig]]
       }
       logto <- c.downField("logto").as[Option[LogtoConfig]]
-    yield NeblinkConfig(enabled, syncIntervalSec, neblinkServer, logto)
+      agentMessaging <- c.downField("agentMessaging").as[Option[AgentMessagingConfig]].map(_.getOrElse(AgentMessagingConfig()))
+    yield NeblinkConfig(enabled, syncIntervalSec, neblinkServer, logto, agentMessaging)
   }
 
   private val configPath = PathUtil.dataRoot / "neblink" / "config.json"
@@ -196,6 +227,66 @@ object NeblinkConfig:
       os.write.over(configPath, config.asJson.spaces2, createFolders = true)
     }
 end NeblinkConfig
+
+// ===== A2A 好友与消息域类型（spec §6.1 REST 响应，客户端侧解码） =====
+
+/** 好友/搜索结果卡（/api/users/lookup 与 /api/friends 共用形态）。 */
+case class FriendSummary(
+  userId: String,
+  neblinkId: String,
+  name: String,
+  avatarUrl: Option[String] = None,
+  since: Option[Long] = None
+)
+
+/** 收到的好友请求（incoming 分组）。 */
+case class FriendRequestSummary(
+  requestId: String,
+  from: FriendSummary,
+  note: Option[String] = None
+)
+
+/** 发出的好友请求（outgoing 分组）。 */
+case class OutgoingRequestSummary(
+  requestId: String,
+  to: FriendSummary
+)
+
+case class FriendListResponse(
+  friends: List[FriendSummary],
+  incoming: List[FriendRequestSummary] = Nil,
+  outgoing: List[OutgoingRequestSummary] = Nil
+)
+
+case class MessageSummary(
+  id: Long,
+  senderId: String,
+  kind: String,
+  body: String,
+  createdAt: Long
+)
+
+case class ConversationSummary(
+  conversationId: String,
+  friend: FriendSummary,
+  lastMessage: Option[MessageSummary] = None,
+  unreadCount: Int = 0
+)
+
+/** 客户端本地未读 cursor 状态（spec §3.4：自己看角标，无回执）。 */
+case class ConversationCursor(conversationId: String, lastReadMessageId: Long, unreadCount: Int)
+
+object FriendCodecs:
+  import io.circe.Decoder
+  import io.circe.generic.semiauto.*
+
+  given Decoder[FriendSummary] = deriveDecoder
+  given Decoder[FriendRequestSummary] = deriveDecoder
+  given Decoder[OutgoingRequestSummary] = deriveDecoder
+  given Decoder[FriendListResponse] = deriveDecoder
+  given Decoder[MessageSummary] = deriveDecoder
+  given Decoder[ConversationSummary] = deriveDecoder
+end FriendCodecs
 
 // ===== Peer Description Store =====
 
