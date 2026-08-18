@@ -540,27 +540,48 @@ function formatTokens(n) {
   return String(n);
 }
 
+function shortModelName(ref) {
+  if (!ref) return '';
+  const i = ref.lastIndexOf('/');
+  return i >= 0 ? ref.slice(i + 1) : ref;
+}
+
 function updateHeaderModelInfo() {
-  if (!activeView) return;
-  const el = activeView.dom.headerModelInfoEl;
+  // The header element lives in the primary window only (popups pass
+  // headerModelInfo: null), so always render the PRIMARY view's session —
+  // using activeView here dropped repaints whenever a bg-agent/flow popup was
+  // active while the primary session's usageUpdate/done arrived.
+  const el = document.getElementById('header-model-info');
   if (!el) return;
-  const sid = activeView?.sessionId;
+  const sid = chatViews.primary?.sessionId || state.activeSessionId;
   const info = sid ? state.sessionModelInfo[sid] : null;
-  if (!info || !info.contextWindow) {
+  const hasRing = !!(info && info.contextWindow);
+  const hasModel = !!(info && info.model);
+  if (!hasRing && !hasModel) {
     el.textContent = '';
     el.style.display = 'none';
+    el.dataset.mode = '';
     return;
   }
-  const ratio = info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
+  const mode = `${hasRing ? 'r' : ''}${hasModel ? 'm' : ''}`;
+
+  const ratio = hasRing && info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
   const pct = Math.min(Math.round(ratio * 100), 100);
   let barColor = '#4caf50';
   if (ratio > 0.5) barColor = '#d4a030';
   if (ratio > 0.75) barColor = '#e53935';
 
-  const thresholdPct = Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
-  const tooltip = info.inputTokens != null
-    ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%) · threshold ${thresholdPct}%`
-    : `${formatTokens(info.contextWindow)} context window`;
+  const thresholdPct = hasRing ? Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100) : 0;
+  const modelShort = shortModelName(info.model);
+  const outPart = info.outputTokens != null ? ` · +${formatTokens(info.outputTokens)} out` : '';
+  const tooltip = [
+    info.model || '',
+    hasRing
+      ? (info.inputTokens != null
+        ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%)${outPart} · threshold ${thresholdPct}%`
+        : `${formatTokens(info.contextWindow)} context window`)
+      : '',
+  ].filter(Boolean).join(' · ');
 
   const R = 15;
   const CIRC = 2 * Math.PI * R;
@@ -569,41 +590,31 @@ function updateHeaderModelInfo() {
 
   el.style.display = 'inline-flex';
 
-  const existingBar = el.querySelector('.ctx-bar-wrap');
-  const existingRing = el.querySelector('.ctx-ring-wrap');
-
-  if (existingBar && existingRing) {
-    existingBar.title = tooltip;
-    const fill = existingBar.querySelector('.ctx-bar-fill');
-    if (fill) { fill.style.width = pct + '%'; fill.style.background = barColor; }
-    const threshold = existingBar.querySelector('.ctx-bar-threshold');
-    if (threshold) threshold.style.left = thresholdPct + '%';
-    const thresholdLabel = existingBar.querySelector('.ctx-bar-threshold-label');
-    if (thresholdLabel) { thresholdLabel.style.left = thresholdPct + '%'; thresholdLabel.textContent = thresholdPct + '%'; }
-    const label = existingBar.querySelector('.ctx-bar-label');
-    if (label) label.textContent = `${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}`;
-    existingRing.title = tooltip;
-    const ringFill = existingRing.querySelector('circle:nth-child(2)');
-    if (ringFill) {
-      ringFill.setAttribute('stroke', barColor);
-      ringFill.setAttribute('stroke-dasharray', `${dashLen} ${CIRC}`);
+  // In-place update when the rendered structure matches the current mode.
+  if (el.dataset.mode === mode) {
+    const ring = /** @type {HTMLElement|null} */ (el.querySelector('.ctx-ring-wrap'));
+    if (ring) {
+      ring.title = tooltip;
+      const ringFill = ring.querySelector('circle:nth-child(2)');
+      if (ringFill) {
+        ringFill.setAttribute('stroke', barColor);
+        ringFill.setAttribute('stroke-dasharray', `${dashLen} ${CIRC}`);
+      }
+      const ringLine = ring.querySelector('.ctx-ring-threshold');
+      if (ringLine) ringLine.setAttribute('transform', `rotate(${thresholdAngle} 18 18)`);
+      const ringPct = ring.querySelector('.ctx-ring-pct');
+      if (ringPct) ringPct.textContent = String(pct);
     }
-    const ringLine = existingRing.querySelector('.ctx-ring-threshold');
-    if (ringLine) ringLine.setAttribute('transform', `rotate(${thresholdAngle} 18 18)`);
-    const ringPct = existingRing.querySelector('.ctx-ring-pct');
-    if (ringPct) ringPct.textContent = pct;
+    const label = /** @type {HTMLElement|null} */ (el.querySelector('.ctx-model-label'));
+    if (label) { label.textContent = modelShort; label.title = info.model || ''; }
     return;
   }
 
+  // Structure change (ring/model appearing or disappearing) — rebuild.
+  el.dataset.mode = mode;
   el.innerHTML = `
-    <div class="ctx-bar-wrap ctx-full" title="${tooltip}">
-      <div class="ctx-bar-track">
-        <div class="ctx-bar-fill" style="width:${pct}%;background:${barColor};"></div>
-        <div class="ctx-bar-threshold" style="left:${thresholdPct}%;"></div>
-        <div class="ctx-bar-threshold-label" style="left:${thresholdPct}%;">${thresholdPct}%</div>
-      </div>
-      <span class="ctx-bar-label">${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}</span>
-    </div>
+    ${hasModel ? `<span class="ctx-model-label" title="${escapeHtml(info.model)}">${escapeHtml(modelShort)}</span>` : ''}
+    ${hasRing ? `
     <div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
       <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
         <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
@@ -617,7 +628,7 @@ function updateHeaderModelInfo() {
               class="ctx-ring-threshold"/>
       </svg>
       <span class="ctx-ring-pct">${pct}</span>
-    </div>
+    </div>` : ''}
   `;
 }
 state.updateHeaderModelInfo = updateHeaderModelInfo;
@@ -630,6 +641,8 @@ onMessage('usageUpdate', (msg, view) => {
       model: state.sessionModelInfo[sid]?.model,
       contextWindow: msg.contextWindow,
       inputTokens: msg.inputTokens,
+      // outputTokens absent (older backend) preserves the previous value
+      outputTokens: msg.outputTokens ?? state.sessionModelInfo[sid]?.outputTokens,
       compactThreshold: msg.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
@@ -654,6 +667,7 @@ onMessage('done', (msg, view) => {
       model: msg.model || state.sessionModelInfo[sid]?.model,
       contextWindow: msg.contextWindow || state.sessionModelInfo[sid]?.contextWindow,
       inputTokens: msg.inputTokens != null ? msg.inputTokens : state.sessionModelInfo[sid]?.inputTokens,
+      outputTokens: msg.outputTokens ?? state.sessionModelInfo[sid]?.outputTokens,
       compactThreshold: msg.compactThreshold != null ? msg.compactThreshold : state.sessionModelInfo[sid]?.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
@@ -1565,6 +1579,15 @@ onMessage('compactComplete', (msg, view) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
+  // Compaction shrinks the live context — refresh the usage ring immediately
+  // instead of leaving the pre-compaction (near-threshold) value up until the
+  // next LLM round's usageUpdate. outputTokens is stale per-turn data, drop it.
+  if (msg.after != null) {
+    const prev = state.sessionModelInfo[sid] || {};
+    state.sessionModelInfo[sid] = { ...prev, inputTokens: msg.after, outputTokens: undefined };
+    try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
+    updateHeaderModelInfo();
+  }
   // Compaction completes outside the normal done chain — finish any
   // streaming agent bubbles so their cursors don't linger.
   if (view) {
@@ -1710,6 +1733,17 @@ onMessage('sessionModelSet', (msg, view) => {
 onMessage('modelChanged', (msg, view) => {
   if (msg.newModel) {
     state.currentModel = msg.newModel;
+    // Record the ACTUAL model on the session so the header model label /
+    // tooltip switch from the configured to the used model immediately —
+    // previously this event only set the global currentModel (unread by any
+    // UI), so a GLM→deepseek fallback left the display showing the old model.
+    const sid = msg.sessionId || state.activeSessionId;
+    if (sid) {
+      const prev = state.sessionModelInfo[sid] || {};
+      state.sessionModelInfo[sid] = { ...prev, model: msg.newModel };
+      try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
+      updateHeaderModelInfo();
+    }
   }
 });
 
