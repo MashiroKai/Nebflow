@@ -24,16 +24,24 @@ export function shortModel(ref) {
   return idx >= 0 ? ref.slice(idx + 1) : ref;
 }
 
-/** Build model refs from config if state.allModelRefs is empty. */
+/**
+ * All model refs for pickers. state.parsedConfig is the live source - it is
+ * re-parsed on every configData push, so models added via the provider editor
+ * appear immediately. state.allModelRefs (filled once from modelOptions at WS
+ * open, never refreshed) is only the fallback for before the first configData.
+ * Both sources derive from the same server configRef, so contents are
+ * identical modulo freshness.
+ */
 export function getAllModelRefs() {
-  let refs = state.allModelRefs || [];
-  if (refs.length === 0 && state.parsedConfig?.llm?.providers) {
-    refs = [];
-    for (const [name, p] of Object.entries(state.parsedConfig.llm.providers)) {
+  const providers = state.parsedConfig?.llm?.providers;
+  if (providers) {
+    const refs = [];
+    for (const [name, p] of Object.entries(providers)) {
       (p.models || []).forEach(m => refs.push(`${name}/${m.id}`));
     }
+    if (refs.length > 0) return refs;
   }
-  return refs;
+  return state.allModelRefs || [];
 }
 
 // ── API ────────────────────────────────────────────────────
