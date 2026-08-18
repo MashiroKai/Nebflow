@@ -2129,7 +2129,7 @@ object AgentActor extends AgentCore with AgentSession:
         model,
         thinking,
         thinkingSignature,
-        sendText,
+        textAlreadyStreamed,
         isSubagent
       )
     yield result
@@ -2150,7 +2150,11 @@ object AgentActor extends AgentCore with AgentSession:
     model: Option[String],
     thinking: Option[String],
     thinkingSignature: Option[String],
-    textAlreadyStreamed: Boolean,
+    // True when the text was streamed incrementally to the client during the
+    // turn (normal path); false when it is being delivered as a single final
+    // burst at finish (error paths: compaction failed / context exceeded /
+    // max tokens). Logged verbatim as textStreamed — do NOT invert.
+    textStreamed: Boolean,
     isSubagent: Boolean
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     logAgentEvent(
@@ -2159,7 +2163,7 @@ object AgentActor extends AgentCore with AgentSession:
       state.sessionId,
       state.sessionName,
       "turn-complete",
-      s"msgs=${state.messages.size} textLen=${text.length} textStreamed=$textAlreadyStreamed " +
+      s"msgs=${state.messages.size} textLen=${text.length} textStreamed=$textStreamed " +
         s"thinking=${thinking.map(_.length).getOrElse(0)} model=${model.getOrElse("-")}"
     )
     // Barrier-aware drain: while a parallel sub-agent batch is outstanding,
@@ -2346,7 +2350,7 @@ object AgentActor extends AgentCore with AgentSession:
             finishTurnCont(
               agentDef, resources, depth, parentRef,
               state.copy(execution = state.execution.copy(pendingMailQueueCount = 0)),
-              replyTo, newMessages, text, model, thinking, thinkingSignature, textAlreadyStreamed, isSubagent
+              replyTo, newMessages, text, model, thinking, thinkingSignature, textStreamed, isSubagent
             )
       yield result
     else
