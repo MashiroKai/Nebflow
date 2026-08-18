@@ -1,0 +1,212 @@
+// friendsApi.js — A2A friends/messaging REST adapter (friends-messaging-arch §6.1).
+//
+// Real mode: calls /api/* on the gateway origin (the Scala-side local proxy to
+// neblink-server is a phase-2a backend deliverable).
+//
+// Mock mode (explicit opt-in — mirrors the website HUB_API_MOCK precedent):
+//   localStorage 'fm_api_mock' = '1'   or   URL ?fmMock=1
+// Optional deterministic seed for tests:
+//   localStorage 'fm_api_mock_seed' = JSON {self, users, friends, incoming,
+//     outgoing, conversations, messages} — see normalizeSeed() for shapes.
+// Backend integration needs ZERO code changes: unset the flag and the same
+// calls hit real endpoints.
+
+import { getAuthToken } from './neblink.js';
+
+const MOCK = (() => {
+  try {
+    if (localStorage.getItem('fm_api_mock') === '1') return true;
+    return new URLSearchParams(location.search).has('fmMock');
+  } catch { return false; }
+})();
+
+export const FM_API_MOCK = MOCK;
+
+async function req(method, path, body) {
+  const resp = await fetch(path, {
+    method,
+    headers: {
+      'Authorization': `Bearer ${getAuthToken()}`,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!resp.ok) {
+    const err = /** @type {Error & {status?: number, data?: any}} */ (new Error(`${method} ${path} -> ${resp.status}`));
+    err.status = resp.status;
+    try { err.data = await resp.json(); } catch { /* no body */ }
+    throw err;
+  }
+  if (resp.status === 204) return {};
+  const text = await resp.text();
+  return text ? JSON.parse(text) : {};
+}
+
+// ── Mock store ───────────────────────────────────────────
+// In-memory per page load; seeded from localStorage so tests and manual
+// previews get deterministic scenarios.
+let M = null;
+
+function normalizeSeed(raw) {
+  const s = raw || {};
+  return {
+    self: s.self || { userId: 'me', neblinkId: 'me@example.com', name: 'Me', avatarUrl: '' },
+    // lookup directory: all users searchable by neblinkId (exact, case-insensitive)
+    users: s.users || [],
+    friends: s.friends || [],       // [{userId,neblinkId,name,avatarUrl,since}]
+    incoming: s.incoming || [],     // [{requestId,from:{userId,neblinkId,name,avatarUrl},note,status}]
+    outgoing: s.outgoing || [],     // [{requestId,to:{...},note,status}]
+    conversations: s.conversations || [], // [{conversationId,friend:{userId,neblinkId,name,avatarUrl},lastMessage,unreadCount}]
+    messages: s.messages || {},     // conversationId -> [{id,senderId,kind,body,createdAt,agentSent?}]
+    _msgSeq: 1000,
+    _reqSeq: 100,
+  };
+}
+
+function mockStore() {
+  if (M) return M;
+  let seed = null;
+  try {
+    const raw = localStorage.getItem('fm_api_mock_seed');
+    if (raw) seed = JSON.parse(raw);
+  } catch { /* fall through to default */ }
+  if (!seed) {
+    seed = {
+      users: [{ userId: 'u-lin', neblinkId: 'lin@example.com', name: '林小满', avatarUrl: '' }],
+      friends: [{ userId: 'u-lin', neblinkId: 'lin@example.com', name: '林小满', avatarUrl: '', since: new Date().toISOString() }],
+      conversations: [{
+        conversationId: 'c-lin',
+        friend: { userId: 'u-lin', neblinkId: 'lin@example.com', name: '林小满', avatarUrl: '' },
+        lastMessage: null,
+        unreadCount: 0,
+      }],
+      messages: { 'c-lin': [] },
+    };
+  }
+  M = normalizeSeed(seed);
+  return M;
+}
+
+function mockError(message, status) {
+  const e = /** @type {Error & {status?: number}} */ (new Error(message));
+  e.status = status;
+  return e;
+}
+
+const delay = () => new Promise(r => setTimeout(r, 30));
+
+// ── Public API (same surface in both modes) ─────────────
+
+/** GET /api/users/lookup?q= → {found, neblinkId?, name?, avatarUrl?, self?} */
+export async function lookupUser(q) {
+  if (!MOCK) return req('GET', `/api/users/lookup?q=${encodeURIComponent(q)}`);
+  await delay();
+  const m = mockStore();
+  const norm = String(q || '').trim().toLowerCase();
+  if (norm && norm === m.self.neblinkId.toLowerCase()) {
+    return { found: true, self: true, neblinkId: m.self.neblinkId, name: m.self.name, avatarUrl: m.self.avatarUrl };
+  }
+  const hit = m.users.find(u => u.neblinkId.toLowerCase() === norm);
+  return hit
+    ? { found: true, neblinkId: hit.neblinkId, name: hit.name, avatarUrl: hit.avatarUrl || '', userId: hit.userId }
+    : { found: false };
+}
+
+/** GET /api/friends → {friends, incoming, outgoing} */
+export async function getFriends() {
+  if (!MOCK) return req('GET', '/api/friends');
+  await delay();
+  const m = mockStore();
+  return { friends: [...m.friends], incoming: [...m.incoming], outgoing: [...m.outgoing] };
+}
+
+/** POST /api/friends/requests {query, note?} → {requestId} (201) */
+export async function sendFriendRequest(query, note) {
+  if (!MOCK) return req('POST', '/api/friends/requests', { query, ...(note ? { note } : {}) });
+  await delay();
+  const m = mockStore();
+  const norm = String(query || '').trim().toLowerCase();
+  const hit = m.users.find(u => u.neblinkId.toLowerCase() === norm);
+  if (!hit) throw mockError('not found', 404);
+  const requestId = 'rq-' + (++m._reqSeq);
+  m.outgoing.push({ requestId, to: { ...hit }, note: note || '', status: 'pending' });
+  return { requestId };
+}
+
+/** POST /api/friends/requests/{id}/accept → {friendshipId, conversationId} */
+export async function acceptFriendRequest(requestId) {
+  if (!MOCK) return req('POST', `/api/friends/requests/${encodeURIComponent(requestId)}/accept`);
+  await delay();
+  const m = mockStore();
+  const rq = m.incoming.find(r => r.requestId === requestId);
+  if (!rq) throw mockError('not found', 404);
+  rq.status = 'accepted';
+  const friend = { userId: rq.from.userId, neblinkId: rq.from.neblinkId, name: rq.from.name, avatarUrl: rq.from.avatarUrl || '', since: new Date().toISOString() };
+  m.friends.push(friend);
+  const conversationId = 'c-' + friend.userId;
+  if (!m.conversations.some(c => c.conversationId === conversationId)) {
+    m.conversations.unshift({ conversationId, friend, lastMessage: null, unreadCount: 0 });
+    m.messages[conversationId] = [];
+  }
+  return { friendshipId: 'fs-' + requestId, conversationId };
+}
+
+/** POST /api/friends/requests/{id}/decline → 200 */
+export async function declineFriendRequest(requestId) {
+  if (!MOCK) return req('POST', `/api/friends/requests/${encodeURIComponent(requestId)}/decline`);
+  await delay();
+  const m = mockStore();
+  const rq = m.incoming.find(r => r.requestId === requestId);
+  if (rq) rq.status = 'declined';
+  return {};
+}
+
+/** GET /api/conversations → [{conversationId, friend, lastMessage, unreadCount}] */
+export async function getConversations() {
+  if (!MOCK) return req('GET', '/api/conversations');
+  await delay();
+  return mockStore().conversations.map(c => ({ ...c }));
+}
+
+/** GET /api/conversations/{id}/messages → [{id,senderId,kind,body,createdAt,agentSent?}] ascending */
+export async function getMessages(conversationId) {
+  if (!MOCK) return req('GET', `/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=50`);
+  await delay();
+  return [...(mockStore().messages[conversationId] || [])];
+}
+
+/** POST /api/friends/{friendUserId}/messages {body} → {messageId, conversationId, createdAt} */
+export async function sendFriendMessage(friendUserId, body) {
+  if (!MOCK) return req('POST', `/api/friends/${encodeURIComponent(friendUserId)}/messages`, { body });
+  await delay();
+  const m = mockStore();
+  const friend = m.friends.find(f => f.userId === friendUserId);
+  if (!friend) throw mockError('not a friend', 403);
+  let conv = m.conversations.find(c => c.friend.userId === friendUserId);
+  if (!conv) {
+    conv = { conversationId: 'c-' + friendUserId, friend, lastMessage: null, unreadCount: 0 };
+    m.conversations.unshift(conv);
+    m.messages[conv.conversationId] = [];
+  }
+  const msg = { id: 'm-' + (++m._msgSeq), senderId: m.self.userId, kind: 'text', body, createdAt: new Date().toISOString() };
+  m.messages[conv.conversationId].push(msg);
+  conv.lastMessage = msg;
+  return { messageId: msg.id, conversationId: conv.conversationId, createdAt: msg.createdAt };
+}
+
+/** POST /api/conversations/{id}/read {lastReadMessageId} → 200 */
+export async function markConversationRead(conversationId, lastReadMessageId) {
+  if (!MOCK) { await req('POST', `/api/conversations/${encodeURIComponent(conversationId)}/read`, { lastReadMessageId }); return; }
+  await delay();
+  const conv = mockStore().conversations.find(c => c.conversationId === conversationId);
+  if (conv) conv.unreadCount = 0;
+}
+
+/** Test/mock helper: inject an inbound message as if a friend_event arrived. */
+export function mockInjectMessage(conversationId, msg) {
+  const m = mockStore();
+  const conv = m.conversations.find(c => c.conversationId === conversationId);
+  if (!conv) return;
+  (m.messages[conversationId] = m.messages[conversationId] || []).push(msg);
+  conv.lastMessage = msg;
+}

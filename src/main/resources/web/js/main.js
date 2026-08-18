@@ -66,6 +66,8 @@ import { handleFlowAgentHistory, openStepPopup as openFlowStepPopup } from './fl
 import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
 import { initNeblink } from './neblink.js';
 import { initDropbox } from './dropbox.js';
+import { initContacts } from './contacts.js';
+import { initMessages } from './messages.js';
 import { formatLiveDuration } from './chat.js';
 import * as planMode from './planMode.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
@@ -2445,6 +2447,8 @@ initDaemons();
 initChatSearch();
 initNeblink();
 initDropbox();
+initContacts();
+initMessages();
 planMode.init();
 
 // Preload Monaco Editor during idle time so first file open is instant.
