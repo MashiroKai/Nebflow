@@ -145,6 +145,9 @@ object LlmInterface:
                         if !effectiveVision && hasImage(req.messages) then stripImages(req.messages)
                         else req.messages
                       adapter <- registry.getAdapter(candidate.providerId)
+                      // P0 concurrency gate: queue for a permit before firing
+                      // (Transient on timeout — falls back to next provider).
+                      permit <- registry.getGate(candidate.providerId).flatMap(_.acquire)
                       resp <- adapter.sendMessage(
                         SendMessageParams(
                           effectiveMessages,
@@ -157,7 +160,7 @@ object LlmInterface:
                           Some(req.sessionId),
                           Some(req.agentId)
                         )
-                      )
+                      ).guarantee(permit.release)
                       // On success, clear the empty-completion counter.
                       // Oscillation fix: only an image-bearing success lifts
                       // a vision=false override; after stripImages the
@@ -323,6 +326,9 @@ object LlmInterface:
                                       effectiveMessages =
                                         if !effectiveVision && hasImage(msgs) then stripImages(msgs) else msgs
                                       adapter <- registry.getAdapter(candidate.providerId)
+                                      // P0 concurrency gate: queue for a permit before
+                                      // opening the stream; released when the stream ends.
+                                      permit <- registry.getGate(candidate.providerId).flatMap(_.acquire)
                                     yield adapter.sendMessageStream(
                                       SendMessageParams(
                                         effectiveMessages,
@@ -335,7 +341,8 @@ object LlmInterface:
                                         Some(req.sessionId),
                                         Some(req.agentId)
                                       )
-                                    ))
+                                    ).onFinalize(permit.release)
+                                    )
                                   )
                                   (stream
                                     // Per-provider two-phase watchdog: detects both
@@ -405,6 +412,35 @@ object LlmInterface:
                                         }
                                       )
                                       .drain)
+                                    // QueueTimeout (P0 concurrency gate): provider is BUSY
+                                    // (gate saturated), not down — skip to the next provider
+                                    // without retry, markDown, or the all-Down gate loop
+                                    // (re-queueing would just wait again). Exhausted chain
+                                    // raises so the agent-level llm-fail retry (bounded) fires.
+                                    .handleErrorWith { err =>
+                                      if err.isInstanceOf[QueueTimeout] then
+                                        val attempt = FallbackAttempt(
+                                          candidate.providerId,
+                                          candidate.model,
+                                          Some(FailoverReason.RateLimit),
+                                          Some(ErrorPermanence.Transient),
+                                          0,
+                                          maxRetries - retriesLeft,
+                                          java.time.Instant.now().toString,
+                                          Option(err.getMessage)
+                                        )
+                                        val notify = onAttempt.traverse_(_.apply(attempt))
+                                        fs2.Stream.eval(
+                                          failureRef.update(_ :+ attempt) *> notify *> logger.warn(
+                                            s"Stream queue timeout: ${candidate.providerId}/${candidate.model} — skipping to next provider"
+                                          )
+                                        ) *>
+                                          (rest match
+                                            case Nil =>
+                                              fs2.Stream.raiseError[IO](new FallbackExhaustedError(List(attempt)))
+                                            case _ => tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs))
+                                      else fs2.Stream.raiseError[IO](err)
+                                    }
                                     // PostEmptyRecovery: if empty completion with images on non-vision model,
                                     // strip images and retry same candidate before falling through to normal error handling.
                                     .handleErrorWith { err =>

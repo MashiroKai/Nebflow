@@ -71,6 +71,10 @@ object Fallback:
         ErrorClassification(reason, permanence, Some(c), Some(error.getMessage))
       case e: AllProvidersDownTimeout =>
         ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(e.getMessage))
+      case e: QueueTimeout =>
+        // Provider is BUSY, not down: classify Transient so the chain moves to
+        // the next provider, and let the call sites skip retry/markDown for it.
+        ErrorClassification(FailoverReason.RateLimit, ErrorPermanence.Transient, message = Some(e.getMessage))
       case _: java.util.concurrent.TimeoutException =>
         ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Permanent, message = Some("timeout"))
       case _ =>
@@ -168,7 +172,14 @@ object Fallback:
           onAttempt.traverse_(_.apply(failAttempt))
           val allFailures = priorFailures :+ failAttempt
 
-          val notifyExhausted = onProviderExhausted.traverse_(_.apply(candidate))
+          // QueueTimeout = provider busy, not down: skip markDown (it would
+          // freeze the provider out for a probe cycle for no fault of its own)
+          // and skip the same-provider retry (re-queueing would just wait
+          // again) — fall straight through to the next provider.
+          val isQueueTimeout = error.isInstanceOf[QueueTimeout]
+          val notifyExhausted =
+            if isQueueTimeout then IO.unit
+            else onProviderExhausted.traverse_(_.apply(candidate))
 
           classification.permanence match
             case ErrorPermanence.Fatal =>
@@ -177,7 +188,7 @@ object Fallback:
             case ErrorPermanence.Permanent =>
               notifyExhausted *> fallback(allFailures)
             case ErrorPermanence.Transient =>
-              if retriesLeft > 0 then
+              if retriesLeft > 0 && !isQueueTimeout then
                 val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
                 val delay = math.min(backoffMs + jitter, MaxBackoffMs)
                 IO.sleep(delay.millis) *>
