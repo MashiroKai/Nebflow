@@ -1359,6 +1359,16 @@ class WebSocketRoutes(
               val task =
                 nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath, crRepeat)
               sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
+                // Creation audit trail: without this line a lost WS create (fire-and-forget
+                // client, no ack retry) is indistinguishable from a persistence failure —
+                // see the 2026-08-17 P0 where the file was never written and no server-side
+                // trace existed to separate "message never arrived" from "arrived and broke".
+                // NOTE: infoSync/warnSync — the IO-returning info/warn would be discarded
+                // as bare statements (effect never runs).
+                logger.infoSync(
+                  s"Scheduled task created: ${task.id} session=${task.sessionId} " +
+                    s"triggerAt=${task.triggerAt} content=${task.content.take(40)}"
+                )
                 sharedResources.scheduledTaskService.foreach(_.notifyTaskChange())
                 wsSend(
                   io.circe.Json.obj(
@@ -1380,8 +1390,20 @@ class WebSocketRoutes(
                 else if crContent.isEmpty then "missing content"
                 else if crTriggerAt <= System.currentTimeMillis() then "triggerAt must be in the future"
                 else "unknown"
+              // Rejections must be loud: the client treats creates as fire-and-forget with
+              // an optimistic row, so a silent reject reads as "task set" until it never
+              // fires. Log it, and tag the error with the originating msgType so the
+              // frontend can route it back to the scheduled-task panel.
+              logger.warnSync(
+                s"Rejected createScheduledTask: $reason (session=$crSessionId " +
+                  s"triggerAt=$crTriggerAt content=${crContent.take(40)})"
+              )
               wsSend(
-                io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid scheduled task: $reason".asJson)
+                io.circe.Json.obj(
+                  "type" -> "error".asJson,
+                  "msgType" -> "createScheduledTask".asJson,
+                  "message" -> s"Invalid scheduled task: $reason".asJson
+                )
               )
             end if
 
