@@ -864,7 +864,8 @@ object AgentActor extends AgentCore with AgentSession:
               AgentStreamEvent.UsageUpdate(
                 effectiveTokens,
                 updatedState.contextWindow,
-                CompactThreshold.thresholdRatio(updatedState.contextWindow)
+                CompactThreshold.thresholdRatio(updatedState.contextWindow),
+                updatedState.latestUsage.flatMap(u => Option.when(u.outputTokens > 0)(u.outputTokens))
               ),
               isSubagent = isSubagent,
               state.sessionId
@@ -2158,7 +2159,8 @@ object AgentActor extends AgentCore with AgentSession:
         model.orElse(state.lastModel),
         contextWindow = Some(state.contextWindow),
         inputTokens = Some(effectiveInputTokens),
-        compactThreshold = Some(CompactThreshold.thresholdRatio(state.contextWindow))
+        compactThreshold = Some(CompactThreshold.thresholdRatio(state.contextWindow)),
+        outputTokens = state.latestUsage.flatMap(u => Option.when(u.outputTokens > 0)(u.outputTokens))
       )
       val emitDoneIO =
         if isSubagent then
