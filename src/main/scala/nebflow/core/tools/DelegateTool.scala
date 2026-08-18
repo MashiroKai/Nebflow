@@ -382,7 +382,7 @@ $prompt"""
       adapterRef <- system.spawn(
         BackoffSupervisor(
           childRef = subagentRef,
-          childSpawnFn = (sys: ActorSystem) =>
+          childSpawnFn = (sys: ActorSystem, recoveredMessages: List[Message]) =>
             sys.spawn(
               AgentActor(
                 agentDef = agentDef,
@@ -392,7 +392,7 @@ $prompt"""
                 parentRef = parentRef,
                 sessionId = Some(subagentId),
                 sessionName = Some(description),
-                initialMessages = initialMessages,
+                initialMessages = if recoveredMessages.nonEmpty then recoveredMessages else initialMessages,
                 contextWindow = resources.contextWindow,
                 projectRoot = Some(projectRoot),
                 safetyMode = safetyMode,

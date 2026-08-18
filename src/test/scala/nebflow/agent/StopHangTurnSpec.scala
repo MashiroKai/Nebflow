@@ -124,7 +124,7 @@ class StopHangTurnSpec extends CatsEffectSuite:
         _ <- system.spawn(
           BackoffSupervisor(
             childRef = childRef,
-            childSpawnFn = (sys: ActorSystem) =>
+            childSpawnFn = (sys: ActorSystem, _) =>
               sys.spawn(
                 AgentActor(
                   agentDef = nebulaDef,

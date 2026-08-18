@@ -34,7 +34,9 @@ object BackoffSupervisor:
 
   /**
    * @param childRef    the pre-spawned child actor (initial spawn done by caller)
-   * @param childSpawnFn used to re-spawn the child on restart
+   * @param childSpawnFn used to re-spawn the child on restart; receives the
+   *                     recovered messages (if any) so the child can resume
+   *                     from the crash checkpoint instead of starting fresh
    * @param childName   child actor name (for logging)
    * @param parentRef   parent agent to notify on completion / failure
    * @param description human-readable task description
@@ -44,14 +46,16 @@ object BackoffSupervisor:
    *                        SubAgentTaskStore keys task files by it; must match
    *                        the id used at recordTask time or status updates
    *                        silently write nowhere
-   * @param resources   shared resources (for agentRegistry cleanup)
-   * @param initialPrompt the original prompt to re-inject after restart
+   * @param resources   shared resources (for agentRegistry cleanup + session
+   *                    store to recover persisted messages on restart)
+   * @param initialPrompt the original prompt to re-inject after restart (used
+   *                      as fallback when no persisted messages are found)
    * @param source       ExternalEvent source string ("delegate" or "subtask")
    * @param extraMetadata extra metadata for ExternalEvent (e.g. "kind" -> "SubTask")
    */
   def apply(
     childRef: ActorRef[AgentCommand],
-    childSpawnFn: ActorSystem => IO[ActorRef[AgentCommand]],
+    childSpawnFn: (ActorSystem, List[Message]) => IO[ActorRef[AgentCommand]],
     childName: String,
     parentRef: Option[ActorRef[AgentCommand]],
     description: String,
@@ -98,7 +102,7 @@ object BackoffSupervisor:
   /** Active state: forwards completion/failure to parent, restarts on Terminated. */
   private def active(
     childRef: ActorRef[AgentCommand],
-    childSpawnFn: ActorSystem => IO[ActorRef[AgentCommand]],
+    childSpawnFn: (ActorSystem, List[Message]) => IO[ActorRef[AgentCommand]],
     childName: String,
     parentRef: Option[ActorRef[AgentCommand]],
     description: String,
@@ -200,11 +204,33 @@ object BackoffSupervisor:
                   .handleErrorWith(e => logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}"))
                 _ <- IO.sleep(delay.millis)
                 _ <- resources.agentRegistry.update(_ - subagentId)
-                newChild <- childSpawnFn(ctx.system)
+                // Crash recovery: load persisted messages from the session store
+                // so the child can resume from where it left off (断点续跑).
+                // If no messages are found (e.g. first turn crashed before any
+                // persist), fall back to re-injecting the original prompt.
+                recoveredMessages <- resources.sessionStore
+                  .loadMessagesForSession(subagentId)
+                  .handleErrorWith(e =>
+                    logger.warn(s"BackoffSupervisor: failed to load messages for $subagentId: ${e.getMessage}").as(Nil)
+                  )
+                newChild <- childSpawnFn(ctx.system, recoveredMessages)
                 _ <- ctx.watch(newChild)
-                // Re-inject original prompt with self as replyTo
-                _ <- newChild ! AgentCommand.UserInput(initialPrompt, Some(ctx.self))
-                _ <- logger.info(s"BackoffSupervisor: respawned $childName, re-injected prompt")
+                // If we recovered messages, send a "continue" instruction so the
+                // child picks up where it left off. Otherwise re-inject the
+                // original prompt (fresh start fallback).
+                _ <- if recoveredMessages.nonEmpty then
+                  newChild ! AgentCommand.UserInput(
+                    "[system] Your previous turn was interrupted by a crash. " +
+                      "Please continue your task from where you left off.",
+                    Some(ctx.self)
+                  )
+                else
+                  newChild ! AgentCommand.UserInput(initialPrompt, Some(ctx.self))
+                _ <- logger.info(
+                  s"BackoffSupervisor: respawned $childName, " +
+                    s"recovered ${recoveredMessages.size} messages" +
+                    (if recoveredMessages.nonEmpty then " (resuming from checkpoint)" else " (re-injected original prompt)")
+                )
               yield active(
                 newChild,
                 childSpawnFn,

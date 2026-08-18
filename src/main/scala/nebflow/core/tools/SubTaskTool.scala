@@ -251,7 +251,7 @@ A task with 2+ independent parts — different file domains, or different nature
       adapterRef <- system.spawn(
         BackoffSupervisor(
           childRef = workerRef,
-          childSpawnFn = (sys: ActorSystem) =>
+          childSpawnFn = (sys: ActorSystem, recoveredMessages: List[Message]) =>
             sys.spawn(
               AgentActor(
                 agentDef = agentDef,
@@ -261,7 +261,7 @@ A task with 2+ independent parts — different file domains, or different nature
                 parentRef = parentRef,
                 sessionId = Some(subtaskId),
                 sessionName = Some(description),
-                initialMessages = Nil,
+                initialMessages = if recoveredMessages.nonEmpty then recoveredMessages else Nil,
                 contextWindow = resources.contextWindow,
                 projectRoot = Some(projectRoot),
                 safetyMode = safetyMode,
