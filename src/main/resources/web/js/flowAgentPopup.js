@@ -288,6 +288,21 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
         <span class="flow-agent-ctx" id="flow-agent-ctx"></span>
         <div class="flow-agent-close" id="flow-agent-close">✕</div>
       </div>
+      <div class="flow-agent-input-area" id="flow-input-area">
+        <div id="flow-slash-dropdown" class="slash-dropdown"></div>
+        <div id="flow-queue-bar"></div>
+        <div class="fa-input-bar" id="flow-input-bar">
+          <button class="glass-control fa-icon-btn" id="flow-attach-btn" title="Attach file">
+            <i data-lucide="paperclip"></i>
+          </button>
+          <div class="fa-input-wrap">
+            <div id="flow-attachment-preview" class="attachment-preview"></div>
+            <textarea id="flow-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
+          </div>
+          <button class="glass-control" id="flow-send-btn" title="Send"><i data-lucide="send"></i></button>
+          <button class="glass-control" id="flow-stop-btn" title="Stop" style="display:none"><i data-lucide="square"></i></button>
+        </div>
+      </div>
       <div class="flow-agent-footer" id="flow-agent-footer">
         <span class="fa-status-dot"></span>
         <span class="fa-task">${esc(entry.meta.task || 'Session')}</span>
@@ -303,11 +318,54 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   mountEl.appendChild(popupOverlay);
 
   // Move the pre-rendered container from hidden root into the modal,
-  // inserting it BEFORE the footer so the layout is header / chat / footer.
+  // inserting it BEFORE the input area so the layout is header / chat / input / footer.
   const modal = popupOverlay.querySelector('.flow-agent-modal');
   const footer = popupOverlay.querySelector('#flow-agent-footer');
-  modal.insertBefore(entry.container, footer);
+  const inputArea = popupOverlay.querySelector('#flow-input-area');
+  modal.insertBefore(entry.container, inputArea);
   entry.footerEl = footer;
+
+  // Wire view.dom to real input elements so initInput() can bind events
+  const v = entry.view;
+  v.dom.input = popupOverlay.querySelector('#flow-input');
+  v.dom.sendBtn = popupOverlay.querySelector('#flow-send-btn');
+  v.dom.stopBtn = popupOverlay.querySelector('#flow-stop-btn');
+  v.dom.attachBtn = popupOverlay.querySelector('#flow-attach-btn');
+  v.dom.attPreview = popupOverlay.querySelector('#flow-attachment-preview');
+  v.dom.slashDropdown = popupOverlay.querySelector('#flow-slash-dropdown');
+  v.dom.queueBar = popupOverlay.querySelector('#flow-queue-bar');
+  // Voice elements — create dummy elements so initInput doesn't crash on null
+  v.dom.voiceBtn = document.createElement('button');
+  v.dom.voiceOverlay = document.createElement('div');
+  v.dom.voiceText = document.createElement('div');
+  v.dom.voiceBtn.style.display = 'none';
+
+  // Disable input if no sessionId (can't route messages)
+  if (!nodeSessionId) {
+    v.dom.input.readOnly = true;
+    v.dom.input.placeholder = 'Agent not running — cannot send messages';
+    v.dom.sendBtn.disabled = true;
+    v.dom.attachBtn.disabled = true;
+    v.dom.sendBtn.style.opacity = '0.4';
+    v.dom.attachBtn.style.opacity = '0.4';
+  } else if (!v._inputBound) {
+    // Bind input events (idempotent — only once per view)
+    v._inputBound = true;
+    import('./input.js').then(({ initInput }) => {
+      import('./chat.js').then(({ refreshSendButtonState }) => {
+        setActiveView(v);
+        initInput(v);
+        refreshSendButtonState();
+      });
+    });
+  }
+
+  // Render lucide icons for the new input-area buttons
+  import('./utils.js').then(({ createIconsIn }) => {
+    createIconsIn(popupOverlay.querySelector('#flow-input-area'));
+  });
+
+  syncInputButtons(entry);
 
   // Sync footer with any meta captured before opening
   updateFooterStatus(entry);
@@ -582,6 +640,15 @@ function updateFooterStatus(entry) {
       : 'Session';
     taskEl.textContent = label;
   }
+  syncInputButtons(entry);
+}
+
+/** Toggle send/stop button visibility based on agent busy state. */
+function syncInputButtons(entry) {
+  if (!entry.view.dom.sendBtn || !entry.view.dom.stopBtn) return;
+  const busy = entry.meta.status === 'running';
+  entry.view.dom.sendBtn.style.display = busy ? 'none' : 'flex';
+  entry.view.dom.stopBtn.style.display = busy ? 'flex' : 'none';
 }
 
 // ── Utils ────────────────────────────────────────────────
