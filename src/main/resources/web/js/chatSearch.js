@@ -3,12 +3,12 @@
 // Header button (or Cmd/Ctrl+F) opens a centered modal (no dimming backdrop,
 // no blur). v3.1 information architecture on top of the v2.1 contract:
 //   - Opens straight into a browse stream of recent messages (no idle hint).
-//   - Category tabs (All / Images / Files / Card) filter orthogonally with
+//   - Category tabs (All / Images / Files / Pop) filter orthogonally with
 //     scope; switching tabs keeps the keyword and re-runs.
 //   - Date is an ANCHOR, not a filter: the calendar popover stages a single
 //     day, OK applies it as a scroll anchor and the list loads
 //     bidirectionally around it (before/after cursor pages, seamless across
-//     days). Card tab disables the date anchor (tool messages carry no ts).
+//     days). Pop tab disables the date anchor (tool messages carry no ts).
 //   - Esc is three-stage: calendar popover > keyword > close.
 //
 // Data model (spec §6.3):
@@ -32,6 +32,7 @@ import state from './state.js';
 import { key } from './branding.js';
 import { chatViews } from './chatView.js';
 import { switchToSession } from './sidebar.js';
+import { sendWs } from './ws.js';
 import { t, getLocale } from './i18n.js';
 import { escapeHtml } from './utils.js';
 
@@ -43,8 +44,8 @@ const FETCH_CONCURRENCY = 4;
 const DEBOUNCE_MS = 300;
 const PAGE_JUMP = 5;
 
-const CONTENT_TABS = ['all', 'images', 'files', 'cards'];
-const TAB_I18N = { all: 'search.tabAll', images: 'search.tabImages', files: 'search.tabFiles', cards: 'search.tabCards' };
+const CONTENT_TABS = ['all', 'images', 'files', 'pop'];
+const TAB_I18N = { all: 'search.tabAll', images: 'search.tabImages', files: 'search.tabFiles', pop: 'search.tabPop' };
 
 let initialized = false;
 let lastResults = [];        // loaded window items in display order
@@ -57,7 +58,7 @@ let searchAbort = null;      // AbortController for the in-flight search
 let debounceTimer = 0;
 
 // ── v3.1 view state ────────────────────────────────────────
-let currentTab = 'all';      // 'all' | 'images' | 'files' | 'cards'
+let currentTab = 'all';      // 'all' | 'images' | 'files' | 'pop'
 /** @type {{y:number, m0:number, d:number}|null} applied date anchor (local) */
 let anchorDate = null;
 let calOpen = false;
@@ -119,7 +120,7 @@ export function initChatSearch() {
   document.getElementById('search-tab-date')?.addEventListener('click', (e) => {
     if (!(e.target instanceof Element)) return;
     if (e.target.closest('.search-date-clear')) { e.stopPropagation(); clearAnchor(); return; }
-    if (currentTab === 'cards') return;   // aria-disabled: anchor is meaningless for ts=0 cards
+    if (currentTab === 'pop') return;   // aria-disabled: anchor is meaningless for ts=0 tool messages
     toggleCalendar();
   });
 
@@ -296,7 +297,7 @@ function syncTabsUI() {
     el.setAttribute('aria-selected', active ? 'true' : 'false');
   }
   // Tool select is a fine filter under All; mutually exclusive with the
-  // typed categories (images/files/cards), so disable it there.
+  // typed categories (images/files/pop), so disable it there.
   const toolSel = selectById('search-tool');
   if (toolSel) {
     const disabled = currentTab !== 'all';
@@ -304,12 +305,12 @@ function syncTabsUI() {
     toolSel.setAttribute('aria-disabled', disabled ? 'true' : 'false');
     toolSel.title = disabled ? t('search.toolDisabledHint') : '';
   }
-  // Date anchor is meaningless in the Card tab (tool messages carry ts=0).
+  // Date anchor is meaningless in the Pop tab (tool messages carry ts=0).
   const dateTab = document.getElementById('search-tab-date');
   if (dateTab) {
-    const dateDisabled = currentTab === 'cards';
+    const dateDisabled = currentTab === 'pop';
     dateTab.setAttribute('aria-disabled', dateDisabled ? 'true' : 'false');
-    dateTab.title = dateDisabled ? t('search.dateDisabledInCards') : '';
+    dateTab.title = dateDisabled ? t('search.dateDisabledInPop') : '';
     dateTab.classList.toggle('active', !!anchorDate);
     dateTab.setAttribute('aria-selected', anchorDate ? 'true' : 'false');
     dateTab.setAttribute('aria-expanded', calOpen ? 'true' : 'false');
@@ -791,7 +792,13 @@ function matchesTab(m) {
   switch (currentTab) {
     case 'images': return m.attachments.some(a => a.type === 'image');
     case 'files': return m.attachments.some(a => a.type !== 'image');
-    case 'cards': return m.kind === 'tool' && cleanToolName(m.tool) === 'Card';
+    // Pop tool messages (Canvas 展示); legacy 'Card' labels kept for history
+    // recorded before the tool rename.
+    case 'pop': {
+      if (m.kind !== 'tool') return false;
+      const n = cleanToolName(m.tool);
+      return n === 'Pop' || n === 'Card';
+    }
     default: return true;
   }
 }
@@ -1381,32 +1388,77 @@ function formatTime(ts) {
 // markdown formatting (**bold**, `code`, list bullets) doesn't break the match.
 const stripForMatch = (s) => (s || '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
 
+// ── Jump-to-message ────────────────────────────────────────
+// The chat view initially renders only the newest 50 messages and pages older
+// history on scroll-to-top, so a search hit can sit far outside the loaded
+// window — a pure DOM scan fails "most of the time" (2026-08-18 user report).
+// scrollToMessage therefore drives the same WS pagination the scroll listener
+// uses: while the target is unmatched and the view has older pages, request
+// them (50 at a time) and retry, up to JUMP_MAX_PAGES / JUMP_DEADLINE_MS.
+const JUMP_TICK_MS = 250;
+const JUMP_MAX_PAGES = 40;        // 40 × 50 = 2000 messages of lookback
+const JUMP_DEADLINE_MS = 25000;   // overall budget
+
 function jumpToResult(res) {
   closeSearchModal();
   switchToSession(res.sessionId);
-  scrollToMessage(res, 0);
+  scrollToMessage(res, { pages: 0, start: Date.now(), settleTicks: 0 });
 }
 
-function scrollToMessage(res, attempt) {
-  const chat = chatViews.primary?.dom?.chat;
+/** @param {HTMLElement} el */
+function flashRow(el) {
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.add('search-hit-flash');
+  setTimeout(() => el.classList.remove('search-hit-flash'), 1800);
+}
+
+/**
+ * @param {any} res search result ({sessionId, text, ts})
+ * @param {{pages:number, start:number, settleTicks:number}} st jump state
+ */
+function scrollToMessage(res, st) {
+  const pv = chatViews.primary;
+  const chat = pv?.dom?.chat;
   if (!chat) return;
+  // User navigated away mid-jump — abort silently.
+  if (state.activeSessionId !== res.sessionId) return;
+
+  // 1. Text-snippet match (primary, human-meaningful).
   const snippet = stripForMatch(res.text).slice(0, 40);
   if (snippet.length >= 4) {
     const rows = chat.querySelectorAll('.row, .tool-card');
     for (const el of rows) {
-      if (stripForMatch(el.textContent).includes(snippet)) {
-        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        el.classList.add('search-hit-flash');
-        setTimeout(() => el.classList.remove('search-hit-flash'), 1800);
-        return;
-      }
+      if (stripForMatch(el.textContent).includes(snippet)) { flashRow(el); return; }
     }
   }
-  // History loads asynchronously after the session switch — retry briefly.
-  if (attempt < 12) {
-    setTimeout(() => scrollToMessage(res, attempt + 1), 250);
-  } else {
-    (/** @type {any} */ (window)).__showToast?.(t('search.jumpFailed'), 'error');  }
+  // 2. Exact-timestamp fallback — covers image-only / very short messages
+  //    whose stripped snippet is under 4 chars (the duration badge carries
+  //    data-ts epoch ms). Tool/agent/ask rows normalize to ts=0 and skip.
+  if (res.ts) {
+    const badge = chat.querySelector(`[data-ts="${res.ts}"]`);
+    const row = badge?.closest('.row, .tool-card');
+    if (row) { flashRow(row); return; }
+  }
+
+  // 3. Not in the loaded window — page older history in and retry.
+  const p = pv.pagination;
+  const expired = Date.now() - st.start > JUMP_DEADLINE_MS;
+  if (!expired && p && !p.pendingInitialLoad && !p.loading && p.hasMore && p.offset > 0 && st.pages < JUMP_MAX_PAGES) {
+    p.loading = true;
+    st.pages++;
+    sendWs({ type: 'getHistory', sessionId: res.sessionId, limit: 50, beforeIndex: p.offset });
+  } else if (!expired && p && !p.pendingInitialLoad && !p.loading && !p.hasMore) {
+    // History fully loaded and still no match — allow a few settle ticks for
+    // deferred markdown rendering, then give up.
+    if (++st.settleTicks > 4) {
+      (/** @type {any} */ (window)).__showToast?.(t('search.jumpFailed'), 'error');
+      return;
+    }
+  } else if (expired) {
+    (/** @type {any} */ (window)).__showToast?.(t('search.jumpFailed'), 'error');
+    return;
+  }
+  setTimeout(() => scrollToMessage(res, st), JUMP_TICK_MS);
 }
 
 // Re-apply labels when the locale changes while the modal is open.
