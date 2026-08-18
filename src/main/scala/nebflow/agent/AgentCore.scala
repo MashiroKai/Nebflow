@@ -389,6 +389,9 @@ private[agent] trait AgentCore:
             isUserTurn,
             resources.scheduledTaskStore,
             stateForLlm.sessionId,
+            // Current-tasks aggregation goes to the root agent (Nebula, depth
+            // 0) only — team members/workers don't need the global task list.
+            isRoot = depth == 0,
             deviceInfo = changeDevices,
             sessionsText = changeSessions,
             taskListText = taskListText,
@@ -492,10 +495,11 @@ private[agent] trait AgentCore:
           // Synchronously update gitBranch in state — no async message
           stateWithBranch = stateWithReminder.withGitBranch(turnCtx.currentBranch)
           _ <- ctx.forkTurn(
-            // ── Token 止损（2026-08-18 事故）：per-turn LLM 请求预算 ──
-            // 同 turn 内 LLM 请求总数（含重试）超限 → 抛 TurnBudgetExceeded
-            // （Permanent 分类，llm-fail-retry 不会再触发）→ 下方 .attempt
-            // 捕获后发 LlmFailed，turn 快速失败并给用户明确原因。
+            // ── Token 止损（2026-08-18 事故，方案 C）：per-turn LLM 重试预算 ──
+            // 同 turn 内失败重试次数（仅 LlmFailed 分支递增；正常工具循环的
+            // 成功调用不计）超限 → 抛 TurnBudgetExceeded（Permanent 分类，
+            // llm-fail-retry 不会再触发）→ 下方 .attempt 捕获后发 LlmFailed，
+            // turn 快速失败并给用户明确原因。
             IO.raiseWhen(stateForLlm.execution.llmCallsThisTurn >= Fallback.MaxTurnLlmCalls)(
               new TurnBudgetExceeded(
                 turnId,
@@ -566,9 +570,9 @@ private[agent] trait AgentCore:
              stateWithBranch.withLastMaintenanceDelegateCount(stateWithReminder.delegateCount)
            else stateWithBranch)
             .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
-            // Token 止损：本次 LLM 请求计数 +1（含重试——重试走 LlmFailed 分支
-            // 重新 pipeLlmCall 时该 state 已带递增计数，预算按 turn 累计）。
-            .withLlmCallsThisTurn(stateWithBranch.llmCallsThisTurn + 1)
+            // 方案 C（2026-08-18 误杀修复）：成功调用不计入预算——llmCallsThisTurn
+            // 仅在 AgentActor 的 LlmFailed 重试分支递增，正常工具循环（读→改→
+            // 编译→再改）每次成功继续调用都不再 +1。
         )
 
         end for
