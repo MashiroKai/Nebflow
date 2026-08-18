@@ -391,6 +391,8 @@ export default {
   'task.tomorrow': 'Tomorrow',
   'task.yesterday': 'Yesterday',
   'task.lastTriggered': 'Last triggered',
+  'task.queuedOffline': 'Connection lost — task queued and will be saved on reconnect',
+  'task.createFailed': 'Failed to create scheduled task',
 
   // NebLink
   'neblink.title': 'Device Link',
