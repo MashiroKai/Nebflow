@@ -38,7 +38,8 @@ import {
   deleteSession, formatSessionTime, setSessionAttention,
   initHeaderModelInfo,
   persistUnread, createNewFolder, getCurrentFolderId,
-  resetChatForActiveSession
+  resetChatForActiveSession,
+  computeAgentStates
 } from './sidebar.js';
 import { initOnboarding } from './onboarding.js';
 import {
@@ -2504,6 +2505,8 @@ onReconnect(() => {
   // Sync background sub-agent state — agentStart events are not replayed
   // after a page refresh, so the indicator count would be lost without this
   sendWs({ type: 'getActiveAgents' });
+  // Re-fetch session list — sessions may have been created/removed during disconnect
+  sendWs({ type: 'listSessions' });
 });
 
 // ---------- Reconnect: sync background tasks ----------
@@ -2544,7 +2547,9 @@ onMessage('activeBgTasks', (msg) => {
 // finished (the backend registry no longer tracks it).
 onMessage('activeAgents', (msg) => {
   const agents = msg.agents || [];
+  // Rebuild sessionBgAgents from backend truth
   state.sessionBgAgents = {};
+  const activeRootSessions = new Set();
   for (const a of agents) {
     const sid = a.rootSessionId || a.sessionId;
     if (!sid || !a.agentId) continue;
@@ -2556,8 +2561,21 @@ onMessage('activeAgents', (msg) => {
       currentTool: null,
       done: false,
     };
+    activeRootSessions.add(sid);
+  }
+  // Sync busySessionIds: clear sessions that are no longer active on the backend.
+  // A 'done' event missed during WS disconnect leaves the session stuck as busy
+  // forever — the agent panel shows "running" even though the agent finished.
+  // The active primary session is exempt (its busy state is managed by the
+  // streaming pipeline: setBusy on textDelta, clearBusy on done/error).
+  for (const sid of [...state.busySessionIds]) {
+    if (sid !== state.activeSessionId && !activeRootSessions.has(sid)) {
+      clearBusy(sid);
+    }
   }
   if (activeView) updateBgAgentIndicator();
+  // Recompute agent nav states — the visual indicator depends on busySessionIds
+  computeAgentStates();
 });
 
 // Scroll listener (primary window)
