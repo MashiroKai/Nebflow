@@ -93,4 +93,24 @@ object Defaults:
 
   /** Preview size in characters for persisted tool results. */
   val ToolResultPreviewSize: Int = 2048
+
+  // ---- Concurrency gate (P0 API 并发管理) ----
+
+  /**
+   * Default per-provider LLM concurrency limit (requests in flight at once).
+   * Mainstream API free/common tiers allow >= 3 concurrent requests; 3 is a
+   * safe floor that keeps 7-parallel-Delegate bursts from slamming the API.
+   * `maxConcurrency: 0` in config means unlimited.
+   */
+  val LlmMaxConcurrencyDefault: Int = 3
+
+  /**
+   * Default queue timeout for a concurrency-gated LLM request. When the
+   * provider's gate is saturated, the request waits up to this long for a
+   * permit, then fails as Transient and falls back to the next provider.
+   */
+  val LlmQueueTimeoutMs: Long = 60_000L
+
+  /** RPM sliding-window width (seconds) for the per-provider rate limiter. */
+  val LlmRpmWindowSec: Int = 60
 end Defaults
