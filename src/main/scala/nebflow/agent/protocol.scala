@@ -220,7 +220,25 @@ case class AgentRecord(
   ref: ActorRef[AgentCommand],
   kind: AgentKind,
   rootSessionId: String,
-  parentRef: Option[ActorRef[AgentCommand]] = None
+  parentRef: Option[ActorRef[AgentCommand]] = None,
+  /**
+   * P0 阶段 3（2026-08-18，设计 §4.4）：registry 注册时刻（task 生命周期起点）。
+   * 默认 0 = 未设置（旧注册点）；TaskStuckWatcher 只依赖 lastActivityMs，
+   * startedAt 供前端展示（二期 §4.6）。
+   */
+  startedAt: Long = 0L,
+  /**
+   * P0 阶段 3：当前 turn 状态快照——TaskStuckWatcher 判定 "Processing 且
+   * 长时间无活动" 的 status 来源。由 AgentCore.pipeLlmCall（Processing）与
+   * AgentActor.finishTurnCont 回 idle 分支（Idle）维护；run_in_background
+   * 时 agent 回 Idle 为合法状态，永不判卡死（防误杀铁律）。
+   */
+  status: AgentStatus = AgentStatus.Idle,
+  /**
+   * P0 阶段 3：最近一次 turn 活动时间戳（LLM 流 chunk / 工具执行完成 /
+   * turn 完成时更新）。TaskStuckWatcher 判卡死的数据源。
+   */
+  lastActivityMs: Long = 0L
 )
 
 // ============================================================
@@ -655,8 +673,19 @@ case class ExecutionContext(
   // re-sent to self so the idle handler processes it with full metadata.
   // Replaces the dead-end `pending` function parameter on the processing
   // behavior (messages entered but were never drained).
-  pendingUserInputs: List[AgentCommand] = Nil
+  pendingUserInputs: List[AgentCommand] = Nil,
+  /**
+   * P0 阶段 3（2026-08-18，设计 §4.4）：最近一次 turn 活动时间戳——状态层
+   * 字段（registry 层权威源见 AgentRecord.lastActivityMs，TaskStuckWatcher
+   * 读它；本字段供 AgentState 使用与二期前端展示）。touch 点见 touchActivity。
+   */
+  lastActivityMs: Long = 0L
 )
+
+/** P0 阶段 3：touch turn 活动戳（幂等——仅更新时间戳，不改变其他状态）。 */
+extension (e: ExecutionContext)
+  def touchActivity(now: Long = System.currentTimeMillis()): ExecutionContext =
+    e.copy(lastActivityMs = now)
 
 object ExecutionContext:
 

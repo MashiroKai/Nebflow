@@ -1,7 +1,7 @@
 package nebflow.core.entity
 
 import cats.effect.kernel.Outcome
-import cats.effect.std.{Dispatcher, Semaphore}
+import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
@@ -218,7 +218,6 @@ class StrictVerdictSpec extends CatsEffectSuite:
       thinkingRef <- IO.ref(ThinkingConfig())
       modelOverrides <- IO.ref(Map.empty[String, ModelCandidate])
       voiceMuted <- IO.ref(false)
-      askSem <- Semaphore[IO](4)
     yield SharedResources(
       llm = llm,
       dispatcher = dispatcher,
@@ -229,7 +228,6 @@ class StrictVerdictSpec extends CatsEffectSuite:
       fileChangeTracker = tracker,
       contextWindow = 100_000,
       agentLibrary = new nebflow.agent.AgentLibrary(tmp / "agents"),
-      askSemaphore = askSem,
       taskStore = FileTaskStore,
       historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
       fileLockManager = fileLocks,
