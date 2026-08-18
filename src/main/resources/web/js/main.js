@@ -2102,7 +2102,7 @@ onMessage('askDone', (msg, view) => {
     // over askAnswerText (only the last bubble segment)
     const answer = (buf ? buf.answer : '') || activeView.stream.askAnswerText || '';
     const question = buf ? buf.question : '';
-    finishAskAnswer(durationMs, msg.model);
+    finishAskAnswer(durationMs);
     if (question || answer) {
       saveMsg({ type: 'ask', question, answer, durationMs, model: msg.model }, msg.sessionId);
     }
