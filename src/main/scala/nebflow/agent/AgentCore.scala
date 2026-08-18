@@ -11,6 +11,7 @@ import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
 import nebflow.core.tools.*
+import nebflow.llm.{Fallback, TurnBudgetExceeded}
 import nebflow.shared.*
 import nebflow.shared.given
 
@@ -468,8 +469,18 @@ private[agent] trait AgentCore:
           // Synchronously update gitBranch in state — no async message
           stateWithBranch = stateWithReminder.withGitBranch(turnCtx.currentBranch)
           _ <- ctx.forkTurn(
-            resources.llm
-              .sendStream(request, onAttempt = Some(onAttemptCb))
+            // ── Token 止损（2026-08-18 事故）：per-turn LLM 请求预算 ──
+            // 同 turn 内 LLM 请求总数（含重试）超限 → 抛 TurnBudgetExceeded
+            // （Permanent 分类，llm-fail-retry 不会再触发）→ 下方 .attempt
+            // 捕获后发 LlmFailed，turn 快速失败并给用户明确原因。
+            IO.raiseWhen(stateForLlm.execution.llmCallsThisTurn >= Fallback.MaxTurnLlmCalls)(
+              new TurnBudgetExceeded(
+                turnId,
+                stateForLlm.execution.llmCallsThisTurn
+              )
+            ) *>
+              resources.llm
+                .sendStream(request, onAttempt = Some(onAttemptCb))
               .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
               // P0 阶段 3：每个流 chunk touch 活动戳——流活着 = turn 有活动 =
               // 不判卡死。Ref.modify 是原子的，按流序逐 chunk 更新，开销可忽略。
@@ -532,6 +543,9 @@ private[agent] trait AgentCore:
              stateWithBranch.withLastMaintenanceDelegateCount(stateWithReminder.delegateCount)
            else stateWithBranch)
             .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
+            // Token 止损：本次 LLM 请求计数 +1（含重试——重试走 LlmFailed 分支
+            // 重新 pipeLlmCall 时该 state 已带递增计数，预算按 turn 累计）。
+            .withLlmCallsThisTurn(stateWithBranch.llmCallsThisTurn + 1)
         )
 
         end for
