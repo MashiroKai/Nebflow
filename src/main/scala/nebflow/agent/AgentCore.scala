@@ -461,6 +461,9 @@ private[agent] trait AgentCore:
           else IO.unit
         for
           _ <- agentStartIO
+          // P0 阶段 3：LLM 调用开始——registry 状态快照置 Processing 并 touch
+          // 活动戳（流 chunk 期间由 evalTap 持续刷新，见下方 sendStream 管道）。
+          _ <- touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing)
           (turnCtx, request, stateWithReminder) <- contextIo
           // Synchronously update gitBranch in state — no async message
           stateWithBranch = stateWithReminder.withGitBranch(turnCtx.currentBranch)
@@ -468,6 +471,9 @@ private[agent] trait AgentCore:
             resources.llm
               .sendStream(request, onAttempt = Some(onAttemptCb))
               .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
+              // P0 阶段 3：每个流 chunk touch 活动戳——流活着 = turn 有活动 =
+              // 不判卡死。Ref.modify 是原子的，按流序逐 chunk 更新，开销可忽略。
+              .evalTap(_ => touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing))
               .compile
               .toList
               .flatMap { chunks =>
@@ -585,7 +591,6 @@ private[agent] trait AgentCore:
         depth = depth,
         agentDef = Some(effectiveDef),
         agentLibrary = Some(resources.agentLibrary),
-        askSemaphore = Some(resources.askSemaphore),
         fileLockManager = Some(resources.fileLockManager),
         fileChangeTracker = Some(resources.fileChangeTracker),
         hookEngine = resources.hookEngine,
@@ -657,6 +662,9 @@ private[agent] trait AgentCore:
         result.thinking,
         result.thinkingSignature
       )
+      // P0 阶段 3：工具执行完成——touch 活动戳（长工具执行期间流已结束，
+      // 若无此 touch 会被误判卡死；下轮 LLM 调用开始会再次 mark Processing）。
+      _ <- touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing)
     yield ()
 
     for _ <- ctx.forkTurn(io.handleErrorWith { e =>
@@ -1224,6 +1232,28 @@ private[agent] trait AgentCore:
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)
+
+  /**
+   * P0 阶段 3（2026-08-18，设计 §4.4）：更新 agentRegistry 的活动快照。
+   * TaskStuckWatcher 读 AgentRecord.status + lastActivityMs 判定卡死——
+   * 本 helper 是这两个字段的唯一写入点（注册点默认值除外）：
+   *   - Processing：AgentCore.pipeLlmCall（LLM 调用开始 + 每个流 chunk）
+   *   - Idle：AgentActor.finishTurnCont 回 idle 分支（turn 完成）
+   * 幂等且仅在记录存在时更新（registry 无该 session 时 no-op——不创建幽灵条目）。
+   */
+  protected def touchRegistryActivity(
+    resources: SharedResources,
+    sessionId: Option[String],
+    status: AgentStatus,
+    now: Long = System.currentTimeMillis()
+  ): IO[Unit] =
+    sessionId.fold(IO.unit) { sid =>
+      resources.agentRegistry.modify { m =>
+        m.get(sid) match
+          case Some(rec) => (m.updated(sid, rec.copy(status = status, lastActivityMs = now)), ())
+          case None => (m, ())
+      }
+    }
 
 end AgentCore
 

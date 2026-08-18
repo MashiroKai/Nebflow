@@ -146,7 +146,10 @@ case class NebflowServiceConfig(
   llm: ServiceLlmConfig,
   mcpServers: Option[Map[String, McpServerConfig]] = None,
   search: Option[SearchConfig] = None,
-  thinkingConfig: Option[ThinkingConfig] = None
+  thinkingConfig: Option[ThinkingConfig] = None,
+  // P0 阶段 3（2026-08-18）：TaskStuckWatcher 卡死判定阈值（ms）。
+  // None → Defaults.StuckThresholdMs（10min）。显式配置可收紧（测试/调试）。
+  stuckThresholdMs: Option[Long] = None
 )
 
 object NebflowServiceConfig:

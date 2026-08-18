@@ -1,6 +1,6 @@
 package nebflow.agent
 
-import cats.effect.std.{Dispatcher, Semaphore}
+import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import nebflow.actor.{ActorRef, ActorSystem}
 import nebflow.bridge.BridgeManager
@@ -35,7 +35,6 @@ case class SharedResources(
   fileChangeTracker: FileChangeTracker,
   contextWindow: Int,
   agentLibrary: AgentLibrary,
-  askSemaphore: Semaphore[IO],
   taskStore: TaskStore,
   historyArchiver: HistoryArchiver,
   fileLockManager: FileLockManager,

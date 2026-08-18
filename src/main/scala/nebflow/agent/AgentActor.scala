@@ -2211,6 +2211,10 @@ object AgentActor extends AgentCore with AgentSession:
         // idle, so clear the team busy mark. The two earlier branches re-enter
         // pipeLlmCall which re-marks busy, so they must NOT clear here.
         _ <- markTeamIdle(agentDef, state.sessionId)
+        // P0 阶段 3：turn 完成回 idle——registry 状态快照置 Idle 并 touch。
+        // Idle 是合法状态（run_in_background 后台命令等待期），TaskStuckWatcher
+        // 只判 Processing——此标记是防误杀铁律的落地。
+        _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
         // Drain pending user inputs: forward head to self (agent is now idle,
         // so it will be processed with full metadata by the idle handler). The
         // tail is preserved for the next turn boundary drain.
