@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/check-js-types.mjs --update",
-  "total": 357,
+  "total": 351,
   "files": {
     "src/main/resources/web/js/activityBar.js": {
       "TS2345": 1,
