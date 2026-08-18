@@ -90,9 +90,9 @@ function convertAgentEvent(msg) {
     case 'agentToolEnd':
       return { type: 'toolEnd', sessionId: sid, label: msg.label || '', summary: msg.summary || '', content: msg.content || '', isError: msg.isError || false, input: msg.input || null };
     case 'agentDone':
-      return { type: 'done', sessionId: sid, model: msg.model, contextWindow: msg.contextWindow, inputTokens: msg.inputTokens, compactThreshold: msg.compactThreshold };
+      return { type: 'done', sessionId: sid, model: msg.model, contextWindow: msg.contextWindow, inputTokens: msg.inputTokens, compactThreshold: msg.compactThreshold, outputTokens: msg.outputTokens };
     case 'usageUpdate':
-      return { type: 'usageUpdate', sessionId: sid, inputTokens: msg.inputTokens, contextWindow: msg.contextWindow, compactThreshold: msg.compactThreshold };
+      return { type: 'usageUpdate', sessionId: sid, inputTokens: msg.inputTokens, contextWindow: msg.contextWindow, compactThreshold: msg.compactThreshold, outputTokens: msg.outputTokens };
     case 'agentEnd':
       return null; // no standard equivalent
     default:
