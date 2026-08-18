@@ -330,8 +330,6 @@ Do NOT duplicate this worker's work — avoid working with the same files or top
     resources: SharedResources
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
-      ctx.watch(workerRef)
-
       def notifyParentAndStop(
         eventType: String,
         payload: String,
@@ -358,7 +356,7 @@ Do NOT duplicate this worker's work — avoid working with the same files or top
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
       end notifyParentAndStop
 
-      IO.pure(
+      ctx.watch(workerRef) *> IO.pure(
         new Behavior[AgentEvent]:
           def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
             event match
