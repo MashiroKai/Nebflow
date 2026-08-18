@@ -51,6 +51,13 @@ case class AgentDef(
   voiceEnabled: Boolean = true,
   model: Option[AgentModelConfig] = None,
   preset: Option[String] = None, // references a named preset in model-presets.json
+  /**
+   * Tool-level model override (#291: Delegate/SubTask `preset` param). Set by
+   * PresetResolver when a spawn carries an explicit preset; survives the
+   * per-turn def refresh in ContextRefresher.loadCurrentDef (which would
+   * otherwise reload the disk def and discard the override).
+   */
+  modelOverride: Option[AgentModelConfig] = None,
   category: String = "standalone",
   mcpServers: List[String] = Nil,
   skills: List[String] = Nil, // skill names this agent can see

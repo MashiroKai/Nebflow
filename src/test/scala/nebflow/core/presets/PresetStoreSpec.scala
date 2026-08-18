@@ -199,4 +199,58 @@ class PresetStoreSpec extends FunSuite:
     val f = store.load()
     assert(f.presets.contains(f.defaultPreset))
 
+  // ── resolveExplicit (tool-level override) ─────────────────
+
+  test("resolveExplicit: resolves an existing preset to its chain"):
+    val (store, _) = tempStore("explicit-ok")
+    store.save(
+      PresetFile(
+        "general",
+        Map(
+          "LowCost" -> ModelPreset("LowCost", "", Some("107/deepseek-v4-flash-ascend"), List("107/deepseek-v4-pro")),
+          "general" -> ModelPreset("general", "", Some("default/model"), Nil)
+        )
+      )
+    )
+    val result = store.resolveExplicit("LowCost")
+    assertEquals(result, Right(AgentModelConfig(Some("107/deepseek-v4-flash-ascend"), List("107/deepseek-v4-pro"))))
+
+  test("resolveExplicit: missing preset errors with available list"):
+    val (store, _) = tempStore("explicit-missing")
+    store.save(
+      PresetFile(
+        "general",
+        Map(
+          "general" -> ModelPreset("general", "", Some("default/model"), Nil),
+          "Vision" -> ModelPreset("Vision", "", Some("kimi/k3-256k"), Nil)
+        )
+      )
+    )
+    val result = store.resolveExplicit("Bogus")
+    assert(result.isLeft)
+    val err = result.swap.toOption.get
+    assert(err.contains("'Bogus' not found"), err)
+    assert(err.contains("Available presets:"), err)
+    // Sorted list includes the real presets
+    assert(err.contains("Vision"), err)
+    assert(err.contains("general"), err)
+
+  test("resolveExplicit: defined-but-empty preset errors with available list"):
+    val (store, _) = tempStore("explicit-empty")
+    store.save(
+      PresetFile(
+        "general",
+        Map(
+          "Empty" -> ModelPreset("Empty", "no chain", None, Nil),
+          "general" -> ModelPreset("general", "", Some("default/model"), Nil)
+        )
+      )
+    )
+    val result = store.resolveExplicit("Empty")
+    assert(result.isLeft)
+    val err = result.swap.toOption.get
+    assert(err.contains("'Empty'"), err)
+    assert(err.contains("no model chain"), err)
+    assert(err.contains("Available presets:"), err)
+
 end PresetStoreSpec

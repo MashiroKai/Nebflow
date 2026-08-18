@@ -6,6 +6,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
+import nebflow.core.presets.PresetStore
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 /**
@@ -145,6 +146,10 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
           "maxItems" -> 5.asJson,
           "description" -> "Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5) attached to the prompt — the sub-agent sees the images directly.".asJson,
           "default" -> io.circe.Json.arr()
+        ),
+        "preset" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Optional named model preset (from model-presets.json, e.g. 'LowCost' for the free 107 gateway, 'Vision' for vision-capable models). Overrides the sub-agent's own preset/model for this spawn. Use 'LowCost' when the task is cheap/not urgent or your default provider is down.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)
@@ -170,6 +175,7 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     val taskDescription = input("taskDescription").flatMap(_.asString).getOrElse(description)
     val targetAgentName = input("agent").flatMap(_.asString).filter(_.nonEmpty)
     val flowName = input("flow").flatMap(_.asString).filter(_.nonEmpty)
+    val presetName = input("preset").flatMap(_.asString).filter(_.nonEmpty)
 
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if flowName.isDefined then
@@ -216,80 +222,114 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
               resolveAgent.flatMap {
                 case Left(err) => IO.pure(Left(err))
                 case Right((agentDef, initialMessages)) =>
-                  (ctx.actorSystem, ctx.sharedResources) match
-                    case (Some(system), Some(resources)) =>
-                      val agentName = agentDef.name
-                      val adjustedPrompt =
-                        if fork && targetAgentName.isEmpty then
-                          s"""<system-reminder>
+                  // #291: explicit preset param overrides the target's own
+                  // preset/model — resolve before spawning so the child's LLM
+                  // requests run on the requested provider chain. Missing
+                  // preset → self-describing error with the available list.
+                  PresetResolver.applyPreset(PresetStore(), agentDef, presetName) match
+                    case Left(err) => IO.pure(Left(ToolError(err)))
+                    case Right(effectiveDef) =>
+                      spawnDelegate(
+                        effectiveDef,
+                        initialMessages,
+                        prompt,
+                        description,
+                        taskDescription,
+                        lifecycle,
+                        attachments,
+                        fork,
+                        targetAgentName,
+                        ctx
+                      )
+              }
+          }
+    end if
+  end call
+
+  /** Shared spawn entry for background and persistent modes (after preset resolution). */
+  private def spawnDelegate(
+    agentDef: AgentDef,
+    initialMessages: List[Message],
+    prompt: String,
+    description: String,
+    taskDescription: String,
+    lifecycle: String,
+    attachments: List[ContentBlock],
+    fork: Boolean,
+    targetAgentName: Option[String],
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    (ctx.actorSystem, ctx.sharedResources) match
+      case (Some(system), Some(resources)) =>
+        val agentName = agentDef.name
+        val adjustedPrompt =
+          if fork && targetAgentName.isEmpty then
+            s"""<system-reminder>
 You are a sub-agent working on a delegated task. Your parent agent has forked this conversation to give you background context.
 
 Focus ONLY on the specific task described below. Do not work on other topics from the conversation history — those are your parent's responsibilities.
 </system-reminder>
 
 $prompt"""
-                        else prompt
+          else prompt
 
-                      // Query parent session's safety mode so sub-agent inherits it
-                      val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
-                        case (Some(store), Some(sid)) => store.getSafetyMode(sid)
-                        case _ => IO.pure("confirm-edits")
-                      // P2: resolve the caller's permission-policy bucket (root session)
-                      // so the delegate inherits the same policy as the caller — the
-                      // whole tree anchors to one rootSessionId.
-                      val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
-                        case (Some(res), Some(sid)) =>
-                          res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
-                        case _ => IO.pure(ctx.sessionId.getOrElse(""))
-                      for
-                        safetyMode <- safetyModeIO
-                        rootSid <- callerRootIO
-                        result <-
-                          if lifecycle == "persistent" then
-                            spawnPersistent(
-                              agentDef = agentDef,
-                              prompt = adjustedPrompt,
-                              attachments = attachments,
-                              description = description,
-                              taskDescription = taskDescription,
-                              agentName = agentName,
-                              initialMessages = initialMessages,
-                              system = system,
-                              resources = resources,
-                              parentDepth = ctx.depth,
-                              parentRef = ctx.agentActorRef,
-                              wsSend = ctx.wsSend,
-                              projectRoot = ctx.projectRoot,
-                              parentSessionId = ctx.sessionId,
-                              safetyMode = safetyMode,
-                              rootSessionId = rootSid
-                            )
-                          else
-                            spawnBackground(
-                              agentDef = agentDef,
-                              prompt = adjustedPrompt,
-                              attachments = attachments,
-                              description = description,
-                              agentName = agentName,
-                              initialMessages = initialMessages,
-                              system = system,
-                              resources = resources,
-                              parentDepth = ctx.depth,
-                              parentRef = ctx.agentActorRef,
-                              wsSend = ctx.wsSend,
-                              projectRoot = ctx.projectRoot,
-                              parentSessionId = ctx.sessionId,
-                              safetyMode = safetyMode,
-                              rootSessionId = rootSid
-                            )
-                      yield result
-                      end for
-                    case _ =>
-                      IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
-              }
-          }
-    end if
-  end call
+        // Query parent session's safety mode so sub-agent inherits it
+        val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
+          case (Some(store), Some(sid)) => store.getSafetyMode(sid)
+          case _ => IO.pure("confirm-edits")
+        // P2: resolve the caller's permission-policy bucket (root session)
+        // so the delegate inherits the same policy as the caller — the
+        // whole tree anchors to one rootSessionId.
+        val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
+          case (Some(res), Some(sid)) =>
+            res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+          case _ => IO.pure(ctx.sessionId.getOrElse(""))
+        for
+          safetyMode <- safetyModeIO
+          rootSid <- callerRootIO
+          result <-
+            if lifecycle == "persistent" then
+              spawnPersistent(
+                agentDef = agentDef,
+                prompt = adjustedPrompt,
+                attachments = attachments,
+                description = description,
+                taskDescription = taskDescription,
+                agentName = agentName,
+                initialMessages = initialMessages,
+                system = system,
+                resources = resources,
+                parentDepth = ctx.depth,
+                parentRef = ctx.agentActorRef,
+                wsSend = ctx.wsSend,
+                projectRoot = ctx.projectRoot,
+                parentSessionId = ctx.sessionId,
+                safetyMode = safetyMode,
+                rootSessionId = rootSid
+              )
+            else
+              spawnBackground(
+                agentDef = agentDef,
+                prompt = adjustedPrompt,
+                attachments = attachments,
+                description = description,
+                agentName = agentName,
+                initialMessages = initialMessages,
+                system = system,
+                resources = resources,
+                parentDepth = ctx.depth,
+                parentRef = ctx.agentActorRef,
+                wsSend = ctx.wsSend,
+                projectRoot = ctx.projectRoot,
+                parentSessionId = ctx.sessionId,
+                safetyMode = safetyMode,
+                rootSessionId = rootSid
+              )
+        yield result
+        end for
+      case _ =>
+        IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
+  end spawnDelegate
 
   // ============================================================
   // Background: return immediately, deliver result via ExternalEvent
