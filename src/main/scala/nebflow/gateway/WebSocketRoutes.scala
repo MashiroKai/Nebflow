@@ -2244,6 +2244,12 @@ class WebSocketRoutes(
             else IO.unit
             end if
 
+          case "listSessions" =>
+            // Manual trigger for re-fetching the unified session list on WS
+            // reconnect (sessions may have been created/removed while the
+            // frontend was disconnected). Same payload as the initial push.
+            sessionService.sendSessionList(wsSend, "Nebula")
+
           // ===== Folder Management =====
 
           case "createFolder" =>
