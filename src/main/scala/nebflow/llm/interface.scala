@@ -1,7 +1,7 @@
 package nebflow.llm
 
 import cats.effect.IO
-import cats.effect.kernel.Ref
+import cats.effect.kernel.{Deferred, Ref}
 import cats.effect.std.Dispatcher
 import cats.syntax.all.*
 import nebflow.core.NebflowLogger
@@ -10,8 +10,46 @@ import sttp.client4.httpclient.fs2.HttpClientFs2Backend
 
 import scala.concurrent.duration.*
 
+/** Raised when a JVM shutdown hook aborts an in-flight LLM request. */
+final class ShutdownAbort
+    extends RuntimeException("Nebflow shutting down: LLM request aborted")
+
 object LlmInterface:
   private val logger = NebflowLogger.forName("nebflow.llm")
+
+  // ── In-flight LLM request registry (shutdown abort, Task 2 2026-08-19) ──
+  // Every active sendStream registers an abort signal here; a JVM shutdown
+  // hook (Main.startGateway) and the GatewayMain graceful-cleanup guarantee
+  // complete all signals so in-flight FS2/sttp HTTP requests abort instead of
+  // burning tokens while the JVM drains after Ctrl+C. Registry is a global
+  // singleton (same pattern as LlmQueueStore) because the hook has no handle
+  // reference — it must reach every stream regardless of which LlmHandle ran
+  // it. Completing a Deferred from another runtime (IORuntime.global in the
+  // hook thread) is safe: it only wakes the waiters, which continue on their
+  // own runtime.
+  private val inflight: Ref[IO, Map[String, Deferred[IO, Either[Throwable, Unit]]]] =
+    Ref.unsafe(Map.empty)
+
+  private[llm] def registerInflight(): IO[(String, Deferred[IO, Either[Throwable, Unit]])] =
+    for
+      key <- IO(java.util.UUID.randomUUID().toString)
+      halt <- IO.deferred[Either[Throwable, Unit]]
+      _ <- inflight.update(_ + (key -> halt))
+    yield (key, halt)
+
+  private[llm] def unregisterInflight(key: String): IO[Unit] =
+    inflight.update(_ - key)
+
+  /** Abort all in-flight LLM requests — streams fail with [[ShutdownAbort]]. */
+  def cancelAllInflight(): IO[Unit] =
+    inflight.get.flatMap { m =>
+      m.values.toList.traverse_(_.complete(Left(new ShutdownAbort))) *> inflight.set(Map.empty)
+    }
+
+  /** Synchronous variant for JVM shutdown hooks (runs on IORuntime.global). */
+  def cancelAllInflightSync(): Unit =
+    try cancelAllInflight().unsafeRunSync()(using cats.effect.unsafe.implicits.global)
+    catch case _: Throwable => ()
 
   /**
    * Acquire a gate permit, persisting the request if it has to queue
@@ -284,17 +322,23 @@ object LlmInterface:
               req: LlmRequest,
               onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
             ): fs2.Stream[IO, StreamChunk] =
-              fs2.Stream
-                .eval(
-                  for
-                    overrides <- sessionOverrides.get
-                    regCandidates <- registry.getCandidatesForAgent(req.agentModel)
-                  yield overrides.get(req.sessionId).toList ++ regCandidates
-                    .filterNot(c =>
-                      overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
-                    )
-                )
-                .flatMap { candidates =>
+              // Shutdown-abort wiring (Task 2): register an abort signal for
+              // this request; a JVM shutdown hook / graceful-cleanup guarantee
+              // completes it, interrupting the stream (and the underlying
+              // sttp/FS2 HTTP request) with ShutdownAbort. Unregistered on
+              // finalize whether the stream completes, fails or is aborted.
+              fs2.Stream.eval(registerInflight()).flatMap { case (key, halt) =>
+                fs2.Stream
+                  .eval(
+                    for
+                      overrides <- sessionOverrides.get
+                      regCandidates <- registry.getCandidatesForAgent(req.agentModel)
+                    yield overrides.get(req.sessionId).toList ++ regCandidates
+                      .filterNot(c =>
+                        overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
+                      )
+                  )
+                  .flatMap { candidates =>
 
                   val maxRetries = Fallback.MaxRetries
 
@@ -705,6 +749,9 @@ object LlmInterface:
                     }
                   }
                 }
+                .interruptWhen(halt.get)
+                .onFinalize(unregisterInflight(key))
+              }
             end sendStream
 
           (handle, registry, healthMonitor, release)
