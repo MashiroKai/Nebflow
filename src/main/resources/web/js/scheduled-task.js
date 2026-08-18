@@ -1,7 +1,7 @@
 // scheduled-task.js — Session Scheduled Tasks UI (iPhone Reminders style)
 import state from './state.js';
 import { key } from './branding.js';
-import { sendWs, onMessage } from './ws.js';
+import { sendWs, onMessage, onReconnect } from './ws.js';
 import { t } from './i18n.js';
 import { addNotification } from './notificationBanner.js';
 import { createIconsIn } from './utils.js';
@@ -15,6 +15,11 @@ function getLocale() {
 let tasks = [];
 let isCreating = false;
 let panelOpen = false;
+
+// Creates attempted while the WS was down (sendWs silently drops non-OPEN
+// sends). Queued instead of optimistically added — the UI must never show a
+// task the server never received. Flushed on reconnect / session restore.
+let pendingCreates = [];
 
 // ── Persistence ────────────────────────────────────────────────────────
 // Cache tasks per-session in localStorage so the panel shows instantly
@@ -321,6 +326,49 @@ function cancelInlineCreate() {
   renderList();
 }
 
+// Send a create frame and add the optimistic temp row. Only call this when
+// the WS is OPEN and a session is active — otherwise the row would be a lie
+// (sendWs silently drops non-OPEN sends).
+function submitCreate(content, triggerAt) {
+  sendWs({
+    type: 'createScheduledTask',
+    sessionId: state.activeSessionId,
+    content: content,
+    triggerAt: triggerAt,
+    referencePath: undefined
+  });
+
+  // Optimistic add — append to end
+  tasks.push({
+    id: 'temp-' + Date.now(),
+    content: content,
+    triggerAt: triggerAt,
+    createdAt: Date.now(),
+    triggered: false,
+    triggeredAt: null,
+    referencePath: null
+  });
+  if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
+}
+
+function wsReady() {
+  return !!(state.ws && state.ws.readyState === WebSocket.OPEN && state.activeSessionId);
+}
+
+function flushPendingCreates() {
+  if (pendingCreates.length === 0 || !wsReady()) return;
+  const queued = pendingCreates;
+  pendingCreates = [];
+  for (const q of queued) {
+    // Same auto-bump semantics as saveInlineTask: a trigger time that expired
+    // while queued becomes 2 min from now.
+    const triggerAt = q.triggerAt <= Date.now() ? Date.now() + 120000 : q.triggerAt;
+    submitCreate(q.content, triggerAt);
+  }
+  renderList();
+  updateBadge();
+}
+
 function saveInlineTask() {
   const input = document.querySelector('#reminder-inline-input');
   const timeInput = document.querySelector('#reminder-time-input');
@@ -346,25 +394,17 @@ function saveInlineTask() {
     ? now + 120000
     : triggerAt;
 
-  sendWs({
-    type: 'createScheduledTask',
-    sessionId: state.activeSessionId,
-    content: content,
-    triggerAt: effectiveTriggerAt,
-    referencePath: undefined
-  });
+  if (!wsReady()) {
+    // WS down (reconnect backoff, half-open socket, server restart) or no
+    // active session yet — queue instead of lying with an optimistic row.
+    pendingCreates.push({ content: content, triggerAt: effectiveTriggerAt });
+    addNotification('task', t('task.queuedOffline'), { dismissAfter: 15000 });
+    isCreating = false;
+    renderList();
+    return;
+  }
 
-  // Optimistic add — append to end
-  tasks.push({
-    id: 'temp-' + Date.now(),
-    content: content,
-    triggerAt: effectiveTriggerAt,
-    createdAt: Date.now(),
-    triggered: false,
-    triggeredAt: null,
-    referencePath: null
-  });
-  if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
+  submitCreate(content, effectiveTriggerAt);
   isCreating = false;
   renderList();
   updateBadge();
@@ -408,6 +448,24 @@ onMessage('scheduledTaskCreated', (msg) => {
     sendWs({ type: 'listScheduledTasks', sessionId: state.activeSessionId });
   }
   updateBadge();
+});
+
+// Server-side rejection of a create (invalid fields, etc.). The backend tags
+// these with msgType: 'createScheduledTask'. Roll back the optimistic temp
+// row so the list never shows a task the server refused to persist.
+onMessage('error', (msg) => {
+  if (msg.msgType !== 'createScheduledTask') return;
+  // Remove the most recent optimistic temp row (the one this error answers).
+  for (let i = tasks.length - 1; i >= 0; i--) {
+    if (typeof tasks[i].id === 'string' && tasks[i].id.startsWith('temp-')) {
+      tasks.splice(i, 1);
+      break;
+    }
+  }
+  if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
+  renderList();
+  updateBadge();
+  addNotification('task', msg.message || t('task.createFailed'), { dismissAfter: 15000 });
 });
 
 onMessage('scheduledTaskDeleted', (msg) => {
@@ -522,6 +580,10 @@ export function initScheduledTask() {
     }
   }
 
+  // Flush any creates queued while the WS was down once the connection is
+  // (re)established. Runs on every open; the queue is normally empty.
+  onReconnect(flushPendingCreates);
+
   // Auto-load tasks for active session
   if (state.activeSessionId) {
     // Show cached tasks instantly, then refresh from server
@@ -540,6 +602,9 @@ export function initScheduledTask() {
 /** Called when session switches — refresh task list */
 export function refreshScheduledTasks(sessionId) {
   isCreating = false;
+  // Session just became available — retry any creates queued while there was
+  // no active session (flush no-ops when the queue is empty or WS is down).
+  flushPendingCreates();
   if (sessionId) {
     // Show cached tasks instantly, then refresh from server
     tasks = loadCachedTasks(sessionId);
