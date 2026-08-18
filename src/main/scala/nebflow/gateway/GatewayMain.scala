@@ -610,6 +610,10 @@ object GatewayMain extends IOApp.Simple:
                                                   .guarantee(
                                                     logger.info("shutting down...") *>
                                                       daemonService.stopAll() *>
+                                                      // P0 (2026-08-19): abort in-flight LLM requests BEFORE the
+                                                      // sttp backend/dispatcher close — Ctrl+C previously let
+                                                      // FS2 streams keep burning tokens during JVM drain.
+                                                      nebflow.llm.LlmInterface.cancelAllInflight() *>
                                                       neblinkClient.traverse_(_.logout) *>
                                                       telemetry.fold(IO.unit)(_.shutdown) *>
                                                       mcpManager.stopAll() *>

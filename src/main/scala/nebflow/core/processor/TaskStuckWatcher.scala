@@ -22,7 +22,8 @@ import scala.concurrent.duration.FiniteDuration
  *   - AgentRecord.status == Processing 且 now - lastActivityMs > threshold
  *   - idle 态永不判卡死（run_in_background 时 agent 回 Idle 为合法状态）——
  *     防误杀铁律；status/lastActivityMs 由 AgentCore.touchRegistryActivity
- *     在 LLM 流 chunk / 工具完成 / turn 完成时维护。
+ *     在 LLM 流 chunk / 工具完成 / turn 完成时维护，另由 BashTool 活动桥接
+ *     （#319）在长前台命令有进展时刷新 lastActivityMs——有进展不判卡死。
  *
  * 恢复：
  *   - 子 agent（有 parentRef）：发 AgentCommand.Stop → AgentActor 的 Stop

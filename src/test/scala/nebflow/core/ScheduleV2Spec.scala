@@ -10,8 +10,7 @@ import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
  *   - ScheduledTaskStore.getAllDueTasks returns tasks sorted by triggerAt (FIFO
  *     firing order — simultaneously-due tasks are processed one by one).
  *   - SystemReminders.collectAllIO injects a summary of the session's pending
- *     schedules (plus cache-v2 dynamic reminders; time-context/off-peak was
- *     removed 2026-08-18, Current tasks is root-agent-only).
+ *     schedules. time-context (peak/off-peak) removed 2026-08-19 audit.
  */
 class ScheduleV2Spec extends CatsEffectSuite:
 
@@ -70,6 +69,7 @@ class ScheduleV2Spec extends CatsEffectSuite:
     yield
       val cats = reminders.map(_.category)
       assert(cats.contains("time"), s"expected time category, got $cats")
+      assert(!cats.contains("time-context"), s"time-context must be removed, got $cats")
       assert(cats.contains("schedule"), s"expected schedule category, got $cats")
       val sched = reminders.find(_.category == "schedule").get
       assert(sched.content.contains("Pending schedules (1)"), sched.content)
@@ -88,8 +88,16 @@ class ScheduleV2Spec extends CatsEffectSuite:
       reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"))
     yield
       assert(reminders.exists(_.category == "time"))
+      assert(!reminders.exists(_.category == "time-context"), "time-context must be removed")
       assert(!reminders.exists(_.category == "schedule"), "schedule must be empty for session without tasks")
 
+  test("time-context removed entirely (no time-context reminder ever)"):
+    for
+      _ <- reset()
+      reminders <- SystemReminders.collectAllIO(true, taskStore, None)
+    yield
+      val cats = reminders.map(_.category)
+      assert(!cats.contains("time-context"), s"time-context must not be injected, got $cats")
   // ------------------------------------------------------------------
   // Cache v2 (2026-08-11): dynamic sections moved out of systemStable
   // are injected as user-turn reminders (devices/sessions/env/tasks/language).
@@ -102,7 +110,7 @@ class ScheduleV2Spec extends CatsEffectSuite:
         true,
         taskStore,
         Some("s1"),
-        isRoot = true,
+        depth = 0,
         deviceInfo = "local (MacBook); Desktop-PC",
         sessionsText = "# Active Sessions\n\naddr-1 — Explorer: investigating (running)",
         taskListText = "## Current Tasks\n\n#1 [pending] Fix the cache bug",
@@ -136,14 +144,14 @@ class ScheduleV2Spec extends CatsEffectSuite:
       assert(!cats.contains("language"), cats)
       assert(cats.contains("time"), "time reminder must remain (持久化语义不受影响)")
 
-  test("collectAllIO omits the tasks reminder for non-root agents (isRoot=false)"):
+  test("collectAllIO omits the tasks reminder for non-root agents (depth>0)"):
     for
       _ <- reset()
       reminders <- SystemReminders.collectAllIO(
         true,
         taskStore,
         Some("s1"),
-        isRoot = false,
+        depth = 1,
         taskListText = "## Current Tasks\n\n#1 [pending] Root-only"
       )
     yield
@@ -161,5 +169,43 @@ class ScheduleV2Spec extends CatsEffectSuite:
         taskListText = "## Current Tasks\n\n#1 [pending] x"
       )
     yield assertEquals(reminders.size, 0)
+
+  // ------------------------------------------------------------------
+  // Reminder audit (2026-08-19): tasks reminder gated to root agents
+  // ------------------------------------------------------------------
+
+  test("collectAllIO omits tasks reminder for workers (depth > 0) but keeps other categories"):
+    for
+      _ <- reset()
+      reminders <- SystemReminders.collectAllIO(
+        true,
+        taskStore,
+        Some("s1"),
+        taskListText = "## Current Tasks\n\n#1 [pending] Fix the cache bug",
+        deviceInfo = "local (MacBook)",
+        language = Some("Chinese"),
+        depth = 1
+      )
+    yield
+      val cats = reminders.map(_.category)
+      assert(!cats.contains("tasks"), s"tasks must be gated for workers, got $cats")
+      assert(cats.contains("devices"), s"devices stays for workers, got $cats")
+      assert(cats.contains("language"), s"language stays for workers, got $cats")
+      assert(cats.contains("time"), s"time stays for workers, got $cats")
+
+  test("collectAllIO keeps tasks reminder for root agents (depth 0)"):
+    for
+      _ <- reset()
+      reminders <- SystemReminders.collectAllIO(
+        true,
+        taskStore,
+        Some("s1"),
+        taskListText = "## Current Tasks\n\n#1 [pending] Fix the cache bug",
+        depth = 0
+      )
+    yield
+      val tasks = reminders.find(_.category == "tasks")
+      assert(tasks.nonEmpty, s"expected tasks reminder, got ${reminders.map(_.category)}")
+      assert(tasks.get.content.contains("Fix the cache bug"), tasks.get.content)
 
 end ScheduleV2Spec
