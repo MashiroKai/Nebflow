@@ -1,30 +1,23 @@
+// taskList.js — Collapsible task panel (floats above the input area)
+// Apple Reminders-style layout per todo-panel-spec.md v1.1:
+//   - two sections (My Tasks / Agent Tasks), explicit group headers only when
+//     both kinds are present
+//   - circle completion control: human tasks clickable, agent tasks read-only,
+//     in_progress rows show a spinner in the same slot
+//   - completing is optimistic-disappear (fill → collapse → remove); the
+//     server confirms via taskListUpdate or rejects via taskError (rollback)
+//   - failed tasks stay visible same-day, sink to the bottom of their group
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import { openTaskArchive } from './taskArchive.js';
-import { key } from './branding.js';
+import { sendWs, onMessage } from './ws.js';
+import state from './state.js';
+import { showToast } from './modal.js';
 
-const MAX_VISIBLE = 20;
-// Legacy spelling 'nebflow-task-collapsed' is normalized into this key by
-// branding.js at module init (see LEGACY_IRREGULAR there).
-const COLLAPSED_KEY = key('task_collapsed');
-
-const iconMap = {
-  pending: 'square',
-  in_progress: 'loader-2',
-  completed: 'check',
-  failed: 'x'
-};
-
-const activeStatuses = new Set(['pending', 'in_progress']);
-
-// ── 今日完成 (completedToday) ─────────────────────────────
-// 口径(Manager 裁定 2026-08-16): N = status==='completed' 且 completedAt 存在
-// 且日期为今天(用户本地时区)。failed/dismissed 均不计入——failed 在档案视图
-// 照常展示带失败标注,但绝不能混进「完成 N」误导用户。
-
-function isTodayLocal(iso) {
-  if (!iso) return false;
-  const d = new Date(iso);
+/** Local-calendar check (device timezone). */
+function isTodayLocal(dateStr) {
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
   if (isNaN(d.getTime())) return false;
   const now = new Date();
   return d.getFullYear() === now.getFullYear() &&
@@ -32,241 +25,257 @@ function isTodayLocal(iso) {
          d.getDate() === now.getDate();
 }
 
-function todayCompleted(tasks) {
-  return (tasks || [])
-    .filter(task => task.status === 'completed' && isTodayLocal(task.completedAt))
-    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
+/** C1: missing taskKind (pre-upgrade server) defaults to 'agent'. */
+function kindOf(tk) {
+  return tk && tk.taskKind === 'human' ? 'human' : 'agent';
 }
 
-function fmtTimeHM(iso) {
-  const d = new Date(iso);
-  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+/** §2.2/C6: visible set = pending + in_progress + failed same-day.
+ *  Completed and dismissed rows never render in the panel. */
+function isVisible(tk) {
+  if (!tk || !tk.status) return false;
+  if (tk.status === 'pending' || tk.status === 'in_progress') return true;
+  if (tk.status === 'failed') return isTodayLocal(tk.createdAt);
+  return false;
 }
 
-/** Render the「今日完成 N」folded bar below the task card (or standalone when
- *  no active tasks). Re-render safe: replaces any existing bar, preserves the
- *  expanded flag on the container across re-renders. */
-function renderTodayBar(container, today, sessionId) {
-  container.querySelector('.task-today-wrap')?.remove();
-  // #task-list 无 .has-tasks 时 max-height:0 折叠——独立展示折叠条必须给容器
-  // 单独放行(.has-today),否则 bar 会被 overflow:hidden 裁掉。
-  container.classList.toggle('has-today', !!(today && today.length));
-  if (!today || today.length === 0) { container._todayTasks = null; return; }
-  container._todayTasks = today;
-  container._todaySessionId = sessionId;
+/** §3.3: in_progress first, then pending by createdAt asc, failed sinks. */
+function sortGroup(a, b) {
+  const rank = tk => tk.status === 'in_progress' ? 0 : tk.status === 'pending' ? 1 : 2;
+  const r = rank(a) - rank(b);
+  if (r !== 0) return r;
+  return (Date.parse(a.createdAt) || 0) - (Date.parse(b.createdAt) || 0);
+}
 
-  const expanded = container._todayExpanded === true;
-  const wrap = document.createElement('div');
-  wrap.className = 'task-today-wrap';
+/** Non-terminal count for the header stats (failed excluded — A9). */
+function activeCount(tasks) {
+  return tasks.filter(tk => tk && (tk.status === 'pending' || tk.status === 'in_progress')).length;
+}
 
-  let html = `<div class="task-today-bar" role="button" tabindex="0">` +
-    `<i data-lucide="${expanded ? 'chevron-down' : 'chevron-right'}"></i>` +
-    `<span class="task-today-count">${escapeHtml(t('task.completedToday', { count: today.length }))}</span>` +
-    `</div>`;
+const REDUCED_MOTION = typeof matchMedia === 'function' &&
+  matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  if (expanded) {
-    html += '<div class="task-today-list">';
-    today.slice(0, 10).forEach(task => {
-      const note = (task.notes && task.notes[0] && task.notes[0].content) || '';
-      html += `<div class="task-today-item">` +
-        `<div class="task-today-item-main">` +
-          `<span class="task-today-subject">${escapeHtml(task.subject || '')}</span>` +
-          `<span class="task-today-time">${escapeHtml(fmtTimeHM(task.completedAt))}</span>` +
-        `</div>` +
-        (note ? `<div class="task-today-note">${escapeHtml(note)}</div>` : '') +
-        `</div>`;
-    });
-    html += `<div class="task-today-all" role="button" tabindex="0">${escapeHtml(t('task.viewAll'))}</div>`;
-    html += '</div>';
+/** taskId → task snapshot, for taskError rollback (§7.2). */
+const pendingComplete = new Map();
+
+// ── Completion flow (§7.1/§7.2) ─────────────────────────────────────────
+
+function requestComplete(row, task) {
+  if (!state.connected) return;                    // §4: disabled while WS down
+  if (pendingComplete.has(task.id)) return;        // debounce double-click
+  pendingComplete.set(task.id, task);
+
+  sendWs({ type: 'completeTask', sessionId: state.activeSessionId, taskId: task.id });
+
+  // A4: optimistic -1 on the header non-terminal count — do not wait for the
+  // server push (taskListUpdate re-render is authoritative when it arrives;
+  // rollback via taskError re-renders from restored state, self-healing).
+  const sid0 = row.dataset.sessionId || state.activeSessionId;
+  const arr0 = sid0 && state.sessionTasks ? state.sessionTasks[sid0] : null;
+  const statsEl = document.querySelector('#task-list .task-stats');
+  if (statsEl && Array.isArray(arr0)) {
+    statsEl.textContent = `${Math.max(0, activeCount(arr0) - 1)}${t('task.statsSuffix')}`;
   }
 
-  wrap.innerHTML = html;
-  container.appendChild(wrap);
-  if (typeof lucide !== 'undefined') createIconsIn(wrap);
-
-  const bar = wrap.querySelector('.task-today-bar');
-  const toggle = () => {
-    container._todayExpanded = !container._todayExpanded;
-    renderTodayBar(container, container._todayTasks, container._todaySessionId);
+  const finish = () => {
+    // Server truth arrives via taskListUpdate; drop the optimistic entry from
+    // local state so re-renders cannot resurrect it.
+    const sid = row.dataset.sessionId || state.activeSessionId;
+    const arr = sid && state.sessionTasks ? state.sessionTasks[sid] : null;
+    const i = Array.isArray(arr) ? arr.indexOf(task) : -1;
+    if (i >= 0) arr.splice(i, 1);
+    row.remove();
+    const container = document.getElementById('task-list');
+    if (container && !container.querySelector('.task-item')) {
+      container.classList.remove('has-tasks');
+      container.innerHTML = '';
+    }
   };
-  bar.addEventListener('click', toggle);
-  bar.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
 
-  const allBtn = wrap.querySelector('.task-today-all');
-  if (allBtn) {
-    allBtn.addEventListener('click', (e) => { e.stopPropagation(); openTaskArchive(); });
-    allBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTaskArchive(); } });
+  if (REDUCED_MOTION) { finish(); return; }
+
+  row.classList.add('task-completing');            // fill sapphire + white check
+  setTimeout(() => {
+    row.classList.add('task-collapsing');          // height collapse ~220ms
+    setTimeout(finish, 230);
+  }, 180);
+}
+
+// Server-side rejection of a complete → roll back: re-insert at the sorted
+// position (render derives it), replay the entering animation, toast (§7.2).
+// The backend taskError frame is {"type":"taskError","error","taskId"} — no
+// msgType field (WebSocketRoutes.scala:1527-1532, symmetric with dismissTask).
+// We identify completeTask failures by taskId membership in pendingComplete:
+// a taskError for an id we never sent a complete for is not ours — pass
+// through untouched (裁定 F-B1①, qa-frontend 打回修复).
+onMessage('taskError', (msg) => {
+  if (!msg.taskId || !pendingComplete.has(msg.taskId)) return;
+  const task = pendingComplete.get(msg.taskId);
+  pendingComplete.delete(msg.taskId);
+  const sid = msg.sessionId || state.activeSessionId;
+  const arr = sid && state.sessionTasks ? state.sessionTasks[sid] : null;
+  if (Array.isArray(arr) && !arr.includes(task)) arr.push(task);
+  const container = document.getElementById('task-list');
+  renderTaskList(arr || [], container, sid);
+  const row = container && container.querySelector(`.task-item[data-task-id="${CSS.escape(task.id)}"]`);
+  if (row && !REDUCED_MOTION) {
+    row.classList.add('task-entering');
+    row.addEventListener('animationend', () => row.classList.remove('task-entering'), { once: true });
   }
+  showToast(t('task.completeError'), 'error');
+});
+
+// ── Row builders (§3.2) ──────────────────────────────────────────────────
+
+/**
+ * Circle control per kind/status:
+ *  - human pending     → clickable (role=checkbox, Space/Enter)
+ *  - agent pending     → decorative, aria-hidden (no checkbox semantics — A14)
+ *  - in_progress       → spinner, aria-hidden (row aria-label carries status)
+ *  - failed            → red x, aria-hidden
+ */
+function buildCheck(task, row) {
+  const check = document.createElement('span');
+  check.className = 'task-check';
+
+  if (task.status === 'in_progress') {
+    check.setAttribute('aria-hidden', 'true');
+    check.innerHTML = '<span class="task-check-spinner"></span>';
+    row.setAttribute('aria-label',
+      `${task.subject || ''} — ${t('task.inProgressShort')}`.trim());
+    return check;
+  }
+  if (task.status === 'failed') {
+    check.setAttribute('aria-hidden', 'true');
+    check.innerHTML = '<i data-lucide="x" class="task-failed-icon"></i>';
+    return check;
+  }
+  if (kindOf(task) === 'human') {
+    check.classList.add('task-check-clickable');
+    check.setAttribute('role', 'checkbox');
+    check.setAttribute('aria-checked', 'false');
+    check.setAttribute('tabindex', '0');
+    check.setAttribute('aria-label', t('task.completeAria', { subject: task.subject || '' }));
+    // Hidden check glyph: hover previews it, .task-completing fills the circle.
+    check.innerHTML = '<i data-lucide="check" class="task-check-glyph"></i>';
+    const complete = () => requestComplete(row, task);
+    check.addEventListener('click', complete);
+    check.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); complete(); }
+    });
+    return check;
+  }
+  // agent pending — purely decorative
+  check.setAttribute('aria-hidden', 'true');
+  return check;
 }
 
-function isCollapsed() {
-  try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
+function buildRow(task, sessionId) {
+  const row = document.createElement('div');
+  row.className = 'task-item' +
+    (task.status === 'in_progress' ? ' task-active' : '') +
+    (task.status === 'failed' ? ' task-failed' : '');
+  row.dataset.taskId = task.id;
+  if (sessionId) row.dataset.sessionId = sessionId;
+
+  row.appendChild(buildCheck(task, row));
+
+  const text = document.createElement('div');
+  text.className = 'task-item-text';
+  const label = document.createElement('span');
+  label.className = 'task-label';
+  label.textContent = task.subject || '';
+  text.appendChild(label);
+  row.appendChild(text);
+  return row;
 }
 
-function setCollapsed(v) {
-  try { localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0'); } catch {}
+function buildGroupHeader(label) {
+  const h = document.createElement('div');
+  // Dual class: .task-group-header is the implementation class (CSS hooks),
+  // .task-section-title is the frozen spec assertion selector (§10 A6).
+  h.className = 'task-group-header task-section-title';
+  h.textContent = label;
+  return h;
 }
 
+// ── Main render ──────────────────────────────────────────────────────────
+
+/**
+ * @param {Array} tasks
+ * @param {HTMLElement} [container]
+ * @param {string} [sessionId] owning session — stamped onto rows so the
+ *   complete/rollback path can update state.sessionTasks[sessionId]
+ */
 export function renderTaskList(tasks, container, sessionId) {
-  container = container || document.getElementById('task-list');
+  if (!container) container = document.getElementById('task-list');
   if (!container) return;
 
-  // Build previous snapshot: taskId → status
-  const prevSnapshot = container._taskSnapshot || {};
+  const visible = (tasks || []).filter(isVisible);
+  container.classList.toggle('has-tasks', visible.length > 0);
+  container.classList.toggle('task-ws-down', !state.connected);
+  container.innerHTML = '';
+  if (visible.length === 0) return;
 
-  const isEmpty = !tasks || tasks.length === 0;
-  const active = isEmpty ? [] : tasks.filter(t => activeStatuses.has(t.status));
+  const human = visible.filter(tk => kindOf(tk) === 'human').sort(sortGroup);
+  const agent = visible.filter(tk => kindOf(tk) === 'agent').sort(sortGroup);
+  const both = human.length > 0 && agent.length > 0;
 
-  if (active.length === 0) {
-    // 「今日完成」折叠条在没有活跃任务时仍独立展示——这正是用户想看
-    // 「今天干成了什么」的时刻。
-    const today = todayCompleted(tasks);
-    const finishClear = () => {
-      container.innerHTML = '';
-      container.classList.remove('has-tasks');
-      renderTodayBar(container, today, sessionId);
-    };
-    // Fade out existing card before clearing
-    const card = container.querySelector('.task-card');
-    if (card && Object.keys(prevSnapshot).length > 0) {
-      card.classList.add('task-card-leaving');
-      setTimeout(finishClear, 300);
-    } else {
-      finishClear();
-    }
-    container._taskSnapshot = {};
-    return;
-  }
+  const card = document.createElement('div');
+  card.className = 'task-card' + (container.dataset.collapsed === '1' ? ' collapsed' : '');
 
-  // Build new snapshot
-  const newSnapshot = {};
-  active.forEach(t => { newSnapshot[t.id] = t.status; });
+  // ── Header: toggle + stats + archive entry (§3.1/§3.4) ──
+  const header = document.createElement('div');
+  header.className = 'task-header';
 
-  // Detect items to animate out (existed before, now completed/gone)
-  const leavingIds = Object.keys(prevSnapshot).filter(id => !newSnapshot[id]);
+  const toggle = document.createElement('button');
+  toggle.className = 'task-toggle';
+  const collapsed = card.classList.contains('collapsed');
+  toggle.title = collapsed ? t('task.expand') : t('task.collapse');
+  toggle.innerHTML = `<i data-lucide="${collapsed ? 'chevron-down' : 'chevron-up'}"></i>`;
 
-  // If there are leaving items, animate them out first, then re-render after 350ms
-  if (leavingIds.length > 0) {
-    let pendingLeave = leavingIds.length;
-    leavingIds.forEach(id => {
-      const el = container.querySelector(`[data-task-id="${id}"]`);
-      if (el) {
-        el.classList.add('task-leaving');
-      }
-      pendingLeave--;
-    });
+  const stats = document.createElement('span');
+  stats.className = 'task-stats';
+  stats.textContent = `${activeCount(visible)}${t('task.statsSuffix')}`;
 
-    // Delay the re-render to let leave animation play
-    setTimeout(() => doRender(container, tasks, active, sessionId, prevSnapshot, newSnapshot), 350);
-  } else {
-    doRender(container, tasks, active, sessionId, prevSnapshot, newSnapshot);
-  }
+  const archiveBtn = document.createElement('button');
+  archiveBtn.className = 'task-archive-btn';
+  archiveBtn.title = t('task.archiveTooltip');
+  archiveBtn.setAttribute('aria-label', t('task.archiveTooltip'));
+  archiveBtn.innerHTML = '<i data-lucide="archive"></i>';
+  archiveBtn.addEventListener('click', (e) => { e.stopPropagation(); openTaskArchive(); });
 
-  container._taskSnapshot = newSnapshot;
-}
+  header.appendChild(toggle);
+  header.appendChild(stats);
+  header.appendChild(archiveBtn);
 
-function doRender(container, allTasks, active, sessionId, prevSnapshot, newSnapshot) {
-  container.classList.add('has-tasks');
-  const collapsed = isCollapsed();
+  // ── Body: two sections (§3) ──
+  const body = document.createElement('div');
+  body.className = 'task-body';
+  const inner = document.createElement('div');
+  inner.className = 'task-body-inner';
 
-  // Build parent → children map
-  const byParent = new Map();
-  active.forEach(t => {
-    const pid = t.parentId || null;
-    if (!byParent.has(pid)) byParent.set(pid, []);
-    byParent.get(pid).push(t);
+  const appendGroup = (label, list) => {
+    if (list.length === 0) return;
+    if (both) inner.appendChild(buildGroupHeader(label));
+    for (const task of list) inner.appendChild(buildRow(task, sessionId));
+  };
+  // Human section pinned on top when both kinds exist (§3).
+  appendGroup(t('task.sectionHuman'), human);
+  appendGroup(t('task.sectionAgent'), agent);
+
+  body.appendChild(inner);
+  card.appendChild(header);
+  card.appendChild(body);
+  container.appendChild(card);
+
+  createIconsIn(container);
+
+  toggle.addEventListener('click', () => {
+    const nowCollapsed = card.classList.toggle('collapsed');
+    container.dataset.collapsed = nowCollapsed ? '1' : '';
+    toggle.innerHTML = `<i data-lucide="${nowCollapsed ? 'chevron-down' : 'chevron-up'}"></i>`;
+    toggle.title = nowCollapsed ? t('task.expand') : t('task.collapse');
+    createIconsIn(toggle);
   });
-  byParent.forEach(arr => arr.sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0)));
-
-  const activeIds = new Set(active.map(t => t.id));
-  const roots = active
-    .filter(t => !t.parentId || !activeIds.has(t.parentId))
-    .sort((a, b) => {
-      if (a.status !== b.status) {
-        const order = { in_progress: 0, pending: 1, completed: 2 };
-        return (order[a.status] ?? 3) - (order[b.status] ?? 3);
-      }
-      return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
-    });
-
-  const counts = { pending: 0, in_progress: 0 };
-  active.forEach(t => { counts[t.status]++; });
-
-  let html = `<div class="task-card${collapsed ? ' collapsed' : ''}">`;
-  html += '<div class="task-header">';
-  html += `<button class="task-toggle" title="${collapsed ? t('task.expand') : t('task.collapse')}"><i data-lucide="${collapsed ? 'chevron-down' : 'chevron-up'}"></i></button>`;
-  const parts = [];
-  if (counts.in_progress > 0) parts.push(t('task.inProgress', { count: counts.in_progress }));
-  if (counts.pending > 0) parts.push(t('task.open', { count: counts.pending }));
-  if (parts.length > 0) html += `<span class="task-stats">${parts.join(', ')}</span>`;
-  html += '</div>';
-  html += `<div class="task-body"><div class="task-body-inner">`;
-
-  let visibleCount = 0;
-  function renderTaskItem(task, depth) {
-    if (visibleCount >= MAX_VISIBLE) return;
-    visibleCount++;
-
-    const isActive = task.status === 'in_progress';
-    let cls = 'task-item';
-    cls += isActive ? ' task-active' : ' task-pending';
-    if (depth > 0) cls += ' task-child';
-
-    // Transition class: flip if status changed, entering if new
-    const prevStatus = prevSnapshot[task.id];
-    if (prevStatus && prevStatus !== task.status) {
-      cls += ' task-flipping';
-    } else if (!prevStatus) {
-      cls += ' task-entering';
-    }
-
-    const indent = depth * 16;
-    const label = (isActive && task.activeForm) ? task.activeForm : task.subject;
-
-    html += `<div class="${cls}" data-task-id="${task.id}" style="margin-left:${indent}px">`;
-    const iconName = iconMap[task.status] || 'square';
-    html += `<span class="task-icon"><i data-lucide="${iconName}"></i></span>`;
-    html += `<span class="task-label">${escapeHtml(label)}</span>`;
-    html += '</div>';
-
-    const children = byParent.get(task.id) || [];
-    children.forEach(c => renderTaskItem(c, depth + 1));
-  }
-
-  roots.forEach(task => renderTaskItem(task, 0));
-
-  const totalShown = active.length;
-  if (totalShown > MAX_VISIBLE) {
-    html += `<div class="task-more">${t('task.more', { count: totalShown - MAX_VISIBLE })}</div>`;
-  }
-
-  html += '</div></div>';
-  html += '</div>';
-  container.innerHTML = html;
-
-  if (typeof lucide !== 'undefined') createIconsIn(container);
-
-  // 「今日完成 N」折叠条——卡片底部追加(独立于卡片折叠态)
-  renderTodayBar(container, todayCompleted(allTasks), sessionId);
-
-  // Toggle handler
-  const toggleBtn = container.querySelector('.task-toggle');
-  if (toggleBtn) {
-    toggleBtn.addEventListener('click', () => {
-      const card = container.querySelector('.task-card');
-      if (!card) return;
-      const nowCollapsed = !card.classList.contains('collapsed');
-      card.classList.toggle('collapsed', nowCollapsed);
-      setCollapsed(nowCollapsed);
-      toggleBtn.title = nowCollapsed ? t('task.expand') : t('task.collapse');
-      toggleBtn.innerHTML = `<i data-lucide="${nowCollapsed ? 'chevron-down' : 'chevron-up'}"></i>`;
-      if (typeof lucide !== 'undefined') createIconsIn(toggleBtn);
-    });
-  }
-}
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
 }

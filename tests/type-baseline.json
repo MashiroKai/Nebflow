@@ -115,11 +115,6 @@
       "TS2362": 3,
       "TS2363": 3
     },
-    "src/main/resources/web/js/taskList.js": {
-      "TS2362": 1,
-      "TS2363": 1,
-      "TS2339": 4
-    },
     "src/main/resources/web/js/viewers/docx.js": {
       "TS2339": 4
     },
