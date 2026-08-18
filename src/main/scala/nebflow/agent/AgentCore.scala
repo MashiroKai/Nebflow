@@ -393,7 +393,8 @@ private[agent] trait AgentCore:
             sessionsText = changeSessions,
             taskListText = taskListText,
             language = changeLanguage,
-            envInfo = changeEnv
+            envInfo = changeEnv,
+            depth = depth
           )
           // Branch change: persist synchronously (no async message needed)
           _ <- turnCtx.branchChange match
