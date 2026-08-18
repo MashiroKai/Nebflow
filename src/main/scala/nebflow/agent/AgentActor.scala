@@ -40,6 +40,21 @@ object TurnBoundaryDrains:
     e.source == "subtask" || e.source == "delegate"
 
   /**
+   * Count how many sub-agent barrier slots a batch of tool results should add.
+   * Only successful ephemeral Delegates and all SubTasks count — persistent
+   * Delegates send their completion with source=address (not "delegate"), so
+   * isSubagentResult never matches and the counter would never decrement.
+   * (qa-backend 2026-08-19: phantom barrier fix)
+   */
+  def countBarrierIncrements(results: List[(nebflow.shared.ToolCall, nebflow.core.ToolExecResult)]): Int =
+    results.count { (call, r) =>
+      !r.isError && (
+        call.name == "SubTask" ||
+        (call.name == "Delegate" && call.input("lifecycle").flatMap(_.asString).forall(_ != "persistent"))
+      )
+    }
+
+  /**
    * Barrier-aware drain (2026-08-18, worker blocking semantics): while a
    * parallel sub-agent batch is outstanding (outstanding > 0), subtask/delegate
    * result events are HELD in the queue — the agent is not interrupted one
@@ -1317,14 +1332,19 @@ object AgentActor extends AgentCore with AgentSession:
         // Increment delegate count for Delegate/SubTask calls
         val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "SubTask")
         val newDelegateCount = state.delegateCount + delegateIncrement
-        // Sub-agent barrier: each SUCCESSFULLY spawned Delegate/SubTask in this
-        // turn adds one outstanding result slot. Failed spawns (depth limit,
-        // invalid agent, missing ActorSystem) return a ToolError and never
-        // produce an ExternalEvent — counting them would stall the barrier
-        // forever, blocking every later result delivery.
-        val spawnedIncrement = tc.results.count { (call, r) =>
-          (call.name == "Delegate" || call.name == "SubTask") && !r.isError
-        }
+        // Sub-agent barrier: each SUCCESSFULLY spawned ephemeral Delegate or
+        // any SubTask in this turn adds one outstanding result slot. Failed
+        // spawns (depth limit, invalid agent, missing ActorSystem) return a
+        // ToolError and never produce an ExternalEvent — counting them would
+        // stall the barrier forever, blocking every later result delivery.
+        //
+        // Persistent Delegates are EXCLUDED (qa-backend 2026-08-19): their
+        // completion event carries source=address (the actor path, via
+        // persistentAdapter in DelegateTool:618-626), NOT "delegate" — so
+        // isSubagentResult (:39-40) never matches it, and the counter would
+        // never decrement. Counting them creates a phantom slot that permanently
+        // holds every later ephemeral batch's results.
+        val spawnedIncrement = TurnBoundaryDrains.countBarrierIncrements(tc.results)
         val newOutstanding = state.execution.outstandingSubagentResults + spawnedIncrement
         val updatedState =
           state.copy(execution =
