@@ -142,6 +142,21 @@ function viewHtml(pane, { content, absPath, fileName }) {
   iframe.srcdoc = srcdoc;
   pane.appendChild(iframe);
 
+  // Navigation-away fallback: srcdoc documents inherit the app's base URL, so
+  // a client-side router (slidev etc.) may navigate the frame onto the app
+  // itself — the embedded-boot guard in index.html stops the recursion, and
+  // this replaces the pane with a clear notice instead of a nested app shell.
+  iframe.addEventListener('load', () => {
+    let href = null;
+    try { href = iframe.contentWindow?.location?.href; } catch { /* cross-origin */ }
+    if (!href || href === 'about:srcdoc') return;
+    pane.innerHTML = '';
+    const note = document.createElement('div');
+    note.style.cssText = 'padding:32px;text-align:center;color:var(--color-text-muted);font-size:13px;line-height:1.6';
+    note.textContent = 'This HTML page navigated its preview frame to the application URL (client-side router). Rendering was stopped to prevent recursive nesting.';
+    pane.appendChild(note);
+  });
+
   addSourceToggle(pane, viewHtml, { content, absPath, fileName });
 }
 
