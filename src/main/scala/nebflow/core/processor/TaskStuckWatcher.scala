@@ -56,10 +56,15 @@ object TaskStuckWatcher:
    * （.start），错误被 handleErrorWith 吞掉防止 fiber 崩溃——扫描器必须自愈。
    */
   def run(resources: SharedResources, wsHub: WsHub, interval: FiniteDuration, thresholdMs: Long): IO[Unit] =
+    // NOTE: must use `>>` (by-name) for the recursion, NOT `*>` — `*>` evaluates
+    // its right operand strictly, so `*> loop` would recurse infinitely while
+    // BUILDING the IO description (StackOverflowError at startup, caught by
+    // the s3 smoke test). `>>` defers `loop` until the sleep completes, so the
+    // recursion crosses the async sleep boundary and stays stack-safe.
     def loop: IO[Unit] =
       scan(resources, wsHub, thresholdMs).handleErrorWith(e =>
         logger.warn(s"TaskStuckWatcher scan failed (will retry next cycle): ${e.getMessage}")
-      ) *> IO.sleep(interval) *> loop
+      ) *> IO.sleep(interval) >> loop
     loop
 
   /** 单轮扫描：识别卡死 agent 并执行恢复动作。独立成函数便于单元测试。 */

@@ -69,30 +69,30 @@ object BackoffSupervisor:
     withinTimeRange: FiniteDuration = 5.minutes
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
-      ctx.watch(childRef)
-      IO(logger.info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)")).as(
-        active(
-          childRef,
-          childSpawnFn,
-          childName,
-          parentRef,
-          description,
-          agentName,
-          subagentId,
-          parentSessionId,
-          resources,
-          initialPrompt,
-          source,
-          extraMetadata,
-          wsSend,
-          restartCount = 0,
-          restartHistory = Nil,
-          minBackoff,
-          maxBackoff,
-          maxRestarts,
-          withinTimeRange
+      ctx.watch(childRef) *>
+        IO(logger.info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)")).as(
+          active(
+            childRef,
+            childSpawnFn,
+            childName,
+            parentRef,
+            description,
+            agentName,
+            subagentId,
+            parentSessionId,
+            resources,
+            initialPrompt,
+            source,
+            extraMetadata,
+            wsSend,
+            restartCount = 0,
+            restartHistory = Nil,
+            minBackoff,
+            maxBackoff,
+            maxRestarts,
+            withinTimeRange
+          )
         )
-      )
     }
 
   /** Active state: forwards completion/failure to parent, restarts on Terminated. */
