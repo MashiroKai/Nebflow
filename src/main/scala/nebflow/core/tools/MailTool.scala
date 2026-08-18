@@ -555,10 +555,48 @@ Message type (optional, default "INFO"):
                     case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
                     case Right(Some(targetSid)) =>
                       queueToSession(targetSid, address, message, mailType, imagePaths, ctx, system, senderSessionId)
+                    case Right(None) if address == "Nebula" =>
+                      queueToNebula(message, mailType, imagePaths, ctx, system, senderSessionId, address)
                     case Right(None) => mailNotFound(address)
                 yield sr2
           yield sr
     yield result
+
+  /**
+   * Queue-mode routing to the Nebula root agent (issue #312).
+   *
+   * resolveSessionId's contract for "Nebula" is Right(None) = "route to the
+   * root agent directly" (see its "team/Nebula" branch) — but the caller must
+   * locate the root session: the Nebula root is a Root-kind AgentRecord in the
+   * agent registry, NOT a team session in sessionMap. Before this fix a queue
+   * Mail to "Nebula" fell into mailNotFound with a misleading "only Team Lead
+   * can communicate with Nebula" error even when the sender IS the Team Lead
+   * (Manager→Nebula queue rejected; immediate mode was fine because it
+   * resolves the actor by name via system.resolve). Permission is already
+   * enforced upstream: deliverQueue runs checkTeamScope first, so only
+   * canMailNebula senders reach here with address == "Nebula".
+   */
+  private[tools] def queueToNebula(
+      message: String,
+      mailType: String,
+      imagePaths: List[String],
+      ctx: ToolContext,
+      system: ActorSystem,
+      senderSessionId: String,
+      address: String
+    ): IO[Either[ToolError, String]] =
+    ctx.sharedResources match
+      case Some(res) =>
+        resolveNebulaRootSession(res).flatMap {
+          case Some(nebulaSid) =>
+            queueToSession(nebulaSid, address, message, mailType, imagePaths, ctx, system, senderSessionId)
+          case None => mailNotFound(address)
+        }
+      case None => mailNotFound(address)
+
+  /** The Nebula root agent's sessionId from the unified agent registry (Root kind). */
+  private[tools] def resolveNebulaRootSession(res: SharedResources): IO[Option[String]] =
+    res.agentRegistry.get.map(_.collectFirst { case (_, rec) if rec.kind == AgentKind.Root => rec.sessionId })
 
   /** Persist to MailQueueStore, activate target, send MailQueued command. */
   private def queueToSession(
