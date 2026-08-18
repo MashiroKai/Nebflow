@@ -1095,7 +1095,12 @@ object AgentActor extends AgentCore with AgentSession:
               val cls = Fallback.classifyError(error)
               cls.permanence == ErrorPermanence.Transient && isOverloadClass(cls.reason)
           if retryable && state.llmFailRetries < OverloadRetryMax then
-            val retryState = state.withLlmFailRetries(state.llmFailRetries + 1)
+            // 方案 C（2026-08-18 误杀修复）：预算只在重试路径递增——llmCallsThisTurn
+            // 与 llmFailRetries 的区别：后者成功即重置（只限连续重试），前者 turn 内
+            // 单调累计（限全 turn 重试总量，正常工具循环的成功调用不计入）。
+            val retryState = state
+              .withLlmFailRetries(state.llmFailRetries + 1)
+              .withLlmCallsThisTurn(state.llmCallsThisTurn + 1)
             val backoffMs = math.min(
               math.max(LlmFailBackoffBaseMs * (1L << (retryState.llmFailRetries - 1)), OverloadBackoffMinMs),
               LlmFailBackoffMaxMs
@@ -2129,7 +2134,15 @@ object AgentActor extends AgentCore with AgentSession:
         model,
         thinking,
         thinkingSignature,
-        sendText,
+        // Log the CALLER's flag, not sendText. finishTurnCont uses this param
+        // only for the turn-complete log ("textStreamed=…"), whose semantics
+        // is "was the text streamed progressively to the UI". Passing sendText
+        // (= !textAlreadyStreamed) inverted it: every normally-streamed turn
+        // (caller=true → sendText=false) logged textStreamed=false, while the
+        // error paths (caller=false → sendText=true) logged true — the exact
+        // opposite of the truth. Fixed 2026-08-18 (107 textStreamed=false
+        // investigation: 107's SSE does stream text_delta; the log lied).
+        textAlreadyStreamed,
         isSubagent
       )
     yield result

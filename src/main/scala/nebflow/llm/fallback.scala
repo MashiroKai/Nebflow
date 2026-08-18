@@ -32,16 +32,17 @@ class AllProvidersDownTimeout(val waitedMs: Long) extends RuntimeException(
 )
 
 /**
- * Raised when a single turn has already made [[Fallback.MaxTurnLlmCalls]] LLM
- * requests (including retries). Token incident (2026-08-18): retry
- * amplification re-sends the full ~250k-token context on every retry, so an
- * unbounded retry storm can burn hundreds of millions of tokens in minutes.
- * This error is classified Permanent — the agent's llm-fail retry loop must
- * NOT fire again (that would defeat the budget). The turn fails fast with an
- * explicit reason instead of silently looping.
+ * Raised when a single turn has already made [[Fallback.MaxTurnLlmCalls]]
+ * failed-retry re-dispatches (plan C: normal tool-loop calls do NOT count).
+ * Token incident (2026-08-18): retry amplification re-sends the full
+ * ~250k-token context on every retry, so an unbounded retry storm can burn
+ * hundreds of millions of tokens in minutes. This error is classified
+ * Permanent — the agent's llm-fail retry loop must NOT fire again (that would
+ * defeat the budget). The turn fails fast with an explicit reason instead of
+ * silently looping.
  */
 class TurnBudgetExceeded(val turnId: Long, val calls: Int) extends RuntimeException(
-  s"turn LLM budget exceeded: $calls calls in turn $turnId (max ${Fallback.MaxTurnLlmCalls}, includes retries) — failing fast to stop retry amplification"
+  s"turn LLM budget exceeded: $calls retry calls in turn $turnId (max ${Fallback.MaxTurnLlmCalls}) — failing fast to stop retry amplification"
 )
 
 case class FallbackResult[T](
@@ -59,11 +60,14 @@ object Fallback:
   val MaxBackoffMs: Long = 10000L
 
   /**
-   * Per-turn LLM request budget (2026-08-18 token incident): a single turn may
-   * make at most this many LLM requests TOTAL, including all retries at both
-   * the fallback layer and the AgentActor llm-fail-retry layer. Normal turns
-   * make 1-3 calls (initial + tool-loop + follow-ups); 4 leaves headroom.
-   * Exceeding it raises [[TurnBudgetExceeded]] (Permanent → no further retry).
+   * Per-turn LLM RETRY budget (2026-08-18 token incident, plan C): a single
+   * turn may make at most this many failed-retry re-dispatches (incremented
+   * only in the AgentActor LlmFailed retry branch). Normal tool-loop calls do
+   * NOT count — tool-intensive agents (read → edit → compile → ...) are free
+   * to call the LLM as often as their loop needs. Exceeding it raises
+   * [[TurnBudgetExceeded]] (Permanent → no further retry): same-turn failures
+   * still fail fast after ≤4 retry re-dispatches, so retry-amplification
+   * protection (full ~250k-context re-sends) is preserved.
    */
   val MaxTurnLlmCalls: Int = 4
 

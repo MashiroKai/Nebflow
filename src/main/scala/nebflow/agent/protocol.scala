@@ -687,11 +687,13 @@ case class ExecutionContext(
   // Consecutive transient LLM failures auto-retried this turn (bounded by
   // AgentActor.LlmFailRetryMax). Reset on any successful LLM completion.
   llmFailRetries: Int = 0,
-  // Per-turn LLM request counter (2026-08-18 token incident): total LLM
-  // requests made this turn INCLUDING retries at both the fallback layer and
-  // the llm-fail-retry layer. Bounded by Fallback.MaxTurnLlmCalls — exceeding
-  // it raises TurnBudgetExceeded (Permanent) so the turn fails fast instead of
-  // amplifying token spend via full-context re-dispatches. Reset when the
+  // Per-turn LLM RETRY counter (2026-08-18 token incident, plan C): counts
+  // ONLY failed-retry re-dispatches (incremented in the AgentActor LlmFailed
+  // retry branch). Normal tool-loop calls do NOT count — tool-intensive agents
+  // (read → edit → compile → ...) never trip it. Bounded by
+  // Fallback.MaxTurnLlmCalls — exceeding it raises TurnBudgetExceeded
+  // (Permanent) so the turn fails fast instead of amplifying token spend via
+  // full-context re-dispatches. Monotonic within the turn; reset when the
   // turn ends (ExecutionContext.idle rebuilds the counter to 0).
   llmCallsThisTurn: Int = 0,
   // Pending queue mails (delivery=queue): counter only — actual items live on
