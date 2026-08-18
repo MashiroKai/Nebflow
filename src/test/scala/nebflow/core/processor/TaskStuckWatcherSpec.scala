@@ -289,4 +289,41 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       assert(msgs.head.isInstanceOf[AgentCommand.Stop], s"expected Stop, got ${msgs.head.getClass.getSimpleName}")
   }
 
+  test("run 循环跨 sleep 边界递归 ≥2 轮不栈溢出（回归：`*> loop` 构建期无限递归）") {
+    val system = ActorSystem("test")
+    for
+      tmp <- IO(os.temp.dir())
+      resources <- mkResources(system, tmp)
+      parentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "parent-loop")
+      received <- Ref.of[IO, List[AgentCommand]](Nil)
+      childRef <- system.spawn(mkRecordingActor(received), "loop-child")
+      now = System.currentTimeMillis()
+      threshold = 1000L
+      _ <- resources.agentRegistry.set(
+        Map(
+          "loop-stuck" -> AgentRecord(
+            sessionId = "loop-stuck",
+            ref = childRef,
+            kind = AgentKind.Delegate,
+            rootSessionId = "root-1",
+            parentRef = Some(parentRef),
+            startedAt = now - 60_000L,
+            status = AgentStatus.Processing,
+            lastActivityMs = now - threshold - 1000
+          )
+        )
+      )
+      // 30ms interval：250ms ≈ 8 轮；每轮扫到 stuck 发 1 个 Stop。
+      // timeout 双保险：若 run() 构建期无限递归（旧 *> 写法）→ 立即 StackOverflowError
+      // → 测试红；若 sleep 链挂死 → timeout 兜底。
+      fiber <- TaskStuckWatcher
+        .run(resources, new WsHub(), 30.millis, threshold)
+        .timeout(3.seconds)
+        .start
+      _ <- IO.sleep(250.millis)
+      _ <- fiber.cancel
+      msgs <- received.get
+    yield assert(msgs.size >= 2, s"expected >=2 Stop across loop rounds, got ${msgs.size}")
+  }
+
 end TaskStuckWatcherSpec
