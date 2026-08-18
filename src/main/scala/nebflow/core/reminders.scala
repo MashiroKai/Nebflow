@@ -52,21 +52,25 @@ object SystemReminders:
   end collectAll
 
   /**
-   * Collect per-turn reminders including time-of-day context (peak/off-peak +
-   * next idle window from usage history) and a summary of pending scheduled
-   * tasks for this session. IO because it queries the scheduled-task store and
-   * the persisted usage pattern.
+   * Collect per-turn reminders and a summary of pending scheduled tasks for
+   * this session. IO because it queries the scheduled-task store.
    *
    * Cache-optimization v2 (2026-08-11): dynamic values that were moved OUT of
    * the per-turn system prompt are injected here instead — request-level
    * reminders (never persisted). Callers pass the *current* values; only
    * changed values produce a reminder (task list is always reported on user
    * turns). The time reminder keeps its persisted semantics (任务 O).
+   *
+   * Distribution by agent role (2026-08-18): the aggregated `tasks` reminder
+   * ("Current tasks") is injected ONLY for the root agent (Nebula, depth 0,
+   * isRoot=true) — team members / workers / delegates do not need the global
+   * task list. All other reminder types are role-agnostic.
    */
   def collectAllIO(
     isUserTurn: Boolean,
     taskStore: ScheduledTaskStore,
     sessionId: Option[String],
+    isRoot: Boolean = true,
     deviceInfo: String = "",
     sessionsText: String = "",
     taskListText: String = "",
@@ -76,15 +80,13 @@ object SystemReminders:
     if !isUserTurn then IO.pure(Nil)
     else
       for
-        pattern <- UsageTracker.loadPattern()
         pending <- sessionId.fold(IO.pure(Nil: List[ScheduledTask]))(taskStore.loadTasks)
         reminders = collectAll(isUserTurn = true) ++
-          timeContextReminder(pattern) ++
           pendingScheduleReminder(pending) ++
           devicesReminder(deviceInfo) ++
           sessionsReminder(sessionsText) ++
           envReminder(envInfo) ++
-          tasksReminder(taskListText) ++
+          tasksReminder(taskListText, isRoot) ++
           languageReminder(language)
       yield reminders
 
@@ -103,42 +105,18 @@ object SystemReminders:
     if envInfo.isEmpty then None
     else Some(SystemReminder("environment", s"Environment changed:\n$envInfo"))
 
-  /** Current task list — user-turn only, never part of systemStable (cache v2). */
-  private def tasksReminder(taskListText: String): Option[SystemReminder] =
-    if taskListText.isEmpty then None
+  /**
+   * Current task list — root agent only (isRoot), user-turn only, never part
+   * of systemStable (cache v2). Team members / workers / delegates get no
+   * global task aggregation (2026-08-18).
+   */
+  private def tasksReminder(taskListText: String, isRoot: Boolean): Option[SystemReminder] =
+    if !isRoot || taskListText.isEmpty then None
     else Some(SystemReminder("tasks", s"Current tasks:\n$taskListText"))
 
   /** Language setting changed since systemStable was built (cache v2). */
   private def languageReminder(language: Option[String]): Option[SystemReminder] =
     language.map(lang => SystemReminder("language", s"Language changed: respond in $lang"))
-
-  /** Peak (14-18 on weekdays) / off-peak + next idle window from usage history. */
-  private def timeContextReminder(pattern: UsagePattern): Option[SystemReminder] =
-    val now = ZonedDateTime.now()
-    val isPeak = now.getDayOfWeek.getValue <= 5 && now.getHour >= 14 && now.getHour < 18
-    val peakPart = if isPeak then "Peak hours active (14:00-18:00, 3x pricing)" else "Off-peak hours"
-    val idlePart = nextIdleWindow(pattern, now) match
-      case Some(w) => s"Next idle window: ${w.startHour}:00 (${w.durationHours}h)"
-      case None => ""
-    val content = s"$peakPart. $idlePart".trim
-    if content.isEmpty then None else Some(SystemReminder("time-context", content))
-
-  /** Find the next idle window strictly after now (today or upcoming days). */
-  private def nextIdleWindow(pattern: UsagePattern, now: ZonedDateTime): Option[TimeWindow] =
-    if pattern.idleWindows.isEmpty then None
-    else
-      val todayDow = now.getDayOfWeek.getValue % 7
-      val nowHour = now.getHour
-      // Candidates today (later hours) and the next 7 days
-      (0 to 7).iterator
-        .flatMap { dayOffset =>
-          val dow = (todayDow + dayOffset) % 7
-          pattern.idleWindows.filter(_.dayOfWeek == dow).map(w => (dayOffset, w))
-        }
-        .collectFirst {
-          case (0, w) if w.startHour > nowHour => w
-          case (dayOffset, w) if dayOffset > 0 => w
-        }
 
   /** Summary of this session's pending (untriggered) scheduled tasks. */
   private def pendingScheduleReminder(pending: List[ScheduledTask]): Option[SystemReminder] =
