@@ -598,6 +598,24 @@ class WebSocketRoutes(
           StaticFile.fromResource(s"web/vendor/monaco/$path", Some(req)).getOrElseF(NotFound())
       end if
 
+    case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/pdfjs/") =>
+      // Serve pdfjs viewer files (pdf.min.js / pdf.worker.min.js) from bundled
+      // resources. The single-segment vendor case below cannot match this
+      // two-level path (/vendor/pdfjs/pdf.min.js), and the fonts/monaco cases
+      // are directory-specific — without this case every pdfjs file 404s and
+      // the PDF viewer fails to boot (pdfjsLib undefined). Same guard pattern
+      // as the monaco case above (manual path parsing, traversal blocked).
+      val segs = req.uri.path.segments.map(_.encoded).toList
+      if segs.sizeIs < 3 then NotFound()
+      else
+        val relParts = segs.drop(2) // drop "vendor" and "pdfjs"
+        // Block path traversal
+        if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+        else
+          val path = relParts.mkString("/")
+          StaticFile.fromResource(s"web/vendor/pdfjs/$path", Some(req)).getOrElseF(NotFound())
+      end if
+
     case req @ GET -> Root / "vendor" / file =>
       StaticFile.fromResource(s"web/vendor/$file", Some(req)).getOrElseF(NotFound())
 
