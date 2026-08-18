@@ -45,3 +45,8 @@ declare const hljs: {
 interface Window {
   copyCode(btn: HTMLElement): void;
 }
+
+/** Global toast helper (set by main.js) */
+interface Window {
+  __showToast?: (message: string, kind?: string) => void;
+}
