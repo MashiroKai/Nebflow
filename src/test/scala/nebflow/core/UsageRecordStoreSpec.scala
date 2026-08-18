@@ -144,4 +144,15 @@ class UsageRecordStoreSpec extends FunSuite:
     assertEquals(byDay.buckets.head.inputTokens, 600L)
   }
 
+  test("lastActivityMs: 0 for unknown agent, updates after record (cold-start routing)"):
+    val s = store(os.temp.dir())
+    assertEquals(s.lastActivityMs("Backend"), 0L, "no records yet → treated as idle")
+    val ts = 1787054400000L
+    s.record(record(ts, input = 10, agent = "Backend")).unsafeRunSync()
+    assertEquals(s.lastActivityMs("Backend"), ts)
+    assertEquals(s.lastActivityMs("Other"), 0L, "different agent unaffected")
+    // Later record bumps the timestamp
+    s.record(record(ts + 60_000L, input = 20, agent = "Backend")).unsafeRunSync()
+    assertEquals(s.lastActivityMs("Backend"), ts + 60_000L)
+
 end UsageRecordStoreSpec
