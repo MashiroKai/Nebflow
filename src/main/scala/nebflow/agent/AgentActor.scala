@@ -2134,14 +2134,6 @@ object AgentActor extends AgentCore with AgentSession:
         model,
         thinking,
         thinkingSignature,
-        // Log the CALLER's flag, not sendText. finishTurnCont uses this param
-        // only for the turn-complete log ("textStreamed=…"), whose semantics
-        // is "was the text streamed progressively to the UI". Passing sendText
-        // (= !textAlreadyStreamed) inverted it: every normally-streamed turn
-        // (caller=true → sendText=false) logged textStreamed=false, while the
-        // error paths (caller=false → sendText=true) logged true — the exact
-        // opposite of the truth. Fixed 2026-08-18 (107 textStreamed=false
-        // investigation: 107's SSE does stream text_delta; the log lied).
         textAlreadyStreamed,
         isSubagent
       )
@@ -2163,7 +2155,11 @@ object AgentActor extends AgentCore with AgentSession:
     model: Option[String],
     thinking: Option[String],
     thinkingSignature: Option[String],
-    textAlreadyStreamed: Boolean,
+    // True when the text was streamed incrementally to the client during the
+    // turn (normal path); false when it is being delivered as a single final
+    // burst at finish (error paths: compaction failed / context exceeded /
+    // max tokens). Logged verbatim as textStreamed — do NOT invert.
+    textStreamed: Boolean,
     isSubagent: Boolean
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     logAgentEvent(
@@ -2172,7 +2168,7 @@ object AgentActor extends AgentCore with AgentSession:
       state.sessionId,
       state.sessionName,
       "turn-complete",
-      s"msgs=${state.messages.size} textLen=${text.length} textStreamed=$textAlreadyStreamed " +
+      s"msgs=${state.messages.size} textLen=${text.length} textStreamed=$textStreamed " +
         s"thinking=${thinking.map(_.length).getOrElse(0)} model=${model.getOrElse("-")}"
     )
     // Barrier-aware drain: while a parallel sub-agent batch is outstanding,
@@ -2359,7 +2355,7 @@ object AgentActor extends AgentCore with AgentSession:
             finishTurnCont(
               agentDef, resources, depth, parentRef,
               state.copy(execution = state.execution.copy(pendingMailQueueCount = 0)),
-              replyTo, newMessages, text, model, thinking, thinkingSignature, textAlreadyStreamed, isSubagent
+              replyTo, newMessages, text, model, thinking, thinkingSignature, textStreamed, isSubagent
             )
       yield result
     else

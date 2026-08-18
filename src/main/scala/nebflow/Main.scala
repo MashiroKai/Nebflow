@@ -95,6 +95,13 @@ object Main extends IOApp:
         ProcessManager.writePid(pid)
         // JVM shutdown hook as backup — ensures PID file cleanup even on SIGINT/SIGTERM
         Runtime.getRuntime.addShutdownHook(new Thread(() => ProcessManager.removePid()))
+        // P0 (2026-08-19): Ctrl+C left in-flight LLM HTTP requests running while
+        // the JVM drained — a token-burn path (2亿 token 事故潜在路径). Abort
+        // every active FS2/sttp stream on shutdown so no request continues past
+        // the hook. Idempotent + exception-safe (runs on IORuntime.global).
+        Runtime.getRuntime.addShutdownHook(
+          new Thread(() => nebflow.llm.LlmInterface.cancelAllInflightSync())
+        )
         nebflow.gateway.GatewayMain.run
           .guarantee(IO.blocking(ProcessManager.removePid()))
           .as(ExitCode.Success)

@@ -52,8 +52,8 @@ object SystemReminders:
   end collectAll
 
   /**
-   * Collect per-turn reminders and a summary of pending scheduled tasks for
-   * this session. IO because it queries the scheduled-task store.
+   * Collect per-turn reminders including a summary of pending scheduled
+   * tasks for this session. IO because it queries the scheduled-task store.
    *
    * Cache-optimization v2 (2026-08-11): dynamic values that were moved OUT of
    * the per-turn system prompt are injected here instead — request-level
@@ -61,21 +61,22 @@ object SystemReminders:
    * changed values produce a reminder (task list is always reported on user
    * turns). The time reminder keeps its persisted semantics (任务 O).
    *
-   * Distribution by agent role (2026-08-18): the aggregated `tasks` reminder
-   * ("Current tasks") is injected ONLY for the root agent (Nebula, depth 0,
-   * isRoot=true) — team members / workers / delegates do not need the global
-   * task list. All other reminder types are role-agnostic.
+   * Reminder audit (2026-08-19): time-context (peak/off-peak + next idle
+   * window) removed entirely — user flagged "Off-peak hours." as noise
+   * (00:00 实测). `tasks` is gated to root agents (depth 0): subagent
+   * workers receive their work from the parent's Delegate/SubTask
+   * instructions, not the task store.
    */
   def collectAllIO(
     isUserTurn: Boolean,
     taskStore: ScheduledTaskStore,
     sessionId: Option[String],
-    isRoot: Boolean = true,
     deviceInfo: String = "",
     sessionsText: String = "",
     taskListText: String = "",
     language: Option[String] = None,
-    envInfo: String = ""
+    envInfo: String = "",
+    depth: Int = 0
   ): IO[List[SystemReminder]] =
     if !isUserTurn then IO.pure(Nil)
     else
@@ -86,7 +87,7 @@ object SystemReminders:
           devicesReminder(deviceInfo) ++
           sessionsReminder(sessionsText) ++
           envReminder(envInfo) ++
-          tasksReminder(taskListText, isRoot) ++
+          (if depth > 0 then None else tasksReminder(taskListText)) ++
           languageReminder(language)
       yield reminders
 
@@ -105,13 +106,9 @@ object SystemReminders:
     if envInfo.isEmpty then None
     else Some(SystemReminder("environment", s"Environment changed:\n$envInfo"))
 
-  /**
-   * Current task list — root agent only (isRoot), user-turn only, never part
-   * of systemStable (cache v2). Team members / workers / delegates get no
-   * global task aggregation (2026-08-18).
-   */
-  private def tasksReminder(taskListText: String, isRoot: Boolean): Option[SystemReminder] =
-    if !isRoot || taskListText.isEmpty then None
+  /** Current task list — user-turn only, never part of systemStable (cache v2). */
+  private def tasksReminder(taskListText: String): Option[SystemReminder] =
+    if taskListText.isEmpty then None
     else Some(SystemReminder("tasks", s"Current tasks:\n$taskListText"))
 
   /** Language setting changed since systemStable was built (cache v2). */
