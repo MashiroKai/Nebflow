@@ -36,6 +36,8 @@ import { key } from './branding.js';
  * @property {string} model
  * @property {number} [contextWindow]
  * @property {number} [inputTokens]
+ * @property {number} [outputTokens]
+ * @property {number} [compactThreshold]
  */
 
 // Constants
