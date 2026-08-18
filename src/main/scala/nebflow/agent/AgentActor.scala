@@ -870,7 +870,38 @@ object AgentActor extends AgentCore with AgentSession:
               isSubagent = isSubagent,
               state.sessionId
             )
-          usageEvent *> handleLlmCompleteBranch(
+          // Structured usage telemetry (token dashboard): record provider/model/
+          // agent/session + token buckets for every successful LLM call. model
+          // arrives as "providerId/modelId" from aggregateChunks.
+          val usageRecordIO: IO[Unit] =
+            (result.usage, result.model) match
+              case (Some(u), Some(modelRef)) =>
+                val idx = modelRef.indexOf('/')
+                val (provider, model) =
+                  if idx > 0 then (modelRef.take(idx), modelRef.drop(idx + 1)) else ("unknown", modelRef)
+                resources.usageRecordStore
+                  .record(
+                    nebflow.core.LlmUsageRecord(
+                      timestamp = System.currentTimeMillis(),
+                      provider = provider,
+                      model = model,
+                      agent = agentDef.name,
+                      sessionId = state.sessionId,
+                      inputTokens = u.inputTokens,
+                      outputTokens = u.outputTokens,
+                      cacheReadTokens = u.cacheReadTokens.getOrElse(0),
+                      cacheWriteTokens = u.cacheWriteTokens.getOrElse(0)
+                    )
+                  )
+                  .handleErrorWith(e =>
+                    IO(
+                      NebflowLogger
+                        .forName("nebflow.agent")
+                        .warn(s"usage record failed: ${e.getMessage}")
+                    )
+                  )
+              case _ => IO.unit
+          usageEvent *> usageRecordIO *> handleLlmCompleteBranch(
             agentDef,
             resources,
             depth,
