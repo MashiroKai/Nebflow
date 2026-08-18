@@ -31,6 +31,19 @@ class AllProvidersDownTimeout(val waitedMs: Long) extends RuntimeException(
   s"all providers down: none recovered within ${waitedMs}ms"
 )
 
+/**
+ * Raised when a single turn has already made [[Fallback.MaxTurnLlmCalls]] LLM
+ * requests (including retries). Token incident (2026-08-18): retry
+ * amplification re-sends the full ~250k-token context on every retry, so an
+ * unbounded retry storm can burn hundreds of millions of tokens in minutes.
+ * This error is classified Permanent — the agent's llm-fail retry loop must
+ * NOT fire again (that would defeat the budget). The turn fails fast with an
+ * explicit reason instead of silently looping.
+ */
+class TurnBudgetExceeded(val turnId: Long, val calls: Int) extends RuntimeException(
+  s"turn LLM budget exceeded: $calls calls in turn $turnId (max ${Fallback.MaxTurnLlmCalls}, includes retries) — failing fast to stop retry amplification"
+)
+
 case class FallbackResult[T](
   data: T,
   attempts: List[FallbackAttempt],
@@ -44,6 +57,20 @@ object Fallback:
   val MaxRetries: Int = 1
   val InitialBackoffMs: Long = 1000L
   val MaxBackoffMs: Long = 10000L
+
+  /**
+   * Per-turn LLM request budget (2026-08-18 token incident): a single turn may
+   * make at most this many LLM requests TOTAL, including all retries at both
+   * the fallback layer and the AgentActor llm-fail-retry layer. Normal turns
+   * make 1-3 calls (initial + tool-loop + follow-ups); 4 leaves headroom.
+   * Exceeding it raises [[TurnBudgetExceeded]] (Permanent → no further retry).
+   */
+  val MaxTurnLlmCalls: Int = 4
+
+  /** Overload-class failures (429 rate-limit / 529 overloaded) need a long
+   *  backoff (≥5s) before retry — they mean the provider is saturated, not
+   *  dead. All other transient errors retry with the normal exponential ramp. */
+  val OverloadBackoffMinMs: Long = 5000L
 
   def classifyError(error: Throwable): ErrorClassification =
     // Check for structured sttp4 HttpError first
@@ -71,6 +98,10 @@ object Fallback:
         ErrorClassification(reason, permanence, Some(c), Some(error.getMessage))
       case e: AllProvidersDownTimeout =>
         ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(e.getMessage))
+      case e: TurnBudgetExceeded =>
+        // Turn LLM budget exhausted — the llm-fail retry loop must NOT fire
+        // again (it would re-send the same full context and defeat the budget).
+        ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Permanent, message = Some(e.getMessage))
       case e: QueueTimeout =>
         // Provider is BUSY, not down: classify Transient so the chain moves to
         // the next provider, and let the call sites skip retry/markDown for it.
@@ -117,6 +148,18 @@ object Fallback:
   def sleepWithJitter(minMs: Int, maxMs: Int): IO[Unit] =
     val delay = minMs + java.util.concurrent.ThreadLocalRandom.current().nextInt(maxMs - minMs)
     IO.sleep(delay.millis)
+
+  /**
+   * Pure retry-delay decision (extracted for testability, 2026-08-18 token
+   * incident): overload-class failures (429/529) always wait ≥
+   * [[OverloadBackoffMinMs]] — the provider is saturated, a long backoff gives
+   * it a chance to recover instead of hammering it. Other transients keep the
+   * exponential ramp. `jitterMs` is caller-provided randomness (0..<2000).
+   */
+  def retryDelayMs(backoffMs: Long, reason: FailoverReason, jitterMs: Long): Long =
+    val delay = math.min(backoffMs + jitterMs, MaxBackoffMs)
+    val isOverload = reason == FailoverReason.Overloaded || reason == FailoverReason.RateLimit
+    if isOverload then math.max(delay, OverloadBackoffMinMs) else delay
 
   def tryProviderWithFallback[T](
     candidates: List[ModelCandidate],
@@ -190,8 +233,10 @@ object Fallback:
             case ErrorPermanence.Transient =>
               if retriesLeft > 0 && !isQueueTimeout then
                 val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
-                val delay = math.min(backoffMs + jitter, MaxBackoffMs)
-                IO.sleep(delay.millis) *>
+                // Overload-class (429/529): provider is saturated — back off
+                // ≥5s before retrying, never hammer it (token incident lesson).
+                val effectiveDelay = retryDelayMs(backoffMs, classification.reason, jitter)
+                IO.sleep(effectiveDelay.millis) *>
                   tryWithRetry(candidate, retriesLeft - 1, backoffMs * 2, allFailures)(fallback)
               else notifyExhausted *> fallback(allFailures)
       }

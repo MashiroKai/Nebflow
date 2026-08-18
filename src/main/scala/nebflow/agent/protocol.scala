@@ -664,6 +664,13 @@ case class ExecutionContext(
   // Consecutive transient LLM failures auto-retried this turn (bounded by
   // AgentActor.LlmFailRetryMax). Reset on any successful LLM completion.
   llmFailRetries: Int = 0,
+  // Per-turn LLM request counter (2026-08-18 token incident): total LLM
+  // requests made this turn INCLUDING retries at both the fallback layer and
+  // the llm-fail-retry layer. Bounded by Fallback.MaxTurnLlmCalls — exceeding
+  // it raises TurnBudgetExceeded (Permanent) so the turn fails fast instead of
+  // amplifying token spend via full-context re-dispatches. Reset when the
+  // turn ends (ExecutionContext.idle rebuilds the counter to 0).
+  llmCallsThisTurn: Int = 0,
   // Pending queue mails (delivery=queue): counter only — actual items live on
   // disk (MailQueueStore). Drained one per turn at turn end, after immediate
   // inputs. Incremented by MailQueued in processing state, reset when drained.
@@ -933,6 +940,11 @@ extension (s: AgentState)
 
   def withLlmFailRetries(count: Int): AgentState =
     s.copy(execution = s.execution.copy(llmFailRetries = count))
+
+  def llmCallsThisTurn: Int = s.execution.llmCallsThisTurn
+
+  def withLlmCallsThisTurn(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(llmCallsThisTurn = count))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
 
   def withSafetyMode(mode: String): AgentState =

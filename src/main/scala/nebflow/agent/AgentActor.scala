@@ -45,16 +45,28 @@ object AgentActor extends AgentCore with AgentSession:
   private val MaxMailReminders = 2
 
   /**
-   * Transient LLM failures (bad_record_mac, connection resets, timeouts) are
-   * auto-retried this many times before the agent fails (initial + retries).
+   * Max llm-fail retries for overload-class failures (429 rate-limit / 529
+   * overloaded): the provider is saturated — a ≥5s backoff gives it a chance
+   * to recover. Token incident (2026-08-18): every retry re-sends the full
+   * ~250k-token context, so ALL other transient errors now fail fast — the
+   * messages are unchanged between retries (96% cache hit), so retrying them
+   * mostly amplifies spend without healing anything.
    */
-  private val LlmFailRetryMax = 3
+  private val OverloadRetryMax = 1
 
-  /** Exponential backoff base for LLM fail retries (ms). 2s → 4s → 8s. */
+  /** Exponential backoff base for LLM fail retries (ms). */
   private val LlmFailBackoffBaseMs = 2000L
 
   /** Cap for LLM fail backoff (ms). */
   private val LlmFailBackoffMaxMs = 10000L
+
+  /** Overload-class failures always back off ≥5s before retrying. */
+  private val OverloadBackoffMinMs = 5000L
+
+  /** Overload-class reasons: provider saturated, backoff can heal it. */
+  private def isOverloadClass(r: FailoverReason): Boolean =
+    r == FailoverReason.Overloaded || r == FailoverReason.RateLimit
+
   private val logger = NebflowLogger.forName("nebflow.agent")
 
   /**
@@ -922,23 +934,27 @@ object AgentActor extends AgentCore with AgentSession:
             "llm-fail",
             s"err=${error.getMessage.take(80)}"
           )
-          // Auto-retry transient LLM failures (bad_record_mac, connection
-          // resets, timeouts, empty streams): re-dispatch from the last
-          // checkpoint up to LlmFailRetryMax times. A transient blip must not
-          // kill a sub-agent mid-task (observed: bad_record_mac killed
-          // Explorer 3× in a row, losing the task each time). Permanent/fatal
-          // errors fail immediately — retrying won't heal auth/model errors.
+          // Auto-retry overload-class LLM failures (429/529) once with a ≥5s
+          // backoff: the provider is saturated and may recover. Token incident
+          // (2026-08-18): every retry re-dispatches the FULL message history
+          // (~250k tokens, 96% cache read), so anything else — connection
+          // resets, timeouts, unknown transients — fails fast: the messages
+          // haven't changed, retrying mostly burns tokens without healing.
+          // The per-turn budget (Fallback.MaxTurnLlmCalls) is the final
+          // backstop: even legitimate retries are capped per turn.
           val retryable = error match
             case e: FallbackExhaustedError =>
-              // Retry only if every attempt was transient/unknown — any
-              // permanent failure anywhere means retry is pointless.
-              e.attempts.forall(a => a.permanence.forall(_ == ErrorPermanence.Transient))
+              // Retry only if every attempt was overload-class (saturation
+              // may clear during the backoff); any other error → fail fast.
+              e.attempts.forall(a => a.reason.exists(isOverloadClass))
             case _: ToolPipelineError => false
-            case _ => Fallback.classifyError(error).permanence == ErrorPermanence.Transient
-          if retryable && state.llmFailRetries < LlmFailRetryMax then
+            case _ =>
+              val cls = Fallback.classifyError(error)
+              cls.permanence == ErrorPermanence.Transient && isOverloadClass(cls.reason)
+          if retryable && state.llmFailRetries < OverloadRetryMax then
             val retryState = state.withLlmFailRetries(state.llmFailRetries + 1)
             val backoffMs = math.min(
-              LlmFailBackoffBaseMs * (1L << (retryState.llmFailRetries - 1)),
+              math.max(LlmFailBackoffBaseMs * (1L << (retryState.llmFailRetries - 1)), OverloadBackoffMinMs),
               LlmFailBackoffMaxMs
             )
             val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 500)
@@ -949,7 +965,7 @@ object AgentActor extends AgentCore with AgentSession:
               state.sessionId,
               state.sessionName,
               "llm-fail-retry",
-              s"err=${error.getMessage.take(80)} retry=${retryState.llmFailRetries}/$LlmFailRetryMax backoff=${delayMs}ms"
+              s"err=${error.getMessage.take(80)} retry=${retryState.llmFailRetries}/$OverloadRetryMax backoff=${delayMs}ms"
             )
             // The failed LLM call produced no content — re-dispatch with the
             // same messages from the last checkpoint, after a backoff delay.

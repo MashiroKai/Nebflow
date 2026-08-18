@@ -76,6 +76,12 @@ object LlmLogWriter:
         val systemText = request.systemStable.getOrElse("") +
           request.systemDynamic.map(d => s"\n\n$d").getOrElse("")
 
+        // ── Token 止损（2026-08-18）：大请求降采样 ──
+        // >100k input 的请求（占比最高的烧钱源）跳过 messages 的 object
+        // 落盘与 SSE 正文事件，只保留 usage/元数据——审计统计完整，IO 大砍。
+        // 今日实测：432MB sse/天 + 30687 个 objects 文件，大头就是大请求。
+        val bigRequest = resultUsage.exists(_.inputTokens > 100000L)
+
         // ── Build and store objects ──
 
         val systemRef: String =
@@ -85,7 +91,8 @@ object LlmLogWriter:
           if tools.nonEmpty then storeObject(toolsToJson(tools)) else null
 
         val messageRefs: List[String] =
-          messages.map(m => storeObject(messageToJson(m)))
+          if bigRequest then Nil // 大请求：跳过 messages 逐条落盘（最大 IO 源）
+          else messages.map(m => storeObject(messageToJson(m)))
 
         // ── Request summary ──
 
@@ -140,7 +147,7 @@ object LlmLogWriter:
 
         // ── SSE events ──
 
-        val sseEvents = chunksToSseEvents(chunks, requestId, agent, model)
+        val sseEvents = chunksToSseEvents(chunks, requestId, agent, model, keepDetail = !bigRequest)
         sseEvents.foreach(appendJsonl("sse", _))
 
         // ── Response entry ──
@@ -315,7 +322,8 @@ object LlmLogWriter:
     chunks: List[StreamChunk],
     requestId: String,
     agent: String,
-    model: String
+    model: String,
+    keepDetail: Boolean
   ): List[Json] =
 
     val entries = List.newBuilder[Json]
@@ -342,6 +350,31 @@ object LlmLogWriter:
 
     for chunk <- chunks do
       chunk match
+        case StreamChunk.Done(stopReason, usage, _, _) =>
+          val entry = baseSse("message_delta")
+            .deepMerge(
+              Json.obj(
+                "stop_reason" -> stopReason.getOrElse("end_turn").asJson
+              )
+            )
+          val withUsage = usage
+            .map { u =>
+              val baseU = Json.obj(
+                "input_tokens" -> u.inputTokens.asJson,
+                "output_tokens" -> u.outputTokens.asJson
+              )
+              val withCr = u.cacheReadTokens
+                .map(cr => baseU.deepMerge(Json.obj("cache_read_input_tokens" -> cr.asJson)))
+                .getOrElse(baseU)
+              val withCw = u.cacheWriteTokens
+                .map(cw => withCr.deepMerge(Json.obj("cache_creation_input_tokens" -> cw.asJson)))
+                .getOrElse(withCr)
+              entry.deepMerge(Json.obj("usage" -> withCw))
+            }
+            .getOrElse(entry)
+          entries += withUsage
+
+        case _ if !keepDetail => () // 大请求降采样：正文事件全跳，只留 usage
         case StreamChunk.ThinkingDelta(delta) =>
           if thinkingIdx < 0 then
             thinkingIdx = nextBlockIdx
@@ -391,30 +424,6 @@ object LlmLogWriter:
                 "delta_tool_json" -> Json.fromJsonObject(tc.input).noSpaces.asJson
               )
             )
-
-        case StreamChunk.Done(stopReason, usage, _, _) =>
-          val entry = baseSse("message_delta")
-            .deepMerge(
-              Json.obj(
-                "stop_reason" -> stopReason.getOrElse("end_turn").asJson
-              )
-            )
-          val withUsage = usage
-            .map { u =>
-              val baseU = Json.obj(
-                "input_tokens" -> u.inputTokens.asJson,
-                "output_tokens" -> u.outputTokens.asJson
-              )
-              val withCr = u.cacheReadTokens
-                .map(cr => baseU.deepMerge(Json.obj("cache_read_input_tokens" -> cr.asJson)))
-                .getOrElse(baseU)
-              val withCw = u.cacheWriteTokens
-                .map(cw => withCr.deepMerge(Json.obj("cache_creation_input_tokens" -> cw.asJson)))
-                .getOrElse(withCr)
-              entry.deepMerge(Json.obj("usage" -> withCw))
-            }
-            .getOrElse(entry)
-          entries += withUsage
 
         case _ => () // ToolCallStart, ToolArgDelta, ThinkingSignature: covered by ToolCallChunk / Done
     end for
