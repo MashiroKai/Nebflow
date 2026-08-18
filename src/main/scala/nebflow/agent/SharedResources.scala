@@ -12,7 +12,7 @@ import nebflow.core.task.TaskStore
 import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.FileLockManager
 import nebflow.core.workspace.KnowledgeStore
-import nebflow.core.{FileChangeTracker, PathUtil}
+import nebflow.core.{FileChangeTracker, PathUtil, UsageRecordStore}
 import nebflow.dropbox.DropboxService
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.*
@@ -53,6 +53,7 @@ case class SharedResources(
   daemonService: Option[DaemonService] = None,
   knowledgeStore: KnowledgeStore = new KnowledgeStore(PathUtil.dataRoot / "workspace-items"),
   subAgentTaskStore: SubAgentTaskStore = new SubAgentTaskStore(PathUtil.dataRoot / "subagent-tasks"),
+  usageRecordStore: UsageRecordStore = new UsageRecordStore(PathUtil.dataRoot / "usage-records"),
   voiceMutedRef: Ref[IO, Boolean],
   lastWsActivity: Ref[IO, Long] = Ref.unsafe[IO, Long](System.currentTimeMillis()),
   runtimeModels: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty),

@@ -52,6 +52,19 @@ class RestApiRoutes(
     case GET -> Root / "health" =>
       Ok(Json.obj("status" -> "ok".asJson, "version" -> nebflow.Version.string.asJson))
 
+    // Token consumption dashboard aggregate (2026-08-18): structured LLM usage
+    // telemetry with dimension slicing.
+    //   dim=provider|model|agent|hour|day (absent = totals only)
+    //   from/to = epoch millis, inclusive lower / exclusive upper (both optional)
+    case req @ GET -> Root / "usage" / "aggregate" =>
+      withAuth(req) {
+        val params = req.uri.multiParams
+        val dim = params.get("dim").flatMap(_.headOption)
+        val from = params.get("from").flatMap(_.headOption).flatMap(_.toLongOption)
+        val to = params.get("to").flatMap(_.headOption).flatMap(_.toLongOption)
+        sharedResources.usageRecordStore.aggregate(dim, from, to).flatMap(agg => Ok(agg.asJson))
+      }
+
     // TTS 语音合成（无需 auth，内部调用）
     case req @ POST -> Root / "tts" =>
       ttsService match
