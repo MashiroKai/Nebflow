@@ -112,6 +112,21 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
         <span class="flow-agent-ctx" id="bgagent-ctx"></span>
         <div class="flow-agent-close" id="bgagent-close">✕</div>
       </div>
+      <div class="flow-agent-input-area" id="bgagent-input-area">
+        <div id="bgagent-slash-dropdown" class="slash-dropdown"></div>
+        <div id="bgagent-queue-bar"></div>
+        <div class="fa-input-bar" id="bgagent-input-bar">
+          <button class="glass-control fa-icon-btn" id="bgagent-attach-btn" title="Attach file">
+            <i data-lucide="paperclip"></i>
+          </button>
+          <div class="fa-input-wrap">
+            <div id="bgagent-attachment-preview" class="attachment-preview"></div>
+            <textarea id="bgagent-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
+          </div>
+          <button class="glass-control" id="bgagent-send-btn" title="Send"><i data-lucide="send"></i></button>
+          <button class="glass-control" id="bgagent-stop-btn" title="Stop" style="display:none"><i data-lucide="square"></i></button>
+        </div>
+      </div>
       <div class="flow-agent-footer" id="bgagent-footer">
         <span class="fa-status-dot"></span>
         <span class="fa-task">${esc(entry.meta.task || 'Session')}</span>
@@ -129,8 +144,51 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   const modal = popupOverlay.querySelector('.flow-agent-modal');
 
   const footer = popupOverlay.querySelector('#bgagent-footer');
-  modal.insertBefore(entry.container, footer);
+  const inputArea = popupOverlay.querySelector('#bgagent-input-area');
+  modal.insertBefore(entry.container, inputArea);
   entry.footerEl = footer;
+
+  // Wire view.dom to real input elements so initInput() can bind events
+  const v = entry.view;
+  v.dom.input = popupOverlay.querySelector('#bgagent-input');
+  v.dom.sendBtn = popupOverlay.querySelector('#bgagent-send-btn');
+  v.dom.stopBtn = popupOverlay.querySelector('#bgagent-stop-btn');
+  v.dom.attachBtn = popupOverlay.querySelector('#bgagent-attach-btn');
+  v.dom.attPreview = popupOverlay.querySelector('#bgagent-attachment-preview');
+  v.dom.slashDropdown = popupOverlay.querySelector('#bgagent-slash-dropdown');
+  v.dom.queueBar = popupOverlay.querySelector('#bgagent-queue-bar');
+  // Voice elements — create dummy elements so initInput doesn't crash on null
+  v.dom.voiceBtn = document.createElement('button');
+  v.dom.voiceOverlay = document.createElement('div');
+  v.dom.voiceText = document.createElement('div');
+  v.dom.voiceBtn.style.display = 'none';
+
+  // Disable input if no sessionId (can't route messages)
+  if (!nodeSessionId) {
+    v.dom.input.readOnly = true;
+    v.dom.input.placeholder = 'Agent not running — cannot send messages';
+    v.dom.sendBtn.disabled = true;
+    v.dom.attachBtn.disabled = true;
+    v.dom.sendBtn.style.opacity = '0.4';
+    v.dom.attachBtn.style.opacity = '0.4';
+  } else if (!v._inputBound) {
+    // Bind input events (idempotent — only once per view)
+    v._inputBound = true;
+    import('./input.js').then(({ initInput }) => {
+      import('./chat.js').then(({ refreshSendButtonState }) => {
+        setActiveView(v);
+        initInput(v);
+        refreshSendButtonState();
+      });
+    });
+  }
+
+  // Render lucide icons for the new input-area buttons
+  import('./utils.js').then(({ createIconsIn }) => {
+    createIconsIn(popupOverlay.querySelector('#bgagent-input-area'));
+  });
+
+  syncInputButtons(entry);
 
   updateFooterStatus(entry);
 
@@ -329,6 +387,15 @@ function updateFooterStatus(entry) {
       : 'Session';
     taskEl.textContent = label;
   }
+  syncInputButtons(entry);
+}
+
+/** Toggle send/stop button visibility based on agent busy state. */
+function syncInputButtons(entry) {
+  if (!entry.view.dom.sendBtn || !entry.view.dom.stopBtn) return;
+  const busy = entry.meta.status === 'running';
+  entry.view.dom.sendBtn.style.display = busy ? 'none' : 'flex';
+  entry.view.dom.stopBtn.style.display = busy ? 'flex' : 'none';
 }
 
 // ── Cleanup when a sub-agent session ends ─────────────────
