@@ -4,6 +4,19 @@ import { initBranding } from './brand.js';
 
 // Branding first: correct the tab title before any other module body runs.
 initBranding();
+
+// Embedded-context gate (flag set by the inline classic script in index.html —
+// see its comment). Module imports above already executed, but they are
+// side-effect-free at import time (connect/restore/init all run from this
+// file's body), so throwing here stops the boot before anything opens WS
+// connections or restores canvas tabs — which is what recursed.
+if (document.documentElement.dataset.nfEmbedded === '1') {
+  document.title = 'Nebflow (embedded)';
+  document.addEventListener('DOMContentLoaded', () => {
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:24px;text-align:center">Nebflow 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
+  });
+  throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
+}
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
 import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath } from './utils.js';
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
