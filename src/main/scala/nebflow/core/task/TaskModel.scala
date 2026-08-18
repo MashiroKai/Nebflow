@@ -89,7 +89,14 @@ case class Task(
   /** When the task entered completed/failed (terminal). None while active. */
   completedAt: Option[String] = None,
   notes: List[TaskNote] = Nil,
-  events: List[TaskEvent] = Nil
+  events: List[TaskEvent] = Nil,
+  /** todo-panel v1.1 §2.1: "agent" = agent-tracked (auto flow); "human" =
+    * reminder for the user (user completes via todos panel circle). Defaults
+    * to "agent" so 535+ legacy JSON files need zero migration (C1). */
+  taskKind: String = "agent",
+  /** Who completed it: "user" = user clicked the circle; "agent" = agent flow.
+    * None = not completed or legacy data. */
+  completedBy: Option[String] = None
 )
 
 object Task:
@@ -100,16 +107,28 @@ object Task:
    * (notes/events, Scala default Nil) make plain semiauto deriveCodec FAIL on
    * a missing key. Configuration.default.withDefaults fills absent fields
    * from their defaults; strictDeserialization stays off so legacy unknown
-   * keys (e.g. a stray "metadata") are ignored.
+   * keys (e.g. a stray "metadata") are ignored. Same red line covers the
+   * todo-panel fields (taskKind -> "agent", completedBy -> None).
    */
   given Configuration = Configuration.default.withDefaults
   given Codec[Task] = ConfiguredCodec.derived
+
+  /** Normalized taskKind: case-insensitive; anything unrecognized (including
+    * null/blank) falls back to "agent" — legacy data and typos must never
+    * break the agent/human split, and unknown kinds have no consumer. */
+  def normalizeTaskKind(raw: Option[String]): String =
+    raw.map(_.trim.toLowerCase).collect { case "human" => "human" }.getOrElse("agent")
+
+end Task
 
 case class TaskCreateInput(
   subject: String,
   description: String,
   activeForm: Option[String] = None,
-  parentTaskId: Option[String] = None
+  parentTaskId: Option[String] = None,
+  /** todo-panel §2.3: pass "human" to create a reminder the USER completes
+    * via the todos panel. Absent/blank/unknown -> "agent". */
+  taskKind: Option[String] = None
 )
 
 object TaskCreateInput:

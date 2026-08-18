@@ -1500,6 +1500,41 @@ class WebSocketRoutes(
             else IO.unit
             end if
 
+          // ===== Complete Task (user clicks the todos-panel circle, todo-panel §7.1) =====
+
+          case "completeTask" =>
+            val ctSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            val ctTaskId = parse(text).flatMap(_.hcursor.downField("taskId").as[String]).getOrElse("")
+            if ctSessionId.nonEmpty && ctTaskId.nonEmpty then
+              sharedResources.taskStore.complete(ctSessionId, ctTaskId, by = "user").attempt.flatMap {
+                case Right(Some(_)) =>
+                  // Return updated task list — completed items vanish from the
+                  // panel ([U3] complete = disappear), so the authoritative
+                  // refresh is what converges every client.
+                  sharedResources.taskStore.listVisible(ctSessionId).flatMap { tasks =>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "taskListUpdate".asJson,
+                        "sessionId" -> ctSessionId.asJson,
+                        "tasks" -> tasks.asJson
+                      )
+                    )
+                  }
+                case Right(None) =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Task not found: $ctTaskId".asJson))
+                case Left(err) =>
+                  // IllegalStateException — terminal task cannot be re-completed
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "taskError".asJson,
+                      "error" -> s"Cannot complete: ${err.getMessage}".asJson,
+                      "taskId" -> ctTaskId.asJson
+                    )
+                  )
+              }
+            else IO.unit
+            end if
+
           // ===== Workspace Knowledge =====
 
           case "listWorkspaceItems" =>
