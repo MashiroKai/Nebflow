@@ -1171,8 +1171,7 @@ private[agent] trait AgentCore:
     val base = if ctx.isSubTaskWorker then SubTaskPrompt.stripTeamContent(rawPrompt) else rawPrompt
     val cleanedPrompt = PromptSections.stripAllMigrated(base)
     val conditionalBlocks = PromptSections.buildConditionalBlocks(ctx)
-    val separator = if conditionalBlocks.nonEmpty then "\n\n" else ""
-    s"$systemPrefix$cleanedPrompt$separator$conditionalBlocks"
+    PromptSections.assembleSystemPrompt(systemPrefix, cleanedPrompt, conditionalBlocks)
 
   end buildSystemPrompt
 
