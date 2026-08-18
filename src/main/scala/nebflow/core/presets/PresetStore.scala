@@ -154,6 +154,26 @@ class PresetStore(
 
   end resolve
 
+  /**
+   * Resolve an explicit preset name for a tool-level override (Delegate/SubTask
+   * `preset` param). Unlike [[resolve]] — which falls through on a dangling
+   * reference — this fails with the available preset list so the caller can
+   * surface a self-describing error the LLM can self-heal from (retry with a
+   * valid name).
+   */
+  def resolveExplicit(presetName: String): Either[String, AgentModelConfig] =
+    load().presets.get(presetName) match
+      case Some(p) if p.preferred.isDefined || p.fallbacks.nonEmpty =>
+        Right(AgentModelConfig(p.preferred, p.fallbacks))
+      case Some(_) =>
+        Left(s"Preset '$presetName' is defined but has no model chain (preferred/fallbacks empty). Available presets: ${availableNames}")
+      case None =>
+        Left(s"Preset '$presetName' not found. Available presets: ${availableNames}")
+
+  /** Sorted, comma-joined preset names for self-describing errors. */
+  def availableNames: String =
+    load().presets.keys.toList.sorted.mkString(", ")
+
   /** Build the initial PresetFile from the global model chain in nebflow.json. */
   private def initFromFile(): PresetFile =
     val globalChain = readGlobalChain()
