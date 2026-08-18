@@ -85,12 +85,28 @@ export function enableViewerZoom(pane, opts) {
   host.addEventListener('wheel', onWheel, { passive: false });
 
   // ── Safari pinch (gesture events) ────────────────────────
+  // GestureEvent 不携带坐标，需用 pointermove 持续追踪最近光标位置，
+  // gesture 期间以该位置为 pivot 实现 CAD 式跟随缩放。
   let gestureBase = 1;
-  const onGestureStart = (e) => { e.preventDefault(); gestureBase = opts.getScale(); };
+  let cursorPos = null;
+  const onPointerMove = (e) => {
+    const rect = host.getBoundingClientRect();
+    cursorPos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+  host.addEventListener('pointermove', onPointerMove);
+
+  const onGestureStart = (e) => {
+    e.preventDefault();
+    gestureBase = opts.getScale();
+    if (!cursorPos) {
+      const rect = host.getBoundingClientRect();
+      cursorPos = { x: rect.width / 2, y: rect.height / 2 };
+    }
+  };
   const onGestureChange = (e) => {
     e.preventDefault();
     const next = clamp(gestureBase * e.scale);
-    opts.applyScale(next, null);
+    opts.applyScale(next, cursorPos);
     setPct(next);
   };
   host.addEventListener('gesturestart', onGestureStart);
@@ -108,6 +124,7 @@ export function enableViewerZoom(pane, opts) {
     setPct,
     destroy() {
       host.removeEventListener('wheel', onWheel);
+      host.removeEventListener('pointermove', onPointerMove);
       host.removeEventListener('gesturestart', onGestureStart);
       host.removeEventListener('gesturechange', onGestureChange);
       host.removeEventListener('mouseenter', enter);

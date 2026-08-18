@@ -106,17 +106,25 @@ async function viewPdf(pane, { absPath, fileName }) {
   const applyScale = (next, pivot) => {
     const old = scale;
     scale = next;
+    const k = next / old;
     const keep = pivot
-      ? { ratio: next / old, top: pages.scrollTop + pivot.y, x: pivot.y }
+      ? {
+          contentTop: pages.scrollTop + pivot.y,
+          contentLeft: pages.scrollLeft + pivot.x,
+        }
       : null;
     clearTimeout(debounce);
     debounce = setTimeout(() => {
       renderAll().then(() => {
-        if (keep) pages.scrollTop = keep.top * keep.ratio - keep.x;
+        if (!keep) return;
+        pages.scrollTop = keep.contentTop * k - pivot.y;
+        pages.scrollLeft = keep.contentLeft * k - pivot.x;
       });
     }, 120);
-    // Optimistic scroll anchoring so the gesture feels live pre-render.
-    if (keep) pages.scrollTop = keep.top * keep.ratio - keep.x;
+    if (keep) {
+      pages.scrollTop = keep.contentTop * k - pivot.y;
+      pages.scrollLeft = keep.contentLeft * k - pivot.x;
+    }
   };
 
   enableViewerZoom(pane, {
