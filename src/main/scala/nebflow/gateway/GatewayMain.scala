@@ -452,8 +452,18 @@ object GatewayMain extends IOApp.Simple:
                                             // shutdown hook always runs on JVM exit. Idempotent: stopAll on an
                                             // already-stopped set is a no-op, so it is safe alongside the
                                             // graceful path in `.guarantee` below.
+                                            //
+                                            // releaseBackend runs FIRST: on Ctrl+C the graceful path never
+                                            // executes, so without this the in-flight LLM HTTP requests (FS2/
+                                            // sttp via the JDK HttpClient) would keep running and the provider
+                                            // would keep generating (and billing) their responses. shutdownNow
+                                            // aborts them at the TCP level; close + dispatcher release tear down
+                                            // the pool. Release is idempotent (once-guarded in createLlm), so
+                                            // hook + graceful `.guarantee` cannot double-release.
                                             Runtime.getRuntime.addShutdownHook(
                                               new Thread(() =>
+                                                try releaseBackend.unsafeRunSync()
+                                                catch case _: Throwable => ()
                                                 try daemonService.stopAll().unsafeRunSync()
                                                 catch case _: Throwable => ()
                                               )

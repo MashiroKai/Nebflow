@@ -140,7 +140,33 @@ object LlmInterface:
       .build()
     Dispatcher.parallel[IO].allocated.flatMap { case (dispatcher, releaseDispatcher) =>
       val backend = HttpClientFs2Backend.usingClient[IO](httpClient, dispatcher)
-      val release: IO[Unit] = releaseDispatcher *> IO(backend.close())
+      // Release is idempotent: both the graceful `.guarantee` path (server
+      // stopped normally) and the JVM shutdown hook (Ctrl+C / SIGTERM) call
+      // it, and either may win the race. The guard makes the second call a
+      // no-op. Order matters — abort in-flight HTTP FIRST:
+      //   1. httpClient.shutdownNow() — JDK 21+ API. Aborts non-completed
+      //      requests at the TCP level (closes the selector + channels), so
+      //      the provider stops generating/billing the response for a request
+      //      whose turn is already gone. Before this, Ctrl+C ran only the
+      //      daemon hook: the sttp backend never closed the client
+      //      (usingClient sets closeClient=false → backend.close() is a no-op)
+      //      and in-flight FS2/sttp exchanges kept running until the JVM
+      //      halted on its own — token spend continued.
+      //   2. httpClient.close() — best-effort close of cached/open connections.
+      //   3. backend.close() — no-op for a user-provided client, kept for
+      //      symmetry in case a backend-owned client is introduced later.
+      //   4. releaseDispatcher — cancels dispatcher fibers.
+      val doRelease: IO[Unit] =
+        IO(httpClient.shutdownNow()) *>
+          IO(httpClient.close()) *>
+          IO(backend.close()) *>
+          releaseDispatcher
+      val releasedRef: Ref[IO, Boolean] = Ref.unsafe(false)
+      val release: IO[Unit] =
+        releasedRef.modify {
+          case false => (true, doRelease)
+          case true  => (true, IO.unit)
+        }.flatten
       IO.pure(backend).flatMap { backend =>
         val config = Config.loadServiceConfig(options.flatMap(_.configPath))
         val cfgRef: Ref[IO, NebflowServiceConfig] = configRef.getOrElse(Ref.unsafe(config))
