@@ -1293,9 +1293,12 @@ private[agent] trait AgentCore:
   /**
    * P0 阶段 3（2026-08-18，设计 §4.4）：更新 agentRegistry 的活动快照。
    * TaskStuckWatcher 读 AgentRecord.status + lastActivityMs 判定卡死——
-   * 本 helper 是这两个字段的唯一写入点（注册点默认值除外）：
+   * 本 helper 是这两个字段的主要写入点（注册点默认值除外）：
    *   - Processing：AgentCore.pipeLlmCall（LLM 调用开始 + 每个流 chunk）
    *   - Idle：AgentActor.finishTurnCont 回 idle 分支（turn 完成）
+   * 补充写入点（#319，2026-08-19）：BashTool.startActivityBridge 在前台命令
+   * 有进展（输出/CPU/sleep）时也会刷新 lastActivityMs——防止长前台命令被
+   * TaskStuckWatcher 误判卡死。仅 touch 时间戳，不改变 status。
    * 幂等且仅在记录存在时更新（registry 无该 session 时 no-op——不创建幽灵条目）。
    */
   protected def touchRegistryActivity(

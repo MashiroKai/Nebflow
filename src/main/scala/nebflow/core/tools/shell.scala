@@ -332,7 +332,7 @@ final class ShellSession private (
 
   end buildProcessBuilder
 
-  private val SleepCommandRe = """\bsleep\s+\d+""".r
+  private[tools] val SleepCommandRe = """\bsleep\s+\d+""".r
 
   /** Grace period before checking if a quiet background process is stuck. */
   private val StuckDetectionGracePeriod: FiniteDuration = 30.seconds
@@ -347,7 +347,7 @@ final class ShellSession private (
   private val CpuActiveThresholdNanos: Long = 10_000_000L
 
   /** Sum total CPU duration (nanos) of a process and all its descendants. */
-  private def sampleProcessCpuTime(proc: Process): Long =
+  private[tools] def sampleProcessCpuTime(proc: Process): Long =
     val handle = proc.toHandle
     def cpuNanos(ph: ProcessHandle): Long =
       val opt = ph.info().totalCpuDuration()
