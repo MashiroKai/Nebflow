@@ -17,6 +17,10 @@ import scala.concurrent.duration.*
  *  - RPM sliding window (short window via test constructor)
  *  - unlimited concurrency (maxConcurrency = 0) still honors RPM
  *  - release re-dispatches a waiting permit
+ *  - cancel while queued / during RPM wait removes the ghost waiter and
+ *    restores the permit (Stop/abort must not leak slots)
+ *  - restored permit dispatches the next waiter immediately (not next release)
+ *  - tryAcquire is RPM-aware (persistence decision must not skip queueing)
  */
 class ConcurrencyGateSpec extends CatsEffectSuite:
 
@@ -137,5 +141,55 @@ class ConcurrencyGateSpec extends CatsEffectSuite:
       // waiters holding the slot, no leaked decrements).
       p2 <- g.acquire.timeoutTo(200.millis, IO.raiseError(new RuntimeException("gate stuck after timeouts")))
       _ <- p2.release
+    yield ()
+  }
+
+  test("cancel while queued removes the ghost waiter and restores the permit") {
+    val g = gate(max = 1)
+    for
+      p1 <- g.acquire // holds the only permit
+      f2 <- g.acquire.start // queues behind p1
+      _ <- IO.sleep(50.millis) // let f2 actually enqueue
+      _ <- f2.cancel // Stop/abort while queued
+      _ <- IO.sleep(50.millis) // let the cancel cleanup settle
+      // Without the cancel path f2's ghost Deferred would stay head of the
+      // queue and swallow p1's release — f3 must get the permit instead.
+      f3 <- g.acquire.start
+      _ <- IO.sleep(50.millis) // let f3 enqueue behind the (removed) ghost
+      _ <- p1.release
+      p3 <- f3.joinWithNever.timeoutTo(300.millis, IO.raiseError(new RuntimeException("gate stuck after cancel")))
+      _ <- p3.release
+      // Clean state: no ghost waiter consumed the release dispatch.
+      ok <- g.tryAcquire
+      _ <- IO(assert(ok, "gate must return to a clean state after the cancelled waiter"))
+    yield ()
+  }
+
+  test("cancel during RPM wait restores the held slot and dispatches the next waiter") {
+    val g = gate(max = 1, rpm = Some(1), window = 200.millis, timeout = 10.seconds)
+    for
+      p1 <- g.acquire // permit + records the only RPM window slot
+      _ <- p1.release
+      f2 <- g.acquire.start // grabs the permit, then RPM-waits ~200ms
+      _ <- IO.sleep(50.millis) // f2 now holds the slot inside waitForWindow
+      f3 <- g.acquire.start // queued behind f2's slot
+      _ <- f2.cancel // abort during the RPM wait -> slot must be restored
+      // The restored slot must reach f3 NOW (dispatch inside cleanup), not on
+      // the next release. f3 completes once the RPM window slides (~200ms).
+      p3 <- f3.joinWithNever.timeoutTo(2.seconds, IO.raiseError(new RuntimeException("slot not dispatched after cancel")))
+      _ <- p3.release
+    yield ()
+  }
+
+  test("tryAcquire accounts for the RPM window, not just free permits") {
+    val g = gate(max = 2, rpm = Some(1), window = 200.millis)
+    for
+      p1 <- g.acquire // records the only RPM slot (window full)
+      before <- g.tryAcquire // a permit is free, but the window is full
+      _ <- IO(assert(!before, "tryAcquire must be false while the RPM window is full"))
+      _ <- IO.sleep(250.millis) // window slides past p1's timestamp
+      after <- g.tryAcquire
+      _ <- IO(assert(after, "tryAcquire must be true once the window has capacity"))
+      _ <- p1.release
     yield ()
   }
