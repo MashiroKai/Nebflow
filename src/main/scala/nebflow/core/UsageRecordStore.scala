@@ -1,0 +1,177 @@
+package nebflow.core
+
+import cats.effect.IO
+import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
+import io.circe.parser.decode
+import io.circe.syntax.*
+import io.circe.{Decoder, Encoder}
+import nebflow.core.NebflowLogger
+
+import java.time.{Instant, ZoneId, ZonedDateTime}
+import java.util.concurrent.locks.ReentrantLock
+
+/**
+ * Structured LLM usage record — the input row of the token-consumption
+ * dashboard. Captured at every successful LLM call completion (AgentActor
+ * LlmComplete): provider / model / agent / session / timestamp + the four
+ * token buckets (input, output, cache_read, cache_write).
+ *
+ * This is a structured telemetry point — NOT a parse of the router sse log.
+ * The fields come straight from the existing chain: provider adapters parse
+ * usage (TokenUsage, protocol.scala:106), aggregateChunks preserves it, and
+ * LlmComplete holds the final ConsumeResult with usage + model.
+ */
+case class LlmUsageRecord(
+  timestamp: Long, // epoch millis
+  provider: String, // provider id, e.g. "107", "deepseek"
+  model: String, // model id, e.g. "glm-5.2-107"
+  agent: String, // agent name, e.g. "Backend"
+  sessionId: Option[String], // None for unsupervised contexts
+  inputTokens: Int,
+  outputTokens: Int,
+  cacheReadTokens: Int,
+  cacheWriteTokens: Int
+)
+
+object LlmUsageRecord:
+  given Encoder[LlmUsageRecord] = deriveEncoder
+  given Decoder[LlmUsageRecord] = deriveDecoder
+
+/** One aggregation bucket (grouped by dimension). */
+case class UsageBucket(
+  key: String, // e.g. "deepseek", "deepseek-v4-flash", "Backend", "2026-08-18T13"
+  count: Int,
+  inputTokens: Long,
+  outputTokens: Long,
+  cacheReadTokens: Long,
+  cacheWriteTokens: Long
+)
+
+object UsageBucket:
+  given Encoder[UsageBucket] = deriveEncoder
+
+/**
+ * Aggregate result for GET /api/usage/aggregate.
+ *
+ * costEquivalent is a rough billed-token equivalent: cache_read input is
+ * priced at 0.1x on most providers (memory: cache_read_input_tokens counts
+ * toward input billing at 0.1x), full input/output at 1x. Real currency
+ * depends on per-provider pricing — this is the dashboard's comparable unit.
+ */
+case class UsageAggregate(
+  totalInput: Long,
+  totalOutput: Long,
+  totalCacheRead: Long,
+  totalCacheWrite: Long,
+  count: Int,
+  costEquivalent: Long,
+  buckets: List[UsageBucket]
+)
+
+object UsageAggregate:
+  given Encoder[UsageAggregate] = deriveEncoder
+
+/**
+ * File-based append-only store for LlmUsageRecord.
+ *
+ * Layout: `<dataRoot>/usage-records/usage-records.jsonl` — one JSON object
+ * per line, appended under a ReentrantLock (the load→modify→save races that
+ * hit SubAgentTaskStore in the 11:08 incident are impossible here since
+ * append is a single atomic write, but the lock keeps concurrent appenders
+ * from interleaving partial lines; queries read the whole file under the
+ * same lock for a consistent snapshot).
+ */
+class UsageRecordStore(baseDir: os.Path):
+
+  private val logger = NebflowLogger.forName("nebflow.usage-record")
+  private val lock = new ReentrantLock()
+
+  private def logPath: os.Path = baseDir / "usage-records.jsonl"
+
+  private def withLock[A](body: => A): IO[A] = IO.blocking {
+    lock.lock()
+    try body
+    finally lock.unlock()
+  }
+
+  /** Append one record. Atomic per-line write; no read-modify-write race. */
+  def record(r: LlmUsageRecord): IO[Unit] = withLock {
+    os.write.append(logPath, r.asJson.noSpaces + "\n", createFolders = true)
+  }
+
+  /** Load all records in file order (oldest first). */
+  def loadAll(): IO[List[LlmUsageRecord]] = withLock {
+    IO.blocking {
+      if !os.exists(logPath) then Nil
+      else
+        os.read
+          .lines(logPath)
+          .flatMap(line => decode[LlmUsageRecord](line).toOption)
+          .toList
+    }
+  }.flatten
+
+  /**
+   * Aggregate records over [from, to) with an optional grouping dimension.
+   *
+   * dim: "provider" | "model" | "agent" | "hour" | "day" | absent (totals only)
+   * from/to: epoch millis, inclusive lower / exclusive upper. Both optional.
+   */
+  def aggregate(dim: Option[String], from: Option[Long], to: Option[Long]): IO[UsageAggregate] =
+    loadAll().map { records =>
+      val filtered = records.filter { r =>
+        val okFrom = from.forall(r.timestamp >= _)
+        val okTo = to.forall(r.timestamp < _)
+        okFrom && okTo
+      }
+      val dimKey: LlmUsageRecord => String = dim.map(_.toLowerCase) match
+        case Some("provider") => r => r.provider
+        case Some("model") => r => r.model
+        case Some("agent") => r => r.agent
+        case Some("hour") => r => hourKey(r.timestamp)
+        case Some("day") => r => dayKey(r.timestamp)
+        case _ => _ => "" // totals only
+      val buckets: List[UsageBucket] = dim match
+        case Some(d) if Set("provider", "model", "agent", "hour", "day").contains(d.toLowerCase) =>
+          filtered
+            .groupBy(dimKey)
+            .toList
+            .sortBy(_._1)
+            .map { case (key, rs) =>
+              UsageBucket(
+                key = key,
+                count = rs.size,
+                inputTokens = rs.map(_.inputTokens.toLong).sum,
+                outputTokens = rs.map(_.outputTokens.toLong).sum,
+                cacheReadTokens = rs.map(_.cacheReadTokens.toLong).sum,
+                cacheWriteTokens = rs.map(_.cacheWriteTokens.toLong).sum
+              )
+            }
+        case _ => Nil
+      val totalInput = filtered.map(_.inputTokens.toLong).sum
+      val totalOutput = filtered.map(_.outputTokens.toLong).sum
+      val totalCacheRead = filtered.map(_.cacheReadTokens.toLong).sum
+      val totalCacheWrite = filtered.map(_.cacheWriteTokens.toLong).sum
+      val costEquivalent = totalInput + (totalCacheRead * 0.1).toLong
+      UsageAggregate(
+        totalInput = totalInput,
+        totalOutput = totalOutput,
+        totalCacheRead = totalCacheRead,
+        totalCacheWrite = totalCacheWrite,
+        count = filtered.size,
+        costEquivalent = costEquivalent,
+        buckets = buckets
+      )
+    }
+
+  private def zoned(ts: Long): ZonedDateTime = ZonedDateTime.ofInstant(Instant.ofEpochMilli(ts), ZoneId.systemDefault())
+
+  private def hourKey(ts: Long): String =
+    val z = zoned(ts)
+    f"${z.getYear}%04d-${z.getMonthValue}%02d-${z.getDayOfMonth}%02dT${z.getHour}%02d"
+
+  private def dayKey(ts: Long): String =
+    val z = zoned(ts)
+    f"${z.getYear}%04d-${z.getMonthValue}%02d-${z.getDayOfMonth}%02d"
+
+end UsageRecordStore
