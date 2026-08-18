@@ -439,22 +439,29 @@ private[agent] trait AgentCore:
               List(MaintenanceService.buildReminder(stateWithReminder.delegateCount))
             else Nil
           freshTools =
-            if isCompactTurn then Some(Nil) else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker)
+            if isCompactTurn then Some(Nil)
+            else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker)
+            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker)
           // A: cold-start routing — a stale agent's first request goes to the
           // free 107 gateway instead of a full-price cache miss on its default
           // provider. Pure guards first (hot agents incur zero I/O); only the
-          // wake-up path touches the preset file.
-          coldStartModel = ColdStartRouter.evaluate(
-            config = resources.agentLibrary.coldStartConfig,
-            agentName = freshDef.name,
-            depth = depth,
-            category = freshDef.category,
-            now = System.currentTimeMillis(),
-            lastActivityMs = resources.usageRecordStore.lastActivityMs(freshDef.name),
-            messages = stateForLlm.messages,
-            currentModel = freshDef.model,
-            presetStore = PresetStore()
-          )
+          // wake-up path touches the preset file. Compaction turns (Save +
+          // Compact) are lifecycle nodes: memory maintenance and the summary
+          // must use the agent's default model, never a cost-routed downgrade.
+          coldStartModel =
+            if stateForLlm.pendingCompaction.isDefined then None
+            else
+              ColdStartRouter.evaluate(
+                config = resources.agentLibrary.coldStartConfig,
+                agentName = freshDef.name,
+                depth = depth,
+                category = freshDef.category,
+                now = System.currentTimeMillis(),
+                lastActivityMs = resources.usageRecordStore.lastActivityMs(freshDef.name),
+                messages = stateForLlm.messages,
+                currentModel = freshDef.model,
+                presetStore = PresetStore()
+              )
           request = LlmRequest(
             messages = stateWithReminder.messages ++ contextMsg ++ branchMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
@@ -1032,6 +1039,26 @@ private[agent] trait AgentCore:
           case None           => Some(td)
       else Some(td)
     })
+
+  /**
+   * Save-phase compaction tools (compaction burn-down, 2026-08-18). The save
+   * turn exists to run the memory maintenance cycle — Write/Edit on the
+   * memory files, Read for the VERIFY step — but the FULL toolset on a weak
+   * default model (107/deepseek) turns into open-ended exploration (5min+
+   * without compactComplete; qa-mini with NO tools finished in 110s). Restrict
+   * to the memory-maintenance essentials: nothing that can branch outward
+   * (no Bash/Grep/Glob/WebSearch). Write/Edit/Read are all present in the
+   * Nebula + team agent toolsets that receive save turns, so the whitelist
+   * never empties them out.
+   */
+  protected def saveTurnTools(
+    agentDef: AgentDef,
+    depth: Int = 0,
+    isSubTaskWorker: Boolean = false
+  ): Option[List[ToolDefinition]] =
+    buildToolList(agentDef, depth, isSubTaskWorker).map(_.filter(td => SaveTurnToolWhitelist.contains(td.name)))
+
+  private val SaveTurnToolWhitelist: Set[String] = Set("Write", "Edit", "Read")
 
   protected def emitStream(
     wsSend: io.circe.Json => IO[Unit],
