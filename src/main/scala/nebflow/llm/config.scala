@@ -44,7 +44,14 @@ case class ProviderConfig(
   // thinking blocks to be passed back in thinking mode (even without a
   // signature), while real Anthropic REJECTS them without one. Defaults per
   // providerId in ProviderRegistry; explicit config wins.
-  requireThinkingPassback: Option[Boolean] = None
+  requireThinkingPassback: Option[Boolean] = None,
+  // P0 API 并发管理（2026-08-18）：per-provider concurrency gate. All three
+  // default to None = use Defaults (see gate.scala) — explicit `0` on
+  // maxConcurrency means unlimited. deriveDecoder requires defaults for
+  // backward compatibility with existing config files.
+  maxConcurrency: Option[Int] = None,
+  rpm: Option[Int] = None,
+  queueTimeoutMs: Option[Int] = None
 )
 
 object ProviderConfig:

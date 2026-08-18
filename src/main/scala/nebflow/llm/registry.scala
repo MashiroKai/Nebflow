@@ -23,6 +23,23 @@ class ProviderRegistry(
   backend: StreamBackend[IO, Fs2Streams[IO]]
 ):
   private val adaptersRef: Ref[IO, Map[String, ProviderAdapter[IO]]] = Ref.unsafe(Map.empty)
+  // P0 API 并发管理: per-provider concurrency gates. Built lazily on first
+  // use; cleared on reloadConfig() so config changes take effect immediately.
+  private val gatesRef: Ref[IO, Map[String, ConcurrencyGate]] = Ref.unsafe(Map.empty)
+
+  def getGate(providerId: String): IO[ConcurrencyGate] =
+    gatesRef.get.map(_.get(providerId)).flatMap {
+      case Some(g) => IO.pure(g)
+      case None =>
+        configRef.get.flatMap { config =>
+          config.llm.providers.get(providerId) match
+            case Some(provider) =>
+              val gate = ConcurrencyGate.fromProvider(providerId, provider)
+              gatesRef.update(_ + (providerId -> gate)).as(gate)
+            case None =>
+              IO.raiseError(new RuntimeException(s"Unknown provider: $providerId"))
+        }
+    }
 
   private def createAdapter(providerId: String, provider: ProviderConfig): ProviderAdapter[IO] =
     provider.protocol match
@@ -186,5 +203,8 @@ class ProviderRegistry(
       }
       _ <- configRef.set(newConfig)
       _ <- adaptersRef.set(Map.empty)
+      // Gates derive their params from ProviderConfig — rebuild on reload so
+      // maxConcurrency/rpm changes apply without restart (design §4.3).
+      _ <- gatesRef.set(Map.empty)
     yield ()
 end ProviderRegistry
