@@ -1146,6 +1146,11 @@ function showProviderModal(existingName, existingData, onSave) {
       {key: 'apiKey', label: 'API Key', type: 'text', password: true, value: p.apiKey && p.apiKey !== '***' ? p.apiKey : '', placeholder: isEdit ? t('provider.keyPlaceholder') : t('provider.required')},
       {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: ['anthropic', 'openai']},
       {key: 'models', label: t('provider.models'), type: 'models', value: initialModels},
+      // P0 API 并发管理：per-provider concurrency gate. None = use server
+      // defaults (maxConcurrency 3, queueTimeoutMs 60000ms).
+      {key: 'maxConcurrency', label: t('provider.maxConcurrency'), type: 'number', value: p.maxConcurrency != null ? String(p.maxConcurrency) : '', placeholder: t('provider.maxConcurrencyHint'), min: 0},
+      {key: 'rpm', label: t('provider.rpm'), type: 'number', value: p.rpm != null ? String(p.rpm) : '', placeholder: t('provider.rpmHint'), min: 1},
+      {key: 'queueTimeoutMs', label: t('provider.queueTimeoutMs'), type: 'number', value: p.queueTimeoutMs != null ? String(p.queueTimeoutMs) : '', placeholder: t('provider.queueTimeoutMsHint'), min: 1},
     ],
     onConfirm(values) {
       const name = values.name.trim();
@@ -1159,6 +1164,31 @@ function showProviderModal(existingName, existingData, onSave) {
       if (!isEdit && apiKey === '***') { window.__showToast?.(t('provider.keyRequired'), 'error'); return; }
       const validModels = values.models.filter(m => m.id && m.id.trim());
       if (validModels.length === 0) { window.__showToast?.(t('provider.modelRequired'), 'error'); return; }
+      // Parse + validate the concurrency-gate fields. Empty = unset (None →
+      // server default); invalid = block save with a clear message. The
+      // backend re-validates on config load, but catching it here avoids a
+      // jarring failed-save for a typo.
+      const parseOptInt = (v) => {
+        if (v == null || v === '') return undefined;
+        const n = Number.parseInt(v, 10);
+        if (!Number.isFinite(n) || String(n) !== String(v).trim()) return NaN;
+        return n;
+      };
+      const maxConcurrency = parseOptInt(values.maxConcurrency);
+      if (Number.isNaN(maxConcurrency) || (maxConcurrency != null && maxConcurrency < 0)) {
+        window.__showToast?.(t('provider.invalidMaxConcurrency'), 'error');
+        return;
+      }
+      const rpm = parseOptInt(values.rpm);
+      if (Number.isNaN(rpm) || (rpm != null && rpm <= 0)) {
+        window.__showToast?.(t('provider.invalidRpm'), 'error');
+        return;
+      }
+      const queueTimeoutMs = parseOptInt(values.queueTimeoutMs);
+      if (Number.isNaN(queueTimeoutMs) || (queueTimeoutMs != null && queueTimeoutMs <= 0)) {
+        window.__showToast?.(t('provider.invalidQueueTimeoutMs'), 'error');
+        return;
+      }
       // Vision is no longer written from here (B3): the checkbox is a
       // read-only reflection of the auto-detected state; manual toggling is
       // retired and runtime demotion persists itself to models.json.
@@ -1167,6 +1197,11 @@ function showProviderModal(existingName, existingData, onSave) {
         apiKey,
         protocol: values.protocol,
         models: validModels,
+        // undefined = key omitted so existing config keys are preserved
+        // (deriveDecoder defaults both to None = server default).
+        ...(maxConcurrency !== undefined ? { maxConcurrency } : {}),
+        ...(rpm !== undefined ? { rpm } : {}),
+        ...(queueTimeoutMs !== undefined ? { queueTimeoutMs } : {}),
       });
     }
   });
@@ -1198,6 +1233,7 @@ function showModal({title, fields, onConfirm}) {
               <button class="cfg-model-add" type="button">${t('model.add')}</button>
             </div>` :
             f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" style="-webkit-text-security:disc" ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeSvg}</button></div>` :
+            f.type === 'number' ? `<input class="cfg-input" type="number" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.min != null ? `min="${f.min}"` : ''} ${f.disabled ? 'disabled' : ''}>` :
             `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.disabled ? 'disabled' : ''}>`}
           </div>
         `).join('')}
