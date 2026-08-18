@@ -26,7 +26,6 @@ case class ToolContext(
   depth: Int = 0,
   agentDef: Option[AgentDef] = None,
   agentLibrary: Option[AgentLibrary] = None,
-  askSemaphore: Option[Semaphore[IO]] = None,
   fileLockManager: Option[FileLockManager] = None,
   fileChangeTracker: Option[FileChangeTracker] = None,
   hookEngine: HookEngine = HookEngine.noop,

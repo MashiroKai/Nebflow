@@ -93,4 +93,40 @@ object Defaults:
 
   /** Preview size in characters for persisted tool results. */
   val ToolResultPreviewSize: Int = 2048
+
+  // ---- Concurrency gate (P0 API 并发管理) ----
+
+  /**
+   * Default per-provider LLM concurrency limit (requests in flight at once).
+   * Mainstream API free/common tiers allow >= 3 concurrent requests; 3 is a
+   * safe floor that keeps 7-parallel-Delegate bursts from slamming the API.
+   * `maxConcurrency: 0` in config means unlimited.
+   */
+  val LlmMaxConcurrencyDefault: Int = 3
+
+  /**
+   * Default queue timeout for a concurrency-gated LLM request. When the
+   * provider's gate is saturated, the request waits up to this long for a
+   * permit, then fails as Transient and falls back to the next provider.
+   */
+  val LlmQueueTimeoutMs: Long = 60_000L
+
+  /** RPM sliding-window width (seconds) for the per-provider rate limiter. */
+  val LlmRpmWindowSec: Int = 60
+
+  /** Persist queued LLM requests to disk so they survive a restart. */
+  val LlmQueuePersistDefault: Boolean = true
+
+  // ---- Task stuck detection (P0 阶段 3) ----
+
+  /**
+   * Default stuck threshold: an agent in Processing with no turn activity for
+   * this long is considered stuck. 10min is far above the llm-fail retry chain
+   * upper bound (8s×3 + provider probe 120s) — every retry action touches the
+   * activity stamp, so a healthy agent in the retry chain is never misjudged.
+   */
+  val StuckThresholdMs: Long = 10 * 60 * 1000L
+
+  /** TaskStuckWatcher scan interval. */
+  val StuckWatcherIntervalSec: Int = 30
 end Defaults
