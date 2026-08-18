@@ -571,11 +571,11 @@ export function finishAi(durationMs, model) {
     let hasBadge = false;
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(bubble, durationMs, seed, ts, activeView.stream.aiText);
+      renderDurationBadge(bubble, durationMs, model, seed, ts, activeView.stream.aiText);
       hasBadge = true;
     }
     // Copy button for AI message — use duration-badge pill with timestamp,
-    // matching user message style. No phrase when no duration.
+    // matching user message style. No phrase/model when no duration.
     if (!hasBadge) {
       const aiRow = bubble.closest('.row');
       if (aiRow) {
@@ -662,13 +662,14 @@ export function pickThinkingPhrase(durationMs, seed) {
 
 /**
  * Create a duration badge DOM element (pill style).
- * Shows the full phrase with duration embedded, plus timestamp.
+ * Shows the full phrase with duration embedded, plus optional model tag and timestamp.
  * @param {number} durationMs
+ * @param {string} [model]
  * @param {number} [seed]
  * @param {number} [timestamp] - epoch millis for display
  * @returns {HTMLElement}
  */
-export function createDurationBadgeElement(durationMs, seed, timestamp, copyText) {
+export function createDurationBadgeElement(durationMs, model, seed, timestamp, copyText) {
   const badge = document.createElement('div');
   badge.className = 'duration-badge';
 
@@ -676,6 +677,16 @@ export function createDurationBadgeElement(durationMs, seed, timestamp, copyText
   phraseSpan.className = 'duration-badge-text';
   phraseSpan.textContent = pickThinkingPhrase(durationMs, seed);
   badge.appendChild(phraseSpan);
+
+  if (model) {
+    const div = document.createElement('span');
+    div.className = 'duration-badge-divider';
+    badge.appendChild(div);
+    const modelSpan = document.createElement('span');
+    modelSpan.className = 'duration-badge-model';
+    modelSpan.textContent = model;
+    badge.appendChild(modelSpan);
+  }
 
   if (timestamp) {
     const div = document.createElement('span');
@@ -704,11 +715,11 @@ export function createDurationBadgeElement(durationMs, seed, timestamp, copyText
 /**
  * Render a subtle duration badge below an AI bubble.
  */
-export function renderDurationBadge(bubble, durationMs, seed, timestamp, copyText) {
+export function renderDurationBadge(bubble, durationMs, model, seed, timestamp, copyText) {
   if (!bubble) return;
   const row = bubble.closest('.row');
   if (!row) return;
-  const badge = createDurationBadgeElement(durationMs, seed, timestamp, copyText);
+  const badge = createDurationBadgeElement(durationMs, model, seed, timestamp, copyText);
   row.appendChild(badge);
 }
 
@@ -1878,7 +1889,7 @@ export function appendAskAnswer(delta) {
     });
 }
 
-export function finishAskAnswer(durationMs) {
+export function finishAskAnswer(durationMs, model) {
   cancelStreamRender(activeView, 'ask');
   if (activeView.stream.currentAskBubble) {
     const contentEl = activeView.stream.currentAskBubble.querySelector('div:not(.ask-label)');
@@ -1887,7 +1898,7 @@ export function finishAskAnswer(durationMs) {
     }
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(activeView.stream.currentAskBubble, durationMs, seed, Date.now());
+      renderDurationBadge(activeView.stream.currentAskBubble, durationMs, model, seed, Date.now());
     }
     activeView.stream.currentAskBubble = null;
     activeView.stream.askAnswerText = '';

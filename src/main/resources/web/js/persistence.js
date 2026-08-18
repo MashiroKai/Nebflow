@@ -342,7 +342,7 @@ export function restoreFromStorage() {
         bubble.innerHTML = renderMarkdownWithMath(m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, i, m.timestamp, m.text);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
           row.appendChild(badge);
         } else {
           row.appendChild(createAiCopyBadge(m.timestamp, m.text));
@@ -498,7 +498,7 @@ export function restoreFromStorage() {
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, i, m.timestamp);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
           aRow.appendChild(badge);
         }
         chat.appendChild(aRow);
@@ -665,7 +665,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         deferMd(bubble, m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, i, m.timestamp, m.text);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
           row.appendChild(badge);
         } else {
           row.appendChild(createAiCopyBadge(m.timestamp, m.text));
@@ -833,7 +833,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, i, m.timestamp);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
           aRow.appendChild(badge);
         }
         fragment.appendChild(aRow);
