@@ -454,7 +454,7 @@ export default {
   'search.tabAll': 'All',
   'search.tabImages': 'Images',
   'search.tabFiles': 'Files',
-  'search.tabCards': 'Cards',
+  'search.tabPop': 'Pop',
   'search.tabDate': 'Date',
   'search.emptyCategory': 'Nothing in this category yet',
   'search.datePickTitle': 'Pick a date',
@@ -462,7 +462,7 @@ export default {
   'search.dateConfirm': 'OK',
   'search.dateCancel': 'Cancel',
   'search.toolDisabledHint': 'Tool filter not applicable in this tab',
-  'search.dateDisabledInCards': 'Date anchor not applicable in Cards tab',
+  'search.dateDisabledInPop': 'Date anchor not applicable in Pop tab',
 
   // === Daemons (Dev Servers) ===
   'daemons.title': 'Dev Servers',
