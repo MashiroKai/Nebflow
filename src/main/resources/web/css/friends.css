@@ -1,0 +1,531 @@
+/* friends.css — A2A friends & messaging UI (friends-messaging-spec v1.2).
+   Zero new color tokens — everything references the existing Sapphire Glass
+   palette (§5). No accent bars, no emoji, pure-badge notifications ([U3]). */
+
+/* ── Activity Bar badge (§4 L1/L1b) ─────────────────────── */
+#activity-bar .activity-btn { position: relative; }
+
+.activity-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9999px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  box-sizing: border-box;
+}
+
+/* ── Shared row/list primitives ─────────────────────────── */
+.fm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.fm-row:hover { background: var(--glass-control-bg-hover); }
+
+.fm-row:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--glass-control-border);
+}
+
+.fm-row[aria-selected="true"] {
+  background: var(--color-frame-active);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.fm-avatar {
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted, #888);
+  font-weight: 500;
+  overflow: hidden;
+}
+
+.fm-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.fm-avatar-36 { width: 36px; height: 36px; font-size: 14px; }
+.fm-avatar-40 { width: 40px; height: 40px; font-size: 15px; }
+
+.fm-row-meta { flex: 1; min-width: 0; }
+
+.fm-row-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text, #000);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fm-row-sub {
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fm-row-badge {
+  flex-shrink: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 9999px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-sizing: border-box;
+}
+
+.fm-status-text {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+}
+
+.fm-empty {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-text-muted, #888);
+  line-height: 1.6;
+}
+
+/* ── Login empty state (§7 未登录) ──────────────────────── */
+.fm-login-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 12px;
+}
+
+.fm-login-text {
+  font-size: 12px;
+  color: var(--color-text-muted, #888);
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ── Contacts panel (§3.1) ──────────────────────────────── */
+#fm-contacts-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fm-search {
+  display: flex;
+  gap: 6px;
+  padding: 4px 2px 8px;
+}
+
+.fm-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-etched-border);
+  background: var(--glass-etched-bg);
+  color: var(--color-text, #000);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.fm-search-input:focus-visible { border-color: rgb(var(--sapphire) / 0.5); }
+
+.fm-search-btn { flex-shrink: 0; font-size: 12px; padding: 6px 12px; }
+
+.fm-result-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px;
+  margin: 0 2px 6px;
+  border-radius: 12px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+}
+
+.fm-add-btn { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
+
+.fm-verify-box {
+  flex-basis: 100%;
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.fm-verify-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-etched-border);
+  background: var(--glass-bg);
+  color: var(--color-text, #000);
+  outline: none;
+}
+
+.fm-verify-box .glass-control { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
+
+/* 「新的朋友」 entry */
+.fm-nf-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.fm-nf-entry:hover { background: var(--glass-control-bg-hover); }
+
+.fm-nf-entry:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--glass-control-border);
+}
+
+.fm-nf-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  color: rgb(var(--sapphire));
+  flex-shrink: 0;
+}
+
+.fm-nf-icon svg { width: 17px; height: 17px; }
+
+.fm-nf-label { flex: 1; font-size: 13px; font-weight: 500; color: var(--color-text, #000); }
+
+.fm-nf-chevron { color: var(--color-text-muted, #888); display: flex; }
+.fm-nf-chevron svg { width: 14px; height: 14px; }
+
+.fm-requests { padding: 2px 0 4px; }
+
+.fm-req-group {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted, #888);
+  margin: 8px 10px 2px;
+}
+
+.fm-req-row { cursor: default; }
+.fm-req-row:hover { background: transparent; }
+
+.fm-req-btns { display: flex; gap: 6px; flex-shrink: 0; }
+
+.fm-req-accept { font-size: 12px; padding: 4px 10px; }
+
+.fm-req-decline {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-control-border);
+  background: transparent;
+  color: var(--color-text, #000);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.fm-req-decline:hover { background: var(--glass-control-bg-hover); }
+
+/* ── Messages panel: conversation list (§3.2) ───────────── */
+#fm-conversations {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px 10px;
+}
+
+.fm-conv-top { display: flex; align-items: baseline; gap: 8px; }
+
+.fm-conv-time {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+  font-variant-numeric: tabular-nums;
+}
+
+.fm-conv-bottom { display: flex; align-items: center; gap: 8px; }
+
+.fm-conv-summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--color-text-muted, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap; /* §3.2 single-line ellipsis (A6) */
+}
+
+/* ── Chat modal (§2.3/§3.3) — cfg-modal glass, 560px ────── */
+.fm-modal {
+  width: 560px;
+  max-width: 92vw;
+  height: 70vh;
+  max-height: 80vh;
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.fm-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 10px;
+}
+
+.fm-modal-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+
+.fm-modal-name {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--color-text, #000);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fm-modal-id {
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fm-forward-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.fm-forward-btn svg { width: 15px; height: 15px; }
+
+.fm-modal-close {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 17px;
+  color: var(--color-text-muted, #888);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.fm-modal-close:hover { background: var(--color-frame-hover); color: var(--color-text, #000); }
+
+.fm-modal-toast {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 14px;
+  border-radius: 9999px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  font-size: 12px;
+  color: var(--color-text, #000);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.fm-offline-bar,
+.fm-blocked-bar {
+  margin: 0 16px 6px;
+  padding: 6px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-text-muted, #888);
+  background: var(--glass-etched-bg);
+  border-radius: 8px;
+}
+
+/* Message flow — bubbles per spec §5 (dropbox token values) */
+.fm-flow {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 16px 10px;
+  border-top: 1px solid var(--glass-etched-border);
+}
+
+.fm-msg { display: flex; flex-direction: column; max-width: 78%; }
+.fm-msg.out { align-self: flex-end; align-items: flex-end; }
+.fm-msg.in  { align-self: flex-start; align-items: flex-start; }
+
+.fm-msg-bubble {
+  padding: 8px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+  color: var(--color-text, #000);
+}
+
+.fm-msg.out .fm-msg-bubble {
+  background: rgba(91, 127, 191, 0.15);
+  border: 1px solid rgba(91, 127, 191, 0.18);
+}
+
+.fm-msg.in .fm-msg-bubble {
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+}
+
+.fm-msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+}
+
+.fm-msg-time { font-variant-numeric: tabular-nums; }
+
+/* Chips: agent-sent + forwarded (§3.3 R6/R7) — pill, etched bg, no new color */
+.fm-msg-agent-badge,
+.fm-msg-forwarded-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  background: var(--glass-etched-bg);
+  border-radius: 9999px;
+  padding: 1px 8px;
+}
+
+.fm-msg-actions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.fm-msg:hover .fm-msg-actions,
+.fm-msg:focus-within .fm-msg-actions { opacity: 1; }
+
+.fm-msg-act {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-muted, #888);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.fm-msg-act:hover { color: var(--color-text, #000); background: var(--color-frame-hover); }
+.fm-msg-act svg { width: 12px; height: 12px; }
+
+/* sending → spinner pulse (§6.2); failed → red ! + click resend */
+.fm-sending .fm-msg-time {
+  animation: fm-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes fm-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.fm-failed .fm-msg-bubble { opacity: 0.7; }
+
+.fm-retry {
+  margin-top: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--color-error);
+  background: transparent;
+  color: var(--color-error);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Input bar */
+.fm-input-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--glass-etched-border);
+}
+
+.fm-input { flex: 1; min-width: 0; }
+.fm-input:disabled { opacity: 0.5; cursor: not-allowed; }
+.fm-send-btn { flex-shrink: 0; }
+.fm-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Reduced motion (§8): all motion ≤0.01s, spinner static ── */
+@media (prefers-reduced-motion: reduce) {
+  .fm-row,
+  .fm-nf-entry,
+  .fm-search-input,
+  .fm-msg-act,
+  .fm-msg-actions,
+  .fm-modal-close,
+  .fm-req-decline,
+  .activity-badge {
+    transition-duration: 0.01s !important;
+  }
+  .fm-sending .fm-msg-time { animation: none; opacity: 0.6; }
+  .fm-sending .fm-msg-time::after { content: '…'; }
+}

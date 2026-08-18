@@ -129,10 +129,34 @@ function syncPanelDom() {
 
 function initSidePanels() {
   registerSidePanel({
+    id: 'messages',
+    buttonId: 'messages-btn',
+    panelId: 'panel-messages',
+    i18nKey: 'activity.messages',
+  });
+  registerSidePanel({
+    id: 'contacts',
+    buttonId: 'contacts-btn',
+    panelId: 'panel-contacts',
+    i18nKey: 'activity.contacts',
+  });
+  registerSidePanel({
     id: 'files',
     buttonId: 'files-btn',
     panelId: 'panel-sessions',
     i18nKey: 'activity.files',
+  });
+  registerSidePanel({
+    id: 'messages',
+    buttonId: 'messages-btn',
+    panelId: 'panel-messages',
+    i18nKey: 'activity.messages',
+  });
+  registerSidePanel({
+    id: 'contacts',
+    buttonId: 'contacts-btn',
+    panelId: 'panel-contacts',
+    i18nKey: 'activity.contacts',
   });
   // Restore the persisted panel; unregistered ids fall back to files.
   const stored = localStorage.getItem(LS_PANEL);
@@ -167,6 +191,24 @@ function bridgeExplorerTitle() {
   apply();
   new MutationObserver(apply).observe(el, { childList: true, characterData: true, subtree: true });
   window.addEventListener('locale-changed', apply);
+}
+
+/**
+ * Set the count badge on an Activity Bar button (friends-messaging §4 L1/L1b).
+ * 0 hides the badge; >99 shows "99+". The badge slot lives inside the button
+ * markup (`<span class="activity-badge" hidden>`).
+ * @param {string} buttonId
+ * @param {number} count
+ * @param {string} [ariaLabel] - full accessible label (already interpolated)
+ */
+export function setActivityBadge(buttonId, count, ariaLabel) {
+  const btn = document.getElementById(buttonId);
+  const badge = /** @type {HTMLElement|null} */ (btn ? btn.querySelector('.activity-badge') : null);
+  if (!badge) return;
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  badge.hidden = n === 0;
+  badge.textContent = n > 99 ? '99+' : String(n);
+  if (ariaLabel !== undefined) badge.setAttribute('aria-label', n > 0 ? ariaLabel : '');
 }
 
 // ── Settings ─────────────────────────────────────────────
@@ -293,6 +335,14 @@ function injectLoginModalStyles() {
 .login-error-msg { font-size: 13px; color: #e57373; margin-bottom: 14px; line-height: 1.5; }
 `;
   document.head.appendChild(style);
+}
+
+/**
+ * Public entry for the NebLink device-flow login modal (used by the
+ * friends/messages panels' logged-out empty states).
+ */
+export function openLoginModal() {
+  showLoginModal();
 }
 
 /**

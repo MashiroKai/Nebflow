@@ -46,7 +46,7 @@ export function getNeblinkState() {
 let deviceUpdateState = {};
 let _rerender = null;
 
-function getAuthToken() {
+export function getAuthToken() {
   return localStorage.getItem(key('token')) || '';
 }
 

@@ -134,7 +134,8 @@ const GLOBAL_MSG_TYPES = new Set([
   'remoteUpdateResult', 'peerListChanged',
   'activeBgTasks', 'activeAgents',
   'mailQueued', 'mailDequeued',
-  'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-history', 'dropboxError'
+  'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-history', 'dropboxError',
+  'friend_event'
 ]);
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
@@ -178,6 +179,15 @@ let hasConnectedBefore = false;
 
 export function onReconnect(callback) {
   reconnectCallbacks.push(callback);
+}
+
+// ---------- Disconnect callback registry ----------
+// Mirror of onReconnect for UI that must react to connection loss (e.g. the
+// friends chat modal's "reconnecting" bar + disabled input, spec §7).
+const disconnectCallbacks = [];
+
+export function onDisconnect(callback) {
+  disconnectCallbacks.push(callback);
 }
 
 // ---------- Reconnection state ----------
@@ -349,6 +359,7 @@ export function connect() {
   state.ws.onclose = () => {
     state.connected = false;
     syncSendButtonConnState();
+    disconnectCallbacks.forEach(cb => { try { cb(); } catch (e) { console.error('[ws] disconnect callback error:', e); } });
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
     if (!opened) {
       // Handshake rejected (e.g. 403) before the socket ever opened.
