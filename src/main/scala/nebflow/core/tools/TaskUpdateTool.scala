@@ -14,18 +14,20 @@ object TaskUpdateTool extends Tool:
 
 ## When to Use
 
-**Mark tasks as resolved:**
-- IMPORTANT: Always mark tasks as completed when you FULLY finish them
-- After resolving, check your task list in the system prompt for the next task
+**Finishing a task (IMPORTANT — completion needs user confirmation):**
+- When you FULLY finish a task, set status to `needs_confirmation` (NOT `completed`) and attach a `note` summarizing the outcome
+- `completed` is RESERVED for the user: they confirm via the circle in the todos panel — you may NOT set it directly (the backend rejects agent → completed)
+- After confirming, check your task list in the system prompt for the next task
 - If you encounter errors, blockers, or cannot finish, mark as failed
-- Never mark completed if tests are failing, implementation is partial, or you encountered unresolved errors
+- Never mark needs_confirmation if tests are failing, implementation is partial, or you encountered unresolved errors
+- While a task is `needs_confirmation` (awaiting user ruling), do NOT change its status — the user either confirms it or returns it with feedback (a [打回任务] block in your next input tells you what to revise; then re-mark needs_confirmation)
 
 **Update task details or dependencies:**
 - Set status to `in_progress` when starting work on a task
 - Use `addBlockedBy`/`removeBlockedBy` to manage dependencies
 
 **Record outcomes (notes):**
-- When marking `completed` (or `failed`), attach a `note` summarizing what was
+- When marking `needs_confirmation` (or `failed`), attach a `note` summarizing what was
   done, key results and where artifacts landed (commit hash / file paths).
   `noteLinks` lists clickable references (file paths, URLs, task IDs).
 - Notes are append-only and preserved in the task archive for later retrieval.
@@ -33,14 +35,16 @@ object TaskUpdateTool extends Tool:
 ## Batch Update
 
 Pass comma-separated task IDs to apply the same update to multiple tasks at once:
-{"taskId": "1,2,3", "status": "completed"} — marks tasks #1, #2, #3 as completed in one call.
-Single-task calls {"taskId": "1", "status": "completed"} work exactly as before.
+{"taskId": "1,2,3", "status": "needs_confirmation"} — marks tasks #1, #2, #3 in one call.
+Single-task calls {"taskId": "1", "status": "needs_confirmation"} work exactly as before.
 
 ## Status Workflow
 
-`pending` -> `in_progress` -> `completed` or `failed`
+`pending` -> `in_progress` -> `needs_confirmation` (done, awaiting user confirmation) or `failed`
 
-Terminal states: `completed` and `failed` cannot transition to any other state.
+- The user confirms needs_confirmation tasks themselves (todos panel circle) — that moves them to `completed`
+- The user may also return a needs_confirmation task to you with feedback — it goes back to `in_progress`
+- Terminal states: `completed` and `failed` cannot transition to any other state.
 
 ## Dependency Management
 
@@ -51,12 +55,12 @@ Terminal states: `completed` and `failed` cannot transition to any other state.
 
 ## Examples
 
-Mark as in progress: {"taskId": "1", "status": "in_progress"}
-Mark as completed:  {"taskId": "1", "status": "completed", "note": "Implemented X, tests green, commit abc1234", "noteLinks": ["/tmp/report.md"]}
-Mark as failed:     {"taskId": "1", "status": "failed", "note": "blocked by upstream API outage"}
-Batch complete:     {"taskId": "1,2,3", "status": "completed"}
-Set dependency:     {"taskId": "2", "addBlockedBy": ["1"]}
-Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
+Mark as in progress:   {"taskId": "1", "status": "in_progress"}
+Finished, awaiting user: {"taskId": "1", "status": "needs_confirmation", "note": "Implemented X, tests green, commit abc1234", "noteLinks": ["/tmp/report.md"]}
+Mark as failed:        {"taskId": "1", "status": "failed", "note": "blocked by upstream API outage"}
+Batch finish:          {"taskId": "1,2,3", "status": "needs_confirmation"}
+Set dependency:        {"taskId": "2", "addBlockedBy": ["1"]}
+Remove dependency:     {"taskId": "2", "removeBlockedBy": ["1"]}"""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -80,7 +84,13 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
         ),
         "status" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> Json.arr("pending".asJson, "in_progress".asJson, "completed".asJson, "failed".asJson),
+          "enum" -> Json.arr(
+            "pending".asJson,
+            "in_progress".asJson,
+            "needs_confirmation".asJson,
+            "completed".asJson,
+            "failed".asJson
+          ),
           "description" -> "New status".asJson
         ),
         "addBlocks" -> Json.obj(
@@ -133,6 +143,7 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
         val statusOpt = input("status").flatMap(_.asString).flatMap {
           case "pending" => Some(TaskStatus.Pending)
           case "in_progress" => Some(TaskStatus.InProgress)
+          case "needs_confirmation" => Some(TaskStatus.NeedsConfirmation)
           case "completed" => Some(TaskStatus.Completed)
           case "failed" => Some(TaskStatus.Failed)
           case _ => None

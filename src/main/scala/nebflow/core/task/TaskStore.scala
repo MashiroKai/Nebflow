@@ -20,6 +20,10 @@ trait TaskStore:
   def renderForPrompt(sessionId: String): IO[String]
   def update(sessionId: String, taskId: String, updates: TaskUpdateInput): IO[Option[Task]]
   def complete(sessionId: String, taskId: String, by: String): IO[Option[Task]]
+  /** todo-panel v2 §2.4 (C16/C17): user returns a needs_confirmation task to
+    * in_progress with feedback. Raises IllegalStateException when the task is
+    * not awaiting confirmation or is a human todo. */
+  def `return`(sessionId: String, taskId: String, feedback: String): IO[Option[Task]]
   def delete(sessionId: String, taskId: String): IO[Boolean]
   def deleteAll(sessionId: String): IO[Unit]
 
@@ -152,16 +156,24 @@ object FileTaskStore extends TaskStore:
         .map(_.filter(_ != null))
     }
 
-  // Issue #2: State transition validation matrix
+  // Issue #2 + todo-panel v2 §2.2: state transition validation matrix.
+  // needs_confirmation -> in_progress is NOT in this matrix — it is the
+  // user-only return() path (spec C16/C17); the agent TaskUpdate path must
+  // not be able to yank a task out of the awaiting-user-ruling state.
   private def isValidTransition(from: TaskStatus, to: TaskStatus): Boolean =
     (from, to) match
       case (TaskStatus.Pending, TaskStatus.InProgress) => true
+      case (TaskStatus.Pending, TaskStatus.NeedsConfirmation) => true // fast-complete path
       case (TaskStatus.Pending, TaskStatus.Completed) => true
       case (TaskStatus.Pending, TaskStatus.Failed) => true
       case (TaskStatus.Pending, TaskStatus.Pending) => true // no-op
+      case (TaskStatus.InProgress, TaskStatus.NeedsConfirmation) => true // C15: the ONLY completion lane
       case (TaskStatus.InProgress, TaskStatus.Completed) => true
       case (TaskStatus.InProgress, TaskStatus.Failed) => true
       case (TaskStatus.InProgress, TaskStatus.InProgress) => true // no-op
+      case (TaskStatus.NeedsConfirmation, TaskStatus.NeedsConfirmation) => true // no-op
+      case (TaskStatus.NeedsConfirmation, TaskStatus.Completed) => true // user confirm (complete())
+      case (TaskStatus.NeedsConfirmation, TaskStatus.Dismissed) => true // user dismiss
       case (TaskStatus.Completed, TaskStatus.Completed) => true // no-op
       case (TaskStatus.Completed, TaskStatus.Dismissed) => true
       case (TaskStatus.Failed, TaskStatus.Failed) => true // no-op
@@ -173,9 +185,19 @@ object FileTaskStore extends TaskStore:
     * completes them via the circle or the agent fails/dismisses them. Guards
     * the agent path (TaskUpdate) from pushing a human reminder into its own
     * work pipeline; the dedicated complete() path checks the plain matrix
-    * (pending/in_progress -> completed) because it records completedBy. */
+    * (pending/in_progress -> completed) because it records completedBy.
+    *
+    * todo-panel v2: adds C15 (agent may not reach completed directly —
+    * needs_confirmation is the only completion lane, completed is reserved
+    * for the user's confirmation) and C22 (agent may not re-judge a task
+    * failed while it is awaiting the user's ruling). */
   private def isValidTransitionFor(task: Task, to: TaskStatus): Boolean =
-    if task.taskKind == "human" && to == TaskStatus.InProgress then false
+    if task.taskKind == "human" && (to == TaskStatus.InProgress || to == TaskStatus.NeedsConfirmation) then
+      false // human todos: no in-progress, no awaiting-confirmation (v2 B9)
+    else if task.status == TaskStatus.NeedsConfirmation && to == TaskStatus.Failed then
+      false // C22: no re-judging while awaiting user ruling
+    else if to == TaskStatus.Completed && task.status != TaskStatus.Completed && task.taskKind == "agent" then
+      false // C15: agent path may not complete directly (needs_confirmation only)
     else isValidTransition(task.status, to)
 
   // Issue #3: DFS cycle detection in dependency graph
@@ -287,7 +309,11 @@ object FileTaskStore extends TaskStore:
     }
 
   def listActive(sessionId: String): IO[List[Task]] =
-    list(sessionId).map(_.filter(t => t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress))
+    // v2 §3: needs_confirmation is NOT terminal — it still counts as "not
+    // done yet" (header activeCount = pending + in_progress + needs_confirmation).
+    list(sessionId).map(_.filter(t =>
+      t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress || t.status == TaskStatus.NeedsConfirmation
+    ))
 
   def listVisible(sessionId: String): IO[List[Task]] =
     list(sessionId).map(_.filter(_.status != TaskStatus.Dismissed))
@@ -334,11 +360,16 @@ object FileTaskStore extends TaskStore:
 
   /**
    * Render tasks as a hierarchical text block for system prompt injection.
-   *  Only active (pending + in_progress) tasks are shown, with tree-style indentation.
+   *  Only active (pending + in_progress + needs_confirmation) tasks are
+   *  shown, with tree-style indentation. v2: needs_confirmation tasks render
+   *  with a marker so the agent knows they are DONE but AWAITING USER
+   *  CONFIRMATION — it must not re-work them (B10/C15/C22).
    */
   def renderForPrompt(sessionId: String): IO[String] =
     list(sessionId).map { allTasks =>
-      val active = allTasks.filter(t => t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress)
+      val active = allTasks.filter(t =>
+        t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress || t.status == TaskStatus.NeedsConfirmation
+      )
       if active.isEmpty then ""
       else
         val byParent = active.groupBy(_.parentId)
@@ -346,12 +377,19 @@ object FileTaskStore extends TaskStore:
 
         val sb = new StringBuilder
         sb.append("## Current Tasks\n\n")
-        sb.append("Your task list is below. Work through tasks in order. Mark each as completed when fully done.\n\n")
+        sb.append(
+          "Your task list is below. Work through tasks in order. When a task is fully done, " +
+            "mark it needs_confirmation (NOT completed) and attach a note with the outcome — " +
+            "completed is reserved for the user's confirmation. Tasks marked [needs_confirmation] " +
+            "are DONE and awaiting user confirmation: do NOT work on them again; if the user " +
+            "returns one with feedback, a [打回任务] block tells you what to revise.\n\n"
+        )
 
         def renderTask(t: Task, depth: Int): Unit =
           val indent = "  " * depth
           val statusIcon = t.status match
             case TaskStatus.InProgress => "[in_progress]"
+            case TaskStatus.NeedsConfirmation => "[needs_confirmation]"
             case TaskStatus.Pending =>
               // todo-panel §2.3: human todos are reminders FOR the user — the
               // agent must not sweep them into its own work-through loop.
@@ -367,6 +405,45 @@ object FileTaskStore extends TaskStore:
         roots.foreach(r => renderTask(r, 0))
         sb.toString
       end if
+    }
+
+  /** todo-panel v2 §2.4 (C16/C17): user return — needs_confirmation back to
+    * in_progress with durable feedback. Mirrors complete()'s structure:
+    * validates against the authoritative task state, raises
+    * IllegalStateException (caller turns it into taskError) when the task is
+    * a human todo or not in needs_confirmation. On success: returnCount+1,
+    * feedback appended to notes (C20 — durable revision history), events
+    * record the return. Empty feedback is legal (bare return, §5.4) and adds
+    * no note. */
+  def `return`(sessionId: String, taskId: String, feedback: String): IO[Option[Task]] =
+    get(sessionId, taskId).flatMap {
+      case None => IO.pure(None)
+      case Some(existing) =>
+        if existing.taskKind == "human" then
+          IO.raiseError(
+            new IllegalStateException(s"Task #$taskId is a human todo — human todos have no return")
+          )
+        else if existing.status != TaskStatus.NeedsConfirmation then
+          IO.raiseError(
+            new IllegalStateException(
+              s"Invalid return: task #$taskId is ${TaskStatus.wireName(existing.status)}, " +
+                s"not needs_confirmation (only awaiting-confirmation tasks can be returned)"
+            )
+          )
+        else
+          val now = Instant.now().toString
+          val evBase = List(
+            TaskEvent("status", Some("needs_confirmation→in_progress"), Some(now)),
+            TaskEvent("returned", Some(feedback.take(120)), Some(now))
+          )
+          val updated = existing.copy(
+            status = TaskStatus.InProgress,
+            returnCount = existing.returnCount + 1,
+            updatedAt = Some(now),
+            notes = if feedback.nonEmpty then existing.notes :+ TaskNote(feedback, Nil, Some(now)) else existing.notes,
+            events = (existing.events ++ evBase).takeRight(MaxEvents)
+          )
+          writeTask(sessionId, updated).as(Some(updated))
     }
 
   // Issue #10: Delete transaction ordering — cleanup references before deleting file

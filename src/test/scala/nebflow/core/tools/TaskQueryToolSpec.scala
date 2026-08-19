@@ -37,8 +37,13 @@ class TaskQueryToolSpec extends FunSuite:
 
   private def seedSession(sid: String, subject: String, status: TaskStatus, desc: String = "d"): String =
     val id = nebflow.core.task.FileTaskStore.create(sid, TaskCreateInput(subject, desc)).unsafeRunSync()
-    if status != TaskStatus.Pending then
-      nebflow.core.task.FileTaskStore.update(sid, id, TaskUpdateInput(status = Some(status))).unsafeRunSync()
+    status match
+      case TaskStatus.Pending => // already pending at create
+      case TaskStatus.Completed =>
+        // v2 C15: completed is reached via complete(), not agent TaskUpdate
+        nebflow.core.task.FileTaskStore.complete(sid, id, by = "agent").unsafeRunSync()
+      case other =>
+        nebflow.core.task.FileTaskStore.update(sid, id, TaskUpdateInput(status = Some(other))).unsafeRunSync()
     id
 
   test("scope=session returns current session tasks incl. completed, keyword matches description") {
