@@ -55,7 +55,8 @@ object LlmInterface:
    * Best-effort abort of a JDK HttpClient: calls `shutdownNow()` (JDK 21+)
    * via reflection, degrading gracefully to `close()` (JDK 11+) on JDK 17.
    * Without this, `httpClient.shutdownNow()` compiles fine (JDK 23 build) but
-   * throws `NoSuchMethodError` at runtime on JDK 17 (KAI, CI packaging),
+   * throws `NoSuchMethodError` at runtime on JDK 17 (real Windows machine,
+   * CI packaging),
    * swallowed by the shutdown hook's `catch case _: Throwable => ()` →
    * Ctrl+C inflight-abort silently no-ops.
    */
@@ -211,7 +212,7 @@ object LlmInterface:
       //      AutoCloseable). close() waits for in-flight exchanges to complete
       //      rather than aborting them, but at least releases resources.
       //      Without this guard, NoSuchMethodError is swallowed by the
-      //      hook's catch-all → Ctrl+C fix silently no-ops on JDK17 (KAI).
+      //      hook's catch-all → Ctrl+C fix silently no-ops on JDK17 (real machine).
       //   2. httpClient.close() — best-effort close of cached/open connections.
       //   3. backend.close() — no-op for a user-provided client, kept for
       //      symmetry in case a backend-owned client is introduced later.

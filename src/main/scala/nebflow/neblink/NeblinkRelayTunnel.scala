@@ -135,7 +135,7 @@ final class NeblinkRelayTunnel(
     val requestId = hc.downField("requestId").as[String].getOrElse("")
     val action = hc.downField("action").as[String].getOrElse("")
     // Expand ~ to *this* device's user.home — must happen on the receiver so
-    // the path resolves to the local filesystem (e.g. C:\Users\kai on Windows),
+    // the path resolves to the local filesystem (e.g. C:\Users\name on Windows),
     // not the sender's home directory.
     val params = PathUtil.expandPathParams(
       hc.downField("params").as[JsonObject].getOrElse(JsonObject.empty)

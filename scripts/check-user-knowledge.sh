@@ -8,7 +8,11 @@
 #                                           词边界排除 1107/1079 类数字噪音，
 #                                           现树零误报）
 #   ustc                                   — 用户所属机构网关
-#   kaiyu                                  — 用户路径/设备名
+#   \bkai\b                                 — 用户名/设备名（词边界独立词：
+#                                           覆盖 kai/Kai/KAI，kaiyu 由下一模式
+#                                           覆盖；不误中 MashiroKai——GitHub
+#                                           repo URL，功能性地址，rebrand 批4
+#                                           随仓库迁移更换）
 #   (^|[^A-Za-z])sk-[A-Za-z0-9]{8}         — API key 形态（词边界防误中
 #                                           "task-specific"/"ask-reminder"）
 #
@@ -22,7 +26,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PATTERN='\b107\b|ustc|kaiyu|(^|[^A-Za-z])sk-[A-Za-z0-9]{8}'
+PATTERN='\b107\b|ustc|\bkai\b|kaiyu|(^|[^A-Za-z])sk-[A-Za-z0-9]{8}'
 
 HITS=$(grep -rInE -i "$PATTERN" --include='*.scala' src/main || true)
 
@@ -36,4 +40,4 @@ if [ -n "$HITS" ]; then
   exit 1
 fi
 
-echo "✓ user-knowledge gate clean: src/main Scala sources contain none of: 107 / ustc / kaiyu / sk-XXXXXXXX"
+echo "✓ user-knowledge gate clean: src/main Scala sources contain none of: 107 / ustc / kai / kaiyu / sk-XXXXXXXX"

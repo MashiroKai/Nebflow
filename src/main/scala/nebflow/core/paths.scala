@@ -45,7 +45,7 @@ object PathUtil:
    * not `C:\Users\name/Desktop` (mixed separators that os-lib rejects).
    *
    * For remote-exec, this MUST run on the *receiving* device so `~` resolves
-   * to the remote user's home (e.g. `C:\Users\kai` on Windows), not the
+   * to the remote user's home (e.g. `C:\Users\name` on Windows), not the
    * sender's. Expanding on the sender would produce the wrong OS's home path.
    */
   def expandTilde(s: String): String =
