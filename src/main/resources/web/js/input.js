@@ -637,7 +637,9 @@ export function send() {
     return;
   }
   renderUserBubble(text, v.pendingAttachments);
-  saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
+  saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a => a.type === 'taskRef'
+    ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
+    : { type: a.type, name: a.name, preview: a.preview })});
   // Save to input history
   if (text && text !== '/clear') {
     state.inputHistory.push(text);
@@ -655,11 +657,20 @@ export function send() {
   v.historyDraft = '';
   try {
     const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    // v2 §5.2/§6.1: split taskRefs (return references) from file/image
+    // attachments — taskRefs ride the default user-message branch as their
+    // own array; absent/empty = v1 path, zero behavior change.
+    const taskRefs = (v.pendingAttachments || [])
+      .filter(a => a.type === 'taskRef')
+      .map(a => ({ taskId: a.taskId, sessionId: a.sessionId || v.sessionId }));
     sendWs({
       content: text,
-      attachments: v.pendingAttachments.map(a => ({
-        mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
-      })),
+      ...(taskRefs.length > 0 ? { taskRefs } : {}),
+      attachments: (v.pendingAttachments || [])
+        .filter(a => a.type !== 'taskRef')
+        .map(a => ({
+          mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
+        })),
       clientMessageId,
       sessionId: v.sessionId,
       chatWidth: v.dom.chat?.clientWidth || 0
@@ -729,7 +740,11 @@ function persistQueue() {
         text: it.text,
         skillName: it.skillName || null,
         mode: it.mode || null,
-        attachments: (it.attachments || []).map(a => ({ type: a.type, name: a.name }))
+        // v2 B15: taskRef chips must survive refresh — keep taskId/sessionId
+        // (+ subject as the display name); file/image keep type+name only.
+        attachments: (it.attachments || []).map(a => a.type === 'taskRef'
+          ? { type: 'taskRef', taskId: a.taskId, sessionId: a.sessionId, subject: a.subject, name: a.subject }
+          : { type: a.type, name: a.name })
       }));
     }
     localStorage.setItem(LS_QUEUE_KEY, JSON.stringify(serializable));
@@ -787,10 +802,26 @@ function queueMessage(view, text, attachments, skillName, mode) {
 
 function sendImmediate(sessionId, item) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
   if (item.mode === 'compact') {
     sendWs({ type: 'command', command: 'compact', sessionId, instruction: item.text || undefined });
   } else if (item.skillName) {
     sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
+  } else if (taskRefs.length > 0) {
+    // v2: a return message must ride the default user-message branch — the
+    // backend only parses taskRefs there (WebSocketRoutes.scala §6.2);
+    // immediateInput goes through handleUserText and would drop them.
+    const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    sendWs({
+      content: item.text,
+      taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })),
+      attachments: (item.attachments || []).filter(a => a.type !== 'taskRef').map(a => ({
+        mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
+      })),
+      clientMessageId,
+      sessionId,
+      chatWidth: activeView?.dom?.chat?.clientWidth || 0
+    });
   } else {
     sendWs({ type: 'immediateInput', content: item.text, sessionId });
   }
@@ -804,7 +835,9 @@ function sendImmediate(sessionId, item) {
       renderUserBubble(item.text, item.attachments);
     }
   }
-  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) }, sessionId);
+  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
+    ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
+    : { type: a.type, name: a.name, preview: a.preview }) }, sessionId);
   // Save to input history (same as normal send and drainMessageQueue)
   if (item.text) {
     state.inputHistory.push(item.text);
@@ -887,7 +920,9 @@ export function drainMessageQueue(sessionId) {
     if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
     try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {}
   }
-  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) }, sessionId);
+  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
+    ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
+    : { type: a.type, name: a.name, preview: a.preview }) }, sessionId);
 
   // Send as normal UserInput
   if (sessionId) state.turnExpecting[sessionId] = true;
@@ -903,9 +938,12 @@ export function drainMessageQueue(sessionId) {
     sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
   } else {
     const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    // v2 B15: queued return messages keep their taskRefs when drained.
+    const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
     sendWs({
       content: item.text,
-      attachments: (item.attachments || []).map(a => ({
+      ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
+      attachments: (item.attachments || []).filter(a => a.type !== 'taskRef').map(a => ({
         mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
       })),
       clientMessageId,
