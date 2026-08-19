@@ -13,6 +13,7 @@ import { restoreFromBackendHistory } from './persistence.js';
 import { isBgAgentId } from './utils.js';
 import state from './state.js';
 import { key } from './branding.js';
+import { t } from './i18n.js';
 
 // ── Per-sub-agent state ────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -326,6 +327,12 @@ export function interceptBgAgentStep(msg) {
     entry.meta.status = 'running';
   } else if (msg.type === 'agentDone' || msg.type === 'agentEnd') {
     entry.meta.status = 'done';
+  } else if (msg.type === 'agentFrozen') {
+    entry.meta.status = 'frozen';
+    entry.meta.frozenResumeAt = msg.resumeAt || null;
+  } else if (msg.type === 'agentResumed') {
+    entry.meta.status = 'running';
+    entry.meta.frozenResumeAt = null;
   }
 
   setActiveView(entry.view);
@@ -375,17 +382,28 @@ export function handleBgAgentHistory(msg) {
 function updateFooterStatus(entry) {
   if (!entry.footerEl) return;
   const status = entry.meta.status || '';
-  entry.footerEl.classList.remove('running', 'done', 'failed');
+  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen');
   if (status) entry.footerEl.classList.add(status);
   const taskEl = entry.footerEl.querySelector('.fa-task');
   if (taskEl) {
-    const label = entry.meta.task
-      ? entry.meta.task
-      : status === 'running' ? 'Running...'
-      : status === 'done' ? 'Done'
-      : status === 'failed' ? 'Failed'
-      : 'Session';
-    taskEl.textContent = label;
+    if (status === 'frozen') {
+      // Frozen tile: "已冻结 · HH:mm 恢复" — resumeAt epoch → local HH:mm
+      const at = entry.meta.frozenResumeAt;
+      const clock = at ? (() => {
+        const d = new Date(at);
+        if (Number.isNaN(d.getTime())) return '';
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      })() : '';
+      taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
+    } else {
+      const label = entry.meta.task
+        ? entry.meta.task
+        : status === 'running' ? 'Running...'
+        : status === 'done' ? 'Done'
+        : status === 'failed' ? 'Failed'
+        : 'Session';
+      taskEl.textContent = label;
+    }
   }
   syncInputButtons(entry);
 }

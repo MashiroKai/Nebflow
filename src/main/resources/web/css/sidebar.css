@@ -1830,3 +1830,66 @@
   .agent-detail-prompt-edit { background: rgba(255,255,255,0.03); }
   .agent-detail-save-btn { background: rgba(255,255,255,0.03); }
 }
+
+/* ---------- Work-schedule (freeze) segment editor — freeze-spec §3.2 -------
+   Reuses the cfg-* variable system (surface chips, etched inputs). Zero new
+   color tokens. */
+.segment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.segment-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--glass-etched-bg, rgba(128,128,128,0.06));
+  border: 1px solid var(--glass-etched-border, rgba(128,128,128,0.14));
+  border-radius: 8px;
+  padding: 6px 8px 6px 12px;
+}
+.segment-row .seg-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+.time-input {
+  width: 76px;
+  background: var(--glass-etched-bg);
+  color: var(--color-frame-input-text);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.time-input:focus {
+  border-color: rgb(var(--sapphire) / 0.6);
+  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
+}
+.seg-remove {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.seg-remove:hover {
+  color: var(--color-error, #f44336);
+  background: var(--color-frame-hover);
+}
+.seg-remove:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}

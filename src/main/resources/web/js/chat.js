@@ -3,7 +3,7 @@
 
 import state, { AGENT_PALETTE } from './state.js';
 import { key } from './branding.js';
-import { activeView, setActiveView } from './chatView.js';
+import { activeView, setActiveView, findViewBySessionId } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
@@ -210,6 +210,60 @@ export function clearStatus() {
   const { statusWrap } = activeView.dom;
   if (statusWrap) statusWrap.classList.remove('on');
   stopSpinner();
+}
+
+// ---------- Freeze status bar (work schedule, freeze-schedule spec §3.2) ----
+// The legacy statusWrap container is never built (setStatus above is a
+// compatibility no-op), so the frozen state gets its own element appended to
+// the chat body — replaces the busy spinner's visual role while the agent is
+// parked at a dispatch boundary. Per-session map so popups/session switches
+// never cross-contaminate.
+const frozenStatusEls = new Map();
+
+function formatResumeClock(resumeAt) {
+  if (!resumeAt) return '';
+  const d = new Date(resumeAt);
+  if (Number.isNaN(d.getTime())) return '';
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+export function showFrozenStatus(sid, resumeAtMillis) {
+  hideFrozenStatus(sid);
+  const v = findViewBySessionId(sid);
+  if (!v || !v.dom.chat) return;
+  const el = document.createElement('div');
+  el.className = 'frozen-status';
+  el.dataset.sid = sid;
+  const clock = formatResumeClock(resumeAtMillis);
+  const text = clock
+    ? t('chat.frozen', { time: clock })
+    : t('chat.frozenNoTime');
+  const hint = document.createElement('div');
+  hint.className = 'frozen-wake-hint';
+  hint.textContent = t('chat.frozenHint');
+  const icon = document.createElement('div');
+  icon.className = 'frozen-icon';
+  const textEl = document.createElement('div');
+  textEl.className = 'frozen-text';
+  textEl.textContent = text;
+  el.appendChild(icon);
+  const body = document.createElement('div');
+  body.appendChild(textEl);
+  body.appendChild(hint);
+  el.appendChild(body);
+  v.dom.chat.appendChild(el);
+  frozenStatusEls.set(sid, el);
+  smartScroll();
+}
+
+export function hideFrozenStatus(sid) {
+  const el = frozenStatusEls.get(sid);
+  if (el) {
+    el.remove();
+    frozenStatusEls.delete(sid);
+  }
 }
 
 export function renderRetryStatus(msg) {
