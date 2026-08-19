@@ -102,6 +102,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
 
   popupOverlay = document.createElement('div');
   popupOverlay.className = 'flow-agent-overlay fullscreen';
+  lastModelBadgeHtml = null; // fresh badge element — force first render on open
 
   // Mount on document.body for bg-agent popups (not inside a flow card)
   popupOverlay.innerHTML = `
@@ -311,8 +312,8 @@ function updatePopupCtxRing() {
   </div>`;
 }
 
-onMessage('usageUpdate', () => { if (popupOverlay) updatePopupCtxRing(); });
-onMessage('done', () => { if (popupOverlay) updatePopupCtxRing(); });
+onMessage('usageUpdate', () => { if (popupOverlay) { updatePopupCtxRing(); renderModelBadge(); } });
+onMessage('done', () => { if (popupOverlay) { updatePopupCtxRing(); renderModelBadge(); } });
 
 // ── WS event interception ────────────────────────────────
 
@@ -435,6 +436,33 @@ function esc(str) {
     .replace(/"/g, '"').replace(/'/g, '&#039;');
 }
 
+// #308 actual-model display: the header badge shows the model this agent
+// ACTUALLY used on its last LLM round (live from state.sessionModelInfo),
+// falling back to the backend health-resolved candidate (cfg.current), then
+// to the configured preferred. Never show "preferred" as if it were live.
+let popupModelCfg = null;      // last fetched /api/agents/:name/model response
+let lastModelBadgeHtml = null; // value-change guard — keep DOM stable
+
+function modelBadgeHtml(current, preferred) {
+  if (!current) return '';
+  const isFallback = !!(preferred && current !== preferred);
+  return isFallback
+    ? `<span class="flow-agent-model-badge">${esc(current)}</span>`
+    : `<span class="flow-agent-subtitle">${esc(current)}</span>`;
+}
+
+function renderModelBadge() {
+  const el = popupOverlay?.querySelector('#bgagent-model');
+  if (!el) return;
+  const live = currentStepId ? state.sessionModelInfo[currentStepId]?.model : null;
+  const cfg = popupModelCfg || {};
+  const current = live || cfg.current || cfg.preferred || '';
+  const html = modelBadgeHtml(current, cfg.preferred);
+  if (html === lastModelBadgeHtml) return; // unchanged — no DOM write
+  lastModelBadgeHtml = html;
+  el.innerHTML = html;
+}
+
 /** Fetch agent model config and render a badge in the popup header. */
 async function fetchAgentModelBadge(agentName) {
   try {
@@ -442,14 +470,7 @@ async function fetchAgentModelBadge(agentName) {
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const resp = await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers });
     if (!resp.ok) return;
-    const cfg = await resp.json();
-    const el = popupOverlay?.querySelector('#bgagent-model');
-    if (!el) return;
-    const current = cfg.preferred || cfg.current || cfg.default || '';
-    if (!current) { el.innerHTML = ''; return; }
-    const isFallback = cfg.preferred && current !== cfg.preferred;
-    el.innerHTML = isFallback
-      ? `<span class="flow-agent-model-badge">${esc(current)}</span>`
-      : `<span class="flow-agent-subtitle">${esc(current)}</span>`;
+    popupModelCfg = await resp.json();
+    renderModelBadge();
   } catch (e) { /* non-critical */ }
 }
