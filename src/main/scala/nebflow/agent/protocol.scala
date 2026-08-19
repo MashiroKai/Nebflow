@@ -100,6 +100,13 @@ object AgentCommand:
     skillBaseDir: String
   ) extends AgentCommand
 
+  /**
+   * FreezeScheduler（30s 轮询）/ setWorkSchedule（配置热更）→ frozen agent：
+   * 重评估工作时间表——已开窗则恢复挂起的 dispatch，仍冻结则更新 resumeAt 留任。
+   * 到达非 frozen behavior 时 no-op（幂等，无需去重）。
+   */
+  case object CheckFreezeGate extends AgentCommand
+
   case class UpdateContextWindow(window: Int) extends AgentCommand
 
   /** Frontend → agent: update safety mode for this session. */
@@ -359,6 +366,12 @@ enum AgentStreamEvent:
   case ExternalEventReceived(source: String, eventType: String, correlationId: Option[String])
   case Interrupted
 
+  /** 冻结调度：agent 在 dispatch 边界被冻结（工作时间段外）。resumeAtMillis 供前端展示。 */
+  case Frozen(resumeAtMillis: Option[Long])
+
+  /** 冻结调度：恢复（开窗自动恢复 / 用户输入唤醒 / 交互豁免路径不会发出本事件）。 */
+  case Resumed
+
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json =
     // For subagent events, inject nodeSessionId so the frontend can persist
     // messages to the correct flow agent session's ui.json.
@@ -518,7 +531,15 @@ enum AgentStreamEvent:
       case Interrupted =>
         val base = Json.obj("type" -> "interrupted".asJson)
         if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
-        else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson)))
+        else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
+      case Frozen(resumeAtMillis) =>
+        val base =
+          if isSubagent then Json.obj("type" -> "agentFrozen".asJson, "agentId" -> agentId.asJson)
+          else Json.obj("type" -> "frozen".asJson, "sessionId" -> sessionId.asJson)
+        resumeAtMillis.fold(base)(t => base.deepMerge(Json.obj("resumeAt" -> t.asJson)))
+      case Resumed =>
+        if isSubagent then Json.obj("type" -> "agentResumed".asJson, "agentId" -> agentId.asJson)
+        else Json.obj("type" -> "resumed".asJson, "sessionId" -> sessionId.asJson))
   end toJson
 end AgentStreamEvent
 
@@ -546,6 +567,8 @@ enum AgentStatus:
   case Idle
   case Processing
   case WaitingForUser
+  /** 冻结调度：dispatch 边界被工作时间表拦住，挂起等待开窗/用户唤醒。 */
+  case Frozen
   case Error(msg: String)
 
 case class CompactionResult(before: Int, after: Int)
@@ -625,7 +648,14 @@ case class SessionContext(
    * context injection (categoryPrefix/managerPrefix/memoryBlock/teamCatalog/
    * flowCatalog stripped), and a fixed Worker Block appended to the prompt.
    */
-  isSubTaskWorker: Boolean = false
+  isSubTaskWorker: Boolean = false,
+  /**
+   * D11 交互豁免（freeze-schedule spec v1.1）：用户在场等待的交互会话（plan
+   * agent 等）不参与冻结——冻结它们省下的 token 远低于浪费的用户等待时间。
+   * PlanAgent.spawn 传 true；其余 spawn 点默认 false 零改动。ask 轮的豁免走
+   * gate 内的 askMode.isDefined 检查，不经此字段。
+   */
+  freezeExempt: Boolean = false
 )
 
 case class InteractionState(
@@ -832,7 +862,8 @@ object AgentState:
     gitBranch: Option[String] = None,
     expectsMail: Boolean = false,
     rootSessionId: String = "",
-    isSubTaskWorker: Boolean = false
+    isSubTaskWorker: Boolean = false,
+    freezeExempt: Boolean = false
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -854,7 +885,8 @@ object AgentState:
         safetyMode = safetyMode,
         expectsMail = expectsMail,
         rootSessionId = rootSessionId,
-        isSubTaskWorker = isSubTaskWorker
+        isSubTaskWorker = isSubTaskWorker,
+        freezeExempt = freezeExempt
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),

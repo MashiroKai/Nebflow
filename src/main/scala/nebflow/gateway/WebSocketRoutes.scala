@@ -12,6 +12,7 @@ import nebflow.agent.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
+import nebflow.core.schedule.WorkSchedule.given
 import nebflow.core.skill.SkillService
 import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
@@ -721,6 +722,7 @@ class WebSocketRoutes(
       ToolRegistry.ALL_TOOLS.map(t => io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson))
     for
       thinkingCfg <- sharedResources.thinkingConfigRef.get
+      workScheduleCfg <- sharedResources.workScheduleRef.get
       mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
         io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
       })
@@ -730,6 +732,7 @@ class WebSocketRoutes(
           "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
           "version" -> nebflow.Version.string.asJson,
           "thinking" -> thinkingCfg.asJson,
+          "workSchedule" -> workScheduleCfg.asJson,
           "tools" -> toolsList.asJson,
           "mcpServers" -> mcpServers.asJson
         )
@@ -755,6 +758,21 @@ class WebSocketRoutes(
       }
     }.handleErrorWith { e =>
       logger.warn(s"Failed to persist thinking config: ${e.getMessage}")
+    }
+
+  /** Persist work schedule to nebflow.json — targeted top-level write (照抄
+    * persistThinkingConfig 的 read-merge-write 语义，merge 纯函数在
+    * WorkSchedule.mergeIntoConfig 便于 B9 测试）。 */
+  private def persistWorkSchedule(cfg: nebflow.core.schedule.WorkScheduleConfig): IO[Unit] =
+    IO.blocking {
+      val existing = if os.exists(nebflow.llm.Config.DefaultConfigPath) then os.read(nebflow.llm.Config.DefaultConfigPath) else "{}"
+      val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+      parse(existing).foreach { json =>
+        val updated = nebflow.core.schedule.WorkSchedule.mergeIntoConfig(json, cfg)
+        os.write.over(path, updated.spaces2, createFolders = true)
+      }
+    }.handleErrorWith { e =>
+      logger.warn(s"Failed to persist work schedule: ${e.getMessage}")
     }
 
   /** Persist MCP server enabled state to nebflow.json — targeted field update. */
@@ -1033,6 +1051,29 @@ class WebSocketRoutes(
               sharedResources.thinkingConfigRef.set(tc) *>
               persistThinkingConfig(tc) *>
               broadcastServerConfig
+
+          case "setWorkSchedule" =>
+            // 冻结调度（freeze-schedule spec ⑦）：payload {type, workSchedule:{enabled,
+            // segments:[{start,end}]}}。校验失败拒绝保存（配置不变）并回
+            // configUpdateFailed；成功 → ref 热更 + targeted write + 广播 + 立即让
+            // 所有 Frozen agent 重评估（不用等 30s 轮询——改配置关功能即恢复）。
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val payload = json.hcursor
+              .downField("workSchedule")
+              .as[Option[io.circe.Json]]
+              .toOption
+              .flatten
+              .getOrElse(json)
+            nebflow.core.schedule.WorkSchedule.validate(payload) match
+              case Right(cfg) =>
+                logger.info(s"Work schedule set: enabled=${cfg.enabled} segments=${cfg.segments.size}") *>
+                  sharedResources.workScheduleRef.set(cfg) *>
+                  persistWorkSchedule(cfg) *>
+                  broadcastServerConfig *>
+                  nebflow.core.processor.FreezeScheduler.scan(sharedResources)
+              case Left(err) =>
+                logger.warn(s"Invalid workSchedule payload rejected: $err") *>
+                  wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
 
           case "setVoiceMuted" =>
             val muted = parse(text).toOption

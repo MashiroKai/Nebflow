@@ -81,5 +81,12 @@ case class SharedResources(
    * before the hub actor exists (tests, early boot).
    */
   interactionHubRef: Ref[IO, Option[ActorRef[InteractionHubCommand]]] =
-    Ref.unsafe[IO, Option[ActorRef[InteractionHubCommand]]](None)
+    Ref.unsafe[IO, Option[ActorRef[InteractionHubCommand]]](None),
+  /**
+   * 冻结调度（freeze-schedule）：全局工作时间表（D5 一期全局粒度）。GatewayMain
+   * 启动时从 nebflow.json workSchedule 节 fail-safe 加载覆写；setWorkSchedule
+   * WS 命令热更。带默认值 → 既有测试的 SharedResources 构造零改动。
+   */
+  workScheduleRef: Ref[IO, nebflow.core.schedule.WorkScheduleConfig] =
+    Ref.unsafe[IO, nebflow.core.schedule.WorkScheduleConfig](nebflow.core.schedule.WorkScheduleConfig())
 )
