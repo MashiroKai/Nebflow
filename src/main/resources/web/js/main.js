@@ -1781,6 +1781,15 @@ onMessage('serverConfig', (msg, view) => {
       import('./sidebar.js').then(({ renderSettings }) => renderSettings());
     }
   }
+  if (msg.stt) {
+    state.stt = msg.stt;
+    // STT config echo — re-render the settings panel so the status indicator
+    // (configured / free-browser-path) stays authoritative (#295).
+    const settingsOverlay = document.getElementById('settings-overlay');
+    if (settingsOverlay && settingsOverlay.classList.contains('on')) {
+      import('./sidebar.js').then(({ renderSettings }) => renderSettings());
+    }
+  }
 });
 
 // MCP server list updated (after background init completes)

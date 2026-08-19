@@ -94,6 +94,9 @@ export default {
   frozenSessions: new Set(),
   // serverConfig echo of the workSchedule node: { enabled, segments:[{start,end}] }
   workSchedule: null,
+  // serverConfig echo of the stt node: { sttConfigured, endpoint?, model? } — the
+  // apiKey is NEVER echoed (server-side only). null/absent = free browser path.
+  stt: null,
 
   // Timestamp of the last textDelta/thinkingDelta received (ms).
   lastStreamActivity: 0,
