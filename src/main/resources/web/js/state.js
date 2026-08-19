@@ -88,6 +88,12 @@ export default {
   busySessionIds: new Set(),
   sessionBusyTimeouts: {},
   compactingSessionIds: new Set(),
+  // Freeze schedule: sessionId set whose agent is parked at a dispatch boundary
+  // (work hours ended after a tool round). Sending a message to a frozen session
+  // bypasses client-side queueing and wakes the agent (freeze-schedule spec §3.2).
+  frozenSessions: new Set(),
+  // serverConfig echo of the workSchedule node: { enabled, segments:[{start,end}] }
+  workSchedule: null,
 
   // Timestamp of the last textDelta/thinkingDelta received (ms).
   lastStreamActivity: 0,

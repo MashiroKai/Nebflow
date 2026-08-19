@@ -597,8 +597,12 @@ export function send() {
     setTimeout(() => send(), 200);
     return;
   }
-  // LLM is busy — queue the message instead of blocking
-  if (isBusy) {
+  // LLM is busy — queue the message instead of blocking. Frozen sessions
+  // EXEMPT: a frozen agent never runs a turn, so queueing would leave the
+  // message parked forever — the whole point of freeze is that a user message
+  // WAKES the agent (spec §3.2 input.js, F7). Fall through to the normal send
+  // path below (direct WS frame, no queueMessage).
+  if (isBusy && !state.frozenSessions.has(v.sessionId)) {
     queueMessage(v, text, v.pendingAttachments);
     input.value = '';
     input.style.height = 'auto';

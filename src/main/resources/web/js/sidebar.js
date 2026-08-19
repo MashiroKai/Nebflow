@@ -273,6 +273,99 @@ export function selectAgent(agentName) {
 }
 
 // ---------- Settings Panel ----------
+/**
+ * Work-schedule (freeze) settings block — the toggle row + the segment
+ * editor. Echoes state.workSchedule (serverConfig). F2: first enable with no
+ * saved segments defaults to one 09:00-12:00 segment.
+ */
+function renderWorkScheduleSection() {
+  const ws = state.workSchedule && typeof state.workSchedule === 'object'
+    ? state.workSchedule : { enabled: false, segments: [] };
+  const enabled = !!ws.enabled;
+  const segs = Array.isArray(ws.segments) ? ws.segments : [];
+  const segRows = segs.length
+    ? segs.map((s, i) => `
+        <div class="segment-row" data-seg-index="${i}">
+          <span class="seg-label">${t('settings.segmentLabel', { n: i + 1 })}</span>
+          <input class="time-input" value="${escapeHtml(s.start || '')}" data-role="start" autocomplete="off" spellcheck="false">
+          <span class="seg-label">${t('settings.segmentTo')}</span>
+          <input class="time-input" value="${escapeHtml(s.end || '')}" data-role="end" autocomplete="off" spellcheck="false">
+          <button class="seg-remove" title="${t('settings.removeSegment')}" aria-label="${t('settings.removeSegment')}">×</button>
+        </div>`).join('')
+    : '';
+  return `
+    <div class="settings-row">
+      <span class="settings-label">${t('settings.workSchedule')}</span>
+      <div class="toggle ${enabled ? 'on' : ''}" id="toggle-schedule"></div>
+    </div>
+    <div id="schedule-editor" style="display:${enabled ? 'block' : 'none'};padding:4px 0 8px;">
+      <div class="segment-list" id="segment-list">${segRows}</div>
+      <button class="cfg-btn cfg-btn-add" id="btn-add-segment">${t('settings.addSegment')}</button>
+      <div class="cfg-hint">${t('settings.workScheduleOnHint')}</div>
+    </div>
+    <div class="cfg-hint" id="schedule-off-hint" style="display:${enabled ? 'none' : 'block'};margin-top:-2px">${t('settings.workScheduleOffHint')}</div>`;
+}
+
+/**
+ * Collect segments currently in the editor (all rows, raw values).
+ */
+function collectSegments() {
+  const rows = document.querySelectorAll('#segment-list .segment-row');
+  return Array.from(rows).map(row => ({
+    start: row.querySelector('[data-role="start"]')?.value.trim() || '',
+    end: row.querySelector('[data-role="end"]')?.value.trim() || ''
+  }));
+}
+
+/** Rebuild the segment rows (used for the F2 default on first enable). */
+function renderScheduleEditorRows(segs) {
+  const list = document.getElementById('segment-list');
+  if (!list) return;
+  list.innerHTML = segs.map((s, i) => `
+    <div class="segment-row" data-seg-index="${i}">
+      <span class="seg-label">${t('settings.segmentLabel', { n: i + 1 })}</span>
+      <input class="time-input" value="${escapeHtml(s.start || '')}" data-role="start" autocomplete="off" spellcheck="false">
+      <span class="seg-label">${t('settings.segmentTo')}</span>
+      <input class="time-input" value="${escapeHtml(s.end || '')}" data-role="end" autocomplete="off" spellcheck="false">
+      <button class="seg-remove" title="${t('settings.removeSegment')}" aria-label="${t('settings.removeSegment')}">×</button>
+    </div>`).join('');
+}
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+function toMin(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
+
+/**
+ * D6 validation: HH:mm format; start < end (equal or inverted = rejected;
+ * inverted = cross-day, not supported in v1). Overlap allowed — backend takes
+ * the union (§2.1 D6).
+ * Returns null when valid, else an i18n error key resolved to text.
+ */
+function validateSegments(segs) {
+  for (const s of segs) {
+    if (!HHMM_RE.test(s.start) || !HHMM_RE.test(s.end)) return t('settings.scheduleInvalidTime');
+    const sm = toMin(s.start);
+    const em = toMin(s.end);
+    if (sm === em) return t('settings.scheduleInvalidRange');
+    if (sm > em) return t('settings.scheduleCrossDay');
+  }
+  return null;
+}
+
+/**
+ * Validate + persist. Local validation only guards the wire; the backend
+ * re-validates (fail-safe → disabled, configUpdateFailed on bad payload).
+ */
+function saveWorkSchedule(enabled, segs, opts) {
+  if (enabled && (!Array.isArray(segs) || segs.length === 0)) {
+    window.__showToast?.(t('settings.scheduleEmpty'), 'error');
+    return;
+  }
+  const err = validateSegments(segs);
+  if (err) { window.__showToast?.(err, 'error'); return; }
+  sendWs({ type: 'setWorkSchedule', workSchedule: { enabled, segments: segs } });
+  if (opts && opts.toast) window.__showToast?.(t('settings.scheduleSaved'), 'success');
+}
+
 export function renderSettings() {
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
@@ -280,7 +373,6 @@ export function renderSettings() {
   const providers = llm.providers || {};
   const mcpServers = state.mcpServers || [];
   const providerNames = Object.keys(providers);
-
   // Build language selector options
   const locales = getAvailableLocales();
   const localeLabels = { 'zh-CN': '中文', en: 'English' };
@@ -308,6 +400,7 @@ export function renderSettings() {
         <span class="settings-label">${t('settings.llmLog')}</span>
         <div class="toggle ${state.llmLogEnabled !== false ? 'on' : ''}" id="toggle-llm-log"></div>
       </div>
+      ${renderWorkScheduleSection()}
       <div class="settings-row">
         <span class="settings-label">${t('settings.language')}</span>
         <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
@@ -755,6 +848,57 @@ function bindSettingsEvents(content, cfg) {
     const enabled = this.classList.contains('on');
     state.llmLogEnabled = enabled;
     sendWs({type: 'setLlmLog', enabled});
+  });
+
+  // ── Work schedule (freeze) — spec §3.2 sidebar.js ──────────────────────
+  document.getElementById('toggle-schedule')?.addEventListener('click', function() {
+    const enabled = this.classList.toggle('on');
+    const editor = document.getElementById('schedule-editor');
+    const offHint = document.getElementById('schedule-off-hint');
+    if (editor) editor.style.display = enabled ? 'block' : 'none';
+    if (offHint) offHint.style.display = enabled ? 'none' : 'block';
+    let segs = collectSegments();
+    if (enabled && segs.length === 0) {
+      segs = [{ start: '09:00', end: '12:00' }];   // F2: default one segment
+      renderScheduleEditorRows(segs);
+    }
+    saveWorkSchedule(enabled, segs, { toast: true });
+  });
+
+  document.getElementById('btn-add-segment')?.addEventListener('click', () => {
+    const list = document.getElementById('segment-list');
+    if (!list) return;
+    const idx = list.children.length;
+    const row = document.createElement('div');
+    row.className = 'segment-row';
+    row.innerHTML = `
+      <span class="seg-label">${t('settings.segmentLabel', { n: idx + 1 })}</span>
+      <input class="time-input" value="" data-role="start" autocomplete="off" spellcheck="false">
+      <span class="seg-label">${t('settings.segmentTo')}</span>
+      <input class="time-input" value="" data-role="end" autocomplete="off" spellcheck="false">
+      <button class="seg-remove" title="${t('settings.removeSegment')}" aria-label="${t('settings.removeSegment')}">×</button>`;
+    list.appendChild(row);
+    row.querySelector('[data-role="start"]')?.focus();
+  });
+
+  // Remove a segment row (delegated — rows are added dynamically)
+  content.addEventListener('click', (e) => {
+    const rm = e.target.closest('.seg-remove');
+    if (!rm || !content.contains(rm)) return;
+    const row = rm.closest('.segment-row');
+    if (row) row.remove();
+    document.querySelectorAll('#segment-list .segment-row .seg-label').forEach((el, i) => {
+      el.textContent = t('settings.segmentLabel', { n: i + 1 });
+    });
+    const enabled = document.getElementById('toggle-schedule')?.classList.contains('on');
+    if (enabled) saveWorkSchedule(true, collectSegments());
+  });
+
+  // Editing a time input re-validates + saves on blur (silent; D6 checks)
+  content.addEventListener('change', (e) => {
+    if (!e.target.classList || !e.target.classList.contains('time-input')) return;
+    const enabled = document.getElementById('toggle-schedule')?.classList.contains('on');
+    if (enabled) saveWorkSchedule(true, collectSegments());
   });
 
   // Language selector

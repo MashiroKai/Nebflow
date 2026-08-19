@@ -155,6 +155,16 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 .flow-agent-footer.failed .fa-status-dot {
   background: var(--color-error, #f44336); opacity: 1;
 }
+/* Frozen (work-schedule park, freeze-spec §3.2): sapphire dot + tint ring,
+   sapphire task text — distinct from running (pulse green) / done (green) */
+.flow-agent-footer.frozen .fa-status-dot {
+  background: rgb(var(--sapphire)); opacity: 1;
+  box-shadow: 0 0 0 3px rgb(var(--sapphire) / 0.15);
+  animation: none;
+}
+.flow-agent-footer.frozen .fa-task {
+  color: rgb(var(--sapphire));
+}
 @keyframes fa-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 .flow-agent-footer .fa-task {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

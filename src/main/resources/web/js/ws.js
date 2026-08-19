@@ -139,6 +139,7 @@ const TERMINAL_MSG_TYPES = new Set([
   'compactStart', 'compactComplete', 'compactFailed',
   'backgroundTaskUpdate', 'taskListUpdate',
   'askUser', 'askPermission',
+  'frozen', 'resumed', 'agentFrozen', 'agentResumed',
   'historyPage' // flow agent popups receive historyPage with their own sessionId
 ]);
 const STREAM_MSG_TYPES = new Set([
