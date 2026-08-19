@@ -72,15 +72,32 @@ object ModelCommand extends CliCommand:
           if modelRef.isEmpty then
             IO.pure(CliResult.Error("Model reference required (e.g. anthropic/claude-sonnet-4-6)"))
           else if sessionId.isEmpty then
-            // Set default model via config
+            // #339：llm.model 已退役——「改全局默认模型」落点变为**默认 preset
+            // 的 preferred**（语义对旧用户不变）。GET /api/presets 取默认名 →
+            // PUT /api/presets/{name} 只换 preferred（fallbacks/description
+            // 服务端缺省保留）。
             client
-              .command(
-                Json.obj(
-                  "type" -> "updateConfig".asJson,
-                  "config" -> s"""{"llm":{"model":{"default":"$modelRef"}}}""".asJson
-                )
+              .get("/api/presets")
+              .flatMap { resp =>
+                val defaultName = resp.hcursor.downField("defaultPreset").as[String].getOrElse("")
+                if defaultName.isEmpty then
+                  IO.pure(CliResult.Error("No default preset found — start the app once to initialize presets"))
+                else
+                  client
+                    .put(s"/api/presets/$defaultName", Json.obj("preferred" -> modelRef.asJson))
+                    .flatMap { r =>
+                      r.hcursor.downField("error").as[String] match
+                        case Right(err) =>
+                          IO.pure(CliResult.Error(s"Failed to set default model: $err"))
+                        case Left(_) =>
+                          IO.pure(
+                            CliResult.text(s"Default model set to $modelRef (default preset \"$defaultName\")")
+                          )
+                    }
+              }
+              .handleErrorWith(e =>
+                IO.pure(CliResult.Error(s"Failed to set default model: ${e.getMessage}"))
               )
-              .as(CliResult.text(s"Default model set to $modelRef"))
           else
             // Set session model
             client

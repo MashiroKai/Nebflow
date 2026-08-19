@@ -64,6 +64,19 @@ class GatewayClient(baseUri: String, token: String):
     parseJson(resp.body, path)
   }
 
+  /** HTTP PUT — sends JSON body, returns JSON (#339: model set → PUT /presets/:name) */
+  def put(path: String, body: Json): IO[Json] = IO.blocking {
+    val uri = Uri.unsafeParse(s"$baseUri$path").withParam("token", token)
+    val resp = basicRequest
+      .put(uri)
+      .header("Authorization", s"Bearer $token")
+      .header("Content-Type", "application/json")
+      .body(body.noSpaces)
+      .response(asStringAlways)
+      .send(backend)
+    parseJson(resp.body, path)
+  }
+
   /** POST /api/command — generic WS-equivalent endpoint */
   def command(payload: Json): IO[Json] = post("/api/command", payload)
 
