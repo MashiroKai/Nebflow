@@ -150,7 +150,8 @@ case class NebflowServiceConfig(
   // P0 阶段 3（2026-08-18）：TaskStuckWatcher 卡死判定阈值（ms）。
   // None → Defaults.StuckThresholdMs（10min）。显式配置可收紧（测试/调试）。
   stuckThresholdMs: Option[Long] = None,
-  /** 冻结调度（freeze-schedule）：顶层 workSchedule 节原样 JSON——WorkSchedule.load
+  /** 冻结调度（freeze-schedule，#337 黑名单语义）：顶层 workSchedule 节原样 JSON
+    * （键名保留前端契约，语义=冻结时段，支持跨午夜）——FreezeSchedule.load
     * fail-safe 解析（非法配置视为关闭）。updateConfig 深合并保留未提及顶层键。 */
   workSchedule: Option[io.circe.Json] = None
 )
