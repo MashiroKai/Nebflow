@@ -15,11 +15,13 @@ class TaskStoreDismissedSpec extends CatsEffectSuite:
     IO.delay { if os.exists(tempRoot) then os.remove.all(tempRoot) } *>
       IO.delay { os.makeDir.all(tempRoot) }
 
-  /** Create a task, move it to Completed, then Dismiss it (the real user flow). */
+  /** Create a task, move it to Completed, then Dismiss it (the real user flow).
+    * v2 C15: agent TaskUpdate can no longer reach completed — seed via the
+    * complete() path (by="agent", the legacy agent-flow completion). */
   private def mkDismissedTask(sessionId: String, subject: String = "test"): IO[String] =
     for
       tid <- store.create(sessionId, TaskCreateInput(subject = subject, description = "desc"))
-      _ <- store.update(sessionId, tid, TaskUpdateInput(status = Some(TaskStatus.Completed)))
+      _ <- store.complete(sessionId, tid, by = "agent")
       _ <- store.dismiss(sessionId, tid)
     yield tid
 
@@ -60,7 +62,7 @@ class TaskStoreDismissedSpec extends CatsEffectSuite:
       sid = "s4"
       tid <- store.create(sid, TaskCreateInput(subject = "t", description = "d"))
       _ <- store.update(sid, tid, TaskUpdateInput(status = Some(TaskStatus.InProgress)))
-      _ <- store.update(sid, tid, TaskUpdateInput(status = Some(TaskStatus.Completed)))
+      _ <- store.complete(sid, tid, by = "agent")
       completed <- store.get(sid, tid)
       _ <- store.dismiss(sid, tid)
       dismissed <- store.get(sid, tid)
@@ -73,7 +75,7 @@ class TaskStoreDismissedSpec extends CatsEffectSuite:
       _ <- reset()
       sid = "s5"
       tid <- store.create(sid, TaskCreateInput(subject = "t", description = "d"))
-      _ <- store.update(sid, tid, TaskUpdateInput(status = Some(TaskStatus.Completed)))
+      _ <- store.complete(sid, tid, by = "agent")
       // Completed -> InProgress is invalid
       result <- store
         .update(sid, tid, TaskUpdateInput(status = Some(TaskStatus.InProgress)))
