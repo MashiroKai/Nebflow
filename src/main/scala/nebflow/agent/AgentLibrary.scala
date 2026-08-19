@@ -21,23 +21,33 @@ class AgentLibrary(
 ):
   private val logger = NebflowLogger.forName("nebflow.agent.library")
 
-  def globalContextWindow: Int =
-    serviceConfig match
-      case None => Defaults.ContextWindow
-      case Some(cfg) =>
-        val (providerId, modelId) = Config.parseModelRef(cfg.llm.model.default)
-        val provider = cfg.llm.providers
-          .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
-        provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(Defaults.ContextWindow)
-
+  /**
+   * 全局 maxTokens 上限（AgentCore 每请求调用）。#339：数据源从 llm.model
+   * 改为**默认 preset** 链首个能解析到 provider 模型表的 ref（preferred 优先
+   * 逐个试 fallbacks）。任何解析失败回 Defaults.MaxTokens，**不再抛异常**
+   * （旧实现对未知 provider 会 throw——本次顺手加固；agent 路径不该因
+   * 配置漂移而炸请求）。
+   *
+   * 既有债（不在本次范围）：所有 agent 共用这一个全局值，而非各 agent 解析
+   * 到的模型的 maxTokens——按模型区分留作后续项。
+   */
   def globalMaxTokens: Int =
     serviceConfig match
       case None => Defaults.MaxTokens
       case Some(cfg) =>
-        val (providerId, modelId) = Config.parseModelRef(cfg.llm.model.default)
-        val provider = cfg.llm.providers
-          .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
-        provider.models.find(_.id == modelId).map(_.maxTokens).getOrElse(Defaults.MaxTokens)
+        try
+          val (resolved, _) = nebflow.core.presets.PresetStore().resolve(None, None)
+          val chain = resolved.preferred.toList ++ resolved.fallbacks
+          chain.flatMap { ref =>
+            try
+              val (providerId, modelId) = Config.parseModelRef(ref)
+              cfg.llm.providers
+                .get(providerId)
+                .flatMap(_.models.find(_.id == modelId))
+                .map(_.maxTokens)
+            catch case _: Exception => None
+          }.headOption.getOrElse(Defaults.MaxTokens)
+        catch case _: Exception => Defaults.MaxTokens
 
   // ============================================================
   // Public API

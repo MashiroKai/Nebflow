@@ -111,7 +111,10 @@ object SearchConfig:
 
 case class ServiceLlmConfig(
   providers: Map[String, ProviderConfig],
-  model: ModelChainConfig
+  /** #339 D-b：llm.model 已退役——默认模型唯一来源是 model-presets.json 的
+    * defaultPreset。Option 化的 schema 仅容忍存量文件的 llm.model 节（可解析
+    * 但被忽略；boot 迁移会播种成 preset 后原子剥离）。 */
+  model: Option[ModelChainConfig] = None
 )
 
 object ServiceLlmConfig:
@@ -216,8 +219,9 @@ object Config:
   private lazy val defaultServiceConfig: NebflowServiceConfig =
     NebflowServiceConfig(
       llm = ServiceLlmConfig(
-        providers = Map.empty,
-        model = ModelChainConfig(default = "anthropic/claude-sonnet-4-6")
+        providers = Map.empty
+        // #339：占位 llm.model default 已删——未配置时默认 preset 链为空，
+        // registry 走"首 provider 首模型"兜底（与首配前的真实状态一致）
       )
     )
 

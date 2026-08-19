@@ -83,11 +83,13 @@ object PresetFile:
  * The old level-4 fallback to the global chain (nebflow.json `llm.model`) is
  * REMOVED: it silently routed agents to a model the user never selected in the
  * preset UI (2026-08-19 preset-display mismatch incident — the global
- * default resolved to a chain the settings UI never showed). `llm.model` now
- * only SEEDS the initial preset; it is never a live fallback. (The provider
- * registry's all-candidates list remains as a last-resort error path when a
- * preset's refs are ALL unresolvable against the provider config — a loud,
- * different failure, not a silent preference.)
+ * default resolved to a chain the settings UI never showed). `llm.model` is
+ * fully retired (#339, D-b): the seed source reads it once for migration,
+ * strips it from nebflow.json at boot, and cold starts seed from the first
+ * provider's first model instead (D-a — see [[PresetStore.readSeedChain]]).
+ * (The provider registry's all-candidates list remains as a last-resort error
+ * path when a preset's refs are ALL unresolvable against the provider config —
+ * a loud, different failure, not a silent preference.)
  *
  * The store reads the file fresh on every call (small file, rare writes) so
  * edits take effect on the next `refreshTurn` without restart or cache
@@ -95,7 +97,7 @@ object PresetFile:
  */
 class PresetStore(
     configPath: os.Path = PathUtil.dataRoot / "model-presets.json",
-    globalChainProvider: () => List[String] = () => PresetStore.readGlobalChainDefault()
+    globalChainProvider: () => List[String] = () => PresetStore.readSeedChain()
 ):
 
   private val logger = NebflowLogger.forName("nebflow.preset")
@@ -199,12 +201,13 @@ class PresetStore(
   def availableNames: String =
     load().presets.keys.toList.sorted.mkString(", ")
 
-  /** Build the initial PresetFile from the global model chain in nebflow.json. */
+  /** Build the initial PresetFile from the seed chain (D-a: llm.model 迁移
+    * 优先，否则首 provider 首模型——单元素链，fallbacks 由用户显式决策）。 */
   private def initFromFile(): PresetFile =
     val globalChain = this.globalChain
     val general = ModelPreset(
       name = "general",
-      description = "默认方案：跟随全局模型链",
+      description = "默认方案：初始配置时自动创建",
       preferred = globalChain.headOption,
       fallbacks = globalChain.drop(1)
     )
@@ -217,10 +220,10 @@ class PresetStore(
    *
    * Healthy files pass through untouched (no write). A broken default is
    * re-pointed at the first preset that has a chain; if none does, the file is
-   * re-seeded from the global llm.model chain — which at that point is the
-   * provider model the user just configured. A fully unconfigured install
-   * (global chain empty too) is left as-is: nothing better exists to write,
-   * and re-saving an identical empty file on every load would be churn.
+   * re-seeded from the seed chain (D-a) — which at that point is the provider
+   * model the user just configured. A fully unconfigured install (seed chain
+   * empty too) is left as-is: nothing better exists to write, and re-saving an
+   * identical empty file on every load would be churn.
    */
   private def repair(f: PresetFile): PresetFile =
     def hasChain(p: ModelPreset): Boolean = p.preferred.isDefined || p.fallbacks.nonEmpty
@@ -244,30 +247,117 @@ end PresetStore
 object PresetStore:
 
   /**
+   * 种子链（D-a，#339）：**llm.model 迁移优先**（服务存量 nebflow.json），
+   * 否则 **providers 推导**（首个含模型 provider 的首模型，单元素链）。
+   * 冷启动（首配 provider、无 llm.model）自然走后者——与旧前端"首配只设
+   * default 不设 fallbacks"行为等价。
+   */
+  def readSeedChain(): List[String] =
+    val fromLlmModel = readGlobalChainDefault()
+    if fromLlmModel.nonEmpty then fromLlmModel else readFromProviders()
+
+  /**
    * Read the global model chain from nebflow.json (`llm.model.default` +
-   * `llm.model.fallbacks`). SEED ONLY (#311) — never a live fallback for
-   * agent resolution.
+   * `llm.model.fallbacks`). MIGRATION ONLY (#339 D-b — llm.model 已退役)：
+   * 仅作为迁移种子源与 readSeedChain 的优先分支，不再是任何 live 路径。
    */
   private def readGlobalChainDefault(): List[String] =
     val nebflowJson = PathUtil.configJsonReadPath(PathUtil.dataRoot)
     if !os.exists(nebflowJson) then Nil
     else
-      decode[NebflowServiceConfig](os.read(nebflowJson)) match
-        case Right(cfg) => cfg.llm.model.default :: cfg.llm.model.fallbacks
-        case Left(_) =>
-          // Fallback: raw JSON parse
-          io.circe.parser
-            .parse(os.read(nebflowJson))
-            .toOption
-            .flatMap(_.hcursor.downField("llm").downField("model").focus)
-            .map { modelJson =>
-              val default = modelJson.hcursor.downField("default").as[Option[String]].toOption.flatten.getOrElse("")
-              val fallbacks =
-                modelJson.hcursor.downField("fallbacks").as[Option[List[String]]].toOption.flatten.getOrElse(Nil)
-              (default :: fallbacks).filter(_.nonEmpty)
-            }
-            .getOrElse(Nil)
+      io.circe.parser
+        .parse(os.read(nebflowJson))
+        .toOption
+        .flatMap(_.hcursor.downField("llm").downField("model").focus)
+        .map { modelJson =>
+          val default = modelJson.hcursor.downField("default").as[Option[String]].toOption.flatten.getOrElse("")
+          val fallbacks =
+            modelJson.hcursor.downField("fallbacks").as[Option[List[String]]].toOption.flatten.getOrElse(Nil)
+          (default :: fallbacks).filter(_.nonEmpty)
+        }
+        .getOrElse(Nil)
 
-    end if
+  /**
+   * providers 推导种子（D-a）：按 JSON 字段顺序取首个含模型 provider 的
+   * 首个模型（单元素链）。**不把全部模型塞进 fallbacks**——那是重新制造
+   * "静默路由到用户未选择的模型"（#311 病灶）；fallback 是用户显式决策。
+   */
+  private def readFromProviders(): List[String] =
+    val nebflowJson = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+    if !os.exists(nebflowJson) then Nil
+    else
+      val firstRef: Option[String] =
+        io.circe.parser
+          .parse(os.read(nebflowJson))
+          .toOption
+          .flatMap(_.hcursor.downField("llm").downField("providers").focus)
+          .flatMap(_.asObject)
+          .flatMap { providers =>
+            // JsonObject 保持插入序——"首个" provider 是用户配置文件里的第一个
+            providers.toIterable.view
+              .flatMap { (name, pj) =>
+                pj.hcursor.downField("models").focus
+                  .flatMap(_.asArray)
+                  .flatMap(_.headOption)
+                  .flatMap(m => m.hcursor.downField("id").as[String].toOption)
+                  .map(id => s"$name/$id")
+              }
+              .take(1)
+              .toList
+              .headOption
+          }
+      firstRef.toList
+
+  /**
+   * llm.model 一次性迁移（#339 D-b，boot 调用）：**先播种验证、后剥离**。
+   *
+   * 1. nebflow.json 无 llm.model 节 → false（无事可做）
+   * 2. ensureDefaultPreset()（种子源此时仍优先读 llm.model——迁移优先）
+   * 3. 默认 preset 不可用（不存在/无链）→ 中止剥离，返回 false（下次启动
+   *    幂等重试；字段留存但 decoder 已忽略）
+   * 4. 可用 → 从 nebflow.json 剥离 llm.model 节（AtomicJson 原子写），
+   *    日志 "migrated llm.model → default preset; field removed"，返回 true
+   *
+   * 防呆：只在 llm.model 节实际存在时剥离；顶层/llm 节非对象的安全跳过。
+   */
+  def migrateGlobalModelChain(): Boolean =
+    val logger = NebflowLogger.forName("nebflow.preset")
+    val nebflowJson = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+    val parsedOpt =
+      if os.exists(nebflowJson) then io.circe.parser.parse(os.read(nebflowJson)).toOption
+      else None
+    val hasLlmModel = parsedOpt.exists { j =>
+      j.hcursor.downField("llm").focus.flatMap(_.asObject).exists(_.contains("model"))
+    }
+    if !hasLlmModel then false
+    else
+      try
+        val store = PresetStore()
+        store.ensureDefaultPreset()
+        val file = store.load()
+        val healthy = file.presets
+          .get(file.defaultPreset)
+          .exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty)
+        if !healthy then
+          logger.warnSync("llm.model migration deferred: default preset not usable yet; will retry next boot")
+          false
+        else
+          val stripped = for
+            root <- parsedOpt.flatMap(_.asObject)
+            llm <- root("llm").flatMap(_.asObject) if llm.contains("model")
+            newLlm = io.circe.JsonObject.fromIterable(llm.toList.filterNot(_._1 == "model"))
+            newRoot = io.circe.JsonObject.fromIterable(
+              root.toList.map((k, v) => if k == "llm" then (k, io.circe.Json.fromJsonObject(newLlm)) else (k, v))
+            )
+          yield io.circe.Json.fromJsonObject(newRoot).noSpaces
+          stripped match
+            case Some(content) =>
+              nebflow.core.AtomicJson.writeSync(nebflowJson, content)
+              logger.infoSync("migrated llm.model → default preset; field removed")
+              true
+            case None => false
+      catch case e: Exception =>
+        logger.warnSync(s"llm.model migration deferred: ${e.getMessage}")
+        false
 
 end PresetStore
