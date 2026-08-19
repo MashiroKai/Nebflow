@@ -10,7 +10,6 @@ import nebflow.agent.PromptSections.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
-import nebflow.core.presets.PresetStore
 import nebflow.core.tools.*
 import nebflow.llm.{Fallback, TurnBudgetExceeded}
 import nebflow.shared.*
@@ -443,26 +442,9 @@ private[agent] trait AgentCore:
             if isCompactTurn then Some(Nil)
             else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker)
             else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker)
-          // A: cold-start routing — a stale agent's first request goes to the
-          // free 107 gateway instead of a full-price cache miss on its default
-          // provider. Pure guards first (hot agents incur zero I/O); only the
-          // wake-up path touches the preset file. Compaction turns (Save +
-          // Compact) are lifecycle nodes: memory maintenance and the summary
-          // must use the agent's default model, never a cost-routed downgrade.
-          coldStartModel =
-            if stateForLlm.pendingCompaction.isDefined then None
-            else
-              ColdStartRouter.evaluate(
-                config = resources.agentLibrary.coldStartConfig,
-                agentName = freshDef.name,
-                depth = depth,
-                category = freshDef.category,
-                now = System.currentTimeMillis(),
-                lastActivityMs = resources.usageRecordStore.lastActivityMs(freshDef.name),
-                messages = stateForLlm.messages,
-                currentModel = freshDef.model,
-                presetStore = PresetStore()
-              )
+          // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
+          // 它把闲置唤醒/重启后的第一发改道到 LowCost(107)，偏离用户设置的
+          // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
           request = LlmRequest(
             messages = stateWithReminder.messages ++ contextMsg ++ branchMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
@@ -471,9 +453,16 @@ private[agent] trait AgentCore:
             maxTokens = Some(resources.agentLibrary.globalMaxTokens),
             thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
             systemStable = Some(systemStable),
-            agentModel = coldStartModel.orElse(freshDef.model)
+            agentModel = freshDef.model
           )
         yield (turnCtx, request, stateWithCache)
+
+        // #22 (2026-08-19): the context build runs INLINE in the actor's
+        // message loop — a hang here (file lock, blocking read) freezes the
+        // whole actor with zero log artifacts and matches the "turn starts,
+        // next request never fires, no error" signature. Bound it: on breach
+        // the turn fails loudly via LlmFailed instead of freezing silently.
+        val ContextBuildTimeout = 60.seconds
 
         val agentStartIO =
           if depth > 0 && !isCompactTurn && !isAskTurn then
@@ -489,89 +478,123 @@ private[agent] trait AgentCore:
           // P0 阶段 3：LLM 调用开始——registry 状态快照置 Processing 并 touch
           // 活动戳（流 chunk 期间由 evalTap 持续刷新，见下方 sendStream 管道）。
           _ <- touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing)
-          (turnCtx, request, stateWithReminder) <- contextIo
-          // Synchronously update gitBranch in state — no async message
-          stateWithBranch = stateWithReminder.withGitBranch(turnCtx.currentBranch)
-          _ <- ctx.forkTurn(
-            // ── Token 止损（2026-08-18 事故，方案 C）：per-turn LLM 重试预算 ──
-            // 同 turn 内失败重试次数（仅 LlmFailed 分支递增；正常工具循环的
-            // 成功调用不计）超限 → 抛 TurnBudgetExceeded（Permanent 分类，
-            // llm-fail-retry 不会再触发）→ 下方 .attempt 捕获后发 LlmFailed，
-            // turn 快速失败并给用户明确原因。
-            IO.raiseWhen(stateForLlm.execution.llmCallsThisTurn >= Fallback.MaxTurnLlmCalls)(
-              new TurnBudgetExceeded(
-                turnId,
-                stateForLlm.execution.llmCallsThisTurn
-              )
-            ) *>
-              resources.llm
-                .sendStream(request, onAttempt = Some(onAttemptCb))
-              .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
-              // P0 阶段 3：每个流 chunk touch 活动戳——流活着 = turn 有活动 =
-              // 不判卡死。Ref.modify 是原子的，按流序逐 chunk 更新，开销可忽略。
-              .evalTap(_ => touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing))
-              .compile
-              .toList
-              .flatMap { chunks =>
-                val cr = aggregateChunks(chunks)
-                // Track runtime model for this session
-                val trackModel = sessionIdOpt match
-                  case Some(sid) if cr.model.isDefined =>
-                    resources.runtimeModels.update(_ + (sid -> cr.model.get))
-                  case _ => IO.unit
-                // Broadcast modelChanged if fallback occurred
-                val notifyModelChanged = firstFailedModel.get.flatMap {
-                  case Some(oldModel) if cr.model.isDefined && cr.model.get != oldModel =>
-                    state.wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "modelChanged".asJson,
-                        "sessionId" -> sessionIdOpt.asJson,
-                        "oldModel" -> oldModel.asJson,
-                        "newModel" -> cr.model.get.asJson
-                      )
+          ctxTriple <- contextIo.timeout(ContextBuildTimeout).attempt
+          result <- ctxTriple match
+            case Right((turnCtx, request, stateWithReminder)) =>
+              // Synchronously update gitBranch in state — no async message
+              val stateWithBranch = stateWithReminder.withGitBranch(turnCtx.currentBranch)
+              ctx.forkTurn(
+                  // ── Token 止损（2026-08-18 事故，方案 C）：per-turn LLM 重试预算 ──
+                  // 同 turn 内失败重试次数（仅 LlmFailed 分支递增；正常工具循环的
+                  // 成功调用不计）超限 → 抛 TurnBudgetExceeded（Permanent 分类，
+                  // llm-fail-retry 不会再触发）→ 下方 .attempt 捕获后发 LlmFailed，
+                  // turn 快速失败并给用户明确原因。
+                  IO.raiseWhen(stateForLlm.execution.llmCallsThisTurn >= Fallback.MaxTurnLlmCalls)(
+                    new TurnBudgetExceeded(
+                      turnId,
+                      stateForLlm.execution.llmCallsThisTurn
                     )
-                  case _ => IO.unit
+                  ) *>
+                    resources.llm
+                      .sendStream(request, onAttempt = Some(onAttemptCb))
+                      .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
+                      // P0 阶段 3：每个流 chunk touch 活动戳——流活着 = turn 有活动 =
+                      // 不判卡死。Ref.modify 是原子的，按流序逐 chunk 更新，开销可忽略。
+                      .evalTap(_ => touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing))
+                      .compile
+                      .toList
+                      .flatMap { chunks =>
+                        val cr = aggregateChunks(chunks)
+                        // Track runtime model for this session
+                        val trackModel = sessionIdOpt match
+                          case Some(sid) if cr.model.isDefined =>
+                            resources.runtimeModels.update(_ + (sid -> cr.model.get))
+                          case _ => IO.unit
+                        // Broadcast modelChanged if fallback occurred
+                        val notifyModelChanged = firstFailedModel.get.flatMap {
+                          case Some(oldModel) if cr.model.isDefined && cr.model.get != oldModel =>
+                            state.wsSend(
+                              io.circe.Json.obj(
+                                "type" -> "modelChanged".asJson,
+                                "sessionId" -> sessionIdOpt.asJson,
+                                "oldModel" -> oldModel.asJson,
+                                "newModel" -> cr.model.get.asJson
+                              )
+                            )
+                          case _ => IO.unit
+                        }
+                        trackModel *> notifyModelChanged *>
+                          LlmLogWriter.log(
+                            request,
+                            chunks,
+                            cr.text,
+                            cr.toolCalls,
+                            cr.thinking,
+                            cr.stopReason,
+                            cr.usage,
+                            cr.model,
+                            isSubagent,
+                            isCompactTurn
+                          ) *> IO.pure(cr)
+                      }
+                      .attempt
+                      .flatMap {
+                        case Right(r) => ctx.self ! LlmComplete(r, replyTo, turnId)
+                        case Left(e) => ctx.self ! LlmFailed(e, replyTo, turnId)
+                      }
+                      .handleErrorWith { e =>
+                        NebflowLogger
+                          .forName("nebflow.agent")
+                          .warn(s"pipeLlmCall failed: ${e.getMessage}")
+                          .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
+                      }
+                )
+                .map { _ =>
+                  processing(
+                    agentDef,
+                    resources,
+                    depth,
+                    parentRef,
+                    // Update lastMaintenanceDelegateCount if maintenance was triggered this turn
+                    (if MaintenanceService.shouldTrigger(stateWithReminder, depth, isCompactTurn, isAskTurn) then
+                       stateWithBranch.withLastMaintenanceDelegateCount(stateWithReminder.delegateCount)
+                     else stateWithBranch)
+                      .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
+                      // 方案 C（2026-08-18 误杀修复）：成功调用不计入预算——llmCallsThisTurn
+                      // 仅在 AgentActor 的 LlmFailed 重试分支递增，正常工具循环（读→改→
+                      // 编译→再改）每次成功继续调用都不再 +1。
+                  )
                 }
-                trackModel *> notifyModelChanged *>
-                  LlmLogWriter.log(
-                    request,
-                    chunks,
-                    cr.text,
-                    cr.toolCalls,
-                    cr.thinking,
-                    cr.stopReason,
-                    cr.usage,
-                    cr.model,
-                    isSubagent,
-                    isCompactTurn
-                  ) *> IO.pure(cr)
-              }
-              .attempt
-              .flatMap {
-                case Right(r) => ctx.self ! LlmComplete(r, replyTo, turnId)
-                case Left(e) => ctx.self ! LlmFailed(e, replyTo, turnId)
-              }
-              .handleErrorWith { e =>
-                NebflowLogger
-                  .forName("nebflow.agent")
-                  .warn(s"pipeLlmCall failed: ${e.getMessage}")
-                  .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
-              }
-          )
-        yield processing(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          // Update lastMaintenanceDelegateCount if maintenance was triggered this turn
-          (if MaintenanceService.shouldTrigger(stateWithReminder, depth, isCompactTurn, isAskTurn) then
-             stateWithBranch.withLastMaintenanceDelegateCount(stateWithReminder.delegateCount)
-           else stateWithBranch)
-            .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
-            // 方案 C（2026-08-18 误杀修复）：成功调用不计入预算——llmCallsThisTurn
-            // 仅在 AgentActor 的 LlmFailed 重试分支递增，正常工具循环（读→改→
-            // 编译→再改）每次成功继续调用都不再 +1。
-        )
+            case Left(e) =>
+              // Context build timed out / failed — fail the turn loudly instead
+              // of freezing the actor. State must carry the new turnId or the
+              // LlmFailed below is discarded as stale.
+              IO(logAgentEvent(
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "context-build-failed",
+                s"err=${e.getMessage.take(120)}"
+              )) *>
+                (ctx.self ! LlmFailed(
+                  ToolPipelineError(
+                    s"Turn context build failed after ${ContextBuildTimeout.toSeconds}s " +
+                      s"(file lock or blocking read?): ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+                  ),
+                  replyTo,
+                  turnId
+                )) *>
+                IO.pure(
+                  processing(
+                    agentDef,
+                    resources,
+                    depth,
+                    parentRef,
+                    state.withCurrentTurnId(turnId)
+                  )
+                )
+        yield result
 
         end for
 

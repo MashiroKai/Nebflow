@@ -87,6 +87,24 @@ class ConcurrencyGateSpec extends CatsEffectSuite:
     yield ()
   }
 
+  test("#22 tracer wiring: fast grant undelayed; queued waiter completes on release despite active tracer") {
+    // acquire 内嵌的等待留痕 tracer（5s 周期）不能改语义：快授权不受拖延、
+    // 排队者在 release 后正常获得许可。tracer fiber 的 start/cancel 生命周期
+    // 由 d.get 驱动，绝不 race/timeout 许可等待本身。
+    val g = gate(max = 1)
+    for
+      t0 <- IO.monotonic
+      p1 <- g.acquire
+      elapsed <- IO.monotonic.map(_ - t0)
+      _ <- IO(assert(elapsed < 1.second, s"fast grant must not be delayed by the tracer, took $elapsed"))
+      f2 <- g.acquire.start
+      _ <- IO.sleep(50.millis)
+      _ <- p1.release
+      p2 <- f2.joinWithNever
+      _ <- p2.release
+    yield ()
+  }
+
   test("RPM window throttles beyond limit and recovers after window slides") {
     val g = gate(max = 5, rpm = Some(1), window = 200.millis)
     for
