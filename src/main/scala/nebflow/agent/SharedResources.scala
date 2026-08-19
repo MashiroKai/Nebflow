@@ -16,7 +16,7 @@ import nebflow.core.{FileChangeTracker, PathUtil, UsageRecordStore}
 import nebflow.dropbox.DropboxService
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.*
-import nebflow.neblink.NeblinkService
+import nebflow.neblink.{NeblinkService, FriendService}
 import nebflow.shared.*
 
 /**
@@ -47,6 +47,9 @@ case class SharedResources(
   scheduledTaskStore: ScheduledTaskStore = new ScheduledTaskStore(PathUtil.dataRoot / "scheduled-tasks"),
   telemetry: Option[TelemetryReporter] = None,
   neblinkService: Option[NeblinkService] = None,
+  /** A2A 好友与消息服务（spec §11 客户端）。由 GatewayMain 在 NeblinkClient
+    * 初始化后创建，注入 REST 路由 + relay tunnel + WS 事件回调。 */
+  friendService: Option[FriendService] = None,
   dropboxService: Option[DropboxService] = None,
   scheduledTaskService: Option[ScheduledTaskService] = None,
   daemonService: Option[DaemonService] = None,

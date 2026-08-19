@@ -57,6 +57,9 @@ final class FriendService(
             logger.debug(s"Duplicate friend_event $eventId ignored")
           case true =>
             handleEvent(evType, event) *>
+              // Notify the UI-facing callback (GatewayMain wires it to a WS
+              // friendEvent broadcast) — best-effort, never blocks the handler.
+              onFriendEvent.traverse_(cb => cb(FriendEvent(evType, event)).handleErrorWith(_ => IO.unit)) *>
               logger.info(s"friend_event processed: type=$evType id=$eventId")
         }
 
@@ -175,6 +178,20 @@ final class FriendService(
   def acceptFriendRequest(requestId: String): IO[Either[String, Json]] = client.acceptFriendRequest(requestId)
 
   def declineFriendRequest(requestId: String): IO[Either[String, String]] = client.declineFriendRequest(requestId)
+
+  /** 删除好友（UI 操作，无权限/限速控制）。 */
+  def removeFriend(friendUserId: String): IO[Either[String, String]] = client.removeFriend(friendUserId)
+
+  /** 用户身份直接发送（前端 UI 输入框发送；与 agent 的 sendAsAgent 不同，无
+    * 权限档位/限速——spec §7.2 限制的是 agent 代发）。发送成功后补拉会话增量。 */
+  def sendAsUser(friendUserId: String, body: String): IO[Either[String, Json]] =
+    client.sendFriendMessage(friendUserId, body).flatMap {
+      case Right(json) =>
+        json.hcursor.get[String]("conversationId").toOption match
+          case Some(convId) => pullConversation(convId).void.handleErrorWith(_ => IO.unit).as(Right(json))
+          case None         => IO.pure(Right(json))
+      case Left(err) => IO.pure(Left(err))
+    }
 
   def unreadCounts: IO[Map[String, Int]] = guard.unreadSnapshot
 
