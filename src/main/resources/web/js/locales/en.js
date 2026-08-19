@@ -45,6 +45,7 @@ export default {
   'messages.loginRequired': 'Log in to NebLink to use messages and contacts',
   'messages.login': 'Log in',
   'messages.reconnecting': 'Connection lost, reconnecting…',
+  'messages.networkError': 'Network error — please check your connection',
   'messages.inputPlaceholder': 'Type a message',
   'messages.send': 'Send',
   'messages.yesterday': 'Yesterday',

@@ -1,15 +1,19 @@
 // friendsApi.js — A2A friends/messaging REST adapter (friends-messaging-arch §6.1).
 //
-// Real mode: calls /api/* on the gateway origin (the Scala-side local proxy to
-// neblink-server is a phase-2a backend deliverable).
+// PRIMARY mode (default): calls the gateway's real REST endpoints
+// (/api/friends*, /api/conversations*, /api/users/lookup — RestApiRoutes
+// withNeblink+withAuth, contract pinned by FriendApiRoutesSpec).
 //
-// Mock mode (explicit opt-in — mirrors the website HUB_API_MOCK precedent):
+// Debug-only mock mode (kept as an escape hatch for offline UI work — P3):
 //   localStorage 'fm_api_mock' = '1'   or   URL ?fmMock=1
-// Optional deterministic seed for tests:
+//   Optional deterministic seed for tests:
 //   localStorage 'fm_api_mock_seed' = JSON {self, users, friends, incoming,
 //     outgoing, conversations, messages} — see normalizeSeed() for shapes.
-// Backend integration needs ZERO code changes: unset the flag and the same
-// calls hit real endpoints.
+//   WITHOUT the flag the real path is always used.
+//
+// Error surface (P3): 401/403 → window 'fm-auth-required' event (login
+// guidance); network failure → 'fm-network-error' (toast). Callers still get
+// the rejected promise for their own handling (e.g. keep-last-known).
 
 import { getAuthToken } from './neblink.js';
 
@@ -23,18 +27,31 @@ const MOCK = (() => {
 export const FM_API_MOCK = MOCK;
 
 async function req(method, path, body) {
-  const resp = await fetch(path, {
-    method,
-    headers: {
-      'Authorization': `Bearer ${getAuthToken()}`,
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
+  let resp;
+  try {
+    resp = await fetch(path, {
+      method,
+      headers: {
+        'Authorization': `Bearer ${getAuthToken()}`,
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch (e) {
+    // Network failure (offline / gateway unreachable) — surface a toast,
+    // then rethrow so callers can keep-last-known.
+    window.dispatchEvent(new CustomEvent('fm-network-error'));
+    throw e;
+  }
   if (!resp.ok) {
     const err = /** @type {Error & {status?: number, data?: any}} */ (new Error(`${method} ${path} -> ${resp.status}`));
     err.status = resp.status;
     try { err.data = await resp.json(); } catch { /* no body */ }
+    // withAuth returns 403 for missing/invalid token (FriendApiRoutesSpec
+    // "auth gate"); 401 also handled for robustness. Guide the user to log in.
+    if (resp.status === 401 || resp.status === 403) {
+      window.dispatchEvent(new CustomEvent('fm-auth-required'));
+    }
     throw err;
   }
   if (resp.status === 204) return {};

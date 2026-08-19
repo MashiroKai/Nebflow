@@ -277,6 +277,9 @@ export function initContacts() {
   onMessage('friend_event', (msg) => {
     if (msg.event === 'friend_request' || msg.event === 'friend_accepted') refresh();
   });
+  // P3 error surface — friendsApi dispatches on auth failure / network error.
+  window.addEventListener('fm-auth-required', () => { openLoginModal(); });
+  window.addEventListener('fm-network-error', () => { window.__showToast?.(t('messages.networkError'), 'error'); });
   window.addEventListener('fm-friends-changed', () => refresh());
 
   // Refresh when the panel becomes active (covers login-state changes).
