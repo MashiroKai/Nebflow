@@ -287,6 +287,63 @@ svg.task-failed-icon {
   font-weight: 500;
 }
 
+/* ── v2 §3/§8: needs_confirmation row — muted status word + return button.
+   No row-level decoration (克制): the three controls self-express state. ── */
+.task-needs-confirmation .task-label {
+  font-weight: 400;               /* not the in_progress 500 — awaiting user */
+}
+
+.task-status-word {
+  flex-shrink: 0;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-text-muted, #888);
+}
+
+/* Return button — glass-control Pattern B (base transparent, hover glass),
+   right end of the row: corner-up-left 13px + label 11px/500 */
+.task-return-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid transparent;   /* reserves hover edge — no layout shift */
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted, #888);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, color 0.15s;
+}
+.task-return-btn:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  color: var(--color-text, #000);
+}
+.task-return-btn:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+.task-return-btn svg {
+  width: 13px;
+  height: 13px;
+}
+.task-ws-down .task-return-btn {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* New / rolled-back task slide-in from the left */
 .task-item.task-entering {
   animation: task-enter 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -323,7 +380,6 @@ svg.task-failed-icon {
     animation: none;
   }
 }
-
 /* ── Narrow viewport (§10 A12, 裁定 F3): tighten the header at ≤480px.
    The archive button is NEVER hidden (archive is the only way back to
    completed history); the stats count may shrink to ellipsis first. ── */
@@ -335,4 +391,9 @@ svg.task-failed-icon {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* v2 B13: status word may give way first, then the button label — the
+     icon stays (flex absorbs, no horizontal overflow delta vs v1) */
+  .task-status-word { display: none; }
+  .task-return-btn span { display: none; }
+  .task-return-btn { padding: 2px 4px; }
 }

@@ -287,7 +287,15 @@ export function renderUserBubble(text, attachments, timestamp) {
   (attachments || []).forEach(att => {
     const bubble = document.createElement('div');
     bubble.className = 'bubble user att-bubble';
-    if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
+    if (att.type === 'taskRef') {
+      // v2 §5.3: return reference — clipboard icon + "Returned: {subject}".
+      // No preview image; name may be undefined pre-restore (subject used).
+      const tag = document.createElement('span');
+      tag.className = 'att-file-tag att-taskref-tag';
+      const icon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;flex-shrink:0"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><path d="M12 11h4"></path><path d="M12 16h4"></path><path d="M8 11h.01"></path><path d="M8 16h.01"></path></svg>';
+      tag.innerHTML = icon + '<span style="margin-left:2px">' + escapeHtml(t('task.refBubbleLabel', { subject: att.subject || att.name || '' })) + '</span>';
+      bubble.appendChild(tag);
+    } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
       const img = document.createElement('img');
       img.className = 'att-img';
       img.src = att.preview;
@@ -1784,7 +1792,48 @@ export function renderAttachmentPreview(target) {
   if (!attPreview) return;
   attPreview.innerHTML = '';
   attachments.forEach((att, idx) => {
-    if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
+    if (att.type === 'taskRef') {
+      // v2 §5.2: return reference chip — sapphire tint (distinct from the
+      // grey .att-file), clipboard icon, subject + description + output
+      // (single-line ellipsis each). Remove is local-only (C16: draft, task
+      // untouched until the message is sent).
+      const wrap = document.createElement('div');
+      wrap.className = 'att-taskref';
+      wrap.dataset.taskRef = att.taskId || '';
+      wrap.dataset.taskSession = att.sessionId || '';
+      const title = [att.subject, att.description, att.output ? '产出：' + att.output : ''].filter(Boolean).join(' — ');
+      wrap.title = title;
+      const icon = '<svg class="att-taskref-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><path d="M12 11h4"></path><path d="M12 16h4"></path><path d="M8 11h.01"></path><path d="M8 16h.01"></path></svg>';
+      const subject = document.createElement('span');
+      subject.className = 'att-taskref-subject';
+      subject.textContent = att.subject || '';
+      const meta = document.createElement('span');
+      meta.className = 'att-taskref-meta';
+      meta.textContent = att.description || '';
+      const output = document.createElement('span');
+      output.className = 'att-taskref-output';
+      output.textContent = att.output ? '产出：' + att.output : '';
+      const rm = document.createElement('div');
+      rm.className = 'att-remove';
+      rm.textContent = 'x';
+      rm.setAttribute('role', 'button');
+      rm.setAttribute('tabindex', '0');
+      rm.setAttribute('aria-label', t('task.removeTaskRef'));
+      const remove = () => {
+        attachments.splice(idx, 1);
+        renderAttachmentPreview(target);
+      };
+      rm.onclick = remove;
+      rm.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); remove(); }
+      });
+      wrap.innerHTML = icon;
+      wrap.appendChild(subject);
+      wrap.appendChild(meta);
+      wrap.appendChild(output);
+      wrap.appendChild(rm);
+      attPreview.appendChild(wrap);
+    } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
       const wrap = document.createElement('div');
       wrap.style.position = 'relative';
       const img = document.createElement('img');
