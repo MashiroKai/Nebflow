@@ -90,6 +90,22 @@ object TaskStuckWatcher:
           s"TaskStuckWatcher: sub-agent ${rec.sessionId} (kind=${rec.kind}) stuck in Processing " +
             s"for ${idleSecs}s > threshold — sending Stop for supervised restart"
         ) *>
+          // AgentControl spec §3.5：子 agent 自动重启也广播 taskStuck（原先只有
+          // 根 agent 广播）——前端可见「后台 agent 卡死，正在自动重启」，Nebula
+          // 事后用 AgentControl(list) 能看到 retryCount。
+          wsHub
+            .broadcast(
+              io.circe.Json.obj(
+                "type" -> "taskStuck".asJson,
+                "sessionId" -> rec.sessionId.asJson,
+                "kind" -> rec.kind.toString.asJson,
+                "idleSecs" -> idleSecs.asJson,
+                "action" -> "restart".asJson
+              )
+            )
+            .handleErrorWith(e =>
+              logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}")
+            ) *>
           (rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
             .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: Stop to stuck sub-agent ${rec.sessionId} failed: ${e.getMessage}"))
       case None =>

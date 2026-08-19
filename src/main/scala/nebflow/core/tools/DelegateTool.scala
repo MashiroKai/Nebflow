@@ -378,7 +378,8 @@ $prompt"""
         ),
         subagentId
       )
-      // P2: BackoffSupervisor replaces backgroundAdapter — auto-restarts on crash
+      // P2: BackoffSupervisor is the background adapter — auto-restarts on crash,
+      // handles AgentEvent.Cancelled (AgentControl cancel path)
       adapterRef <- system.spawn(
         BackoffSupervisor(
           childRef = subagentRef,
@@ -421,7 +422,14 @@ $prompt"""
             subagentRef,
             AgentKind.Delegate,
             if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId),
-            parentRef
+            parentRef,
+            // AgentControl：startedAt/lastActivityMs 驱动 list 的 up/idle 列与
+            // 卡死判定；supervisorRef 是 cancel 的直达通道（BackoffSupervisor
+            // 处理 AgentEvent.Cancelled）。
+            startedAt = System.currentTimeMillis(),
+            lastActivityMs = System.currentTimeMillis(),
+            supervisorRef = Some(adapterRef),
+            parentSessionId = parentSessionId.getOrElse("")
           )
         )
       )
@@ -455,84 +463,6 @@ $prompt"""
 You will be notified when it completes via a system message.
 Do NOT duplicate this agent's work — avoid working with the same files or topics it is using. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response."""
     )
-
-  /**
-   * Background adapter: forwards result to parent via ExternalEvent, then cleans up.
-   * Watches sub-agent for crashes — notifies parent if sub-agent dies unexpectedly.
-   */
-  private def backgroundAdapter(
-    subagentRef: ActorRef[AgentCommand],
-    parentRef: Option[ActorRef[AgentCommand]],
-    description: String,
-    agentName: String,
-    subagentId: String,
-    resources: SharedResources
-  ): Behavior[AgentEvent] =
-    Behaviors.setup { ctx =>
-      def notifyParentAndStop(
-        eventType: String,
-        payload: String,
-        extraMetadata: JsonObject = JsonObject.empty
-      ): IO[Behavior[AgentEvent]] =
-        val notify = parentRef match
-          case Some(ref) =>
-            ref ! AgentCommand.ExternalEvent(
-              source = "delegate",
-              eventType = eventType,
-              payload = payload,
-              metadata = JsonObject(
-                "description" -> description.asJson,
-                "agentName" -> agentName.asJson
-              ).deepMerge(extraMetadata),
-              correlationId = Some(subagentId)
-            )
-          case None => IO.unit
-        (notify *> resources.agentRegistry.update(_ - subagentId) *>
-          (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
-          IO.pure(Behaviors.stopped[AgentEvent]))
-          .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
-      end notifyParentAndStop
-
-      ctx.watch(subagentRef) *> IO.pure(
-        new Behavior[AgentEvent]:
-          def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
-            event match
-              case AgentEvent.Completed(_, messages) =>
-                val text = extractLastAssistantText(messages)
-                // trim guard: whitespace-only tail → "(no text output)", not an empty shell
-                if text.trim.nonEmpty then notifyParentAndStop("completed", s"\"$description\":\n${text.trim}")
-                else notifyParentAndStop("completed", s"\"$description\" (no text output)")
-              case AgentEvent.Failed(sessionId, error) =>
-                val sessionInfo =
-                  if sessionId.nonEmpty then s" [session=$sessionId]" else ""
-                val retryable = error.errorType match
-                  case AgentErrorType.LlmFailed => true
-                  case AgentErrorType.Timeout => true
-                  case _ => false
-                notifyParentAndStop(
-                  "failed",
-                  s"\"$description\": ${error.message}$sessionInfo",
-                  JsonObject(
-                    "failedSessionId" -> subagentId.asJson,
-                    "retryable" -> retryable.asJson,
-                    "failureType" -> error.errorType.toString.asJson
-                  )
-                )
-
-          override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
-            signal match
-              case SystemSignal.Terminated(_) =>
-                notifyParentAndStop(
-                  "failed",
-                  s"\"$description\": terminated unexpectedly",
-                  JsonObject(
-                    "failedSessionId" -> subagentId.asJson,
-                    "retryable" -> true.asJson,
-                    "failureType" -> "crashed".asJson
-                  )
-                )
-      )
-    }
 
   // ============================================================
   // Persistent: sub-agent stays alive, address returned to caller
@@ -594,7 +524,14 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
             subagentRef,
             AgentKind.Delegate,
             if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId),
-            parentRef
+            parentRef,
+            // AgentControl：persistent 的 cancel 走 persistentAdapter 的
+            // Cancelled 分支（ExternalEvent + SessionUpdate("cancelled") +
+            // registry 移除 + child Stop）；restart 不支持（无 supervisor）。
+            startedAt = System.currentTimeMillis(),
+            lastActivityMs = System.currentTimeMillis(),
+            supervisorRef = Some(adapterRef),
+            parentSessionId = parentSessionId.getOrElse("")
           )
         )
       )
@@ -647,16 +584,39 @@ You will be notified when the initial task completes."""
       ctx.watch(subagentRef) *> IO.pure(
         new Behavior[AgentEvent]:
           def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
-            val (eventType, payload, sessionStatus) = event match
+            event match
+              case AgentEvent.Cancelled(_, reason) =>
+                // AgentControl cancel（spec §3.2b）：persistent 语义——通知父 +
+                // SessionUpdate("cancelled") + registry 移除 + child Stop + 自停。
+                // 与自然终态不同：child 必须终止（用户主动取消），不能留活等 Mail。
+                val reasonSuffix = if reason.nonEmpty then s" ($reason)" else ""
+                val notify = parentRef.fold(IO.unit)(ref =>
+                  (ref ! AgentCommand.ExternalEvent(
+                    source = address,
+                    eventType = "cancelled",
+                    payload = s"[Session cancelled] \"$description\": cancelled by Nebula via AgentControl$reasonSuffix",
+                    metadata = JsonObject(
+                      "description" -> description.asJson,
+                      "agentName" -> agentName.asJson,
+                      "cancelled" -> true.asJson,
+                      "reason" -> reason.asJson
+                    ),
+                    correlationId = Some(subagentId)
+                  )) *> (ref ! AgentCommand.SessionUpdate(address, "cancelled"))
+                )
+                (notify *> resources.agentRegistry.update(_ - subagentId) *>
+                  (subagentRef ! AgentCommand.Stop("agent-control-cancel")) *>
+                  IO.pure(Behaviors.stopped[AgentEvent]))
+                  .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
+
               case AgentEvent.Completed(_, messages) =>
                 val text = extractLastAssistantText(messages)
                 val p =
                   if text.nonEmpty then s"[Session update] \"$description\":\n$text"
                   else s"[Session update] \"$description\" (task complete, awaiting instructions)"
-                ("completed", p, "idle (awaiting instructions)")
+                notifyParentAndStop("completed", p, "idle (awaiting instructions)")
               case AgentEvent.Failed(_, error) =>
-                ("failed", s"[Session error] \"$description\": ${error.message}", "failed")
-            notifyParentAndStop(eventType, payload, sessionStatus)
+                notifyParentAndStop("failed", s"[Session error] \"$description\": ${error.message}", "failed")
 
           override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
             signal match

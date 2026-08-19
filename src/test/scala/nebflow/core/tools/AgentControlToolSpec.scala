@@ -1,0 +1,382 @@
+package nebflow.core.tools
+
+import cats.effect.std.Dispatcher
+import cats.effect.{IO, Ref}
+import cats.syntax.all.*
+import io.circe.syntax.*
+import munit.CatsEffectSuite
+import nebflow.actor.{ActorSystem, Behavior, Behaviors}
+import nebflow.agent.*
+import nebflow.core.FileChangeTracker
+import nebflow.core.compact.HistoryArchiver
+import nebflow.core.task.FileTaskStore
+import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+
+import scala.concurrent.duration.*
+
+/**
+ * AgentControl spec §4 / §6 B2：守卫矩阵 + list/status 渲染 + cancel/restart 分支。
+ *
+ * 真实 agentRegistry（Ref）+ 真实 SubAgentTaskStore + probe actor（记录命令的
+ * 最小 behavior）——不 spawn 真 AgentActor（全链路由 AgentControlE2ESpec 覆盖）。
+ */
+class AgentControlToolSpec extends CatsEffectSuite:
+
+  override def munitIOTimeout: FiniteDuration = 30.seconds
+
+  private def mkRecordingCmd(record: Ref[IO, List[AgentCommand]]): Behavior[AgentCommand] =
+    def loop: Behavior[AgentCommand] =
+      Behaviors.receiveMessage(cmd => record.update(_ :+ cmd).as(loop))
+    loop
+
+  private def mkRecordingEvt(record: Ref[IO, List[AgentEvent]]): Behavior[AgentEvent] =
+    def loop: Behavior[AgentEvent] =
+      Behaviors.receiveMessage(evt => record.update(_ :+ evt).as(loop))
+    loop
+
+  private def mkResources(system: ActorSystem, tmp: os.Path): IO[SharedResources] =
+    for
+      dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
+      rateLimiter <- RateLimiter.create()
+      tracker <- FileChangeTracker.create(os.pwd.toString)
+      fileLocks <- FileLockManager.create
+      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
+      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+      voiceMuted <- Ref.of[IO, Boolean](false)
+    yield SharedResources(
+      llm = null,
+      dispatcher = dispatcher,
+      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
+      projectRoot = os.pwd,
+      thinkingConfigRef = thinkingRef,
+      rateLimiter = rateLimiter,
+      fileChangeTracker = tracker,
+      contextWindow = 100_000,
+      agentLibrary = new AgentLibrary(tmp / "agents"),
+      taskStore = FileTaskStore,
+      historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
+      fileLockManager = fileLocks,
+      sessionModelOverrides = modelOverrides,
+      providerRegistry = null,
+      healthMonitor = ProviderHealthMonitor(null),
+      actorSystem = system,
+      subAgentTaskStore = new SubAgentTaskStore(tmp / "subagent-tasks"),
+      voiceMutedRef = voiceMuted
+    )
+
+  private def mkTask(parentSid: String, childSid: String, agent: String = "Worker"): SubAgentTask =
+    SubAgentTask(
+      taskId = childSid,
+      parentSessionId = parentSid,
+      agentName = agent,
+      prompt = "some long running prompt",
+      description = "guard test task",
+      status = "running",
+      retryCount = 0,
+      spawnedAt = System.currentTimeMillis(),
+      completedAt = None,
+      lastError = None,
+      source = "delegate"
+    )
+
+  private def ctx(resources: SharedResources, sessionId: String): ToolContext =
+    ToolContext(
+      projectRoot = os.pwd.toString,
+      sessionId = Some(sessionId),
+      sharedResources = Some(resources)
+    )
+
+  private def call(resources: SharedResources, sessionId: String, action: String, target: String = "", reason: String = ""): Either[ToolError, String] =
+    val input = io.circe.JsonObject(
+      "action" -> action.asJson,
+      "sessionId" -> target.asJson,
+      "reason" -> reason.asJson
+    )
+    AgentControlTool.call(input, ctx(resources, sessionId)).unsafeRunSync()
+
+  private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
+    cond: IO[Boolean]
+  ): IO[Unit] =
+    def go(deadline: Long): IO[Unit] =
+      cond.flatMap {
+        case true  => IO.unit
+        case false =>
+          if System.currentTimeMillis() >= deadline then
+            IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
+          else IO.sleep(every) >> go(deadline)
+      }
+    go(System.currentTimeMillis() + timeout.toMillis)
+
+  // ── list / status 渲染 ─────────────────────────────────────
+
+  test("list renders rows (kind/status/agent/task) and marks read-only kinds") {
+    val system = ActorSystem("ac-list")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      _ <- resources.subAgentTaskStore.recordTask(mkTask("root-1", "delegate-Explorer-aaaa1111", "Explorer"))
+      delRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "list-del")
+      teamRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "list-team")
+      now = System.currentTimeMillis()
+      _ <- resources.agentRegistry.set(Map(
+        "delegate-Explorer-aaaa1111" -> AgentRecord(
+          "delegate-Explorer-aaaa1111", delRef, AgentKind.Delegate, "root-1",
+          startedAt = now - 120_000, status = AgentStatus.Processing, lastActivityMs = now - 45_000
+        ),
+        "team-nebflow-project-Backend" -> AgentRecord(
+          "team-nebflow-project-Backend", teamRef, AgentKind.Team, "team-nebflow-project-Backend"
+        )
+      ))
+      res <- AgentControlTool.call(
+        io.circe.JsonObject("action" -> "list".asJson), ctx(resources, "root-1")
+      )
+    yield
+      val out = res.toOption.get
+      assert(out.contains("delegate-Explorer-aaaa1111"), s"row must render sessionId:\n$out")
+      assert(out.contains("Delegate"), s"kind column:\n$out")
+      assert(out.contains("Team"), s"team row:\n$out")
+      assert(out.contains("read-only"), s"read-only annotation for Team:\n$out")
+      assert(out.contains("Explorer"), s"agent name from task record:\n$out")
+      assert(out.contains("guard test task"), s"task description column:\n$out")
+      assert(out.contains("2m0s"), s"up column from startedAt (120s → 2m0s):\n$out")
+      assert(out.contains("45s"), s"idle column from lastActivityMs (45s):\n$out")
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  test("status renders detail card for a live record") {
+    val system = ActorSystem("ac-status")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      _ <- resources.subAgentTaskStore.recordTask(mkTask("root-2", "delegate-Worker-bbbb2222"))
+      delRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "status-del")
+      _ <- resources.agentRegistry.set(Map(
+        "delegate-Worker-bbbb2222" -> AgentRecord(
+          "delegate-Worker-bbbb2222", delRef, AgentKind.Delegate, "root-2",
+          startedAt = System.currentTimeMillis() - 30_000, status = AgentStatus.Processing,
+          lastActivityMs = System.currentTimeMillis() - 5_000, parentSessionId = "root-2"
+        )
+      ))
+      res <- IO(call(resources, "root-2", "status", target = "delegate-Worker-bbbb2222"))
+    yield
+      val out = res.toOption.get
+      assert(out.contains("kind: Delegate"), s"$out")
+      assert(out.contains("status: Processing"), s"$out")
+      assert(out.contains("task.status: running"), s"$out")
+      assert(out.contains("manageable: cancel / restart"), s"$out")
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  test("status detects orphan task files (registry empty, task still running)") {
+    val system = ActorSystem("ac-orphan")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      _ <- resources.subAgentTaskStore.recordTask(mkTask("root-3", "delegate-Ghost-cccc3333", "Ghost"))
+      res <- IO(call(resources, "root-3", "status", target = "delegate-Ghost-cccc3333"))
+    yield
+      val out = res.toOption.get
+      assert(out.contains("Orphan task"), s"$out")
+      assert(out.contains("status=running"), s"$out")
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  // ── cancel 守卫（§4 矩阵）───────────────────────────────────
+
+  test("cancel on unknown sessionId → error listing manageable sessions") {
+    val system = ActorSystem("ac-guard-unknown")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      res <- IO(call(resources, "root-x", "cancel", target = "delegate-nobody"))
+    yield
+      assert(res.isLeft)
+      val msg = res.fold(e => e.message, _ => "")
+      assert(msg.contains("No live agent"), msg)
+      assert(msg.contains("(none currently)"), msg)
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  test("cancel self / Root / Team / Flow / cross-root are all rejected with the right guidance") {
+    val system = ActorSystem("ac-guard-kinds")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      rootRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "g-root")
+      teamRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "g-team")
+      flowRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "g-flow")
+      delRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "g-del")
+      _ <- resources.agentRegistry.set(Map(
+        "self-session" -> AgentRecord("self-session", rootRef, AgentKind.Root, "self-session"),
+        // 同桶（root=self-session）但 kind=Root —— 走 kind 拒绝而非权限拒绝
+        "another-root" -> AgentRecord("another-root", rootRef, AgentKind.Root, "self-session"),
+        "team-nebflow-project-Backend" -> AgentRecord("team-nebflow-project-Backend", teamRef, AgentKind.Team, "self-session"),
+        // 同桶 Flow —— cancelFlow 指引
+        "dag-step1" -> AgentRecord("dag-step1", flowRef, AgentKind.Flow, "self-session"),
+        // 跨桶 Delegate —— Permission denied（在 kind 检查之前）
+        "delegate-Other-hhhh0000" -> AgentRecord("delegate-Other-hhhh0000", delRef, AgentKind.Delegate, "other-root")
+      ))
+      selfRes <- IO(call(resources, "self-session", "cancel", target = "self-session"))
+      rootRes <- IO(call(resources, "self-session", "cancel", target = "another-root"))
+      teamRes <- IO(call(resources, "self-session", "cancel", target = "team-nebflow-project-Backend"))
+      flowRes <- IO(call(resources, "self-session", "cancel", target = "dag-step1"))
+      crossRes <- IO(call(resources, "self-session", "cancel", target = "delegate-Other-hhhh0000"))
+    yield
+      assert(selfRes.left.exists(_.message.contains("Self-guard")), selfRes.toString)
+      assert(rootRes.left.exists(_.message.contains("cannot be managed")), rootRes.toString)
+      assert(teamRes.left.exists(_.message.contains("read-only")), teamRes.toString)
+      assert(flowRes.left.exists(_.message.contains("cancelFlow")), flowRes.toString)
+      assert(crossRes.left.exists(_.message.contains("Permission denied")), crossRes.toString)
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  // ── cancel 路径 ────────────────────────────────────────────
+
+  test("cancel via supervisorRef sends AgentEvent.Cancelled to the supervisor") {
+    val system = ActorSystem("ac-cancel-sup")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      supEvents <- Ref.of[IO, List[AgentEvent]](Nil)
+      supRef <- system.spawn(mkRecordingEvt(supEvents), "sup-evt")
+      delRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "cancel-sup-del")
+      _ <- resources.agentRegistry.set(Map(
+        "delegate-Worker-dddd4444" -> AgentRecord(
+          "delegate-Worker-dddd4444", delRef, AgentKind.Delegate, "root-9",
+          supervisorRef = Some(supRef), parentSessionId = "root-9"
+        )
+      ))
+      res <- IO(call(resources, "root-9", "cancel", target = "delegate-Worker-dddd4444", reason = "obsolete"))
+      _ <- waitUntil(3.seconds)(supEvents.get.map(_.nonEmpty))
+      events <- supEvents.get
+    yield
+      assert(res.isRight, res.toString)
+      val cancelled = events.collect { case c: AgentEvent.Cancelled => c }
+      assertEquals(cancelled.size, 1, s"supervisor must receive exactly one Cancelled, got: $events")
+      assertEquals(cancelled.head.sessionId, "delegate-Worker-dddd4444")
+      assertEquals(cancelled.head.reason, "obsolete")
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  test("cancel degraded path (no supervisor): parent notified, task cancelled, registry removed, child stopped") {
+    val system = ActorSystem("ac-cancel-deg")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      _ <- resources.subAgentTaskStore.recordTask(mkTask("root-5", "subtask-Worker-eeee5555"))
+      parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+      parentRef <- system.spawn(mkRecordingCmd(parentEvents), "deg-parent")
+      childEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+      childRef <- system.spawn(mkRecordingCmd(childEvents), "deg-child")
+      _ <- resources.agentRegistry.set(Map(
+        "subtask-Worker-eeee5555" -> AgentRecord(
+          "subtask-Worker-eeee5555", childRef, AgentKind.SubTask, "root-5",
+          parentRef = Some(parentRef), parentSessionId = "root-5"
+        )
+      ))
+      res <- IO(call(resources, "root-5", "cancel", target = "subtask-Worker-eeee5555", reason = "fallback"))
+      _ <- waitUntil(3.seconds)(
+        resources.subAgentTaskStore.loadTasks("root-5").map(_.exists(t => t.taskId == "subtask-Worker-eeee5555" && t.status == "cancelled"))
+      )
+      _ <- waitUntil(3.seconds)(resources.agentRegistry.get.map(!_.contains("subtask-Worker-eeee5555")))
+      _ <- waitUntil(3.seconds)(childEvents.get.map(_.exists(_.isInstanceOf[AgentCommand.Stop])))
+      tasks <- resources.subAgentTaskStore.loadTasks("root-5")
+      childCmds <- childEvents.get
+      parentCmds <- parentEvents.get
+    yield
+      assert(res.isRight, res.toString)
+      assert(res.toOption.get.contains("fallback path"), res.toOption.get)
+      val ext = parentCmds.collectFirst { case e: AgentCommand.ExternalEvent => e }
+      assert(ext.isDefined, s"parent must be notified, got: $parentCmds")
+      assertEquals(ext.get.source, "subtask")
+      assertEquals(ext.get.eventType, "cancelled")
+      assertEquals(ext.get.metadata("cancelled").flatMap(_.asBoolean), Some(true))
+      val task = tasks.find(_.taskId == "subtask-Worker-eeee5555").get
+      assertEquals(task.status, "cancelled")
+      assert(task.lastError.exists(_.contains("cancelled by Nebula")), s"${task.lastError}")
+      assert(childCmds.exists(_.isInstanceOf[AgentCommand.Stop]), s"child must receive Stop: $childCmds")
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  // ── restart 守卫与路径 ─────────────────────────────────────
+
+  test("restart on Ephemeral kind is rejected with cancel guidance") {
+    val system = ActorSystem("ac-restart-eph")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      ephRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "eph-child")
+      _ <- resources.agentRegistry.set(Map(
+        "ephemeral-Mailer-ffff6666" -> AgentRecord("ephemeral-Mailer-ffff6666", ephRef, AgentKind.Ephemeral, "root-7")
+      ))
+      res <- IO(call(resources, "root-7", "restart", target = "ephemeral-Mailer-ffff6666"))
+    yield
+      assert(res.isLeft)
+      val msg = res.fold(e => e.message, _ => "")
+      assert(msg.contains("restart is not supported"), msg)
+      assert(msg.contains("Cancel"), msg)
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  test("restart happy path: task → restarting + Stop sent to the child (supervisor untouched)") {
+    val system = ActorSystem("ac-restart-happy")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      _ <- resources.subAgentTaskStore.recordTask(mkTask("root-8", "delegate-Worker-77778888"))
+      supEvents <- Ref.of[IO, List[AgentEvent]](Nil)
+      supRef <- system.spawn(mkRecordingEvt(supEvents), "rh-sup")
+      childEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+      childRef <- system.spawn(mkRecordingCmd(childEvents), "rh-child")
+      _ <- resources.agentRegistry.set(Map(
+        "delegate-Worker-77778888" -> AgentRecord(
+          "delegate-Worker-77778888", childRef, AgentKind.Delegate, "root-8",
+          supervisorRef = Some(supRef), parentSessionId = "root-8"
+        )
+      ))
+      res <- IO(call(resources, "root-8", "restart", target = "delegate-Worker-77778888", reason = "stuck turn"))
+      _ <- waitUntil(3.seconds)(
+        resources.subAgentTaskStore.loadTasks("root-8").map(_.exists(t => t.taskId == "delegate-Worker-77778888" && t.status == "restarting"))
+      )
+      _ <- waitUntil(3.seconds)(childEvents.get.map(_.exists {
+        case AgentCommand.Stop(r) => r.contains("agent-control-restart")
+        case _ => false
+      }))
+      tasks <- resources.subAgentTaskStore.loadTasks("root-8")
+      childCmds <- childEvents.get
+      supEvts <- supEvents.get
+    yield
+      assert(res.isRight, res.toString)
+      assert(res.toOption.get.contains("resume from the last persisted checkpoint"), res.toOption.get)
+      val task = tasks.find(_.taskId == "delegate-Worker-77778888").get
+      assertEquals(task.status, "restarting")
+      assert(childCmds.exists { case AgentCommand.Stop(r) => r.contains("stuck turn"); case _ => false },
+        s"reason must ride the Stop: $childCmds")
+      assert(supEvts.isEmpty, s"restart must not message the supervisor directly (death-watch drives respawn): $supEvts")
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  test("restart without a task record (persistent delegate) is rejected") {
+    val system = ActorSystem("ac-restart-persist")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      supRef <- system.spawn(mkRecordingEvt(Ref.unsafe(Nil)), "rp-sup")
+      childRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "rp-child")
+      _ <- resources.agentRegistry.set(Map(
+        "delegate-Worker-99990000" -> AgentRecord(
+          "delegate-Worker-99990000", childRef, AgentKind.Delegate, "root-a",
+          supervisorRef = Some(supRef), parentSessionId = "root-a"
+        )
+      ))
+      // 无 taskStore 记录（persistent Delegate 从不 recordTask）
+      res <- IO(call(resources, "root-a", "restart", target = "delegate-Worker-99990000"))
+    yield
+      assert(res.isLeft)
+      val msg = res.fold(e => e.message, _ => "")
+      assert(msg.contains("Persistent delegates do not support restart"), msg)
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+end AgentControlToolSpec

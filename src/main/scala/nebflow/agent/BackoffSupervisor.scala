@@ -150,6 +150,26 @@ object BackoffSupervisor:
               )
             )
 
+          case AgentEvent.Cancelled(_, reason) =>
+            // AgentControl cancel（spec §3.2）：与自然终态同路清理——父
+            // ExternalEvent(source 保持 delegate/subtask → barrier 正确释放)
+            // + taskStore cancelled + registry 移除 + child Stop + 自停。
+            // 与 Completed/Failed 竞态：mailbox 串行，首个终态胜出，supervisor
+            // 停止后其余消息被丢弃（actor 语义），无双重通知。
+            val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
+            notifyParentAndStop(
+              "cancelled",
+              s""""$description": cancelled by Nebula via AgentControl$reasonSuffix""",
+              JsonObject(
+                "failedSessionId" -> subagentId.asJson,
+                "retryable" -> false.asJson,
+                "failureType" -> "cancelled".asJson,
+                "cancelled" -> true.asJson,
+                "reason" -> reason.asJson
+              ),
+              taskStatusOverride = Some("cancelled")
+            )
+
       override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
         signal match
           case SystemSignal.Terminated(_) =>
@@ -205,7 +225,10 @@ object BackoffSupervisor:
                   )
                   .handleErrorWith(e => logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}"))
                 _ <- IO.sleep(delay.millis)
-                _ <- resources.agentRegistry.update(_ - subagentId)
+                // Spec C2 (restart): registry 记录跨 respawn 刷新——先取崩溃前
+                // 记录，spawn 后以新 ref 回写。缺了这步 respawn 的 child 会从
+                // agentRegistry 消失（AgentControl list / TaskStuckWatcher 全盲）。
+                oldRecord <- resources.agentRegistry.get.map(_.get(subagentId))
                 // Crash recovery: load persisted messages from the session store
                 // so the child can resume from where it left off (断点续跑).
                 // If no messages are found (e.g. first turn crashed before any
@@ -217,6 +240,27 @@ object BackoffSupervisor:
                   )
                 newChild <- childSpawnFn(ctx.system, recoveredMessages)
                 _ <- ctx.watch(newChild)
+                // Spec C2: 回写 registry（新 ref + supervisor 指向自己 + 活动时
+                // 间刷新）。无旧记录（ghost respawn）时按 source 重建最小条目。
+                _ <- resources.agentRegistry.update { registry =>
+                  val fallback = AgentRecord(
+                    sessionId = subagentId,
+                    ref = newChild,
+                    kind = if source == "subtask" then AgentKind.SubTask else AgentKind.Delegate,
+                    rootSessionId = parentSessionId,
+                    supervisorRef = Some(ctx.self),
+                    parentSessionId = parentSessionId
+                  )
+                  val refreshed = oldRecord
+                    .getOrElse(fallback)
+                    .copy(
+                      ref = newChild,
+                      supervisorRef = Some(ctx.self),
+                      status = AgentStatus.Idle,
+                      lastActivityMs = System.currentTimeMillis()
+                    )
+                  registry.updated(subagentId, refreshed)
+                }
                 // If we recovered messages, send a "continue" instruction so the
                 // child picks up where it left off. Otherwise re-inject the
                 // original prompt (fresh start fallback).
@@ -275,22 +319,26 @@ object BackoffSupervisor:
       private def notifyParentAndStop(
         eventType: String,
         payload: String,
-        failureMetadata: JsonObject
+        failureMetadata: JsonObject,
+        taskStatusOverride: Option[String] = None
       ): IO[Behavior[AgentEvent]] =
         val metadata = JsonObject(
           "description" -> description.asJson,
           "agentName" -> agentName.asJson
         ).deepMerge(extraMetadata).deepMerge(failureMetadata)
 
-        // P3.1: update task store status
-        val taskStatus = if eventType == "completed" then "completed" else "failed"
+        // P3.1: update task store status. taskStatusOverride supports terminal
+        // states beyond completed/failed (AgentControl 的 "cancelled")。
+        val taskStatus = taskStatusOverride.getOrElse(
+          if eventType == "completed" then "completed" else "failed"
+        )
         val taskUpdate = resources.subAgentTaskStore
           .updateStatus(
             parentSessionId,
             subagentId,
             taskStatus,
             completedAt = Some(System.currentTimeMillis()),
-            lastError = if eventType == "failed" then Some(payload) else None
+            lastError = if taskStatus != "completed" then Some(payload) else None
           )
           .handleErrorWith(e => logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}"))
 

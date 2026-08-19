@@ -148,4 +148,27 @@ class SubAgentTaskStore(baseDir: os.Path):
     }
     .handleErrorWith(e => logger.warn(s"findRunningTasks failed: ${e.getMessage}").as(Nil))
 
+  /**
+   * AgentControl（spec §2 status 命令）：按 taskId 全目录反查任务记录——registry
+   * 无记录时检测孤儿任务（task status=running 但 actor 已不存在），也用于
+   * restart 前区分 ephemeral Delegate（有任务记录）与 persistent（无记录）。
+   * 文件数 = 活跃父会话数（量小），线性扫描可接受。
+   */
+  def findByTaskId(taskId: String): IO[Option[SubAgentTask]] =
+    IO
+      .blocking {
+        if !os.exists(baseDir) then None
+        else
+          os.list(baseDir)
+            .flatMap { f =>
+              if f.toString.endsWith(".json") then
+                decode[List[SubAgentTask]](os.read(f)) match
+                  case Right(list) => list.filter(_.taskId == taskId)
+                  case Left(_) => Nil
+              else Nil
+            }
+            .headOption
+      }
+      .handleErrorWith(e => logger.warn(s"findByTaskId failed: ${e.getMessage}").as(None))
+
 end SubAgentTaskStore

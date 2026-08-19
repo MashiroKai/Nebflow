@@ -39,6 +39,8 @@ object ToolRegistry:
       "Mail" -> MailTool,
       // Sub-agent delegation (background + persistent modes) — Nebula/调度器专用
       "Delegate" -> DelegateTool,
+      // Background agent inspection & control (list/status/cancel/restart) — Nebula 专用
+      "AgentControl" -> AgentControlTool,
       // Flow DAG pipeline triggering — whitelist-driven via agent.json flows
       // (injected by buildAllowedToolSet for agents declaring flows)
       "FlowTrigger" -> FlowTriggerTool,
