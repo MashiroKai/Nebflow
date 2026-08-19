@@ -1947,6 +1947,31 @@
   color: var(--color-text-muted);
   margin-top: 1px;
 }
+/* Global cancel button — sapphire ghost control, right-aligned in the bar.
+   Sends setWorkSchedule(enabled:false) → window permanently open → every
+   frozen agent wakes (task c). */
+.frozen-status .frozen-cancel-btn {
+  margin-left: auto;
+  flex: 0 0 auto;
+  background: rgb(var(--sapphire) / 0.12);
+  border: 1px solid rgb(var(--sapphire) / 0.3);
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 4px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.frozen-status .frozen-cancel-btn:hover {
+  background: rgb(var(--sapphire) / 0.2);
+  border-color: rgb(var(--sapphire) / 0.5);
+}
+.frozen-status .frozen-cancel-btn:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
 @media (prefers-reduced-motion: reduce) {
   .frozen-status { animation: none; }
   .frozen-status .frozen-icon { animation: none; }

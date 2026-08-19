@@ -253,6 +253,21 @@ export function showFrozenStatus(sid, resumeAtMillis) {
   body.appendChild(textEl);
   body.appendChild(hint);
   el.appendChild(body);
+  // Global cancel (task c): clicking disables the schedule — the window becomes
+  // permanently open (backend fail-safe), FreezeScheduler wakes every frozen
+  // agent. NOT a per-agent unfreeze; the freeze setting is global (spec D5).
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'frozen-cancel-btn';
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = t('chat.frozenCancel');
+  cancelBtn.title = t('chat.frozenCancel');
+  cancelBtn.addEventListener('click', () => {
+    const segs = Array.isArray(state.workSchedule && state.workSchedule.segments)
+      ? state.workSchedule.segments : [];
+    sendWs({ type: 'setWorkSchedule', workSchedule: { enabled: false, segments: segs } });
+    window.__showToast?.(t('chat.frozenCanceled'), 'success');
+  });
+  el.appendChild(cancelBtn);
   v.dom.chat.appendChild(el);
   frozenStatusEls.set(sid, el);
   smartScroll();
