@@ -278,6 +278,7 @@ case class ConversationCursor(conversationId: String, lastReadMessageId: Long, u
 
 object FriendCodecs:
   import io.circe.Decoder
+  import io.circe.Encoder
   import io.circe.generic.semiauto.*
 
   given Decoder[FriendSummary] = deriveDecoder
@@ -286,6 +287,14 @@ object FriendCodecs:
   given Decoder[FriendListResponse] = deriveDecoder
   given Decoder[MessageSummary] = deriveDecoder
   given Decoder[ConversationSummary] = deriveDecoder
+  // Encoders for gateway REST responses (client decodes server JSON; gateway
+  // re-encodes the same domain objects for the frontend UI).
+  given Encoder[FriendSummary] = deriveEncoder
+  given Encoder[FriendRequestSummary] = deriveEncoder
+  given Encoder[OutgoingRequestSummary] = deriveEncoder
+  given Encoder[FriendListResponse] = deriveEncoder
+  given Encoder[MessageSummary] = deriveEncoder
+  given Encoder[ConversationSummary] = deriveEncoder
 end FriendCodecs
 
 // ===== Peer Description Store =====

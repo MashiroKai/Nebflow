@@ -376,16 +376,47 @@ object GatewayMain extends IOApp.Simple:
                                       // Start relay tunnel if NebLink Server is configured — maintains a
                                       // persistent WS to the server so cross-network relay-exec requests
                                       // can reach this device.
-                                      neblinkClient.foreach { client =>
+                                      // A2A 一期：FriendService 基于 NeblinkClient（好友/消息 REST +
+                                      // 事件去重/限速/未读 cursor）。WS 事件回调广播 friendEvent 给前端
+                                      // （messages.js 监听）；agentMessaging 配置来自 neblinkConfig。
+                                      val clientWithFriends: Option[(nebflow.neblink.NeblinkClient, nebflow.neblink.FriendService)] =
+                                        neblinkClient.map { client =>
+                                          val amConfig = neblinkService.neblinkConfig.unsafeRunSync().agentMessaging
+                                          val friendService = new nebflow.neblink.FriendService(
+                                            client,
+                                            amConfig,
+                                            onFriendEvent = Some { ev =>
+                                              // Frontend contract (messages.js onMessage('friend_event')):
+                                              // frame type is "friend_event"; event type in msg.event;
+                                              // payload fields (conversationId/messageId/body/...) flattened
+                                              // onto the frame. Strip the payload's inner "type" so it
+                                              // cannot clobber the frame envelope.
+                                              val payloadFields =
+                                                ev.payload.asObject.getOrElse(io.circe.JsonObject.empty).remove("type")
+                                              val frame = io.circe.Json
+                                                .obj("type" -> "friend_event".asJson, "event" -> ev.eventType.asJson)
+                                                .deepMerge(io.circe.Json.fromJsonObject(payloadFields))
+                                              wsHub.broadcast(frame)
+                                            }
+                                          )
+                                          (client, friendService)
+                                        }
+                                      clientWithFriends.foreach { (client, friendService) =>
                                         val serverUrl =
                                           neblinkService.neblinkConfig.unsafeRunSync().neblinkServer.get.url
                                         val relayTunnel = new nebflow.neblink.NeblinkRelayTunnel(
                                           neblinkService,
                                           serverUrl,
-                                          () => client.currentSessionToken
+                                          () => client.currentSessionToken,
+                                          friendService = Some(friendService)
                                         )(dispatcher)
                                         neblinkService.setRelayTunnel(relayTunnel)
                                         dispatcher.unsafeRunAndForget(relayTunnel.connect())
+                                        // Baseline refresh (spec §5.2 startup entry): conversations +
+                                        // per-conversation keyset pull + friends. Silently no-ops when
+                                        // not logged in yet (FriendService catches upstream errors);
+                                        // later friend_event pushes keep state fresh.
+                                        dispatcher.unsafeRunAndForget(friendService.refreshAll())
                                       }
                                       // Discovery service — uses NebLink Server for discovery
                                       val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
@@ -421,6 +452,7 @@ object GatewayMain extends IOApp.Simple:
                                               sharedResourcesWithTelemetry.copy(
                                                 bridgeManager = Some(bridgeManager),
                                                 neblinkService = Some(neblinkService),
+                                                friendService = clientWithFriends.map(_._2),
                                                 dropboxService = Some(dropboxService)
                                               )
 
