@@ -560,6 +560,9 @@ export function renderSettings() {
 }
 
 function renderProviderCard(name, p) {
+  // Deleted providers are stored as null — render nothing instead of crashing
+  // the settings re-render (remove flow calls renderSettings synchronously).
+  if (!p) return '';
   const modelCount = (p.models || []).length;
   const modelsHtml = (p.models || []).map(m => {
     const ref = `${name}/${m.id}`;
@@ -982,8 +985,9 @@ function bindSettingsEvents(content, cfg) {
       e.stopPropagation();
       window.__showConfirm?.('Remove Provider', t('provider.removeConfirm', { name }), () => {
         state.parsedConfig.llm.providers[name] = null;
-        // Clean up model chain references to the removed provider
-        cleanModelChainForProvider(name);
+        // Preset reference cleanup on provider removal is backend-owned (#339 —
+        // the global default-model field is retired; backend auto-created
+        // presets are keyed per provider).
         state.configDirty = true;
         flushConfigToServer();
         renderSettings();
@@ -995,8 +999,6 @@ function bindSettingsEvents(content, cfg) {
         if (newName !== name) {
           // Use null to signal explicit deletion of old name
           state.parsedConfig.llm.providers[name] = null;
-          // Update model chain references from old name to new name
-          renameProviderInModelChain(name, newName);
         }
         state.parsedConfig.llm.providers[newName] = data;
         state.configDirty = true;
@@ -1099,53 +1101,6 @@ document.addEventListener('change', (e) => {
   updateSegmentRowHint(e.target.closest('.segment-row'));
   saveWorkSchedule(true, collectSegments());
 });
-
-/** Remove all references to a provider from the model chain (default + fallbacks).
- *  Must be called when a provider is deleted, otherwise backend validation fails
- *  because fallbacks point to a provider that no longer exists. */
-function cleanModelChainForProvider(providerName) {
-  if (!state.parsedConfig?.llm?.model) return;
-  const model = state.parsedConfig.llm.model;
-  const prefix = providerName + '/';
-
-  // Clear default if it points to the removed provider
-  if (model.default && model.default.startsWith(prefix)) {
-    model.default = '';
-  }
-
-  // Remove all fallbacks that reference the removed provider
-  if (model.fallbacks) {
-    model.fallbacks = model.fallbacks.filter(f => !f.startsWith(prefix));
-  }
-
-  // Auto-set a new default if possible
-  if (!model.default) {
-    const remainingProviders = state.parsedConfig.llm.providers || {};
-    const firstProvider = Object.entries(remainingProviders).find(([_, p]) => p && p.models?.length > 0);
-    if (firstProvider) {
-      const [pName, pData] = firstProvider;
-      model.default = `${pName}/${pData.models[0].id}`;
-    }
-  }
-}
-
-/** Update model chain references when a provider is renamed (default + fallbacks). */
-function renameProviderInModelChain(oldName, newName) {
-  if (!state.parsedConfig?.llm?.model) return;
-  const model = state.parsedConfig.llm.model;
-  const oldPrefix = oldName + '/';
-  const newPrefix = newName + '/';
-
-  if (model.default && model.default.startsWith(oldPrefix)) {
-    model.default = newPrefix + model.default.slice(oldPrefix.length);
-  }
-
-  if (model.fallbacks) {
-    model.fallbacks = model.fallbacks.map(f =>
-      f.startsWith(oldPrefix) ? newPrefix + f.slice(oldPrefix.length) : f
-    );
-  }
-}
 
 function flushConfigToServer() {
   const json = JSON.stringify(state.parsedConfig, null, 2);
@@ -1322,22 +1277,15 @@ function wireProviderModelFetch() {
 }
 
 // --- Provider modal ---
-/** Persist a newly added provider: mutate parsedConfig + auto-default model + flush. */
+/** Persist a newly added provider: mutate parsedConfig + flush. The backend
+ *  auto-creates the first preset from a new provider — the legacy global
+ *  default-model field is retired (global-default preset semantics, #339),
+ *  so there is no frontend chain write here. */
 function saveNewProvider(name, data) {
-  if (!state.parsedConfig) state.parsedConfig = {llm: {providers: {}, model: {default: ''}}};
-  if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}, model: {default: ''}};
+  if (!state.parsedConfig) state.parsedConfig = {llm: {providers: {}}};
+  if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}};
   if (!state.parsedConfig.llm.providers) state.parsedConfig.llm.providers = {};
-  if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {default: '', fallbacks: []};
   state.parsedConfig.llm.providers[name] = data;
-  // Auto-set default model if it's empty or points to a non-existent provider
-  const currentDefault = state.parsedConfig.llm.model.default || '';
-  const defaultProvider = currentDefault.split('/')[0];
-  if (!currentDefault || !state.parsedConfig.llm.providers[defaultProvider]) {
-    const firstModel = (data.models || [])[0];
-    if (firstModel) {
-      state.parsedConfig.llm.model.default = `${name}/${firstModel.id}`;
-    }
-  }
   state.configDirty = true;
   flushConfigToServer();
 }
