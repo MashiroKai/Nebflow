@@ -31,7 +31,8 @@ import {
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
   appendThinkingDelta, finishThinking,
-  appendToolStreamDelta, cancelToolStreamRAF
+  appendToolStreamDelta, cancelToolStreamRAF,
+  showFrozenStatus, hideFrozenStatus
 } from './chat.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
@@ -286,6 +287,13 @@ function clearBusyFor(msg) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
   }
+  // Freeze fallback (spec §7 risk table): a terminal event while frozen must
+  // clear the frozen marker + status bar too — 'done' arriving without a
+  // resumed event would otherwise leave a stale frozen bar over a dead turn.
+  if (sid && state.frozenSessions.has(sid)) {
+    state.frozenSessions.delete(sid);
+    hideFrozenStatus(sid);
+  }
   // Drain queued messages after a short delay to let the UI finalize first
   if (sid) {
     setTimeout(() => drainMessageQueue(sid), 50);
@@ -310,6 +318,70 @@ function resetStreamTimeout(sid) {
     }
   }, state.streamTimeoutMs + 30000);
 }
+
+// ── Freeze schedule (work hours) events ──────────────────────────────────
+// Backend emits 'frozen' (root session) / 'agentFrozen' (sub-agent) when an
+// agent parks at a dispatch boundary outside work hours; 'resumed' /
+// 'agentResumed' when it wakes (schedule re-open, config change, or a user
+// message). Contract: protocol.scala AgentStreamEvent Frozen/Resumed.
+onMessage('frozen', (msg) => {
+  const sid = msg.sessionId;
+  if (!sid) return;
+  state.frozenSessions.add(sid);
+  // F8/F4: a freeze can last hours — kill the activity stream timeout so it
+  // cannot false-fire at streamTimeoutMs+30s and clear the busy state (which
+  // would also drain the queue) mid-freeze. resumed re-arms it via activity.
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+  const v = findViewBySessionId(sid);
+  if (v) {
+    setActiveView(v);
+    showFrozenStatus(sid, msg.resumeAt || null);
+    // Wake hint in the input box (spec §4 behavior 4)
+    if (v.dom && v.dom.input) v.dom.input.placeholder = t('chat.frozenWakeHint');
+  }
+});
+
+onMessage('resumed', (msg) => {
+  const sid = msg.sessionId;
+  if (!sid) return;
+  if (!state.frozenSessions.has(sid)) return;   // stale/dup — no-op
+  state.frozenSessions.delete(sid);
+  const v = findViewBySessionId(sid);
+  if (v) {
+    setActiveView(v);
+    hideFrozenStatus(sid);
+    // Restore the mode-appropriate placeholder (default / skill / ask / plan)
+    import('./input.js').then(({ applyInputModes }) => applyInputModes());
+  }
+});
+
+// Sub-agent freeze: mark the sessionBgAgents entry so the bg-agent dropdown
+// badge reflects the parked state (agentFrozen carries agentId; bgAgentPopup
+// intercepts the same event via nodeSessionId for its tile footer).
+onMessage('agentFrozen', (msg, view) => {
+  const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
+  if (!sid) return;
+  const aid = msg.agentId || (view && view.stream.activeAgentId);
+  if (aid && state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
+    state.sessionBgAgents[sid][aid].frozen = true;
+    state.sessionBgAgents[sid][aid].frozenResumeAt = msg.resumeAt || null;
+    if (view) renderBgAgentDropdown();
+  }
+});
+
+onMessage('agentResumed', (msg, view) => {
+  const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
+  if (!sid) return;
+  const aid = msg.agentId || (view && view.stream.activeAgentId);
+  if (aid && state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
+    state.sessionBgAgents[sid][aid].frozen = false;
+    state.sessionBgAgents[sid][aid].frozenResumeAt = null;
+    if (view) renderBgAgentDropdown();
+  }
+});
 
 // --- Chat streaming ---
 // ALL sessions: save to localStorage. Active session only: render DOM.
@@ -1682,6 +1754,15 @@ onMessage('serverConfig', (msg, view) => {
   }
   if (msg.mcpServers) {
     state.mcpServers = msg.mcpServers;
+  }
+  if (msg.workSchedule) {
+    state.workSchedule = msg.workSchedule;
+    // Re-render the settings panel if open so the schedule editor echoes the
+    // authoritative server config (freeze-schedule spec F2/F5).
+    const settingsOverlay = document.getElementById('settings-overlay');
+    if (settingsOverlay && settingsOverlay.classList.contains('on')) {
+      import('./sidebar.js').then(({ renderSettings }) => renderSettings());
+    }
   }
 });
 
