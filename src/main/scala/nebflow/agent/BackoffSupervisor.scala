@@ -126,8 +126,10 @@ object BackoffSupervisor:
         event match
           case AgentEvent.Completed(_, messages) =>
             val text = extractLastAssistantText(messages)
+            // trim guard: a whitespace-only tail ("\n\n") is NOT a real output —
+            // render "(no text output)" instead of an empty-shell payload
             val payload =
-              if text.nonEmpty then s""""$description":\n$text"""
+              if text.trim.nonEmpty then s""""$description":\n${text.trim}"""
               else s""""$description" (no text output)"""
             notifyParentAndStop("completed", payload, JsonObject.empty)
 
@@ -315,7 +317,7 @@ object BackoffSupervisor:
       .collectFirst {
         case msg if msg.role == MessageRole.Assistant => msg.textContent
       }
-      .filter(_.nonEmpty)
+      .filter(_.trim.nonEmpty)
       .getOrElse("")
 
 end BackoffSupervisor

@@ -409,8 +409,8 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   label.textContent = injectedSourceLabel(source, eventType, sender, sourceTeam);
   appendDeliveryBadge(label, delivery);
   const content = document.createElement('div');
-  if (deferFn) deferFn(content, text || '');
-  else content.innerHTML = renderMarkdownWithMath(text || '', false);
+  if (deferFn) deferFn(content, (text || '').trim());
+  else content.innerHTML = renderMarkdownWithMath((text || '').trim(), false);
   bubble.appendChild(label);
   bubble.appendChild(content);
   row.appendChild(bubble);

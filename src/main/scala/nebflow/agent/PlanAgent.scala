@@ -117,7 +117,8 @@ object PlanAgent:
             event match
               case AgentEvent.Completed(_, messages) =>
                 val text = extractLastAssistantText(messages)
-                val planText = if text.nonEmpty then text else "(plan agent produced no text output)"
+                // trim guard: whitespace-only tail is not a real plan
+                val planText = if text.trim.nonEmpty then text.trim else "(plan agent produced no text output)"
                 (mainAgentRef ! AgentCommand.PlanTurnComplete(planText)) *>
                   IO.pure(this)
               case AgentEvent.Failed(_, error) =>
@@ -147,7 +148,7 @@ object PlanAgent:
       .collectFirst {
         case msg if msg.role == MessageRole.Assistant => msg.textContent
       }
-      .filter(_.nonEmpty)
+      .filter(_.trim.nonEmpty)
       .getOrElse("")
 
 end PlanAgent
