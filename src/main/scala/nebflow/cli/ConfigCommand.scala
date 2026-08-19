@@ -13,8 +13,8 @@ object ConfigCommand extends CliCommand:
 
   def examples = List(
     "nebflow config show",
-    "nebflow config get llm.model.default",
-    "nebflow config set llm.model.default openai/gpt-4o"
+    "nebflow config get workSchedule",
+    "nebflow config set providers.openai.queuePersist true"
   )
 
   private object ConfigGet extends CliSubcommand:
