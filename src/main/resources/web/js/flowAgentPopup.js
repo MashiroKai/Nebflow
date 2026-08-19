@@ -595,6 +595,7 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   // Wire view.dom to real input elements so initInput() can bind events
   const v = entry.view;
   v.dom.input = popupOverlay.querySelector('#flow-input');
+  v.dom.inputBar = popupOverlay.querySelector('#flow-input-bar'); // #303 drag-drop routing
   v.dom.sendBtn = popupOverlay.querySelector('#flow-send-btn');
   v.dom.stopBtn = popupOverlay.querySelector('#flow-stop-btn');
   v.dom.attachBtn = popupOverlay.querySelector('#flow-attach-btn');

@@ -153,6 +153,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   // Wire view.dom to real input elements so initInput() can bind events
   const v = entry.view;
   v.dom.input = popupOverlay.querySelector('#bgagent-input');
+  v.dom.inputBar = popupOverlay.querySelector('#bgagent-input-bar'); // #303 drag-drop routing
   v.dom.sendBtn = popupOverlay.querySelector('#bgagent-send-btn');
   v.dom.stopBtn = popupOverlay.querySelector('#bgagent-stop-btn');
   v.dom.attachBtn = popupOverlay.querySelector('#bgagent-attach-btn');
