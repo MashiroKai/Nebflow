@@ -28,7 +28,7 @@ object PathUtil:
    * On Windows (`\\` separator), forward slashes are converted to backslashes.
    * On Unix (`/` separator), this is a no-op.
    *
-   * This prevents mixed-separator paths (e.g. `C:\Users\Kai/Desktop`) that
+   * This prevents mixed-separator paths (e.g. `C:\Users\name/Desktop`) that
    * os-lib rejects when parsing path segments — see BUG 1 & 2.
    */
   def normalizeSeparators(s: String): String =
@@ -41,8 +41,8 @@ object PathUtil:
    * Leaves all other strings unchanged. Idempotent.
    *
    * After expansion, separators are normalized for the current OS so that
-   * `~/Desktop` on Windows produces `C:\Users\Kai\Desktop` (all backslashes),
-   * not `C:\Users\Kai/Desktop` (mixed separators that os-lib rejects).
+   * `~/Desktop` on Windows produces `C:\Users\name\Desktop` (all backslashes),
+   * not `C:\Users\name/Desktop` (mixed separators that os-lib rejects).
    *
    * For remote-exec, this MUST run on the *receiving* device so `~` resolves
    * to the remote user's home (e.g. `C:\Users\kai` on Windows), not the
@@ -62,7 +62,7 @@ object PathUtil:
    *
    * Used by remote-exec receivers (P2P direct + relay) so path-bearing tools
    * (Read/Write/Edit/Glob/Grep) accept `~` relative to the receiving device,
-   * and so Windows-style paths with forward slashes (e.g. `C:/Users/dev/x`)
+   * and so Windows-style paths with forward slashes (e.g. `C:/Users/name/x`)
    * are normalized to the OS-native separator.
    *
    * Bash is excluded — its shell expands `~` natively, and rewriting inside

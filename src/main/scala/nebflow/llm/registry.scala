@@ -114,7 +114,7 @@ class ProviderRegistry(
   /**
    * List all models with descriptions. Returns (ref, displayLabel, description) triples.
    * displayLabel includes the provider name to ensure uniqueness when multiple
-   * providers offer the same model ID (e.g. USTC and deepseek both have deepseek-v4-pro).
+   * providers offer the same model ID (e.g. two providers both have model-x).
    */
   def getAllModelsDetailed(): IO[List[(String, String, Option[String])]] =
     configRef.get.map { config =>

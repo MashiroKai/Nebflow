@@ -31,6 +31,17 @@ jobs:
         # import() is the sanctioned escape hatch and is not counted.
         run: node scripts/check-circular.mjs
 
+  user-knowledge-gate:
+    name: User Knowledge Gate (#338)
+    # Fail-fast static gate: user-specific knowledge (provider gateway IDs,
+    # personal paths, API keys) must not leak into src/main Scala sources.
+    # Same logic locally: bash scripts/check-user-knowledge.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check src/main for user-specific identifiers
+        run: bash scripts/check-user-knowledge.sh
+
   compile:
     name: Compile (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
