@@ -1,9 +1,11 @@
 package nebflow.gateway
 
 import cats.effect.IO
-import io.circe.Json
+import io.circe.{Json, JsonObject}
 import io.circe.parser.parse
+import io.circe.syntax.*
 import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.shared.Defaults
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
@@ -13,7 +15,10 @@ import java.util.Base64
 
 object SttService:
   private val logger = NebflowLogger.forName("nebflow.stt")
-  private val configPath = PathUtil.dataRoot / "stt-config.json"
+
+  /** STT 配置文件路径。def（非 val）——PathUtil.dataRoot 可被测试 setDataRoot
+    * 重定向，val 会在类加载时冻结（#295）。 */
+  def configPath: os.Path = PathUtil.dataRoot / "stt-config.json"
 
   def create(): IO[Option[SttService]] =
     IO.blocking {
@@ -23,11 +28,11 @@ object SttService:
           val hc = json.hcursor
           val apiKeyOpt = hc.downField("apiKey").as[String].toOption.filter(_.nonEmpty)
           apiKeyOpt.flatMap { apiKey =>
-            val model = hc.downField("model").as[String].getOrElse("glm-asr-2512")
+            val model = hc.downField("model").as[String].getOrElse(Defaults.SttDefaultModel)
             val endpoint = hc
               .downField("endpoint")
               .as[String]
-              .getOrElse("https://open.bigmodel.cn/api/paas/v4/audio/transcriptions")
+              .getOrElse(Defaults.SttDefaultEndpoint)
             Some(new SttService(apiKey, model, endpoint))
           }
         }
@@ -36,6 +41,47 @@ object SttService:
       case None => IO.pure(None)
     }
   end create
+
+  /**
+   * setSttConfig WS 命令的校验/归一入口（#295，纯函数）。
+   *
+   * 语义（用户 2026-08-18 拍板）：三字段均可选；全空/空对象 = 清空配置
+   * （Right(None)——删配置文件，回退免费浏览器 Web Speech）。endpoint 提供
+   * 时须 http(s):// 开头；model 非空字符串；apiKey 原样存（空串视为未提供）。
+   * 只写提供的字段——读取侧（create）对缺省字段回 Defaults。
+   */
+  def validateConfig(payload: Json): Either[String, Option[Json]] =
+    def field(name: String): Option[String] =
+      payload.hcursor.downField(name).as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    val endpoint = field("endpoint")
+    val apiKey = field("apiKey")
+    val model = field("model")
+    endpoint match
+      case Some(e) if !e.startsWith("http://") && !e.startsWith("https://") =>
+        Left(s"STT endpoint must start with http:// or https:// (got: ${e.take(60)})")
+      case _ =>
+        val fields = List(
+          endpoint.map(e => "endpoint" -> e.asJson),
+          apiKey.map(k => "apiKey" -> k.asJson),
+          model.map(m => "model" -> m.asJson)
+        ).flatten
+        if fields.isEmpty then Right(None)
+        else Right(Some(Json.fromJsonObject(JsonObject.fromIterable(fields))))
+
+  /**
+   * serverConfig 广播的 stt 节（#295）：{sttConfigured, endpoint?, model?}——
+   * **apiKey 永不外露**（key 不落地前端铁律）。未配置时仅 sttConfigured:false。
+   */
+  def serverConfigNode(svc: Option[SttService]): Json =
+    svc match
+      case Some(s) =>
+        Json.obj(
+          "sttConfigured" -> true.asJson,
+          "endpoint" -> s.endpoint.asJson,
+          "model" -> s.model.asJson
+        )
+      case None =>
+        Json.obj("sttConfigured" -> false.asJson)
 end SttService
 
 /**
@@ -52,8 +98,10 @@ end SttService
  */
 class SttService private[gateway] (
   apiKey: String,
-  model: String,
-  endpoint: String
+  /** 转录模型名（serverConfig 广播可见；apiKey 永不外露）。 */
+  val model: String,
+  /** 转录端点（serverConfig 广播可见；apiKey 永不外露）。 */
+  val endpoint: String
 ):
   private val logger = NebflowLogger.forName("nebflow.stt")
 
