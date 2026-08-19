@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.core.PathUtil
+import nebflow.core.{AtomicJson, PathUtil}
 import nebflow.shared.{*, given}
 
 // Re-export SessionMeta from shared package for backward compatibility
@@ -335,9 +335,8 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         val id = UUID.randomUUID().toString
         val now = System.currentTimeMillis()
         val meta = SessionMeta(id, "Default Session", now, now, hasUnread = false)
-        IO.blocking {
-          os.write.over(sessionFile(id), msgs.asJson.spaces2, createFolders = true)
-        } *> indexRef.set((id, List(meta), Nil)) *> activeMessagesRef.set(msgs) *> saveIndex
+        AtomicJson.write(sessionFile(id), msgs.asJson.spaces2) *>
+          indexRef.set((id, List(meta), Nil)) *> activeMessagesRef.set(msgs) *> saveIndex
       case None =>
         createDefaultSession
     }
@@ -352,7 +351,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     val now = System.currentTimeMillis()
     val meta = SessionMeta(id, "Nebula", now, now, hasUnread = false, agentName = Some("Nebula"))
     indexRef.set((id, List(meta), Nil)) *> activeMessagesRef.set(Nil) *>
-      IO.blocking(os.write.over(sessionFile(id), "[]", createFolders = true)) *> saveIndex
+      AtomicJson.write(sessionFile(id), "[]") *> saveIndex
 
   private def sessionFile(id: String): os.Path = sessionsDir / s"$id.json"
 
@@ -369,7 +368,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       folderId match
         case Some(fid) =>
           val json = Json.obj("folderId" -> fid.asJson)
-          os.write.over(f, json.noSpaces, createFolders = true)
+          AtomicJson.writeSync(f, json.noSpaces)
         case None =>
           // Clean up sidecar when session is moved to root
           if os.exists(f) then os.remove(f)
@@ -427,14 +426,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private def saveSessionMessages(id: String, msgs: List[Message]): IO[Unit] =
     // Invalidate pending debounce entry so loadSessionMessages reads the fresh disk state.
     dirtyMsgSessions.update(_ - id) *> pendingMsgs.update(_ - id) *>
-      IO.delay(msgs.asJson.noSpaces).flatMap { jsonStr =>
-        IO.blocking {
-          val f = sessionFile(id)
-          val tmp = sessionsDir / s"$id.json.tmp.${java.util.UUID.randomUUID()}"
-          os.write.over(tmp, jsonStr, createFolders = true)
-          os.move.over(tmp, f, replaceExisting = true)
-        }
-      }
+      IO.delay(msgs.asJson.noSpaces).flatMap(jsonStr => AtomicJson.write(sessionFile(id), jsonStr))
 
   private def saveIndex: IO[Unit] =
     indexRef.get.flatMap { case (activeId, sessions, folders) =>
@@ -444,15 +436,12 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           "sessions" -> sessions.asJson,
           "folders" -> folders.asJson
         )
-        // Atomic write: use UNIQUE temp file per call to avoid concurrent move race.
-        // The old shared temp file (_index.json.tmp) caused a race when multiple
-        // flow agents called createSession → saveIndex simultaneously: one thread
-        // moved the temp file, the other's os.move failed → pipeline crash.
-        val tmpFile = sessionsDir / s"_index.json.tmp.${java.util.UUID.randomUUID()}"
-        os.write.over(tmpFile, json.spaces2, createFolders = true)
-        os.move.over(tmpFile, indexFile)
+        // Atomic rename(2) via AtomicJson — the unique temp file per call also
+        // avoids the old shared-temp race when multiple flow agents call
+        // createSession → saveIndex simultaneously.
+        AtomicJson.writeSync(indexFile, json.spaces2)
       }.handleErrorWith(e =>
-        // If even the unique-temp approach fails (extremely unlikely), log and
+        // If even the atomic write fails (extremely unlikely), log and
         // continue — the in-memory Ref is the source of truth.
         IO.delay(logger.warn(s"saveIndex failed (non-fatal): ${e.getMessage}")).void
       )
@@ -1190,7 +1179,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
    * provided list so callers control what gets persisted.
    */
   private def writeUiMessagesToDisk(id: String, msgs: List[UiMessage]): IO[Unit] =
-    IO.blocking(os.write.over(uiFile(id), msgs.asJson.noSpaces, createFolders = true))
+    AtomicJson.write(uiFile(id), msgs.asJson.noSpaces)
 
   /**
    * Eager cache update + immediate disk write. Used by paths that need the
