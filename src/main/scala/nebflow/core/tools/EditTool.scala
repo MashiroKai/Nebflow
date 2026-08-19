@@ -43,7 +43,7 @@ Usage:
 Edit patterns:
 - Rename a variable: Use replace_all to change every occurrence. Do not do it one at a time.
 - Modify a specific function: Include enough context (function signature, surrounding lines) to make the old_string unique.
-- Multi-location edits: If the same change needs to happen in multiple places, use multiple Edit calls in parallel rather than trying to write a complex regex.
+- Multi-location edits: For 2+ changes to the SAME file, use the MultiEdit tool — one atomic call with an ordered edits array. Never send parallel Edit calls for the same file: concurrent writes race and only the last one survives.
 - Large refactors: If a change affects more than 3-4 files, consider whether the scope matches what the user asked for."""
 
   val inputSchema = JsonObject.fromIterable(
