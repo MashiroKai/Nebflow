@@ -92,7 +92,9 @@ function convertAgentEvent(msg) {
     case 'agentDone':
       return { type: 'done', sessionId: sid, model: msg.model, contextWindow: msg.contextWindow, inputTokens: msg.inputTokens, compactThreshold: msg.compactThreshold, outputTokens: msg.outputTokens };
     case 'usageUpdate':
-      return { type: 'usageUpdate', sessionId: sid, inputTokens: msg.inputTokens, contextWindow: msg.contextWindow, compactThreshold: msg.compactThreshold, outputTokens: msg.outputTokens };
+      // #308 actual model: forward the round's actual model so popup badges
+      // can live-refresh. model is None on older backends → falls back cleanly.
+      return { type: 'usageUpdate', sessionId: sid, inputTokens: msg.inputTokens, contextWindow: msg.contextWindow, compactThreshold: msg.compactThreshold, outputTokens: msg.outputTokens, model: msg.model };
     case 'agentEnd':
       return null; // no standard equivalent
     default:
@@ -151,7 +153,11 @@ const STREAM_MSG_TYPES = new Set([
   'agentToolStart', 'agentToolEnd', 'agentEnd',
   'agentThinking', 'agentRetryStatus', 'agentDone',
   'treeBranchMounted', 'treeBranchUnmounted', 'treeBranchUpdated',
-  'flowMail', 'flowStarted', 'flowProgress', 'flowCompleted', 'teamList'
+  'flowMail', 'flowStarted', 'flowProgress', 'flowCompleted', 'teamList',
+  // #308 actual model: sub-agent usageUpdate (sessionId = nodeSessionId) must
+  // survive the entry filter below to reach the popup live-refresh path.
+  // Without this, the event is silently dropped for non-active sessions.
+  'usageUpdate'
 ]);
 
 /**

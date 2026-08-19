@@ -8,6 +8,8 @@
 import { openStepPopup } from './flowAgentPopup.js';
 import { esc, authHeaders, overlayRoot, teamPendingCount } from './flowHelpers.js';
 import { orderDagNodes, dagNodeInlineHtml } from './flowDag.js';
+import state from './state.js';
+import { onMessage } from './ws.js';
 
 // ── Module-level state for flow rows ───────────────────────
 const dagCache = new Map();           // flowName → { ordered: [{nodeId, agent}] }
@@ -213,6 +215,16 @@ export function bindTileClicks() {
 export async function populateTileModels(teams) {
   const tileSel = (flowName, agentName) =>
     `.team-tile[data-agent="${esc(agentName)}"][data-flow="${esc(flowName)}"]`;
+  // #308 actual model: the session's last ACTUALLY-used model is
+  // authoritative; REST preferred/current is only a fallback when the agent
+  // has never run a LLM round (no sessionModelInfo entry).
+  const liveModelShort = (sid) => {
+    if (!sid) return null;
+    const model = state.sessionModelInfo[sid]?.model;
+    if (!model) return null;
+    const i = model.lastIndexOf('/');
+    return i >= 0 ? model.slice(i + 1) : model;
+  };
   for (const flow of teams) {
     for (const a of (flow.agents || [])) {
       const tile = document.querySelector(tileSel(flow.name, a.name));
@@ -228,9 +240,10 @@ export async function populateTileModels(teams) {
         const role = !!a.manager ? 'manager' : (el.getAttribute('data-status') || 'idle');
         roleEl.textContent = `${role} · ${shortName}`;
       };
-      // Cache hit — write synchronously, no fetch.
+      const live = liveModelShort(a.sessionId);
+      // Cache hit — write synchronously, no fetch. Live overrides cache.
       const cached = modelCache.get(a.name);
-      if (cached) { writeLabel(tile, cached); continue; }
+      if (cached) { writeLabel(tile, live || cached); continue; }
       // One in-flight fetch per agent — concurrent re-renders share it.
       if (modelPending.has(a.name)) continue;
       modelPending.add(a.name);
@@ -238,9 +251,9 @@ export async function populateTileModels(teams) {
         const resp = await fetch(`/api/agents/${encodeURIComponent(a.name)}/model`, { headers: authHeaders() });
         if (!resp.ok) continue;
         const cfg = await resp.json();
-        // preferred is the configured model — trust it over `current`
-        // (current is only a reference from the backend resolution).
-        const current = cfg.preferred || cfg.current || cfg.default || '';
+        // #308: live actual model first, then health-resolved current, then
+        // configured preferred — never show "preferred" as if it were live.
+        const current = live || cfg.current || cfg.preferred || cfg.default || '';
         if (!current) continue;
         const slashIdx = current.lastIndexOf('/');
         const shortName = slashIdx >= 0 ? current.slice(slashIdx + 1) : current;
@@ -254,6 +267,25 @@ export async function populateTileModels(teams) {
     }
   }
 }
+
+// #308 live refresh: when a LLM round reports the actual model for a team
+// agent session, update its tile label immediately (direct DOM write — no
+// cache invalidation needed; the fetch path prefers live anyway).
+function refreshTileModelLive(sid) {
+  if (!sid) return;
+  const info = state.sessionModelInfo[sid];
+  if (!info?.model) return;
+  const i = info.model.lastIndexOf('/');
+  const short = i >= 0 ? info.model.slice(i + 1) : info.model;
+  document.querySelectorAll(`.team-tile[data-sid="${CSS.escape(sid)}"]`).forEach((tile) => {
+    const roleEl = tile.querySelector('.team-tile-role');
+    if (!roleEl) return;
+    const role = tile.classList.contains('manager') ? 'manager' : (tile.getAttribute('data-status') || 'idle');
+    roleEl.textContent = `${role} · ${short}`;
+  });
+}
+onMessage('usageUpdate', (msg) => refreshTileModelLive(msg.sessionId));
+onMessage('done', (msg) => refreshTileModelLive(msg.sessionId));
 
 export function bindCardActions(openMailbox, openRules, openDefinition) {
   document.querySelectorAll('.team-act-btn').forEach(btn => {
