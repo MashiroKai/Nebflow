@@ -479,6 +479,8 @@ Message type (optional, default "INFO"):
           Right(text)
         case AgentEvent.Failed(_, error) =>
           Left(s"$agentName failed: ${error.message}")
+        case AgentEvent.Cancelled(_, reason) =>
+          Left(s"$agentName cancelled: $reason")
       (responseDeferred
         .complete(result)
         .as(Behaviors.stopped))

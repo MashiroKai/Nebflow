@@ -127,6 +127,9 @@ object PlanAgent:
               case AgentEvent.Failed(_, error) =>
                 (mainAgentRef ! AgentCommand.PlanFailed(error.message)) *>
                   IO.pure(Behaviors.stopped[AgentEvent])
+              case AgentEvent.Cancelled(_, reason) =>
+                (mainAgentRef ! AgentCommand.PlanFailed(s"plan agent cancelled: $reason")) *>
+                  IO.pure(Behaviors.stopped[AgentEvent])
 
           override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
             signal match
