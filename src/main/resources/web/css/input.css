@@ -48,8 +48,12 @@
   display: flex;
   flex-direction: column;
 }
-/* Drag-over highlight on body indicates drop zone */
-body.drag-over #input-bar {
+/* Drag-over highlight — the input bar being dragged over (#303).
+   Element-scoped: primary #input-bar + popup .fa-input-bar share the same
+   visual. (Formerly body.drag-over — the stuck-highlight bug came from a
+   body-level counter that never reset; now per-bar and delegation-managed.) */
+#input-bar.drag-over,
+.fa-input-bar.drag-over {
   outline: 2px dashed var(--color-primary);
   outline-offset: -2px;
 }
