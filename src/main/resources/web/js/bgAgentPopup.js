@@ -117,7 +117,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
         <div id="bgagent-slash-dropdown" class="slash-dropdown"></div>
         <div id="bgagent-queue-bar"></div>
         <div class="fa-input-bar" id="bgagent-input-bar">
-          <button class="glass-control fa-icon-btn" id="bgagent-attach-btn" title="Attach file">
+          <button class="icon-btn" id="bgagent-attach-btn" title="Attach file">
             <i data-lucide="paperclip"></i>
           </button>
           <div class="fa-input-wrap">

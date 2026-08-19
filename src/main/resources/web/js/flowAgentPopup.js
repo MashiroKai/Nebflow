@@ -112,10 +112,11 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 .flow-agent-modal .code-copy-btn { right: 40px; }
 
 /* Chat area — no custom overrides; inherits chat.css bubble/tool-card styles.
-   Matches #chat layout: flex column + overscroll-behavior. */
+   Matches #chat layout: flex column + overscroll-behavior.
+   Bottom padding ≥12px: visual gap above the glass input bar (popup-input-polish §I). */
 .flow-agent-chat {
   flex: 1; overflow-y: auto;
-  padding: 12px 16px 8px;
+  padding: 12px 16px 12px;
   display: flex; flex-direction: column;
   overscroll-behavior: contain;
   scrollbar-color: var(--color-frame-border) transparent;
@@ -194,6 +195,261 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   width: 90%; max-width: 720px;
   height: 80vh; max-height: 85vh;
   margin: 6vh auto;
+}
+
+/* ── Input area — mirrors main-window css/input.css exactly. ─────────────
+   Main-window input styles are ID-scoped (#input / #send-btn / #stop-btn /
+   #slash-dropdown / #queue-bar), so popup elements (ids bgagent-*, flow-*)
+   cannot inherit them. These rules mirror the exact values from
+   input.css: #input-bar :12 / #input :153 / .icon-btn :173 / #send-btn :207 /
+   #stop-btn :261 / #slash-dropdown :350 / #queue-bar :446 / dark :673.
+   If main-window input.css changes, sync these values here. (popup-input-polish spec) */
+.flow-agent-input-area {
+  position: relative;  /* anchor for slash-dropdown (absolute bottom:100%) */
+  padding: 4px 16px 10px;  /* bottom ≥10px breathing above footer border (input.css #input-area:8) */
+  flex-shrink: 0;
+}
+.fa-input-bar {
+  position: relative;
+  pointer-events: auto;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+}
+.fa-input-bar::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 10%; right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 10%,
+    var(--sapphire-refraction) 50%,
+    transparent 90%);
+  pointer-events: none;
+  z-index: 1;
+  border-radius: inherit;
+}
+.fa-input-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;  /* allow textarea to shrink inside flex (main window has room; popup may not) */
+}
+.flow-agent-input-area textarea {
+  border: none;
+  background: transparent;
+  border-radius: 18px;
+  padding: 8px 14px;
+  font-size: 14.5px;
+  outline: none;
+  width: 100%;
+  line-height: 1.4;
+  resize: none;
+  overflow-y: auto;
+  max-height: 200px;
+  font-family: inherit;
+  box-sizing: border-box;
+  color: var(--color-text);
+}
+.flow-agent-input-area textarea::placeholder {
+  color: var(--color-text-muted);
+}
+/* Attach button: DOM now uses the global .icon-btn class (input.css:173) —
+   styling and svg sizing (20px/stroke 2) come with the class, zero new CSS. */
+
+/* Send — light-green glass, identical material to #send-btn (input.css:207) */
+#bgagent-send-btn, #flow-send-btn {
+  background: rgba(7, 193, 96, 0.42);
+  -webkit-backdrop-filter: blur(8px) saturate(1.3);
+  backdrop-filter: blur(8px) saturate(1.3);
+  color: #fff;
+  border: 1px solid rgba(7, 193, 96, 0.15);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
+    0 1px 4px rgba(7, 193, 96, 0.2),
+    0 2px 8px rgba(0, 0, 0, 0.06);
+  border-radius: 50%;
+  width: 36px; height: 36px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+#bgagent-send-btn:hover, #flow-send-btn:hover {
+  background: rgba(7, 193, 96, 0.55);
+  border-color: rgba(7, 193, 96, 0.25);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
+    0 2px 8px rgba(7, 193, 96, 0.28),
+    0 2px 12px rgba(0, 0, 0, 0.08);
+}
+#bgagent-send-btn:active, #flow-send-btn:active {
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.12),
+    0 1px 2px rgba(7, 193, 96, 0.12);
+}
+#bgagent-send-btn:disabled, #flow-send-btn:disabled {
+  background: rgba(170, 170, 170, 0.3);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  cursor: default;
+}
+#bgagent-send-btn.disconnected, #flow-send-btn.disconnected {
+  background: rgba(170, 170, 170, 0.3);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  cursor: not-allowed;
+}
+#bgagent-send-btn.disconnected:hover, #flow-send-btn.disconnected:hover {
+  background: rgba(170, 170, 170, 0.3);
+}
+#bgagent-send-btn svg, #flow-send-btn svg,
+#bgagent-stop-btn svg, #flow-stop-btn svg {
+  width: 18px; height: 18px; stroke-width: 2.5;
+}
+
+/* Stop — red glass, identical material to #stop-btn (input.css:261) */
+#bgagent-stop-btn, #flow-stop-btn {
+  background: var(--color-error);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.3);
+  backdrop-filter: blur(8px) saturate(1.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.12),
+    0 1px 4px rgba(0, 0, 0, 0.12);
+  border-radius: 50%;
+  width: 36px; height: 36px;
+  cursor: pointer;
+  display: none;  /* syncInputButtons toggles inline display flex/none */
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+#bgagent-stop-btn:hover, #flow-stop-btn:hover { background: #d32f2f; }
+
+/* Attachment preview chips container (input.css #attachment-preview :56) */
+.flow-agent-input-area .attachment-preview {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+/* Slash command dropdown (input.css #slash-dropdown :350) */
+.flow-agent-input-area .slash-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0; right: 0;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+  margin-bottom: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  display: none;
+  z-index: 50;
+  pointer-events: auto;
+}
+.flow-agent-input-area .slash-dropdown.on { display: block; }
+
+/* Queue bar (input.css #queue-bar :446) — container only; item classes
+   (.queue-item etc.) are global and already styled */
+.flow-agent-input-area #bgagent-queue-bar,
+.flow-agent-input-area #flow-queue-bar {
+  position: relative;
+  pointer-events: auto;
+  flex-shrink: 0;
+  max-height: 0;
+  opacity: 0;
+  margin-bottom: 0;
+  border: 0;
+  overflow: hidden;
+  transition: max-height 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 0.22s ease,
+              margin-bottom 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.flow-agent-input-area #bgagent-queue-bar.visible,
+.flow-agent-input-area #flow-queue-bar.visible {
+  max-height: 280px;
+  opacity: 1;
+  margin-bottom: 4px;
+  overflow-y: auto;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+}
+.flow-agent-input-area #bgagent-queue-bar.visible::before,
+.flow-agent-input-area #flow-queue-bar.visible::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 10%; right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 10%,
+    var(--sapphire-refraction) 50%,
+    transparent 90%);
+  pointer-events: none;
+  z-index: 1;
+}
+.flow-agent-input-area #bgagent-queue-bar.collapsed,
+.flow-agent-input-area #flow-queue-bar.collapsed {
+  max-height: 40px;
+  overflow: hidden;
+}
+
+/* ── Dark theme (input.css:673) ── */
+@media (prefers-color-scheme: dark) {
+  .fa-input-bar {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  .flow-agent-input-area textarea { color: #e0e2e5; }
+  .flow-agent-input-area textarea::placeholder { color: #555860; }
+  .flow-agent-input-area .slash-dropdown {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 4px 16px rgba(0, 0, 0, 0.30),
+      0px 8px 32px rgba(0, 0, 0, 0.45);
+  }
+  .flow-agent-input-area #bgagent-queue-bar.visible,
+  .flow-agent-input-area #flow-queue-bar.visible {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
 }
 </style>`;
 
@@ -302,7 +558,7 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
         <div id="flow-slash-dropdown" class="slash-dropdown"></div>
         <div id="flow-queue-bar"></div>
         <div class="fa-input-bar" id="flow-input-bar">
-          <button class="glass-control fa-icon-btn" id="flow-attach-btn" title="Attach file">
+          <button class="icon-btn" id="flow-attach-btn" title="Attach file">
             <i data-lucide="paperclip"></i>
           </button>
           <div class="fa-input-wrap">
