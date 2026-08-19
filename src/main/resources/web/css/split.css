@@ -225,6 +225,13 @@
 .explorer-item.explorer-file:hover {
   color: var(--color-text);
 }
+/* #303 internal drag: file rows are draggable into a chat input bar. */
+.explorer-item.explorer-file[draggable="true"] {
+  cursor: grab;
+}
+.explorer-item.explorer-file.dragging {
+  opacity: 0.45;
+}
 .explorer-chevron {
   display: flex;
   align-items: center;

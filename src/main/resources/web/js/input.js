@@ -1450,13 +1450,19 @@ export function initInput(view) {
 // A file dropped onto ANY input bar (main or popup) attaches to THAT bar's
 // session; drops elsewhere are ignored (no page navigation).
 const INPUT_BAR_SELECTOR = '#input-bar, .fa-input-bar';
+// #303 internal drag: explorer file rows carry this custom MIME in addition to
+// (or instead of) native 'Files' — both count as attach payloads.
+const INTERNAL_DRAG_MIME = 'application/x-nebflow-file';
 
 export function initGlobalFileDrop() {
   let dragDepth = 0;    // child-element nesting depth inside the bar
   let activeBar = null; // currently highlighted input bar
 
-  const hasFiles = (e) =>
-    !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
+  const hasAttach = (e) => {
+    if (!e.dataTransfer) return false;
+    const types = Array.from(e.dataTransfer.types || []);
+    return types.includes('Files') || types.includes(INTERNAL_DRAG_MIME);
+  };
   const barOf = (e) =>
     e.target instanceof Element ? e.target.closest(INPUT_BAR_SELECTOR) : null;
   const clearHighlight = () => {
@@ -1465,7 +1471,7 @@ export function initGlobalFileDrop() {
   };
 
   document.addEventListener('dragenter', (e) => {
-    if (!hasFiles(e)) return;
+    if (!hasAttach(e)) return;
     const bar = barOf(e);
     if (!bar) return;
     if (bar !== activeBar) clearHighlight();
@@ -1475,7 +1481,7 @@ export function initGlobalFileDrop() {
   });
 
   document.addEventListener('dragover', (e) => {
-    if (!hasFiles(e)) return;      // native text drags pass through untouched
+    if (!hasAttach(e)) return;     // native text drags pass through untouched
     e.preventDefault();            // block browser default "open dropped file"
     e.dataTransfer.dropEffect = 'copy';
   });
@@ -1489,7 +1495,7 @@ export function initGlobalFileDrop() {
   });
 
   document.addEventListener('drop', (e) => {
-    if (!hasFiles(e)) return;
+    if (!hasAttach(e)) return;
     e.preventDefault();            // never navigate to the dropped file
     const bar = barOf(e);
     clearHighlight();
@@ -1500,7 +1506,90 @@ export function initGlobalFileDrop() {
     setActiveView(view);
     const target = { attPreviewEl: view.dom.attPreview,
                      attachments: view.pendingAttachments };
-    Array.from(e.dataTransfer.files || []).forEach(f => addFileAttachment(f, null, target));
+    // #303 internal drag: explorer file rows carry a custom MIME payload —
+    // attach by path through the same pipeline as the attach button.
+    const internal = e.dataTransfer.getData(INTERNAL_DRAG_MIME);
+    if (internal) {
+      try {
+        const { path, rootPath } = JSON.parse(internal);
+        if (path) addPathAttachment({ path, rootPath }, view, target);
+        else console.warn('[drop] internal drag payload missing path');
+      } catch (err) {
+        console.warn('[drop] bad internal drag payload:', err);
+      }
+    } else {
+      // External drag (desktop files) — unchanged.
+      Array.from(e.dataTransfer.files || []).forEach(f => addFileAttachment(f, null, target));
+    }
     view.dom.input?.focus();
   });
+}
+
+// ---------- #303 internal drag: explorer file → attachment pipeline ----------
+// Explorer rows drop with {path, rootPath} (explorer-relative path + absolute
+// root, the same coordinates readFile/listDir use). We re-read the file through
+// the SAME channels the tree uses — /api/nf-file for media (binary never rides
+// the WS), readFile WS for text — then feed a real File object into
+// addFileAttachment, so preview chips / upload / send are byte-identical to the
+// attach-button path.
+function joinAbsPath(rootPath, path) {
+  if (!rootPath) return path;
+  return rootPath.endsWith('/') ? rootPath + path : rootPath + '/' + path;
+}
+
+async function addPathAttachment({ path, rootPath }, view, target) {
+  const name = path.split('/').pop() || path;
+  const absPath = joinAbsPath(rootPath, path);
+  const token = localStorage.getItem(key('token')) || '';
+  // Typed window alias — the one-shot readFile guard flag shared with explorer.js.
+  const win = /** @type {Window & { __internalDragReadPath: string | null }} */ (/** @type {any} */ (window));
+
+  // Phase 1: whitelisted media (images, pdf, mp4…) come back from nf-file.
+  // Non-whitelisted extensions → 400 "File type not allowed" → phase 2.
+  try {
+    const resp = await fetch(`/api/nf-file?path=${encodeURIComponent(absPath)}&token=${encodeURIComponent(token)}`);
+    if (resp.ok) {
+      const blob = await resp.blob();
+      const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+      addFileAttachment(file, null, target);
+      return;
+    }
+  } catch { /* offline/network — fall through to readFile, it surfaces the error */ }
+
+  // Phase 2: text files via readFile WS. The answer is a fileContent frame that
+  // explorer.js routes to us (window flag + 'internal-file-read' event) instead
+  // of opening a Canvas tab. One-shot guard with a timeout so a lost response
+  // never leaks the flag into a later normal file open.
+  const readDone = new Promise((resolve) => {
+    let settled = false;
+    const finish = (detail) => { if (!settled) { settled = true; resolve(detail); } };
+    const onRead = (e) => {
+      clearTimeout(timer);
+      window.removeEventListener('internal-file-read', onRead);
+      finish(e.detail);
+    };
+    const timer = setTimeout(() => {
+      window.removeEventListener('internal-file-read', onRead);
+      if (win.__internalDragReadPath === path) win.__internalDragReadPath = null;
+      finish({ error: 'timeout' });
+    }, 8000);
+    window.addEventListener('internal-file-read', onRead);
+  });
+  win.__internalDragReadPath = path;
+  // sessionId follows explorer.js's own readFile semantics (state.activeSessionId,
+  // not the drop target view's session — the file tree is session-agnostic).
+  sendWs({ type: 'readFile', sessionId: state.activeSessionId, path, rootPath: rootPath || undefined });
+  const detail = await readDone;
+  if (detail.error) {
+    showAttError(`Failed to attach ${name}: ${detail.error}`, target);
+    return;
+  }
+  if (!detail.content) {
+    // Binary non-media (zip, bin…) — readFile never sends content for these and
+    // nf-file is whitelist-only, so there is nothing to embed.
+    showAttError(`Cannot attach binary file ${name} — reference its path in the message instead`, target);
+    return;
+  }
+  const file = new File([detail.content], name, { type: 'text/plain' });
+  addFileAttachment(file, null, target);
 }
