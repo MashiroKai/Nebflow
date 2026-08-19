@@ -116,12 +116,13 @@ class TodoPanelBackendSpec extends CatsEffectSuite:
       _ <- reset()
       sid = "c3"
       tid <- mkTask(sid, Some("agent"))
-      _ <- store.update(sid, tid, TaskUpdateInput(status = Some(TaskStatus.Completed)))
+      // v2 C15: agent reaches completed via complete() (legacy agent flow), not TaskUpdate
+      _ <- store.complete(sid, tid, by = "agent")
       r <- store.complete(sid, tid, by = "user").attempt
       after <- store.get(sid, tid)
     yield
       assert(r.isRight, "duplicate complete must not taskError-zombie the panel row")
-      assertEquals(after.get.completedBy, None, "original agent completion preserved")
+      assertEquals(after.get.completedBy, Some("agent"), "original agent completion preserved")
 
   test("complete on failed or dismissed task raises (terminal re-complete = taskError)"):
     for
@@ -130,7 +131,7 @@ class TodoPanelBackendSpec extends CatsEffectSuite:
       f <- mkTask(sid, None)
       _ <- store.update(sid, f, TaskUpdateInput(status = Some(TaskStatus.Failed)))
       d <- mkTask(sid, None)
-      _ <- store.update(sid, d, TaskUpdateInput(status = Some(TaskStatus.Completed)))
+      _ <- store.complete(sid, d, by = "agent")
       _ <- store.dismiss(sid, d)
       rf <- store.complete(sid, f, by = "user").attempt
       rd <- store.complete(sid, d, by = "user").attempt

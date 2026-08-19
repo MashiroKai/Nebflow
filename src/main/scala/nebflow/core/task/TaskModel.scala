@@ -5,7 +5,7 @@ import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.generic.semiauto.deriveCodec
 
 enum TaskStatus:
-  case Pending, InProgress, Completed, Failed, Dismissed
+  case Pending, InProgress, NeedsConfirmation, Completed, Failed, Dismissed
 
 object TaskStatus:
 
@@ -18,6 +18,7 @@ object TaskStatus:
   def wireName(s: TaskStatus): String = s match
     case TaskStatus.Pending => "pending"
     case TaskStatus.InProgress => "in_progress"
+    case TaskStatus.NeedsConfirmation => "needs_confirmation"
     case TaskStatus.Completed => "completed"
     case TaskStatus.Failed => "failed"
     case TaskStatus.Dismissed => "dismissed"
@@ -26,6 +27,7 @@ object TaskStatus:
     io.circe.Decoder.decodeString.emap {
       case "pending" => Right(TaskStatus.Pending)
       case "in_progress" => Right(TaskStatus.InProgress)
+      case "needs_confirmation" => Right(TaskStatus.NeedsConfirmation)
       case "completed" => Right(TaskStatus.Completed)
       case "failed" => Right(TaskStatus.Failed)
       case "dismissed" => Right(TaskStatus.Dismissed)
@@ -34,6 +36,7 @@ object TaskStatus:
     io.circe.Encoder.encodeString.contramap {
       case TaskStatus.Pending => "pending"
       case TaskStatus.InProgress => "in_progress"
+      case TaskStatus.NeedsConfirmation => "needs_confirmation"
       case TaskStatus.Completed => "completed"
       case TaskStatus.Failed => "failed"
       case TaskStatus.Dismissed => "dismissed"
@@ -96,7 +99,11 @@ case class Task(
   taskKind: String = "agent",
   /** Who completed it: "user" = user clicked the circle; "agent" = agent flow.
     * None = not completed or legacy data. */
-  completedBy: Option[String] = None
+  completedBy: Option[String] = None,
+  /** todo-panel v2 §2.4 (C17): times the user has returned this task from
+    * needs_confirmation back to in_progress. withDefaults keeps 535+ legacy
+    * JSON files zero-migration (absent key decodes to 0). */
+  returnCount: Int = 0
 )
 
 object Task:
@@ -108,7 +115,8 @@ object Task:
    * a missing key. Configuration.default.withDefaults fills absent fields
    * from their defaults; strictDeserialization stays off so legacy unknown
    * keys (e.g. a stray "metadata") are ignored. Same red line covers the
-   * todo-panel fields (taskKind -> "agent", completedBy -> None).
+   * todo-panel fields (taskKind -> "agent", completedBy -> None,
+   * returnCount -> 0).
    */
   given Configuration = Configuration.default.withDefaults
   given Codec[Task] = ConfiguredCodec.derived
@@ -118,6 +126,19 @@ object Task:
     * break the agent/human split, and unknown kinds have no consumer. */
   def normalizeTaskKind(raw: Option[String]): String =
     raw.map(_.trim.toLowerCase).collect { case "human" => "human" }.getOrElse("agent")
+
+  /** todo-panel v2 §6.2c (B7): the [打回任务] injection block appended to the
+    * user message when the user returns a needs_confirmation task. Built from
+    * the PRE-return snapshot — notes.last is the agent's outcome summary, not
+    * the feedback. Fixed copy (agent context, not UI — no i18n, spec §11). */
+  def returnInjectionBlock(taskId: String, snapshot: Task, feedback: String): String =
+    val output = snapshot.notes.lastOption.map(_.content).getOrElse("（无）")
+    val feedbackLine = if feedback.nonEmpty then feedback else "（未附意见）"
+    s"[打回任务 #$taskId: ${snapshot.subject}]\n" +
+      s"任务描述: ${snapshot.description}\n" +
+      s"产出: $output\n" +
+      s"用户意见: $feedbackLine\n" +
+      "（该任务已回到进行中，请按用户意见修改；改完重新置 needs_confirmation 待用户确认）"
 
 end Task
 

@@ -3140,17 +3140,25 @@ class WebSocketRoutes(
                                 )
                               ).handleErrorWith(_ => IO.unit)
                             ) *> {
-                              val blocksList = blocks.toList
-                              ensureAgent(msgSessionId)(ref =>
-                                ref ! AgentCommand
-                                  .UserInput(
-                                    content,
-                                    None,
-                                    clientMessageId,
-                                    Some(blocksList).filter(_.nonEmpty),
-                                    chatWidth
-                                  )
-                              )
+                              // todo-panel v2 §6.2 (C16/C21): process the optional
+                              // taskRefs field BEFORE dispatching — each ref returns
+                              // a needs_confirmation task to in_progress (durable
+                              // feedback note + returnCount) and appends a
+                              // [打回任务] injection block so the session agent
+                              // (= task owner, C21) sees the revision context.
+                              processTaskReturns(msgSessionId, content, json, blocks, wsSend).flatMap { _ =>
+                                val blocksList = blocks.toList
+                                ensureAgent(msgSessionId)(ref =>
+                                  ref ! AgentCommand
+                                    .UserInput(
+                                      content,
+                                      None,
+                                      clientMessageId,
+                                      Some(blocksList).filter(_.nonEmpty),
+                                      chatWidth
+                                    )
+                                )
+                              }
                             }
                           }
                       }
@@ -3231,6 +3239,65 @@ class WebSocketRoutes(
     "bower_components",
     "Movies"
   )
+
+  /** todo-panel v2 §6.2 (C16/C17/C21): process the optional `taskRefs` array
+    * on a default-branch user message — the user RETURN flow. For each ref:
+    * validate the session, return the needs_confirmation task to in_progress
+    * (returnCount+1, feedback appended to notes, events recorded), and append
+    * a [打回任务] injection block built from the PRE-return snapshot (the
+    * agent's latest outcome note). Per-ref failures emit taskError frames and
+    * never block the message itself or the other refs. After processing, the
+    * authoritative task list is pushed so every panel converges. */
+  private def processTaskReturns(
+    msgSessionId: String,
+    content: String,
+    frame: io.circe.Json,
+    blocks: scala.collection.mutable.ListBuffer[ContentBlock],
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[Unit] =
+    val taskRefs = frame.hcursor.downField("taskRefs").as[List[io.circe.Json]].getOrElse(Nil)
+    if taskRefs.isEmpty then IO.unit // absent/empty — zero behavior change (v1 path)
+    else
+      def taskError(taskId: String, msg: String): IO[Unit] =
+        wsSend(io.circe.Json.obj(
+          "type" -> "taskError".asJson,
+          "error" -> msg.asJson,
+          "taskId" -> taskId.asJson
+        ))
+
+      taskRefs.traverse_ { ref =>
+        val taskId = ref.hcursor.downField("taskId").as[String].getOrElse("")
+        val refSession = ref.hcursor.downField("sessionId").as[String].getOrElse(msgSessionId)
+        if taskId.isEmpty then IO.unit
+        else if refSession != msgSessionId then
+          // §6.2a: cross-session injection guard
+          taskError(taskId, s"Cross-session task reference rejected: $taskId")
+        else
+          sharedResources.taskStore.get(msgSessionId, taskId).flatMap {
+            case None => taskError(taskId, s"Task not found: $taskId")
+            case Some(snapshot) =>
+              sharedResources.taskStore.`return`(msgSessionId, taskId, content).attempt.flatMap {
+                case Right(Some(_)) =>
+                  // Injection block from the PRE-return snapshot (§6.2c): the
+                  // last note is the agent's outcome summary, NOT the feedback.
+                  blocks += ContentBlock.Text(
+                    nebflow.core.task.Task.returnInjectionBlock(taskId, snapshot, content)
+                  )
+                  IO.unit
+                case Right(None) => IO.unit // raced delete — nothing to return
+                case Left(err) =>
+                  taskError(taskId, s"Cannot return: ${err.getMessage}")
+              }
+          }
+      } *> sharedResources.taskStore.listVisible(msgSessionId).flatMap { tasks =>
+        // §6.2 step 3: push the authoritative list so returned rows converge
+        // to in_progress on every connected client.
+        wsSend(io.circe.Json.obj(
+          "type" -> "taskListUpdate".asJson,
+          "sessionId" -> msgSessionId.asJson,
+          "tasks" -> tasks.asJson
+        ))
+      }
 
   /**
    * Search for a file by name and verify its SHA-256 hash matches.

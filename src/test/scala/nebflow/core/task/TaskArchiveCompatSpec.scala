@@ -108,7 +108,8 @@ class TaskArchiveCompatSpec extends FunSuite:
     val sid = "sess-r3a"
     val id = FileTaskStore.create(sid, TaskCreateInput("t", "d")).unsafeRunSync()
     FileTaskStore.update(sid, id, TaskUpdateInput(status = Some(TaskStatus.InProgress))).unsafeRunSync()
-    val done = FileTaskStore.update(sid, id, TaskUpdateInput(status = Some(TaskStatus.Completed))).unsafeRunSync().get
+    // v2 C15: agent reaches completed via complete(), not TaskUpdate
+    val done = FileTaskStore.complete(sid, id, by = "agent").unsafeRunSync().get
     assert(done.completedAt.isDefined)
     // disk round-trip
     val fromDisk = FileTaskStore.get(sid, id).unsafeRunSync().get
@@ -165,8 +166,9 @@ class TaskArchiveCompatSpec extends FunSuite:
     val sid = "sess-r4b"
     val id = FileTaskStore.create(sid, TaskCreateInput("t", "d")).unsafeRunSync()
     FileTaskStore.update(sid, id, TaskUpdateInput(
-      note = Some("first"), noteLinks = Some(List("/tmp/a.md", "abc123")), status = Some(TaskStatus.Completed)
+      note = Some("first"), noteLinks = Some(List("/tmp/a.md", "abc123"))
     )).unsafeRunSync()
+    FileTaskStore.complete(sid, id, by = "agent").unsafeRunSync()
     FileTaskStore.update(sid, id, TaskUpdateInput(note = Some("second"))).unsafeRunSync()
     val t = FileTaskStore.get(sid, id).unsafeRunSync().get
     assertEquals(t.notes.map(_.content), List("first", "second"))
@@ -188,6 +190,8 @@ class TaskArchiveCompatSpec extends FunSuite:
   }
 
   // ===== R5 (red line): renderForPrompt byte-identical =====
+  // v2 note: the header sentence changed with the five-state lifecycle (C15 —
+  // needs_confirmation is the completion lane); the body rendering is unchanged.
 
   test("R5: renderForPrompt output is byte-identical to the frozen baseline") {
     val sid = "sess-r5"
@@ -202,7 +206,11 @@ class TaskArchiveCompatSpec extends FunSuite:
     val out = FileTaskStore.renderForPrompt(sid).unsafeRunSync()
     val expected =
       "## Current Tasks\n\n" +
-        "Your task list is below. Work through tasks in order. Mark each as completed when fully done.\n\n" +
+        "Your task list is below. Work through tasks in order. When a task is fully done, " +
+        "mark it needs_confirmation (NOT completed) and attach a note with the outcome — " +
+        "completed is reserved for the user's confirmation. Tasks marked [needs_confirmation] " +
+        "are DONE and awaiting user confirmation: do NOT work on them again; if the user " +
+        "returns one with feedback, a [打回任务] block tells you what to revise.\n\n" +
         "#2 [in_progress] subject2 — activeForm2\n" +
         "#3 [pending] subject3\n"
     assertEquals(out, expected)
@@ -228,8 +236,9 @@ class TaskArchiveCompatSpec extends FunSuite:
     val orphan = "sess-deleted"
     val id1 = FileTaskStore.create(sid, TaskCreateInput("known task", "d")).unsafeRunSync()
     FileTaskStore.update(sid, id1, TaskUpdateInput(
-      status = Some(TaskStatus.Completed), note = Some("done"), noteLinks = Some(List("/x.md"))
+      note = Some("done"), noteLinks = Some(List("/x.md"))
     )).unsafeRunSync()
+    FileTaskStore.complete(sid, id1, by = "agent").unsafeRunSync()
     val dir2 = tempRoot / "tasks" / orphan
     os.makeDir.all(dir2)
     os.write(dir2 / "1.json", s1)

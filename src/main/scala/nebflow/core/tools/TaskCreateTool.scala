@@ -50,7 +50,7 @@ hierarchical task tree. Sub-tasks inherit the parent's context.
 - **parentTaskId** (optional): Parent task ID for creating sub-tasks
 - **taskKind** (optional): `"agent"` (default — your own tracked work) or `"human"` (a reminder FOR the user, e.g. "confirm the production deploy" — the user completes it by clicking its circle in the todos panel; do NOT work it yourself and never mark it in_progress)
 
-All tasks are created with status `pending`. Use TaskUpdate to change status and manage dependencies.
+All tasks are created with status `pending`. Use TaskUpdate to change status and manage dependencies. When you fully finish a task, mark it `needs_confirmation` (the user confirms completion themselves — `completed` is reserved for the user).
 
 The current task list is always visible in your system prompt — no need to call TaskList."""
 
