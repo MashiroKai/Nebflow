@@ -106,7 +106,7 @@ Message type (optional, default "INFO"):
         "delivery" -> Json.obj(
           "type" -> "string".asJson,
           "enum" -> Json.arr("ask".asJson, "queue".asJson, "immediate".asJson),
-          "description" -> "Delivery mode: 'ask' = sync fork (wait for answer); 'queue' = serialized FIFO (survives restart, processed one at a time after current task completes); 'immediate' = inject like user input (merged into current turn at next boundary). Default: 'immediate'.".asJson,
+          "description" -> "Delivery mode: 'ask' = sync fork (wait for answer); 'queue' = serialized FIFO (survives restart, processed one at a time after current task completes); 'immediate' = inject like user input (merged into current turn at next boundary). Default: 'immediate'. [INTERRUPT] type must use 'immediate' — queue would delay it past the current task, breaking the interrupt semantics.".asJson,
           "default" -> "immediate".asJson
         ),
         "images" -> Json.obj(
