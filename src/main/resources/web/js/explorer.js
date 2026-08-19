@@ -328,6 +328,22 @@ function buildFileNode(path, depth) {
   node.appendChild(icon);
   node.appendChild(label);
 
+  // #303 internal drag: FILE rows are draggable into a chat input bar (dirs are
+  // not draggable in v1). The payload carries the explorer-relative path + root
+  // so the drop handler re-reads the file through the same readFile/nf-file
+  // channels the tree uses. input.js consumes this in initGlobalFileDrop.
+  node.draggable = true;
+  node.addEventListener('dragstart', (e) => {
+    e.stopPropagation();
+    e.dataTransfer.setData('application/x-nebflow-file',
+      JSON.stringify({ path, rootPath: explorerRoot || '' }));
+    e.dataTransfer.effectAllowed = 'copy';
+    node.classList.add('dragging');   // semi-transparent while dragging
+  });
+  node.addEventListener('dragend', () => {
+    node.classList.remove('dragging');
+  });
+
   // Single click → open as preview tab (italic, temporary)
   // Cmd/Ctrl or Shift click = selection only — no open
   node.addEventListener('click', (e) => {
@@ -472,6 +488,25 @@ onMessage('dirListing', (msg) => {
 });
 
 onMessage('fileContent', (msg) => {
+  // #303 internal drag: a drop-triggered readFile is answered here — hand the
+  // content to the input-bar attachment pipeline instead of opening a tab.
+  // One-shot guard: input.js sets the window flag before sending readFile and
+  // this branch consumes it (nulls it) on the matching path.
+  const win = /** @type {Window & { __internalDragReadPath: string | null }} */ (/** @type {any} */ (window));
+  if (win.__internalDragReadPath && win.__internalDragReadPath === msg.path) {
+    win.__internalDragReadPath = null;
+    window.dispatchEvent(new CustomEvent('internal-file-read', {
+      detail: {
+        path: msg.path,
+        absPath: msg.absPath || '',
+        content: msg.content || '',
+        size: msg.size || 0,
+        name: msg.fileName || msg.path.split('/').pop() || msg.path,
+        error: msg.error || null,
+      },
+    }));
+    return;
+  }
   if (msg.error) {
     console.warn('readFile error:', msg.error);
     return;
