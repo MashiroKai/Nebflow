@@ -376,11 +376,12 @@ Do NOT duplicate this worker's work — avoid working with the same files or top
             event match
               case AgentEvent.Completed(_, messages) =>
                 val text = extractLastAssistantText(messages)
-                if text.nonEmpty then
+                // trim guard: whitespace-only tail → "(no text output)", not an empty shell
+                if text.trim.nonEmpty then
                   notifyParentAndStop(
                     "completed",
                     s""""$description":
-$text"""
+${text.trim}"""
                   )
                 else notifyParentAndStop("completed", s""""$description" (no text output)""")
               case AgentEvent.Failed(sessionId, error) =>
@@ -421,7 +422,7 @@ $text"""
       .collectFirst {
         case msg if msg.role == MessageRole.Assistant => msg.textContent
       }
-      .filter(_.nonEmpty)
+      .filter(_.trim.nonEmpty)
       .getOrElse("")
 
 end SubTaskTool

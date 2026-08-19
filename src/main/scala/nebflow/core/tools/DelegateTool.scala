@@ -499,7 +499,8 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
             event match
               case AgentEvent.Completed(_, messages) =>
                 val text = extractLastAssistantText(messages)
-                if text.nonEmpty then notifyParentAndStop("completed", s"\"$description\":\n$text")
+                // trim guard: whitespace-only tail → "(no text output)", not an empty shell
+                if text.trim.nonEmpty then notifyParentAndStop("completed", s"\"$description\":\n${text.trim}")
                 else notifyParentAndStop("completed", s"\"$description\" (no text output)")
               case AgentEvent.Failed(sessionId, error) =>
                 val sessionInfo =
@@ -676,7 +677,7 @@ You will be notified when the initial task completes."""
       .collectFirst {
         case msg if msg.role == MessageRole.Assistant => msg.textContent
       }
-      .filter(_.nonEmpty)
+      .filter(_.trim.nonEmpty)
       .getOrElse("")
 
 end DelegateTool
