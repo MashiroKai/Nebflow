@@ -443,7 +443,7 @@ private[agent] trait AgentCore:
             else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker)
             else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker)
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
-          // 它把闲置唤醒/重启后的第一发改道到 LowCost(107)，偏离用户设置的
+          // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
           // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
           request = LlmRequest(
             messages = stateWithReminder.messages ++ contextMsg ++ branchMsg ++ maintenanceMsg,
@@ -1069,7 +1069,7 @@ private[agent] trait AgentCore:
    * Save-phase compaction tools (compaction burn-down, 2026-08-18). The save
    * turn exists to run the memory maintenance cycle — Write/Edit on the
    * memory files, Read for the VERIFY step — but the FULL toolset on a weak
-   * default model (107/deepseek) turns into open-ended exploration (5min+
+   * default model turns into open-ended exploration (5min+
    * without compactComplete; qa-mini with NO tools finished in 110s). Restrict
    * to the memory-maintenance essentials: nothing that can branch outward
    * (no Bash/Grep/Glob/WebSearch). Write/Edit/Read are all present in the

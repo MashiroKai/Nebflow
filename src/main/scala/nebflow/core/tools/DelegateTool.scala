@@ -150,7 +150,7 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
         ),
         "preset" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Optional named model preset (from model-presets.json, e.g. 'LowCost' for the free 107 gateway, 'Vision' for vision-capable models). Overrides the sub-agent's own preset/model for this spawn. Use 'LowCost' when the task is cheap/not urgent or your default provider is down.".asJson
+          "description" -> "Optional named model preset — a preset name from model-presets.json (e.g. 'LowCost' for cheap or non-urgent tasks, 'Vision' for vision-capable models). Overrides the sub-agent's own preset/model for this spawn. Use 'LowCost' when the task is cheap/not urgent or your default provider is down.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)

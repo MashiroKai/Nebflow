@@ -10,7 +10,8 @@ import nebflow.core.presets.PresetStore
  * Resolution: an explicit `preset` parameter on the spawn tool wins over the
  * target agent's own preset/model — the resulting AgentDef carries the
  * explicit preset's chain as its resolved model, so the child's LLM requests
- * run on the requested provider chain (e.g. LowCost → 107 free gateway).
+ * run on the requested provider chain (e.g. a 'LowCost' preset resolving to a
+ * cheaper provider chain).
  *
  * Missing/empty presets return Left with the available list so the tool can
  * surface a self-describing error the LLM can self-heal from (issue #291,

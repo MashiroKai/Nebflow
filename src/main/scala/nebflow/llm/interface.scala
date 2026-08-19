@@ -183,8 +183,8 @@ object LlmInterface:
     configRef: Option[Ref[IO, NebflowServiceConfig]] = None
   ): IO[(LlmHandle[IO], ProviderRegistry, ProviderHealthMonitor, IO[Unit])] =
     // Force HTTP/1.1: the JDK HttpClient's HTTP/2 connection-reuse + TLS 1.3
-    // session resumption clashes with the USTC gateway reverse proxy
-    // (nginx/one-api style), producing intermittent bad_record_mac TLS alerts
+    // session resumption clashes with certain reverse proxies
+    // (nginx/one-api style API gateways), producing intermittent bad_record_mac TLS alerts
     // on reused connections. curl never hits it — each request is a fresh
     // connection. HTTP/1.1 removes the multiplexed-reuse path entirely; if
     // bad_record_mac persists, next step is disabling TLS 1.3 resumption.

@@ -23,8 +23,8 @@ import java.util.concurrent.locks.ReentrantLock
  */
 case class LlmUsageRecord(
   timestamp: Long, // epoch millis
-  provider: String, // provider id, e.g. "107", "deepseek"
-  model: String, // model id, e.g. "glm-5.2-107"
+  provider: String, // provider id, e.g. "openai", "deepseek"
+  model: String, // model id, e.g. "glm-5.2"
   agent: String, // agent name, e.g. "Backend"
   sessionId: Option[String], // None for unsupervised contexts
   inputTokens: Int,
