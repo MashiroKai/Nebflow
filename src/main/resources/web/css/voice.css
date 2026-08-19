@@ -21,6 +21,11 @@
 
 /* ── Voice toggle button (speaker icon in input bar) ──────────────────── */
 
+/* TTS entry hidden (feature shelved; module code & backend kept) */
+#voice-toggle-btn {
+  display: none;
+}
+
 .voice-toggle {
   background: none;
   border: 1px solid transparent; /* reserves edge space for glass hover */
