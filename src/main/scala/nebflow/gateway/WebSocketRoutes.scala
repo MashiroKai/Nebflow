@@ -47,6 +47,10 @@ class WebSocketRoutes(
   sttService: Option[SttService] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
+
+  /** #295 热更：setSttConfig 写配置后重建服务并替换此 Ref——transcribe 立即
+    * 走新配置，无需重启。构造参数保留为初始值（GatewayMain 启动时装载）。 */
+  private val sttServiceRef: Ref[IO, Option[SttService]] = Ref.unsafe(sttService)
   private val nebulaSystem = sharedResources.actorSystem
 
   /** Map of sessionId -> root AgentActor ref. Concurrent-safe via Ref. */
@@ -403,6 +407,7 @@ class WebSocketRoutes(
             }
           _ <- logger.info("WebSocket client connected")
           thinkingCfg <- sharedResources.thinkingConfigRef.get
+          sttSvc <- sttServiceRef.get
           toolsList = ToolRegistry.ALL_TOOLS.map(t =>
             io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
           )
@@ -417,6 +422,7 @@ class WebSocketRoutes(
                   "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
                   "version" -> nebflow.Version.string.asJson,
                   "thinking" -> thinkingCfg.asJson,
+                  "stt" -> SttService.serverConfigNode(sttSvc),
                   "tools" -> toolsList.asJson,
                   "mcpServers" -> mcpServers.asJson
                 )
@@ -723,6 +729,7 @@ class WebSocketRoutes(
     for
       thinkingCfg <- sharedResources.thinkingConfigRef.get
       workScheduleCfg <- sharedResources.freezeScheduleRef.get
+      sttSvc <- sttServiceRef.get
       mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
         io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
       })
@@ -733,6 +740,7 @@ class WebSocketRoutes(
           "version" -> nebflow.Version.string.asJson,
           "thinking" -> thinkingCfg.asJson,
           "workSchedule" -> workScheduleCfg.asJson,
+          "stt" -> SttService.serverConfigNode(sttSvc),
           "tools" -> toolsList.asJson,
           "mcpServers" -> mcpServers.asJson
         )
@@ -1074,6 +1082,34 @@ class WebSocketRoutes(
               case Left(err) =>
                 logger.warn(s"Invalid workSchedule payload rejected: $err") *>
                   wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
+
+          case "setSttConfig" =>
+            // #295 STT 可配置（用户 2026-08-18 拍板）：payload {type, sttConfig:
+            // {endpoint?, apiKey?, model?}}。全字段空/空对象=清空（删配置文件，
+            // 回退免费浏览器 Web Speech）。endpoint 须 http(s)://，model 非空，
+            // apiKey 原样存（key 不落地前端——serverConfig 广播只含
+            // sttConfigured/endpoint/model，永不回传 apiKey）。写盘走 AtomicJson
+            // 原子写；写后 SttService.create() 重建热更（transcribe 立即走新配置）。
+            val payload = parse(text).toOption
+              .flatMap(_.hcursor.downField("sttConfig").as[Option[Json]].toOption.flatten)
+              .getOrElse(Json.obj())
+            SttService.validateConfig(payload) match
+              case Left(err) =>
+                logger.warn(s"Invalid sttConfig payload rejected: $err") *>
+                  wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
+              case Right(Some(cfgJson)) =>
+                AtomicJson.write(SttService.configPath, cfgJson.noSpaces) *>
+                  SttService.create().flatMap { svc =>
+                    sttServiceRef.set(svc) *> logger.info(s"STT config set: endpoint=${svc.map(_.endpoint).getOrElse("(defaults)")}")
+                  } *>
+                  broadcastServerConfig *>
+                  wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+              case Right(None) =>
+                (if os.exists(SttService.configPath) then IO.blocking(os.remove(SttService.configPath)) else IO.unit) *>
+                  sttServiceRef.set(None) *>
+                  logger.info("STT config cleared (fallback to browser Web Speech)") *>
+                  broadcastServerConfig *>
+                  wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
 
           case "setVoiceMuted" =>
             val muted = parse(text).toOption
@@ -1865,12 +1901,13 @@ class WebSocketRoutes(
             val audioB64 = hc.downField("audio").as[String].getOrElse("")
             val language = hc.downField("language").as[String].toOption.filter(_.nonEmpty)
             if audioB64.nonEmpty then
+              sttServiceRef.get.flatMap { sttService =>
               sttService match
                 case None =>
                   wsSend(
                     io.circe.Json.obj(
                       "type" -> "transcription".asJson,
-                      "error" -> s"STT not configured. Create ~/${Branding.homeDirName}/stt-config.json".asJson
+                      "error" -> "STT not configured — set it up in Settings".asJson
                     )
                   )
                 case Some(svc) =>
@@ -1902,6 +1939,7 @@ class WebSocketRoutes(
                       )
                     )
                   }
+              }
             else IO.unit
             end if
 
