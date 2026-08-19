@@ -616,7 +616,7 @@ object GatewayMain extends IOApp.Simple:
                                                         .start
                                                       // --- Background: FreezeScheduler (freeze-schedule) ---
                                                       // 冻结恢复扫描：周期向 Frozen 态 agent 发 CheckFreezeGate，
-                                                      // 开窗则恢复挂起的 dispatch（仿 TaskStuckWatcher 模式：
+                                                      // 出冻结段则恢复挂起的 dispatch（仿 TaskStuckWatcher 模式：
                                                       // 错误自愈 + `>>` 递归栈安全）。Frozen 态 TaskStuckWatcher
                                                       // 天然豁免（只扫 Processing）。
                                                       _ <- nebflow.core.processor.FreezeScheduler

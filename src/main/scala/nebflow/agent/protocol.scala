@@ -102,8 +102,8 @@ object AgentCommand:
 
   /**
    * FreezeScheduler（30s 轮询）/ setWorkSchedule（配置热更）→ frozen agent：
-   * 重评估工作时间表——已开窗则恢复挂起的 dispatch，仍冻结则更新 resumeAt 留任。
-   * 到达非 frozen behavior 时 no-op（幂等，无需去重）。
+   * 重评估冻结时间表（#337 黑名单语义）——已出冻结段则恢复挂起的 dispatch，
+   * 仍在冻结段内则更新 resumeAt 留任。到达非 frozen behavior 时 no-op（幂等，无需去重）。
    */
   case object CheckFreezeGate extends AgentCommand
 
@@ -387,10 +387,10 @@ enum AgentStreamEvent:
   case ExternalEventReceived(source: String, eventType: String, correlationId: Option[String])
   case Interrupted
 
-  /** 冻结调度：agent 在 dispatch 边界被冻结（工作时间段外）。resumeAtMillis 供前端展示。 */
+  /** 冻结调度：agent 在 dispatch 边界被冻结（处于冻结时段内，#337 黑名单语义）。resumeAtMillis 供前端展示。 */
   case Frozen(resumeAtMillis: Option[Long])
 
-  /** 冻结调度：恢复（开窗自动恢复 / 用户输入唤醒 / 交互豁免路径不会发出本事件）。 */
+  /** 冻结调度：恢复（出冻结段自动恢复 / 用户输入唤醒 / 交互豁免路径不会发出本事件）。 */
   case Resumed
 
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json =
@@ -592,7 +592,7 @@ enum AgentStatus:
   case Idle
   case Processing
   case WaitingForUser
-  /** 冻结调度：dispatch 边界被工作时间表拦住，挂起等待开窗/用户唤醒。 */
+  /** 冻结调度：dispatch 边界被冻结时间表拦住（#337 黑名单语义），挂起等待出冻结段/用户唤醒。 */
   case Frozen
   case Error(msg: String)
 
