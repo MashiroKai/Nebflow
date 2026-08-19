@@ -4,7 +4,7 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 
 import java.time.Instant
 
@@ -58,10 +58,8 @@ object FileTaskStore extends TaskStore:
     else 0
   }
 
-  private def writeHighWaterMark(sessionId: String, value: Int): IO[Unit] = IO.blocking {
-    val f = sessionDir(sessionId) / hwmFile
-    os.write.over(f, value.toString)
-  }
+  private def writeHighWaterMark(sessionId: String, value: Int): IO[Unit] =
+    AtomicJson.write(sessionDir(sessionId) / hwmFile, value.toString)
 
   private def readTask(path: os.Path): IO[Option[Task]] = IO.blocking {
     if os.exists(path) then
@@ -71,24 +69,12 @@ object FileTaskStore extends TaskStore:
     else None
   }
 
-  private def writeTask(sessionId: String, task: Task): IO[Unit] = IO.blocking {
-    // Issue #23: atomic write via tmp+rename — a bare os.write.over can leave
-    // a truncated/partial JSON file if the process dies mid-write; readers
-    // then silently drop the task (readTask skips corrupted files).
-    // NOTE: os.move.over(replaceExisting=true) is NOT atomic (it does
-    // delete-then-rename internally and throws if the target is missing) —
-    // java.nio Files.move with ATOMIC_MOVE maps to rename(2), which is the
-    // true single-step atomic replace on POSIX.
-    val f = taskFile(sessionId, task.id)
-    val tmp = f / os.up / s"${f.last}.tmp.${java.util.UUID.randomUUID()}"
-    os.write.over(tmp, task.asJson.noSpaces)
-    java.nio.file.Files.move(
-      tmp.toNIO,
-      f.toNIO,
-      java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-      java.nio.file.StandardCopyOption.ATOMIC_MOVE
-    )
-  }
+  private def writeTask(sessionId: String, task: Task): IO[Unit] =
+    // Issue #23: atomic write (tmp + rename(2)) via AtomicJson — a bare
+    // os.write.over can leave a truncated/partial JSON file if the process
+    // dies mid-write; readers then silently drop the task (readTask skips
+    // corrupted files).
+    AtomicJson.write(taskFile(sessionId, task.id), task.asJson.noSpaces)
 
   // Issue #1: Atomic hwm using Ref
   private def initHwmIfNeeded(sessionId: String): IO[Unit] =

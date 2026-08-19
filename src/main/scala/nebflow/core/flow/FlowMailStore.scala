@@ -1,5 +1,6 @@
 package nebflow.core.flow
 
+import nebflow.core.AtomicJson
 import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
@@ -69,9 +70,7 @@ object FlowMailStore:
                 case Left(_) => Nil
             else Nil
           val updated = (existing :+ record).takeRight(200) // cap at 200 entries
-          val tmp = dir / s".${file.last}.tmp"
-          os.write.over(tmp, updated.asJson.noSpaces)
-          os.move.over(tmp, file, replaceExisting = true)
+          AtomicJson.writeSync(file, updated.asJson.noSpaces)
         }.void
       }.handleErrorWith(e => logger.warn(s"FlowMailStore.append failed: ${e.getMessage}").void)
 

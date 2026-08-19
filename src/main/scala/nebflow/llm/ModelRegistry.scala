@@ -4,7 +4,7 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder}
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 
 /**
  * Loads and caches model capability metadata from `~/.nebflow/models.json`.
@@ -95,7 +95,7 @@ object ModelRegistry:
     val current = ensureLoaded
     val updated = current.copy(models = models)
     val path = configPath
-    os.write.over(path, updated.asJson.noSpaces)
+    AtomicJson.writeSync(path, updated.asJson.noSpaces)
     cache = Some(updated)
     logger.infoSync(s"Saved models.json: ${models.size} models")
 
@@ -116,7 +116,7 @@ object ModelRegistry:
       case Some(existing) => existing.copy(vision = Some(vision))
       case None           => ModelEntry(vision = Some(vision))
     val updated = current.copy(models = current.models + (key -> updatedEntry))
-    os.write.over(configPath, updated.asJson.noSpaces)
+    AtomicJson.writeSync(configPath, updated.asJson.noSpaces)
     cache = Some(updated)
     logger.infoSync(s"Persisted vision=$vision for $key in models.json")
 

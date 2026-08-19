@@ -1,5 +1,6 @@
 package nebflow.core.flow
 
+import nebflow.core.AtomicJson
 import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
@@ -63,9 +64,7 @@ object TurnStateStore:
       val dir = file / os.up
       IO.blocking {
         if !os.exists(dir) then os.makeDir.all(dir)
-        val tmp = dir / s"turn-state.json.tmp.${java.util.UUID.randomUUID()}"
-        os.write.over(tmp, state.asJson.noSpaces)
-        os.move.over(tmp, file, replaceExisting = true)
+        AtomicJson.writeSync(file, state.asJson.noSpaces)
       }.void
         .handleErrorWith(e => logger.warn(s"TurnStateStore.save failed for $sessionId: ${e.getMessage}").void)
 

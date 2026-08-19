@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.AgentCore
 import nebflow.agent.SharedResources
+import nebflow.core.AtomicJson
 import nebflow.core.Branding
 import nebflow.core.PathUtil
 import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
@@ -1472,7 +1473,7 @@ class RestApiRoutes(
                       io.circe.parser.parse(json) match
                         case Right(parsed) =>
                           val updated = parsed.deepMerge(Json.obj("model" -> modelConfig.asJson))
-                          os.write.over(jsonPath, updated.noSpaces)
+                          AtomicJson.writeSync(jsonPath, updated.noSpaces)
                           true
                         case Left(_) => false
                     }.flatMap {
@@ -1514,7 +1515,7 @@ class RestApiRoutes(
                           parsed.asObject
                             .map(obj => Json.fromFields(obj.toMap.removed("preset")))
                             .getOrElse(parsed)
-                      os.write.over(jsonPath, updated.noSpaces)
+                      AtomicJson.writeSync(jsonPath, updated.noSpaces)
                       true
                     case Left(_) => false
                 }.flatMap {
@@ -1551,7 +1552,7 @@ class RestApiRoutes(
                       val merged = parsed
                         .deepMerge(skillsOpt.toOption.map(s => Json.obj("skills" -> s.asJson)).getOrElse(Json.obj()))
                         .deepMerge(flowsOpt.toOption.map(f => Json.obj("flows" -> f.asJson)).getOrElse(Json.obj()))
-                      os.write.over(jsonPath, merged.noSpaces)
+                      AtomicJson.writeSync(jsonPath, merged.noSpaces)
                       true
                     case Left(_) => false
                 }.flatMap {
@@ -2071,7 +2072,7 @@ class RestApiRoutes(
                 val updated = json.asObject
                   .map(obj => Json.fromFields(obj.toMap.removed("preset")))
                   .getOrElse(json)
-                if updated != json then os.write.over(path, updated.noSpaces)
+                if updated != json then AtomicJson.writeSync(path, updated.noSpaces)
               case _ => ()
           case Left(_) => () // skip unparseable file
       }
@@ -2147,7 +2148,7 @@ class RestApiRoutes(
                   .map(obj => Json.fromFields(obj.toMap.removed("model")))
                   .getOrElse(json)
                 val updated = withoutModel.deepMerge(Json.obj("preset" -> presetName.asJson))
-                os.write.over(jsonPath, updated.noSpaces)
+                AtomicJson.writeSync(jsonPath, updated.noSpaces)
               case Left(_) => ()
           case None => ()
       }

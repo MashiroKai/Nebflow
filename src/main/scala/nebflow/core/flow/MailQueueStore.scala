@@ -1,5 +1,6 @@
 package nebflow.core.flow
 
+import nebflow.core.AtomicJson
 import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
@@ -83,9 +84,7 @@ object MailQueueStore:
               case Left(_)      => Nil // corrupt file — start fresh
           else Nil
         val updated = current :+ item
-        val tmp = dir / s"mail-queue.json.tmp.${java.util.UUID.randomUUID()}"
-        os.write.over(tmp, updated.asJson.noSpaces)
-        os.move.over(tmp, file, replaceExisting = true)
+        AtomicJson.writeSync(file, updated.asJson.noSpaces)
       }.void
         .handleErrorWith(e => logger.warn(s"MailQueueStore.append failed for $sessionId: ${e.getMessage}").void)
 
@@ -115,9 +114,7 @@ object MailQueueStore:
         else
           decode[List[MailQueueItem]](os.read(file)) match
             case Right(head :: rest) =>
-              val tmp = dir / s"mail-queue.json.tmp.${java.util.UUID.randomUUID()}"
-              os.write.over(tmp, rest.asJson.noSpaces)
-              os.move.over(tmp, file, replaceExisting = true)
+              AtomicJson.writeSync(file, rest.asJson.noSpaces)
               Some(head)
             case Right(Nil) => None
             case Left(_) => None
@@ -135,9 +132,7 @@ object MailQueueStore:
           decode[List[MailQueueItem]](os.read(file)) match
             case Right(items) =>
               val remaining = items.filterNot(_.id == id)
-              val tmp = dir / s"mail-queue.json.tmp.${java.util.UUID.randomUUID()}"
-              os.write.over(tmp, remaining.asJson.noSpaces)
-              os.move.over(tmp, file, replaceExisting = true)
+              AtomicJson.writeSync(file, remaining.asJson.noSpaces)
               remaining
             case Left(_) => Nil
       }.handleErrorWith(e => logger.warn(s"MailQueueStore.removeById failed for $sessionId: ${e.getMessage}").as(Nil))

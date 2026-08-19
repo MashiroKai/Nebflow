@@ -1,5 +1,6 @@
 package nebflow.core.flow
 
+import nebflow.core.AtomicJson
 import cats.effect.IO
 import io.circe.*
 import io.circe.syntax.*
@@ -42,11 +43,9 @@ object MountedFlowStore:
     else
       val dir = sessionDir(sessionId)
       val file = storeFile(sessionId)
-      val tmp = dir / "flows.json.tmp"
       IO.blocking {
         if !os.exists(dir) then os.makeDir.all(dir)
-        os.write.over(tmp, Json.obj("flows" -> entries.asJson).noSpaces)
-        os.move.over(tmp, file, replaceExisting = true)
+        AtomicJson.writeSync(file, Json.obj("flows" -> entries.asJson).noSpaces)
       }.void
 
   /** Load the list of mounted flows. Returns empty if not found. */
