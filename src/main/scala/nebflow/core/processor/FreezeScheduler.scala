@@ -13,8 +13,8 @@ import scala.concurrent.duration.FiniteDuration
  * 每 interval（默认 30s，Defaults.FreezeCheckIntervalSec）扫 agentRegistry，
  * status==Frozen 的 agent 发 CheckFreezeGate——agent 在 frozen behavior 中自行
  * 重评估时间表（支持运行中改配置/时钟漂移）：仍冻结 → 留任（更新内部 resumeAt）；
- * 已开放 → Resumed 事件 + 恢复挂起的 dispatch。消息幂等：到达非 frozen behavior
- * 时 no-op，无需 epoch 去重（D4）。
+ * 已出冻结段（#337 黑名单语义：段外=工作时段）→ Resumed 事件 + 恢复挂起的
+ * dispatch。消息幂等：到达非 frozen behavior 时 no-op，无需 epoch 去重（D4）。
  *
  * 恢复延迟上限 = interval（30s 可接受，D4）；setWorkSchedule 配置热更时另走
  * 即时 scan（不等轮询）。

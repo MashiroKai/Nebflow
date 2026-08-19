@@ -13,7 +13,7 @@ import nebflow.core.FileChangeTracker
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.processor.{FreezeScheduler, TaskStuckWatcher}
-import nebflow.core.schedule.{WorkScheduleConfig, WorkScheduleSegment}
+import nebflow.core.schedule.{FreezeScheduleConfig, FreezeSegment}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
@@ -73,7 +73,7 @@ class FreezeGateSpec extends CatsEffectSuite:
     system: ActorSystem,
     tmp: os.Path,
     llm: LlmHandle[IO],
-    scheduleRef: cats.effect.Ref[IO, WorkScheduleConfig]
+    scheduleRef: cats.effect.Ref[IO, FreezeScheduleConfig]
   ): IO[SharedResources] =
     for
       dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
@@ -102,22 +102,23 @@ class FreezeGateSpec extends CatsEffectSuite:
       actorSystem = system,
       subAgentTaskStore = new SubAgentTaskStore(tmp / "subagent-tasks"),
       voiceMutedRef = voiceMuted,
-      workScheduleRef = scheduleRef
+      freezeScheduleRef = scheduleRef
     )
 
   /**
-   * 恒不包含当前时刻的合法时段（跨日安全）：start = now+30min（模 1440），
-   * 若 +60min 越界则退到 (00:00, 01:00)——此时 now 必然 ≥ 21:30，不在段内。
+   * 恒覆盖当前时刻的合法冻结段（#337 黑名单语义；跨日安全）：start = now-30min、
+   * end = now+30min（各模 1440）——now±30 落午夜两侧时即跨午夜段（start > end），
+   * 恰好顺带覆盖 P2 环绕判定。start != end 恒成立（相隔 60min）。
    */
-  private def closedConfig(): WorkScheduleConfig =
+  private def frozenConfig(): FreezeScheduleConfig =
     val now = java.time.LocalTime.now()
     val minuteOfDay = now.getHour * 60 + now.getMinute
-    val s = (minuteOfDay + 30) % 1440
-    val (startM, endM) = if s + 60 <= 1440 then (s, s + 60) else (0, 60)
+    val s = (minuteOfDay - 30 + 1440) % 1440
+    val e = (minuteOfDay + 30) % 1440
     def fmt(m: Int): String = f"${m / 60}%02d:${m % 60}%02d"
-    WorkScheduleConfig(enabled = true, segments = List(WorkScheduleSegment(fmt(startM), fmt(endM))))
+    FreezeScheduleConfig(enabled = true, segments = List(FreezeSegment(fmt(s), fmt(e))))
 
-  private val openConfig: WorkScheduleConfig = WorkScheduleConfig(enabled = false)
+  private val openConfig: FreezeScheduleConfig = FreezeScheduleConfig(enabled = false)
 
   private def rootDef(name: String = "Nebula", category: String = ""): AgentDef =
     AgentDef(name = name, description = "test", tools = List("Read"), systemPrompt = "", category = category)
@@ -135,7 +136,7 @@ class FreezeGateSpec extends CatsEffectSuite:
 
   // ── B3/B4: gate 拦截，零 LLM 调用 ──────────────────────────
 
-  test("B3: closed window blocks system-initiated dispatch — zero LLM calls, Frozen status + event") {
+  test("B3: freeze segment blocks system-initiated dispatch — zero LLM calls, Frozen status + event") {
     val system = ActorSystem("freeze-b3")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
@@ -147,7 +148,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         counter <- IO.ref(0)
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(closedConfig())
+        schedRef <- IO.ref(frozenConfig())
         resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
         sid = "freeze-b3-agent"
         ref <- system.spawn(
@@ -192,7 +193,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         counter <- IO.ref(0)
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(closedConfig())
+        schedRef <- IO.ref(frozenConfig())
         resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
         sid = "freeze-b4-evt-agent"
         ref <- system.spawn(
@@ -255,7 +256,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         _ <- ref ! AgentCommand.UserInput("read the file", None, Some("b4-tools-1"))
         // 等首轮 LLM 请求发出（tool call 已流回、400ms 延迟 Done 之前）→ 关窗
         _ <- waitUntil(System.currentTimeMillis() + 5000)(counter.get.map(_ >= 1))
-        _ <- schedRef.set(closedConfig())
+        _ <- schedRef.set(frozenConfig())
         // Done → 工具执行 → ToolsComplete → 续轮 dispatch 过 gate → 冻结
         _ <- waitUntil(System.currentTimeMillis() + 8000)(
           resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
@@ -308,7 +309,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
         _ <- ref ! AgentCommand.UserInput("read the file", None, Some("b5-1"))
         _ <- waitUntil(System.currentTimeMillis() + 5000)(counter.get.map(_ >= 1))
-        _ <- schedRef.set(closedConfig())
+        _ <- schedRef.set(frozenConfig())
         _ <- waitUntil(System.currentTimeMillis() + 8000)(
           resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
         )
@@ -353,7 +354,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         counter <- IO.ref(0)
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(closedConfig())
+        schedRef <- IO.ref(frozenConfig())
         resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
         sid = "freeze-b5-sys-agent"
         ref <- system.spawn(
@@ -409,7 +410,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         counter <- IO.ref(0)
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(closedConfig())
+        schedRef <- IO.ref(frozenConfig())
         resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
         sid = "freeze-b5-dup-agent"
         ref <- system.spawn(
@@ -455,7 +456,7 @@ class FreezeGateSpec extends CatsEffectSuite:
 
   // ── B6: 自动恢复 ──────────────────────────────────────────
 
-  test("B6: CheckFreezeGate on open window resumes the held dispatch + resumed event") {
+  test("B6: CheckFreezeGate outside freeze segment resumes the held dispatch + resumed event") {
     val system = ActorSystem("freeze-b6")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
@@ -467,7 +468,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         counter <- IO.ref(0)
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(closedConfig())
+        schedRef <- IO.ref(frozenConfig())
         resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
         sid = "freeze-b6-agent"
         ref <- system.spawn(
@@ -513,7 +514,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         counter <- IO.ref(0)
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(closedConfig())
+        schedRef <- IO.ref(frozenConfig())
         resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
         sid = "freeze-b6-scan-agent"
         ref <- system.spawn(
@@ -564,7 +565,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         counter <- IO.ref(0)
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(closedConfig())
+        schedRef <- IO.ref(frozenConfig())
         resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
         sid = "freeze-int-agent"
         ref <- system.spawn(
@@ -615,7 +616,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         counter <- IO.ref(0)
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(closedConfig())
+        schedRef <- IO.ref(frozenConfig())
         resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
         sid = "freeze-b11-ask-agent"
         ref <- system.spawn(
@@ -656,7 +657,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         counter <- IO.ref(0)
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(closedConfig())
+        schedRef <- IO.ref(frozenConfig())
         resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
         sid = "freeze-b11-exempt-agent"
         ref <- system.spawn(
@@ -700,7 +701,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         counter <- IO.ref(0)
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(closedConfig())
+        schedRef <- IO.ref(frozenConfig())
         resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
         sid = "freeze-b12-agent"
         ref <- system.spawn(
@@ -779,7 +780,7 @@ class FreezeGateSpec extends CatsEffectSuite:
           actorSystem = system,
           subAgentTaskStore = new SubAgentTaskStore(tmp / "subagent-tasks"),
           voiceMutedRef = voiceMuted,
-          workScheduleRef = schedRef
+          freezeScheduleRef = schedRef
         )
         staleActivity = System.currentTimeMillis() - 20 * 60 * 1000L // 远超 10min 阈值
         // Frozen + 长时间无活动 → 豁免（零动作）
