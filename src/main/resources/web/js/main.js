@@ -49,7 +49,7 @@ import {
   showDeleteFolderModal,
   showAgentModal, hideAgentModal, initModals
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
@@ -187,6 +187,7 @@ initChatView(
   // so Object.assign(state.dom, view.dom) correctly overrides each field.
   {
     chat: document.getElementById('chat'),
+    inputBar: document.getElementById('input-bar'),
     input: document.getElementById('input'),
     sendBtn: document.getElementById('send-btn'),
     stopBtn: document.getElementById('stop-btn'),
@@ -700,7 +701,9 @@ onMessage('usageUpdate', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && msg.inputTokens != null && msg.contextWindow) {
     state.sessionModelInfo[sid] = {
-      model: state.sessionModelInfo[sid]?.model,
+      // #308 actual model: usageUpdate now carries the model actually used
+      // this round (backend B2); prefer it over the stale stored value.
+      model: msg.model || state.sessionModelInfo[sid]?.model,
       contextWindow: msg.contextWindow,
       inputTokens: msg.inputTokens,
       // outputTokens absent (older backend) preserves the previous value
@@ -2374,6 +2377,7 @@ initModals();
 initRulesModal();
 initPathPicker();
 initInput(chatViews.primary);
+initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
 
 // Keep the last chat message visible above the floating #input-area.
 // #input-area (position:absolute; bottom:0) overlays #chat and has variable
