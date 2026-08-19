@@ -131,6 +131,15 @@ object Defaults:
   /** TaskStuckWatcher scan interval. */
   val StuckWatcherIntervalSec: Int = 30
 
+  // ---- STT（语音输入，可配置转录服务，#295）----
+
+  /** STT 默认模型（OpenAI 兼容音频转录 API 的公共模型名，非用户配置）。 */
+  val SttDefaultModel: String = "glm-asr-2512"
+
+  /** STT 默认端点（智谱开放平台音频转录；配置文件可覆盖）。 */
+  val SttDefaultEndpoint: String =
+    "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions"
+
   /**
    * FreezeScheduler 扫描间隔（冻结恢复延迟上限，freeze-schedule spec ⑤）。
    * frozen agent 靠本扫描驱动重评估时间表——出冻结段后最多延迟本值恢复 dispatch。
