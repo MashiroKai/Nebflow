@@ -15,6 +15,10 @@ function getLocale() {
 let tasks = [];
 let isCreating = false;
 let panelOpen = false;
+// Recurrence selected in the inline create form ("once" | "hourly" | "daily"
+// | "weekly"). Reset whenever the form opens. Wire values match ScheduleTool
+// schema — "once" maps to omitting repeat (one-shot).
+let currentRepeat = 'once';
 
 // Creates attempted while the WS was down (sendWs silently drops non-OPEN
 // sends). Queued instead of optimistically added — the UI must never show a
@@ -100,6 +104,15 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+/** Localized label for a repeat value ("hourly" | "daily" | "weekly"), or ''
+ *  for one-shot — the badge is only rendered for recurring tasks. */
+function repeatLabel(r) {
+  if (r === 'hourly') return t('task.repeatHourly');
+  if (r === 'daily') return t('task.repeatDaily');
+  if (r === 'weekly') return t('task.repeatWeekly');
+  return '';
 }
 
 // ── Badge ──────────────────────────────────────────────────────────────
@@ -198,9 +211,23 @@ function buildRow(r, isTriggered) {
   const content = document.createElement('div');
   content.className = 'reminder-row-content';
 
+  // Title line: task text (ellipsis) + repeat badge for recurring tasks.
+  // One-shot tasks get no badge (restraint; the repeat field is the signal).
+  const titleRow = document.createElement('div');
+  titleRow.className = 'reminder-row-title';
   const textSpan = document.createElement('span');
   textSpan.className = 'reminder-row-text';
   textSpan.textContent = r.content;
+  titleRow.appendChild(textSpan);
+  const badgeLabel = repeatLabel(r.repeat);
+  if (badgeLabel) {
+    const badge = document.createElement('span');
+    badge.className = 'reminder-repeat-badge';
+    badge.dataset.repeat = r.repeat;
+    badge.textContent = badgeLabel;
+    titleRow.appendChild(badge);
+  }
+  content.appendChild(titleRow);
 
   // Time info: show next trigger + last triggered when available
   const timeSpan = document.createElement('span');
@@ -218,7 +245,6 @@ function buildRow(r, isTriggered) {
     }
   }
 
-  content.appendChild(textSpan);
   content.appendChild(timeSpan);
 
   // Last triggered sub-text (if available)
@@ -255,11 +281,37 @@ function buildInlineCreate() {
         <i data-lucide="clock"></i>
         <input type="datetime-local" id="reminder-time-input" value="${dtStr}" min="${minStr}">
       </div>
+      <div class="reminder-repeat-row">
+        <i data-lucide="repeat"></i>
+        <div class="reminder-repeat-seg" id="reminder-repeat-seg" role="radiogroup" aria-label="${t('task.repeat')}">
+          <button type="button" data-repeat="once" class="active" role="radio" aria-checked="true">${t('task.repeatOnce')}</button>
+          <button type="button" data-repeat="hourly" role="radio" aria-checked="false">${t('task.repeatHourly')}</button>
+          <button type="button" data-repeat="daily" role="radio" aria-checked="false">${t('task.repeatDaily')}</button>
+          <button type="button" data-repeat="weekly" role="radio" aria-checked="false">${t('task.repeatWeekly')}</button>
+        </div>
+      </div>
     </div>`;
 
   // Bind events
   const input = wrap.querySelector('#reminder-inline-input');
   const timeInput = wrap.querySelector('#reminder-time-input');
+  const repeatSeg = wrap.querySelector('#reminder-repeat-seg');
+
+  // Repeat segmented control — the active pill is currentRepeat; values match
+  // ScheduleTool schema ("hourly"|"daily"|"weekly"; "once" omits repeat).
+  if (repeatSeg) {
+    repeatSeg.addEventListener('click', (e) => {
+      if (!(e.target instanceof Element)) return;
+      const btn = /** @type {HTMLElement | null} */ (e.target.closest('button[data-repeat]'));
+      if (!btn) return;
+      repeatSeg.querySelectorAll('button').forEach(b => {
+        const active = b === btn;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-checked', active ? 'true' : 'false');
+      });
+      currentRepeat = btn.dataset.repeat;
+    });
+  }
 
   if (input) {
     input.addEventListener('keydown', (e) => {
@@ -318,6 +370,7 @@ function togglePanel() {
 function startInlineCreate() {
   if (isCreating) return;
   isCreating = true;
+  currentRepeat = 'once';   // fresh form → one-shot by default
   renderList();
 }
 
@@ -329,14 +382,18 @@ function cancelInlineCreate() {
 // Send a create frame and add the optimistic temp row. Only call this when
 // the WS is OPEN and a session is active — otherwise the row would be a lie
 // (sendWs silently drops non-OPEN sends).
-function submitCreate(content, triggerAt) {
-  sendWs({
+function submitCreate(content, triggerAt, repeat) {
+  const payload = {
     type: 'createScheduledTask',
     sessionId: state.activeSessionId,
     content: content,
     triggerAt: triggerAt,
     referencePath: undefined
-  });
+  };
+  // "once" = one-shot = omit repeat (ScheduleTool schema: optional field);
+  // hourly/daily/weekly are sent verbatim.
+  if (repeat && repeat !== 'once') payload.repeat = repeat;
+  sendWs(payload);
 
   // Optimistic add — append to end
   tasks.push({
@@ -346,7 +403,8 @@ function submitCreate(content, triggerAt) {
     createdAt: Date.now(),
     triggered: false,
     triggeredAt: null,
-    referencePath: null
+    referencePath: null,
+    repeat: repeat && repeat !== 'once' ? repeat : undefined
   });
   if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
 }
@@ -363,7 +421,7 @@ function flushPendingCreates() {
     // Same auto-bump semantics as saveInlineTask: a trigger time that expired
     // while queued becomes 2 min from now.
     const triggerAt = q.triggerAt <= Date.now() ? Date.now() + 120000 : q.triggerAt;
-    submitCreate(q.content, triggerAt);
+    submitCreate(q.content, triggerAt, q.repeat);
   }
   renderList();
   updateBadge();
@@ -397,14 +455,14 @@ function saveInlineTask() {
   if (!wsReady()) {
     // WS down (reconnect backoff, half-open socket, server restart) or no
     // active session yet — queue instead of lying with an optimistic row.
-    pendingCreates.push({ content: content, triggerAt: effectiveTriggerAt });
+    pendingCreates.push({ content: content, triggerAt: effectiveTriggerAt, repeat: currentRepeat });
     addNotification('task', t('task.queuedOffline'), { dismissAfter: 15000 });
     isCreating = false;
     renderList();
     return;
   }
 
-  submitCreate(content, effectiveTriggerAt);
+  submitCreate(content, effectiveTriggerAt, currentRepeat);
   isCreating = false;
   renderList();
   updateBadge();
