@@ -82,8 +82,8 @@ object PresetFile:
  *
  * The old level-4 fallback to the global chain (nebflow.json `llm.model`) is
  * REMOVED: it silently routed agents to a model the user never selected in the
- * preset UI (2026-08-19 "为什么在用 107" incident — global default was
- * 107/glm-5.2-107 while the settings showed general/GLM-5.3). `llm.model` now
+ * preset UI (2026-08-19 preset-display mismatch incident — the global
+ * default resolved to a chain the settings UI never showed). `llm.model` now
  * only SEEDS the initial preset; it is never a live fallback. (The provider
  * registry's all-candidates list remains as a last-resort error path when a
  * preset's refs are ALL unresolvable against the provider config — a loud,

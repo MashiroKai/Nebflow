@@ -8,7 +8,7 @@ import nebflow.shared.AgentModelConfig
  * once any model is configured, and the old level-4 silent fallback to the
  * global chain (nebflow.json `llm.model`) is REMOVED.
  *
- * Incident: the global default (107/glm-5.2-107) silently served every agent
+ * Incident: the global default (provider-x/model-y) silently served every agent
  * without an explicit chain while the settings UI showed general/GLM-5.3 — a
  * hidden, hard-to-see routing bug. llm.model now only SEEDS the initial
  * preset (created at first provider save / gateway boot); it is never a live
@@ -39,7 +39,7 @@ class PresetStoreInvariantSpec extends FunSuite:
   }
 
   test("resolve never returns the removed global level — chain-less default repaired to a chained sibling") {
-    val (store, _) = tempStore(globalChain = List("107/glm-5.2-107"))
+    val (store, _) = tempStore(globalChain = List("provider-x/model-y"))
     store.save(
       PresetFile(
         defaultPreset = "broken",
@@ -84,19 +84,19 @@ class PresetStoreInvariantSpec extends FunSuite:
         "general",
         Map(
           "general" -> ModelPreset("general", "", Some("zhipu/GLM-5.3"), Nil),
-          "LowCost" -> ModelPreset("LowCost", "", Some("107/glm-5.2-107"), Nil)
+          "LowCost" -> ModelPreset("LowCost", "", Some("provider-x/model-y"), Nil)
         )
       )
     )
     assertEquals(store.resolve(Some("LowCost"), None)._2, "preset")
-    assertEquals(store.resolve(Some("LowCost"), None)._1.preferred, Some("107/glm-5.2-107"))
+    assertEquals(store.resolve(Some("LowCost"), None)._1.preferred, Some("provider-x/model-y"))
     val (legacy, lfrom) = store.resolve(None, Some(AgentModelConfig(Some("deepseek/deepseek-v4-pro"), Nil)))
     assertEquals(lfrom, "legacy-model")
     assertEquals(legacy.preferred, Some("deepseek/deepseek-v4-pro"))
   }
 
   test("healthy file untouched by ensureDefaultPreset (no rewrite churn)") {
-    val (store, path) = tempStore(globalChain = List("107/glm-5.2-107"))
+    val (store, path) = tempStore(globalChain = List("provider-x/model-y"))
     store.save(
       PresetFile(
         "general",
