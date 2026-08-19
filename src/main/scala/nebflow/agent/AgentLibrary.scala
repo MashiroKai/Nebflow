@@ -5,7 +5,7 @@ import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.core.presets.PresetStore
-import nebflow.llm.{ColdStartConfig, Config, NebflowServiceConfig}
+import nebflow.llm.{Config, NebflowServiceConfig}
 import nebflow.shared.{AgentModelConfig, Defaults}
 
 import scala.util.Try
@@ -20,10 +20,6 @@ class AgentLibrary(
   serviceConfig: Option[NebflowServiceConfig] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.agent.library")
-
-  /** Cold-start routing config (A, 2026-08-18) — public for AgentCore routing. */
-  def coldStartConfig: Option[ColdStartConfig] =
-    serviceConfig.flatMap(_.llm.coldStart)
 
   def globalContextWindow: Int =
     serviceConfig match

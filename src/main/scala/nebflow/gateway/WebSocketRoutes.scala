@@ -2909,6 +2909,16 @@ class WebSocketRoutes(
                 case Left(err) =>
                   wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
                 case Right(_) =>
+                  // #311: the first provider/model save seeds/repairs the default
+                  // preset (from the just-saved llm.model chain) so agent model
+                  // resolution never silently falls to a hidden global chain.
+                  IO
+                    .delay(nebflow.core.presets.PresetStore().ensureDefaultPreset())
+                    .attempt
+                    .flatMap {
+                      case Right(_) => IO.unit
+                      case Left(e)  => logger.warn(s"Default preset seeding failed: ${e.getMessage}")
+                    } *>
                   // Hot-reload: update in-memory config and clear adapter cache
                   sharedResources.providerRegistry.reloadConfig().attempt.flatMap {
                     case Right(_) =>
