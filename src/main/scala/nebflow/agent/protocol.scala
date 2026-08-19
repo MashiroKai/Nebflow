@@ -375,7 +375,10 @@ enum AgentStreamEvent:
     inputTokens: Int,
     contextWindow: Int,
     compactThreshold: Double,
-    outputTokens: Option[Int] = None
+    outputTokens: Option[Int] = None,
+    // #308: the model actually used in this LLM round (after fallback), so the
+    // UI can live-refresh the "actual model" badge per round — None omits the key.
+    model: Option[String] = None
   )
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
   case CompactComplete(before: Int, after: Int, reportPath: Option[String] = None)
@@ -462,7 +465,9 @@ enum AgentStreamEvent:
         val withIt = inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
         val withOt = outputTokens.fold(withIt)(ot => withIt.deepMerge(Json.obj("outputTokens" -> ot.asJson)))
         compactThreshold.fold(withOt)(ct => withOt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
-      case UsageUpdate(inputTokens, contextWindow, compactThreshold, outputTokens) =>
+      case UsageUpdate(inputTokens, contextWindow, compactThreshold, outputTokens, model) =>
+        // #308: model (actual model of this round) is merged last, same style as
+        // Done's withModel — absent when None so old payloads stay byte-stable.
         if isSubagent then
           Json.obj(
             "type" -> "usageUpdate".asJson,
@@ -472,6 +477,7 @@ enum AgentStreamEvent:
             "contextWindow" -> contextWindow.asJson,
             "compactThreshold" -> compactThreshold.asJson
           ).deepMerge(outputTokens.fold(Json.obj())(ot => Json.obj("outputTokens" -> ot.asJson)))
+            .deepMerge(model.fold(Json.obj())(m => Json.obj("model" -> m.asJson)))
         else
           Json.obj(
             "type" -> "usageUpdate".asJson,
@@ -480,6 +486,7 @@ enum AgentStreamEvent:
             "contextWindow" -> contextWindow.asJson,
             "compactThreshold" -> compactThreshold.asJson
           ).deepMerge(outputTokens.fold(Json.obj())(ot => Json.obj("outputTokens" -> ot.asJson)))
+            .deepMerge(model.fold(Json.obj())(m => Json.obj("model" -> m.asJson)))
       case CompactStart(mode, inputTokens, threshold) =>
         if isSubagent then
           Json.obj(

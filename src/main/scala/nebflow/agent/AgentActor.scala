@@ -1026,7 +1026,11 @@ object AgentActor extends AgentCore with AgentSession:
                 effectiveTokens,
                 updatedState.contextWindow,
                 CompactThreshold.thresholdRatio(updatedState.contextWindow),
-                updatedState.latestUsage.flatMap(u => Option.when(u.outputTokens > 0)(u.outputTokens))
+                updatedState.latestUsage.flatMap(u => Option.when(u.outputTokens > 0)(u.outputTokens)),
+                // #308: per-round actual model (lastModel was just refreshed from
+                // this round's result at withLastModel above) — lets the frontend
+                // live-refresh the popup/tile model badge every LLM round.
+                model = updatedState.lastModel
               ),
               isSubagent = isSubagent,
               state.sessionId
