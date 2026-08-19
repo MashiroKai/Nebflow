@@ -78,7 +78,10 @@ object PlanAgent:
           projectRoot = Some(projectRoot),
           // P2: the plan agent shares the main agent's session — it inherits
           // the same root-session policy bucket.
-          rootSessionId = parentSessionId.getOrElse("")
+          rootSessionId = parentSessionId.getOrElse(""),
+          // D11 交互豁免（freeze-schedule）：用户在场看着规划面板等 plan 产出，
+          // 冻结它省的 token 远低于浪费的用户等待——不参与工作时间冻结。
+          freezeExempt = true
         ),
         planAgentId
       )
