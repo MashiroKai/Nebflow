@@ -14,7 +14,7 @@ object ConfigCommand extends CliCommand:
   def examples = List(
     "nebflow config show",
     "nebflow config get workSchedule",
-    "nebflow config set providers.openai.queuePersist true"
+    "nebflow config set workSchedule.enabled false"
   )
 
   private object ConfigGet extends CliSubcommand:
@@ -73,18 +73,32 @@ object ConfigCommand extends CliCommand:
                   "config" -> configJson.spaces2.asJson
                 )
               )
-              .as(CliResult.text(s"Config updated: $key = $value"))
-
-    private def buildNestedJson(path: List[String], value: String): Json =
-      path match
-        case Nil => Json.Null
-        case last :: Nil =>
-          // Try to parse as JSON, fallback to string
-          io.circe.parser.parse(value).getOrElse(Json.fromString(value))
-        case head :: tail =>
-          Json.obj(head -> buildNestedJson(tail, value))
+              .flatMap { resp =>
+                // 服务端校验拒绝回 {"type":"error","message":...}——必须浮出，
+                // 无条件 "Config updated" 会把 no-op 静默成成功（qa #339 打回）
+                (for
+                  t <- resp.hcursor.downField("type").as[String].toOption if t == "error"
+                  m <- resp.hcursor.downField("message").as[String].toOption
+                yield m) match
+                  case Some(err) => IO.pure(CliResult.Error(s"Config update rejected: $err"))
+                  case None      => IO.pure(CliResult.text(s"Config updated: $key = $value"))
+              }
+              .handleErrorWith(e => IO.pure(CliResult.Error(s"Config update failed: ${e.getMessage}")))
 
   end ConfigSet
+
+  /** dot 路径 → 嵌套 JSON。末段路径是键名（与 ConfigGet 的全段下钻对称）。
+    * qa #339 打回：旧基例返回裸值、丢末段键——`set a.b.c true` 实发
+    * {"b": true} 而非 {"a":{"b":{"c":true}}}，静默写错位置。private[cli]
+    * 供 ConfigCommandSpec 直测。 */
+  private[cli] def buildNestedJson(path: List[String], value: String): Json =
+    path match
+      case Nil => Json.Null
+      case last :: Nil =>
+        // Value: try JSON parse (true/42/{...}), fallback to bare string
+        Json.obj(last -> io.circe.parser.parse(value).getOrElse(Json.fromString(value)))
+      case head :: tail =>
+        Json.obj(head -> buildNestedJson(tail, value))
 
   private object ConfigShow extends CliSubcommand:
     def name = "show"
