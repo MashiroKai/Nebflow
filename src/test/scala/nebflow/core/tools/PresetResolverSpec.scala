@@ -10,8 +10,9 @@ import nebflow.shared.AgentModelConfig
  * (issue #291, 2026-08-18).
  *
  * Priority: explicit preset (tool param) > agent.json preset/model > default
- * preset > global chain. The explicit preset replaces the AgentDef's resolved
- * model entirely — the LLM layer then uses the preset's chain for the child.
+ * preset (terminal — the global-chain fallback level was removed, #311). The
+ * explicit preset replaces the AgentDef's resolved model entirely — the LLM
+ * layer then uses the preset's chain for the child.
  */
 class PresetResolverSpec extends FunSuite:
 

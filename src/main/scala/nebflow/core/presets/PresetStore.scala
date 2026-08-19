@@ -69,22 +69,46 @@ object PresetFile:
 /**
  * File-backed store for model presets.
  *
+ * INVARIANT (#311, 2026-08-19): a usable default preset ALWAYS exists once any
+ * model is configured. The file is created/seeded the moment the user saves
+ * their first provider/model (settings updateConfig → [[ensureDefaultPreset]],
+ * also enforced at gateway boot), and [[load]] repairs a dangling or
+ * chain-less defaultPreset before anyone reads it.
+ *
  * Resolution priority (highest → lowest):
  *   1. Explicit preset name (agent.json `"preset": "vision"`)
  *   2. Legacy per-agent `model` field (preferred/fallbacks)
- *   3. Default preset (from model-presets.json)
- *   4. Global chain (nebflow.json `llm.model`) — represented as `AgentModelConfig.empty`,
- *      which causes `getCandidatesForAgent` to fall back to the global chain.
+ *   3. Default preset — TERMINAL.
+ *
+ * The old level-4 fallback to the global chain (nebflow.json `llm.model`) is
+ * REMOVED: it silently routed agents to a model the user never selected in the
+ * preset UI (2026-08-19 "为什么在用 107" incident — global default was
+ * 107/glm-5.2-107 while the settings showed general/GLM-5.3). `llm.model` now
+ * only SEEDS the initial preset; it is never a live fallback. (The provider
+ * registry's all-candidates list remains as a last-resort error path when a
+ * preset's refs are ALL unresolvable against the provider config — a loud,
+ * different failure, not a silent preference.)
  *
  * The store reads the file fresh on every call (small file, rare writes) so
  * edits take effect on the next `refreshTurn` without restart or cache
  * invalidation.
  */
 class PresetStore(
-  configPath: os.Path = PathUtil.dataRoot / "model-presets.json"
+    configPath: os.Path = PathUtil.dataRoot / "model-presets.json",
+    globalChainProvider: () => List[String] = () => PresetStore.readGlobalChainDefault()
 ):
 
   private val logger = NebflowLogger.forName("nebflow.preset")
+
+  private def globalChain: List[String] = globalChainProvider()
+
+  /**
+   * Idempotent invariant enforcer: the preset file exists and its
+   * defaultPreset carries a model chain. Call after the first provider/model
+   * save (updateConfig / onboarding) and at gateway boot. A healthy file is
+   * untouched (no write); an absent/empty/broken file is created or repaired.
+   */
+  def ensureDefaultPreset(): Unit = load()
 
   /** Load the preset file, initializing it from the global chain on first use. */
   def load(): PresetFile =
@@ -101,7 +125,7 @@ class PresetStore(
           save(init)
           init
         case Right(f) =>
-          // Validate/repair defaultPreset if it dangles
+          // Validate/repair defaultPreset if it dangles or carries no chain
           repair(f)
         case Left(err) =>
           logger.warnSync(s"Failed to parse model-presets.json: ${err.getMessage}; re-initializing")
@@ -121,8 +145,9 @@ class PresetStore(
    * legacy model override.
    *
    * Returns `(AgentModelConfig, resolvedFrom)` where `resolvedFrom` indicates
-   * which priority level was used: "preset" | "legacy-model" | "default-preset"
-   * | "global".
+   * which priority level was used: "preset" | "legacy-model" |
+   * "default-preset". There is NO "global" level anymore — level 3 is
+   * terminal (see class doc; #311 removed the silent global-chain fallback).
    */
   def resolve(
     presetName: Option[String],
@@ -142,13 +167,13 @@ class PresetStore(
           case Some(m) if m.preferred.isDefined || m.fallbacks.nonEmpty =>
             (m, "legacy-model")
           case _ =>
-            // 3. Default preset
-            file.presets.get(file.defaultPreset) match
-              case Some(p) if p.preferred.isDefined || p.fallbacks.nonEmpty =>
-                (AgentModelConfig(p.preferred, p.fallbacks), "default-preset")
-              case _ =>
-                // 4. Global chain (empty = let getCandidatesForAgent use global)
-                (AgentModelConfig.empty, "global")
+            // 3. Default preset — terminal. load() guarantees it carries a
+            // chain whenever any model is configured; the getOrElse only
+            // matters on a fully unconfigured install (no providers saved
+            // yet), where the empty chain defers to the registry's
+            // all-candidates path at request time.
+            val dp = file.presets.getOrElse(file.defaultPreset, ModelPreset(file.defaultPreset))
+            (AgentModelConfig(dp.preferred, dp.fallbacks), "default-preset")
 
     end match
 
@@ -176,7 +201,7 @@ class PresetStore(
 
   /** Build the initial PresetFile from the global model chain in nebflow.json. */
   private def initFromFile(): PresetFile =
-    val globalChain = readGlobalChain()
+    val globalChain = this.globalChain
     val general = ModelPreset(
       name = "general",
       description = "默认方案：跟随全局模型链",
@@ -186,10 +211,44 @@ class PresetStore(
     PresetFile(defaultPreset = "general", presets = Map("general" -> general))
 
   /**
-   * Read the global model chain from nebflow.json (`llm.model.default` +
-   * `llm.model.fallbacks`).
+   * Enforce the invariant on a parsed file: defaultPreset exists AND carries
+   * a model chain (#311 — a chain-less default is treated exactly like a
+   * dangling one).
+   *
+   * Healthy files pass through untouched (no write). A broken default is
+   * re-pointed at the first preset that has a chain; if none does, the file is
+   * re-seeded from the global llm.model chain — which at that point is the
+   * provider model the user just configured. A fully unconfigured install
+   * (global chain empty too) is left as-is: nothing better exists to write,
+   * and re-saving an identical empty file on every load would be churn.
    */
-  private def readGlobalChain(): List[String] =
+  private def repair(f: PresetFile): PresetFile =
+    def hasChain(p: ModelPreset): Boolean = p.preferred.isDefined || p.fallbacks.nonEmpty
+    f.presets.get(f.defaultPreset) match
+      case Some(p) if hasChain(p) => f
+      case _ =>
+        f.presets.find((_, p) => hasChain(p)) match
+          case Some((name, _)) =>
+            val fixed = f.copy(defaultPreset = name)
+            save(fixed)
+            fixed
+          case None =>
+            val chain = globalChain
+            if chain.isEmpty then f
+            else
+              val init = initFromFile()
+              save(init)
+              init
+end PresetStore
+
+object PresetStore:
+
+  /**
+   * Read the global model chain from nebflow.json (`llm.model.default` +
+   * `llm.model.fallbacks`). SEED ONLY (#311) — never a live fallback for
+   * agent resolution.
+   */
+  private def readGlobalChainDefault(): List[String] =
     val nebflowJson = PathUtil.configJsonReadPath(PathUtil.dataRoot)
     if !os.exists(nebflowJson) then Nil
     else
@@ -210,19 +269,5 @@ class PresetStore(
             .getOrElse(Nil)
 
     end if
-
-  end readGlobalChain
-
-  /** Repair a PresetFile with a dangling defaultPreset by re-initializing. */
-  private def repair(f: PresetFile): PresetFile =
-    if f.presets.contains(f.defaultPreset) then f
-    else if f.presets.nonEmpty then
-      val fixed = f.copy(defaultPreset = f.presets.keys.head)
-      save(fixed)
-      fixed
-    else
-      val init = initFromFile()
-      save(init)
-      init
 
 end PresetStore
