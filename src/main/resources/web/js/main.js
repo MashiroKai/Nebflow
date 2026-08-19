@@ -700,7 +700,9 @@ onMessage('usageUpdate', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && msg.inputTokens != null && msg.contextWindow) {
     state.sessionModelInfo[sid] = {
-      model: state.sessionModelInfo[sid]?.model,
+      // #308 actual model: usageUpdate now carries the model actually used
+      // this round (backend B2); prefer it over the stale stored value.
+      model: msg.model || state.sessionModelInfo[sid]?.model,
       contextWindow: msg.contextWindow,
       inputTokens: msg.inputTokens,
       // outputTokens absent (older backend) preserves the previous value
