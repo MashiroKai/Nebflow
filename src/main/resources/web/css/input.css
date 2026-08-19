@@ -74,6 +74,60 @@ body.drag-over #input-bar {
   align-items: center;
   gap: 4px;
 }
+
+/* v2 §5.2: task return reference chip — sapphire tint (distinct from the
+   grey .att-file), zero new color tokens (sapphire alpha variants only).
+   rgb(var(--sapphire) / a) form — the triplet is space-separated, rgba()
+   with a comma would be dropped as invalid. */
+.att-taskref {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgb(var(--sapphire) / 0.06);
+  border: 1px solid rgb(var(--sapphire) / 0.25);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--color-text);
+  position: relative;
+  max-width: 100%;                 /* never exceed the chips container (B13) */
+  animation: taskref-in 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes taskref-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.att-taskref-icon {
+  color: rgb(var(--sapphire));
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+.att-taskref-subject {
+  font-weight: 500;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;                    /* allow shrink → ellipsis on narrow view */
+  flex-shrink: 1;
+}
+.att-taskref-meta,
+.att-taskref-output {
+  color: var(--color-text-muted);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;                    /* allow shrink → ellipsis on narrow view */
+  flex-shrink: 1;
+}
+@media (prefers-color-scheme: dark) {
+  .att-taskref { background: rgb(var(--sapphire) / 0.10); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .att-taskref { animation: none; }
+}
 .att-error {
   background: rgba(244, 67, 54, 0.12);
   color: var(--color-error);

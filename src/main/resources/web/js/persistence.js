@@ -126,7 +126,12 @@ function sanitizeForCache(entry) {
   // it's a small string and lets the restore path re-render the image from
   // the uploads route (G1) even after the preview is gone.
   if (e.attachments) {
-    e.attachments = e.attachments.map(a => ({ type: a.type, name: a.name, path: a.path }));
+    e.attachments = e.attachments.map(a => ({
+      type: a.type, name: a.name, path: a.path,
+      // v2: taskRef chips keep their identity (tiny fields) so a restored
+      // history renders the return reference, not a bare [file] tag.
+      ...(a.type === 'taskRef' ? { taskId: a.taskId, sessionId: a.sessionId, subject: a.subject } : {})
+    }));
   }
   return e;
 }
@@ -158,6 +163,16 @@ export function attachmentImageUrl(path) {
 function appendAttachmentBubble(row, att) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble user att-bubble';
+  if (att.type === 'taskRef') {
+    // v2 §5.3 restore path — same tag shape as renderUserBubble's live path.
+    const tag = document.createElement('span');
+    tag.className = 'att-file-tag att-taskref-tag';
+    const icon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;flex-shrink:0"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><path d="M12 11h4"></path><path d="M12 16h4"></path><path d="M8 11h.01"></path><path d="M8 16h.01"></path></svg>';
+    tag.innerHTML = icon + '<span style="margin-left:2px">' + escapeHtml(t('task.refBubbleLabel', { subject: att.subject || att.name || '' })) + '</span>';
+    bubble.appendChild(tag);
+    row.appendChild(bubble);
+    return;
+  }
   const imgSrc =
     att.type === 'image'
       ? (att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:'))
