@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 import nebflow.shared.{LlmRequest, Message, ToolDefinition}
 import nebflow.shared.given
 
@@ -96,12 +96,7 @@ object LlmQueueStore:
   private def queueFile(providerId: String): os.Path = queueDir / s"$providerId.json"
 
   private def writeAll(providerId: String, items: List[QueueItem]): Unit =
-    val file = queueFile(providerId)
-    val dir = file / os.up
-    if !os.exists(dir) then os.makeDir.all(dir)
-    val tmp = dir / s"$providerId.json.tmp.${java.util.UUID.randomUUID()}"
-    os.write.over(tmp, items.asJson.noSpaces)
-    os.move.over(tmp, file, replaceExisting = true)
+    AtomicJson.writeSync(queueFile(providerId), items.asJson.noSpaces)
 
   private def readAll(providerId: String): List[QueueItem] =
     val file = queueFile(providerId)
