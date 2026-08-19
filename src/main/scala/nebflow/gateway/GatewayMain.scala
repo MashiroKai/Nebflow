@@ -228,6 +228,13 @@ object GatewayMain extends IOApp.Simple:
                   defaultConfig
         }
         configRef.get.flatMap { config =>
+          // #311 (2026-08-19): enforce the preset invariant at boot — a usable
+          // default preset must always exist once any model is configured.
+          // Creates/seeds model-presets.json when absent (from llm.model, i.e.
+          // the user's first provider model) and repairs a dangling/chain-less
+          // default. Idempotent; healthy files are untouched.
+          try nebflow.core.presets.PresetStore().ensureDefaultPreset()
+          catch case e: Exception => logger.warn(s"Default preset seeding failed: ${e.getMessage}")
           Auth.loadOrCreateToken.flatMap { token =>
             // Global session state shared across all connections
             val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")

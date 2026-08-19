@@ -2139,6 +2139,18 @@ object AgentActor extends AgentCore with AgentSession:
             )
         )
       case None => (state, IO.unit)
+    // #22 (2026-08-19): 空轮必须留痕——thinking-only 响应（text 空、无工具）
+    // 结束 turn 时零输出零事件，从外部（含派工 Manager）看与「turn 静默挂死」
+    // 无法区分（14:40/14:47 Manager 两案实为此形态）。留痕后法证可分。
+    if text.isEmpty then
+      logAgentEvent(
+        agentDef,
+        depth,
+        state.sessionId,
+        state.sessionName,
+        "turn-ended-empty",
+        s"model=${model.getOrElse("-")} thinking=${thinking.map(_.length).getOrElse(0)} msgs=${state.messages.size}"
+      )
     val isSubagent = parentRef.isDefined
     val sendText = !textAlreadyStreamed && text.nonEmpty
     val assistantContent = (thinking, text) match

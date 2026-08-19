@@ -111,43 +111,11 @@ object SearchConfig:
 
 case class ServiceLlmConfig(
   providers: Map[String, ProviderConfig],
-  model: ModelChainConfig,
-  /**
-   * Cold-start routing (A, 2026-08-18): an agent idle longer than
-   * `idleThresholdMs` has its first LLM request routed to a low-cost/free
-   * preset (default "LowCost" → 107 free gateway) instead of its default
-   * provider. Rationale: provider prompt caches expire after ~30min, so the
-   * wake-up request is a full-price cache miss — routing it to the free
-   * gateway makes the wake-up cost ~0. Defaults: enabled=true (user prefers
-   * the free 107 gateway, "107 免费多用"), one-key disable via enabled=false.
-   */
-  coldStart: Option[ColdStartConfig] = None
+  model: ModelChainConfig
 )
 
 object ServiceLlmConfig:
   given Decoder[ServiceLlmConfig] = deriveDecoder[ServiceLlmConfig]
-
-/**
- * Cold-start routing config (all fields optional — missing = default).
- *
- * `preset` names a preset from model-presets.json (default "LowCost"); the
- * preset chain is used as the wake-up model. When the preset is missing or
- * empty, a built-in 107 chain is used as a last resort (unavailable
- * providers are skipped by the candidate resolver, which falls back to the
- * global chain).
- */
-case class ColdStartConfig(
-  enabled: Option[Boolean] = None, // default true
-  idleThresholdMs: Option[Long] = None, // default 30min (aligned with measured provider cache TTL)
-  preset: Option[String] = None // default "LowCost"
-)
-
-object ColdStartConfig:
-  given Decoder[ColdStartConfig] = deriveDecoder[ColdStartConfig]
-
-  val DefaultEnabled: Boolean = true
-  val DefaultIdleThresholdMs: Long = 30 * 60 * 1000L
-  val DefaultPreset: String = "LowCost"
 
 case class ThinkingConfig(
   enabled: Boolean = true,

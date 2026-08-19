@@ -337,6 +337,19 @@ final class ShellSession private (
   /** Grace period before checking if a quiet background process is stuck. */
   private val StuckDetectionGracePeriod: FiniteDuration = 30.seconds
 
+  /**
+   * #22 (2026-08-19): foreground no-progress ceiling. A foreground command
+   * with NO new output AND no CPU activity for this long is killed with an
+   * informative error — it is almost certainly waiting for interactive input
+   * or hung on something the agent cannot see. Commands that keep producing
+   * output or burning CPU (builds, test suites) run on; sleep-like commands
+   * are excluded (#319: `sleep N` foreground must complete).
+   */
+  private val ForegroundSampleInterval: FiniteDuration = 30.seconds
+  private val ForegroundNoProgressTimeout: FiniteDuration = 10.minutes
+
+  private val shellLogger = NebflowLogger.forName("nebflow.shell")
+
   /** CPU sampling window to distinguish slow builds from idle prompts. */
   private val CpuSampleInterval: FiniteDuration = 2.seconds
 
@@ -444,7 +457,8 @@ final class ShellSession private (
             // outer health — ensures stuck detection works even when caller
             // passed health = None.
             h.lastActivityMs.set(System.currentTimeMillis())
-            h.outputLineCount.incrementAndGet()
+            h.outputLineCount.incrementAndGet(),
+          isProcessExited = () => !proc.isAlive
         )
       )
       val stderrIO = IO.blocking(
@@ -452,18 +466,21 @@ final class ShellSession private (
           proc.getErrorStream,
           line =>
             h.lastActivityMs.set(System.currentTimeMillis())
-            h.outputLineCount.incrementAndGet()
+            h.outputLineCount.incrementAndGet(),
+          isProcessExited = () => !proc.isAlive
         )
       )
-      val waitIO = IO.blocking {
+      // #22: stream readers are poll-based (see readStream) — a process-exit
+      // grace bounds them even when an orphaned grandchild keeps holding the
+      // pipes. waitIO stays a plain blocking wait (proc death always ends it).
+      val waitIO: IO[Int] = IO.blocking {
         proc.waitFor()
         proc.exitValue()
       }
 
       // ── Stuck process detection (background tasks only) ──────────────
-      // Foreground commands are managed by auto-background (30s threshold):
-      // if still running, they move to background and the agent continues.
-      // No need to kill them — auto-background is the safety net.
+      // Foreground commands run to completion (#319) — their safety nets are
+      // the explicit timeout watchdog and the no-progress ceiling below.
       //
       // Background tasks have no time limit, so a command waiting for stdin
       // (ssh, sudo, telnet…) would hang forever. After the grace period
@@ -475,10 +492,57 @@ final class ShellSession private (
       val isSleepLike = SleepCommandRe.findFirstIn(command).isDefined
       val enableStuckDetection = isBackground && !isSleepLike
 
+      // Shared by the background stuck detector and the foreground no-progress
+      // ceiling: set when WE killed the tree (vs. natural exit) so the result
+      // carries the informative TimeoutException instead of a bare exit code.
+      val stuckFlag = Ref.unsafe[IO, Boolean](false)
+
+      // ── Foreground no-progress ceiling (#22, 2026-08-19) ────────────────
+      // A foreground command that produces no output and burns no CPU for
+      // ForegroundNoProgressTimeout is killed — interactive prompts / hung
+      // waits would otherwise freeze the agent's turn forever (default
+      // timeout is 365.days). Progress (output OR CPU) resets the window, so
+      // long builds and test suites run to completion (#319 preserved).
+      def foregroundNoProgressWatch: IO[Unit] =
+        def watch(lastLines: Int, lastCpu: Long, idleMs: Long): IO[Unit] =
+          IO.sleep(ForegroundSampleInterval) *> IO {
+            val alive = proc.isAlive()
+            val lines = h.outputLineCount.get()
+            val cpu = if alive then sampleProcessCpuTime(proc) else 0L
+            (alive, lines, cpu)
+          }.flatMap { (alive, lines, cpu) =>
+            if !alive then IO.unit
+            else if lines > lastLines || (cpu - lastCpu) >= CpuActiveThresholdNanos then
+              watch(lines, cpu, 0L)
+            else if idleMs + ForegroundSampleInterval.toMillis >= ForegroundNoProgressTimeout.toMillis then
+              IO.delay(
+                shellLogger.warn(
+                  s"Foreground command idle for ${(idleMs + ForegroundSampleInterval.toMillis) / 1000}s " +
+                    s"(no output, no CPU) — killing: ${command.take(80)}"
+                )
+              ) *> stuckFlag.set(true) *> ProcessTree.killProcessTree(proc)
+            else watch(lastLines, lastCpu, idleMs + ForegroundSampleInterval.toMillis)
+          }
+        watch(h.outputLineCount.get(), 0L, 0L)
+
+      // ── Hard timeout watchdog (#22, 2026-08-19 20:35 incident) ──────────
+      // `.timeout` over the three IO.blocking reads below is SOFT: IO.blocking
+      // cannot be interrupted, so the TimeoutException only surfaces after the
+      // reads return — i.e. after every pipe-holding descendant exits. In the
+      // incident the explicit 10-min timeout fired at 20:45 but the tool
+      // returned at 21:12 because an orphaned sbt→java test JVM kept the pipe
+      // open. The watchdog kills the whole tree AT the deadline: pipes hit
+      // EOF, reads unblock, and the timeout surfaces within milliseconds.
+      val timeoutWatchdog =
+        IO.sleep(timeout) *>
+          IO.delay(
+            shellLogger.warn(s"Command timeout (${timeout.toSeconds}s) reached — killing process tree: ${command.take(80)}")
+          ) *>
+          ProcessTree.killProcessTree(proc)
+
       for
         _ <- storeProc
         _ <- writeStdin
-        stuckFlag <- IO.ref(false)
 
         // Stuck detector fiber: after the grace period, if the process is
         // quiet, sample CPU over a short window before deciding to kill.
@@ -511,6 +575,9 @@ final class ShellSession private (
           else IO.unit
         ).start
 
+        noProgressFiber <- (if !isBackground && !isSleepLike then foregroundNoProgressWatch else IO.unit).start
+        watchdogFiber <- timeoutWatchdog.start
+
         // Main execution: read stdout/stderr and wait for process completion
         result <- (stdoutIO, stderrIO, waitIO)
           .parMapN { (out, err, code) =>
@@ -518,18 +585,25 @@ final class ShellSession private (
           }
           .timeout(timeout)
 
-        // Cleanup: cancel the stuck detector fiber
+        // Cleanup: cancel the watchdog / detector fibers
+        _ <- watchdogFiber.cancel
+        _ <- noProgressFiber.cancel
         _ <- stuckFiber.cancel
 
-        // Check if the process was killed by the stuck detector
+        // Check if the process was killed by the stuck detector / no-progress ceiling
         wasStuck <- stuckFlag.get
         finalResult <-
           if wasStuck then
             IO.raiseError(
               new TimeoutException(
-                "Command produced no output within " + StuckDetectionGracePeriod.toSeconds +
-                  " seconds and no CPU activity was detected. This command likely requires " +
-                  "interactive terminal input. Use a non-interactive alternative, or run it " +
+                (if isBackground then
+                   "Command produced no output within " + StuckDetectionGracePeriod.toSeconds +
+                     " seconds and no CPU activity was detected."
+                 else
+                  "Command produced no output and no CPU activity for " +
+                    ForegroundNoProgressTimeout.toSeconds + " seconds (foreground no-progress ceiling).") +
+                  " This command likely requires interactive terminal input (or is hung). " +
+                  "Use a non-interactive alternative, pass an explicit timeout, or run it " +
                   "manually in your terminal."
               )
             )
@@ -697,7 +771,34 @@ final class ShellSession private (
 
   end startJobHealthCheck
 
-  private def readStream(is: java.io.InputStream, onLine: String => Unit = _ => ()): String =
+  /**
+   * Poll-based line reader (#22, 2026-08-19).
+   *
+   * A blocking `BufferedReader.readLine()` cannot be interrupted — IO.blocking
+   * defers cancellation until the native read returns, and a pipe held open by
+   * an orphaned grandchild (reparented to launchd, invisible to every tree
+   * walk) never returns EOF. That is how a 10-minute explicit timeout ran for
+   * 37 minutes in the 20:35 incident while the turn looked silently dead.
+   *
+   * This reader never blocks while the process is alive: it polls
+   * `reader.ready()` on a 25ms cadence and reads only when data is available.
+   * After the process exits it drains whatever is buffered for a short grace
+   * window, then stops with the output it has — bounding every pipe-holder
+   * class (orphaned grandchildren included) to exit + grace, with zero added
+   * latency for normal commands.
+   *
+   * Known narrow corner (documented, accepted): a PARTIAL line (no newline
+   * yet) read while the process is alive may block in readLine() until the
+   * writer finishes the line or dies; if a surviving orphan then holds the
+   * pipe open forever, so can this read — requires both a mid-line write at
+   * exit AND an orphan holder, vs. the previous every-orphan hang.
+   */
+  private def readStream(
+      is: java.io.InputStream,
+      onLine: String => Unit = _ => (),
+      isProcessExited: () => Boolean = () => true,
+      exitGraceMs: Long = 250L
+  ): String =
     // On Windows, detect whether the output is UTF-8 or system ANSI code page
     // (GBK on Chinese Windows). Git Bash and Python (with PYTHONUTF8=1) output
     // UTF-8, but native Windows programs (ipconfig, systeminfo, cmd, etc.) output
@@ -711,21 +812,37 @@ final class ShellSession private (
       val sb = new StringBuilder
       var line: String = null
       val truncationMarker = "\n[Output truncated due to size limit]\n"
+      var truncated = false
+      var exitedAtMs = -1L
+      var done = false
 
-      try
-        while {
-          line = reader.readLine()
-          line != null
-        } do
-          sb.append(line).append("\n")
-          onLine(line)
-          if sb.length > MaxOutputSize then
-            val trimTo = math.max(0, MaxOutputSize - truncationMarker.length)
-            sb.setLength(trimTo)
-            sb.append(truncationMarker)
-            while { line = reader.readLine(); line != null } do ()
-      catch
-        case _: java.io.IOException => () // expected when proc.destroyForcibly() closes the stream on timeout/cancel
+      while !done do
+        try
+          if reader.ready() then
+            exitedAtMs = -1L
+            line = reader.readLine()
+            if line == null then done = true // EOF
+            else
+              onLine(line)
+              if !truncated then
+                sb.append(line).append("\n")
+                if sb.length > MaxOutputSize then
+                  val trimTo = math.max(0, MaxOutputSize - truncationMarker.length)
+                  sb.setLength(trimTo)
+                  sb.append(truncationMarker)
+                  truncated = true
+          else if isProcessExited() then
+            val now = System.currentTimeMillis()
+            if exitedAtMs < 0 then exitedAtMs = now
+            // Grace: buffered tail data surfaces as ready() within this window;
+            // no data after it (writers dead or orphaned) → stop, EOF or not.
+            if now - exitedAtMs >= exitGraceMs then done = true
+            else Thread.sleep(25)
+          else Thread.sleep(25)
+        catch
+          // expected when proc.destroyForcibly() closes the stream on timeout/cancel
+          case _: java.io.IOException => done = true
+      end while
 
       val s = sb.toString()
       if s.trim.isEmpty then "" else s
