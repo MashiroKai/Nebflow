@@ -479,6 +479,11 @@ export default {
   'task.lastTriggered': '上次触发',
   'task.queuedOffline': '连接中断，任务已排队，将在重连后保存',
   'task.createFailed': '定时任务创建失败',
+  'task.repeat': '周期',
+  'task.repeatOnce': '单次',
+  'task.repeatHourly': '每小时',
+  'task.repeatDaily': '每天',
+  'task.repeatWeekly': '每周',
 
   // NebLink
   'neblink.title': '设备互联',
