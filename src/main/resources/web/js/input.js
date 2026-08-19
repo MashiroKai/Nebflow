@@ -1258,41 +1258,10 @@ export function initInput(view) {
     f.click();
   };
 
-  // Drag & drop + paste on document.body — only register once (primary view)
+  // Paste image support (Cmd/Ctrl+V) — primary only, unchanged.
+  // Drag & drop moved to initGlobalFileDrop() (document-level delegation
+  // covering primary + popup input bars — see #303).
   if (view.id === 'primary') {
-    let dragCounter = 0;
-    document.body.addEventListener('dragenter', (e) => {
-      if (e.dataTransfer && e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
-        dragCounter++;
-        document.body.classList.add('drag-over');
-      }
-    });
-    document.body.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    });
-    document.body.addEventListener('dragleave', (e) => {
-      if (e.dataTransfer && e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
-        dragCounter--;
-        if (dragCounter <= 0) {
-          dragCounter = 0;
-          document.body.classList.remove('drag-over');
-        }
-      }
-    });
-    document.body.addEventListener('drop', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCounter = 0;
-      document.body.classList.remove('drag-over');
-      setActiveView(chatViews.primary);
-      const files = [];
-      if (e.dataTransfer.files) {
-        for (const f of e.dataTransfer.files) files.push(f);
-      }
-      files.forEach(f => addFileAttachment(f));
-    });
-    // Paste image support (Cmd/Ctrl+V)
     document.addEventListener('paste', (e) => {
       const items = e.clipboardData && e.clipboardData.items;
       if (!items) return;
@@ -1472,4 +1441,66 @@ export function initInput(view) {
       });
     }
   }
+}
+
+// ---------- Global drag & drop onto input bars (#303) ----------
+// Event delegation on document: popup views recreate their input bar DOM on
+// every open (per-element binding would go stale — see _inputBound), so all
+// drag listeners live here and resolve the owning ChatView at event time.
+// A file dropped onto ANY input bar (main or popup) attaches to THAT bar's
+// session; drops elsewhere are ignored (no page navigation).
+const INPUT_BAR_SELECTOR = '#input-bar, .fa-input-bar';
+
+export function initGlobalFileDrop() {
+  let dragDepth = 0;    // child-element nesting depth inside the bar
+  let activeBar = null; // currently highlighted input bar
+
+  const hasFiles = (e) =>
+    !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
+  const barOf = (e) =>
+    e.target instanceof Element ? e.target.closest(INPUT_BAR_SELECTOR) : null;
+  const clearHighlight = () => {
+    if (activeBar) activeBar.classList.remove('drag-over');
+    activeBar = null; dragDepth = 0;
+  };
+
+  document.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    const bar = barOf(e);
+    if (!bar) return;
+    if (bar !== activeBar) clearHighlight();
+    activeBar = bar;
+    dragDepth++;
+    bar.classList.add('drag-over');
+  });
+
+  document.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;      // native text drags pass through untouched
+    e.preventDefault();            // block browser default "open dropped file"
+    e.dataTransfer.dropEffect = 'copy';
+  });
+
+  // No hasFiles() check here: dataTransfer.types is unreadable during
+  // dragleave in some engines (this was the old stuck-highlight bug).
+  document.addEventListener('dragleave', () => {
+    if (!activeBar) return;
+    dragDepth--;
+    if (dragDepth <= 0) clearHighlight();
+  });
+
+  document.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();            // never navigate to the dropped file
+    const bar = barOf(e);
+    clearHighlight();
+    if (!bar) return;              // dropped outside any input bar — ignore
+    const view = Object.values(chatViews)
+      .find(v => v.mounted && v.dom && v.dom.inputBar === bar);
+    if (!view || view.dom.input?.readOnly) return; // disabled popup guard
+    setActiveView(view);
+    const target = { attPreviewEl: view.dom.attPreview,
+                     attachments: view.pendingAttachments };
+    Array.from(e.dataTransfer.files || []).forEach(f => addFileAttachment(f, null, target));
+    view.dom.input?.focus();
+  });
 }
