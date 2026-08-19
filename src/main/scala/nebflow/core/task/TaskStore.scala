@@ -72,7 +72,22 @@ object FileTaskStore extends TaskStore:
   }
 
   private def writeTask(sessionId: String, task: Task): IO[Unit] = IO.blocking {
-    os.write.over(taskFile(sessionId, task.id), task.asJson.noSpaces)
+    // Issue #23: atomic write via tmp+rename — a bare os.write.over can leave
+    // a truncated/partial JSON file if the process dies mid-write; readers
+    // then silently drop the task (readTask skips corrupted files).
+    // NOTE: os.move.over(replaceExisting=true) is NOT atomic (it does
+    // delete-then-rename internally and throws if the target is missing) —
+    // java.nio Files.move with ATOMIC_MOVE maps to rename(2), which is the
+    // true single-step atomic replace on POSIX.
+    val f = taskFile(sessionId, task.id)
+    val tmp = f / os.up / s"${f.last}.tmp.${java.util.UUID.randomUUID()}"
+    os.write.over(tmp, task.asJson.noSpaces)
+    java.nio.file.Files.move(
+      tmp.toNIO,
+      f.toNIO,
+      java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+      java.nio.file.StandardCopyOption.ATOMIC_MOVE
+    )
   }
 
   // Issue #1: Atomic hwm using Ref
