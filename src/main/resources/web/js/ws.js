@@ -82,7 +82,7 @@ function convertAgentEvent(msg) {
     case 'agentTextDelta':
       return { type: 'textDelta', sessionId: sid, delta: msg.delta || '' };
     case 'agentThinking':
-      return { type: 'thinkingDelta', sessionId: sid, delta: '' };
+      return { type: 'thinkingDelta', sessionId: sid, delta: msg.delta || '' };
     case 'agentToolCallDetected':
       return { type: 'toolCallDetected', sessionId: sid, name: msg.name || '' };
     case 'agentToolStart':

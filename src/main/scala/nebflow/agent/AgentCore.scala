@@ -1138,10 +1138,20 @@ private[agent] trait AgentCore:
       def flushThinking(): IO[Unit] =
         if thinkingCount == 0 then IO.unit
         else
+          val delta = thinkingBuf.toString
           val json =
-            if isSubagent then AgentStreamEvent.Thinking.toJson(ctx.self.path.name, true, None)
+            if isSubagent then
+              // Sub-agents emit agentThinking with a delta field. routeWsSend
+              // stamps nodeSessionId; ws.js convertAgentEvent maps agentThinking
+              // → thinkingDelta with sessionId = nodeSessionId so the popup view
+              // renders the reasoning bubble.
+              Json.obj(
+                "type" -> "agentThinking".asJson,
+                "agentId" -> ctx.self.path.name.asJson,
+                "delta" -> delta.asJson,
+                "nodeSessionId" -> sessionId.asJson
+              )
             else
-              val delta = thinkingBuf.toString
               Json.obj("type" -> "thinkingDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
           thinkingBuf.setLength(0)
           thinkingCount = 0
@@ -1162,7 +1172,9 @@ private[agent] trait AgentCore:
 
         // Batch thinking instead of one frame per chunk.
         case StreamChunk.ThinkingDelta(delta) if delta.nonEmpty && !isCompactTurn =>
-          if !isSubagent then thinkingBuf.append(delta)
+          // Both main and sub-agent thinking enters the buffer; flush sends
+          // thinkingDelta with the session's sessionId so popup views render it.
+          thinkingBuf.append(delta)
           thinkingCount += 1
           if thinkingCount >= MaxBatch || System.currentTimeMillis() - lastFlushMs >= FlushWindowMs then flushAll()
           else IO.unit
