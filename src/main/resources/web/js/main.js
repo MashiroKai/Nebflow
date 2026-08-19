@@ -296,6 +296,15 @@ function clearBusyFor(msg) {
   if (sid && state.frozenSessions.has(sid)) {
     state.frozenSessions.delete(sid);
     hideFrozenStatus(sid);
+    const fv = findViewBySessionId(sid);
+    if (fv && fv.dom && fv.dom.inputBar) {
+      fv.dom.inputBar.classList.remove('frozen');
+      // Restore the mode-appropriate placeholder when the frozen session is
+      // the one on screen (otherwise it self-heals on next view activation).
+      if (fv === activeView && fv.dom.input) {
+        import('./input.js').then(({ applyInputModes }) => applyInputModes());
+      }
+    }
   }
   // Drain queued messages after a short delay to let the UI finalize first
   if (sid) {
@@ -344,6 +353,8 @@ onMessage('frozen', (msg) => {
     showFrozenStatus(sid, msg.resumeAt || null);
     // Wake hint in the input box (spec §4 behavior 4)
     if (v.dom && v.dom.input) v.dom.input.placeholder = t('chat.frozenWakeHint');
+    // Frozen visual state on the input bar — cold sapphire tint (task b)
+    if (v.dom && v.dom.inputBar) v.dom.inputBar.classList.add('frozen');
   }
 });
 
@@ -356,6 +367,7 @@ onMessage('resumed', (msg) => {
   if (v) {
     setActiveView(v);
     hideFrozenStatus(sid);
+    if (v.dom && v.dom.inputBar) v.dom.inputBar.classList.remove('frozen');
     // Restore the mode-appropriate placeholder (default / skill / ask / plan)
     import('./input.js').then(({ applyInputModes }) => applyInputModes());
   }
