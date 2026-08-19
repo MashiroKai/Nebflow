@@ -104,7 +104,7 @@ The current task list is always visible in your system prompt — no need to cal
         for
           id <- store.create(sessionId, createInput)
           _ <- TaskToolHelper.emitTaskListUpdate(store, sessionId, ctx)
-        yield Right(s"Task created: ${createInput.subject}")
+        yield Right(s"Task created: ${createInput.subject} (ID: $id)")
       case (None, _) => IO.pure(Left(ToolError("No task store available")))
       case (_, None) => IO.pure(Left(ToolError("No session ID available")))
 
