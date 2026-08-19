@@ -238,7 +238,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         counter <- IO.ref(0)
         requests <- IO.ref(List.empty[LlmRequest])
         events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(openConfig) // 开窗启动第一轮
+        schedRef <- IO.ref(openConfig) // 不冻结启动第一轮
         resources <- mkResources(system, tmp, ToolThenTextLlm(counter, requests, target.toString), schedRef)
         sid = "freeze-b4-tools-agent"
         ref <- system.spawn(
@@ -379,7 +379,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         _ <- IO.sleep(600.millis)
         count1 <- counter.get
         _ = assert(count1 == 0, s"system input must not wake a frozen agent, got $count1")
-        // 开窗 + 恢复 → 首个挂起任务 dispatch；turn 结束 drain 排队消息 → 第二轮
+        // 解除冻结 + 恢复 → 首个挂起任务 dispatch；turn 结束 drain 排队消息 → 第二轮
         _ <- schedRef.set(openConfig)
         _ <- ref ! AgentCommand.CheckFreezeGate
         _ <- waitUntil(System.currentTimeMillis() + 8000)(counter.get.map(_ >= 1))
@@ -538,7 +538,7 @@ class FreezeGateSpec extends CatsEffectSuite:
         _ <- IO.sleep(400.millis)
         count1 <- counter.get
         _ = assert(count1 == 0, "closed-window scan must not resume")
-        // 开窗后 scan：CheckFreezeGate 送达 → 恢复
+        // 解除冻结后 scan：CheckFreezeGate 送达 → 恢复
         _ <- schedRef.set(openConfig)
         _ <- FreezeScheduler.scan(resources)
         _ <- waitUntil(System.currentTimeMillis() + 8000)(counter.get.map(_ >= 1))

@@ -20,7 +20,7 @@ import scala.concurrent.duration.*
 /**
  * Dispatch 发起方分类（freeze-schedule spec D1）：决定 pipeLlmCall gate 的行为。
  * Gated（默认）= 系统续跑（ToolsComplete 续轮 / finishTurnCont / ExternalEvent /
- * CompactionComplete 恢复 / Retry 等）——受工作时间表约束；UserWake = 用户显式
+ * CompactionComplete 恢复 / Retry 等）——受冻结时间表约束（#337 黑名单语义）；UserWake = 用户显式
  * 发起（idle UserInput[clientMessageId.isDefined] / AskQuestion / SkillActivate /
  * PlanApproved）——冻结时段也放行（用户输入即唤醒，需求硬指标）。
  */
@@ -1428,7 +1428,7 @@ object AgentActor extends AgentCore with AgentSession:
           case Some(LastDispatch(false, _)) =>
             // Re-dispatch LLM call with same messages. 6-arg call goes through
             // the AgentActor shadow (freeze gate) — retry must not bypass the
-            // work schedule (spec §5.4: 冻结时段不重试，开窗后恢复即重试).
+            // work schedule (spec §5.4: 冻结时段不重试，出冻结段后恢复即重试).
             pipeLlmCall(agentDef, resources, depth, parentRef, state, None)
           case Some(LastDispatch(true, Some(cr))) =>
             // Re-dispatch tool execution with same LLM result
@@ -2631,12 +2631,12 @@ object AgentActor extends AgentCore with AgentSession:
 
   /**
    * frozen behavior：冻结中的 agent——持有完整 state（工具结果已组装并持久化，
-   * F1）+ replyTo，等待开窗自动恢复或用户唤醒。
+   * F1）+ replyTo，等待出冻结段自动恢复或用户唤醒。
    *
    * 恢复驱动只有两个：CheckFreezeGate（FreezeScheduler 30s 轮询 / 配置热更即时
    * scan）重评估时间表；UserInput(clientMessageId.isDefined) 用户唤醒。系统注入
    * 一律排队不唤醒（零 token 铁律，D2）——BackoffSupervisor 崩溃重启注入的
-   * "continue" 在冻结时段同样不唤醒，开窗后续跑（spec §5.3）。
+   * "continue" 在冻结时段同样不唤醒，出冻结段后续跑（spec §5.3）。
    *
    * 独立 behavior 而非 processing 加 flag（D3）：天然隔离 processing 的 20+ 交互
    * case（重复 ToolsComplete 双 dispatch、stale LlmComplete 等）；catch-all 留在
@@ -2806,7 +2806,7 @@ object AgentActor extends AgentCore with AgentSession:
               IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
 
       case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
-        // 排队 pendingEvents（不唤醒）：开窗/唤醒后的下一个 turn 边界
+        // 排队 pendingEvents（不唤醒）：出冻结段/唤醒后的下一个 turn 边界
         // （ToolsComplete → drainBarrier）统一注入。barrier 计数语义镜像 idle
         // ExternalEvent——subagent result 到达即递减 outstanding，否则批次在
         // 冻结期间全部完成时计数永不清零，恢复后 drainBarrier 永久 hold。
