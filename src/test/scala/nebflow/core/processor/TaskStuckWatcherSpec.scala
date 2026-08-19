@@ -24,8 +24,10 @@ import scala.concurrent.duration.*
  *   - 子 agent（有 parentRef）Processing 超时 → 发 Stop（→ BackoffSupervisor
  *     death-watch 重启链路由现有 supervisor 测试覆盖，这里只验证识别+触发）
  *   - 根 agent（无 parentRef）Processing 超时 → 广播 taskStuck WS 事件，不 Stop
+ *   - #22 (2026-08-19)：Team agent Processing 超时 → 广播 taskStuck(action=
+ *     attention)，只读不 Stop（Team 是长驻用户可见会话，AgentControl §4）
  *   - 防误杀铁律：Idle 态永不判；lastActivityMs 在阈值内不判；
- *     刚注册（lastActivityMs==0）不判；非 taskKinds（Team/Root）不扫
+ *     刚注册（lastActivityMs==0）不判
  */
 class TaskStuckWatcherSpec extends CatsEffectSuite:
 
@@ -72,6 +74,51 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       actorSystem = system,
       voiceMutedRef = voiceMuted
     )
+
+
+  test("#22: Team agent Processing 超时 → 只读广播 taskStuck(action=attention)，绝不发 Stop") {
+    val system = ActorSystem("test-team-stuck")
+    for
+      _ <- IO(system)
+      tmp <- IO(os.temp.dir())
+      resources <- mkResources(system, tmp)
+      teamReceived <- Ref.of[IO, List[AgentCommand]](Nil)
+      teamRef <- system.spawn(mkRecordingActor(teamReceived), "team-agent")
+      parentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "team-parent")
+      wsHub = new WsHub()
+      receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
+      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+      now = System.currentTimeMillis()
+      threshold = 10 * 60 * 1000L
+      // Mail 激活的 team agent：kind=Team、有 parentRef（曾使 parentRef=Some 分支
+      // 误发 Stop 的风险形态）——必须走 Team 只读分支
+      stuckTeam = AgentRecord(
+        sessionId = "team-nebflow-project-Frontend",
+        ref = teamRef,
+        kind = AgentKind.Team,
+        rootSessionId = "root-1",
+        parentRef = Some(parentRef),
+        startedAt = now - 2 * 60 * 60 * 1000L,
+        status = AgentStatus.Processing,
+        lastActivityMs = now - threshold - 1000
+      )
+      _ <- resources.agentRegistry.set(Map("team-nebflow-project-Frontend" -> stuckTeam))
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold)
+      _ <- IO.sleep(200.millis)
+      wsEvents <- receivedWs.get
+      teamCmds <- teamReceived.get
+    yield
+      // 广播：kind=Team + action=attention（用户可见，交给用户/Nebula 决策）
+      assert(wsEvents.size == 1, s"expected one taskStuck broadcast, got $wsEvents")
+      val ev = wsEvents.head
+      assertEquals(ev.hcursor.get[String]("type").toOption, Some("taskStuck"))
+      assertEquals(ev.hcursor.get[String]("kind").toOption, Some("Team"))
+      assertEquals(ev.hcursor.get[String]("action").toOption, Some("attention"))
+      assertEquals(ev.hcursor.get[String]("sessionId").toOption, Some("team-nebflow-project-Frontend"))
+      assert(ev.hcursor.get[Long]("idleSecs").toOption.exists(_ > 0), s"idleSecs: $ev")
+      // 只读铁律：长驻 team agent 绝不自动 Stop（AgentControl §4 Team=只读）
+      assert(teamCmds.isEmpty, s"Team agent must NOT receive any command, got $teamCmds")
+  }
 
   test("子 agent Processing 超时 → 广播 taskStuck(action=restart) + 发 Stop（AgentControl spec §3.5）") {
     val system = ActorSystem("test")
@@ -231,20 +278,24 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
     yield assert(msgs.isEmpty, s"freshly-registered agent must not be stopped, got $msgs")
   }
 
-  test("非扫描集合（Team）不扫描") {
+  test("#22: Team 加入扫描集合但只读——广播 taskStuck，绝不 Stop") {
     val system = ActorSystem("test")
     for
+      _ <- IO(system)
       tmp <- IO(os.temp.dir())
       resources <- mkResources(system, tmp)
       childRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "team-child")
       received <- Ref.of[IO, List[AgentCommand]](Nil)
+      wsHub = new WsHub()
+      receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
+      _ <- wsHub.register(json => receivedWs.update(_ :+ json))
       now = System.currentTimeMillis()
       _ <- resources.agentRegistry.set(
         Map(
           "team-long" -> AgentRecord(
             sessionId = "team-long",
             ref = childRef,
-            kind = AgentKind.Team, // Team 长期驻留，registry 常年在
+            kind = AgentKind.Team, // Team 现在在扫描集合（#22），但只读
             rootSessionId = "root-1",
             parentRef = Some(childRef),
             startedAt = now - 60 * 60 * 1000L,
@@ -253,10 +304,16 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
           )
         )
       )
-      _ <- TaskStuckWatcher.scan(resources, new WsHub(), 10 * 60 * 1000L)
+      _ <- TaskStuckWatcher.scan(resources, wsHub, 10 * 60 * 1000L)
       _ <- IO.sleep(200.millis)
       msgs <- received.get
-    yield assert(msgs.isEmpty, s"Team agent must not be scanned, got $msgs")
+      wsEvents <- receivedWs.get
+    yield
+      // 只读铁律：Team 永不 Stop
+      assert(msgs.isEmpty, s"Team agent must never be stopped, got: $msgs")
+      // 但要被看见：长驻 Team 卡死不再是盲区（#22 12:28-13:45 两小时零可见性）
+      assert(wsEvents.nonEmpty, s"Team stuck must broadcast taskStuck, got: $wsEvents")
+      assert(wsEvents.head.hcursor.get[String]("kind").toOption.contains("Team"), s"kind=Team: ${wsEvents.head}")
   }
 
   test("空 registry 扫描不抛错") {
