@@ -119,7 +119,8 @@
 }
 
 /* ── Section titles (§3, A6: .task-section-title is the frozen assertion
-   class; .task-group-header carries the styles) — only when both kinds ── */
+   class; .task-group-header carries the styles) — v3: constant while the
+   panel is visible (C27), one per zone, no counts (C26) ── */
 .task-group-header {
   font-size: 11px;
   font-weight: 500;
@@ -128,8 +129,22 @@
   cursor: default;
 }
 
+/* v3 dual-zone structure containers — bare by design (§15.5/§15.6 克制:
+   zone differentiation comes from content, not container decoration). */
+.task-section {
+  min-width: 0;
+}
+
 .task-body-inner > .task-group-header:first-child {
   margin-top: 2px;
+}
+
+/* ── Empty zone state (C27, §15.5/§15.6) ── */
+.task-empty {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-muted, #888);
+  padding: 4px 2px;
 }
 
 /* ── Rows (§3.2): .task-item > .task-check + .task-item-text ── */
@@ -143,7 +158,8 @@
 }
 
 /* Circle completion control — Apple Reminders style (§6 frozen: 20×20px
-   hit area, 14px glyph, 1.5px border at 40% alpha) */
+   hit area, 14px glyph, 1.5px border at 40% alpha). 待办区专属 (裁定 19:56:
+   圆圈 = 用户可操作区专属). */
 .task-check {
   flex-shrink: 0;
   width: 20px;
@@ -153,6 +169,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 任务区专属 (裁定 19:56): square glyph — read-only observation, must NOT
+   look clickable. Same metrics, square corner. */
+.task-check-box {
+  border-radius: 4px;
 }
 
 .task-check-clickable {
@@ -304,6 +326,30 @@ svg.task-failed-icon {
   color: var(--color-text-muted, #888);
 }
 
+/* v3 C29: 待确认状态词 = sapphire 族亮度变体（待办区「需要你」信号；
+   零新全局 token，局部变量级。亮 rgb(76,110,170) 5.10:1 / 暗
+   rgb(140,165,215) 5.30:1 — §15.9 对比度核验） */
+.task-needs-confirmation .task-status-word {
+  color: rgb(76, 110, 170);
+}
+@media (prefers-color-scheme: dark) {
+  .task-needs-confirmation .task-status-word {
+    color: rgb(140, 165, 215);
+  }
+}
+
+/* v3 §15.6/§15.7: 任务区相对时间（刚分/分钟/小时/天，60s textContent 直更） */
+.task-last-active {
+  flex-shrink: 0;
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-text-muted, #888);
+}
+
 /* Return button — glass-control Pattern B (base transparent, hover glass),
    right end of the row: corner-up-left 13px + label 11px/500 */
 .task-return-btn {
@@ -354,6 +400,27 @@ svg.task-failed-icon {
   to   { opacity: 1; transform: translateX(0); }
 }
 
+/* ── v3 裁定 3: 跨区移动 (任务区 → 待办区, 进行→待确认) ──
+   Old-zone row fades out (160ms), then redraw plays .task-zone-enter on the
+   new side. 克制: 只用于状态变化瞬间, 不循环不常驻. */
+.task-item.task-leaving {
+  animation: task-leave 0.16s ease forwards;
+}
+
+@keyframes task-leave {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+.task-item.task-zone-enter {
+  animation: task-zone-enter 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes task-zone-enter {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   .task-toggle:hover,
@@ -376,7 +443,9 @@ svg.task-failed-icon {
   }
   .task-completing .task-check,
   .task-collapsing,
-  .task-item.task-entering {
+  .task-item.task-entering,
+  .task-item.task-leaving,
+  .task-item.task-zone-enter {
     animation: none;
   }
 }
@@ -396,4 +465,6 @@ svg.task-failed-icon {
   .task-status-word { display: none; }
   .task-return-btn span { display: none; }
   .task-return-btn { padding: 2px 4px; }
+  /* v3 D12: 任务区相对时间在窄屏让步（信息次要，防水平溢出增量） */
+  .task-last-active { display: none; }
 }
