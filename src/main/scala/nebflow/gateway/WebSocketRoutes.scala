@@ -3647,10 +3647,17 @@ class WebSocketRoutes(
 
       case "agentThinking" =>
         // Mark turn start on the first thinking token too (some turns emit
-        // thinking before any text).
+        // thinking before any text). Also accumulate the delta into the
+        // sub-agent's own sessionThinkingBuffers so agentToolEnd/agentDone
+        // can persist thinking into ui.json.
         hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId) match
           case Some(nsid) =>
-            sessionTurnStarts
+            val delta = hc.downField("delta").as[String].getOrElse("")
+            val recordThinking =
+              if delta.nonEmpty then
+                sessionThinkingBuffers.update(m => m.updatedWith(nsid)(_.map(_ + delta).orElse(Some(delta))))
+              else IO.unit
+            recordThinking *> sessionTurnStarts
               .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis()))
           case None => IO.unit
 
@@ -3664,22 +3671,26 @@ class WebSocketRoutes(
             val content = hc.downField("content").as[String].getOrElse("")
             val isError = hc.downField("isError").as[Boolean].getOrElse(false)
             val input = hc.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces
-            // Flush any accumulated text before recording the tool, so the AI
-            // message bubble appears above the tool card in history.
+            // Flush any accumulated text + thinking before recording the tool, so the AI
+            // message bubble (with thinking) appears above the tool card in history.
             sessionTextBuffers
               .modify(m => (m - nsid, m.getOrElse(nsid, "")))
               .flatMap { text =>
-                val flushText =
-                  if text.nonEmpty then
-                    sharedResources.sessionStore.appendUiMessages(
+                sessionThinkingBuffers
+                  .modify(m => (m - nsid, m.getOrElse(nsid, "")))
+                  .flatMap { thinking =>
+                    val flushMsg =
+                      if text.nonEmpty then
+                        sharedResources.sessionStore.appendUiMessages(
+                          nsid,
+                          List(UiMessage.Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis()))
+                        )
+                      else IO.unit
+                    flushMsg *> sharedResources.sessionStore.appendUiMessages(
                       nsid,
-                      List(UiMessage.Ai(text, None, None, None, System.currentTimeMillis()))
+                      List(UiMessage.Tool(label, summary, content, isError, input))
                     )
-                  else IO.unit
-                flushText *> sharedResources.sessionStore.appendUiMessages(
-                  nsid,
-                  List(UiMessage.Tool(label, summary, content, isError, input))
-                )
+                  }
               }
           case _ => IO.unit
         end match
@@ -3689,7 +3700,7 @@ class WebSocketRoutes(
           hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
         nodeSessionId match
           case Some(nsid) =>
-            // Flush any remaining accumulated text as a final AI bubble, with
+            // Flush any remaining accumulated text + thinking as a final AI bubble, with
             // duration (from the turn start) and model so the popup renders the
             // ✻ duration badge on the agent's last reply.
             val model = hc.downField("model").as[Option[String]].getOrElse(None)
@@ -3700,26 +3711,31 @@ class WebSocketRoutes(
                 sessionTextBuffers
                   .modify(m => (m - nsid, m.getOrElse(nsid, "")))
                   .flatMap { text =>
-                    if text.nonEmpty then
-                      sharedResources.sessionStore.appendUiMessages(
-                        nsid,
-                        List(UiMessage.Ai(text, durationMs, model, None, System.currentTimeMillis()))
-                      )
-                    else
-                      // No text (flushed earlier by agentToolEnd) — backfill
-                      // model + timestamp onto the last saved AI message. We no
-                      // longer gate on durationMs.isDefined: when sessionTurnStarts
-                      // was never set (startTime=0 → durationMs=None), team agent
-                      // AI messages still need model and timestamp so the popup
-                      // renders the badge (model name + time). durationMs stays
-                      // None when unknown; the frontend falls back to a simpler
-                      // badge (model + timestamp, no thinking phrase).
-                      sharedResources.sessionStore.updateLastAiMeta(
-                        nsid,
-                        durationMs,
-                        model,
-                        System.currentTimeMillis()
-                      )
+                    sessionThinkingBuffers
+                      .modify(m => (m - nsid, m.getOrElse(nsid, "")))
+                      .flatMap { thinking =>
+                        val thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
+                        if text.nonEmpty || thinkingOpt.isDefined then
+                          sharedResources.sessionStore.appendUiMessages(
+                            nsid,
+                            List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis()))
+                          )
+                        else
+                          // No text (flushed earlier by agentToolEnd) — backfill
+                          // model + timestamp onto the last saved AI message. We no
+                          // longer gate on durationMs.isDefined: when sessionTurnStarts
+                          // was never set (startTime=0 → durationMs=None), team agent
+                          // AI messages still need model and timestamp so the popup
+                          // renders the badge (model name + time). durationMs stays
+                          // None when unknown; the frontend falls back to a simpler
+                          // badge (model + timestamp, no thinking phrase).
+                          sharedResources.sessionStore.updateLastAiMeta(
+                            nsid,
+                            durationMs,
+                            model,
+                            System.currentTimeMillis()
+                          )
+                      }
                   }
               }
           case _ => IO.unit
