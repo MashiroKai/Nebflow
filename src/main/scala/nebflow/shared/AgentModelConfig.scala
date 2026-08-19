@@ -13,8 +13,11 @@ import io.circe.{Decoder, Encoder, Json}
  * matching is performed: the user picks the models, and fallback stays within
  * that user-chosen set.
  *
- * If both fields are empty, the global candidate chain (nebflow.json
- * `model.default` + `model.fallbacks`) is used instead.
+ * If both fields are empty, the agent follows the global default preset
+ * (model-presets.json `defaultPreset`, resolved by PresetStore.resolve level 3
+ * — terminal). The old nebflow.json `llm.model` global chain is retired
+ * (#339): it seeded the default preset once at migration, then the field was
+ * stripped; it is never a live resolution source.
  */
 case class AgentModelConfig(
   preferred: Option[String] = None,

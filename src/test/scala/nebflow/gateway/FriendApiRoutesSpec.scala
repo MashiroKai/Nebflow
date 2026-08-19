@@ -136,7 +136,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
 
   private def mkRoutes(fs: Option[FriendService]): RestApiRoutes =
     val config = NebflowServiceConfig(
-      llm = ServiceLlmConfig(providers = Map.empty, model = ModelChainConfig(default = "test/default"))
+      llm = ServiceLlmConfig(providers = Map.empty) // #339：llm.model 已退役
     )
     new RestApiRoutes(
       token = TestToken,

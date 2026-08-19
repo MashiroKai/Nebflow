@@ -40,7 +40,6 @@ object ConfigService:
     val errors = scala.collection.mutable.ListBuffer.empty[String]
     val llmHc = json.hcursor.downField("llm")
     val providersResult = llmHc.downField("providers").as[Map[String, Json]]
-    val modelResult = llmHc.downField("model").as[Json]
 
     // Check providers
     providersResult.toOption.foreach { providers =>
@@ -75,31 +74,9 @@ object ConfigService:
       }
     }
 
-    // Check model chain. A provider being deleted (null value) counts as absent —
-    // a surviving reference to it reports "points to unknown provider", guiding
-    // the caller to clean it up (the frontend does this before sending the delete).
-    def providerPresent(providerId: String): Boolean =
-      providersResult.toOption.exists(_.get(providerId).exists(!_.isNull))
-
-    modelResult.toOption.foreach { modelJson =>
-      val default = modelJson.hcursor.downField("default").as[Option[String]].toOption.flatten.getOrElse("")
-      if default.nonEmpty then
-        val idx = default.indexOf('/')
-        if idx == -1 then errors += s"Default model '$default' is invalid — expected 'providerId/modelId' format"
-        else
-          val providerId = default.take(idx)
-          if !providerPresent(providerId) then
-            errors += s"Default model '$default' points to unknown provider '$providerId'"
-      val fallbacks = modelJson.hcursor.downField("fallbacks").as[Option[List[String]]].toOption.flatten.getOrElse(Nil)
-      fallbacks.foreach { ref =>
-        val idx = ref.indexOf('/')
-        if idx == -1 then errors += s"Fallback model '$ref' is invalid — expected 'providerId/modelId' format"
-        else
-          val providerId = ref.take(idx)
-          if !providerPresent(providerId) then
-            errors += s"Fallback model '$ref' points to unknown provider '$providerId'"
-      }
-    }
+    // #339：llm.model 链校验段已删——字段退役（decoder 容忍但忽略；boot 迁移
+    // 播种成默认 preset 后原子剥离）。preset 引用的清理/改写由 scrubPresetRefs
+    // / rewritePresetRefs 承担（已存在）。
 
     errors.toList
   end validateConfigJson
@@ -108,15 +85,13 @@ object ConfigService:
     IO.blocking {
       val existing = if os.exists(configPath) then os.read(configPath) else "{}"
       // Provider rename detection (B2): delete-old + add-new with identical
-      // content is a rename. Rewrite the global-chain refs old→new in the
-      // incoming payload BEFORE validation — validation rejects refs to the
-      // now-absent old name, and a rename must keep the chain, not scrub it.
-      // Masked apiKeys on renamed providers are restored from the old entry
-      // (mergeConfig cannot preserve them — the new name has no existing twin).
+      // content is a rename. Masked apiKeys on renamed providers are restored
+      // from the old entry (mergeConfig cannot preserve them — the new name has
+      // no existing twin). (#339：llm.model 链的 rename 改写已删——字段退役；
+      // preset 引用的改写在下方的 rewritePresetRefs。)
       val renames = detectProviderRenames(existing, incomingRaw)
       val incoming0 = restoreRenamedSecrets(incomingRaw, existing, renames)
-      val incoming = renames.foldLeft(incoming0)((acc, r) => rewriteChainRefs(acc, r._1, r._2))
-      (existing, incoming, renames)
+      (existing, incoming0, renames)
     }.flatMap { (existing, incoming, renames) =>
       // Validate before writing
       val errors = validateConfig(incoming)
@@ -130,15 +105,11 @@ object ConfigService:
         ConfigSnapshot.save() *>
           IO
             .blocking {
-              val merged0 = mergeConfig(existing, incoming)
-              // Backend fallback: scrub deleted-provider references from the global
-              // model chain (pure deletes only — renames are rewritten below). The
-              // frontend normally cleans these first; this catches partial updates
-              // where the chain survives the merge untouched.
-              val merged1 = pureDeletes.foldLeft(merged0)(scrubGlobalChain)
-              // Renames: the merged chain may still carry the old name when the
-              // incoming payload omitted llm.model entirely (partial update).
-              val merged = renames.foldLeft(merged1)((acc, r) => rewriteChainRefs(acc, r._1, r._2))
+              val merged = mergeConfig(existing, incoming)
+              // (#339：llm.model 的 scrubGlobalChain/rewriteChainRefs 已删——字段
+              // 退役。provider 删除/改名对 preset 引用的清理由下方
+              // scrubPresetRefs/rewritePresetRefs 承担，agent.json 由
+              // rewriteAgentModelRefs 承担。)
               // Write path: always the brand config name — the first
               // read-modify-write after a rename completes the file
               // migration (existing was read through the legacy fallback).
@@ -209,60 +180,6 @@ object ConfigService:
       .flatMap(_.hcursor.downField("llm").downField("providers").as[Option[Map[String, Json]]].toOption.flatten)
       .map(_.collect { case (name, v) if v.isNull => name }.toList)
       .getOrElse(Nil)
-
-  /**
-   * Remove `provider/...` references from the global model chain
-   * (llm.model.default + llm.model.fallbacks). Called as a backend fallback
-   * during merge — the frontend normally cleans these references before
-   * sending the delete.
-   *
-   * `model.default` is a required field in ServiceLlmConfig, so a scrubbed
-   * default is promoted from the first remaining fallback, or set to "" (the
-   * registry skips empty/invalid refs and falls back to the first available
-   * model). Fallbacks are filtered; an emptied fallbacks key is dropped.
-   * Returns the input unchanged when nothing references the provider.
-   */
-  private def scrubGlobalChain(json: String, provider: String): String =
-    val prefix = s"$provider/"
-    parse(json).toOption match
-      case None => json
-      case Some(j) =>
-        j.hcursor.downField("llm").downField("model").focus match
-          case None => json
-          case Some(modelJson) =>
-            val modelHc = modelJson.hcursor
-            val defaultRef = modelHc.downField("default").as[Option[String]].toOption.flatten.getOrElse("")
-            val fallbackRefs = modelHc.downField("fallbacks").as[Option[List[String]]].toOption.flatten.getOrElse(Nil)
-            val defaultTouched = defaultRef.startsWith(prefix)
-            val fallbacksTouched = fallbackRefs.exists(_.startsWith(prefix))
-            if !defaultTouched && !fallbacksTouched then json
-            else
-              val fbs = fallbackRefs.filterNot(_.startsWith(prefix))
-              val newDefault =
-                if defaultTouched then fbs.headOption.getOrElse("") else defaultRef
-              val newFallbacks = if defaultTouched then fbs.drop(1) else fbs
-              // `model.default` is a REQUIRED field in ServiceLlmConfig — never
-              // drop it. "" is skipped by the registry's chain resolution, which
-              // then falls back to the first available model.
-              val fields = scala.collection.mutable.LinkedHashMap.empty[String, Json]
-              fields += "default" -> newDefault.asJson
-              if newFallbacks.nonEmpty then fields += "fallbacks" -> newFallbacks.asJson
-              val newModel = Json.fromFields(fields.toMap)
-              val newLlm = j.hcursor
-                .downField("llm")
-                .focus
-                .flatMap(_.asObject)
-                .map(obj => Json.fromFields(obj.toMap.updated("model", newModel)))
-                .getOrElse(Json.obj("model" -> newModel))
-              j.asObject
-                .map(obj => Json.fromFields(obj.toMap.updated("llm", newLlm)).noSpaces)
-                .getOrElse(json)
-
-            end if
-
-    end match
-
-  end scrubGlobalChain
 
   /** Every agent.json across standalone / team / flow layers. */
   private def allAgentJsonFiles(): List[os.Path] =
@@ -397,36 +314,6 @@ object ConfigService:
           case _ => acc
       }
   end restoreRenamedSecrets
-
-  /** Rewrite `oldName/…` model refs to `newName/…` in the global chain
-    * (llm.model.default + llm.model.fallbacks). No-op when nothing matches. */
-  private def rewriteChainRefs(json: String, oldName: String, newName: String): String =
-    val oldPrefix = s"$oldName/"; val newPrefix = s"$newName/"
-    def rw(ref: String) = if ref.startsWith(oldPrefix) then newPrefix + ref.stripPrefix(oldPrefix) else ref
-    parse(json).toOption match
-      case None => json
-      case Some(j) =>
-        j.hcursor.downField("llm").downField("model").focus match
-          case None => json
-          case Some(modelJson) =>
-            val modelHc = modelJson.hcursor
-            val defaultRef = modelHc.downField("default").as[Option[String]].toOption.flatten.getOrElse("")
-            val fallbackRefs = modelHc.downField("fallbacks").as[Option[List[String]]].toOption.flatten.getOrElse(Nil)
-            if !defaultRef.startsWith(oldPrefix) && !fallbackRefs.exists(_.startsWith(oldPrefix)) then json
-            else
-              val fields = scala.collection.mutable.LinkedHashMap.empty[String, Json]
-              fields += "default" -> rw(defaultRef).asJson
-              val newFallbacks = fallbackRefs.map(rw)
-              if newFallbacks.nonEmpty then fields += "fallbacks" -> newFallbacks.asJson
-              val newModel = modelJson.asObject
-                .map(o => Json.fromFields(o.toMap ++ fields.toMap))
-                .getOrElse(Json.fromFields(fields.toMap))
-              val newLlm = j.hcursor.downField("llm").focus.flatMap(_.asObject)
-                .map(o => Json.fromFields(o.toMap.updated("model", newModel)))
-                .getOrElse(Json.obj("model" -> newModel))
-              j.asObject.map(o => Json.fromFields(o.toMap.updated("llm", newLlm)).noSpaces).getOrElse(json)
-    end match
-  end rewriteChainRefs
 
   /** Rewrite `oldName/…` refs to `newName/…` in an agent.json model config.
     * Structural mirror of scrubAgentJson — refs are rewritten in place, the

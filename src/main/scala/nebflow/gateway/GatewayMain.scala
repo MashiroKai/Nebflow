@@ -192,8 +192,9 @@ object GatewayMain extends IOApp.Simple:
 
   private lazy val defaultConfig: NebflowServiceConfig = NebflowServiceConfig(
     llm = ServiceLlmConfig(
-      providers = Map.empty,
-      model = ModelChainConfig(default = "anthropic/claude-sonnet-4-6")
+      providers = Map.empty
+      // #339：占位 llm.model default 已删（字段退役）——未配置时 registry 走
+      // "首 provider 首模型"兜底
     )
   )
 
@@ -235,6 +236,11 @@ object GatewayMain extends IOApp.Simple:
           // default. Idempotent; healthy files are untouched.
           try nebflow.core.presets.PresetStore().ensureDefaultPreset()
           catch case e: Exception => logger.warn(s"Default preset seeding failed: ${e.getMessage}")
+          // #339 D-b：llm.model 一次性迁移（先播种验证后剥离，原子写；失败
+          // 幂等重试）。种子源此时仍优先读 llm.model（迁移优先），剥离后新
+          // 安装的种子源走 providers 推导。
+          try nebflow.core.presets.PresetStore.migrateGlobalModelChain()
+          catch case e: Exception => logger.warn(s"llm.model migration failed: ${e.getMessage}")
           Auth.loadOrCreateToken.flatMap { token =>
             // Global session state shared across all connections
             val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")
@@ -256,17 +262,36 @@ object GatewayMain extends IOApp.Simple:
                       // --- Fast path: only essential init before server start ---
                       val chatRoutes = new ChatRoutes(handle, token)
                       val isConfigured = config.llm.providers.nonEmpty
-                      val contextWindow =
-                        if !isConfigured then Defaults.ContextWindow
+                      // #339 D-c：contextWindow 改读默认 preset 链首个能解析到
+                      // provider 模型表的 ref（preferred 优先逐个试 fallbacks；
+                      // 全失败回 Defaults.ContextWindow + warn）。横幅同时暴露
+                      // preset 名 + 实际 ref，与设置页 preset 卡片逐字可对上。
+                      val (contextWindow, presetLabel): (Int, Option[(String, String)]) =
+                        if !isConfigured then (Defaults.ContextWindow, None)
                         else
                           try
-                            val (providerId, modelId) = Config.parseModelRef(config.llm.model.default)
-                            config.llm.providers
-                              .get(providerId)
-                              .flatMap(_.models.find(_.id == modelId))
-                              .map(_.contextWindow)
-                              .getOrElse(Defaults.ContextWindow)
-                          catch case _: Exception => Defaults.ContextWindow
+                            val pFile = nebflow.core.presets.PresetStore().load()
+                            val dp = pFile.presets
+                              .getOrElse(pFile.defaultPreset, nebflow.core.presets.ModelPreset(pFile.defaultPreset))
+                            val chain = dp.preferred.toList ++ dp.fallbacks
+                            val resolved = chain.flatMap { ref =>
+                              try
+                                val (providerId, modelId) = Config.parseModelRef(ref)
+                                config.llm.providers
+                                  .get(providerId)
+                                  .flatMap(_.models.find(_.id == modelId))
+                                  .map(m => (m.contextWindow, ref))
+                              catch case _: Exception => None
+                            }
+                            resolved.headOption match
+                              case Some((cw, ref)) => (cw, Some((pFile.defaultPreset, ref)))
+                              case None =>
+                                logger.warn(
+                                  s"Default preset '${pFile.defaultPreset}' resolves to no provider model; " +
+                                    s"contextWindow falls back to ${Defaults.ContextWindow}"
+                                )
+                                (Defaults.ContextWindow, Some((pFile.defaultPreset, dp.preferred.getOrElse(""))))
+                          catch case _: Exception => (Defaults.ContextWindow, None)
                       val baseUrl = s"http://localhost:${cfg.port}"
                       val url = s"$baseUrl?token=$token"
                       sys.props.update("nebflow.url", baseUrl)
@@ -283,8 +308,11 @@ object GatewayMain extends IOApp.Simple:
                             Ref.unsafe(initialFreezeSchedule)
                       logger.info(s"nebflow v${nebflow.Version.string}") *>
                         (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
-                         else
-                           logger.info(s"Context window: $contextWindow tokens (from ${config.llm.model.default})")) *>
+                         else presetLabel match
+                           case Some((name, ref)) =>
+                             logger.info(s"Context window: $contextWindow tokens (default preset \"$name\": $ref)")
+                           case None =>
+                             logger.info(s"Context window: $contextWindow tokens")) *>
                         RateLimiter.create().flatMap { rateLimiter =>
                           FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
                             // Create Dispatcher for the multi-agent runtime, then start server
