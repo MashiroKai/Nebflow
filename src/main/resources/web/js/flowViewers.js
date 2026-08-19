@@ -123,8 +123,6 @@ export async function openRules(teamName) {
 let mailboxCtx = null; // { flowName, team }
 
 function pendingRowHtml(it) {
-  const preview = String(it.message || '').replace(/\s+/g, ' ').trim();
-  const truncated = preview.length > 160 ? preview.slice(0, 160) + '…' : preview;
   const typeTag = it.type ? `<span class="flow-mail-queue-tag">${esc(it.type)}</span>` : '';
   return `
     <div class="flow-mail-row pending" data-item-id="${esc(it.id || '')}" data-sid="${esc(it.toSession || '')}">
@@ -136,9 +134,10 @@ function pendingRowHtml(it) {
         <span class="flow-mail-queue-tag" title="${esc(t('mailDelivery.queueTitle'))}">${esc(t('mailDelivery.queue'))}</span>
         ${typeTag}
         <span class="flow-mail-time">${esc(fmtRelTime(it.timestamp))}</span>
+        <span class="flow-mail-expand">展开 ▾</span>
         <button class="flow-mail-cancel" title="Remove from queue">Cancel</button>
       </div>
-      <div class="flow-mail-content">${esc(truncated)}</div>
+      <div class="flow-mail-content">${renderMarkdownWithMath(it.message || '')}</div>
     </div>`;
 }
 
@@ -167,6 +166,14 @@ async function loadPendingSection(body, team) {
   section.style.display = '';
   countEl.textContent = `(${items.length})`;
   list.innerHTML = items.map(pendingRowHtml).join('');
+  // Row click toggles expand/collapse (same interaction as History rows).
+  list.querySelectorAll('.flow-mail-row.pending').forEach(row => {
+    row.addEventListener('click', () => {
+      const expanded = row.classList.toggle('expanded');
+      const hint = row.querySelector('.flow-mail-expand');
+      if (hint) hint.textContent = expanded ? '收起 ▴' : '展开 ▾';
+    });
+  });
   list.querySelectorAll('.flow-mail-cancel').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -190,6 +197,14 @@ async function loadPendingSection(body, team) {
       }
     });
   });
+  // Count correction: after a successful render, sync the per-session badge to
+  // the actual rendered row count so the aggregate badge matches the list.
+  const perSession = new Map();
+  for (const row of list.querySelectorAll('.flow-mail-row.pending')) {
+    const sid = row.getAttribute('data-sid') || '';
+    if (sid) perSession.set(sid, (perSession.get(sid) || 0) + 1);
+  }
+  for (const [sid, cnt] of perSession) setMailPending(sid, cnt);
 }
 
 /** Called by flowCanvas on mailQueued/mailDequeued — live-refresh the
