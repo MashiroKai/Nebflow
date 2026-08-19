@@ -2562,19 +2562,21 @@ object AgentActor extends AgentCore with AgentSession:
       // （maybeAutoCompact 等）静态解析不经此处，但只会在 gate 放行后执行。
       // 冻结期间零 LLM 调用（零 token 硬指标）——拦截后转入 frozen behavior，
       // 持有完整 state（工具结果已在冻结前持久化，F1）。
-      resources.workScheduleRef.get.flatMap { cfg =>
-        val window = nebflow.core.schedule.WorkSchedule.eval(cfg, System.currentTimeMillis())
+      // #337：黑名单语义——segments 是冻结时间，段内 window.frozen=true。
+      resources.freezeScheduleRef.get.flatMap { cfg =>
+        // #337 黑名单语义：segments = 冻结时段（非工作时间），段内 frozen=true。
+        val window = nebflow.core.schedule.FreezeSchedule.eval(cfg, System.currentTimeMillis())
         // D11 交互豁免：ask 轮（用户在场等回答）与 freezeExempt 会话（plan
         // agent 等交互场景）不冻结——冻结它们省的 token 远低于浪费的用户等待。
         val interactive = state.askMode.isDefined || state.session.freezeExempt
-        if !window.open && cause == DispatchCause.Gated && !interactive then
+        if window.frozen && cause == DispatchCause.Gated && !interactive then
           logAgentEvent(
             agentDef,
             depth,
             state.sessionId,
             state.sessionName,
             "freeze-enter",
-            s"resumeAt=${window.nextChangeAt.getOrElse(0L)}"
+            s"resumeAt=${window.nextChangeAt.map(_.toString).getOrElse("none")}"
           )
           enterFrozen(agentDef, resources, depth, parentRef, state, replyTo, window.nextChangeAt)
         else
@@ -2654,13 +2656,14 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.CheckFreezeGate =>
         // 唯一自动恢复驱动：重评估（支持运行中改配置/时钟漂移）。仍冻结 →
         // 原地留任（静默更新 resumeAt——不重发 Frozen 事件，避免 30s 轮询刷屏）；
-        // 开放 → Resumed + 恢复挂起的 dispatch（cause=Gated，但窗口已开 → 通过）。
+        // 冻结时段已过（段外=工作时段）→ Resumed + 恢复挂起的 dispatch
+        // （cause=Gated，但已不在冻结段 → 通过）。
         for
-          cfg <- resources.workScheduleRef.get
-          window = nebflow.core.schedule.WorkSchedule.eval(cfg, System.currentTimeMillis())
+          cfg <- resources.freezeScheduleRef.get
+          window = nebflow.core.schedule.FreezeSchedule.eval(cfg, System.currentTimeMillis())
           result <-
-            if window.open then
-              logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-resume", "reason=window-open")
+            if !window.frozen then
+              logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-resume", "reason=outside-freeze-segment")
               emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *>
                 pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo)
             else IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, window.nextChangeAt))

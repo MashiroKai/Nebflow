@@ -274,12 +274,13 @@ object GatewayMain extends IOApp.Simple:
                           // Initialize thinking config from nebflow.json (default enabled=true)
                           val initialThinking = config.thinkingConfig.getOrElse(nebflow.llm.ThinkingConfig())
                           val thinkingConfigRef: Ref[IO, nebflow.llm.ThinkingConfig] = Ref.unsafe(initialThinking)
-                          // 冻结调度（freeze-schedule）：从 nebflow.json workSchedule 节
-                          // fail-safe 加载（非法配置视为关闭——恒开窗，功能旁路）。
-                          val initialWorkSchedule =
-                            nebflow.core.schedule.WorkSchedule.load(config.workSchedule)
-                          val workScheduleRef: Ref[IO, nebflow.core.schedule.WorkScheduleConfig] =
-                            Ref.unsafe(initialWorkSchedule)
+                          // 冻结调度（freeze-schedule，#337 黑名单语义）：从 nebflow.json
+                          // workSchedule 节（JSON 键名保留，语义=冻结时段）fail-safe 加载
+                          // （非法配置视为关闭——恒不冻结，功能旁路）。
+                          val initialFreezeSchedule =
+                            nebflow.core.schedule.FreezeSchedule.load(config.workSchedule)
+                          val freezeScheduleRef: Ref[IO, nebflow.core.schedule.FreezeScheduleConfig] =
+                            Ref.unsafe(initialFreezeSchedule)
                       logger.info(s"nebflow v${nebflow.Version.string}") *>
                         (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                          else
@@ -313,7 +314,7 @@ object GatewayMain extends IOApp.Simple:
                                   actorSystem = actorSystem,
                                   hookEngine = hookEngine,
                                   voiceMutedRef = voiceMutedRef,
-                                  workScheduleRef = workScheduleRef
+                                  freezeScheduleRef = freezeScheduleRef
                                 )
                                 // Initialize telemetry (opt-out aware, fire-and-forget on failure)
                                 val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>

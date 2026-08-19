@@ -12,7 +12,7 @@ import nebflow.agent.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
-import nebflow.core.schedule.WorkSchedule.given
+import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
 import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
@@ -722,7 +722,7 @@ class WebSocketRoutes(
       ToolRegistry.ALL_TOOLS.map(t => io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson))
     for
       thinkingCfg <- sharedResources.thinkingConfigRef.get
-      workScheduleCfg <- sharedResources.workScheduleRef.get
+      workScheduleCfg <- sharedResources.freezeScheduleRef.get
       mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
         io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
       })
@@ -760,15 +760,15 @@ class WebSocketRoutes(
       logger.warn(s"Failed to persist thinking config: ${e.getMessage}")
     }
 
-  /** Persist work schedule to nebflow.json — targeted top-level write (照抄
+  /** Persist freeze schedule to nebflow.json — targeted top-level write (照抄
     * persistThinkingConfig 的 read-merge-write 语义，merge 纯函数在
-    * WorkSchedule.mergeIntoConfig 便于 B9 测试）。 */
-  private def persistWorkSchedule(cfg: nebflow.core.schedule.WorkScheduleConfig): IO[Unit] =
+    * FreezeSchedule.mergeIntoConfig 便于 B9 测试）。JSON 键名保留 "workSchedule"（前端契约）。 */
+  private def persistWorkSchedule(cfg: nebflow.core.schedule.FreezeScheduleConfig): IO[Unit] =
     IO.blocking {
       val existing = if os.exists(nebflow.llm.Config.DefaultConfigPath) then os.read(nebflow.llm.Config.DefaultConfigPath) else "{}"
       val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
       parse(existing).foreach { json =>
-        val updated = nebflow.core.schedule.WorkSchedule.mergeIntoConfig(json, cfg)
+        val updated = nebflow.core.schedule.FreezeSchedule.mergeIntoConfig(json, cfg)
         os.write.over(path, updated.spaces2, createFolders = true)
       }
     }.handleErrorWith { e =>
@@ -1064,10 +1064,10 @@ class WebSocketRoutes(
               .toOption
               .flatten
               .getOrElse(json)
-            nebflow.core.schedule.WorkSchedule.validate(payload) match
+            nebflow.core.schedule.FreezeSchedule.validate(payload) match
               case Right(cfg) =>
-                logger.info(s"Work schedule set: enabled=${cfg.enabled} segments=${cfg.segments.size}") *>
-                  sharedResources.workScheduleRef.set(cfg) *>
+                logger.info(s"Freeze schedule set: enabled=${cfg.enabled} segments=${cfg.segments.size}") *>
+                  sharedResources.freezeScheduleRef.set(cfg) *>
                   persistWorkSchedule(cfg) *>
                   broadcastServerConfig *>
                   nebflow.core.processor.FreezeScheduler.scan(sharedResources)

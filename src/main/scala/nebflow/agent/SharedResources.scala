@@ -83,10 +83,11 @@ case class SharedResources(
   interactionHubRef: Ref[IO, Option[ActorRef[InteractionHubCommand]]] =
     Ref.unsafe[IO, Option[ActorRef[InteractionHubCommand]]](None),
   /**
-   * 冻结调度（freeze-schedule）：全局工作时间表（D5 一期全局粒度）。GatewayMain
-   * 启动时从 nebflow.json workSchedule 节 fail-safe 加载覆写；setWorkSchedule
-   * WS 命令热更。带默认值 → 既有测试的 SharedResources 构造零改动。
+   * 冻结调度（freeze-schedule，#337 黑名单语义）：全局冻结时间表（配置段=冻结
+   * 时间/非工作时间，D5 一期全局粒度）。GatewayMain 启动时从 nebflow.json
+   * workSchedule 节（JSON 键名保留，语义=冻结时段）fail-safe 加载覆写；
+   * setWorkSchedule WS 命令热更。带默认值 → 既有测试的 SharedResources 构造零改动。
    */
-  workScheduleRef: Ref[IO, nebflow.core.schedule.WorkScheduleConfig] =
-    Ref.unsafe[IO, nebflow.core.schedule.WorkScheduleConfig](nebflow.core.schedule.WorkScheduleConfig())
+  freezeScheduleRef: Ref[IO, nebflow.core.schedule.FreezeScheduleConfig] =
+    Ref.unsafe[IO, nebflow.core.schedule.FreezeScheduleConfig](nebflow.core.schedule.FreezeScheduleConfig())
 )
