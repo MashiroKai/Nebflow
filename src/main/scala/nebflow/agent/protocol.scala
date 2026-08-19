@@ -245,7 +245,19 @@ case class AgentRecord(
    * P0 阶段 3：最近一次 turn 活动时间戳（LLM 流 chunk / 工具执行完成 /
    * turn 完成时更新）。TaskStuckWatcher 判卡死的数据源。
    */
-  lastActivityMs: Long = 0L
+  lastActivityMs: Long = 0L,
+  /**
+   * AgentControl（2026-08-19 spec §3.1）：监听该 agent 终态的 adapter 引用——
+   * ephemeral Delegate/SubTask = BackoffSupervisor；persistent Delegate =
+   * persistentAdapter；Ephemeral/Flow/Root/Team = None（无取消通道，cancel 走
+   * 降级 Stop 路径）。默认 None → 既有注册点零改动。
+   */
+  supervisorRef: Option[ActorRef[AgentEvent]] = None,
+  /**
+   * AgentControl：任务归属的父会话（SubAgentTaskStore 文件键）。Delegate/
+   * SubTask 注册点已有值；list/restart 用它反查任务元数据，避免全目录扫描。
+   */
+  parentSessionId: String = ""
 )
 
 // ============================================================
@@ -335,6 +347,12 @@ sealed trait AgentEvent
 object AgentEvent:
   case class Completed(sessionId: String, messages: List[Message] = Nil) extends AgentEvent
   case class Failed(sessionId: String, error: AgentError) extends AgentEvent
+  /**
+   * AgentControl 取消终态（spec §3.1）：sealed 穷尽——所有 adapter 必须处理。
+   * BackoffSupervisor/persistentAdapter 走 notifyParentAndStop("cancelled")；
+   * bridge 类（Ephemeral/FlowDag/Mail fork）完成 deferred Left。
+   */
+  case class Cancelled(sessionId: String, reason: String) extends AgentEvent
 
 enum AgentStreamEvent:
   case TextDelta(text: String)

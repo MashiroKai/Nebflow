@@ -1338,10 +1338,13 @@ object AgentCore:
    * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
    *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
    *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
+   * - AgentControl: 后台 agent 管控（list/status/cancel/restart，spec §4 安全
+   *   边界矩阵——危险能力只交给根调度者）。
    */
   val NebulaExclusiveTools = Set(
     "Schedule",
-    "Delegate"
+    "Delegate",
+    "AgentControl"
   )
 
   /** Tools available to Nebula and Team Leads, but NOT workers. */

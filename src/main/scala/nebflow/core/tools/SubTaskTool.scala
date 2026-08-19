@@ -247,7 +247,8 @@ A task with 2+ independent parts — different file domains, or different nature
         ),
         subtaskId
       )
-      // P2: BackoffSupervisor replaces subtaskAdapter — auto-restarts on crash
+      // P2: BackoffSupervisor is the subtask adapter — auto-restarts on crash,
+      // handles AgentEvent.Cancelled (AgentControl cancel path)
       adapterRef <- system.spawn(
         BackoffSupervisor(
           childRef = workerRef,
@@ -294,7 +295,12 @@ A task with 2+ independent parts — different file domains, or different nature
             workerRef,
             AgentKind.SubTask,
             if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subtaskId),
-            parentRef
+            parentRef,
+            // AgentControl：list/up/idle 列 + cancel/restart 直达 supervisor。
+            startedAt = System.currentTimeMillis(),
+            lastActivityMs = System.currentTimeMillis(),
+            supervisorRef = Some(adapterRef),
+            parentSessionId = parentSessionId.getOrElse("")
           )
         )
       )
@@ -329,94 +335,6 @@ You will be notified when it completes via a system message.
 Do NOT duplicate this worker's work — avoid working with the same files or topics it is using. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response."""
     )
 
-  /**
-   * Subtask adapter: forwards the worker's final message to the parent via
-   * ExternalEvent, then cleans up — unregisters from agentRegistry, deletes
-   * the worker's session store entry (no `subtask-*` residue), stops the
-   * worker and itself. Watches the worker for crashes.
-   */
-  private def subtaskAdapter(
-    workerRef: ActorRef[AgentCommand],
-    parentRef: Option[ActorRef[AgentCommand]],
-    description: String,
-    agentName: String,
-    subtaskId: String,
-    resources: SharedResources
-  ): Behavior[AgentEvent] =
-    Behaviors.setup { ctx =>
-      def notifyParentAndStop(
-        eventType: String,
-        payload: String,
-        extraMetadata: JsonObject = JsonObject.empty
-      ): IO[Behavior[AgentEvent]] =
-        val notify = parentRef match
-          case Some(ref) =>
-            ref ! AgentCommand.ExternalEvent(
-              source = "subtask",
-              eventType = eventType,
-              payload = payload,
-              metadata = JsonObject(
-                "description" -> description.asJson,
-                "agentName" -> agentName.asJson,
-                "kind" -> "SubTask".asJson
-              ).deepMerge(extraMetadata),
-              correlationId = Some(subtaskId)
-            )
-          case None => IO.unit
-        (notify *> resources.agentRegistry.update(_ - subtaskId) *>
-          resources.sessionStore.deleteSession(subtaskId).handleErrorWith(_ => IO.unit) *>
-          (workerRef ! AgentCommand.Stop("subtask-complete")) *>
-          IO.pure(Behaviors.stopped[AgentEvent]))
-          .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
-      end notifyParentAndStop
-
-      ctx.watch(workerRef) *> IO.pure(
-        new Behavior[AgentEvent]:
-          def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
-            event match
-              case AgentEvent.Completed(_, messages) =>
-                val text = extractLastAssistantText(messages)
-                // trim guard: whitespace-only tail → "(no text output)", not an empty shell
-                if text.trim.nonEmpty then
-                  notifyParentAndStop(
-                    "completed",
-                    s""""$description":
-${text.trim}"""
-                  )
-                else notifyParentAndStop("completed", s""""$description" (no text output)""")
-              case AgentEvent.Failed(sessionId, error) =>
-                val sessionInfo =
-                  if sessionId.nonEmpty then s" [session=$sessionId]" else ""
-                val retryable = error.errorType match
-                  case AgentErrorType.LlmFailed => true
-                  case AgentErrorType.Timeout => true
-                  case _ => false
-                notifyParentAndStop(
-                  "failed",
-                  s""""$description": ${error.message}$sessionInfo""",
-                  JsonObject(
-                    "failedSessionId" -> subtaskId.asJson,
-                    "retryable" -> retryable.asJson,
-                    "failureType" -> error.errorType.toString.asJson
-                  )
-                )
-
-          override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
-            signal match
-              case SystemSignal.Terminated(_) =>
-                notifyParentAndStop(
-                  "failed",
-                  s""""$description": terminated unexpectedly""",
-                  JsonObject(
-                    "failedSessionId" -> subtaskId.asJson,
-                    "retryable" -> true.asJson,
-                    "failureType" -> "crashed".asJson
-                  )
-                )
-      )
-    }
-
-  /** Extract the last assistant message text from a list of messages. */
   private def extractLastAssistantText(messages: List[Message]): String =
     messages.reverse
       .collectFirst {

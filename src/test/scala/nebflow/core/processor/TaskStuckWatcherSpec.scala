@@ -73,7 +73,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  test("子 agent Processing 超时 → 发 Stop，不广播") {
+  test("子 agent Processing 超时 → 广播 taskStuck(action=restart) + 发 Stop（AgentControl spec §3.5）") {
     val system = ActorSystem("test")
     for
       _ <- IO(system)
@@ -81,7 +81,8 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       resources <- mkResources(system, tmp)
       parentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "parent")
       _ <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "child")
-      childRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "child-1")
+      childReceived <- Ref.of[IO, List[AgentCommand]](Nil)
+      childRef <- system.spawn(mkRecordingActor(childReceived), "child-1")
       wsHub = new WsHub()
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
       _ <- wsHub.register(json => receivedWs.update(_ :+ json))
@@ -101,9 +102,19 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       _ <- TaskStuckWatcher.scan(resources, wsHub, threshold)
       _ <- IO.sleep(200.millis) // 等 tell 到达
       wsEvents <- receivedWs.get
+      stopMsgs <- childReceived.get
     yield
-      // 子 agent 恢复动作是发 Stop（由「Stop 实际送达」测试断言），不应广播 taskStuck
-      assert(wsEvents.isEmpty, s"expected no broadcast for sub-agent, got $wsEvents")
+      // §3.5：子 agent 自动重启也广播——前端可见「卡死，正在自动重启」，
+      // Nebula 事后 AgentControl(list) 能看到 retryCount
+      assert(wsEvents.size == 1, s"expected exactly one taskStuck broadcast for sub-agent, got $wsEvents")
+      val ev = wsEvents.head
+      assertEquals(ev.hcursor.get[String]("type").toOption.getOrElse(""), "taskStuck")
+      assertEquals(ev.hcursor.get[String]("sessionId").toOption.getOrElse(""), "delegate-stuck")
+      assertEquals(ev.hcursor.get[String]("kind").toOption.getOrElse(""), "Delegate")
+      assertEquals(ev.hcursor.get[String]("action").toOption.getOrElse(""), "restart")
+      assert(ev.hcursor.get[Long]("idleSecs").toOption.exists(_ > 0), s"idleSecs must be positive: $ev")
+      // 恢复动作不变：仍然发 Stop（→ BackoffSupervisor death-watch 重启）
+      assert(stopMsgs.count(_.isInstanceOf[AgentCommand.Stop]) == 1, s"Stop must still be sent, got $stopMsgs")
   }
 
   test("根 agent Processing 超时 → 广播 taskStuck，不 Stop") {

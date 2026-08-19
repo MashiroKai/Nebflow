@@ -715,6 +715,8 @@ object FlowDagExecutor:
               resultDeferred.complete(Right(messages)).void.as(Behaviors.stopped)
             case AgentEvent.Failed(_, err) =>
               resultDeferred.complete(Left(err.message)).void.as(Behaviors.stopped)
+            case AgentEvent.Cancelled(_, reason) =>
+              resultDeferred.complete(Left(s"cancelled: $reason")).void.as(Behaviors.stopped)
         },
         s"bridge-${nodeId.take(10)}-${sessionId.take(8)}"
       )
