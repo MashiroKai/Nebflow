@@ -58,4 +58,48 @@ class BashToolForegroundSpec extends CatsEffectSuite:
     }
   }
 
+  // ── #22 (2026-08-19 20:35 incident): zombie timeout class ────────────────
+  // IO.timeout over IO.blocking stream readers is SOFT — it cannot interrupt
+  // a blocked read; the TimeoutException only surfaces once every pipe holder
+  // exits. A 10-min timeout ran 37 minutes in production because orphaned
+  // grandchildren kept the pipes open. The poll-based reader + watchdog kill
+  // now bound the return time: orphan pipe → prompt normal result (parent
+  // exited); live tree → prompt timeout (watchdog kill).
+
+  test("orphaned pipe-holder no longer stalls the tool return (#22)") {
+    val input = JsonObject(
+      "command" -> "sleep 120 & exit 7".asJson, // parent exits; orphan holds stdout
+      "description" -> "orphan-pipe-timeout".asJson,
+      "timeout" -> 3000.asJson
+    )
+    val start = System.currentTimeMillis()
+    BashTool.call(input, ToolContext(projectRoot = "/tmp")).map { result =>
+      // Either outcome is correct — the invariant is BOUNDEDNESS: the tool
+      // must not wait for the 120s orphan (old behavior: blocked reads).
+      result match
+        case Right(out) =>
+          assert(out.contains("exit 7"), s"should carry the real exit code: $out")
+        case Left(ToolError(msg)) =>
+          assert(msg.contains("timed out"), s"unexpected error: $msg")
+      val elapsed = (System.currentTimeMillis() - start) / 1000
+      assert(elapsed < 30, s"tool must return promptly, took ${elapsed}s (zombie class)")
+    }
+  }
+
+  test("timeout kills the whole process tree — parent waiting on child (#22)") {
+    val input = JsonObject(
+      "command" -> "sleep 120 & wait".asJson, // parent stays alive waiting on the child
+      "description" -> "tree-kill-timeout".asJson,
+      "timeout" -> 3000.asJson
+    )
+    val start = System.currentTimeMillis()
+    BashTool.call(input, ToolContext(projectRoot = "/tmp")).map {
+      case Left(ToolError(msg)) =>
+        assert(msg.contains("timed out"), s"should report timeout: $msg")
+        val elapsed = (System.currentTimeMillis() - start) / 1000
+        assert(elapsed < 30, s"tree kill must surface promptly, took ${elapsed}s")
+      case Right(out) => fail(s"expected timeout error, got: $out")
+    }
+  }
+
 end BashToolForegroundSpec

@@ -45,12 +45,17 @@ object TaskStuckWatcher:
   private val taskKinds = Set(AgentKind.Delegate, AgentKind.Ephemeral, AgentKind.Flow, AgentKind.SubTask)
 
   /**
-   * 扫描集合 = taskKinds + Root。Root（Nebula 主窗口）虽不在活跃子代理列表
+   * 扫描集合 = taskKinds + Root + Team。Root（Nebula 主窗口）虽不在活跃子代理列表
    * （filterActiveAgents 语义），但其 turn 同样可能卡死（如 12:39 现场 Nebula
-   * 自身撞限流）——设计 §4.4 要求根 agent 也通知（不自动重启）。Team 长期驻留
-   * 且不在此集合，保持与 filterActiveAgents 一致的边界。
+   * 自身撞限流）——设计 §4.4 要求根 agent 也通知（不自动重启）。
+   *
+   * #22 (2026-08-19)：Team 加入扫描——Mail 激活的 team agent turn 静默挂死
+   * 2 小时（Frontend 12:28-13:45 三案之一），因 Team 不在扫描集合而零可见
+   * 性、零恢复。Team 是 AgentControl §4 只读 kind（用户可见的长驻会话），
+   * 不自动 Stop——只广播 taskStuck(action=attention) 留痕，由用户/Nebula
+   * 决策（AgentControl restart / 手动干预）。
    */
-  private val scannedKinds: Set[AgentKind] = taskKinds + AgentKind.Root
+  private val scannedKinds: Set[AgentKind] = taskKinds + AgentKind.Root + AgentKind.Team
 
   /**
    * 周期扫描循环：scan → sleep(interval) → 递归。由 GatewayMain 以 fiber 启动
@@ -81,46 +86,69 @@ object TaskStuckWatcher:
         }
     }
 
-  /** 恢复动作：子 agent 重启 / 根 agent 通知。 */
+  /** 恢复动作：Team 只读通知 / 子 agent 重启 / 根 agent 通知。 */
   private def recover(resources: SharedResources, wsHub: WsHub, rec: AgentRecord, now: Long): IO[Unit] =
     val idleSecs = (now - rec.lastActivityMs) / 1000
-    rec.parentRef match
-      case Some(_) =>
-        logger.warn(
-          s"TaskStuckWatcher: sub-agent ${rec.sessionId} (kind=${rec.kind}) stuck in Processing " +
-            s"for ${idleSecs}s > threshold — sending Stop for supervised restart"
-        ) *>
-          // AgentControl spec §3.5：子 agent 自动重启也广播 taskStuck（原先只有
-          // 根 agent 广播）——前端可见「后台 agent 卡死，正在自动重启」，Nebula
-          // 事后用 AgentControl(list) 能看到 retryCount。
-          wsHub
-            .broadcast(
-              io.circe.Json.obj(
-                "type" -> "taskStuck".asJson,
-                "sessionId" -> rec.sessionId.asJson,
-                "kind" -> rec.kind.toString.asJson,
-                "idleSecs" -> idleSecs.asJson,
-                "action" -> "restart".asJson
-              )
+    // #22: Team kind 只读——长驻用户可见会话，绝不自动 Stop（AgentControl §4）。
+    // 2026-08-19 Frontend 僵尸 turn 若有此广播，2 小时静默会变成即时可见。
+    if rec.kind == AgentKind.Team then
+      logger.warn(
+        s"TaskStuckWatcher: team agent ${rec.sessionId} stuck in Processing for ${idleSecs}s " +
+          "— read-only notice (Team agents are never auto-stopped); user/Nebula can restart via AgentControl"
+      ) *>
+        wsHub
+          .broadcast(
+            io.circe.Json.obj(
+              "type" -> "taskStuck".asJson,
+              "sessionId" -> rec.sessionId.asJson,
+              "kind" -> rec.kind.toString.asJson,
+              "idleSecs" -> idleSecs.asJson,
+              "action" -> "attention".asJson
             )
-            .handleErrorWith(e =>
-              logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}")
-            ) *>
-          (rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
-            .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: Stop to stuck sub-agent ${rec.sessionId} failed: ${e.getMessage}"))
-      case None =>
-        logger.warn(
-          s"TaskStuckWatcher: root agent ${rec.sessionId} stuck in Processing for ${idleSecs}s " +
-            "— not auto-restarting, broadcast taskStuck for user decision"
-        ) *>
-          wsHub
-            .broadcast(
-              io.circe.Json.obj(
-                "type" -> "taskStuck".asJson,
-                "sessionId" -> rec.sessionId.asJson,
-                "kind" -> rec.kind.toString.asJson
+          )
+          .handleErrorWith(e =>
+            logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}")
+          )
+    else
+        rec.parentRef match
+        case Some(_) =>
+          logger.warn(
+            s"TaskStuckWatcher: sub-agent ${rec.sessionId} (kind=${rec.kind}) stuck in Processing " +
+              s"for ${idleSecs}s > threshold — sending Stop for supervised restart"
+          ) *>
+            // AgentControl spec §3.5：子 agent 自动重启也广播 taskStuck（原先只有
+            // 根 agent 广播）——前端可见「后台 agent 卡死，正在自动重启」，Nebula
+            // 事后用 AgentControl(list) 能看到 retryCount。
+            wsHub
+              .broadcast(
+                io.circe.Json.obj(
+                  "type" -> "taskStuck".asJson,
+                  "sessionId" -> rec.sessionId.asJson,
+                  "kind" -> rec.kind.toString.asJson,
+                  "idleSecs" -> idleSecs.asJson,
+                  "action" -> "restart".asJson
+                )
               )
-            )
-            .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}"))
+              .handleErrorWith(e =>
+                logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}")
+              ) *>
+            (rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
+              .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: Stop to stuck sub-agent ${rec.sessionId} failed: ${e.getMessage}"))
+        case None =>
+          logger.warn(
+            s"TaskStuckWatcher: root agent ${rec.sessionId} stuck in Processing for ${idleSecs}s " +
+              "— not auto-restarting, broadcast taskStuck for user decision"
+          ) *>
+            wsHub
+              .broadcast(
+                io.circe.Json.obj(
+                  "type" -> "taskStuck".asJson,
+                  "sessionId" -> rec.sessionId.asJson,
+                  "kind" -> rec.kind.toString.asJson
+                )
+              )
+              .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}"))
+
+    end if
 
 end TaskStuckWatcher

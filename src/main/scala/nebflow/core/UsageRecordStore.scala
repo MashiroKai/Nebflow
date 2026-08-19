@@ -88,11 +88,10 @@ class UsageRecordStore(baseDir: os.Path):
 
   /**
    * In-memory last-activity index: agent name → timestamp of its most recent
-   * record. Updated on every [[record]]; used by cold-start routing
-   * (ColdStartRouter) to detect >idle-threshold wakes without scanning the
-   * JSONL. Empty after restart → first request of every agent counts as idle
-   * (cache is cold post-restart anyway, so routing it to the free gateway is
-   * the intended behavior).
+   * record. Updated on every [[record]]. General per-agent last-seen index —
+   * the cold-start routing that consumed it was removed (2026-08-19, model
+   * selection now follows the preset strictly); kept as a cheap extension
+   * point for future per-agent activity features.
    */
   private val lastSeen = new java.util.concurrent.ConcurrentHashMap[String, Long]()
 

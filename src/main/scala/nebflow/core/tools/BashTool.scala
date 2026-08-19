@@ -449,7 +449,20 @@ Git safety:
   ): IO[Either[ToolError, String]] =
     val processTimeout = explicitTimeoutMs.map(_.millis).getOrElse(365.days)
     val health = new JobHealth()
+    // #22 (2026-08-19): a running Bash is INVISIBLE — the completion log only
+    // fires when it returns, so a long/hung command reads as "turn went
+    // silent" in every forensic timeline (20:35 Backend: 37min of zero
+    // artifacts while an un-killable timeout ran). Log the start too (same
+    // "nebflow.handlers" logger as the completion line so the pair greps
+    // together), and keep a once-a-minute running log from the bridge below.
+    val handlersLogger = NebflowLogger.forName("nebflow.handlers")
+    val agentName = ctx.agentDef.map(_.name).getOrElse("-")
+    val sessionLabel = ctx.sessionName.getOrElse("-")
+    val logCtx = handlersLogger.ctxPrefix(agentName, sessionLabel)
+    val firstLine = command.split('\n').headOption.getOrElse(command).take(100)
+    val timeoutLabel = explicitTimeoutMs.map(ms => s" timeout=${ms}ms").getOrElse("")
     for
+      _ <- IO(handlersLogger.infoSync(s"$logCtx Tool Bash START$timeoutLabel: $firstLine"))
       // Activity bridge: while the command runs, mirror process progress into
       // the agent registry so TaskStuckWatcher never kills a busy command.
       bridgeFiber <- startActivityBridge(shell, health, command, ctx)
@@ -472,6 +485,11 @@ Git safety:
    * but produce output slowly (or none at all, e.g. sleep). Genuinely stuck
    * processes (no output, no CPU, not sleep-like) are left alone so the
    * watcher can still stop them.
+   *
+   * #22 (2026-08-19): while alive, also emits a once-a-minute running log
+   * (INFO, WARN after 10min) — without it an in-flight command leaves zero
+   * log artifacts between START and completion, which is exactly how the
+   * 20:35 "silent turn death" hid a 37-minute zombie timeout.
    */
   private def startActivityBridge(
     shell: ShellSession,
@@ -480,7 +498,11 @@ Git safety:
     ctx: ToolContext
   ): IO[Fiber[IO, Throwable, Unit]] =
     val checkInterval = 30.seconds
-    def loop(lastLines: Int, lastCpu: Long): IO[Unit] =
+    val handlersLogger = NebflowLogger.forName("nebflow.handlers")
+    val agentName = ctx.agentDef.map(_.name).getOrElse("-")
+    val sessionLabel = ctx.sessionName.getOrElse("-")
+    val logCtx = handlersLogger.ctxPrefix(agentName, sessionLabel)
+    def loop(lastLines: Int, lastCpu: Long, ticks: Int): IO[Unit] =
       IO.sleep(checkInterval) *>
         IO {
           val proc = health.processRef.get()
@@ -489,13 +511,24 @@ Git safety:
           val cpu = if alive then shell.sampleProcessCpuTime(proc) else 0L
           (alive, lines, cpu)
         }.flatMap { case (alive, lines, cpu) =>
+          // Running visibility: log every 60s (every 2nd tick) while alive.
+          val tick = ticks + 1
+          val visible =
+            alive && tick >= 2 && tick % 2 == 0 &&
+              (lines > lastLines || cpu > lastCpu || tick >= 20)
+          // Commands with progress always log; silent ones log from 10min on.
+          val runningLog =
+            if visible then
+              val elapsed = tick * 30
+              val msg =
+                s"$logCtx Tool Bash RUNNING ${elapsed}s: output=${lines} lines cpu=${cpu / 1_000_000}ms cmd=${command.take(60)}"
+              IO(if elapsed >= 600 then handlersLogger.warnSync(msg) else handlersLogger.infoSync(msg))
+            else IO.unit
           val sleepLike = shell.SleepCommandRe.findFirstIn(command).isDefined
           val hasProgress = alive && (lines > lastLines || cpu > lastCpu || sleepLike)
-          if hasProgress then
-            touchAgentActivity(ctx) *> loop(lines, cpu)
-          else loop(lastLines, lastCpu)
+          runningLog *> (if hasProgress then touchAgentActivity(ctx) *> loop(lines, cpu, tick) else loop(lastLines, lastCpu, tick))
         }
-    loop(health.outputLineCount.get(), 0L).start
+    loop(health.outputLineCount.get(), 0L, 0).start
 
   /** Refresh the agent registry's lastActivityMs for this session (if present). */
   private def touchAgentActivity(ctx: ToolContext): IO[Unit] =

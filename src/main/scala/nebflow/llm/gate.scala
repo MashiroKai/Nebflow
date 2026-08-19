@@ -1,7 +1,8 @@
 package nebflow.llm
 
-import cats.effect.{Deferred, IO, Ref}
+import cats.effect.{Deferred, Fiber, IO, Ref}
 import cats.syntax.all.*
+import nebflow.core.NebflowLogger
 import nebflow.shared.Defaults
 
 import java.util.concurrent.CancellationException
@@ -112,6 +113,15 @@ final class ConcurrencyGate private[llm] (
    * 排队等待正常，不 fallback。Provider 真故障时 LLM 请求本身的超时
    * (首 token 90s / 空闲 60s) 会触发 fallback，排队层不需要超时兜底。
    * LLM timeout 从 stream 开始计时（acquire 之后），不受排队影响。
+   *
+   * #22 (2026-08-19): 无限等待必须留痕——排队 >5s 起每 5s 输出一次 gate
+   * 状态快照（permits/waiters/本请求是否仍在队列）。三次今日 turn 静默死亡
+   * 现场的法证链都终止于「usage record 已落盘 → 下一个请求从未发出」，gate
+   * 楔死是头号嫌疑但无日志可证。留痕后三种病理可直接区分：
+   *   - permits=0 & waiters>0 持续 → permit 泄漏（release 丢失）
+   *   - thisWaiter=granted(rpm-wait) → RPM 窗口等待卡死（时钟回拨类）
+   *   - 完全无等待日志 → 卡点在 gate 之外（inline 上下文构建段）
+   * 正常快路径（≤5s 获得许可）零日志零开销——tracer 只在等待超 5s 后启动。
    */
   def acquire: IO[ConcurrencyPermit] =
     if maxConcurrency == 0 then waitForWindow.as(new ConcurrencyPermit(this, limited = false))
@@ -130,10 +140,25 @@ final class ConcurrencyGate private[llm] (
             if s.waiting.exists(_ eq d) then s.copy(waiting = s.waiting.filterNot(_ eq d))
             else s.copy(permits = s.permits + 1)
           } *> dispatch
+        val gateLogger = NebflowLogger.forName("nebflow.llm.gate")
+        def traceLoop: IO[Unit] =
+          IO.sleep(5.seconds) *> state.get.flatMap { s =>
+            val mine = if s.waiting.exists(_ eq d) then "queued" else "granted(rpm-wait)"
+            gateLogger.warn(
+              s"gate[$providerId] acquire waiting: permits=${s.permits} waiters=${s.waiting.size} " +
+                s"thisWaiter=$mine (no queue timeout by design, #296)"
+            )
+          } >> traceLoop
         val body =
           state.update(s => s.copy(waiting = s.waiting.enqueue(d))) *>
             dispatch *>
-            d.get *>  // No timeout — wait indefinitely for a permit
+            (for
+              // 独立 tracer fiber：d.get 完成即取消，不影响许可等待本身
+              // （绝不能 race/timeout d.get——那会取消等待并触发 cleanup 语义）。
+              tracer <- traceLoop.start
+              _ <- d.get
+              _ <- tracer.cancel
+            yield ()) *>
             waitForWindow
         body
           .onError {
