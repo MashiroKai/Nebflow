@@ -10,7 +10,9 @@ import nebflow.shared.AgentModelConfig
  *
  * Incident: the global default (provider-x/model-y) silently served every agent
  * without an explicit chain while the settings UI showed general/GLM-5.3 — a
- * hidden, hard-to-see routing bug. llm.model now only SEEDS the initial
+ * hidden, hard-to-see routing bug. llm.model is retired (#339): it seeds the
+ * initial preset once during migration, then the field is stripped at boot —
+ * never a live fallback.
  * preset (created at first provider save / gateway boot); it is never a live
  * fallback.
  */

@@ -60,12 +60,12 @@ class ConfigServiceSpec extends FunSuite:
     assert(errors.exists(_.contains("At least one model is required")))
   }
 
-  test("validateConfig reports dangling chain ref to deleted (null) provider") {
+  test("validateConfig ignores llm.model chain refs (#339: field retired)") {
+    // #339：llm.model 链校验已删——悬空引用不再是错误（字段退役，boot 迁移剥离）
     val cfg =
       """{"llm":{"providers":{"Zai":null},"model":{"default":"Zai/m1","fallbacks":["Zai/m2"]}}}"""
     val errors = ConfigService.validateConfig(cfg)
-    assert(errors.exists(_.contains("Default model 'Zai/m1' points to unknown provider 'Zai'")))
-    assert(errors.exists(_.contains("Fallback model 'Zai/m2' points to unknown provider 'Zai'")))
+    assert(!errors.exists(_.contains("points to unknown provider")))
   }
 
   // ── updateConfig: provider deletion + graceful cleanup ──
@@ -108,12 +108,13 @@ class ConfigServiceSpec extends FunSuite:
     val result = ConfigService.updateConfig(incoming).unsafeRunSync()
     assertEquals(result, Right(()))
 
-    // ── Config file: provider removed, global chain scrubbed (default promoted) ──
+    // ── Config file: provider removed; llm.model 死字段原样保留（#339：scrub
+    // 已删，boot 迁移整体剥离）──
     val saved = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
     val llmHc = saved.hcursor.downField("llm")
     assert(llmHc.downField("providers").downField("Zai").focus.isEmpty, "Zai provider must be deleted")
-    assertEquals(llmHc.downField("model").downField("default").as[String], Right("glm/m1"))
-    assertEquals(llmHc.downField("model").downField("fallbacks").as[Option[List[String]]], Right(None))
+    assertEquals(llmHc.downField("model").downField("default").as[String], Right("Zai/m1"))
+    assertEquals(llmHc.downField("model").downField("fallbacks").as[List[String]], Right(List("glm/m1")))
 
     // ── Standalone agent: preferred scrubbed, fallbacks filtered ──
     val coder = parse(os.read(tmpRoot / "agents" / "Coder" / "agent.json")).toOption.get
@@ -152,16 +153,18 @@ class ConfigServiceSpec extends FunSuite:
     assertEquals(os.read(tmpRoot / "agents" / "Nebula" / "agent.json"), nebulaJson)
   }
 
-  test("updateConfig with dangling chain ref in incoming is rejected (guides cleanup)") {
+  test("updateConfig ignores dangling llm.model refs (#339: field retired, validation removed)") {
+    // #339：llm.model 链校验段已删——字段退役（decoder 容忍、boot 迁移剥离）。
+    // 悬空引用不再拒绝：preset 引用的清理由 scrubPresetRefs 承担。
     val cfg =
       """{"llm":{"providers":{"Zai":null},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
     val result = ConfigService.updateConfig(cfg).unsafeRunSync()
-    assert(result.isLeft)
-    assert(result.left.exists(_.contains("points to unknown provider 'Zai'")))
+    assertEquals(result, Right(()))
   }
 
-  test("scrubbed default with no remaining fallback keeps required field as empty string") {
-    // default references the deleted provider and there is no fallback to promote
+  test("pure delete leaves retired llm.model field untouched (#339: scrubGlobalChain removed)") {
+    // #339：scrubGlobalChain 已删——llm.model 是死字段，删除 provider 不再改写
+    // 它（boot 迁移会整体剥离）。decoder 容忍其存在。
     val seed =
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
@@ -172,14 +175,12 @@ class ConfigServiceSpec extends FunSuite:
     val result = ConfigService.updateConfig(incoming).unsafeRunSync()
     assertEquals(result, Right(()))
 
-    // model.default must remain present (required field) but empty — the
-    // registry skips it and falls back to the first available model
     val saved = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
     val modelHc = saved.hcursor.downField("llm").downField("model")
-    assertEquals(modelHc.downField("default").as[String], Right(""))
-    assertEquals(modelHc.downField("fallbacks").as[Option[List[String]]], Right(None))
-    // The whole config must still decode (default field not dropped)
-    assert(nebflow.llm.Config.loadServiceConfig().llm.model.default == "")
+    // 死字段原样保留（不在 updateConfig 的清理职责内）
+    assertEquals(modelHc.downField("default").as[String], Right("Zai/m1"))
+    // 整个配置仍可解码（llm.model → Option，Some 容忍）
+    assert(nebflow.llm.Config.loadServiceConfig().llm.model.map(_.default).contains("Zai/m1"))
   }
 
   // ── B2: provider rename → reference rewrite ─────────────
@@ -203,8 +204,8 @@ class ConfigServiceSpec extends FunSuite:
       """{"name":"Coder","tools":[],"model":{"preferred":"Zai/m1","fallbacks":["Zai/m2","glm/m1"]}}"""
     )
 
-    // Partial update: providers only, llm.model omitted. The old chain refs
-    // survive the merge and must be rewritten old→new, not scrubbed.
+    // Partial update: providers only. #339：llm.model 的 rename 改写已删（死
+    // 字段原样留存，boot 迁移整体剥离）；agent.json/preset 引用仍改写。
     val incoming = s"""{"llm":{"providers":{"Zai":null,"zai-new":$zaiMasked}}}"""
     val result = ConfigService.updateConfig(incoming).unsafeRunSync()
     assertEquals(result, Right(()))
@@ -217,11 +218,8 @@ class ConfigServiceSpec extends FunSuite:
       llmHc.downField("providers").downField("zai-new").downField("apiKey").as[String],
       Right("sk-test")
     )
-    assertEquals(llmHc.downField("model").downField("default").as[String], Right("zai-new/m1"))
-    assertEquals(
-      llmHc.downField("model").downField("fallbacks").as[List[String]],
-      Right(List("zai-new/m2", "glm/m1"))
-    )
+    // llm.model 死字段不再改写（旧名留存，boot 迁移剥离）
+    assertEquals(llmHc.downField("model").downField("default").as[String], Right("Zai/m1"))
 
     val coder = parse(os.read(coderDir / "agent.json")).toOption.get
     assertEquals(coder.hcursor.downField("model").downField("preferred").as[String], Right("zai-new/m1"))
@@ -238,8 +236,8 @@ class ConfigServiceSpec extends FunSuite:
         ).noSpaces}},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
     os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
 
-    // incoming still carries old-name refs — rewrite happens BEFORE validate,
-    // so a rename must not be rejected as a dangling reference
+    // #339：llm.model 校验/改写均已删——incoming 带旧名 refs 直接接受（无
+    // 校验可触发拒绝），死字段按 merge 原样保留。
     val incoming = s"""{"llm":{"providers":{"Zai":null,"zai-new":$zaiMasked},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
     val result = ConfigService.updateConfig(incoming).unsafeRunSync()
     assertEquals(result, Right(()))
@@ -247,7 +245,7 @@ class ConfigServiceSpec extends FunSuite:
     val saved = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
     assertEquals(
       saved.hcursor.downField("llm").downField("model").downField("default").as[String],
-      Right("zai-new/m1")
+      Right("Zai/m1")
     )
   }
 

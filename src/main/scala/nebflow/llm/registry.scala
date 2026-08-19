@@ -71,7 +71,15 @@ class ProviderRegistry(
 
   def getCandidates(): IO[List[ModelCandidate]] =
     configRef.get.map { config =>
-      val chain = config.llm.model.default :: config.llm.model.fallbacks
+      // #339：全局链来源 = 默认 preset（llm.model 已退役）。resolve(None,None)
+      // 走 terminal 第 3 级；preset 文件小、每次读新（与 PresetStore 设计一致）。
+      // onboarding 探针 probeLlm（不带 agentModel）自动跟随默认 preset——首配
+      // 后探针测的正是刚配置的模型。
+      val chain =
+        try
+          val (am, _) = nebflow.core.presets.PresetStore().resolve(None, None)
+          am.preferred.toList ++ am.fallbacks
+        catch case _: Exception => Nil
       val fromChain = chain.flatMap { ref =>
         // Gracefully skip invalid refs instead of throwing
         try
@@ -196,8 +204,8 @@ class ProviderRegistry(
           case _: Exception =>
             NebflowServiceConfig(
               llm = ServiceLlmConfig(
-                providers = Map.empty,
-                model = ModelChainConfig(default = "anthropic/claude-sonnet-4-6")
+                providers = Map.empty
+                // #339：占位 llm.model 已删（字段退役）
               )
             )
       }
