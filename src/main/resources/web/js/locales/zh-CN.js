@@ -45,6 +45,7 @@ export default {
   'messages.loginRequired': '登录 NebLink 后使用消息与联系人',
   'messages.login': '登录',
   'messages.reconnecting': '连接已断开，正在重连…',
+  'messages.networkError': '网络错误，请检查连接',
   'messages.inputPlaceholder': '发送消息',
   'messages.send': '发送',
   'messages.yesterday': '昨天',

@@ -43,10 +43,19 @@ function avatarEl(person, size) {
 }
 
 // ── Time format: today HH:mm / yesterday / M-D (§3.2) ───
-function fmtTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
+// Backend timestamps are epoch SECONDS (numbers, FriendApiRoutesSpec:
+// "createdAt":1234567890) or ISO strings — normalize before new Date().
+function toEpochMs(ts) {
+  if (ts == null || ts === '') return 0;
+  if (typeof ts === 'number') return ts < 1e12 ? ts * 1000 : ts; // s vs ms
+  const ms = Date.parse(ts);
+  return isNaN(ms) ? 0 : ms;
+}
+
+export function fmtTime(ts) {
+  const ms = toEpochMs(ts);
+  if (!ms) return '';
+  const d = new Date(ms);
   const now = new Date();
   const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   if (sameDay) return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -80,7 +89,7 @@ async function refreshConversations() {
   try {
     const [convs, friends] = await Promise.all([api.getConversations(), api.getFriends()]);
     conversations = (convs || []).sort((a, b) =>
-      (Date.parse(b.lastMessage?.createdAt) || 0) - (Date.parse(a.lastMessage?.createdAt) || 0));
+      (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
     friendsCache = friends.friends || [];
   } catch { /* keep last known */ }
   renderList();
@@ -425,7 +434,7 @@ async function sendCurrent(conv) {
 
 function resortAndRender() {
   conversations.sort((a, b) =>
-    (Date.parse(b.lastMessage?.createdAt) || 0) - (Date.parse(a.lastMessage?.createdAt) || 0));
+    (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
   renderList();
 }
 
@@ -471,6 +480,9 @@ export function initMessages() {
   initialized = true;
 
   onMessage('friend_event', onFriendEvent);
+  // P3 error surface — friendsApi dispatches on auth failure / network error.
+  window.addEventListener('fm-auth-required', () => { openLoginModal(); });
+  window.addEventListener('fm-network-error', () => { window.__showToast?.(t('messages.networkError'), 'error'); });
   onReconnect(() => {
     if (modalEls) {
       modalEls.offline.hidden = true;
