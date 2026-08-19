@@ -274,25 +274,21 @@ export function selectAgent(agentName) {
 
 // ---------- Settings Panel ----------
 /**
- * Work-schedule (freeze) settings block — the toggle row + the segment
+ * Freeze-time (work-schedule) settings block — the toggle row + the segment
  * editor. Echoes state.workSchedule (serverConfig). F2: first enable with no
  * saved segments defaults to one 09:00-12:00 segment.
+ *
+ * SEMANTICS (user ruling 2026-08-19 23:16): the config is the FREEZE window
+ * (non-work hours) — a BLACKLIST. Agents park INSIDE these intervals and work
+ * outside them. Segments may cross midnight (start > end, e.g. 23:00-08:00 =
+ * frozen overnight); start == end is rejected (zero-length freeze window).
  */
 function renderWorkScheduleSection() {
   const ws = state.workSchedule && typeof state.workSchedule === 'object'
     ? state.workSchedule : { enabled: false, segments: [] };
   const enabled = !!ws.enabled;
   const segs = Array.isArray(ws.segments) ? ws.segments : [];
-  const segRows = segs.length
-    ? segs.map((s, i) => `
-        <div class="segment-row" data-seg-index="${i}">
-          <span class="seg-label">${t('settings.segmentLabel', { n: i + 1 })}</span>
-          <input class="time-input" value="${escapeHtml(s.start || '')}" data-role="start" autocomplete="off" spellcheck="false">
-          <span class="seg-label">${t('settings.segmentTo')}</span>
-          <input class="time-input" value="${escapeHtml(s.end || '')}" data-role="end" autocomplete="off" spellcheck="false">
-          <button class="seg-remove" title="${t('settings.removeSegment')}" aria-label="${t('settings.removeSegment')}">×</button>
-        </div>`).join('')
-    : '';
+  const segRows = segs.map((s, i) => buildSegmentRowHtml(s, i)).join('');
   return `
     <div class="settings-row">
       <span class="settings-label">${t('settings.workSchedule')}</span>
@@ -304,6 +300,25 @@ function renderWorkScheduleSection() {
       <div class="cfg-hint">${t('settings.workScheduleOnHint')}</div>
     </div>
     <div class="cfg-hint" id="schedule-off-hint" style="display:${enabled ? 'none' : 'block'};margin-top:-2px">${t('settings.workScheduleOffHint')}</div>`;
+}
+
+/**
+ * One segment row — start/end HH:mm inputs + remove. A small sapphire hint is
+ * shown when the segment crosses midnight (start > end): the freeze window
+ * spans into the next day (blacklist semantics).
+ */
+function buildSegmentRowHtml(s, i) {
+  const crossMidnight = HHMM_RE.test(s.start) && HHMM_RE.test(s.end)
+    && toMin(s.start) > toMin(s.end);
+  return `
+    <div class="segment-row" data-seg-index="${i}">
+      <span class="seg-label">${t('settings.segmentLabel', { n: i + 1 })}</span>
+      <input class="time-input" value="${escapeHtml(s.start || '')}" data-role="start" autocomplete="off" spellcheck="false">
+      <span class="seg-label">${t('settings.segmentTo')}</span>
+      <input class="time-input" value="${escapeHtml(s.end || '')}" data-role="end" autocomplete="off" spellcheck="false">
+      ${crossMidnight ? `<span class="seg-cross-midnight">${t('settings.segmentCrossMidnight')}</span>` : ''}
+      <button class="seg-remove" title="${t('settings.removeSegment')}" aria-label="${t('settings.removeSegment')}">×</button>
+    </div>`;
 }
 
 /**
@@ -321,23 +336,17 @@ function collectSegments() {
 function renderScheduleEditorRows(segs) {
   const list = document.getElementById('segment-list');
   if (!list) return;
-  list.innerHTML = segs.map((s, i) => `
-    <div class="segment-row" data-seg-index="${i}">
-      <span class="seg-label">${t('settings.segmentLabel', { n: i + 1 })}</span>
-      <input class="time-input" value="${escapeHtml(s.start || '')}" data-role="start" autocomplete="off" spellcheck="false">
-      <span class="seg-label">${t('settings.segmentTo')}</span>
-      <input class="time-input" value="${escapeHtml(s.end || '')}" data-role="end" autocomplete="off" spellcheck="false">
-      <button class="seg-remove" title="${t('settings.removeSegment')}" aria-label="${t('settings.removeSegment')}">×</button>
-    </div>`).join('');
+  list.innerHTML = segs.map((s, i) => buildSegmentRowHtml(s, i)).join('');
 }
 
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 function toMin(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
 
 /**
- * D6 validation: HH:mm format; start < end (equal or inverted = rejected;
- * inverted = cross-day, not supported in v1). Overlap allowed — backend takes
- * the union (§2.1 D6).
+ * Blacklist validation contract (user ruling 2026-08-19 23:16): HH:mm format;
+ * start == end → rejected (zero-length freeze window is meaningless); start > end
+ * → LEGAL (crosses midnight, freeze window spans into the next day). Overlap
+ * allowed — backend takes the union.
  * Returns null when valid, else an i18n error key resolved to text.
  */
 function validateSegments(segs) {
@@ -346,9 +355,26 @@ function validateSegments(segs) {
     const sm = toMin(s.start);
     const em = toMin(s.end);
     if (sm === em) return t('settings.scheduleInvalidRange');
-    if (sm > em) return t('settings.scheduleCrossDay');
   }
   return null;
+}
+
+/** In-place toggle of a row's cross-midnight hint (no rebuild → no focus loss
+ *  while the user clicks from the start input into the end input). */
+function updateSegmentRowHint(row) {
+  if (!row) return;
+  const start = row.querySelector('[data-role="start"]')?.value.trim() || '';
+  const end = row.querySelector('[data-role="end"]')?.value.trim() || '';
+  const cross = HHMM_RE.test(start) && HHMM_RE.test(end) && toMin(start) > toMin(end);
+  let hint = row.querySelector('.seg-cross-midnight');
+  if (cross && !hint) {
+    hint = document.createElement('span');
+    hint.className = 'seg-cross-midnight';
+    hint.textContent = t('settings.segmentCrossMidnight');
+    row.insertBefore(hint, row.querySelector('.seg-remove'));
+  } else if (!cross && hint) {
+    hint.remove();
+  }
 }
 
 /**
@@ -869,36 +895,8 @@ function bindSettingsEvents(content, cfg) {
     const list = document.getElementById('segment-list');
     if (!list) return;
     const idx = list.children.length;
-    const row = document.createElement('div');
-    row.className = 'segment-row';
-    row.innerHTML = `
-      <span class="seg-label">${t('settings.segmentLabel', { n: idx + 1 })}</span>
-      <input class="time-input" value="" data-role="start" autocomplete="off" spellcheck="false">
-      <span class="seg-label">${t('settings.segmentTo')}</span>
-      <input class="time-input" value="" data-role="end" autocomplete="off" spellcheck="false">
-      <button class="seg-remove" title="${t('settings.removeSegment')}" aria-label="${t('settings.removeSegment')}">×</button>`;
-    list.appendChild(row);
-    row.querySelector('[data-role="start"]')?.focus();
-  });
-
-  // Remove a segment row (delegated — rows are added dynamically)
-  content.addEventListener('click', (e) => {
-    const rm = e.target.closest('.seg-remove');
-    if (!rm || !content.contains(rm)) return;
-    const row = rm.closest('.segment-row');
-    if (row) row.remove();
-    document.querySelectorAll('#segment-list .segment-row .seg-label').forEach((el, i) => {
-      el.textContent = t('settings.segmentLabel', { n: i + 1 });
-    });
-    const enabled = document.getElementById('toggle-schedule')?.classList.contains('on');
-    if (enabled) saveWorkSchedule(true, collectSegments());
-  });
-
-  // Editing a time input re-validates + saves on blur (silent; D6 checks)
-  content.addEventListener('change', (e) => {
-    if (!e.target.classList || !e.target.classList.contains('time-input')) return;
-    const enabled = document.getElementById('toggle-schedule')?.classList.contains('on');
-    if (enabled) saveWorkSchedule(true, collectSegments());
+    list.insertAdjacentHTML('beforeend', buildSegmentRowHtml({ start: '', end: '' }, idx));
+    list.querySelector(`[data-seg-index="${idx}"] [data-role="start"]`)?.focus();
   });
 
   // Language selector
@@ -1020,6 +1018,36 @@ function bindSettingsEvents(content, cfg) {
     document.getElementById('update-action').style.display = 'none';
   });
 }
+
+// Delegated segment-editor listeners — bound ONCE at module scope, NOT inside
+// bindSettingsEvents. renderSettings() re-runs on every serverConfig echo while
+// the panel is open; #settings-content is a persistent container, so listeners
+// bound to it inside bindSettingsEvents would accumulate and fire N× per event
+// (duplicate setWorkSchedule saves). Delegating from document keeps exactly one
+// listener for the whole app lifetime.
+document.addEventListener('click', (e) => {
+  const settings = document.getElementById('settings-content');
+  if (!settings || !(e.target instanceof Node) || !settings.contains(e.target)) return;
+  const rm = e.target.closest('.seg-remove');
+  if (!rm) return;
+  const row = rm.closest('.segment-row');
+  if (row) row.remove();
+  settings.querySelectorAll('#segment-list .segment-row .seg-label').forEach((el, i) => {
+    el.textContent = t('settings.segmentLabel', { n: i + 1 });
+  });
+  const enabled = document.getElementById('toggle-schedule')?.classList.contains('on');
+  if (enabled) saveWorkSchedule(true, collectSegments());
+});
+
+document.addEventListener('change', (e) => {
+  const settings = document.getElementById('settings-content');
+  if (!settings || !(e.target instanceof Node) || !settings.contains(e.target)) return;
+  if (!e.target.classList || !e.target.classList.contains('time-input')) return;
+  const enabled = document.getElementById('toggle-schedule')?.classList.contains('on');
+  if (!enabled) return;
+  updateSegmentRowHint(e.target.closest('.segment-row'));
+  saveWorkSchedule(true, collectSegments());
+});
 
 /** Remove all references to a provider from the model chain (default + fallbacks).
  *  Must be called when a provider is deleted, otherwise backend validation fails
