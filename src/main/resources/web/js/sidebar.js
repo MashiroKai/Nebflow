@@ -322,6 +322,41 @@ function buildSegmentRowHtml(s, i) {
 }
 
 /**
+ * STT (speech-to-text) settings block — endpoint/model/apiKey + save/clear.
+ * Echoes state.stt (serverConfig). The apiKey is NEVER echoed back (backend
+ * contract: serverConfig.stt = {sttConfigured, endpoint?, model?} only), so
+ * the password input starts empty on every render — saving sends exactly what
+ * is typed; all-empty = clear config (back to the free browser path).
+ */
+function renderSttSection() {
+  const stt = state.stt && typeof state.stt === 'object' ? state.stt : {};
+  const configured = !!stt.sttConfigured;
+  const endpoint = stt.endpoint || '';
+  const model = stt.model || '';
+  const status = configured
+    ? t('settings.sttConfiguredStatus', { endpoint: escapeHtml(endpoint), model: escapeHtml(model) })
+    : t('settings.sttUnconfiguredStatus');
+  return `
+    <div class="settings-row">
+      <span class="settings-label">${t('settings.sttTitle')}</span>
+      <span class="cfg-hint stt-status" id="stt-status-hint">${status}</span>
+    </div>
+    <div class="cfg-form-group" id="stt-form-group">
+      <label class="cfg-label" for="stt-endpoint">${t('settings.sttEndpoint')}</label>
+      <input class="cfg-input" id="stt-endpoint" type="text" value="${escapeHtml(endpoint)}" placeholder="https://api.example.com/v1/audio/transcriptions" autocomplete="off" spellcheck="false">
+      <label class="cfg-label" for="stt-model">${t('settings.sttModel')}</label>
+      <input class="cfg-input" id="stt-model" type="text" value="${escapeHtml(model)}" placeholder="${t('settings.sttModelPlaceholder')}" autocomplete="off" spellcheck="false">
+      <label class="cfg-label" for="stt-apikey">${t('settings.sttApiKey')}</label>
+      <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t('settings.sttApiKeyPlaceholder')}" autocomplete="off">
+      <div class="cfg-hint">${t('settings.sttHint')}</div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="cfg-btn cfg-btn-primary" id="btn-save-stt">${t('settings.sttSave')}</button>
+        <button class="cfg-btn" id="btn-clear-stt">${t('settings.sttClear')}</button>
+      </div>
+    </div>`;
+}
+
+/**
  * Collect segments currently in the editor (all rows, raw values).
  */
 function collectSegments() {
@@ -427,6 +462,7 @@ export function renderSettings() {
         <div class="toggle ${state.llmLogEnabled !== false ? 'on' : ''}" id="toggle-llm-log"></div>
       </div>
       ${renderWorkScheduleSection()}
+      ${renderSttSection()}
       <div class="settings-row">
         <span class="settings-label">${t('settings.language')}</span>
         <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
@@ -898,6 +934,21 @@ function bindSettingsEvents(content, cfg) {
     list.insertAdjacentHTML('beforeend', buildSegmentRowHtml({ start: '', end: '' }, idx));
     list.querySelector(`[data-seg-index="${idx}"] [data-role="start"]`)?.focus();
   });
+
+  // ── STT config (#295) — save sends what's typed; all-empty = clear (back to
+  // the free browser path). The apiKey input is never pre-filled (server never
+  // echoes it) — leaving it blank while changing endpoint/model sends an empty
+  // key; the backend decides keep-vs-clear semantics (联调 item).
+  function sendSttConfig(clear) {
+    const endpoint = clear ? '' : (document.getElementById('stt-endpoint')?.value.trim() || '');
+    const model = clear ? '' : (document.getElementById('stt-model')?.value.trim() || '');
+    const apiKey = clear ? '' : (document.getElementById('stt-apikey')?.value.trim() || '');
+    const allEmpty = !endpoint && !model && !apiKey;
+    sendWs({ type: 'setSttConfig', sttConfig: { endpoint, apiKey, model } });
+    window.__showToast?.(t(allEmpty ? 'settings.sttCleared' : 'settings.sttSaved'), 'success');
+  }
+  document.getElementById('btn-save-stt')?.addEventListener('click', () => sendSttConfig(false));
+  document.getElementById('btn-clear-stt')?.addEventListener('click', () => sendSttConfig(true));
 
   // Language selector
   document.getElementById('cfg-language')?.addEventListener('change', function() {
