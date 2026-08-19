@@ -18,6 +18,22 @@ import nebflow.shared.given
 import scala.concurrent.duration.*
 
 /**
+ * Dispatch 发起方分类（freeze-schedule spec D1）：决定 pipeLlmCall gate 的行为。
+ * Gated（默认）= 系统续跑（ToolsComplete 续轮 / finishTurnCont / ExternalEvent /
+ * CompactionComplete 恢复 / Retry 等）——受工作时间表约束；UserWake = 用户显式
+ * 发起（idle UserInput[clientMessageId.isDefined] / AskQuestion / SkillActivate /
+ * PlanApproved）——冻结时段也放行（用户输入即唤醒，需求硬指标）。
+ */
+sealed trait DispatchCause
+
+object DispatchCause:
+  /** 系统续跑：受冻结调度约束（冻结窗口内进入 frozen behavior）。 */
+  case object Gated extends DispatchCause
+
+  /** 用户显式发起：gate 直接放行（唤醒语义）。 */
+  case object UserWake extends DispatchCause
+
+/**
  * Pure turn-boundary drain decisions shared by ToolsComplete / CompactionComplete.
  * Top-level and side-effect-free so specs can verify the compaction guard
  * directly (queued-inputs-during-compaction bug, 2026-08-14).
@@ -235,7 +251,9 @@ object AgentActor extends AgentCore with AgentSession:
      * spawn sites still get a sane bucket (P1 best-effort behavior).
      */
     rootSessionId: String = "",
-    isSubTaskWorker: Boolean = false
+    isSubTaskWorker: Boolean = false,
+    /** D11 交互豁免：freezeExempt 会话不参与冻结（PlanAgent.spawn 传 true）。 */
+    freezeExempt: Boolean = false
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -275,7 +293,8 @@ object AgentActor extends AgentCore with AgentSession:
             gitBranch = gitBranch,
             expectsMail = expectsMail,
             rootSessionId = effectiveRootSessionId,
-            isSubTaskWorker = isSubTaskWorker
+            isSubTaskWorker = isSubTaskWorker,
+            freezeExempt = freezeExempt
           )
         )(using ctx)
       )
@@ -404,7 +423,10 @@ object AgentActor extends AgentCore with AgentSession:
               depth,
               parentRef,
               stateWithWidth.withMessages(newMessages).withEmptyResponseRetries(0).withMailUsedThisTurn(false),
-              replyTo
+              replyTo,
+              // D2：真实用户 WS 输入恒带 clientMessageId → UserWake（冻结时段也
+              // 放行，用户输入即唤醒）；系统注入（Mail/continue 等 None）→ Gated。
+              if clientMessageId.isDefined then DispatchCause.UserWake else DispatchCause.Gated
             )
           yield result
         end if
@@ -416,7 +438,7 @@ object AgentActor extends AgentCore with AgentSession:
           .withMessages(state.messages :+ askReminder)
           .withAskMode(Some(question))
           .withStatus(AgentStatus.Processing)
-        pipeLlmCall(agentDef, resources, depth, parentRef, askState, None)
+        pipeLlmCall(agentDef, resources, depth, parentRef, askState, None, DispatchCause.UserWake)
 
       case AgentCommand.SkillActivate(skillName, input, skillSessionId, skillContent, skillBaseDir) =>
         logAgentEvent(
@@ -439,7 +461,7 @@ object AgentActor extends AgentCore with AgentSession:
         for
           _ <- sessionBusyIO2
           _ <- emitInjectedUserEvent(state.wsSend, state.sessionId, input, "skill", None)
-          result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None)
+          result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None, DispatchCause.UserWake)
         yield result
 
       case AgentCommand.Interrupt() =>
@@ -852,7 +874,8 @@ object AgentActor extends AgentCore with AgentSession:
                 depth,
                 parentRef,
                 state.withMessages(newMessages).withPlanMode(None),
-                None
+                None,
+                DispatchCause.UserWake
               )
             yield result
             end for
@@ -1399,28 +1422,13 @@ object AgentActor extends AgentCore with AgentSession:
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "retry", s"reason=$reason")
         ctx.cancelCurrentTurn() *> (state.lastDispatch match
           case Some(LastDispatch(false, _)) =>
-            // Re-dispatch LLM call with same messages
-            pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state,
-              None,
-              (ad, r, d, p, s) => processing(ad, r, d, p, s)
-            )
+            // Re-dispatch LLM call with same messages. 6-arg call goes through
+            // the AgentActor shadow (freeze gate) — retry must not bypass the
+            // work schedule (spec §5.4: 冻结时段不重试，开窗后恢复即重试).
+            pipeLlmCall(agentDef, resources, depth, parentRef, state, None)
           case Some(LastDispatch(true, Some(cr))) =>
             // Re-dispatch tool execution with same LLM result
-            pipeToolExecutions(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state,
-              cr,
-              None,
-              (ad, r, d, p, s) => processing(ad, r, d, p, s)
-            )
+            pipeToolExecutions(agentDef, resources, depth, parentRef, state, cr, None)
           case _ =>
             // No checkpoint — go to idle
             markTeamIdle(agentDef, state.sessionId) *>
@@ -2524,20 +2532,46 @@ object AgentActor extends AgentCore with AgentSession:
     depth: Int,
     parentRef: Option[ActorRef[AgentCommand]],
     state: AgentState,
-    replyTo: Option[ActorRef[AgentEvent]]
+    replyTo: Option[ActorRef[AgentEvent]],
+    cause: DispatchCause = DispatchCause.Gated
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     // Turn start: mark team agent busy. Idempotent (Set), so the recursive
     // multi-tool-call turns that re-enter pipeLlmCall are harmless.
+    // MUST run unconditionally BEFORE the freeze gate (spec 6a / B12): a frozen
+    // team agent must still read busy in the Teams panel — putting this in the
+    // dispatch branch would leave frozen team agents marked idle.
     markTeamBusy(agentDef, state.sessionId) *>
-      super.pipeLlmCall(
-        agentDef,
-        resources,
-        depth,
-        parentRef,
-        state,
-        replyTo,
-        (ad, r, d, p, s) => processing(ad, r, d, p, s)
-      )
+      // ── Freeze gate (freeze-schedule spec ⑥, F2 single choke point) ──
+      // 所有 AgentActor 层 dispatch 都经过本 shadow；AgentCore 内部递归
+      // （maybeAutoCompact 等）静态解析不经此处，但只会在 gate 放行后执行。
+      // 冻结期间零 LLM 调用（零 token 硬指标）——拦截后转入 frozen behavior，
+      // 持有完整 state（工具结果已在冻结前持久化，F1）。
+      resources.workScheduleRef.get.flatMap { cfg =>
+        val window = nebflow.core.schedule.WorkSchedule.eval(cfg, System.currentTimeMillis())
+        // D11 交互豁免：ask 轮（用户在场等回答）与 freezeExempt 会话（plan
+        // agent 等交互场景）不冻结——冻结它们省的 token 远低于浪费的用户等待。
+        val interactive = state.askMode.isDefined || state.session.freezeExempt
+        if !window.open && cause == DispatchCause.Gated && !interactive then
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "freeze-enter",
+            s"resumeAt=${window.nextChangeAt.getOrElse(0L)}"
+          )
+          enterFrozen(agentDef, resources, depth, parentRef, state, replyTo, window.nextChangeAt)
+        else
+          super.pipeLlmCall(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state,
+            replyTo,
+            (ad, r, d, p, s) => processing(ad, r, d, p, s)
+          )
+      }
 
   private def pipeToolExecutions(
     agentDef: AgentDef,
@@ -2558,6 +2592,351 @@ object AgentActor extends AgentCore with AgentSession:
       replyTo,
       (ad, r, d, p, s) => processing(ad, r, d, p, s)
     )
+
+  // ============================================================
+  // Frozen state (freeze-schedule spec 6c / D3)
+  // ============================================================
+
+  /** gate 拦截后的转入辅助：Frozen 事件 + registry 标记 + 进入 frozen behavior。 */
+  private def enterFrozen(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    resumeAt: Option[Long]
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    emitStream(state.wsSend, AgentStreamEvent.Frozen(resumeAt), isSubagent = depth > 0, state.sessionId) *>
+      touchRegistryActivity(resources, state.sessionId, AgentStatus.Frozen) *>
+      IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt))
+
+  /**
+   * frozen behavior：冻结中的 agent——持有完整 state（工具结果已组装并持久化，
+   * F1）+ replyTo，等待开窗自动恢复或用户唤醒。
+   *
+   * 恢复驱动只有两个：CheckFreezeGate（FreezeScheduler 30s 轮询 / 配置热更即时
+   * scan）重评估时间表；UserInput(clientMessageId.isDefined) 用户唤醒。系统注入
+   * 一律排队不唤醒（零 token 铁律，D2）——BackoffSupervisor 崩溃重启注入的
+   * "continue" 在冻结时段同样不唤醒，开窗后续跑（spec §5.3）。
+   *
+   * 独立 behavior 而非 processing 加 flag（D3）：天然隔离 processing 的 20+ 交互
+   * case（重复 ToolsComplete 双 dispatch、stale LlmComplete 等）；catch-all 留在
+   * frozen 态——stale 消息丢弃，但冻结前已持久化的状态不丢。
+   */
+  private def frozen(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    resumeAt: Option[Long]
+  )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
+    Behaviors.receiveMessage:
+
+      case AgentCommand.CheckFreezeGate =>
+        // 唯一自动恢复驱动：重评估（支持运行中改配置/时钟漂移）。仍冻结 →
+        // 原地留任（静默更新 resumeAt——不重发 Frozen 事件，避免 30s 轮询刷屏）；
+        // 开放 → Resumed + 恢复挂起的 dispatch（cause=Gated，但窗口已开 → 通过）。
+        for
+          cfg <- resources.workScheduleRef.get
+          window = nebflow.core.schedule.WorkSchedule.eval(cfg, System.currentTimeMillis())
+          result <-
+            if window.open then
+              logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-resume", "reason=window-open")
+              emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *>
+                pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo)
+            else IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, window.nextChangeAt))
+        yield result
+
+      case AgentCommand.UserInput(text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery) =>
+        if clientMessageId.isDefined then
+          // ★ 用户唤醒（B5）：注入用户消息到冻结中的上下文，立即 dispatch——
+          // 冻结前组装好的工具结果 + 用户新指令同轮喂给 LLM。dedup 防止 WS
+          // 重发导致同一条用户消息注入两次（v1.1）。
+          val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
+          if isDuplicate then
+            logger.info(s"[frozen] Dropping duplicate wake message clientMessageId=${clientMessageId.getOrElse("")}")
+            IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt))
+          else
+            val userMsg = blocks.filter(_.nonEmpty) match
+              case Some(bl) => Message(MessageRole.User, Right(bl))
+              case None => Message(MessageRole.User, Left(text))
+            val stateWithWidth =
+              if chatWidth > 0 then dedupedState.copy(session = dedupedState.session.copy(chatWidth = chatWidth))
+              else dedupedState
+            val wakeState = stateWithWidth
+              .withMessages(stateWithWidth.messages :+ userMsg)
+              .withEmptyResponseRetries(0)
+              .withMailUsedThisTurn(false)
+            logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"text=${text.take(60)}")
+            emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *>
+              pipeLlmCall(agentDef, resources, depth, parentRef, wakeState, replyTo2, DispatchCause.UserWake)
+        else
+          // 系统注入（Mail/Delegate/BackoffSupervisor continue）：排队不唤醒——
+          // 恢复后的 turn 结束时由 finishTurnCont drain（head 重发，idle 全量处理）。
+          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-queue-input", s"textLen=${text.length}")
+          val queued = state.copy(execution =
+            state.execution.copy(
+              pendingUserInputs = state.execution.pendingUserInputs :+ AgentCommand.UserInput(
+                text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery
+              )
+            )
+          )
+          IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt))
+
+      case AgentCommand.AskQuestion(question, _) =>
+        // 用户动作（D2）：唤醒——ask 轮本身也是 gate 豁免路径（askMode.isDefined）。
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"ask=${question.take(60)}")
+        val askReminder = AskService.buildAskReminder(question)
+        val askState = state
+          .withMessages(state.messages :+ askReminder)
+          .withAskMode(Some(question))
+          .withStatus(AgentStatus.Processing)
+        emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *>
+          pipeLlmCall(agentDef, resources, depth, parentRef, askState, None, DispatchCause.UserWake)
+
+      case AgentCommand.SkillActivate(skillName, input, _, skillContent, _) =>
+        // 用户动作（D2）：唤醒（镜像 idle 的 SkillActivate handler）。
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"skill=$skillName")
+        val combinedText = s"<skill name=\"$skillName\">\n$skillContent\n</skill>\n\n$input"
+        val processingState = state
+          .withMessages(
+            state.messages :+ Message(MessageRole.User, Left(combinedText), source = Some("skill"))
+          )
+          .withStatus(AgentStatus.Processing)
+        for
+          _ <- emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId)
+          _ <- emitInjectedUserEvent(state.wsSend, state.sessionId, input, "skill", None)
+          result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None, DispatchCause.UserWake)
+        yield result
+
+      case AgentCommand.Interrupt() =>
+        // D10 放弃续跑：与 processing 的 Interrupt 同语义（cancelCurrentTurn +
+        // Interrupted 事件 + idle，历史含工具结果保留）。
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "interrupt", "reason=user-during-frozen")
+        for
+          _ <- ctx.cancelCurrentTurn()
+
+          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+
+          _ <- state.pendingCompaction
+            .flatMap(_.replyDeferred)
+            .traverse_(d => d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit))
+          // Back to idle without resuming — clear the team busy mark so a
+          // frozen-then-interrupted team agent isn't stuck "running".
+          _ <- markTeamIdle(agentDef, state.sessionId)
+          // frozen 专属：registry 退回 Idle——否则 FreezeScheduler 会持续 ping
+          // 一个已回 idle 的 agent（无害但浪费，且面板显示错误）。
+          _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
+        yield
+          val interruptedState = state.resetForInterrupt.withPendingCompaction(None)
+          idle(agentDef, resources, depth, parentRef, interruptedState)
+
+      case AgentCommand.Stop(_) =>
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user-during-frozen")
+        for
+          _ <- ctx.cancelCurrentTurn()
+
+          _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
+          _ <- fireLifecycleStopHooks(resources, state)
+        yield Behaviors.stopped
+
+      case AgentCommand.RestartAgent(level) =>
+        // 镜像 processing 的 RestartAgent；末尾 dispatch 是系统动作（Gated）——
+        // 冻结时段再次进入 frozen（正确语义：supervisor 重启不唤醒）。
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart", s"level=${level.toString}")
+        for
+          _ <- ctx.cancelCurrentTurn()
+          _ <- state.pendingCompaction
+            .flatMap(_.replyDeferred)
+            .traverse_(d => d.complete(Left("Restarted by supervisor")).void.handleErrorWith(_ => IO.unit))
+          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+          restartState = level match
+            case RestartLevel.Soft =>
+              state.resetForInterrupt.withPendingCompaction(None)
+            case RestartLevel.Rollback =>
+              rollbackLastToolCall(state.resetForInterrupt.withPendingCompaction(None))
+            case _ =>
+              state.resetForInterrupt.withPendingCompaction(None)
+          _ <- state
+            .wsSend(
+              Json.obj(
+                "type" -> "agentRestarted".asJson,
+                "sessionId" -> state.sessionId.asJson,
+                "level" -> level.toString.asJson
+              )
+            )
+            .handleErrorWith(_ => IO.unit)
+          result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState, None)
+        yield result
+        end for
+
+      case AgentCommand.Retry(reason) =>
+        // 镜像 processing 的 Retry：从 checkpoint 重派——Gated，冻结时段再次冻结
+        // （不烧 token，spec §5.4）。
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "retry", s"reason=$reason")
+        ctx.cancelCurrentTurn() *> (state.lastDispatch match
+          case Some(LastDispatch(false, _)) =>
+            pipeLlmCall(agentDef, resources, depth, parentRef, state, None)
+          case Some(LastDispatch(true, Some(cr))) =>
+            pipeToolExecutions(agentDef, resources, depth, parentRef, state, cr, None)
+          case _ =>
+            markTeamIdle(agentDef, state.sessionId) *>
+              IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
+
+      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
+        // 排队 pendingEvents（不唤醒）：开窗/唤醒后的下一个 turn 边界
+        // （ToolsComplete → drainBarrier）统一注入。barrier 计数语义镜像 idle
+        // ExternalEvent——subagent result 到达即递减 outstanding，否则批次在
+        // 冻结期间全部完成时计数永不清零，恢复后 drainBarrier 永久 hold。
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-queue-event", s"source=$source type=$eventType")
+        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
+        val isSubagentResult = TurnBoundaryDrains.isSubagentResult(event)
+        val outstanding = state.execution.outstandingSubagentResults
+        val newOutstanding = if isSubagentResult then math.max(0, outstanding - 1) else outstanding
+        val queued = state.copy(execution =
+          state.execution.copy(
+            outstandingSubagentResults = newOutstanding,
+            pendingEvents = state.execution.pendingEvents :+ event
+          )
+        )
+        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt))
+
+      case msg: AgentCommand.ImmediateInput =>
+        // 排队 pendingImmediateInputs（不唤醒）——恢复后的 turn 边界 drain。
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-queue-immediate", s"textLen=${msg.text.length}")
+        val queued = state.copy(execution =
+          state.execution.copy(pendingImmediateInputs = state.execution.pendingImmediateInputs :+ msg)
+        )
+        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt))
+
+      case AgentCommand.MailQueued(item, _) =>
+        // 镜像 processing：计数 +1，实际内容在磁盘（MailQueueStore）。
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "mail-queued",
+          s"from=${item.from} pendingCount=${state.execution.pendingMailQueueCount + 1}"
+        )
+        val queued = state.copy(execution =
+          state.execution.copy(pendingMailQueueCount = state.execution.pendingMailQueueCount + 1)
+        )
+        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt))
+
+      case AgentCommand.StartPlan(task) =>
+        // 排队不唤醒：plan 模式是 idle 语义（spawn plan agent + planWaiting），
+        // 冻结中直接切换会丢掉挂起的续跑 state；排队在恢复后的 turn 边界由
+        // idle handler 全量处理（plan agent 本身 freezeExempt，不受冻结影响）。
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-queue-plan", s"task=${task.take(60)}")
+        val queued = state.copy(execution =
+          state.execution.copy(pendingUserInputs = state.execution.pendingUserInputs :+ AgentCommand.StartPlan(task))
+        )
+        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt))
+
+      case AgentCommand.SetSafetyMode(mode) =>
+        // 镜像 processing 的轻量状态更新（保持一致性）。
+        val policy = PermissionPolicy(safetyMode = mode)
+        resources.permissionPolicies
+          .update(_ + (state.session.rootSessionId -> policy)) *>
+          IO.pure(
+            frozen(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)),
+              replyTo,
+              resumeAt
+            )
+          )
+
+      case AgentCommand.UpdateContextWindow(window) =>
+        // 轻量存储：恢复后下一次 dispatch 的 autoCompact 自会按新窗口评估溢出。
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withContextWindow(window), replyTo, resumeAt))
+
+      case AgentCommand.UpdateGitBranch(branch) =>
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withGitBranch(branch), replyTo, resumeAt))
+
+      case n: AgentCommand.BackgroundTaskNotification =>
+        // 转成 ExternalEvent 走上面的排队分支（同 processing 的处理方式）。
+        (ctx.self ! n.toExternalEvent) *>
+          IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt))
+
+      case AgentCommand.SetPermissionDeferred(deferred) =>
+        // 镜像 processing：持有 deferred，防子 agent 权限应答悬空。
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), replyTo, resumeAt))
+
+      case AgentCommand.SessionStarted(address, agentName, taskDescription) =>
+        val session = AgentSessionInfo(address, agentName, taskDescription, "running")
+        IO.pure(
+          frozen(agentDef, resources, depth, parentRef, state.withAgentSessions(state.agentSessions :+ session), replyTo, resumeAt)
+        )
+
+      case AgentCommand.SessionUpdate(address, status) =>
+        val updated = state.agentSessions.map(s => if s.address == address then s.copy(status = status) else s)
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), replyTo, resumeAt))
+
+      case AgentCommand.SessionClosed(address) =>
+        val updated = state.agentSessions.filterNot(_.address == address)
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), replyTo, resumeAt))
+
+      case AgentCommand.CompactionComplete(result) =>
+        // stale 压缩结果：frozen 不可能由压缩轮直接进入（压缩 dispatch 在
+        // super 内部静态解析，进入 frozen 前已完成）。镜像 idle 的兜底——完成
+        // deferred 防等待方悬空，结果本身丢弃。
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "stale-compaction-discarded",
+          result.fold(err => s"err=${err.take(60)}", msgs => s"ok=${msgs.size}msgs")
+        )
+        val staleState = state.invalidateSystemStableCache
+        state.pendingCompaction.flatMap(_.replyDeferred) match
+          case Some(d) =>
+            ctx.forkTurn(
+              d.complete(Left("Compaction result arrived while agent was frozen"))
+                .void
+                .handleErrorWith(_ => IO.unit)
+            ) *> IO.pure(
+              frozen(agentDef, resources, depth, parentRef, staleState.withPendingCompaction(None), replyTo, resumeAt)
+            )
+          case None =>
+            IO.pure(frozen(agentDef, resources, depth, parentRef, staleState, replyTo, resumeAt))
+
+      case AgentCommand.ClearReadTracker =>
+        state.readTracker.fold(IO.unit)(t => t.clear()) *>
+          IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt))
+
+      case AgentCommand.ResetSession =>
+        for
+
+          _ <- state.readTracker.fold(IO.unit)(t => t.clear())
+          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+          _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
+        yield
+          val resetState = state
+            .withMessages(Nil)
+            .withLatestUsage(None)
+            .withPendingCompaction(None)
+            .withCompactionFailures(0)
+            .withLastCompactionFailureAt(0L)
+            .withRecentMessageIds(Nil)
+            .invalidateSystemStableCache
+            .resetToIdle(Nil)
+          idle(agentDef, resources, depth, parentRef, resetState)
+
+      case _ =>
+        // stale LlmComplete/LlmFailed/ToolsComplete/TriggerCompaction 等 → 丢弃
+        // 留在 frozen（这些消息属于被 gate 拦下的 turn，没有 fiber 在等待它们）。
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt))
+
+  end frozen
 
   // ============================================================
   // Save phase (stage 1) completion — transitions to compact turn

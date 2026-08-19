@@ -264,9 +264,15 @@ object GatewayMain extends IOApp.Simple:
                       val url = s"$baseUrl?token=$token"
                       sys.props.update("nebflow.url", baseUrl)
 
-                      // Initialize thinking config from nebflow.json (default enabled=true)
-                      val initialThinking = config.thinkingConfig.getOrElse(nebflow.llm.ThinkingConfig())
-                      val thinkingConfigRef: Ref[IO, nebflow.llm.ThinkingConfig] = Ref.unsafe(initialThinking)
+                          // Initialize thinking config from nebflow.json (default enabled=true)
+                          val initialThinking = config.thinkingConfig.getOrElse(nebflow.llm.ThinkingConfig())
+                          val thinkingConfigRef: Ref[IO, nebflow.llm.ThinkingConfig] = Ref.unsafe(initialThinking)
+                          // 冻结调度（freeze-schedule）：从 nebflow.json workSchedule 节
+                          // fail-safe 加载（非法配置视为关闭——恒开窗，功能旁路）。
+                          val initialWorkSchedule =
+                            nebflow.core.schedule.WorkSchedule.load(config.workSchedule)
+                          val workScheduleRef: Ref[IO, nebflow.core.schedule.WorkScheduleConfig] =
+                            Ref.unsafe(initialWorkSchedule)
                       logger.info(s"nebflow v${nebflow.Version.string}") *>
                         (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                          else
@@ -299,7 +305,8 @@ object GatewayMain extends IOApp.Simple:
                                   healthMonitor = healthMonitor,
                                   actorSystem = actorSystem,
                                   hookEngine = hookEngine,
-                                  voiceMutedRef = voiceMutedRef
+                                  voiceMutedRef = voiceMutedRef,
+                                  workScheduleRef = workScheduleRef
                                 )
                                 // Initialize telemetry (opt-out aware, fire-and-forget on failure)
                                 val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>
@@ -597,6 +604,17 @@ object GatewayMain extends IOApp.Simple:
                                                           interval = nebflow.shared.Defaults.StuckWatcherIntervalSec.seconds,
                                                           thresholdMs =
                                                             config.stuckThresholdMs.getOrElse(nebflow.shared.Defaults.StuckThresholdMs)
+                                                        )
+                                                        .start
+                                                      // --- Background: FreezeScheduler (freeze-schedule) ---
+                                                      // 冻结恢复扫描：周期向 Frozen 态 agent 发 CheckFreezeGate，
+                                                      // 开窗则恢复挂起的 dispatch（仿 TaskStuckWatcher 模式：
+                                                      // 错误自愈 + `>>` 递归栈安全）。Frozen 态 TaskStuckWatcher
+                                                      // 天然豁免（只扫 Processing）。
+                                                      _ <- nebflow.core.processor.FreezeScheduler
+                                                        .run(
+                                                          sharedResourcesWithDaemon,
+                                                          interval = nebflow.shared.Defaults.FreezeCheckIntervalSec.seconds
                                                         )
                                                         .start
                                                       _ <-

@@ -130,4 +130,11 @@ object Defaults:
 
   /** TaskStuckWatcher scan interval. */
   val StuckWatcherIntervalSec: Int = 30
+
+  /**
+   * FreezeScheduler 扫描间隔（冻结恢复延迟上限，freeze-schedule spec ⑤）。
+   * frozen agent 靠本扫描驱动重评估时间表——开窗后最多延迟本值恢复 dispatch。
+   * setWorkSchedule 配置热更走即时 scan，不受此间隔约束。
+   */
+  val FreezeCheckIntervalSec: Int = 30
 end Defaults
