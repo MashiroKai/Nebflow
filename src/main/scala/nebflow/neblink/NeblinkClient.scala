@@ -464,7 +464,12 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
         val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
         if response.statusCode() >= 200 && response.statusCode() < 300 then Right(response.body())
         else Left(s"HTTP ${response.statusCode()}: ${response.body()}")
-      catch case e: Exception => Left(e.getMessage)
+        catch
+          case e: Exception =>
+            // Some JDK-native exceptions (e.g. bare ConnectException) carry a
+            // null message — fall back to toString so downstream Left values
+            // never NPE on encoding/logging.
+            Left(if e.getMessage == null then e.toString else e.getMessage)
     }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
 
 end NeblinkClient

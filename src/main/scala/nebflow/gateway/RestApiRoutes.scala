@@ -18,6 +18,7 @@ import nebflow.core.skill.SkillService
 import cats.effect.unsafe.implicits.global
 import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.*
+import nebflow.neblink.FriendCodecs.given
 import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -880,7 +881,144 @@ class RestApiRoutes(
             }
       }
 
+    // ===== A2A 好友与消息端点（spec §6.1 客户端 UI 代理层） =====
+    // 全部经 FriendService → NeblinkClient 代理到 neblink-server（Bearer device
+    // session token）。friendService 仅在 NebLink Server 配置时存在。
+
+    /** 好友列表 + 双向 pending 请求。 */
+    case req @ GET -> Root / "friends" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            fs.refreshFriends().flatMap(resp => Ok(resp.asJson))
+      }
+
+    /** 待处理请求分组（incoming / outgoing）。 */
+    case req @ GET -> Root / "friends" / "requests" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            fs.refreshFriends().flatMap { resp =>
+              Ok(Json.obj(
+                "incoming" -> resp.incoming.asJson,
+                "outgoing" -> resp.outgoing.asJson
+              ))
+            }
+      }
+
+    /** 发好友请求（按 NebLink 号寻址）。body: {query, note?} */
+    case req @ POST -> Root / "friends" / "requests" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.as[Json].flatMap { body =>
+              val query = body.hcursor.downField("query").as[String].getOrElse("")
+              val note = body.hcursor.downField("note").as[Option[String]].toOption.flatten
+              if query.isEmpty then BadRequest(Json.obj("error" -> "Missing query".asJson))
+              else
+                fs.sendFriendRequest(query, note).flatMap(friendResult)
+            }
+      }
+
+    case req @ POST -> Root / "friends" / "requests" / requestId / "accept" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) => fs.acceptFriendRequest(requestId).flatMap(friendResult)
+      }
+
+    case req @ POST -> Root / "friends" / "requests" / requestId / "decline" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) => fs.declineFriendRequest(requestId).flatMap(friendResultRaw)
+      }
+
+    /** 发消息给好友（用户身份——UI 输入框直发，无 agent 权限档位）。body: {body} */
+    case req @ POST -> Root / "friends" / friendUserId / "messages" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.as[Json].flatMap { body =>
+              val text = body.hcursor.downField("body").as[String].getOrElse("")
+              if text.isEmpty then BadRequest(Json.obj("error" -> "Missing body".asJson))
+              else fs.sendAsUser(friendUserId, text).flatMap(friendResult)
+            }
+      }
+
+    /** 删除好友。 */
+    case req @ DELETE -> Root / "friends" / friendUserId =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) => fs.removeFriend(friendUserId).flatMap(friendResultRaw)
+      }
+
+    /** 会话列表（按 last_message_id 倒序，含 unreadCount）。 */
+    case req @ GET -> Root / "conversations" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            fs.refreshConversations().flatMap(convs => Ok(convs.asJson))
+      }
+
+    /** keyset 分页拉消息。?after=N&limit=N */
+    case req @ GET -> Root / "conversations" / conversationId / "messages" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            val after = req.params.get("after").flatMap(_.toLongOption).getOrElse(0L)
+            val limit = req.params.get("limit").flatMap(_.toIntOption).getOrElse(50)
+            fs.listMessages(conversationId, after, limit).flatMap(r => friendResult(r.map(_.asJson)))
+      }
+
+    /** 标记已读。body: {lastReadMessageId} */
+    case req @ POST -> Root / "conversations" / conversationId / "read" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.as[Json].flatMap { body =>
+              val lastRead = body.hcursor.downField("lastReadMessageId").as[Long].getOrElse(-1L)
+              if lastRead < 0 then BadRequest(Json.obj("error" -> "Missing lastReadMessageId".asJson))
+              else fs.markRead(conversationId, lastRead).flatMap(friendResultRaw)
+            }
+      }
+
+    /** 查号（精确匹配 neblink_id，大小写不敏感）。?q=... */
+    case req @ GET -> Root / "users" / "lookup" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.params.get("q") match
+              case None | Some("") => BadRequest(Json.obj("error" -> "Missing q".asJson))
+              case Some(q)         => fs.lookupUser(q).flatMap(friendResult)
+      }
+
   }
+
+  /** Uniform A2A endpoint result mapping: upstream Left → 502 with error body. */
+  private def friendResult(result: Either[String, io.circe.Json]): IO[Response[IO]] =
+    result match
+      case Right(json) => Ok(json)
+      case Left(err)   => BadGateway(Json.obj("error" -> err.asJson))
+
+  /** Raw-string upstream results (decline/remove/read): parse the body as JSON
+    * when possible, else wrap as {ok, message}. */
+  private def friendResultRaw(result: Either[String, String]): IO[Response[IO]] =
+    result match
+      case Right(body) =>
+        parser.parse(body) match
+          case Right(json) => Ok(json)
+          case Left(_)     => Ok(Json.obj("ok" -> true.asJson, "message" -> body.asJson))
+      case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
 
   /** Shared remote-update logic: P2P HTTP first, relay fallback. Used by REST + WS handlers. */
   private def doRemoteUpdate(
