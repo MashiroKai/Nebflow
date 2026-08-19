@@ -13,6 +13,7 @@ import { openTaskArchive } from './taskArchive.js';
 import { sendWs, onMessage } from './ws.js';
 import state from './state.js';
 import { showToast } from './modal.js';
+import { activeView, chatViews } from './chatView.js';
 
 /** Local-calendar check (device timezone). */
 function isTodayLocal(dateStr) {
@@ -30,26 +31,30 @@ function kindOf(tk) {
   return tk && tk.taskKind === 'human' ? 'human' : 'agent';
 }
 
-/** §2.2/C6: visible set = pending + in_progress + failed same-day.
- *  Completed and dismissed rows never render in the panel. */
+/** §2.2/C6 (+v2): visible set = pending + in_progress + needs_confirmation +
+ *  failed same-day. Completed and dismissed rows never render in the panel. */
 function isVisible(tk) {
   if (!tk || !tk.status) return false;
-  if (tk.status === 'pending' || tk.status === 'in_progress') return true;
+  if (tk.status === 'pending' || tk.status === 'in_progress' || tk.status === 'needs_confirmation') return true;
   if (tk.status === 'failed') return isTodayLocal(tk.createdAt);
   return false;
 }
 
-/** §3.3: in_progress first, then pending by createdAt asc, failed sinks. */
+/** §3.3 + C19 (v2): needs_confirmation first (user must act), then
+ *  in_progress, then pending by createdAt asc, failed sinks. */
 function sortGroup(a, b) {
-  const rank = tk => tk.status === 'in_progress' ? 0 : tk.status === 'pending' ? 1 : 2;
+  const rank = tk => tk.status === 'needs_confirmation' ? 0
+    : tk.status === 'in_progress' ? 1
+    : tk.status === 'pending' ? 2 : 3;
   const r = rank(a) - rank(b);
   if (r !== 0) return r;
   return (Date.parse(a.createdAt) || 0) - (Date.parse(b.createdAt) || 0);
 }
 
-/** Non-terminal count for the header stats (failed excluded — A9). */
+/** Non-terminal count for the header stats (failed excluded — A9; v2:
+ *  needs_confirmation is not terminal — awaiting user ruling, counted). */
 function activeCount(tasks) {
-  return tasks.filter(tk => tk && (tk.status === 'pending' || tk.status === 'in_progress')).length;
+  return tasks.filter(tk => tk && (tk.status === 'pending' || tk.status === 'in_progress' || tk.status === 'needs_confirmation')).length;
 }
 
 const REDUCED_MOTION = typeof matchMedia === 'function' &&
@@ -108,21 +113,31 @@ function requestComplete(row, task) {
 // We identify completeTask failures by taskId membership in pendingComplete:
 // a taskError for an id we never sent a complete for is not ours — pass
 // through untouched (裁定 F-B1①, qa-frontend 打回修复).
+// v2: return failures (a taskRef chip in the input) remove the chip + toast
+// t('task.returnError'); the row converges via the taskListUpdate push the
+// backend always sends after processing taskRefs (§6.3).
 onMessage('taskError', (msg) => {
-  if (!msg.taskId || !pendingComplete.has(msg.taskId)) return;
-  const task = pendingComplete.get(msg.taskId);
-  pendingComplete.delete(msg.taskId);
-  const sid = msg.sessionId || state.activeSessionId;
-  const arr = sid && state.sessionTasks ? state.sessionTasks[sid] : null;
-  if (Array.isArray(arr) && !arr.includes(task)) arr.push(task);
-  const container = document.getElementById('task-list');
-  renderTaskList(arr || [], container, sid);
-  const row = container && container.querySelector(`.task-item[data-task-id="${CSS.escape(task.id)}"]`);
-  if (row && !REDUCED_MOTION) {
-    row.classList.add('task-entering');
-    row.addEventListener('animationend', () => row.classList.remove('task-entering'), { once: true });
+  if (!msg.taskId) return;
+  if (pendingComplete.has(msg.taskId)) {
+    const task = pendingComplete.get(msg.taskId);
+    pendingComplete.delete(msg.taskId);
+    const sid = msg.sessionId || state.activeSessionId;
+    const arr = sid && state.sessionTasks ? state.sessionTasks[sid] : null;
+    if (Array.isArray(arr) && !arr.includes(task)) arr.push(task);
+    const container = document.getElementById('task-list');
+    renderTaskList(arr || [], container, sid);
+    const row = container && container.querySelector(`.task-item[data-task-id="${CSS.escape(task.id)}"]`);
+    if (row && !REDUCED_MOTION) {
+      row.classList.add('task-entering');
+      row.addEventListener('animationend', () => row.classList.remove('task-entering'), { once: true });
+    }
+    showToast(t('task.completeError'), 'error');
+    return;
   }
-  showToast(t('task.completeError'), 'error');
+  // v2 §6.3: return rejection — drop the taskRef chip (local only), toast.
+  if (removeTaskRefsByTaskId(msg.taskId)) {
+    showToast(t('task.returnError'), 'error');
+  }
 });
 
 // ── Row builders (§3.2) ──────────────────────────────────────────────────
@@ -130,6 +145,8 @@ onMessage('taskError', (msg) => {
 /**
  * Circle control per kind/status:
  *  - human pending     → clickable (role=checkbox, Space/Enter)
+ *  - agent needs_confirmation → clickable — user confirm = complete (§2.3,
+ *    same interaction as human check-off, [U4])
  *  - agent pending     → decorative, aria-hidden (no checkbox semantics — A14)
  *  - in_progress       → spinner, aria-hidden (row aria-label carries status)
  *  - failed            → red x, aria-hidden
@@ -150,7 +167,12 @@ function buildCheck(task, row) {
     check.innerHTML = '<i data-lucide="x" class="task-failed-icon"></i>';
     return check;
   }
-  if (kindOf(task) === 'human') {
+  if (task.status === 'needs_confirmation') {
+    // §9: the awaiting-ruling state is carried by the row's aria-label —
+    // the status word is aria-hidden to avoid double readout.
+    row.setAttribute('aria-label', `${task.subject || ''} — ${t('task.needsConfirmation')}`.trim());
+  }
+  if (task.status === 'needs_confirmation' || kindOf(task) === 'human') {
     check.classList.add('task-check-clickable');
     check.setAttribute('role', 'checkbox');
     check.setAttribute('aria-checked', 'false');
@@ -174,7 +196,8 @@ function buildRow(task, sessionId) {
   const row = document.createElement('div');
   row.className = 'task-item' +
     (task.status === 'in_progress' ? ' task-active' : '') +
-    (task.status === 'failed' ? ' task-failed' : '');
+    (task.status === 'failed' ? ' task-failed' : '') +
+    (task.status === 'needs_confirmation' ? ' task-needs-confirmation' : '');
   row.dataset.taskId = task.id;
   if (sessionId) row.dataset.sessionId = sessionId;
 
@@ -187,7 +210,82 @@ function buildRow(task, sessionId) {
   label.textContent = task.subject || '';
   text.appendChild(label);
   row.appendChild(text);
+
+  // v2 §3: awaiting-ruling row carries a muted status word + return button
+  // (right end). Status word is aria-hidden — the row's state is carried by
+  // the clickable checkbox aria-label + return button.
+  if (task.status === 'needs_confirmation') {
+    const word = document.createElement('span');
+    word.className = 'task-status-word';
+    word.setAttribute('aria-hidden', 'true');
+    word.textContent = t('task.needsConfirmation');
+
+    const ret = document.createElement('button');
+    ret.className = 'task-return-btn';
+    ret.type = 'button';
+    const retLabel = t('task.returnAria', { subject: task.subject || '' });
+    ret.setAttribute('aria-label', retLabel);
+    ret.title = retLabel;
+    const icon = document.createElement('i');
+    icon.dataset.lucide = 'corner-up-left';
+    const span = document.createElement('span');
+    span.textContent = t('task.returnLabel');
+    ret.appendChild(icon);
+    ret.appendChild(span);
+    ret.addEventListener('click', () => requestReturn(task, row));
+
+    row.appendChild(word);
+    row.appendChild(ret);
+  }
   return row;
+}
+
+// ── Return flow (v2 §5/§6.3): draft a taskRef reference into the input ──────
+// C16: clicking Return only DRAFTS — the reference chip goes into
+// #attachment-preview (reusing the file-attachment mechanism, C18); sending
+// the message is what actually returns the task. Snapshot taken at click
+// time; the backend validates against authoritative state on send (§5.1).
+function requestReturn(task, row) {
+  if (!state.connected) return;                    // WS down → disabled (§4)
+  const sessionId = row.dataset.sessionId || state.activeSessionId;
+  if (!sessionId || !activeView || !Array.isArray(activeView.pendingAttachments)) return;
+  const notes = Array.isArray(task.notes) ? task.notes : [];
+  const lastNote = notes.length > 0 ? notes[notes.length - 1] : null;
+  activeView.pendingAttachments.push({
+    type: 'taskRef',
+    taskId: task.id,
+    sessionId,
+    subject: task.subject || '',
+    description: task.description || '',
+    output: (lastNote && lastNote.content) || ''   // agent's outcome note
+  });
+  import('./chat.js').then(({ renderAttachmentPreview }) => {
+    renderAttachmentPreview(activeView);
+    if (activeView.dom && activeView.dom.input) activeView.dom.input.focus();
+  });
+}
+
+/** Remove taskRef chips with the given taskId from every view's pending
+ *  attachments (taskError carries no sessionId — sweep is idempotent).
+ *  Returns true if anything was removed. */
+function removeTaskRefsByTaskId(taskId) {
+  let removed = false;
+  const seen = new Set();
+  const sweep = (v) => {
+    if (!v || seen.has(v) || !Array.isArray(v.pendingAttachments)) return;
+    seen.add(v);
+    const before = v.pendingAttachments.length;
+    v.pendingAttachments = v.pendingAttachments.filter(a => !(a.type === 'taskRef' && a.taskId === taskId));
+    if (v.pendingAttachments.length !== before) {
+      removed = true;
+      import('./chat.js').then(({ renderAttachmentPreview }) => {
+        if (v.dom && v.dom.attPreview) renderAttachmentPreview(v);
+      });
+    }
+  };
+  sweep(activeView);
+  for (const v of Object.values(chatViews)) sweep(v);
+  return removed;
 }
 
 function buildGroupHeader(label) {

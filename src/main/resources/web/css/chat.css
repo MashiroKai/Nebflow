@@ -671,6 +671,14 @@
   color: #888;
   font-size: 12px;
 }
+/* v2 §5.3: return reference tag in a sent message bubble — sapphire text
+   distinguishes it from a plain file tag */
+.bubble.user.att-bubble .att-file-tag.att-taskref-tag {
+  color: rgb(var(--sapphire));
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 
 .bubble.ai {
   background: var(--color-bubble-ai);
