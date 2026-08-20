@@ -1132,6 +1132,57 @@ class WebSocketRoutes(
                         wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
                 }
 
+          case "getToolResultTtl" =>
+            // #341 WS 尾巴：TTL 设置面板读当前生效配置（Ref 是权威——含未
+            // 重启的热更值）。无敏感字段，全量回显。
+            sharedResources.toolResultTtlRef.get.flatMap { cfg =>
+              wsSend(io.circe.Json.obj(
+                "type" -> "toolResultTtl".asJson,
+                "config" -> cfg.asJson
+              ))
+            }
+
+          case "setToolResultTtl" =>
+            // #341 WS 尾巴：payload {type, config:{enabled,ttlMinutes,
+            // keepRecent,minChars}}（全量替换，四字段必填）。STRICT 校验（负
+            // 数/非整数/超界/缺字段 → 拒绝并 warn，回 configUpdateFailed——与
+            // boot 时 fail-safe load 不同：交互面必须把错误亮给用户）。
+            // 成功 → nebflow.json toolResultTtl 节 read-merge + AtomicJson
+            // 原子写 + Ref 热更（下个 LLM 请求生效，镜像 freezeScheduleRef）
+            // → 回 toolResultTtlSaved。
+            val payload = parse(text).toOption
+              .flatMap(_.hcursor.downField("config").as[Option[Json]].toOption.flatten)
+              .getOrElse(Json.Null)
+            nebflow.core.compact.ToolResultTtlConfig.parseStrict(payload) match
+              case Left(err) =>
+                logger.warn(s"Invalid toolResultTtl payload rejected: $err") *>
+                  wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
+              case Right(cfg) =>
+                val persist = IO.blocking {
+                  val existing =
+                    if os.exists(nebflow.llm.Config.DefaultConfigPath) then
+                      os.read(nebflow.llm.Config.DefaultConfigPath)
+                    else "{}"
+                  val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+                  parse(existing).foreach { json =>
+                    val updated = json.mapObject(_.add("toolResultTtl", cfg.asJson))
+                    // writeSync (not write): we are already inside IO.blocking —
+                    // the IO-returning variant would be built, not run.
+                    AtomicJson.writeSync(path, updated.noSpaces)
+                  }
+                }.handleErrorWith { e =>
+                  logger.warn(s"Failed to persist toolResultTtl: ${e.getMessage}")
+                }
+                persist *> sharedResources.toolResultTtlRef.set(cfg) *>
+                  logger.info(
+                    s"Tool result TTL set: enabled=${cfg.enabled} ttlMinutes=${cfg.ttlMinutes} " +
+                      s"keepRecent=${cfg.keepRecent} minChars=${cfg.minChars}"
+                  ) *>
+                  wsSend(io.circe.Json.obj(
+                    "type" -> "toolResultTtlSaved".asJson,
+                    "config" -> cfg.asJson
+                  ))
+
           case "setVoiceMuted" =>
             val muted = parse(text).toOption
               .flatMap(_.hcursor.downField("muted").as[Boolean].toOption)

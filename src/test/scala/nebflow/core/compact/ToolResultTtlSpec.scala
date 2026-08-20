@@ -240,6 +240,7 @@ class ToolResultTtlSpec extends FunSuite:
       // updates (not creates) index entries; create it first and use its id.
       sessionMeta <- sessionStore.createSession("ttl-wiring")
       sid = sessionMeta.id
+      ttlRef <- IO.ref(wiringCfg)
       resources <- IO.pure(
         SharedResources(
           llm = null,
@@ -260,7 +261,7 @@ class ToolResultTtlSpec extends FunSuite:
           actorSystem = system,
           subAgentTaskStore = new SubAgentTaskStore(tmp / "subagent-tasks"),
           voiceMutedRef = voiceMuted,
-          toolResultTtl = wiringCfg
+          toolResultTtlRef = ttlRef
         )
       )
       capture = new CaptureLlm(requests)
@@ -315,6 +316,176 @@ class ToolResultTtlSpec extends FunSuite:
         },
         s"persisted history must keep the full result (${persisted.size} msgs)"
       )
+    program.unsafeRunSync()
+    system.stopAll.attempt.void.unsafeRunSync()
+    os.remove.all(tmp)
+
+  // ── #341 WS 尾巴：parseStrict（setToolResultTtl 严格校验）────────
+
+  private def strict(json: String): Either[String, ToolResultTtlConfig] =
+    ToolResultTtlConfig.parseStrict(io.circe.parser.parse(json).toOption.get)
+
+  test("parseStrict: valid full config decodes with all four fields"):
+    assertEquals(
+      strict("""{"enabled":true,"ttlMinutes":120,"keepRecent":3,"minChars":500}"""),
+      Right(ToolResultTtlConfig(true, 120, 3, 500))
+    )
+
+  test("parseStrict: negative ttlMinutes rejected"):
+    assert(strict("""{"enabled":true,"ttlMinutes":-5,"keepRecent":3,"minChars":500}""").isLeft)
+
+  test("parseStrict: non-integer keepRecent rejected (3.5)"):
+    assert(strict("""{"enabled":true,"ttlMinutes":60,"keepRecent":3.5,"minChars":500}""").isLeft)
+
+  test("parseStrict: string-encoded integer accepted (circe coercion); non-numeric string rejected"):
+    // circe's Int decoder coerces "60" — acceptable leniency (decodes to the
+    // same value); genuinely non-numeric strings are still rejected.
+    assertEquals(
+      strict("""{"enabled":true,"ttlMinutes":"60","keepRecent":3,"minChars":500}"""),
+      Right(ToolResultTtlConfig(true, 60, 3, 500))
+    )
+    assert(strict("""{"enabled":true,"ttlMinutes":"abc","keepRecent":3,"minChars":500}""").isLeft)
+
+  test("parseStrict: missing field rejected (enabled absent)"):
+    assert(strict("""{"ttlMinutes":60,"keepRecent":3,"minChars":500}""").isLeft)
+
+  test("parseStrict: non-boolean enabled rejected"):
+    assert(strict("""{"enabled":"yes","ttlMinutes":60,"keepRecent":3,"minChars":500}""").isLeft)
+
+  test("parseStrict: out-of-bounds rejected (ttlMinutes > 43200, keepRecent > 200)"):
+    assert(strict("""{"enabled":true,"ttlMinutes":43201,"keepRecent":3,"minChars":500}""").isLeft)
+    assert(strict("""{"enabled":true,"ttlMinutes":60,"keepRecent":201,"minChars":500}""").isLeft)
+
+  test("parseStrict: boundary values accepted (1 / 43200, 0 / 200)"):
+    assertEquals(
+      strict("""{"enabled":false,"ttlMinutes":1,"keepRecent":0,"minChars":0}"""),
+      Right(ToolResultTtlConfig(false, 1, 0, 0))
+    )
+    assert(strict("""{"enabled":true,"ttlMinutes":43200,"keepRecent":200,"minChars":5000000}""").isRight)
+
+  test("parseStrict: non-object rejected"):
+    assert(ToolResultTtlConfig.parseStrict(io.circe.Json.Null).isLeft)
+    assert(ToolResultTtlConfig.parseStrict(io.circe.Json.fromInt(42)).isLeft)
+
+  test("parseStrict vs load: strict rejects what load clamps (fail-safe stays boot-only)"):
+    // load is fail-safe (boot): decodable-but-invalid values are CLAMPED by
+    // sanitized (e.g. ttlMinutes -5 → 1), never throw, never reject.
+    assertEquals(
+      ToolResultTtlConfig.load(Some(io.circe.parser.parse("""{"ttlMinutes":-5}""").toOption.get)),
+      ToolResultTtlConfig(enabled = false, ttlMinutes = 1, keepRecent = 5, minChars = 2000)
+    )
+    // parseStrict (interactive setter) must NOT silently accept the same input.
+    assert(strict("""{"ttlMinutes":-5}""").isLeft)
+
+  // ── #341 WS 尾巴：Ref 热更——set 后下个 LLM 请求生效 ─────────────
+
+  test("wiring: Ref hot-update — set-toolResultTtl takes effect on the NEXT request without restart"):
+    val system = nebflow.actor.ActorSystem("ttl-hotupdate")
+    val tmp = os.temp.dir()
+    val bigContent = "h" * 5000
+    val oldTs = System.currentTimeMillis() - 2 * 60 * 60 * 1000L
+    val initial = List(
+      Message(MessageRole.User, Left("kick"), timestamp = oldTs - 60000),
+      Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("tu-old", "Read", io.circe.JsonObject("file_path" -> "/tmp/y".asJson)))), timestamp = oldTs - 30000),
+      Message(MessageRole.User, Right(List(ContentBlock.ToolResult("tu-old", bigContent))), timestamp = oldTs),
+      Message(MessageRole.Assistant, Left("cold"), timestamp = oldTs)
+    )
+    class CaptureLlm(requests: Ref[IO, List[LlmRequest]]) extends LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+      def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
+        Stream.eval(requests.update(_ :+ req)).drain ++ Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+    val program = for
+      requests <- IO.ref(List.empty[LlmRequest])
+      dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
+      rateLimiter <- RateLimiter.create()
+      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
+      fileLocks <- nebflow.core.tools.FileLockManager.create
+      thinkingRef <- IO.ref(nebflow.llm.ThinkingConfig())
+      modelOverrides <- IO.ref(Map.empty[String, nebflow.llm.ModelCandidate])
+      voiceMuted <- IO.ref(false)
+      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks-hot")
+      sessionMeta <- sessionStore.createSession("ttl-hotupdate")
+      sid = sessionMeta.id
+      ttlRef <- IO.ref(ToolResultTtlConfig()) // default OFF — mirrors GatewayMain boot with no config node
+      resources <- IO.pure(
+        SharedResources(
+          llm = null,
+          dispatcher = dispatcher,
+          sessionStore = sessionStore,
+          projectRoot = os.pwd,
+          thinkingConfigRef = thinkingRef,
+          rateLimiter = rateLimiter,
+          fileChangeTracker = tracker,
+          contextWindow = 100_000,
+          agentLibrary = new AgentLibrary(tmp / "agents"),
+          taskStore = nebflow.core.task.FileTaskStore,
+          historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
+          fileLockManager = fileLocks,
+          sessionModelOverrides = modelOverrides,
+          providerRegistry = null,
+          healthMonitor = nebflow.llm.ProviderHealthMonitor(null),
+          actorSystem = system,
+          subAgentTaskStore = new SubAgentTaskStore(tmp / "subagent-tasks"),
+          voiceMutedRef = voiceMuted,
+          toolResultTtlRef = ttlRef
+        )
+      )
+      capture = new CaptureLlm(requests)
+      resourcesWithLlm = resources.copy(llm = capture)
+      actorRef <- system.spawn(
+        AgentActor(
+          agentDef = AgentDef(name = "Nebula", description = "ttl hot update", tools = List("Read"), systemPrompt = ""),
+          resources = resourcesWithLlm,
+          wsSend = _ => IO.unit,
+          depth = 0,
+          sessionId = Some(sid),
+          sessionName = Some("ttl-hotupdate"),
+          initialMessages = initial
+        ),
+        sid
+      )
+      _ <- resourcesWithLlm.agentRegistry.update(_ + (sid -> AgentRecord(sid, actorRef, AgentKind.Root, sid, None)))
+      // Request 1 with TTL disabled (default): the full old result goes through.
+      _ <- actorRef ! AgentCommand.UserInput("first", None, Some("cmid-hot-1"))
+      _ <- IO.sleep(2500.millis)
+      // Hot-update: what setToolResultTtl does after persisting (Ref.set).
+      _ <- ttlRef.set(Enabled.copy(keepRecent = 0))
+      // Request 2: a SECOND actor sharing the same SharedResources (same live
+      // Ref) and the same COLD history. The hot-cache gate (FMC coexistence,
+      // #341) intentionally skips cleanup while the session's last assistant
+      // is fresh — actor A's turn-1 output would make its turn 2 hot, so we
+      // prove the per-request Ref read on a cold-history actor instead: the
+      // resources were built (and actor spawned) BEFORE the set, the request
+      // goes out AFTER — if AgentCore snapshotted the config at construction
+      // time, this request would still carry the full content.
+      sessionMeta2 <- sessionStore.createSession("ttl-hotupdate-2")
+      sid2 = sessionMeta2.id
+      actorRef2 <- system.spawn(
+        AgentActor(
+          agentDef = AgentDef(name = "Nebula", description = "ttl hot update 2", tools = List("Read"), systemPrompt = ""),
+          resources = resourcesWithLlm,
+          wsSend = _ => IO.unit,
+          depth = 0,
+          sessionId = Some(sid2),
+          sessionName = Some("ttl-hotupdate-2"),
+          initialMessages = initial
+        ),
+        sid2
+      )
+      _ <- resourcesWithLlm.agentRegistry.update(_ + (sid2 -> AgentRecord(sid2, actorRef2, AgentKind.Root, sid2, None)))
+      _ <- actorRef2 ! AgentCommand.UserInput("second", None, Some("cmid-hot-2"))
+      _ <- IO.sleep(2500.millis)
+      reqs <- requests.get
+    yield
+      assert(reqs.size >= 2, s"expected >=2 requests, got ${reqs.size}")
+      def toolResults(req: LlmRequest): List[String] = req.messages.flatMap(
+        _.content.toOption.toList.flatten.collect { case tr: ContentBlock.ToolResult => tr.content }
+      )
+      val first = toolResults(reqs(0))
+      val later = toolResults(reqs.drop(1).last)
+      assert(first.contains(bigContent), "request 1 (disabled) must carry the full result")
+      assert(later.exists(_.startsWith("[Tool output archived:")), s"request 2 (enabled via Ref) must carry the placeholder:\n${later}")
+      assert(!later.contains(bigContent), "request 2 must NOT carry the full old result")
     program.unsafeRunSync()
     system.stopAll.attempt.void.unsafeRunSync()
     os.remove.all(tmp)

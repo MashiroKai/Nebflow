@@ -551,9 +551,12 @@ private[agent] trait AgentCore:
           // 落盘会话零改动（语义三分：显示/LLM 上下文/会话文件）。门控与
           // FastMicroCompact 相同的 turn 排除（压缩/存档/ask 需要全量输入）；
           // keepRecent 窗保证 turn 中途的当前结果永不被清理（构造性安全）。
+          // #341 WS 尾巴：配置 Ref 化——每请求读当前值，setToolResultTtl 热更
+          // 即时生效（无需重启）。
+          ttlCfg <- resources.toolResultTtlRef.get
           ttlCleanedMessages =
             if isCompactTurn || isSaveTurn || isAskTurn then None
-            else ToolResultTtl.cleanRequestMessages(stateWithReminder.messages, resources.toolResultTtl)
+            else ToolResultTtl.cleanRequestMessages(stateWithReminder.messages, ttlCfg)
           _ = ttlCleanedMessages.foreach { _ =>
             logAgentEvent(
               agentDef,
