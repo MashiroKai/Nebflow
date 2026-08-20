@@ -385,6 +385,12 @@ let ttlAdvanceExpanded = false;
 /** Backend defaults — mirrors ToolResultTtlConfig.parseStrict bounds. Used
  *  both for rendering before the first echo and for local pre-validation. */
 const TTL_DEFAULTS = { enabled: false, ttlMinutes: 60, keepRecent: 5, minChars: 2000 };
+
+/** True while a setToolResultTtl is in flight — lets the shared
+ *  configUpdateFailed handler attribute the error to THIS panel (the same
+ *  frame type is also emitted by workSchedule/STT saves, so without a guard
+ *  a non-TTL failure would toast the TTL message). */
+let ttlSavePending = false;
 const TTL_BOUNDS = {
   ttlMinutes: { min: 1, max: 43200 },
   keepRecent: { min: 0, max: 200 },
@@ -461,6 +467,62 @@ function bindTtlEvents() {
     if (body) body.hidden = !ttlAdvanceExpanded;
     if (toggle) toggle.setAttribute('aria-expanded', String(ttlAdvanceExpanded));
   });
+
+  // Enabled switch — toggles the .on class and the three number inputs'
+  // disabled state in place (#341: enabled=false → inputs greyed). Local
+  // only: nothing reaches the backend until the explicit Save button (#334
+  // ruling — editing mid-states must never affect runtime behavior).
+  const sw = document.getElementById('toggle-ttl-enabled');
+  if (sw) {
+    const flip = () => {
+      const on = sw.classList.toggle('on');
+      sw.setAttribute('aria-checked', String(on));
+      ['ttl-minutes', 'ttl-keep-recent', 'ttl-min-chars'].forEach(id => {
+        const inp = document.getElementById(id);
+        if (inp) inp.disabled = !on;
+      });
+    };
+    sw.addEventListener('click', flip);
+    sw.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); }
+    });
+  }
+
+  // Explicit save (#334 semantics) — local STRICT pre-validation mirrors the
+  // backend parseStrict bounds exactly (ttlMinutes 1–43200, keepRecent 0–200,
+  // minChars 0–5000000, integers only) so a typo is blocked client-side with
+  // an actionable toast instead of a round-trip to configUpdateFailed. The
+  // payload is always the FULL config (four fields mandatory — the backend
+  // replaces the whole node, there is no merge).
+  document.getElementById('btn-save-ttl')?.addEventListener('click', () => {
+    const enabled = document.getElementById('toggle-ttl-enabled')?.classList.contains('on') ?? false;
+    const values = {
+      ttlMinutes: parseTtlInt(document.getElementById('ttl-minutes')?.value),
+      keepRecent: parseTtlInt(document.getElementById('ttl-keep-recent')?.value),
+      minChars: parseTtlInt(document.getElementById('ttl-min-chars')?.value),
+    };
+    const fieldKey = {
+      ttlMinutes: 'settings.ttlMinutesLabel',
+      keepRecent: 'settings.keepRecentLabel',
+      minChars: 'settings.minCharsLabel',
+    };
+    for (const [name, raw] of Object.entries(values)) {
+      if (raw === null) {
+        window.__showToast?.(t('settings.ttlInvalidInt', { field: t(fieldKey[name]) }), 'error');
+        return;
+      }
+      const { min, max } = TTL_BOUNDS[name];
+      if (raw < min || raw > max) {
+        window.__showToast?.(t('settings.ttlOutOfRange', { field: t(fieldKey[name]), min, max }), 'error');
+        return;
+      }
+    }
+    sendWs({
+      type: 'setToolResultTtl',
+      config: { enabled, ttlMinutes: values.ttlMinutes, keepRecent: values.keepRecent, minChars: values.minChars },
+    });
+    ttlSavePending = true; // configUpdateFailed attribution window
+  });
 }
 
 // #341 echo: getToolResultTtl response — authoritative config into state +
@@ -473,6 +535,7 @@ onMessage('toolResultTtl', (msg) => {
 // #341: setToolResultTtl success — same authoritative refresh + a success
 // toast (save is NOT optimistic: the UI only confirms after the backend ack).
 onMessage('toolResultTtlSaved', (msg) => {
+  ttlSavePending = false;
   if (msg.config && typeof msg.config === 'object') state.toolResultTtl = msg.config;
   refreshTtlSectionDom();
   window.__showToast?.(t('settings.ttlSaved'), 'success');
@@ -480,11 +543,15 @@ onMessage('toolResultTtlSaved', (msg) => {
 
 // configUpdateFailed has NO global consumer (main.js only handles the
 // configUpdated success flag) — surface backend validation errors as an error
-// toast here. Shared by every config-save path that can emit it (workSchedule,
-// STT, toolResultTtl), so nothing fails silently in the console again.
+// toast here. The same frame is emitted by workSchedule/STT saves too, so
+// attribute the message to the TTL panel only while a TTL save is in flight;
+// otherwise fall back to the generic copy (chat.configUpdateFailed) so other
+// save paths never fail silently in the console.
 onMessage('configUpdateFailed', (msg) => {
   const detail = typeof msg.message === 'string' && msg.message ? `: ${msg.message}` : '';
-  window.__showToast?.(t('settings.ttlSaveFailed') + detail, 'error');
+  const prefix = ttlSavePending ? t('settings.ttlSaveFailed') : t('chat.configUpdateFailed');
+  ttlSavePending = false;
+  window.__showToast?.(prefix + detail, 'error');
 });
 
 function renderSttSection() {
