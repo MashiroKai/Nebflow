@@ -42,31 +42,66 @@ object SttService:
     }
   end create
 
+  /** #295 A2：字段级三态。None=字段省略（保留旧值）；Some(None)=显式空串
+    * （清除该字段）；Some(Some(v))=设值（已 trim、非空）。 */
+  type SttField = Option[Option[String]]
+
+  final case class SttConfigPatch(endpoint: SttField, apiKey: SttField, model: SttField):
+    /** 全部字段显式清除——等价于清空整个配置。 */
+    def clearsEverything: Boolean =
+      List(endpoint, apiKey, model).forall(_.contains(None))
+
   /**
-   * setSttConfig WS 命令的校验/归一入口（#295，纯函数）。
+   * setSttConfig WS 命令的校验/解析入口（#295 → A2 部分更新语义，纯函数）。
    *
-   * 语义（用户 2026-08-18 拍板）：三字段均可选；全空/空对象 = 清空配置
-   * （Right(None)——删配置文件，回退免费浏览器 Web Speech）。endpoint 提供
-   * 时须 http(s):// 开头；model 非空字符串；apiKey 原样存（空串视为未提供）。
-   * 只写提供的字段——读取侧（create）对缺省字段回 Defaults。
+   * 语义（2026-08-20 A2 对齐，前端契约：空 key 输入框省略字段）：
+   * - 字段省略 → 保留旧值（merge 侧处理，本次不触碰）
+   * - 字段显式空串/纯空白 → 清除该字段
+   * - 字段设值 → 校验后写入（endpoint 须 http(s)://；model/apiKey 非空即可）
+   *
+   * 旧 validateConfig 把「省略」与「显式空」折叠成同一路径且整文件替换，
+   * 导致二次保存（前端 apiKey 恒空、省略该字段）时旧 key 被覆盖丢失。
    */
-  def validateConfig(payload: Json): Either[String, Option[Json]] =
-    def field(name: String): Option[String] =
-      payload.hcursor.downField(name).as[String].toOption.map(_.trim).filter(_.nonEmpty)
-    val endpoint = field("endpoint")
-    val apiKey = field("apiKey")
-    val model = field("model")
-    endpoint match
-      case Some(e) if !e.startsWith("http://") && !e.startsWith("https://") =>
-        Left(s"STT endpoint must start with http:// or https:// (got: ${e.take(60)})")
-      case _ =>
-        val fields = List(
-          endpoint.map(e => "endpoint" -> e.asJson),
-          apiKey.map(k => "apiKey" -> k.asJson),
-          model.map(m => "model" -> m.asJson)
-        ).flatten
-        if fields.isEmpty then Right(None)
-        else Right(Some(Json.fromJsonObject(JsonObject.fromIterable(fields))))
+  def parsePatch(payload: Json): Either[String, SttConfigPatch] =
+    def field(name: String): Either[String, SttField] =
+      payload.hcursor.downField(name).as[Option[String]] match
+        case Left(_) => Left(s"STT field '$name' must be a string if present")
+        case Right(None) => Right(None) // field absent from JSON — keep old value
+        case Right(Some(raw)) =>
+          val v = raw.trim
+          if v.isEmpty then Right(Some(None)) // explicit empty — clear this field
+          else Right(Some(Some(v)))
+    for
+      endpoint <- field("endpoint")
+      apiKey <- field("apiKey")
+      model <- field("model")
+      _ <- endpoint.flatten match
+        case Some(e) if !e.startsWith("http://") && !e.startsWith("https://") =>
+          Left(s"STT endpoint must start with http:// or https:// (got: ${e.take(60)})")
+        case _ => Right(())
+    yield SttConfigPatch(endpoint, apiKey, model)
+
+  /**
+   * patch 叠加旧配置（#295 A2 纯函数）。省略=保留旧值；显式空=删字段；
+   * 设值=覆写。返回 None=合并后无任何字段（未配置态——调用方删文件，
+   * 服务回退浏览器 Web Speech）。部分字段存在但缺 apiKey 时 create()
+   * 返回 None（无代理服务），字段保留在盘上待 key 回填。
+   */
+  def mergeConfig(old: Option[Json], patch: SttConfigPatch): Option[Json] =
+    def oldField(name: String): Option[String] =
+      old.flatMap(_.hcursor.downField(name).as[String].toOption).filter(_.nonEmpty)
+    def apply(name: String, f: SttField): Option[(String, Json)] =
+      f match
+        case None         => oldField(name).map(v => name -> v.asJson) // omitted — keep
+        case Some(None)   => None // explicit clear
+        case Some(Some(v)) => Some(name -> v.asJson)
+    val fields = List(
+      apply("endpoint", patch.endpoint),
+      apply("apiKey", patch.apiKey),
+      apply("model", patch.model)
+    ).flatten
+    if fields.isEmpty then None
+    else Some(Json.fromJsonObject(JsonObject.fromIterable(fields)))
 
   /**
    * serverConfig 广播的 stt 节（#295）：{sttConfigured, endpoint?, model?}——
