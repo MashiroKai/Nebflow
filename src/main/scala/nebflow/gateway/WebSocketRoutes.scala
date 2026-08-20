@@ -1084,32 +1084,45 @@ class WebSocketRoutes(
                   wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
 
           case "setSttConfig" =>
-            // #295 STT 可配置（用户 2026-08-18 拍板）：payload {type, sttConfig:
-            // {endpoint?, apiKey?, model?}}。全字段空/空对象=清空（删配置文件，
-            // 回退免费浏览器 Web Speech）。endpoint 须 http(s)://，model 非空，
-            // apiKey 原样存（key 不落地前端——serverConfig 广播只含
-            // sttConfigured/endpoint/model，永不回传 apiKey）。写盘走 AtomicJson
-            // 原子写；写后 SttService.create() 重建热更（transcribe 立即走新配置）。
+            // #295 STT 可配置（用户 2026-08-18 拍板）→ A2 部分更新语义
+            // （2026-08-20）：payload {type, sttConfig: {endpoint?, apiKey?,
+            // model?}}。字段省略=保留旧值（前端空 key 输入框省略字段——旧
+            // 整文件替换语义会把已存 apiKey 覆盖丢失，此为 #295 A2 根因）；
+            // 字段显式空串=清除该字段；合并后无任何字段=删配置文件（回退
+            // 免费浏览器 Web Speech）。endpoint 设值须 http(s)://，model
+            // 非空，apiKey 原样存（key 不落地前端——serverConfig 广播只含
+            // sttConfigured/endpoint/model，永不回传 apiKey）。写盘走
+            // AtomicJson 原子写；写后 SttService.create() 重建热更
+            // （transcribe 立即走新配置）。
             val payload = parse(text).toOption
               .flatMap(_.hcursor.downField("sttConfig").as[Option[Json]].toOption.flatten)
               .getOrElse(Json.obj())
-            SttService.validateConfig(payload) match
+            SttService.parsePatch(payload) match
               case Left(err) =>
                 logger.warn(s"Invalid sttConfig payload rejected: $err") *>
                   wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
-              case Right(Some(cfgJson)) =>
-                AtomicJson.write(SttService.configPath, cfgJson.noSpaces) *>
-                  SttService.create().flatMap { svc =>
-                    sttServiceRef.set(svc) *> logger.info(s"STT config set: endpoint=${svc.map(_.endpoint).getOrElse("(defaults)")}")
-                  } *>
-                  broadcastServerConfig *>
-                  wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
-              case Right(None) =>
-                (if os.exists(SttService.configPath) then IO.blocking(os.remove(SttService.configPath)) else IO.unit) *>
-                  sttServiceRef.set(None) *>
-                  logger.info("STT config cleared (fallback to browser Web Speech)") *>
-                  broadcastServerConfig *>
-                  wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+              case Right(patch) =>
+                val oldCfgOpt = IO.blocking {
+                  if os.exists(SttService.configPath) then
+                    parse(os.read(SttService.configPath)).toOption
+                  else None
+                }
+                oldCfgOpt.flatMap { oldCfg =>
+                  SttService.mergeConfig(oldCfg, patch) match
+                    case Some(cfgJson) =>
+                      AtomicJson.write(SttService.configPath, cfgJson.noSpaces) *>
+                        SttService.create().flatMap { svc =>
+                          sttServiceRef.set(svc) *> logger.info(s"STT config set: endpoint=${svc.map(_.endpoint).getOrElse("(defaults)")}")
+                        } *>
+                        broadcastServerConfig *>
+                        wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+                    case None =>
+                      (if os.exists(SttService.configPath) then IO.blocking(os.remove(SttService.configPath)) else IO.unit) *>
+                        sttServiceRef.set(None) *>
+                        logger.info("STT config cleared (fallback to browser Web Speech)") *>
+                        broadcastServerConfig *>
+                        wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+                }
 
           case "setVoiceMuted" =>
             val muted = parse(text).toOption
