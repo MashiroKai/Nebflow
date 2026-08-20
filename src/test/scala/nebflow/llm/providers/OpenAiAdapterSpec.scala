@@ -9,6 +9,8 @@ import nebflow.llm.SendMessageParams
 import nebflow.shared.*
 import munit.CatsEffectSuite
 
+import scala.jdk.CollectionConverters.*
+
 class OpenAiAdapterSpec extends CatsEffectSuite:
 
   private val adapter = new OpenAiAdapter("https://api.example.com/v1", "test-key", null)
@@ -322,21 +324,46 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
     val frag2 =
       """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"arguments":""}}]},"finish_reason":null}]}"""
     val finish = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
-    for
-      c1 <- adapter.processOpenAiData(frag1, state, params)
-      c2 <- adapter.processOpenAiData(frag2, state, params)
-      c3 <- adapter.processOpenAiData(finish, state, params)
-      fs <- state.get
-    yield
-      // No empty-name ToolCallStart leaked from the degenerate start
-      assert(c1.collect { case StreamChunk.ToolCallStart(n) => n }.forall(_.nonEmpty),
-        s"degenerate start must not emit ToolCallStart, got $c1")
-      // Flush emitted no degenerate ToolCallChunk at all — the call is dropped
-      val toolChunks = (c1 ++ c2 ++ c3).collect { case StreamChunk.ToolCallChunk(tc) => tc }
-      assert(toolChunks.isEmpty, s"expected no ToolCallChunk from degenerate fragments, got $toolChunks")
-      // Stream still terminates cleanly
-      assert((c1 ++ c2 ++ c3).exists(_.isInstanceOf[StreamChunk.Done]), "finish must emit Done")
-      assert(fs.isEmpty, "state must stay empty")
+
+    // Anti-regression nail for the dead-logging defect (qa 2026-08-20): the
+    // warn on degenerate fragments is the ONLY capture point for DashScope's
+    // server-side trigger (not reproducible locally) — pure chunk assertions
+    // cannot tell whether the log line was built-but-discarded. Attach a
+    // list-appender and require the WARN to actually fire.
+    val lbLogger =
+      org.slf4j.LoggerFactory.getLogger("nebflow.llm.openai").asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+
+    IO
+      .delay {
+        appender.start()
+        lbLogger.addAppender(appender)
+      }
+      .bracket { _ =>
+        for
+          c1 <- adapter.processOpenAiData(frag1, state, params)
+          c2 <- adapter.processOpenAiData(frag2, state, params)
+          c3 <- adapter.processOpenAiData(finish, state, params)
+          fs <- state.get
+        yield
+          // No empty-name ToolCallStart leaked from the degenerate start
+          assert(c1.collect { case StreamChunk.ToolCallStart(n) => n }.forall(_.nonEmpty),
+            s"degenerate start must not emit ToolCallStart, got $c1")
+          // Flush emitted no degenerate ToolCallChunk at all — the call is dropped
+          val toolChunks = (c1 ++ c2 ++ c3).collect { case StreamChunk.ToolCallChunk(tc) => tc }
+          assert(toolChunks.isEmpty, s"expected no ToolCallChunk from degenerate fragments, got $toolChunks")
+          // Stream still terminates cleanly
+          assert((c1 ++ c2 ++ c3).exists(_.isInstanceOf[StreamChunk.Done]), "finish must emit Done")
+          assert(fs.isEmpty, "state must stay empty")
+          // The diagnostic warn FIRED (not built-and-discarded)
+          assert(
+            appender.list.asScala.exists(e =>
+              e.getLevel == ch.qos.logback.classic.Level.WARN &&
+                e.getFormattedMessage.contains("degenerate tool-call fragment")
+            ),
+            s"expected a WARN 'degenerate tool-call fragment' log event, got ${appender.list.asScala.map(_.getFormattedMessage).toList}"
+          )
+      } { _ => IO.delay(lbLogger.detachAppender(appender)) }
   }
 
   test("processOpenAiData: late degenerate fragment does NOT clobber a valid started call") {
