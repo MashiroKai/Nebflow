@@ -14,6 +14,15 @@ import scala.concurrent.duration.*
 final class ShutdownAbort
     extends RuntimeException("Nebflow shutting down: LLM request aborted")
 
+/** Raised when TaskStuckWatcher hard-cancels an agent's in-flight LLM request
+  * (gate-wedge P1-1, 2026-08-20): the agent ignored ≥2 Stop mailbox messages
+  * because it was suspended on its LLM fiber, so the watcher escalates to
+  * cancelling the fiber itself. Classified Fatal — the provider is NOT at
+  * fault, no fallback/retry must re-send the full context; the agent's turn
+  * fails and its own bounded retry loop (MaxTurnLlmCalls) takes over. */
+final class StuckAbort(val sessionId: String)
+    extends RuntimeException(s"TaskStuckWatcher hard-cancel: LLM request of session $sessionId aborted (agent unresponsive to Stop)")
+
 object LlmInterface:
   private val logger = NebflowLogger.forName("nebflow.llm")
 
@@ -27,23 +36,43 @@ object LlmInterface:
   // it. Completing a Deferred from another runtime (IORuntime.global in the
   // hook thread) is safe: it only wakes the waiters, which continue on their
   // own runtime.
-  private val inflight: Ref[IO, Map[String, Deferred[IO, Either[Throwable, Unit]]]] =
+  private final case class InflightEntry(
+    sessionId: Option[String],
+    halt: Deferred[IO, Either[Throwable, Unit]]
+  )
+
+  private val inflight: Ref[IO, Map[String, InflightEntry]] =
     Ref.unsafe(Map.empty)
 
-  private[llm] def registerInflight(): IO[(String, Deferred[IO, Either[Throwable, Unit]])] =
+  def registerInflight(
+    sessionId: Option[String] = None
+  ): IO[(String, Deferred[IO, Either[Throwable, Unit]])] =
     for
       key <- IO(java.util.UUID.randomUUID().toString)
       halt <- IO.deferred[Either[Throwable, Unit]]
-      _ <- inflight.update(_ + (key -> halt))
+      _ <- inflight.update(_ + (key -> InflightEntry(sessionId, halt)))
     yield (key, halt)
 
   private[llm] def unregisterInflight(key: String): IO[Unit] =
     inflight.update(_ - key)
 
+  /** gate-wedge P1-1: hard-cancel every in-flight LLM request belonging to a
+    * session — wakes queued (pre-gate), rpm-waiting and streaming requests
+    * alike (the interrupt wraps the whole candidate stream, not just the HTTP
+    * layer). Returns how many requests were aborted. Used by TaskStuckWatcher
+    * after repeated Stop mailbox messages went unconsumed. */
+  def cancelInflightFor(sessionId: String): IO[Int] =
+    inflight.get.flatMap { m =>
+      val matching = m.toList.collect { case (k, e) if e.sessionId.contains(sessionId) => (k, e) }
+      matching.traverse_ { case (_, e) =>
+        e.halt.complete(Left(new StuckAbort(sessionId))).void.handleErrorWith(_ => IO.unit)
+      } *> IO.pure(matching.size)
+    }
+
   /** Abort all in-flight LLM requests — streams fail with [[ShutdownAbort]]. */
   def cancelAllInflight(): IO[Unit] =
     inflight.get.flatMap { m =>
-      m.values.toList.traverse_(_.complete(Left(new ShutdownAbort))) *> inflight.set(Map.empty)
+      m.values.toList.traverse_(_.halt.complete(Left(new ShutdownAbort))) *> inflight.set(Map.empty)
     }
 
   /** Synchronous variant for JVM shutdown hooks (runs on IORuntime.global). */
@@ -80,8 +109,9 @@ object LlmInterface:
    *   In-flight requests are deliberately not covered by queue persistence.
    * - Gate busy: write the full LlmRequest to LlmQueueStore (so a restart
    *   doesn't lose it), then queue. On grant, removeHead — FIFO guarantees
-   *   our item is at the head. QueueTimeout no longer occurs (acquire waits
-   *   indefinitely — user #296 追加, 2026-08-19).
+   *   our item is at the head. Queueing is bounded by the gate's queueTimeout
+   *   (gate-wedge P0-1, 2026-08-20 — reverts #296's infinite wait): a wedged
+   *   gate surfaces as QueueTimeout → Transient fallback, not silent death.
    * - queuePersist=false: skip persistence entirely (in-memory only).
    */
   private def acquireWithPersistence(
@@ -350,7 +380,13 @@ object LlmInterface:
               // completes it, interrupting the stream (and the underlying
               // sttp/FS2 HTTP request) with ShutdownAbort. Unregistered on
               // finalize whether the stream completes, fails or is aborted.
-              fs2.Stream.eval(registerInflight()).flatMap { case (key, halt) =>
+              fs2.Stream.eval(
+                registerInflight(Some(req.sessionId)).flatTap { case (key, _) =>
+                  // gate-wedge P2: pre-gate intake trace — makes "request
+                  // accepted but never fired" visible in the sse logs.
+                  nebflow.core.LlmLogWriter.logIntake(key, req.sessionId, req.agentId)
+                }
+              ).flatMap { case (key, halt) =>
                 fs2.Stream
                   .eval(
                     for
@@ -561,12 +597,11 @@ object LlmInterface:
                                         }
                                       )
                                       .drain)
-                                    // QueueTimeout no longer occurs (gate.acquire waits
-                                    // indefinitely — user #296 追加, 2026-08-19): 排队等待
-                                    // 正常，不 fallback。Provider 真故障时 LLM 请求本身的
-                                    // 超时（首 token 90s / 空闲 60s）会触发 fallback，排队层
-                                    // 不需要超时兜底。LLM timeout 从 stream 开始计时（acquire
-                                    // 之后），不受排队影响。
+                                    // gate-wedge P0-1 (2026-08-20): acquire 有界——排队
+                                    // 与 RPM 等待合计超 queueTimeout（默认 120s）即抛
+                                    // QueueTimeout（Transient → fallback 下一个 provider）。
+                                    // #296 的「排队不该立即失败」保留；无限等待被推翻：
+                                    // gate 楔死时表现为 120s 内 WARN+fallback，而非静默死亡。
                                     // PostEmptyRecovery: if empty completion with images on non-vision model,
                                     // strip images and retry same candidate before falling through to normal error handling.
                                     .handleErrorWith { err =>
@@ -677,6 +712,12 @@ object LlmInterface:
                                               .orElse(Option(err.getMessage))
                                               .getOrElse(classification.reason.toString)
 
+                                            // gate-wedge P0-1: QueueTimeout = the gate is busy,
+                                            // NOT a provider fault — skip the same-provider retry
+                                            // (it would re-queue, wait queueTimeout again, and now
+                                            // also pay the 60s overload backoff) and skip markDown
+                                            // (mirrors the non-stream path, fallback.scala isQueueTimeout).
+                                            val isQueueTimeout = err.isInstanceOf[QueueTimeout]
                                             classification.permanence match
                                               case ErrorPermanence.Fatal =>
                                                 // Error affects all providers — abort entire stream
@@ -701,21 +742,27 @@ object LlmInterface:
                                                       .markDown(candidate.providerId, candidate.model, downReason)
                                                 ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                                               case ErrorPermanence.Transient =>
-                                                if retriesLeft > 0 && !isTimeout then
+                                                if retriesLeft > 0 && !isTimeout && !isQueueTimeout then
                                                   // Only retry same provider for non-timeout errors.
                                                   // Timeout means the provider is unresponsive — skip to next.
                                                   val jitter =
                                                     java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
-                                                  val delay = math.min(backoffMs + jitter, Fallback.MaxBackoffMs)
+                                                  // gate-wedge 止损: route through retryDelayMs so
+                                                  // overload-class (429/529) waits >= the rate window
+                                                  // (OverloadBackoffMinMs) — the old inline
+                                                  // min(backoff+jitter, max) had no overload floor on
+                                                  // the stream path.
+                                                  val delay = Fallback.retryDelayMs(backoffMs, classification.reason, jitter)
                                                   fs2.Stream.eval(
                                                     resetLock *> notify *> logger.warn(
                                                       s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
                                                     ) *> IO.sleep(delay.millis)
                                                   ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
                                                 else
-                                                  // Timeout or retries exhausted — try next provider
+                                                  // Timeout / queue timeout / retries exhausted — try next provider
                                                   val skipMsg =
-                                                    if isTimeout then "inactivity timeout, skipping to next provider"
+                                                    if isQueueTimeout then "queue timeout, skipping to next provider"
+                                                    else if isTimeout then "inactivity timeout, skipping to next provider"
                                                     else "retries exhausted"
                                                   // Align with the Rust handle.rs fallback branch: timeout is
                                                   // classified Permanent, so the stream ALWAYS markDowns here
@@ -732,8 +779,10 @@ object LlmInterface:
                                                     )
                                                       *> failureRef.update(_ :+ attempt)
                                                       *> notify
-                                                      *> healthMonitor
-                                                        .markDown(candidate.providerId, candidate.model, downReason)
+                                                      *> IO.whenA(!isQueueTimeout)(
+                                                        healthMonitor
+                                                          .markDown(candidate.providerId, candidate.model, downReason)
+                                                      )
                                                   ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                                                 end if
                                             end match

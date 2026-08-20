@@ -72,9 +72,11 @@ object Fallback:
   val MaxTurnLlmCalls: Int = 4
 
   /** Overload-class failures (429 rate-limit / 529 overloaded) need a long
-   *  backoff (≥5s) before retry — they mean the provider is saturated, not
-   *  dead. All other transient errors retry with the normal exponential ramp. */
-  val OverloadBackoffMinMs: Long = 5000L
+   *  backoff before retry — they mean the provider is saturated, not dead.
+   *  gate-wedge 止损 (2026-08-20): raised 5s → 60s to match the standard
+   *  rate-limit window (litellm-class resolvers refill per 60s). Retrying at
+   *  the window edge just burns another 429 and re-sends the full context. */
+  val OverloadBackoffMinMs: Long = 60_000L
 
   def classifyError(error: Throwable): ErrorClassification =
     // Check for structured sttp4 HttpError first
@@ -110,6 +112,13 @@ object Fallback:
         // Provider is BUSY, not down: classify Transient so the chain moves to
         // the next provider, and let the call sites skip retry/markDown for it.
         ErrorClassification(FailoverReason.RateLimit, ErrorPermanence.Transient, message = Some(e.getMessage))
+      case e: StuckAbort =>
+        // gate-wedge P1-1: the WATCHER killed this request on purpose (agent
+        // unresponsive to Stop). The provider is innocent — no markDown, no
+        // same-provider retry, no next-provider fallback (that would re-send
+        // the full context the watcher just tried to stop burning). Abort the
+        // whole stream; the agent's bounded turn-retry loop takes over.
+        ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Fatal, message = Some(e.getMessage))
       case _: java.util.concurrent.TimeoutException =>
         ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Permanent, message = Some("timeout"))
       case _ =>

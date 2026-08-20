@@ -28,18 +28,26 @@ class ProviderRegistry(
   private val gatesRef: Ref[IO, Map[String, ConcurrencyGate]] = Ref.unsafe(Map.empty)
 
   def getGate(providerId: String): IO[ConcurrencyGate] =
-    gatesRef.get.map(_.get(providerId)).flatMap {
-      case Some(g) => IO.pure(g)
-      case None =>
-        configRef.get.flatMap { config =>
-          config.llm.providers.get(providerId) match
-            case Some(provider) =>
-              val gate = ConcurrencyGate.fromProvider(providerId, provider)
-              gatesRef.update(_ + (providerId -> gate)).as(gate)
-            case None =>
-              IO.raiseError(new RuntimeException(s"Unknown provider: $providerId"))
+    gatesRef.get.map(_.get(providerId).map(IO.pure).getOrElse {
+      configRef.get.flatMap { config =>
+        config.llm.providers.get(providerId) match
+          case Some(provider) =>
+            val gate = ConcurrencyGate.fromProvider(providerId, provider)
+            // gate-wedge: atomic get-or-create — the old get-then-update let
+            // concurrent first-use callers each build their OWN gate (one
+            // permit set each), so the concurrency limit was not enforced at
+            // all during the race window (three concurrent requests → three
+            // gates → zero queueing). Publish via modify; racing losers adopt
+            // the winner instead of keeping their private instance.
+            gatesRef.modify { m =>
+              m.get(providerId) match
+                case Some(existing) => (m, existing)
+                case None           => (m + (providerId -> gate), gate)
+            }
+          case None =>
+            IO.raiseError(new RuntimeException(s"Unknown provider: $providerId"))
         }
-    }
+    }).flatten
 
   private def createAdapter(providerId: String, provider: ProviderConfig): ProviderAdapter[IO] =
     provider.protocol match
