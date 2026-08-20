@@ -54,6 +54,7 @@ export function showPanel(tab) {
 export function openSettingsPanel() {
   document.getElementById('settings-overlay')?.classList.add('on');
   sendWs({type: 'getConfig'});
+  sendWs({type: 'getToolResultTtl'}); // #341: fresh TTL echo every open
   renderSettings();
 }
 
@@ -376,6 +377,116 @@ function buildSegmentRowHtml(s, i) {
  *  not persisted to storage on purpose). */
 let sttAdvanceExpanded = false;
 
+/** Tool result TTL panel — same session-memory collapse semantics as STT
+ *  advance (#341): collapsed by default, expanded state survives re-renders
+ *  but not fresh sessions. */
+let ttlAdvanceExpanded = false;
+
+/** Backend defaults — mirrors ToolResultTtlConfig.parseStrict bounds. Used
+ *  both for rendering before the first echo and for local pre-validation. */
+const TTL_DEFAULTS = { enabled: false, ttlMinutes: 60, keepRecent: 5, minChars: 2000 };
+const TTL_BOUNDS = {
+  ttlMinutes: { min: 1, max: 43200 },
+  keepRecent: { min: 0, max: 200 },
+  minChars: { min: 0, max: 5000000 },
+};
+
+/** Parse an integer input exactly like the backend parseStrict does — rejects
+ *  empty/non-integer/float strings (backend accepts Int JSON only). */
+function parseTtlInt(value) {
+  const s = String(value).trim();
+  if (!/^-?\d+$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/**
+ * Tool result TTL settings block (#341 frontend tail) — collapsed advanced
+ * panel mirroring the STT advance pattern. Echoes state.toolResultTtl
+ * (fetched via getToolResultTtl; refreshed by toolResultTtl/toolResultTtlSaved
+ * frames). EXPLICIT SAVE (#334 ruling applied to all runtime-behavior config):
+ * edits stay in the DOM until the Save button; closing the panel discards
+ * them; nothing reaches the freeze engine mid-edit. enabled=false greys the
+ * three number inputs.
+ */
+function renderTtlSection() {
+  const cfg = state.toolResultTtl && typeof state.toolResultTtl === 'object'
+    ? state.toolResultTtl : TTL_DEFAULTS;
+  const enabled = !!cfg.enabled;
+  const rowHtml = (labelKey, hintKey, id, value) => `
+      <div class="cfg-form-group">
+        <label class="cfg-label" for="${id}">${t(labelKey)}</label>
+        <input class="cfg-input" id="${id}" type="number" inputmode="numeric" value="${Number(value)}" ${enabled ? '' : 'disabled'} autocomplete="off">
+        <div class="cfg-hint">${t(hintKey)}</div>
+      </div>`;
+  return `
+    <div class="settings-row stt-advance-toggle-row">
+      <button type="button" class="settings-collapse-toggle" id="ttl-advance-toggle"
+              aria-expanded="${ttlAdvanceExpanded}" aria-controls="ttl-advance-body">
+        <span class="settings-label">${t('settings.ttlAdvanceTitle')}</span>
+        <span class="settings-collapse-chevron" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div class="settings-collapse-body" id="ttl-advance-body" ${ttlAdvanceExpanded ? '' : 'hidden'}>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.ttlEnabled')}</span>
+        <div class="toggle ${enabled ? 'on' : ''}" id="toggle-ttl-enabled" role="switch" aria-checked="${enabled}" tabindex="0"></div>
+      </div>
+      <div class="cfg-hint">${t('settings.ttlEnabledHint')}</div>
+      ${rowHtml('settings.ttlMinutesLabel', 'settings.ttlMinutesHint', 'ttl-minutes', cfg.ttlMinutes ?? TTL_DEFAULTS.ttlMinutes)}
+      ${rowHtml('settings.keepRecentLabel', 'settings.keepRecentHint', 'ttl-keep-recent', cfg.keepRecent ?? TTL_DEFAULTS.keepRecent)}
+      ${rowHtml('settings.minCharsLabel', 'settings.minCharsHint', 'ttl-min-chars', cfg.minChars ?? TTL_DEFAULTS.minChars)}
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="cfg-btn cfg-btn-primary" id="btn-save-ttl">${t('settings.ttlSave')}</button>
+      </div>
+    </div>`;
+}
+
+/** Re-render just the TTL section in place after a WS echo (settings open).
+ *  Elements are rebuilt, so listeners bound by bindTtlEvents are re-attached
+ *  to fresh nodes (old ones GC) — no accumulation. */
+function refreshTtlSectionDom() {
+  const wrap = document.getElementById('ttl-section-wrap');
+  if (!wrap) return; // settings panel not open
+  wrap.innerHTML = renderTtlSection();
+  bindTtlEvents();
+}
+
+function bindTtlEvents() {
+  // Expand/collapse — session-memory state, same pattern as STT advance.
+  document.getElementById('ttl-advance-toggle')?.addEventListener('click', () => {
+    ttlAdvanceExpanded = !ttlAdvanceExpanded;
+    const body = document.getElementById('ttl-advance-body');
+    const toggle = document.getElementById('ttl-advance-toggle');
+    if (body) body.hidden = !ttlAdvanceExpanded;
+    if (toggle) toggle.setAttribute('aria-expanded', String(ttlAdvanceExpanded));
+  });
+}
+
+// #341 echo: getToolResultTtl response — authoritative config into state +
+// in-place refresh (no full renderSettings: unrelated drafts must survive).
+onMessage('toolResultTtl', (msg) => {
+  if (msg.config && typeof msg.config === 'object') state.toolResultTtl = msg.config;
+  refreshTtlSectionDom();
+});
+
+// #341: setToolResultTtl success — same authoritative refresh + a success
+// toast (save is NOT optimistic: the UI only confirms after the backend ack).
+onMessage('toolResultTtlSaved', (msg) => {
+  if (msg.config && typeof msg.config === 'object') state.toolResultTtl = msg.config;
+  refreshTtlSectionDom();
+  window.__showToast?.(t('settings.ttlSaved'), 'success');
+});
+
+// configUpdateFailed has NO global consumer (main.js only handles the
+// configUpdated success flag) — surface backend validation errors as an error
+// toast here. Shared by every config-save path that can emit it (workSchedule,
+// STT, toolResultTtl), so nothing fails silently in the console again.
+onMessage('configUpdateFailed', (msg) => {
+  const detail = typeof msg.message === 'string' && msg.message ? `: ${msg.message}` : '';
+  window.__showToast?.(t('settings.ttlSaveFailed') + detail, 'error');
+});
+
 function renderSttSection() {
   const stt = state.stt && typeof state.stt === 'object' ? state.stt : {};
   const configured = !!stt.sttConfigured;
@@ -533,6 +644,7 @@ export function renderSettings() {
       </div>
       ${renderWorkScheduleSection()}
       ${renderSttSection()}
+      <div id="ttl-section-wrap">${renderTtlSection()}</div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.language')}</span>
         <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
@@ -1052,6 +1164,9 @@ function bindSettingsEvents(content, cfg) {
     if (body) body.hidden = !sttAdvanceExpanded;
     if (toggle) toggle.setAttribute('aria-expanded', String(sttAdvanceExpanded));
   });
+
+  // Tool result TTL section (#341) — element-level bindings on fresh nodes.
+  bindTtlEvents();
 
   // Language selector
   document.getElementById('cfg-language')?.addEventListener('change', function() {
