@@ -621,6 +621,9 @@ private[agent] trait AgentCore:
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val nextTurnIdx = state.turnIdx + 1
     val permissionDeferredRef = cats.effect.Ref.unsafe[IO, Option[cats.effect.Deferred[IO, Boolean]]](None)
+    // #12 劝停：同 turn 同工具的用户拒绝计数（per-turn lifecycle 与
+    // permissionDeferredRef 一致——turn 结束自然清零）。
+    val permissionDenialsRef = cats.effect.Ref.unsafe[IO, Map[String, Int]](Map.empty)
     val isSubagent = depth > 0
     val sessionIdOpt = state.sessionId
 
@@ -693,7 +696,7 @@ private[agent] trait AgentCore:
                 IO.pure(
                   ToolExecResult(s"Tool ${call.name} is denied by the session permission policy", isError = true)
                 )
-              case PermissionDecision.Ask => askUserPermission(call, state, permissionDeferredRef, callCtx)
+              case PermissionDecision.Ask => askUserPermission(call, state, permissionDeferredRef, permissionDenialsRef, callCtx)
             }
             .map(r => (call, r))
             .attempt
@@ -784,6 +787,7 @@ private[agent] trait AgentCore:
     call: ToolCall,
     state: AgentState,
     permissionDeferredRef: Ref[IO, Option[cats.effect.Deferred[IO, Boolean]]],
+    permissionDenialsRef: Ref[IO, Map[String, Int]],
     toolCtx: ToolContext
   )(using ctx: ActorContext[AgentCommand]): IO[ToolExecResult] =
     permissionDeferredRef.modify {
@@ -829,7 +833,14 @@ private[agent] trait AgentCore:
               result <- approvedOpt match
                 case Some(approved) =>
                   if approved then executeTool(call, toolCtx)
-                  else IO.pure(ToolExecResult("Permission denied by user", isError = true))
+                  else
+                    // #12 劝停（用户 2026-08-20 批准）：第 ≥2 次用户拒绝时注入
+                    // system-reminder——对齐 retryableHint 模式，防 LLM 无限重试。
+                    // 超时不计数（用户未操作≠拒绝，超时消息自带 re-issue 指引）。
+                    permissionDenialsRef.modify { m =>
+                      val n = m.getOrElse(call.name, 0) + 1
+                      (m.updated(call.name, n), n)
+                    }.map(n => ToolExecResult(AgentCore.denialMessage(call.name, n), isError = true))
                 case None =>
                   // Timeout — dismiss the permission popup on the frontend
                   // (the card is rendered at sessionId = rootSessionId).
@@ -1365,6 +1376,22 @@ private[agent] trait AgentCore:
 end AgentCore
 
 object AgentCore:
+
+  /**
+   * #12 劝停: error text for the n-th user denial of `toolName` within one
+   * turn. First denial stays minimal; from the second on, inject a
+   * system-reminder (retryableHint pattern) so the LLM changes approach
+   * instead of re-asking endlessly. Timeout does NOT count — a user who
+   * never saw the card is not a denial.
+   */
+  def denialMessage(toolName: String, n: Int): String =
+    if n >= 2 then
+      s"Permission denied by user ('$toolName' denied $n times this turn)." +
+        "<system-reminder>The user has denied this tool " + n.toString + " times in this turn. " +
+        "Repeating the same request will keep being denied. Change the approach, " +
+        "ask the user what they want via AskUserQuestion, or report the blocker " +
+        "instead of retrying.</system-reminder>"
+    else "Permission denied by user"
 
   /**
    * Nebula-exclusive tools: only available when agentName == "Nebula".

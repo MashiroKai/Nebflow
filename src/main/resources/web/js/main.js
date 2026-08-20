@@ -977,11 +977,11 @@ onMessage('askUser', (msg, view) => {
       const prevData = finishAi();
       if (prevData) saveMsg(prevData, sid);
     }
-    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName);
+    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId);
     if (data) saveMsg(data, msg.sessionId);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName }, sid);
+    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId }, sid);
   }
 });
 
@@ -995,13 +995,13 @@ onMessage('askPermission', (msg, view) => {
     if (view) {
       // Active session: renderPermissionPrompt detects bypass, sends approval,
       // and shows the "auto-approved" badge. Let it handle everything.
-      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam);
+      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId);
     } else {
       // Non-active session: auto-approve directly (renderPermissionPrompt is never called).
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved: true }));
+        state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved: true, ...(msg.requestId && { requestId: msg.requestId }) }));
       }
-      saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, autoApproved: true, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam }, sid);
+      saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, autoApproved: true, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId }, sid);
     }
     return;
   }
@@ -1017,10 +1017,10 @@ onMessage('askPermission', (msg, view) => {
   // disabled because answeredPermissions still holds this sid.
   if (sid) state.answeredPermissions.delete(sid);
   if (view) {
-    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam);
+    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam }, sid);
+    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId }, sid);
   }
 });
 
@@ -1269,7 +1269,7 @@ onMessage('historyPage', (msg, view) => {
       activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.option-box')) row.remove();
       });
-      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName);
+      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName, lastHistMsg.requestId);
     }
 
     // Re-create interactive AskPermission if the last history message is an unanswered askPermission.
@@ -1281,7 +1281,11 @@ onMessage('historyPage', (msg, view) => {
       activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.permission-pending-box')) row.remove();
       });
+<<<<<<< HEAD
       renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel, lastHistMsg.sourceAgent, lastHistMsg.sourceSession, lastHistMsg.sourceTeam);
+=======
+      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel, lastHistMsg.sourceAgent, lastHistMsg.sourceSession, lastHistMsg.requestId);
+>>>>>>> fix/issue-12-approval-link
     }
 
     // Final scroll-to-bottom: after all rendering (history + streaming bubbles + pending tools)
