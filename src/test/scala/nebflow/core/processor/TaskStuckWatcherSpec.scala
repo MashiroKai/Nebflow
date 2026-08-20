@@ -394,4 +394,47 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
     yield assert(msgs.size >= 2, s"expected >=2 Stop across loop rounds, got ${msgs.size}")
   }
 
+
+  test("gate-wedge P1-1: 第二次扫描对无视 Stop 的卡死子 agent 硬取消在飞 LLM 请求") {
+    // 事故链：suspended 在 LLM fiber 上的 agent 永不消费 mailbox 的 Stop——
+    // 6.5h 每 30s 重发全部无效。第二次扫描必须升级：经 inflight 注册表按
+    // session cancel 在飞请求（StuckAbort），turn 走 llm-fail，Stop 终于被消费。
+    val system = ActorSystem("test-escalation")
+    for
+      _ <- IO(system)
+      tmp <- IO(os.temp.dir())
+      resources <- mkResources(system, tmp)
+      childReceived <- Ref.of[IO, List[AgentCommand]](Nil)
+      childRef <- system.spawn(mkRecordingActor(childReceived), "child-esc")
+      parentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "parent-esc")
+      wsHub = new WsHub()
+      now = System.currentTimeMillis()
+      threshold = 10 * 60 * 1000L
+      stuckChild = AgentRecord(
+        sessionId = "session-escalate",
+        ref = childRef,
+        kind = AgentKind.Delegate,
+        rootSessionId = "root-1",
+        parentRef = Some(parentRef),
+        startedAt = now - 2 * 60 * 60 * 1000L,
+        status = AgentStatus.Processing,
+        lastActivityMs = now - threshold - 1000
+      )
+      _ <- resources.agentRegistry.set(Map("session-escalate" -> stuckChild))
+      // 该 session 有一个在飞（排队中即可）LLM 请求
+      (_, halt) <- nebflow.llm.LlmInterface.registerInflight(Some("session-escalate"))
+      stopCounts <- Ref.of[IO, Map[String, Int]](Map.empty)
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // Stop #1
+      abortedAfterFirst <- halt.tryGet
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // Stop #2 → escalate
+      aborted <- halt.get.timeoutTo(1.second, IO.pure(Left(new RuntimeException("not aborted"))))
+      cmds <- childReceived.get
+    yield
+      assertEquals(abortedAfterFirst, None, "first scan must NOT hard-cancel yet (Stop gets a chance)")
+      aborted match
+        case Left(e: nebflow.llm.StuckAbort) => assert(e.sessionId == "session-escalate")
+        case other => fail(s"expected Left(StuckAbort), got $other")
+      assert(cmds.count(_.isInstanceOf[AgentCommand.Stop]) == 2, s"both scans must still send Stop, got $cmds")
+  }
+
 end TaskStuckWatcherSpec

@@ -69,6 +69,35 @@ class LlmInflightAbortSpec extends CatsEffectSuite:
     assert(prog.unsafeRunSync() == Right(List(1, 2, 3)))
   }
 
+  test("gate-wedge P1-1: cancelInflightFor aborts only the target session's requests") {
+    for
+      (_, haltA) <- LlmInterface.registerInflight(Some("session-stuck"))
+      (_, haltB) <- LlmInterface.registerInflight(Some("session-healthy"))
+      n <- LlmInterface.cancelInflightFor("session-stuck")
+      aborted <- haltA.get.timeoutTo(1.second, IO.pure(Left(new RuntimeException("not aborted"))))
+      untouched <- haltB.tryGet
+      _ <- LlmInterface.unregisterInflight("session-healthy")
+    yield
+      assertEquals(n, 1, "exactly one request should match the session")
+      aborted match
+        case Left(e: StuckAbort) => assert(e.sessionId == "session-stuck")
+        case other => fail(s"expected Left(StuckAbort), got $other")
+      assertEquals(untouched, None, "other sessions' requests must be untouched")
+  }
+
+  test("gate-wedge P1-1: cancelInflightFor returns 0 when nothing is registered") {
+    for n <- LlmInterface.cancelInflightFor("session-nobody")
+    yield assertEquals(n, 0)
+  }
+
+  test("gate-wedge P1-1: unregister removes the entry so cancelInflightFor misses it") {
+    for
+      (key, _) <- LlmInterface.registerInflight(Some("session-gone"))
+      _ <- LlmInterface.unregisterInflight(key)
+      n <- LlmInterface.cancelInflightFor("session-gone")
+    yield assertEquals(n, 0)
+  }
+
   test("cancelAllInflightSync (hook entry) does not throw when idle") {
     val result = try
       LlmInterface.cancelAllInflightSync()

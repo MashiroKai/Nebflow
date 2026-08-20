@@ -224,6 +224,33 @@ object LlmLogWriter:
 
   private val writeLock = new Object
 
+  /**
+   * gate-wedge P2 (2026-08-20): pre-gate request INTAKE event — one JSONL line
+   * appended to the sse file the moment a streaming request is accepted by the
+   * interface, BEFORE provider selection / gate acquire. The incident showed
+   * requests that died while queued at the gate leave ZERO traces in the stream
+   * logs (SSE logging only starts once bytes flow). With intake lines, a
+   * request_id that has an intake but no response is instantly identifiable as
+   * "never fired" (gate wedge / pre-gate death) instead of requiring 8h of
+   * forensic reconstruction. One line per request; no objects stored.
+   */
+  def logIntake(requestId: String, sessionId: String, agentId: String): IO[Unit] =
+    if !enabled.get() then IO.unit
+    else
+      IO.blocking {
+        appendJsonl(
+          "sse",
+          Json.obj(
+            "timestamp" -> Instant.now().toString.asJson,
+            "type" -> "intake".asJson,
+            "request_id" -> requestId.asJson,
+            "session" -> sessionId.asJson,
+            "agent" -> agentId.asJson,
+            "stage" -> "pre-gate".asJson
+          )
+        )
+      }.handleErrorWith(e => logger.warn(s"LlmLogWriter.logIntake: ${e.getMessage}"))
+
   private def appendJsonl(suffix: String, json: Json): Unit = writeLock.synchronized {
     val date = Instant.now().toString.take(10) // yyyy-MM-dd
     val path = logDir.resolve(s"${date}_$suffix.jsonl")
