@@ -26,5 +26,5 @@ object WorkerSkillHook extends PreCompactionHook:
     else
       ExperienceExtractor
         .extractAndStore(messages, agentName, sessionId, resources)
-        .handleErrorWith(e => IO(logger.warn(s"Skill extraction failed: ${e.getMessage}")).void)
+        .handleErrorWith(e => logger.warn(s"Skill extraction failed: ${e.getMessage}"))
 end WorkerSkillHook

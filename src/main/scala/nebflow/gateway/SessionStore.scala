@@ -157,7 +157,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       // startups no-op once files are under the threshold. Errors are logged
       // inside the fiber so they never surface to the load caller.
       shrinkOversizedUiFiles
-        .handleErrorWith(e => IO(logger.warn(s"UI file shrink failed: ${e.getMessage}")).void)
+        .handleErrorWith(e => logger.warn(s"UI file shrink failed: ${e.getMessage}"))
         .start
         .void
     )
@@ -187,7 +187,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
                   saveUiMessages(id, reduced) *>
                     IO.blocking(os.size(f)).map(newSize => List((f.last, size, newSize, msgs.length, reduced.length)))
                 )
-                .handleErrorWith(e => IO(logger.warn(s"Failed to shrink ${f.last}: ${e.getMessage}")).as(Nil))
+                .handleErrorWith(e => logger.warn(s"Failed to shrink ${f.last}: ${e.getMessage}").as(Nil))
             else IO.pure(Nil)
           }
         }
@@ -443,7 +443,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       }.handleErrorWith(e =>
         // If even the atomic write fails (extremely unlikely), log and
         // continue — the in-memory Ref is the source of truth.
-        IO.delay(logger.warn(s"saveIndex failed (non-fatal): ${e.getMessage}")).void
+        logger.warn(s"saveIndex failed (non-fatal): ${e.getMessage}")
       )
     }
 
@@ -786,7 +786,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
             val init = if action == "created" then saveSessionMessages(meta.id, Nil) else IO.unit
             init *>
               saveIndex *>
-              IO.delay(logger.info(s"ensureAgentSession($agentName): $action, session=${meta.id}, flushed index")) *>
+              logger.info(s"ensureAgentSession($agentName): $action, session=${meta.id}, flushed index") *>
               notifySessionChanged(meta.id)
         persist.as((meta, action != "exists"))
       }
@@ -1353,7 +1353,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         case Some(_) => drainDirty // keep draining until empty
         case None => IO.unit
       }
-      .handleErrorWith(e => IO(logger.warn(s"UI flush failed: ${e.getMessage}")))
+      .handleErrorWith(e => logger.warn(s"UI flush failed: ${e.getMessage}"))
 
   /**
    * Drain, clear the pending-fiber slot, then re-check: if new appends marked
@@ -1405,7 +1405,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         case Some(_) => drainDirtyMsgs
         case None => IO.unit
       }
-      .handleErrorWith(e => IO(logger.warn(s"Message flush failed: ${e.getMessage}")))
+      .handleErrorWith(e => logger.warn(s"Message flush failed: ${e.getMessage}"))
 
   private def runMsgFlush(): IO[Unit] =
     msgFlushFiber.set(None) *> drainDirtyMsgs *> dirtyMsgSessions.get.flatMap { remaining =>

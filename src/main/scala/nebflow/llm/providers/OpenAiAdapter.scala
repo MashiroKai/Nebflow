@@ -388,11 +388,10 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       case Left(err) =>
         // Observability (issue #18 follow-up): dropped SSE data used to be
         // invisible; log so malformed provider frames are diagnosable.
-        IO.delay(
-          NebflowLogger
-            .forName("nebflow.llm.openai")
-            .warn(s"dropped unparseable SSE data (${err.message}): ${data.take(120)}")
-        ).as(Nil)
+        NebflowLogger
+          .forName("nebflow.llm.openai")
+          .warn(s"dropped unparseable SSE data (${err.message}): ${data.take(120)}")
+          .as(Nil)
       case Right(json) =>
         // Check for usage-only chunk (stream_options.include_usage sends a final chunk with empty choices)
         val usageOpt = json.hcursor.downField("usage").as[Json].toOption.map { u =>

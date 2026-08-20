@@ -138,7 +138,7 @@ object UsageTracker:
 
         pattern
     }
-    .handleErrorWith(e => IO(logger.warn(s"analyzePattern failed: ${e.getMessage}")).as(UsagePattern.empty))
+    .handleErrorWith(e => logger.warn(s"analyzePattern failed: ${e.getMessage}").as(UsagePattern.empty))
 
   /** Load the last persisted pattern from disk without recomputing from the log. */
   def loadPattern(): IO[UsagePattern] = IO
@@ -146,7 +146,7 @@ object UsageTracker:
       if !os.exists(patternPath) then UsagePattern.empty
       else decode[UsagePattern](os.read(patternPath)).getOrElse(UsagePattern.empty)
     }
-    .handleErrorWith(e => IO(logger.warn(s"loadPattern failed: ${e.getMessage}")).as(UsagePattern.empty))
+    .handleErrorWith(e => logger.warn(s"loadPattern failed: ${e.getMessage}").as(UsagePattern.empty))
 
   private def groupConsecutiveHours(hours: List[Int]): List[TimeWindow] =
     hours.foldLeft(List.empty[TimeWindow]) { (acc, h) =>

@@ -253,7 +253,7 @@ object AgentActor extends AgentCore with AgentSession:
         if waitingForBatch then withDelivery.deepMerge(Json.obj("waitingForBatch" -> true.asJson))
         else withDelivery
       ctx.forkTurn(
-        wsSend(withWaiting).handleErrorWith(e => IO(logger.warn(s"injected user event failed: ${e.getMessage}")))
+        wsSend(withWaiting).handleErrorWith(e => logger.warn(s"injected user event failed: ${e.getMessage}"))
       )
     }
 
@@ -1265,7 +1265,7 @@ object AgentActor extends AgentCore with AgentSession:
                   (resources.sessionStore.saveMessagesForSession(sid, cleanedState.messages) *>
                     resources.sessionStore.flushIndex)
                     .handleErrorWith(e =>
-                      IO(NebflowLogger.forName("nebflow.agent").warn(s"Save failed session: ${e.getMessage}"))
+                      NebflowLogger.forName("nebflow.agent").warn(s"Save failed session: ${e.getMessage}")
                     )
                 )
               }
@@ -1473,7 +1473,7 @@ object AgentActor extends AgentCore with AgentSession:
           _ <- ctx.forkTurn(
             persistIfSession(resources, updatedState)
               .handleErrorWith(e =>
-                IO(NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}"))
+                NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}")
               )
           )
           _ <- immEventIO
@@ -2354,7 +2354,7 @@ object AgentActor extends AgentCore with AgentSession:
               state
                 .wsSend(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson))
                 .handleErrorWith(e =>
-                  IO(NebflowLogger.forName("nebflow.agent").warn(s"roundComplete delivery failed: ${e.getMessage}"))
+                  NebflowLogger.forName("nebflow.agent").warn(s"roundComplete delivery failed: ${e.getMessage}")
                 )
             )
           )
@@ -2389,7 +2389,7 @@ object AgentActor extends AgentCore with AgentSession:
             (resources.sessionStore.saveMessagesForSession(sid, messagesWithPending) *>
               resources.sessionStore.flushIndex)
               .handleErrorWith(e =>
-                IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
+                NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
               )
           )
         )
@@ -2420,7 +2420,7 @@ object AgentActor extends AgentCore with AgentSession:
               state
                 .wsSend(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson))
                 .handleErrorWith(e =>
-                  IO(NebflowLogger.forName("nebflow.agent").warn(s"roundComplete delivery failed: ${e.getMessage}"))
+                  NebflowLogger.forName("nebflow.agent").warn(s"roundComplete delivery failed: ${e.getMessage}")
                 )
             )
           )
@@ -2466,7 +2466,7 @@ object AgentActor extends AgentCore with AgentSession:
             (resources.sessionStore.saveMessagesForSession(sid, messagesWithImmediate) *>
               resources.sessionStore.flushIndex)
               .handleErrorWith(e =>
-                IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
+                NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
               )
           )
         )
@@ -2521,7 +2521,7 @@ object AgentActor extends AgentCore with AgentSession:
                 (resources.sessionStore.saveMessagesForSession(sid, messagesWithQueue) *>
                   resources.sessionStore.flushIndex)
                   .handleErrorWith(e =>
-                    IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
+                    NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
                   )
               )
               _ <-
@@ -2593,7 +2593,7 @@ object AgentActor extends AgentCore with AgentSession:
             (resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
               resources.sessionStore.flushIndex)
               .handleErrorWith(e =>
-                IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
+                NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
               )
           )
         )
@@ -3266,7 +3266,7 @@ object AgentActor extends AgentCore with AgentSession:
       _ <- ctx.forkTurn(
         resources.sessionStore
           .appendUiMessages(sessionId, List(UiMessage.Ask(question, answerText, Some(0L), model)))
-          .handleErrorWith(e => IO(logger.warn(s"Failed to persist ask UiMessage: ${e.getMessage}")))
+          .handleErrorWith(e => logger.warn(s"Failed to persist ask UiMessage: ${e.getMessage}"))
       )
     yield
       val originalMessages = state.messages.takeWhile(m => !isAskReminder(m))

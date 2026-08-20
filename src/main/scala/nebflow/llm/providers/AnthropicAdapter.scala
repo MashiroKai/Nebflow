@@ -352,11 +352,10 @@ class AnthropicAdapter(
         case Left(err) =>
           // Observability (issue #18 follow-up): dropped SSE data used to be
           // invisible; log so malformed provider frames are diagnosable.
-          IO.delay(
-            nebflow.core.NebflowLogger
-              .forName("nebflow.llm.anthropic")
-              .warn(s"dropped unparseable SSE data (${err.message}): ${data.take(120)}")
-          ).as(Nil)
+          nebflow.core.NebflowLogger
+            .forName("nebflow.llm.anthropic")
+            .warn(s"dropped unparseable SSE data (${err.message}): ${data.take(120)}")
+            .as(Nil)
         case Right(json) =>
           eventType match
             case "message_start" =>
@@ -367,7 +366,7 @@ class AnthropicAdapter(
               val cacheWrite = usageObj.downField("cache_creation_input_tokens").as[Option[Int]].toOption.flatten
               nebflow.core.NebflowLogger
                 .forName("nebflow.llm.anthropic")
-                .info(
+                .infoSync(
                   s"message_start: model=${params.model} usage_json=${usageObj.as[Json].getOrElse(Json.Null).noSpaces} inputTokens=$inputTokens cacheRead=$cacheRead cacheWrite=$cacheWrite"
                 )
               tokenRef.set(Tokens(inputTokens, cacheRead, cacheWrite)).as(Nil)
@@ -439,7 +438,7 @@ class AnthropicAdapter(
                 val totalInput = inputTokens + cacheRead.getOrElse(0) + cacheWrite.getOrElse(0)
                 nebflow.core.NebflowLogger
                   .forName("nebflow.llm.anthropic")
-                  .info(
+                  .infoSync(
                     s"message_delta: model=${params.model} deltaInput=$deltaInput stored_input=${t.input} final_input=$inputTokens cacheRead=$cacheRead cacheWrite=$cacheWrite totalInput=$totalInput outputTokens=$outputTokens stopReason=$stopReason"
                   )
                 val usage = Some(

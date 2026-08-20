@@ -58,7 +58,7 @@ object MailTurnCompaction:
             extra = Map("summary" -> summary.take(500))
           )
           .void
-          .handleErrorWith(e => IO(logger.warn(s"MailTurn archive failed for $agentName: ${e.getMessage}")).void)
+          .handleErrorWith(e => logger.warn(s"MailTurn archive failed for $agentName: ${e.getMessage}"))
       yield ()
 
       end for

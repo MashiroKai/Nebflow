@@ -56,12 +56,12 @@ object ToolInputJson:
           val rescued = BareIsoLiteral.replaceAllIn(raw, m => "\"" + m.group(1).trim + "\"")
           parse(rescued).flatMap(_.as[JsonObject]) match
             case Right(obj) =>
-              logger.info(
+              logger.infoSync(
                 s"tool '$toolName': rescued unquoted ISO-8601 literal in arguments (direct parse error: ${directErr.getMessage})"
               )
               obj
             case Left(rescueErr) =>
-              logger.warn(
+              logger.warnSync(
                 s"tool '$toolName': arguments are not valid JSON and could not be repaired " +
                   s"(${rescueErr.getMessage}); raw=${raw.take(200)}"
               )
