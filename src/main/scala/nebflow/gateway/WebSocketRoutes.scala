@@ -894,11 +894,19 @@ class WebSocketRoutes(
 
           case "permissionAnswer" =>
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val approved = json.hcursor.downField("approved").as[Boolean].getOrElse(false)
             val permSessionId = json.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
             val requestId = json.hcursor.downField("requestId").as[String].toOption.getOrElse("")
-            logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
-              forwardInteractionAnswer(requestId, permSessionId, io.circe.Json.obj("approved" -> approved.asJson))
+            // #12: NEVER synthesize a deny from a malformed reply — the old
+            // getOrElse(false) turned any missing/non-boolean `approved` into
+            // a user-attributed denial the user never clicked.
+            json.hcursor.downField("approved").as[Boolean] match
+              case Right(approved) =>
+                logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
+                  forwardInteractionAnswer(requestId, permSessionId, io.circe.Json.obj("approved" -> approved.asJson))
+              case Left(_) =>
+                logger.warn(
+                  s"Permission answer DROPPED: 'approved' missing or not a boolean (requestId=$requestId, session=$permSessionId) — a malformed reply must not become a deny (#12)"
+                )
 
           case "planApprove" =>
             val planSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
