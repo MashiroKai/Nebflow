@@ -103,6 +103,83 @@ class UsageRecordStoreSpec extends FunSuite:
     assertEquals(agg.buckets, Nil)
   }
 
+  test("provider filter narrows totals and buckets (D1: filter before group)") {
+    val dir = os.temp.dir()
+    val s = store(dir)
+    s.record(record(1000L, provider = "107", model = "m-a", agent = "Nebula", input = 100, output = 10, cacheRead = 90)).unsafeRunSync()
+    s.record(record(2000L, provider = "107", model = "m-b", agent = "Backend", input = 200, output = 20, cacheRead = 0)).unsafeRunSync()
+    s.record(record(3000L, provider = "deepseek", model = "m-a", agent = "Nebula", input = 400, output = 40, cacheRead = 0)).unsafeRunSync()
+    // dim=day + provider=107: buckets only cover provider 107's records
+    val agg = s.aggregate(Some("day"), None, None, provider = Some("107")).unsafeRunSync()
+    assertEquals(agg.count, 2)
+    assertEquals(agg.totalInput, 300L)
+    assertEquals(agg.totalOutput, 30L)
+    assertEquals(agg.totalCacheRead, 90L)
+    assertEquals(agg.buckets.map(_.inputTokens).sum, 300L, "buckets aggregate the filtered set")
+    // same-dim grouping on the filtered field collapses to one bucket
+    val byProvider = s.aggregate(Some("provider"), None, None, provider = Some("107")).unsafeRunSync()
+    assertEquals(byProvider.buckets.map(_.key), List("107"))
+    // no filter = full set (backward compatible defaults)
+    val unfiltered = s.aggregate(Some("provider"), None, None).unsafeRunSync()
+    assertEquals(unfiltered.count, 3)
+    assertEquals(unfiltered.totalInput, 700L)
+  }
+
+  test("filter is orthogonal to dim: dim=agent within provider subset") {
+    val dir = os.temp.dir()
+    val s = store(dir)
+    s.record(record(1000L, provider = "107", agent = "Nebula", input = 100)).unsafeRunSync()
+    s.record(record(2000L, provider = "107", agent = "Backend", input = 200)).unsafeRunSync()
+    s.record(record(3000L, provider = "107", agent = "Nebula", input = 300)).unsafeRunSync()
+    s.record(record(4000L, provider = "kimi", agent = "Nebula", input = 4000)).unsafeRunSync()
+    val agg = s.aggregate(Some("agent"), None, None, provider = Some("107")).unsafeRunSync()
+    val buckets = agg.buckets.map(b => b.key -> b.inputTokens).toMap
+    assertEquals(buckets, Map("Nebula" -> 400L, "Backend" -> 200L), "kimi records excluded before grouping")
+  }
+
+  test("model and agent filters, and combined filters") {
+    val dir = os.temp.dir()
+    val s = store(dir)
+    s.record(record(1000L, provider = "107", model = "m-a", agent = "Nebula", input = 100)).unsafeRunSync()
+    s.record(record(2000L, provider = "107", model = "m-b", agent = "Nebula", input = 200)).unsafeRunSync()
+    s.record(record(3000L, provider = "kimi", model = "m-a", agent = "Backend", input = 400)).unsafeRunSync()
+    val byModel = s.aggregate(None, None, None, model = Some("m-a")).unsafeRunSync()
+    assertEquals(byModel.count, 2)
+    assertEquals(byModel.totalInput, 500L)
+    val byAgent = s.aggregate(None, None, None, agent = Some("Backend")).unsafeRunSync()
+    assertEquals(byAgent.count, 1)
+    assertEquals(byAgent.totalInput, 400L)
+    // combined: all three must match (AND)
+    val combined = s
+      .aggregate(None, None, None, provider = Some("107"), model = Some("m-a"), agent = Some("Nebula"))
+      .unsafeRunSync()
+    assertEquals(combined.count, 1)
+    assertEquals(combined.totalInput, 100L)
+  }
+
+  test("non-matching filter yields empty aggregate, not an error") {
+    val dir = os.temp.dir()
+    val s = store(dir)
+    s.record(record(1000L, input = 100)).unsafeRunSync()
+    val agg = s.aggregate(Some("provider"), None, None, provider = Some("nonexistent")).unsafeRunSync()
+    assertEquals(agg.count, 0)
+    assertEquals(agg.totalInput, 0L)
+    assertEquals(agg.buckets, Nil)
+  }
+
+  test("provider filter composes with from/to boundary (inclusive lower, exclusive upper)") {
+    val dir = os.temp.dir()
+    val s = store(dir)
+    s.record(record(1000L, provider = "107", input = 100)).unsafeRunSync()
+    s.record(record(2000L, provider = "107", input = 200)).unsafeRunSync()
+    s.record(record(3000L, provider = "107", input = 400)).unsafeRunSync()
+    s.record(record(2000L, provider = "kimi", input = 8000)).unsafeRunSync()
+    // [2000, 3000): includes ts=2000 (provider 107), excludes ts=3000 and kimi
+    val agg = s.aggregate(None, Some(2000L), Some(3000L), provider = Some("107")).unsafeRunSync()
+    assertEquals(agg.count, 1)
+    assertEquals(agg.totalInput, 200L)
+  }
+
   test("concurrent appends do not lose records or interleave lines") {
     val dir = os.temp.dir()
     val s = store(dir)
