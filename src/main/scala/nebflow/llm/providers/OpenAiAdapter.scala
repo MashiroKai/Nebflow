@@ -468,11 +468,12 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                           // Degenerate start (explicit empty id and/or name) —
                           // log the raw frame so the server-side trigger stays
                           // diagnosable, then treat as continuation.
-                          IO.delay(
-                            logger.warn(
-                              s"degenerate tool-call fragment (empty id/name) treated as continuation: " +
-                                tc.noSpaces.take(160)
-                            )
+                          // logger.warn already returns IO[Unit] — wrapping it in IO.delay
+                          // would build-but-never-run the inner IO (qa catch:
+                          // dead logging, same family as TaskStuckWatcher:93).
+                          logger.warn(
+                            s"degenerate tool-call fragment (empty id/name) treated as continuation: " +
+                              tc.noSpaces.take(160)
                           ) *> continueFragment(acc, index, args)
                         case _ =>
                           continueFragment(acc, index, args)
