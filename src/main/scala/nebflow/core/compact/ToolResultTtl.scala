@@ -163,4 +163,33 @@ object ToolResultTtlConfig:
       .map(_.sanitized)
       .getOrElse(ToolResultTtlConfig())
 
+  /**
+   * #341 WS 尾巴（setToolResultTtl）：STRICT validation — unlike the fail-safe
+   * [[load]] (boot-time, clamps garbage to disabled), the interactive setter
+   * must REJECT malformed input so the user sees the error instead of a
+   * silently-transformed config. Full-object contract: all four fields
+   * required (the settings panel always sends the complete config); numbers
+   * must be integers within sane bounds.
+   */
+  def parseStrict(json: Json): Either[String, ToolResultTtlConfig] =
+    val obj = json.asObject.toRight("config must be a JSON object")
+    def intField(name: String, min: Int, max: Int): Either[String, Int] =
+      obj.flatMap { o =>
+        o(name).toRight(s"missing field \"$name\"").flatMap { v =>
+          v.as[Int].left.map(_ => s"field \"$name\" must be an integer").flatMap { n =>
+            if n < min then Left(s"field \"$name\" must be >= $min (got $n)")
+            else if n > max then Left(s"field \"$name\" must be <= $max (got $n)")
+            else Right(n)
+          }
+        }
+      }
+    for
+      o <- obj
+      enabled <- o("enabled").toRight("missing field \"enabled\"")
+        .flatMap(_.as[Boolean].left.map(_ => "field \"enabled\" must be a boolean"))
+      ttlMinutes <- intField("ttlMinutes", min = 1, max = 43200)
+      keepRecent <- intField("keepRecent", min = 0, max = 200)
+      minChars <- intField("minChars", min = 0, max = 5000000)
+    yield ToolResultTtlConfig(enabled, ttlMinutes, keepRecent, minChars)
+
 end ToolResultTtlConfig
