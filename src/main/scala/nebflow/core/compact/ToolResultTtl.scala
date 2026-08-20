@@ -62,25 +62,33 @@ object ToolResultTtl:
     if !cfg.enabled || messages.isEmpty then None
     else if !cacheIsCold(messages, nowMs) then None
     else
+      // qa #341 FAIL fix (2026-08-20): candidates must be ORDERED (message
+      // order, oldest → newest) — a Set's iteration order is hash-based, so
+      // takeRight(keepRecent) on it kept ARBITRARY entries, not the newest N
+      // (real toolUseIds are UUID-like → random subset was the norm). List
+      // + separate Set for O(1) membership.
       val candidates = compactableToolUseIds(messages)
       if candidates.size <= cfg.keepRecent then None
       else
-        val keepSet = candidates.takeRight(cfg.keepRecent).toSet
+        val candidateSet = candidates.toSet
+        val keepSet = candidates.takeRight(cfg.keepRecent).toSet // true newest N
         val ttlCutoff = nowMs - cfg.ttlMinutes.toLong * 60_000L
         var changed = false
         val cleaned = messages.map {
           case msg @ Message(MessageRole.User, Right(blocks), ts, _) =>
+            var msgChanged = false
             val newBlocks = blocks.map {
               case tr: ContentBlock.ToolResult
-                  if candidates.contains(tr.toolUseId) &&
+                  if candidateSet.contains(tr.toolUseId) &&
                     !keepSet.contains(tr.toolUseId) &&
                     tr.content.length > cfg.minChars &&
                     (ts <= 0 || ts <= ttlCutoff) =>
                 changed = true
+                msgChanged = true
                 tr.copy(content = placeholder(tr.content.length, nowMs - ts))
               case other => other
             }
-            if newBlocks eq blocks then msg else msg.copy(content = Right(newBlocks))
+            if msgChanged then msg.copy(content = Right(newBlocks)) else msg
           case other => other
         }
         if changed then Some(cleaned) else None
@@ -96,15 +104,17 @@ object ToolResultTtl:
       case Some(ts) => nowMs - ts >= ColdAfterMs
       case None     => true
 
-  /** Compactable tool_use ids in order of appearance. */
-  private def compactableToolUseIds(messages: List[Message]): Set[String] =
+  /** Compactable tool_use ids in MESSAGE ORDER (oldest → newest), distinct.
+    * ORDER MATTERS: keepRecent = takeRight of this list = the true newest N
+    * (qa #341 FAIL — a Set here made the keep window arbitrary). */
+  private def compactableToolUseIds(messages: List[Message]): List[String] =
     messages.flatMap {
       case Message(MessageRole.Assistant, Right(blocks), _, _) =>
         blocks.collect {
           case ContentBlock.ToolUse(id, name, _) if CompactableTools.contains(name) => id
         }
       case _ => Nil
-    }.toSet
+    }.distinct
 
   private def placeholder(chars: Int, ageMs: Long): String =
     val ageMin = math.max(1, ageMs / 60_000L)

@@ -88,6 +88,54 @@ class ToolResultTtlSpec extends FunSuite:
         assert(byId("tu-1").contains("re-run the tool"), "placeholder must tell the model how to recover")
       case None => fail("expected cleanup to fire")
 
+  // ── qa #341 FAIL regression: keepRecent must keep the NEWEST N in MESSAGE
+  // ORDER. The original implementation took takeRight of a Set — hash
+  // iteration order, not message order — and this suite's "tu-N" ids hash in
+  // insertion order by coincidence, so the bug was invisible. Real toolUseIds
+  // are UUID-like; these 8 distinct UUIDs make hash order ≠ insertion order
+  // (verified: on the Set-based implementation this test fails with high
+  // probability — exactly the production condition).
+  test("keepRecent keeps the newest N in message order — realistic UUID ids (hash-order regression)"):
+    val uuids = List(
+      "f81d4fae-7dec-11d0-a765-00a0c91e6bf6",
+      "6fa459ea-ee8a-3ca4-894e-db77e160355e",
+      "16fd2706-8baf-433b-8ebd-8edd94ad1b00",
+      "3d813cbb-47fb-32ba-91df-831e15933ac4",
+      "9f8b3c2a-1d4e-4f6a-9c8b-7e5d2a1f0b3c",
+      "0c9589ae-6c2b-4f0e-9d3a-5b7c1e8a2f4d",
+      "7e2a9c4f-3b1d-4a6e-8f0c-2d5b9a7e1c3f",
+      "4b6d8f0a-9e2c-4c1b-8a7d-3f0e5b2c9d1a"
+    )
+    val h = uuids.flatMap(id => List(toolUse(id), toolResult(id, "x" * 5000, Old))) ++
+      List(assistant(TwoHoursAgo), Message(MessageRole.User, Left("go"), timestamp = Now))
+    ToolResultTtl.cleanRequestMessages(h, Enabled, Now) match
+      case Some(cleaned) =>
+        val byId = cleaned.collect {
+          case Message(MessageRole.User, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
+        }.flatten.map(tr => tr.toolUseId -> tr.content).toMap
+        // keepRecent=2: the LAST TWO in message order stay full; every earlier one archived
+        uuids.takeRight(2).foreach { id =>
+          assertEquals(byId(id), "x" * 5000, s"newest candidate $id must stay full")
+        }
+        uuids.dropRight(2).foreach { id =>
+          assert(byId(id).startsWith("[Tool output archived:"), s"older candidate $id must be archived")
+        }
+      case None => fail("expected cleanup to fire")
+
+  test("mid-turn safety: the newest N survive even with aggressive ttlMinutes"):
+    // ttl=1min with everything older than 1min — the newest N must STILL be
+    // kept (keepRecent outranks age); only older-than-window entries archive.
+    val aggressive = Enabled.copy(ttlMinutes = 1)
+    ToolResultTtl.cleanRequestMessages(history(4), aggressive, Now) match
+      case Some(cleaned) =>
+        val byId = cleaned.collect {
+          case Message(MessageRole.User, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
+        }.flatten.map(tr => tr.toolUseId -> tr.content).toMap
+        assertEquals(byId("tu-4"), "x" * 5000, "newest survives aggressive TTL")
+        assertEquals(byId("tu-3"), "x" * 5000, "second newest survives aggressive TTL")
+        assert(byId("tu-1").startsWith("[Tool output archived:"), "oldest archived")
+      case None => fail("expected cleanup to fire")
+
   test("original list is not mutated (request-only purity)"):
     val h = history(4)
     ToolResultTtl.cleanRequestMessages(h, Enabled, Now)
