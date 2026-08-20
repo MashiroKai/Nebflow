@@ -359,12 +359,30 @@ object FileTaskStore extends TaskStore:
           writeTask(sessionId, updated).as(Some(updated))
     }
 
+  /** Max rendered subject length (chars) — reminder-refactor 2026-08-20:
+    * full subjects stay available via the TaskList tool. */
+  private val MaxSubjectChars = 30
+
+  /** Max pending lines rendered before folding to a count (2026-08-20 ruling). */
+  private val MaxPendingLines = 8
+
+  private def truncateSubject(s: String): String =
+    if s.length <= MaxSubjectChars then s else s.take(MaxSubjectChars) + "…"
+
   /**
-   * Render tasks as a hierarchical text block for system prompt injection.
-   *  Only active (pending + in_progress + needs_confirmation) tasks are
-   *  shown, with tree-style indentation. v2: needs_confirmation tasks render
-   *  with a marker so the agent knows they are DONE but AWAITING USER
-   *  CONFIRMATION — it must not re-work them (B10/C15/C22).
+   * Render active tasks as a hierarchical text block for the per-turn tasks
+   * reminder (Nebula only). Only active (pending + in_progress +
+   * needs_confirmation) tasks are shown, with tree-style indentation.
+   * v2: needs_confirmation tasks render with a marker so the agent knows they
+   * are DONE but AWAITING USER CONFIRMATION — it must not re-work them
+   * (B10/C15/C22).
+   *
+   * Reminder refactor (2026-08-20, user ruling): subjects truncated to
+   * [[MaxSubjectChars]]; pending lines beyond [[MaxPendingLines]] fold into a
+   * count line (in_progress / needs_confirmation always render); the
+   * instruction block (~300B) moved OUT of this render into the systemStable
+   * "Task List Protocol" section (PromptSections.tasksGuideSection) —
+   * semantics live in the cached prompt, data travels per turn.
    */
   def renderForPrompt(sessionId: String): IO[String] =
     list(sessionId).map { allTasks =>
@@ -376,15 +394,18 @@ object FileTaskStore extends TaskStore:
         val byParent = active.groupBy(_.parentId)
         val roots = byParent.getOrElse(None, Nil).sortBy(_.id.toIntOption.getOrElse(0))
 
+        def subtreeActive(t: Task): List[Task] =
+          t :: byParent.getOrElse(Some(t.id), Nil).sortBy(_.id.toIntOption.getOrElse(0)).flatMap(subtreeActive)
+
+        // Pending-fold state: once the pending budget is exhausted, whole
+        // all-pending subtrees fold into the count; a pending node with
+        // in_progress/needs_confirmation descendants still renders so the
+        // actionable tasks are never silently dropped.
+        var pendingRendered = 0
+        var foldedCount = 0
+
         val sb = new StringBuilder
-        sb.append("## Current Tasks\n\n")
-        sb.append(
-          "Your task list is below. Work through tasks in order. When a task is fully done, " +
-            "mark it needs_confirmation (NOT completed) and attach a note with the outcome — " +
-            "completed is reserved for the user's confirmation. Tasks marked [needs_confirmation] " +
-            "are DONE and awaiting user confirmation: do NOT work on them again; if the user " +
-            "returns one with feedback, a [打回任务] block tells you what to revise.\n\n"
-        )
+        sb.append(s"## Current Tasks (${active.size} active)\n")
 
         def renderTask(t: Task, depth: Int): Unit =
           val indent = "  " * depth
@@ -399,11 +420,22 @@ object FileTaskStore extends TaskStore:
           val activeStr = t.activeForm match
             case Some(a) if t.status == TaskStatus.InProgress => s" — $a"
             case _ => ""
-          sb.append(s"$indent#${t.id} $statusIcon ${t.subject}$activeStr\n")
+          sb.append(s"$indent#${t.id} $statusIcon ${truncateSubject(t.subject)}$activeStr\n")
+          if t.status == TaskStatus.Pending then pendingRendered += 1
           val children = byParent.getOrElse(Some(t.id), Nil).sortBy(_.id.toIntOption.getOrElse(0))
           children.foreach(c => renderTask(c, depth + 1))
+        end renderTask
 
-        roots.foreach(r => renderTask(r, 0))
+        def tryRender(t: Task, depth: Int): Unit =
+          val foldable = t.status == TaskStatus.Pending &&
+            pendingRendered >= MaxPendingLines &&
+            subtreeActive(t).forall(_.status == TaskStatus.Pending)
+          if foldable then foldedCount += subtreeActive(t).size
+          else renderTask(t, depth)
+
+        roots.foreach(r => tryRender(r, 0))
+        if foldedCount > 0 then
+          sb.append(s"… +$foldedCount more pending (TaskList shows all)\n")
         sb.toString
       end if
     }

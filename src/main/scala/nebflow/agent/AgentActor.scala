@@ -191,7 +191,9 @@ object AgentActor extends AgentCore with AgentSession:
         else ""
       s"${i + 1}. ${e.payload}$hint"
     }
-    Message(MessageRole.User, Left(s"<system-reminder>\n${parts.mkString("\n\n")}\n</system-reminder>"))
+    // Reminder refactor (2026-08-20): source marker is the fromUser signal —
+    // external-event injections must NOT look like user-typed messages.
+    Message(MessageRole.User, Left(s"<system-reminder>\n${parts.mkString("\n\n")}\n</system-reminder>"), source = Some("external"))
 
   /**
    * Emit a `user` WS event so the frontend renders an injected-task bubble
@@ -645,7 +647,10 @@ object AgentActor extends AgentCore with AgentSession:
               depth,
               parentRef,
               state.withMessages(
-                state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource)
+                // Reminder refactor (2026-08-20): always carry a source marker —
+                // external-event turns are system events, not real user input
+                // (fromUser = Message.source.isEmpty).
+                state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource.orElse(Some("external")))
               ),
               None
             )
