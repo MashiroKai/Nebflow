@@ -14,6 +14,7 @@ import { t } from './i18n.js';
 import { getLocale } from './i18n.js';
 import { renderQueueBar } from './chatQueue.js';
 import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
+import { showToast } from './modal.js';
 
 // ---------- Large text auto-attachment (paste detection) ----------
 const LARGE_TEXT_THRESHOLD = 1000;
@@ -1349,6 +1350,10 @@ export function initInput(view) {
         break;
       case 'error':
         voiceBtn.classList.remove('recording');
+        // Voice errors must be user-visible, not console-only (#stt-hotfix:
+        // a denied/busy mic previously produced zero on-screen feedback).
+        // data is an already-classified, i18n'd message from voiceEngine.
+        showToast(data, 'error');
         console.warn('[voice] Error:', data);
         break;
       case 'idle':
