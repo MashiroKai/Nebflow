@@ -262,6 +262,81 @@ private[agent] trait AgentCore:
 
   end startDirectCompaction
 
+  // ============================================================
+  // Reminder refactor (2026-08-20, user ruling — audit
+  // docs/Nebflow/20260820_system-reminder-audit.md):
+  // time/tasks injection gating + tasks delta state.
+  // ============================================================
+
+  /** Min gap between two time reminders on system-event turns (user ruling:
+    * 「每小时通知一次。轮次的第一个 user turn 注入等」). Real-user turns
+    * always inject. Initialized to construction time: a fresh actor (spawn /
+    * restart) stays quiet on system events for the first hour — real user
+    * input is the orientation trigger, not background noise. */
+  private val TimeReminderMinGapMs = 60 * 60 * 1000L
+
+  @volatile private var lastTimeReminderMs: Long = System.currentTimeMillis()
+
+  /** Previous turn's task lines (id -> "#id [status] subject") for delta
+    * detection. Actor-local by design: one AgentActor serves one session, and
+    * a restart/compaction (lifecycle) resets it back to a full render. */
+  @volatile private var lastTaskLines: Map[String, String] = Map.empty
+
+  private val TaskLineRegex = """^\s*#(\d+)\s+(.+)$""".r
+
+  /** Extract "#id ..." task lines from a renderForPrompt output (headers and
+    * fold lines don't match and are ignored). */
+  private def parseTaskLines(rendered: String): Map[String, String] =
+    rendered.linesIterator.collect {
+      case TaskLineRegex(id, rest) => id -> s"#$id $rest".trim
+    }.toMap
+
+  /** Full / delta / unchanged task text for this turn's reminder. */
+  private def renderTasksForTurn(
+    resources: SharedResources,
+    sessionId: String,
+    lifecycleReset: Boolean
+  ): IO[String] =
+    resources.taskStore.renderForPrompt(sessionId).map { full =>
+      val current = parseTaskLines(full)
+      val text =
+        if full.isEmpty then
+          // Active set became empty — announce the clearing once, then stay quiet.
+          if lastTaskLines.nonEmpty then "All tasks done — the task list is now empty."
+          else ""
+        else if lifecycleReset || lastTaskLines.isEmpty then full
+        else if current == lastTaskLines then s"Tasks unchanged (${current.size} active)."
+        else renderTaskDelta(lastTaskLines, current)
+      lastTaskLines = current
+      text
+    }
+
+  /** "+ added / ~ changed / - removed" lines against the previous turn. */
+  private def renderTaskDelta(oldMap: Map[String, String], newMap: Map[String, String]): String =
+    val byId = (k: String) => k.toIntOption.getOrElse(Int.MaxValue)
+    val added = newMap.keySet.diff(oldMap.keySet).toList.sortBy(byId)
+    val removed = oldMap.keySet.diff(newMap.keySet).toList.sortBy(byId)
+    val changed = newMap.collect { case (k, v) if oldMap.get(k).exists(_ != v) => k }.toList.sortBy(byId)
+    val sb = new StringBuilder
+    sb.append(s"## Task changes (${newMap.size} active)\n")
+    added.foreach(id => sb.append(s"+ ${newMap(id)}\n"))
+    changed.foreach(id => sb.append(s"~ ${newMap(id)}\n"))
+    removed.foreach(id => sb.append(s"- ${oldMap(id)}\n"))
+    sb.toString
+
+  /** Devices delta: "+ entry" for new devices, "- entry" for gone ones.
+    * Falls back to the full block when only ordering/hints changed (entries
+    * identical) so the agent still gets a coherent picture. */
+  private def devicesDeltaLines(oldInfo: String, newInfo: String): String =
+    def entries(s: String): Vector[String] =
+      s.split("[;\n]").map(_.trim).filter(_.nonEmpty).toVector
+    val oldE = entries(oldInfo)
+    val newE = entries(newInfo)
+    val added = newE.filterNot(oldE.contains)
+    val removed = oldE.filterNot(newE.contains)
+    if added.isEmpty && removed.isEmpty then newInfo
+    else (added.map("+" + _) ++ removed.map("-" + _)).mkString("\n")
+
   protected def pipeLlmCall(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -330,24 +405,44 @@ private[agent] trait AgentCore:
             )
           devInfo = deviceInfoBlock
           sessionsText = formatAgentSessions(stateForLlm.agentSessions)
-          // Cache v2: the task list is fetched every turn but NO LONGER injected
-          // into systemStable — it travels as a user-turn reminder instead
-          // (keeps the system prompt stable across task create/update/dismiss).
-          taskListText <- stateForLlm.sessionId match
-            case Some(sid) => resources.taskStore.renderForPrompt(sid)
-            case None => IO.pure("")
-          // Env section text (rendered from data.sh + prompt.md) — participates
-          // in change detection. chatWidth is the only ctx input the env block
-          // uses (version/PID/port come from sys props).
+          // Lifecycle nodes (new session / compaction / restart): rebuild the
+          // whole systemStable and refresh the snapshot — mid-session changes
+          // are reported via reminders instead of invalidating the cache.
+          // Computed BEFORE the task-list render: a lifecycle reset also resets
+          // the tasks delta back to a full render (2026-08-20 refactor).
+          isLifecycleRebuild = isCompactTurn || stateForLlm.cachedSystemStable.isEmpty
+          // Reminder refactor (2026-08-20, user ruling — see
+          // docs/Nebflow/20260820_system-reminder-audit.md): "real user turn"
+          // means the triggering message was typed by the user (source=None).
+          // Tool-injected User messages (mail/mail-queue/skill/flow/external)
+          // carry a source marker — system-event turns. time fires on system
+          // events at most once per hour; tasks only on real-user turns.
+          lastMsgOpt = stateForLlm.messages.lastOption
+          isUserTurn = lastMsgOpt.exists { m =>
+            m.role == MessageRole.User && !m.content.toOption.exists(_.exists(_.isInstanceOf[ContentBlock.ToolResult]))
+          }
+          isRealUserTurn = isUserTurn && lastMsgOpt.exists(_.source.isEmpty)
+          isRootAgent = freshDef.name == "Nebula"
+          nowMs = System.currentTimeMillis()
+          injectTime = isUserTurn && (isRealUserTurn || nowMs - lastTimeReminderMs >= TimeReminderMinGapMs)
+          // Tasks: Nebula only, real-user turns only. renderForPrompt returns
+          // the FULL list; the delta against the previous turn lives here
+          // (unchanged → one line; changed → +/-/~ lines; lifecycle → full).
+          taskListText <-
+            if isRootAgent && isRealUserTurn then
+              stateForLlm.sessionId match
+                case Some(sid) => renderTasksForTurn(resources, sid, isLifecycleRebuild)
+                case None => IO.pure("")
+            else IO.pure("")
+          // Env section text (rendered from data.sh + prompt.md) — stays in
+          // systemStable only. Reminder refactor (2026-08-20): environment
+          // CHANGE reminders are gone (user ruling); chatWidth was removed
+          // from the template so this text is constant mid-session anyway.
           envInfo = PromptSections.envInfoSection(
             PromptContext(chatWidth = stateForLlm.session.chatWidth)
           )
           // Snapshot of the dynamic values at systemStable build time.
           currentSnapshot = SystemStableSnapshot(devInfo, sessionsText, stateForLlm.language, envInfo)
-          // Lifecycle nodes (new session / compaction / restart): rebuild the
-          // whole systemStable and refresh the snapshot — mid-session changes
-          // are reported via reminders instead of invalidating the cache.
-          isLifecycleRebuild = isCompactTurn || stateForLlm.cachedSystemStable.isEmpty
           promptCtx = PromptContext(
             availableTools = allowedTools,
             depth = depth,
@@ -371,9 +466,12 @@ private[agent] trait AgentCore:
           // cached string byte-for-byte (provider prefix cache stays hit).
           // Memory block (turnCtx.memoryBlock) is therefore consumed only at
           // rebuild — memory edits take effect at the next lifecycle node.
-          (systemStable, changeDevices, changeSessions, changeEnv, changeLanguage) =
+          // Reminder refactor (2026-08-20): sessions/environment change
+          // reminders removed (user ruling) — only devices (delta) and
+          // language remain as change notifications.
+          (systemStable, changeDevices, changeLanguage) =
             if isLifecycleRebuild then
-              (buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx), "", "", "", Option.empty[String])
+              (buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx), "", Option.empty[String])
             else
               val cached = stateForLlm.cachedSystemStable.getOrElse(
                 buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
@@ -381,30 +479,18 @@ private[agent] trait AgentCore:
               val snap = stateForLlm.stableSnapshot.getOrElse(currentSnapshot)
               (
                 cached,
-                if snap.devices != devInfo then devInfo else "",
-                if snap.sessions != sessionsText then sessionsText else "",
-                if snap.envInfo != envInfo then envInfo else "",
+                if snap.devices != devInfo then devicesDeltaLines(snap.devices, devInfo) else "",
                 if snap.language != stateForLlm.language then stateForLlm.language else None
               )
-          // User turn = the last message is a User message that is NOT a tool
-          // result. Tool-result messages are User role with Right(blocks)
-          // containing ContentBlock.ToolResult — those belong to the tool loop,
-          // not a new user turn. Attachments (Right(blocks) with Image/Text but
-          // no ToolResult) and tool-injected inputs (Left text from
-          // Mail/Delegate/SubTask) DO count as user turns.
-          isUserTurn = stateForLlm.messages.lastOption.exists { m =>
-            m.role == MessageRole.User && !m.content.toOption.exists(_.exists(_.isInstanceOf[ContentBlock.ToolResult]))
-          }
           reminders <- SystemReminders.collectAllIO(
             isUserTurn,
             resources.scheduledTaskStore,
             stateForLlm.sessionId,
-            deviceInfo = changeDevices,
-            sessionsText = changeSessions,
+            deviceDelta = changeDevices,
             taskListText = taskListText,
             language = changeLanguage,
-            envInfo = changeEnv,
-            depth = depth
+            isRootAgent = isRootAgent,
+            injectTime = injectTime
           )
           // Branch change: persist synchronously (no async message needed)
           _ <- turnCtx.branchChange match
@@ -429,6 +515,10 @@ private[agent] trait AgentCore:
           timeMsg =
             if isCompactTurn || isAskTurn || timeReminders.isEmpty then Nil
             else List(Message(MessageRole.User, Left(SystemReminder.renderAll(timeReminders))))
+          // Reminder refactor (2026-08-20): stamp the injection time only when
+          // a time reminder actually fires — the ≥1h system-event gap is
+          // measured from the last REAL injection, not the last turn.
+          _ = if timeMsg.nonEmpty then lastTimeReminderMs = System.currentTimeMillis()
           contextMsg =
             if isCompactTurn || isAskTurn || contextReminders.isEmpty then Nil
             else List(Message(MessageRole.User, Left(SystemReminder.renderAll(contextReminders))))

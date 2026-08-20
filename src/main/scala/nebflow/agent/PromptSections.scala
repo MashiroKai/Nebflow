@@ -297,6 +297,16 @@ object PromptSections:
       condition = _.language.isDefined,
       renderer = ctx => languageBlock(ctx.language.get)
     ),
+    // Reminder refactor (2026-08-20, D6): task-list semantics are stable
+    // instruction text — cached in systemStable instead of repeating with
+    // every per-turn tasks reminder (~300B × every turn saved). Data (the
+    // task lines) still travels per turn as reminders; only Nebula receives
+    // them (user ruling).
+    PromptSection.dynamic(
+      630,
+      condition = _.agentName == "Nebula",
+      renderer = _ => tasksGuideSection
+    ),
 
     // --- Catalog sections ---
     PromptSection.dynamic(
@@ -568,6 +578,24 @@ object PromptSections:
       s"- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $lang.\n" +
       s"- When writing to memory files (Agent/Session/User memory), all content MUST be in $lang.\n" +
       s"- All user-visible text must be in $lang."
+
+  /** Task-list semantics for the per-turn tasks reminder (Nebula only).
+    * Reminder refactor (2026-08-20, D6): migrated from the old
+    * renderForPrompt instruction header so it is cached in systemStable
+    * instead of repeating with every reminder. */
+  val tasksGuideSection: String =
+    """## Task List Protocol
+      |
+      |Your task list arrives as per-turn <system-reminder> blocks (never inside this system prompt):
+      |- Full list after lifecycle events (session start / compaction / restart)
+      |- `Tasks unchanged (N active).` — nothing changed since the previous turn
+      |- `## Task changes` — only the added (+), changed (~), and removed (-) lines
+      |
+      |Semantics:
+      |- Work through tasks in order. When a task is fully done, mark it needs_confirmation (NOT completed) and attach a note with the outcome — completed is reserved for the user's confirmation.
+      |- Tasks marked [needs_confirmation] are DONE and awaiting user confirmation: do NOT work on them again. If the user returns one with feedback, a [打回任务] block tells you what to revise.
+      |- Tasks marked [waiting-user] are human todos — reminders for the user, never part of your own work loop.
+      |- Subject lines are truncated (~30 chars) and pending tasks beyond the first 8 fold into a count line — use the TaskList/Task tools for full details.""".stripMargin
 
   /**
    * Build the conditional blocks string from the registry.
