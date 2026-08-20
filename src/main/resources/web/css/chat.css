@@ -1714,22 +1714,47 @@
   font-size: 13px;
 }
 .thinking-label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  opacity: 0.45;
+  /* #345 (OpenAI paradigm): sentence-case small label — uppercase + tracking
+     removed (中英混排突兀); 12px/500 per visual-style weight B. */
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.55;
   margin-bottom: 2px;
   color: var(--color-text-muted);
 }
 .thinking-label.collapsible {
   cursor: pointer;
   user-select: none;
-  opacity: 0.45;
+  opacity: 0.55;
   transition: opacity 0.15s;
 }
 .thinking-label.collapsible:hover {
-  opacity: 0.7;
+  opacity: 0.8;
+}
+/* Shared 12px chevron (thinking labels + #346 turn summary) */
+.nf-chevron {
+  display: inline-flex;
+  transition: transform 0.15s ease;
+}
+.nf-chevron svg { display: block; }
+.expanded > .nf-chevron,
+[aria-expanded="true"] > .nf-chevron {
+  transform: rotate(90deg);
+}
+.thinking-label .thinking-dot {
+  width: 3px;
+  height: 3px;
+  background: var(--color-text-muted);
+}
+/* dots are children 3/4/5 inside the label (chevron + text precede them) */
+.thinking-label .thinking-dot:nth-child(4) { animation-delay: 0.15s; }
+.thinking-label .thinking-dot:nth-child(5) { animation-delay: 0.3s; }
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dot { animation-duration: 0.01s !important; }
+  .nf-chevron { transition-duration: 0.01s; }
 }
 .thinking-label.collapsible::before {
   content: '';
