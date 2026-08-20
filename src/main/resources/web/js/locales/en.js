@@ -131,6 +131,8 @@ export default {
   'settings.ttlSave': 'Save cleanup config',
   'settings.ttlSaved': 'Cleanup config saved',
   'settings.ttlSaveFailed': 'Cleanup config save failed',
+  'settings.ttlInvalidInt': '{field} must be an integer',
+  'settings.ttlOutOfRange': '{field} must be between {min} and {max}',
   'stt.timeout': 'Transcription timed out, please retry',
   'stt.micDenied': 'Microphone permission denied — grant access from the browser address bar and retry',
   'stt.micBusy': 'Microphone is held by another app or tab (close apps using the mic, then retry)',
