@@ -36,6 +36,7 @@ import { sendWs } from './ws.js';
 import { t, getLocale } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import { popArtifactFromInput, openPopArtifact } from './chat.js';
+import { expandGroupContaining } from './turnGroup.js';
 
 const MAX_RESULTS = 200;      // search-mode cap (v2.1 one-shot query)
 const FETCH_PAGE = 100;       // stream page size (spec §6.3 caps a page at ≤200;
@@ -1433,6 +1434,7 @@ function jumpToResult(res) {
 
 /** @param {HTMLElement} el */
 function flashRow(el) {
+  expandGroupContaining(el); // #346 E10: reveal collapsed turn before scrolling
   el.scrollIntoView({ block: 'center', behavior: 'smooth' });
   el.classList.add('search-hit-flash');
   setTimeout(() => el.classList.remove('search-hit-flash'), 1800);

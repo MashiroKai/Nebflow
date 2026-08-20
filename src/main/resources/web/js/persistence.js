@@ -9,6 +9,7 @@ import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow, thoughtDurationLabel, bindCollapsibleToggle, chevronSvg } from './chat.js';
+import { buildTurnGroupsForHistory } from './turnGroup.js';
 
 // ---------- AI message badge (no duration) ----------
 // Builds a duration-badge pill with timestamp + copy button, matching
@@ -556,6 +557,7 @@ export function restoreFromStorage() {
       chat.appendChild(row);
     }
   });
+  buildTurnGroupsForHistory(chat); // #346 E4: rebuild turn groups from flat rows
   chat.scrollTop = chat.scrollHeight;
   if (activeView) activeView.stream.scrollSnapped = true;
   // Schedule deferred scrolls to catch async iframe height changes from card rendering.
@@ -891,6 +893,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     }
   });
   chat.appendChild(fragment);
+  buildTurnGroupsForHistory(chat); // #346 E4: rebuild turn groups from flat rows
   // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
   // followed by deferred rAF (catches late layout changes from streaming state restoration, etc.).
   // Caller can set scrollToBottom=false (e.g. scroll-up pagination preserves position).
