@@ -56,13 +56,31 @@ export function isModelReady() {
 
 // ── Cloud path: PCM capture → WAV → WS transcribe ─────────────────────
 
+/**
+ * Map a getUserMedia DOMException to a user-visible, actionable i18n message.
+ * The raw error name is appended so support/debugging keeps ground truth.
+ * (2026-08-20 #stt-hotfix: errors were previously console-only — the user
+ * saw nothing when the mic was denied or held by another tab/app.)
+ */
+function classifyMicError(e) {
+  const name = e?.name || '';
+  const raw = e?.message || name || 'UnknownError';
+  if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError')
+    return t('stt.micDenied') + ' (' + name + ')';
+  if (name === 'NotReadableError' || name === 'TrackStartError' || name === 'OverconstrainedError')
+    return t('stt.micBusy') + ' (' + name + ')';
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'ConstraintNotSatisfiedError')
+    return t('stt.micNoDevice') + ' (' + name + ')';
+  return raw;
+}
+
 async function cloudStart() {
   cancelPendingTranscribe(); // a fresh recording invalidates any stale result
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
-    cb.onState?.('error', 'Microphone access denied: ' + (e.message || e.name));
+    cb.onState?.('error', classifyMicError(e));
     return;
   }
   const Ctx = window.AudioContext || window['webkitAudioContext'];
@@ -104,7 +122,10 @@ function cloudStop() {
 
   const total = chunks.reduce((n, c) => n + c.length, 0);
   if (total === 0) {
-    cb.onState?.('idle');
+    // Recorded nothing (mic stream opened but onaudioprocess never fired, or
+    // the push-to-talk was too short) — surface it instead of silently
+    // dropping back to idle (#stt-hotfix).
+    cb.onState?.('error', t('stt.noAudio'));
     return;
   }
   const all = new Float32Array(total);
