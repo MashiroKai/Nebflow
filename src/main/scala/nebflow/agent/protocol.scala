@@ -718,6 +718,19 @@ case class ExecutionContext(
    * pendingEvents): a crash mid-batch degrades to per-result delivery.
    */
   outstandingSubagentResults: Int = 0,
+  /**
+   * #25 (nested delegation dead-letter): completion-notification debt. When a
+   * turn ends while outstandingSubagentResults > 0, the replyTo that would
+   * have received AgentEvent.Completed is PARKED here instead of being sent —
+   * the actor lifecycle must not treat "turn ended" as "task completed" while
+   * spawned sub-agents are still in flight (the supervisor adapter would stop
+   * this actor and the grandchildren's results would dead-letter). When a
+   * later turn ends with the barrier at 0, every parked ref receives the
+   * Completed event — carrying the FINAL synthesized text — and the debt
+   * clears. In-memory only (same lifecycle as pendingEvents): a crash
+   * mid-flight degrades to the pre-#25 notification-less state.
+   */
+  owedCompletion: List[ActorRef[AgentEvent]] = Nil,
   pendingImmediateInputs: List[AgentCommand.ImmediateInput] = Nil,
   emptyResponseRetries: Int = 0,
   lastDispatch: Option[LastDispatch] = None,
@@ -1058,6 +1071,12 @@ extension (s: AgentState)
   def withOutstandingSubagentResults(count: Int): AgentState =
     s.copy(execution = s.execution.copy(outstandingSubagentResults = count))
 
+  /** #25: set the parked completion-notification debt. */
+  def withOwedCompletion(targets: List[ActorRef[AgentEvent]]): AgentState =
+    s.copy(execution = s.execution.copy(owedCompletion = targets))
+
+  def owedCompletion: List[ActorRef[AgentEvent]] = s.execution.owedCompletion
+
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))
   def withLastModel(model: Option[String]): AgentState = s.copy(compaction = s.compaction.copy(lastModel = model))
@@ -1071,13 +1090,19 @@ extension (s: AgentState)
       // Sub-agent barrier: already-received results held for batch delivery are
       // still due to the agent — survive the reset (the workers keep running).
       .copy(pendingEvents = s.execution.pendingEvents,
-            outstandingSubagentResults = s.execution.outstandingSubagentResults))
+            outstandingSubagentResults = s.execution.outstandingSubagentResults,
+            // #25: a parked completion notification is still owed — the
+            // supervisor/bridge is still waiting for the final answer.
+            owedCompletion = s.execution.owedCompletion))
 
   def resetForInterrupt: AgentState = s.copy(
     execution = ExecutionContext.idle(s.execution.messages, s.execution.turnIdx, s.execution.currentTurnId)
       // Sub-agent barrier: held results survive an interrupt — they are still due.
       .copy(pendingEvents = s.execution.pendingEvents,
             outstandingSubagentResults = s.execution.outstandingSubagentResults,
+            // #25: parked completion debt survives an interrupt/restart —
+            // the waiting requester is still owed the final answer.
+            owedCompletion = s.execution.owedCompletion,
             // #13: undelivered immediate inputs (queued Mail) survive
             // interrupt/restart — they are user-originated work; resetting
             // them away silently dropped tasks on every restartAgent.
