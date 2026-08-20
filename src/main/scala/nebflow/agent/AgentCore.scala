@@ -499,7 +499,7 @@ private[agent] trait AgentCore:
                 resources.sessionStore
                   .updateGitBranch(sid, turnCtx.currentBranch)
                   .handleErrorWith(e =>
-                    IO(NebflowLogger.forName("nebflow.agent").warn(s"Failed to persist gitBranch: ${e.getMessage}"))
+                    NebflowLogger.forName("nebflow.agent").warn(s"Failed to persist gitBranch: ${e.getMessage}")
                   )
               )
             case None => IO.unit
@@ -1228,7 +1228,7 @@ private[agent] trait AgentCore:
     val json = event.toJson(ctx.self.path.name, isSubagent, sessionId)
     ctx.forkTurn(
       wsSend(json).handleErrorWith(e =>
-        IO(NebflowLogger.forName("nebflow.agent").warn(s"emitStream($eventName) failed: ${e.getMessage}"))
+        NebflowLogger.forName("nebflow.agent").warn(s"emitStream($eventName) failed: ${e.getMessage}")
       )
     )
 

@@ -345,7 +345,7 @@ A task with 2+ independent parts — different file domains, or different nature
             source = "subtask"
           )
         )
-        .handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}")))
+        .handleErrorWith(e => logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}"))
       // G3: blocks carry attachments with the prompt text as the first Text
       // block (UserInput drops `text` when blocks are present).
       _ <- workerRef ! AgentCommand.UserInput(

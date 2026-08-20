@@ -337,7 +337,7 @@ class WebSocketRoutes(
             // Record as UiMessage
             sharedResources.sessionStore
               .appendUiMessages(sessionId, List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis())))
-              .handleErrorWith(e => IO(logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}"))) *>
+              .handleErrorWith(e => logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}")) *>
             // Push to frontend in real-time so it shows without switching sessions
             wsHub.broadcast(
               io.circe.Json.obj(
@@ -3274,7 +3274,7 @@ class WebSocketRoutes(
                              msgSessionId,
                              List(UiMessage.User(content, attJson, injected, timestamp = System.currentTimeMillis()))
                            )
-                           .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
+                           .handleErrorWith(e => logger.warn(s"Failed to record user UiMessage: ${e.getMessage}"))
                        else IO.unit) *> {
                         // Track turn count + session start time for telemetry
                         sessionTurnCounts
@@ -4075,9 +4075,9 @@ class WebSocketRoutes(
       case _ => IO.unit
 
     record.handleErrorWith(e =>
-      IO(logger.warn(s"Failed to record UI message for session $sessionId: ${e.getMessage}"))
+      logger.warn(s"Failed to record UI message for session $sessionId: ${e.getMessage}")
     ) *> underlying(json).handleErrorWith(e =>
-      IO(logger.warn(s"Failed to broadcast message for session $sessionId: ${e.getMessage}"))
+      logger.warn(s"Failed to broadcast message for session $sessionId: ${e.getMessage}")
     )
 
   // ============================================================

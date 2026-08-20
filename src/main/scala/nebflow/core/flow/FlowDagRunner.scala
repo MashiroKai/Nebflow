@@ -48,7 +48,7 @@ object FlowDagRunner:
               parentAgentRef,
               rootSessionId
             )
-            .handleErrorWith(e => IO(logger.warn(s"FlowDagExecutor failed: ${e.getMessage}")).as(Left(e.getMessage)))
+            .handleErrorWith(e => logger.warn(s"FlowDagExecutor failed: ${e.getMessage}").as(Left(e.getMessage)))
           _ <- result match
             case Right(output) =>
               (replyTo ! AgentCommand.ImmediateInput(
