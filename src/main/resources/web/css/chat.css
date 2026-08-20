@@ -1457,6 +1457,145 @@
   font-weight: 400;
 }
 
+/* ---------- AskUser preview thumbnails (direction C §7) ---------- */
+/* Only buttons carrying a preview get the inline-flex layout — buttons without
+   a preview field render byte-for-byte like before (E1 zero regression). */
+.option-btn.has-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.option-btn.has-preview .option-text {
+  text-align: left;
+  min-width: 0;
+}
+.option-preview {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 40px;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  background: var(--color-surface);
+}
+.option-preview .preview-swatch {
+  flex: 1;
+  min-width: 0;
+}
+.option-preview .preview-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* Selected ring: outline offset outside the filled .picked background so it
+   stays visible on the primary-colored button (spec §7.1/§7.3). */
+.option-btn.picked.has-preview .option-preview {
+  outline: 1.5px solid var(--color-primary);
+  outline-offset: 2px;
+}
+/* AskUser card animations (onboarding spec §7 A-1/A-2): card fade-in on
+   insert, per-question reveal when a dependsOn branch becomes visible. */
+@keyframes ob-card-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ob-q-reveal-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.option-box.ob-fade-in {
+  animation: ob-card-in 200ms ease-out;
+}
+.ob-q-reveal {
+  animation: ob-q-reveal-in 150ms ease-out;
+}
+/* A-5: confirm button unlock transition (120ms opacity). */
+.option-confirm {
+  transition: background 0.2s ease-out, opacity 0.12s ease-out;
+}
+.option-confirm:disabled {
+  opacity: 0.6;
+}
+/* AskUser canvas comparison button (direction C §4.1) — glass control,
+   sits above the option box. */
+.ob-compare-btn {
+  margin-bottom: 6px;
+  font-size: 12px;
+  padding: 4px 12px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s,
+              box-shadow 0.15s, opacity 0.15s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .option-box.ob-fade-in,
+  .ob-q-reveal {
+    animation: none;
+  }
+}
+
+/* ---------- Chat-native onboarding (onboarding-redesign-spec §8.4) ---------- */
+/* Typewriter simulation: paragraph stack + blinking cursor + skip button.
+   Zero new colors — cursor uses var(--color-text), skip inherits .glass-control. */
+.ob-sim-bubble {
+  position: relative; /* anchor for the absolute skip button */
+}
+.ob-body {
+  margin-top: 4px;
+}
+.ob-para {
+  margin: 0;
+}
+.ob-para + .ob-para {
+  margin-top: 4px;
+}
+.ob-cursor {
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--color-text);
+  animation: ob-blink 1s steps(2) infinite;
+}
+@keyframes ob-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.ob-skip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s,
+              box-shadow 0.15s, opacity 0.15s;
+}
+/* Summary / error action rows (glass controls, §8.2 — save button keeps the
+   translucent-green send-button accent). */
+.ob-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ob-actions button {
+  transition: background 0.15s, color 0.15s, border-color 0.15s,
+              box-shadow 0.15s, opacity 0.15s;
+}
+.glass-control.ob-primary {
+  background: rgba(7, 193, 96, 0.42);
+}
+.ob-probing {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ob-cursor {
+    display: none;
+  }
+}
+
 /* ===== Top Overlays (task list + notifications) ===== */
 #top-overlays {
   position: absolute;

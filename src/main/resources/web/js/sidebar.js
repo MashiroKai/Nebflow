@@ -1369,8 +1369,9 @@ function wireProviderModelFetch() {
 /** Persist a newly added provider: mutate parsedConfig + flush. The backend
  *  auto-creates the first preset from a new provider — the legacy global
  *  default-model field is retired (global-default preset semantics, #339),
- *  so there is no frontend chain write here. */
-function saveNewProvider(name, data) {
+ *  so there is no frontend chain write here. Exported for the chat-native
+ *  onboarding flow (onboarding-redesign-spec §5.1) — one write path. */
+export function saveNewProvider(name, data) {
   if (!state.parsedConfig) state.parsedConfig = {llm: {providers: {}}};
   if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}};
   if (!state.parsedConfig.llm.providers) state.parsedConfig.llm.providers = {};
