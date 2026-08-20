@@ -64,7 +64,19 @@ A task with 2+ independent parts — different file domains, or different nature
 - Images: optional `images` parameter attaches up to 5 absolute local image paths to the prompt — the worker sees them directly. For other files, reference paths in the prompt text.
 - **Safety**: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance; killing it kills you and the user's session. Process inspection with `ps` (read-only) is fine; any write operation (signals, kills) is strictly forbidden."""
 
-  val inputSchema = JsonObject.fromIterable(
+  /**
+   * Dynamic preset parameter doc — same live-catalog rendering as
+   * DelegateTool.presetParamDescription (see note there: per-LLM-call
+   * re-evaluation, Settings edits reach workers without restart).
+   */
+  private def presetParamDescription: String =
+    val catalog = PresetStore.catalogLines()
+    val catalogText =
+      if catalog.isEmpty then ""
+      else " Available presets (name — the user's note on it):\n" + catalog.map(l => s"  $l").mkString("\n")
+    s"Optional named model preset — overrides the worker's own preset/model for this spawn. Pick by the catalog below when the task fits a preset's profile, or to fall back when your default provider is down.$catalogText"
+
+  def inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
       "properties" -> io.circe.Json.obj(
@@ -85,7 +97,7 @@ A task with 2+ independent parts — different file domains, or different nature
         ),
         "preset" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Optional named model preset — a preset name from model-presets.json (e.g. 'LowCost' for cheap or non-urgent tasks, 'Vision' for vision-capable models). Overrides the worker's own preset/model for this spawn. Use 'LowCost' when the task is cheap/not urgent or your default provider is down.".asJson
+          "description" -> presetParamDescription.asJson
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)

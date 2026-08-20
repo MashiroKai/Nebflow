@@ -110,7 +110,21 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
 - Images: optional `images` parameter attaches up to 5 absolute local image paths to the prompt — the sub-agent sees them directly. For other files, reference paths in the prompt text.
 - **Safety**: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance; killing it kills you and the user's session. Process inspection with `ps` (read-only) is fine; any write operation (signals, kills) is strictly forbidden."""
 
-  val inputSchema = JsonObject.fromIterable(
+  /**
+   * Dynamic preset parameter doc: renders the live preset catalog (name —
+   * user's description) so agents can factor user intent into preset
+   * selection. Re-evaluated per LLM call (ALL_TOOLS is a def; PresetStore
+   * reads fresh) — preset edits in Settings reach agents on the next request
+   * without restart.
+   */
+  private def presetParamDescription: String =
+    val catalog = PresetStore.catalogLines()
+    val catalogText =
+      if catalog.isEmpty then ""
+      else " Available presets (name — the user's note on it):\n" + catalog.map(l => s"  $l").mkString("\n")
+    s"Optional named model preset — overrides the sub-agent's own preset/model for this spawn. Pick by the catalog below when the task fits a preset's profile, or to fall back when your default provider is down.$catalogText"
+
+  def inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
       "properties" -> io.circe.Json.obj(
@@ -150,7 +164,7 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
         ),
         "preset" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Optional named model preset — a preset name from model-presets.json (e.g. 'LowCost' for cheap or non-urgent tasks, 'Vision' for vision-capable models). Overrides the sub-agent's own preset/model for this spawn. Use 'LowCost' when the task is cheap/not urgent or your default provider is down.".asJson
+          "description" -> presetParamDescription.asJson
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)
