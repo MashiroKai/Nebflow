@@ -306,6 +306,10 @@ object GatewayMain extends IOApp.Simple:
                             nebflow.core.schedule.FreezeSchedule.load(config.workSchedule)
                           val freezeScheduleRef: Ref[IO, nebflow.core.schedule.FreezeScheduleConfig] =
                             Ref.unsafe(initialFreezeSchedule)
+                          // 工具结果 TTL 清理（#341）：fail-safe 加载（非法配置
+                          // 视为关闭——默认关，request-only 清理）。
+                          val toolResultTtlCfg =
+                            nebflow.core.compact.ToolResultTtlConfig.load(config.toolResultTtl)
                       logger.info(s"nebflow v${nebflow.Version.string}") *>
                         (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                          else presetLabel match
@@ -342,7 +346,8 @@ object GatewayMain extends IOApp.Simple:
                                   actorSystem = actorSystem,
                                   hookEngine = hookEngine,
                                   voiceMutedRef = voiceMutedRef,
-                                  freezeScheduleRef = freezeScheduleRef
+                                  freezeScheduleRef = freezeScheduleRef,
+                                  toolResultTtl = toolResultTtlCfg
                                 )
                                 // Initialize telemetry (opt-out aware, fire-and-forget on failure)
                                 val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>
