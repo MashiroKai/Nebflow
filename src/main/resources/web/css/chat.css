@@ -1714,22 +1714,47 @@
   font-size: 13px;
 }
 .thinking-label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  opacity: 0.45;
+  /* #345 (OpenAI paradigm): sentence-case small label — uppercase + tracking
+     removed (中英混排突兀); 12px/500 per visual-style weight B. */
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.55;
   margin-bottom: 2px;
   color: var(--color-text-muted);
 }
 .thinking-label.collapsible {
   cursor: pointer;
   user-select: none;
-  opacity: 0.45;
+  opacity: 0.55;
   transition: opacity 0.15s;
 }
 .thinking-label.collapsible:hover {
-  opacity: 0.7;
+  opacity: 0.8;
+}
+/* Shared 12px chevron (thinking labels + #346 turn summary) */
+.nf-chevron {
+  display: inline-flex;
+  transition: transform 0.15s ease;
+}
+.nf-chevron svg { display: block; }
+.expanded > .nf-chevron,
+[aria-expanded="true"] > .nf-chevron {
+  transform: rotate(90deg);
+}
+.thinking-label .thinking-dot {
+  width: 3px;
+  height: 3px;
+  background: var(--color-text-muted);
+}
+/* dots are children 3/4/5 inside the label (chevron + text precede them) */
+.thinking-label .thinking-dot:nth-child(4) { animation-delay: 0.15s; }
+.thinking-label .thinking-dot:nth-child(5) { animation-delay: 0.3s; }
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dot { animation-duration: 0.01s !important; }
+  .nf-chevron { transition-duration: 0.01s; }
 }
 .thinking-label.collapsible::before {
   content: '';
@@ -1753,6 +1778,48 @@
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 12px;
+}
+
+/* ── #346 turn-level collapse: summary bar ───────────────────────────────
+   Muted text form (same design language as the #345 thinking label): no
+   background, no glass, no hover fill — chevron + text brighten on hover. */
+.turn-group { margin: 2px 0; }
+.turn-summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 85%;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-dim);
+  opacity: 0.9;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity 0.15s ease;
+  animation: turnSummaryIn 0.15s ease-out;
+}
+.turn-summary:hover { opacity: 1; }
+.turn-summary:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+.turn-summary-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.turn-group[data-turn-state="failed"] .turn-summary { display: none; }
+.turn-steps { /* rows keep their own spacing; container is plain */ }
+@keyframes turnSummaryIn {
+  from { opacity: 0; }
+  to { opacity: 0.9; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-summary { animation-duration: 0.01s; transition-duration: 0.01s; }
 }
 
 /* Streaming cursor */

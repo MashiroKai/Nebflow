@@ -12,6 +12,9 @@
   --color-bubble-ai: #fff;
   --color-text: #1b1e26;
   --color-text-muted: #8b8e96;
+  /* #346 A13: collapsed-state entry text must clear 4.5:1 on the page bg in
+     both themes — muted (~3:1 light) is too faint for the sole summary line. */
+  --color-text-dim: #6b6e76;
   --color-border: #ddd;
 
   /* Frame (nav / sidebar / header / modal) — light */
@@ -51,6 +54,7 @@ body {
     --color-bubble-ai: #1c1f27;
     --color-text: #e8eaed;
     --color-text-muted: #7b7e88;
+    --color-text-dim: #9ba0aa;
     --color-border: #2a2d35;
 
     /* Frame — dark */
