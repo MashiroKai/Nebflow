@@ -31,6 +31,11 @@ import scala.concurrent.duration.FiniteDuration
  *     BackoffSupervisor death-watch 收 Terminated → 按现有退避（5s→60s）重启，
  *     不新造恢复机制。重启后若仍卡死，watcher 再次 Stop → 重启计数 +1 →
  *     maxRestarts 熔断（supervisor 现有逻辑）。
+ *   - gate-wedge P1-1（2026-08-20）：Stop 是 mailbox 消息，suspended 在 LLM
+ *     fiber 上的 agent 永不消费（事故：6.5h 每 30s 重发全部无效）。同一
+ *     session 累计 StopAttempts(=2) 次无响应后，watcher 升级为经 inflight
+ *     注册表按 session 硬取消在飞 LLM 请求（StuckAbort→Fatal，不 fallback
+ *     不重发上下文）——turn 走 llm-fail，mailbox 恢复轮转，Stop 终于被消费。
  *   - 根 agent（无 parentRef）：不自动重启——广播 taskStuck WS 事件 + 日志，
  *     由用户决定。
  *
@@ -40,6 +45,10 @@ import scala.concurrent.duration.FiniteDuration
 object TaskStuckWatcher:
 
   private val logger = NebflowLogger.forName("nebflow.core.processor.stuck")
+
+  /** gate-wedge P1-1: after this many ignored Stops, escalate to hard-cancelling
+    * the stuck agent's in-flight LLM fiber via the inflight registry. */
+  val StopAttempts: Int = 2
 
   /** 与 WebSocketRoutes.filterActiveAgents 相同的 task 集合（保持单一事实源意识）。 */
   private val taskKinds = Set(AgentKind.Delegate, AgentKind.Ephemeral, AgentKind.Flow, AgentKind.SubTask)
@@ -67,27 +76,56 @@ object TaskStuckWatcher:
     // BUILDING the IO description (StackOverflowError at startup, caught by
     // the s3 smoke test). `>>` defers `loop` until the sleep completes, so the
     // recursion crosses the async sleep boundary and stays stack-safe.
+    //
+    // gate-wedge P1-1 (2026-08-20): stopCounts tracks how many Stop mailbox
+    // messages each stuck session has ignored. Stop is consumed by the actor
+    // loop, which never turns while the agent is suspended on its LLM fiber —
+    // the incident showed 6.5h of 30s-interval Stop resends with zero effect.
+    // After StopAttempts ineffective Sends we escalate to cancelling the
+    // in-flight LLM fiber itself (LlmInterface.cancelInflightFor): the turn
+    // fails, the queued Stops are finally consumed, recovery proceeds.
     def loop: IO[Unit] =
-      scan(resources, wsHub, thresholdMs).handleErrorWith(e =>
+      for
+        stopCounts <- cats.effect.Ref.of[IO, Map[String, Int]](Map.empty)
+        _ <- scanLoop(stopCounts)
+      yield ()
+
+    def scanLoop(stopCounts: cats.effect.Ref[IO, Map[String, Int]]): IO[Unit] =
+      scan(resources, wsHub, thresholdMs, stopCounts).handleErrorWith(e =>
         logger.warn(s"TaskStuckWatcher scan failed (will retry next cycle): ${e.getMessage}")
-      ) *> IO.sleep(interval) >> loop
+      ) *> IO.sleep(interval) >> scanLoop(stopCounts)
     loop
 
   /** 单轮扫描：识别卡死 agent 并执行恢复动作。独立成函数便于单元测试。 */
-  def scan(resources: SharedResources, wsHub: WsHub, thresholdMs: Long): IO[Unit] =
+  def scan(
+    resources: SharedResources,
+    wsHub: WsHub,
+    thresholdMs: Long,
+    stopCounts: cats.effect.Ref[IO, Map[String, Int]] = cats.effect.Ref.unsafe(Map.empty)
+  ): IO[Unit] =
     val now = System.currentTimeMillis()
     resources.agentRegistry.get.flatMap { registry =>
-      registry.values.toList
+      val stuck = registry.values.toList
         .filter(rec => scannedKinds.contains(rec.kind))
         .filter(rec => rec.status == AgentStatus.Processing)
         .filter(rec => rec.lastActivityMs > 0 && now - rec.lastActivityMs > thresholdMs)
-        .traverse_ { rec =>
-          recover(resources, wsHub, rec, now)
+      val stuckIds = stuck.map(_.sessionId).toSet
+      // Drop counters for sessions that recovered (fresh activity / different
+      // status / gone) so a future stuck episode starts from Stop attempt 1.
+      stopCounts.modify(m => (m.view.filterKeys(stuckIds.contains).toMap, ())) *>
+        stuck.traverse_ { rec =>
+          recover(resources, wsHub, rec, now, stopCounts)
         }
     }
 
   /** 恢复动作：Team 只读通知 / 子 agent 重启 / 根 agent 通知。 */
-  private def recover(resources: SharedResources, wsHub: WsHub, rec: AgentRecord, now: Long): IO[Unit] =
+  private def recover(
+    resources: SharedResources,
+    wsHub: WsHub,
+    rec: AgentRecord,
+    now: Long,
+    stopCounts: cats.effect.Ref[IO, Map[String, Int]]
+  ): IO[Unit] =
     val idleSecs = (now - rec.lastActivityMs) / 1000
     // #22: Team kind 只读——长驻用户可见会话，绝不自动 Stop（AgentControl §4）。
     // 2026-08-19 Frontend 僵尸 turn 若有此广播，2 小时静默会变成即时可见。
@@ -132,8 +170,28 @@ object TaskStuckWatcher:
               .handleErrorWith(e =>
                 logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}")
               ) *>
-            (rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
-              .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: Stop to stuck sub-agent ${rec.sessionId} failed: ${e.getMessage}"))
+            // gate-wedge P1-1: count ineffective Stops. A suspended agent never
+            // consumes mailbox messages, so resending forever is useless (the
+            // incident: thousands of resends over 6.5h). At the Nth attempt we
+            // ALSO hard-cancel the in-flight LLM fiber — queued, rpm-waiting
+            // or streaming — so the turn fails and the mailbox finally turns.
+            stopCounts.modify { m =>
+              val n = m.getOrElse(rec.sessionId, 0) + 1
+              (m.updated(rec.sessionId, n), n)
+            }.flatMap { attempts =>
+              val escalate =
+                if attempts >= StopAttempts then
+                  nebflow.llm.LlmInterface.cancelInflightFor(rec.sessionId).flatMap { n =>
+                    logger.warn(
+                      s"TaskStuckWatcher: ${rec.sessionId} ignored $attempts Stops — hard-cancelled $n in-flight LLM request(s) (agent was suspended on its LLM fiber)"
+                    )
+                  }.handleErrorWith(e =>
+                    logger.warn(s"TaskStuckWatcher: hard-cancel for ${rec.sessionId} failed: ${e.getMessage}")
+                  )
+                else IO.unit
+              escalate *> (rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
+                .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: Stop to stuck sub-agent ${rec.sessionId} failed: ${e.getMessage}"))
+            }
         case None =>
           logger.warn(
             s"TaskStuckWatcher: root agent ${rec.sessionId} stuck in Processing for ${idleSecs}s " +
