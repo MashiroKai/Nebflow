@@ -126,7 +126,8 @@ const handlers = {};
 const GLOBAL_MSG_TYPES = new Set([
   'sessionList', 'serverConfig', 'agentList', 'agentSessionList',
   'agentSystemPrompt', 'agentSystemPromptSaved',
-  'mcpServersUpdate', 'configData', 'configUpdated', 'modelOptions',
+  'mcpServersUpdate', 'configData', 'configUpdated', 'configUpdateFailed',
+  'toolResultTtl', 'toolResultTtlSaved', 'modelOptions',
   'memoryData', 'memorySaved', 'memoryStatus', 'memoryChanged',
   'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
   'browseResult',
