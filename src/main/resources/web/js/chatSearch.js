@@ -35,6 +35,7 @@ import { switchToSession } from './sidebar.js';
 import { sendWs } from './ws.js';
 import { t, getLocale } from './i18n.js';
 import { escapeHtml } from './utils.js';
+import { popArtifactFromInput, openPopArtifact } from './chat.js';
 
 const MAX_RESULTS = 200;      // search-mode cap (v2.1 one-shot query)
 const FETCH_PAGE = 100;       // stream page size (spec §6.3 caps a page at ≤200;
@@ -156,7 +157,7 @@ export function initChatSearch() {
     if (!el) return;
     const idx = modelKeys.get(el.dataset.key || '');
     const res = idx === undefined ? null : lastResults[idx];
-    if (res) jumpToResult(res);
+    if (res) activateResult(res);
   });
   // Hovering a result clears the keyboard selection.
   resultsEl?.addEventListener('mouseover', (e) => {
@@ -571,7 +572,7 @@ function onModalKeydown(e) {
       if (inNativeControl || ae?.tagName === 'BUTTON') return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      if (activeIndex >= 0 && lastResults[activeIndex]) jumpToResult(lastResults[activeIndex]);
+      if (activeIndex >= 0 && lastResults[activeIndex]) activateResult(lastResults[activeIndex]);
       return;
     }
     case 'ArrowLeft':
@@ -775,6 +776,7 @@ function normalizeMessage(m, ord) {
       return {
         kind: 'tool', ord, attachments: [],
         tool: m.label || '',
+        input: m.input,   // raw tool input (JSON string) — Pop artifacts parse from it
         text: [m.summary, m.input, m.content].filter(Boolean).join('\n'),
         ts: 0,
       };
@@ -1075,6 +1077,7 @@ async function runSearch() {
           sessionName: session.name || session.id,
           kind: m.kind,
           tool: m.tool || '',
+          input: m.input,
           text: m.text,
           ts: m.ts,
           ord: m.ord,
@@ -1134,6 +1137,7 @@ function wrapItem(s, viewIdx) {
     sessionName: s.name,
     kind: m.kind,
     tool: m.tool || '',
+    input: m.input,
     text: m.text,
     ts: m.ts,
     ord: m.ord,
@@ -1325,6 +1329,9 @@ function populateToolFilter(perSession, keepValue) {
  *  data-ts / data-kind / data-attachments are the QA assertion surface. */
 function resultElement(r) {
   const kw = (inputById('search-keyword')?.value || '').trim();
+  // Queue #2: Pop/Card artifact rows (Canvas-openable) get data-artifact="1" —
+  // the QA surface for the click-routing split + the CSS ↗ affordance.
+  const artifact = popArtifactFromInput(r.tool, r.input) ? '1' : '';
   const typeBadge = r.kind === 'tool'
     ? `${escapeHtml(t('search.typeTool'))} · ${escapeHtml(cleanToolName(r.tool))}`
     : r.kind === 'user'
@@ -1333,7 +1340,7 @@ function resultElement(r) {
   const time = r.ts ? formatTime(r.ts) : '';
   const attTypes = (r.attachments || []).map(a => a.type).filter(Boolean).join(' ');
   const tpl = document.createElement('template');
-  tpl.innerHTML = `<div class="search-result" id="sr-${escapeHtml(r.key)}" data-key="${escapeHtml(r.key)}" data-ts="${r.ts}" data-kind="${escapeHtml(r.kind)}" data-attachments="${escapeHtml(attTypes)}" role="option" aria-selected="false" tabindex="-1">
+  tpl.innerHTML = `<div class="search-result" id="sr-${escapeHtml(r.key)}" data-key="${escapeHtml(r.key)}" data-ts="${r.ts}" data-kind="${escapeHtml(r.kind)}" data-attachments="${escapeHtml(attTypes)}" data-artifact="${artifact}" role="option" aria-selected="false" tabindex="-1">
     <div class="search-result-head">
       <span class="search-result-session">${escapeHtml(r.sessionName)}</span>
       <span class="search-result-type type-${escapeHtml(r.kind)}">${typeBadge}</span>
@@ -1398,6 +1405,25 @@ const stripForMatch = (s) => (s || '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCas
 const JUMP_TICK_MS = 250;
 const JUMP_MAX_PAGES = 40;        // 40 × 50 = 2000 messages of lookback
 const JUMP_DEADLINE_MS = 25000;   // overall budget
+
+// ── Result activation ───────────────────────────────────────
+/**
+ * Activate a result row (click or Enter). Pop/Card artifact messages (with a
+ * Canvas-openable filePath — same detection as the message bubble's Pop card)
+ * open the content DIRECTLY in Canvas, no message jump; everything else keeps
+ * the locate-and-jump behavior. The modal closes in both cases (act-and-exit
+ * convention — jumpToResult already closes; a Canvas tab opened under an open
+ * modal would be hidden behind it).
+ */
+function activateResult(res) {
+  const art = popArtifactFromInput(res.tool, res.input);
+  if (art) {
+    closeSearchModal();
+    openPopArtifact(art.filePath, art.title);
+    return;
+  }
+  jumpToResult(res);
+}
 
 function jumpToResult(res) {
   closeSearchModal();
