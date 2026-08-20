@@ -89,5 +89,9 @@ case class SharedResources(
    * setWorkSchedule WS 命令热更。带默认值 → 既有测试的 SharedResources 构造零改动。
    */
   freezeScheduleRef: Ref[IO, nebflow.core.schedule.FreezeScheduleConfig] =
-    Ref.unsafe[IO, nebflow.core.schedule.FreezeScheduleConfig](nebflow.core.schedule.FreezeScheduleConfig())
+    Ref.unsafe[IO, nebflow.core.schedule.FreezeScheduleConfig](nebflow.core.schedule.FreezeScheduleConfig()),
+  /** 工具结果 TTL 清理（#341）：request-only 清理配置。GatewayMain 启动时从
+    * nebflow.json toolResultTtl 节 fail-safe 加载覆写；默认关（disabled）。
+    * 带默认值 → 既有测试的 SharedResources 构造零改动。 */
+  toolResultTtl: nebflow.core.compact.ToolResultTtlConfig = nebflow.core.compact.ToolResultTtlConfig()
 )
