@@ -86,7 +86,7 @@ class InteractionHubSpec extends CatsEffectSuite:
     end for
   }
 
-  test("old frontend fallback: answer without requestId completes oldest pending for the root session".ignore) {
+  test("old frontend fallback: answer without requestId completes oldest pending for the root session") {
     val system = nebflow.actor.ActorSystem("hub-test")
     for
       hub <- mkHub(system)
@@ -152,6 +152,79 @@ class InteractionHubSpec extends CatsEffectSuite:
       assertEquals(card.hcursor.downField("sessionId").as[String], Right("root-1"))
       assertEquals(card.hcursor.downField("requestId").as[String], Right("ask-1"))
       assertEquals(card.hcursor.downField("agentName").as[String], Right("Frontend"))
+    end for
+  }
+
+  // ---------- #12: approval link reliability ----------
+
+  test("#12 invalid answer shape does not consume the card — deferred still completable") {
+    val system = nebflow.actor.ActorSystem("hub-test")
+    for
+      hub <- mkHub(system)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)
+      d <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.Request(permRequest("r-shape", d))
+      _ <- IO.sleep(50.millis)
+      // askUser-shaped answer routed at a permission card: must NOT complete
+      // anything and must NOT delete the slot (the card stays answerable).
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("r-shape", "root-1", Json.obj("answers" -> Json.arr(Json.fromString("yes"))))
+      )
+      _ <- IO.sleep(50.millis)
+      notCompleted <- d.tryGet
+      // correct answer still reaches the SAME card
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("r-shape", "root-1", Json.obj("approved" -> Json.fromBoolean(true)))
+      )
+      a <- d.get
+      _ <- system.stopAll
+    yield
+      assertEquals(notCompleted, None) // card RETAINED, deferred not stranded
+      assertEquals(a, true)
+    end for
+  }
+
+  test("#12 fallback skips kind-incompatible cards — askUser answer never wires into an older permission card") {
+    val system = nebflow.actor.ActorSystem("hub-test")
+    val items = List(nebflow.core.AskItem("Continue?", List(nebflow.core.AskOption("yes"))))
+    for
+      hub <- mkHub(system)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)
+      // permission card is the OLDEST pending (would win naive FIFO matching)
+      dPerm <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.Request(permRequest("r-perm-old", dPerm))
+      gotAnswers <- Ref.of[IO, Option[List[String]]](None)
+      replyTo <- system.spawn(
+        nebflow.actor.Behaviors.receiveMessage[List[String]] { answers =>
+          gotAnswers.set(Some(answers)).as(nebflow.actor.Behaviors.stopped)
+        },
+        "ask-reply-sink-12"
+      )
+      _ <- hub ! InteractionHubCommand.Request(
+        InteractionRequest(
+          requestId = "r-ask-new",
+          kind = InteractionKind.AskUser,
+          payload = Json.obj("items" -> Json.arr(), "agentName" -> Json.fromString("Frontend")),
+          reply = InteractionReply.AskUserReply(Some(replyTo)),
+          rootSessionId = "root-1",
+          sourceAgent = "Frontend",
+          sourceSession = "team-abc"
+        )
+      )
+      _ <- IO.sleep(50.millis)
+      // answer WITHOUT requestId (old frontend) but askUser-shaped: the naive
+      // oldest-first match would wire it into the permission deferred and
+      // strand it; #12 requires it to reach the askUser card instead.
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("", "root-1", Json.obj("answers" -> Json.arr(Json.fromString("yes"))))
+      )
+      _ <- IO.sleep(100.millis)
+      permState <- dPerm.tryGet
+      answersOpt <- gotAnswers.get
+      _ <- system.stopAll
+    yield
+      assertEquals(permState, None) // permission card untouched (not cross-wired)
+      assertEquals(answersOpt, Some(List("yes"))) // answer reached the askUser card
     end for
   }
 
