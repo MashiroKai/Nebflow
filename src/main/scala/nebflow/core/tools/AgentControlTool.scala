@@ -211,12 +211,20 @@ When to use:
           val stuck = if isStuck(rec, now) then s"⚠ ${fmtMillis(now - rec.lastActivityMs)}" else "no"
           val readOnly = if !CancelableKinds.contains(rec.kind) then " （read-only）" else ""
           val taskLabel = (task.map(_.description).getOrElse("") + readOnly).trim
+          // issue #31 Fix D: barrier snapshot — phantom visibility. outstanding>0
+          // on an idle session with no in-flight work = a batch member hung / died
+          // without a terminal event; held>0 = results parked waiting for the batch.
+          val barrier =
+            if rec.outstandingSubagents > 0 || rec.pendingEventCount > 0 then
+              s"${rec.outstandingSubagents}/${rec.pendingEventCount}"
+            else "-"
           List(
             rec.sessionId,
             rec.kind.toString,
             agent,
             rec.status.toString,
             stuck,
+            barrier,
             fmtMillis(if rec.startedAt > 0 then now - rec.startedAt else 0),
             fmtMillis(if rec.lastActivityMs > 0 then now - rec.lastActivityMs else 0),
             task.map(_.retryCount.toString).getOrElse("-"),
@@ -224,7 +232,7 @@ When to use:
           )
         }
     yield
-      val header = List("sessionId", "kind", "agent", "status", "stuck?", "up", "idle", "retries", "task")
+      val header = List("sessionId", "kind", "agent", "status", "stuck?", "barrier", "up", "idle", "retries", "task")
       val table = (header :: rows).map(r => "| " + r.mkString(" | ") + " |").mkString("\n")
       val summary =
         if rows.isEmpty then "No live background agents (registry is empty)."
@@ -234,6 +242,8 @@ When to use:
              |$table
              |
              |stuck? = Processing with no activity for >${Defaults.StuckThresholdMs / 60000}min (same threshold as the automatic watcher).
+             |barrier = outstandingSubagents/heldResults (issue #31): outstanding>0 while idle with no in-flight work = phantom slot
+             |          (a batch member hung or died without a terminal event — held results never inject until restart).
              |Cancelable kinds: Delegate / SubTask / Ephemeral. Restartable: Delegate(ephemeral) / SubTask. Team/Flow/Root are read-only.""".stripMargin
       Right(summary)
 
@@ -252,7 +262,12 @@ When to use:
               s"lastActivity: ${if rec.lastActivityMs > 0 then fmtMillis(now - rec.lastActivityMs) + " ago" else "(never)"}",
               s"rootSessionId: ${rec.rootSessionId}",
               s"parentSessionId: ${if rec.parentSessionId.nonEmpty then rec.parentSessionId else "-"}",
-              s"supervised: ${rec.supervisorRef.isDefined}"
+              s"supervised: ${rec.supervisorRef.isDefined}",
+              // issue #31 Fix D: barrier snapshot (phantom visibility)
+              s"barrier: outstanding=${rec.outstandingSubagents} held=${rec.pendingEventCount}" +
+                (if rec.outstandingSubagents > 0 then
+                   " ⚠ outstanding > 0 — if no batch is actually in flight this is a phantom slot"
+                 else "")
             ) ++ taskOpt.map { t =>
               List(
                 s"task.description: ${t.description}",
