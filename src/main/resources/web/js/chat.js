@@ -1862,26 +1862,25 @@ export function renderAttachmentPreview(target) {
   attPreview.innerHTML = '';
   attachments.forEach((att, idx) => {
     if (att.type === 'taskRef') {
-      // v2 §5.2: return reference chip — sapphire tint (distinct from the
-      // grey .att-file), clipboard icon, subject + description + output
-      // (single-line ellipsis each). Remove is local-only (C16: draft, task
-      // untouched until the message is sent).
+      // B (用户 2026-08-20 打回): 引用块精简——紧凑 chip = 任务号 + 标题 +
+      // 实时意见首行（微信式：被引任务 + 正在输入的意见），单行上限，不显示
+      // 描述/产出全文。Remove is local-only (C16: draft, task untouched until
+      // the message is sent).
       const wrap = document.createElement('div');
       wrap.className = 'att-taskref';
       wrap.dataset.taskRef = att.taskId || '';
       wrap.dataset.taskSession = att.sessionId || '';
-      const title = [att.subject, att.description, att.output ? '产出：' + att.output : ''].filter(Boolean).join(' — ');
-      wrap.title = title;
+      wrap.title = `${att.taskId ? '#' + att.taskId : ''} ${att.subject || ''}`.trim();
       const icon = '<svg class="att-taskref-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><path d="M12 11h4"></path><path d="M12 16h4"></path><path d="M8 11h.01"></path><path d="M8 16h.01"></path></svg>';
+      const num = document.createElement('span');
+      num.className = 'att-taskref-num';
+      num.textContent = att.taskId ? '#' + att.taskId : '';
       const subject = document.createElement('span');
       subject.className = 'att-taskref-subject';
       subject.textContent = att.subject || '';
-      const meta = document.createElement('span');
-      meta.className = 'att-taskref-meta';
-      meta.textContent = att.description || '';
-      const output = document.createElement('span');
-      output.className = 'att-taskref-output';
-      output.textContent = att.output ? '产出：' + att.output : '';
+      const opinion = document.createElement('span');
+      opinion.className = 'att-taskref-opinion';
+      opinion.hidden = true; // shown once the user types a message below
       const rm = document.createElement('div');
       rm.className = 'att-remove';
       rm.textContent = 'x';
@@ -1897,11 +1896,26 @@ export function renderAttachmentPreview(target) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); remove(); }
       });
       wrap.innerHTML = icon;
-      wrap.appendChild(subject);
-      wrap.appendChild(meta);
-      wrap.appendChild(output);
-      wrap.appendChild(rm);
+      wrap.append(num, subject, opinion, rm);
       attPreview.appendChild(wrap);
+
+      // Live opinion preview — the first line of the input box content, so the
+      // chip shows "task # + title + what you are about to say" on one line.
+      // Listener self-removes once the chip is gone (send / ×).
+      const inputEl = attPreview.parentElement?.querySelector('textarea');
+      const syncOpinion = () => {
+        if (!wrap.isConnected) { inputEl?.removeEventListener('input', syncOpinion); return; }
+        const firstLine = (inputEl?.value || '').split('\n')[0].trim();
+        if (firstLine) {
+          opinion.textContent = firstLine;
+          opinion.hidden = false;
+        } else {
+          opinion.textContent = '';
+          opinion.hidden = true;
+        }
+      };
+      syncOpinion();
+      inputEl?.addEventListener('input', syncOpinion);
     } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
       const wrap = document.createElement('div');
       wrap.style.position = 'relative';
