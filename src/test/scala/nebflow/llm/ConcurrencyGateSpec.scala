@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.CatsEffectSuite
 
+import scala.jdk.CollectionConverters.*
 import scala.concurrent.duration.*
 
 /**
@@ -21,6 +22,11 @@ import scala.concurrent.duration.*
  *    restores the permit (Stop/abort must not leak slots)
  *  - restored permit dispatches the next waiter immediately (not next release)
  *  - tryAcquire is RPM-aware (persistence decision must not skip queueing)
+ *  - gate-wedge P0-1: bounded queue wait — QueueTimeout on saturation, with
+ *    permit accounting fully restored afterwards (no wedge residue)
+ *  - gate-wedge P0-2: cancellation storms (wedge repro) leave permits at full
+ *    capacity, zero tracer-fiber residue, and future-stamped RPM entries
+ *    (wall clock stepped back) cannot park a holder
  */
 class ConcurrencyGateSpec extends CatsEffectSuite:
 
@@ -70,21 +76,118 @@ class ConcurrencyGateSpec extends CatsEffectSuite:
     yield ()
   }
 
-  test("queued acquire waits indefinitely — no QueueTimeout (user #296 追加)") {
-    // gate.acquire now waits indefinitely (no queue timeout). Provider failure
-    // is caught by LLM request timeout (first token 90s / inactivity 60s),
-    // not the gate. Verify: a queued acquire stays queued until release.
-    val g = gate(max = 1, timeout = 100.millis) // timeout is now ignored
+  test("P0-1: saturated gate raises QueueTimeout after queueTimeout — and accounting is intact afterwards") {
+    // gate-wedge: #296's infinite wait is reverted. A queued acquire must fail
+    // with QueueTimeout (Transient → fallback next provider) once the timeout
+    // elapses, and the gate must be fully usable afterwards (the timed-out
+    // waiter's slot accounting is cleaned up on the error path).
+    val g = gate(max = 1, timeout = 150.millis)
     for
       p1 <- g.acquire
-      f2 <- g.acquire.start // queues behind p1
-      // f2 should still be waiting after 200ms (timeout was 100ms but no longer fires)
-      stillWaiting <- IO.defer(f2.join.timeoutTo(200.millis, IO.pure(None)))
-      _ <- IO(assert(stillWaiting == None, "queued acquire must NOT time out — waits indefinitely"))
-      _ <- p1.release // now f2 can proceed
-      p2 <- f2.joinWithNever
+      outcome <- g.acquire.attempt
+      _ <- p1.release
+      _ <- IO(
+        outcome match
+          case Left(e: QueueTimeout) =>
+            assert(e.providerId == "test-provider", s"wrong provider: ${e.getMessage}")
+          case other => fail(s"expected QueueTimeout, got $other")
+      )
+      // After timeout + release the gate must accept fresh acquires instantly.
+      p2 <- g.acquire.timeoutTo(500.millis, IO.raiseError(new RuntimeException("gate wedged after QueueTimeout")))
       _ <- p2.release
+      ok <- g.tryAcquire
+      _ <- IO(assert(ok, "gate must return to full capacity after a queue timeout"))
     yield ()
+  }
+
+  test("P0-1: queue timeout during RPM wait releases the held permit (no holder stranded)") {
+    // The timeout bounds queue wait AND rpm-wait combined. A granted request
+    // stuck in a full RPM window times out and its permit is restored by the
+    // timeout cleanup. Window (300ms) chosen so the SECOND acquire can prove
+    // it re-got the permit and rides the rpm-wait to completion (~300ms mark)
+    // — with a leaked permit it would sit queued until its own timeout.
+    val g = gate(max = 1, rpm = Some(1), window = 300.millis, timeout = 200.millis)
+    for
+      p1 <- g.acquire // permit + records the only RPM slot at t≈0
+      _ <- p1.release
+      // f2 grabs the permit (rpm-wait ~300ms) — the 200ms timeout fires first.
+      outcome <- g.acquire.attempt
+      _ <- IO(
+        outcome match
+          case Left(_: QueueTimeout) => ()
+          case other => fail(s"expected QueueTimeout, got $other")
+      )
+      // Permit restored by the timeout cleanup: the next acquire is granted
+      // again and completes as soon as the window slides (~100ms later),
+      // well inside its own 200ms timeout.
+      p3 <- g.acquire.timeoutTo(2.seconds, IO.raiseError(new RuntimeException("permit not restored after rpm-wait timeout")))
+      _ <- p3.release
+    yield ()
+  }
+
+  test("P0-2 wedge repro: three cancelled queued acquires leave permits at full capacity, zero tracer residue") {
+    // The 8.5h incident: granted-but-cancelled waiters leaked permits until
+    // permits=0 forever, and their ghost tracers printed "granted(rpm-wait)"
+    // every 5s for hours. Fix invariants: after a cancellation storm the gate
+    // must hand out ALL permits immediately and no tracer fiber may survive.
+    val g = gate(max = 1, timeout = 10.seconds)
+    for
+      p1 <- g.acquire
+      fibers <- (1 to 3).toList.traverse(_ => g.acquire.start)
+      _ <- IO.sleep(50.millis) // all three enqueued and tracing
+      _ <- fibers.traverse_(f => f.cancel) // Stop/abort storm while queued
+      _ <- IO.sleep(100.millis) // let cleanups settle
+      tracersAfterCancel <- g.tracersRef.get
+      _ <- p1.release
+      // Capacity intact: an immediate acquire succeeds with no ghost waiters.
+      p2 <- g.acquire.timeoutTo(500.millis, IO.raiseError(new RuntimeException("gate wedged after cancel storm")))
+      _ <- p2.release
+      tracersFinal <- g.tracersRef.get
+      ok <- g.tryAcquire
+    yield
+      assertEquals(tracersAfterCancel, 0, "cancelled waiters must cancel their tracer fibers (E8 ghost-log leak)")
+      assertEquals(tracersFinal, 0)
+      assert(ok, "gate must return to full capacity after the cancellation storm")
+  }
+
+  test("P0-2: wall clock steps backwards — future-stamped RPM entries do not wedge the holder") {
+    // Incident hypothesis 2: after a host sleep + NTP correction the wall
+    // clock jumps back, making already-recorded window timestamps "future"
+    // relative to now — a naive `now - t < windowMs` filter keeps them
+    // forever (negative age passes!) and the holder sleeps (future - now) =
+    // hours. The hardened filter drops future-stamped entries and caps each
+    // sleep at one window, so the second acquire completes fast instead of
+    // parking for 10 minutes (the injected step-back magnitude).
+    for
+      clockRef <- IO.ref(Option.empty[Long])
+      // Stateful clock: first read returns real time, later reads whatever
+      // the test injects (the step-back).
+      clock = IO.realTime.map(_.toMillis).flatMap { t =>
+        clockRef.get.flatMap {
+          case Some(fixed) => IO.pure(fixed)
+          case None        => clockRef.set(Some(t)).as(t)
+        }
+      }
+      g = new ConcurrencyGate(
+        "clock-test",
+        maxConcurrency = 1,
+        rpm = Some(1),
+        queueTimeout = 10.seconds,
+        rpmWindow = 1.second,
+        clockMs = clock,
+        tracerPeriod = 5.seconds
+      )
+      p1 <- g.acquire // stamps the only RPM slot with real (pre-step) time
+      _ <- p1.release
+      _ <- IO.realTime.map(_.toMillis).flatMap(real => clockRef.set(Some(real - 10 * 60 * 1000L)))
+      start <- IO.monotonic
+      p2 <- g.acquire.timeoutTo(
+        2.seconds,
+        IO.raiseError(new RuntimeException("future-stamped entries wedged the holder"))
+      )
+      elapsed <- IO.monotonic.map(_ - start)
+      _ <- p2.release
+    yield assert(elapsed < 2.seconds, s"acquire must drop future-stamped entries and complete fast, took $elapsed")
   }
 
   test("#22 tracer wiring: fast grant undelayed; queued waiter completes on release despite active tracer") {
@@ -204,6 +307,43 @@ class ConcurrencyGateSpec extends CatsEffectSuite:
       p3 <- f3.joinWithNever.timeoutTo(2.seconds, IO.raiseError(new RuntimeException("slot not dispatched after cancel")))
       _ <- p3.release
     yield ()
+  }
+
+  test("P2: rpm-wait tracer line carries window=N and oldestAge (gate-wedge acceptance)") {
+    // The incident forensics were blinded by a tracer that printed only
+    // permits/waiters/thisWaiter — one window metric would have separated
+    // hypothesis 1 (leak) from hypothesis 2 (rpm pinned) in seconds. The
+    // tracer line must now contain window=N and oldestAge=Xs.
+    val logbackLogger = org.slf4j.LoggerFactory.getLogger("nebflow.llm.gate")
+      .asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]()
+    appender.start()
+    logbackLogger.addAppender(appender)
+    val g = new ConcurrencyGate(
+      "trace-test",
+      maxConcurrency = 1,
+      rpm = Some(1),
+      queueTimeout = 10.seconds,
+      rpmWindow = 3.seconds,
+      clockMs = IO.realTime.map(_.toMillis),
+      tracerPeriod = 150.millis
+    )
+    for
+      p1 <- g.acquire // stamps the only RPM slot
+      _ <- p1.release
+      f2 <- g.acquire.start // granted the permit, rpm-waits ~3s, tracer fires meanwhile
+      _ <- IO.sleep(500.millis) // at least 2 tracer periods elapse
+      _ <- f2.cancel // end the wait cleanly (timeout is 10s)
+      _ <- IO.sleep(100.millis)
+      lines = appender.list.asScala.map(_.getFormattedMessage).toList
+      _ <- IO(logbackLogger.detachAppender(appender))
+      waitingLines = lines.filter(_.contains("acquire waiting"))
+    yield
+      assert(waitingLines.nonEmpty, s"expected tracer lines while rpm-waiting, got: $lines")
+      val line = waitingLines.head
+      assert(line.contains("window=1"), s"tracer must carry window length: $line")
+      assert(line.contains("oldestAge="), s"tracer must carry oldest entry age: $line")
+      assert(line.contains("thisWaiter=granted(rpm-wait)"), s"rpm-waiting holder must be labeled: $line")
   }
 
   test("tryAcquire accounts for the RPM window, not just free permits") {
