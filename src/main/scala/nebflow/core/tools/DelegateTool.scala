@@ -13,9 +13,11 @@ import nebflow.shared.{ContentBlock, Message, MessageRole}
  * DelegateTool — Nebula/调度器专用 sub-agent delegation.
  *
  * Only available to the Nebula root agent (NebulaExclusiveTools). Lets Nebula
- * spawn a sub-agent for a subtask, targeting a standalone agent or cloning
- * the caller. Team members delegate via SubTaskTool instead (self-clone +
- * ephemeral worker, no Mail identity). Flow pipelines are triggered via
+ * spawn a sub-agent for a subtask, targeting a standalone agent by explicit
+ * name. Self-cloning is banned (#28, 2026-08-20): the root orchestrator exists
+ * exactly once and must never be spawned — neither as the no-agent default nor
+ * via agent="Nebula". Team members delegate via SubTaskTool instead (self-clone
+ * + ephemeral worker, no Mail identity). Flow pipelines are triggered via
  * FlowTriggerTool (R1 split, 2026-08-15) — this tool no longer handles flows.
  *
  * Two modes:
@@ -99,12 +101,12 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
 - You want a flow pipeline (multi-agent DAG) — use FlowTrigger instead
 
 **Targeting:**
-- Default (no `agent` param): spawns a self-clone of the calling agent — it inherits your system prompt INCLUDING your routing rules. If your rules already assign this task type to a specific agent (e.g. research → Explorer), pass `agent=` directly instead: a self-cloned router agent will re-delegate, creating a wasteful two-layer chain (double token cost, and results may not propagate back).
-- With `agent` parameter: spawns the specified standalone agent (e.g. Coder, Explorer)
+- `agent` is REQUIRED: it names the standalone agent to spawn (e.g. Coder, Explorer). Self-cloning is not supported — the calling agent must not be re-spawned (issue #28).
+- Dispatch directly: if your routing rules already assign this task type to a specific agent, pass that `agent=` directly — dispatching a generic agent that re-dispatches creates a wasteful two-layer chain (double token cost, and results may not propagate back).
 - Cannot target team agents — those require Mail
 
 **Rules:**
-- Prompt must be self-contained (the sub-agent starts with a clean context). Set fork=true to pass your conversation history.
+- Prompt must be self-contained (the sub-agent starts with a clean context — your conversation history is NOT passed).
 - State what "done" looks like (e.g. "Report findings — do not modify files").
 - Do NOT duplicate the sub-agent's work — work on non-overlapping files or topics.
 - Images: optional `images` parameter attaches up to 5 absolute local image paths to the prompt — the sub-agent sees them directly. For other files, reference paths in the prompt text.
@@ -130,16 +132,11 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
       "properties" -> io.circe.Json.obj(
         "prompt" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Self-contained task description for the sub-agent. Must include all context needed unless fork=true.".asJson
+          "description" -> "Self-contained task description for the sub-agent. Must include all context needed — the sub-agent starts with a clean context.".asJson
         ),
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Short label for the task (shown in UI).".asJson
-        ),
-        "fork" -> io.circe.Json.obj(
-          "type" -> "boolean".asJson,
-          "description" -> "If true, pass current conversation context to the sub-agent (enables prompt cache reuse, saves tokens). Default: false.".asJson,
-          "default" -> false.asJson
         ),
         "lifecycle" -> io.circe.Json.obj(
           "type" -> "string".asJson,
@@ -153,7 +150,7 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
         ),
         "agent" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Target standalone agent name (e.g. 'Coder', 'Explorer'). If omitted, clones the calling agent. Only standalone agents can be targeted.".asJson
+          "description" -> "Required. Target standalone agent name (e.g. 'Coder', 'Explorer'). Only stateless standalone agents can be targeted — team agents require Mail, and the calling agent itself cannot be delegated to (self-clone is banned, issue #28).".asJson
         ),
         "images" -> io.circe.Json.obj(
           "type" -> "array".asJson,
@@ -167,25 +164,48 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
           "description" -> presetParamDescription.asJson
         )
       ),
-      "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)
+      "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson, "agent".asJson)
     )
   )
 
   def summarize(input: JsonObject): String =
     val desc = input("description").flatMap(_.asString).getOrElse("")
-    val forked = input("fork").flatMap(_.asBoolean).getOrElse(false)
     val agent = input("agent").flatMap(_.asString).getOrElse("")
     val target = if agent.nonEmpty then s"→ $agent" else ""
-    if forked then s"Delegate($desc [fork] $target)".trim
-    else s"Delegate($desc $target)".trim
+    s"Delegate($desc $target)".trim
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.length > 200 then result.take(197) + "..." else result
 
+  /**
+   * #28: dynamic list of targetable standalone agents, appended to
+   * self-describing rejection errors so the caller can retry with a legal
+   * target without another round-trip. Best-effort — empty on library failure
+   * (the rejection itself must never fail). 'Nebula' and the caller itself
+   * are excluded: both are banned targets (#28) and listing them as
+   * "targetable" would be self-contradictory.
+   */
+  private def standaloneCatalog(ctx: ToolContext): IO[String] =
+    ctx.agentLibrary match
+      case Some(lib) =>
+        val banned = Set("Nebula") ++ ctx.agentDef.map(_.name)
+        lib
+          .loadAll()
+          .map { all =>
+            val names = all.values
+              .filter(d => d.category == "standalone" && !banned.contains(d.name))
+              .map(_.name)
+              .toList
+              .sorted
+            if names.isEmpty then " No targetable standalone agents are currently defined."
+            else s" Targetable standalone agents: ${names.mkString(", ")}."
+          }
+          .handleErrorWith(_ => IO.pure(""))
+      case None => IO.pure("")
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val prompt = input("prompt").flatMap(_.asString).getOrElse("")
     val description = input("description").flatMap(_.asString).getOrElse("subtask")
-    val fork = input("fork").flatMap(_.asBoolean).getOrElse(false)
     val lifecycle = input("lifecycle").flatMap(_.asString).getOrElse("ephemeral")
     val taskDescription = input("taskDescription").flatMap(_.asString).getOrElse(description)
     val targetAgentName = input("agent").flatMap(_.asString).filter(_.nonEmpty)
@@ -200,6 +220,15 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
       )
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-agent depth ($MaxDepth) reached. Cannot delegate further.")))
+    else if targetAgentName.isEmpty then
+      // #28 (2026-08-20): self-clone is banned — the root orchestrator (Nebula)
+      // exists exactly once and must never be spawned, so Delegate requires an
+      // explicit standalone target. The error lists the legal targets.
+      standaloneCatalog(ctx).map { catalog =>
+        Left(ToolError(
+          s"Missing required parameter: agent. Delegate no longer supports self-cloning the caller (issue #28: the root orchestrator exists exactly once and must never be re-spawned).$catalog"
+        ))
+      }
     else
       // G3: resolve optional image attachments before spawning — fail fast on
       // invalid paths (nothing is spawned).
@@ -209,34 +238,41 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
           ImageInject.resolveImages(imagePaths).flatMap {
             case Left(err) => IO.pure(Left(err))
             case Right(attachments) =>
-              // Resolve the effective agent def: either a target standalone agent
-              // or a clone of the calling agent. Done before the ActorSystem check so
-              // that invalid agent names are reported even without a live actor system.
-              val resolveAgent: IO[Either[ToolError, (AgentDef, List[Message])]] =
-                targetAgentName match
-                  case Some(agentName) =>
-                    ctx.agentLibrary match
-                      case Some(lib) =>
-                        lib.get(agentName).map {
-                          case Some(targetDef) if targetDef.category == "standalone" =>
-                            Right((targetDef, Nil)) // no fork for cross-agent
-                          case Some(_) =>
-                            Left(ToolError(s"'$agentName' is not a standalone agent"))
-                          case None =>
-                            Left(ToolError(s"Agent '$agentName' not found"))
+              // Resolve the target agent def. #28: an explicit standalone target
+              // is mandatory; the identity checks ban delegating to 'Nebula'
+              // (the root exists exactly once — its def defaults to category
+              // "standalone", so the category check alone cannot catch it) and
+              // to the caller itself (self-clone via the back door). Done
+              // before the ActorSystem check so that invalid targets are
+              // reported even without a live actor system.
+              val resolveAgent: IO[Either[ToolError, AgentDef]] =
+                ctx.agentLibrary match
+                  case Some(lib) =>
+                    lib.get(targetAgentName.get).flatMap {
+                      case Some(targetDef) if targetDef.category != "standalone" =>
+                        standaloneCatalog(ctx).map { catalog =>
+                          Left(ToolError(s"'${targetAgentName.get}' is not a standalone agent (team agents are reached via Mail).$catalog"))
                         }
+                      case Some(targetDef) if targetDef.name == "Nebula" =>
+                        standaloneCatalog(ctx).map { catalog =>
+                          Left(ToolError(s"Cannot Delegate to 'Nebula' — the root orchestrator exists exactly once and must never be spawned (issue #28).$catalog"))
+                        }
+                      case Some(targetDef) if ctx.agentDef.exists(_.name == targetDef.name) =>
+                        standaloneCatalog(ctx).map { catalog =>
+                          Left(ToolError(s"Cannot Delegate to '${targetDef.name}' — that is the calling agent itself; self-clone is banned (issue #28).$catalog"))
+                        }
+                      case Some(targetDef) => IO.pure(Right(targetDef))
                       case None =>
-                        IO.pure(Left(ToolError("No agent library available")))
+                        standaloneCatalog(ctx).map { catalog =>
+                          Left(ToolError(s"Agent '${targetAgentName.get}' not found.$catalog"))
+                        }
+                    }
                   case None =>
-                    ctx.agentDef match
-                      case Some(parentAgentDef) =>
-                        IO.pure(Right((parentAgentDef, if fork then ctx.messages else Nil)))
-                      case None =>
-                        IO.pure(Left(ToolError("No agent definition available")))
+                    IO.pure(Left(ToolError("No agent library available")))
 
               resolveAgent.flatMap {
                 case Left(err) => IO.pure(Left(err))
-                case Right((agentDef, initialMessages)) =>
+                case Right(agentDef) =>
                   // #291: explicit preset param overrides the target's own
                   // preset/model — resolve before spawning so the child's LLM
                   // requests run on the requested provider chain. Missing
@@ -246,14 +282,11 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
                     case Right(effectiveDef) =>
                       spawnDelegate(
                         effectiveDef,
-                        initialMessages,
                         prompt,
                         description,
                         taskDescription,
                         lifecycle,
                         attachments,
-                        fork,
-                        targetAgentName,
                         ctx
                       )
               }
@@ -264,29 +297,16 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
   /** Shared spawn entry for background and persistent modes (after preset resolution). */
   private def spawnDelegate(
     agentDef: AgentDef,
-    initialMessages: List[Message],
     prompt: String,
     description: String,
     taskDescription: String,
     lifecycle: String,
     attachments: List[ContentBlock],
-    fork: Boolean,
-    targetAgentName: Option[String],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     (ctx.actorSystem, ctx.sharedResources) match
       case (Some(system), Some(resources)) =>
         val agentName = agentDef.name
-        val adjustedPrompt =
-          if fork && targetAgentName.isEmpty then
-            s"""<system-reminder>
-You are a sub-agent working on a delegated task. Your parent agent has forked this conversation to give you background context.
-
-Focus ONLY on the specific task described below. Do not work on other topics from the conversation history — those are your parent's responsibilities.
-</system-reminder>
-
-$prompt"""
-          else prompt
 
         // Query parent session's safety mode so sub-agent inherits it
         val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
@@ -306,12 +326,11 @@ $prompt"""
             if lifecycle == "persistent" then
               spawnPersistent(
                 agentDef = agentDef,
-                prompt = adjustedPrompt,
+                prompt = prompt,
                 attachments = attachments,
                 description = description,
                 taskDescription = taskDescription,
                 agentName = agentName,
-                initialMessages = initialMessages,
                 system = system,
                 resources = resources,
                 parentDepth = ctx.depth,
@@ -325,12 +344,10 @@ $prompt"""
             else
               spawnBackground(
                 agentDef = agentDef,
-                prompt = adjustedPrompt,
+                prompt = prompt,
                 attachments = attachments,
                 description = description,
                 agentName = agentName,
-                isSelfClone = targetAgentName.isEmpty,
-                initialMessages = initialMessages,
                 system = system,
                 resources = resources,
                 parentDepth = ctx.depth,
@@ -357,8 +374,6 @@ $prompt"""
     attachments: List[ContentBlock],
     description: String,
     agentName: String,
-    isSelfClone: Boolean = false,
-    initialMessages: List[Message],
     system: ActorSystem,
     resources: SharedResources,
     parentDepth: Int,
@@ -384,7 +399,7 @@ $prompt"""
           parentRef = parentRef,
           sessionId = Some(subagentId),
           sessionName = Some(description),
-          initialMessages = initialMessages,
+          initialMessages = Nil, // #28: clean context — cross-agent spawn only
           readTracker = Some(readTracker),
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
@@ -409,7 +424,7 @@ $prompt"""
                 parentRef = parentRef,
                 sessionId = Some(subagentId),
                 sessionName = Some(description),
-                initialMessages = if recoveredMessages.nonEmpty then recoveredMessages else initialMessages,
+                initialMessages = recoveredMessages,
                 contextWindow = resources.contextWindow,
                 projectRoot = Some(projectRoot),
                 safetyMode = safetyMode,
@@ -475,7 +490,7 @@ $prompt"""
         blocks = ImageInject.messageBlocks(prompt, attachments)
       )
     yield Right(
-      s"""Sub-agent '$agentName'${if isSelfClone then " (self-clone of you)" else ""} started in background for: $description.
+      s"""Sub-agent '$agentName' started in background for: $description.
 You will be notified when it completes via a system message.
 Do NOT duplicate this agent's work — avoid working with the same files or topics it is using. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response."""
     )
@@ -491,7 +506,6 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
     description: String,
     taskDescription: String,
     agentName: String,
-    initialMessages: List[Message],
     system: ActorSystem,
     resources: SharedResources,
     parentDepth: Int,
@@ -517,7 +531,7 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
           parentRef = parentRef,
           sessionId = Some(subagentId),
           sessionName = Some(description),
-          initialMessages = initialMessages,
+          initialMessages = Nil, // #28: clean context — cross-agent spawn only
           readTracker = Some(readTracker),
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,

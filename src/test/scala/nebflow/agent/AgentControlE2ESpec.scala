@@ -75,9 +75,11 @@ class AgentControlE2ESpec extends CatsEffectSuite:
             StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
               id = "tc-delegate-1",
               name = "Delegate",
+              // #28: agent 参数必填——self-clone 已封禁，显式指向 seed 的 Worker
               input = JsonObject(
                 "prompt" -> "work on the background item".asJson,
-                "description" -> s"e2e-$mode target".asJson
+                "description" -> s"e2e-$mode target".asJson,
+                "agent" -> "Worker".asJson
               )
             )),
             StreamChunk.Done(None, None)
@@ -191,12 +193,25 @@ class AgentControlE2ESpec extends CatsEffectSuite:
       """{"name":"Nebula","displayName":"Nebula","description":"e2e root","tools":["Read","Delegate","AgentControl"]}"""
     )
 
+  /**
+   * #28：Delegate 必须显式指定 standalone 目标（self-clone 已封禁）。
+   * Worker 是子代理 def——restart 模式下 child 会发起 Read toolcall，
+   * tools 必须含 Read。category 缺省即 "standalone"。
+   */
+  private def seedWorker(tmp: os.Path): Unit =
+    val dir = tmp / "agents" / "Worker"
+    os.makeDir.all(dir)
+    os.write.over(dir / "agent.json",
+      """{"name":"Worker","displayName":"Worker","description":"e2e delegate target","tools":["Read"]}"""
+    )
+
   // ── C1: cancel 全链路 ──────────────────────────────────────
 
   test("C1: cancel — list→cancel→parent notified (barrier released)→registry cleaned→task cancelled") {
     val system = ActorSystem("ac-e2e-cancel")
     val tmp = os.temp.dir()
     seedNebula(tmp)
+    seedWorker(tmp)
     val prevRoot = PathUtil.dataRoot
     val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
     nebflow.core.LlmLogWriter.setEnabled(false)
@@ -270,6 +285,7 @@ class AgentControlE2ESpec extends CatsEffectSuite:
     val system = ActorSystem("ac-e2e-restart")
     val tmp = os.temp.dir()
     seedNebula(tmp)
+    seedWorker(tmp)
     val prevRoot = PathUtil.dataRoot
     val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
     nebflow.core.LlmLogWriter.setEnabled(false)
