@@ -317,6 +317,17 @@ private[agent] trait AgentCore:
           voiceMuted <- resources.voiceMutedRef.get
           voiceEnabled = freshDef.voiceEnabled && !voiceMuted
           allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker)
+          // #16 observability: one log line per LLM call when MCP tools are
+          // injected — names the servers explicitly so phantom-tool suspicion
+          // can be settled by grepping the log instead of reconstructing
+          // requests. Zero-MCP agents stay silent (no noise).
+          mcpInjected = allowedTools.filter(_.startsWith("mcp__"))
+          _ = if mcpInjected.nonEmpty then
+            val servers = mcpInjected.map(_.split("__").apply(1)).toList.sorted
+            NebflowLogger.forName("nebflow.agent.mcp").info(
+              s"injecting ${mcpInjected.size} MCP tools from servers: ${servers.mkString(", ")} " +
+                s"(agent=${freshDef.name}, session=${stateForLlm.sessionId.getOrElse("-")})"
+            )
           devInfo = deviceInfoBlock
           sessionsText = formatAgentSessions(stateForLlm.agentSessions)
           // Cache v2: the task list is fetched every turn but NO LONGER injected
