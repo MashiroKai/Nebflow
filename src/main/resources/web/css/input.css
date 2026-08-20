@@ -121,24 +121,33 @@
   height: 13px;
   flex-shrink: 0;
 }
+.att-taskref-num {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
 .att-taskref-subject {
   font-weight: 500;
-  max-width: 140px;
+  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;                    /* allow shrink → ellipsis on narrow view */
   flex-shrink: 1;
 }
-.att-taskref-meta,
-.att-taskref-output {
+.att-taskref-opinion {
   color: var(--color-text-muted);
-  max-width: 160px;
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;                    /* allow shrink → ellipsis on narrow view */
   flex-shrink: 1;
+  border-left: 1px solid rgb(var(--sapphire) / 0.2);
+  padding-left: 6px;
+}
+.att-taskref-opinion[hidden] {
+  display: none;
 }
 @media (prefers-color-scheme: dark) {
   .att-taskref { background: rgb(var(--sapphire) / 0.10); }

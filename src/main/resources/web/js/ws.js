@@ -416,7 +416,16 @@ export function connect() {
       if (!view && !msg.sessionId && !GLOBAL_MSG_TYPES.has(msg.type)) {
         view = chatViews.primary || null;
       }
-      setActiveView(view || null);
+      // Global messages (serverConfig, sessionList, configData…) are app-wide
+      // and carry no sessionId — they must NOT null the current view. Before
+      // this guard, every serverConfig broadcast called setActiveView(null),
+      // tearing down the active window after any config save (STT/freeze
+      // echo). Keep the pre-message view for them.
+      if (msg.sessionId || !GLOBAL_MSG_TYPES.has(msg.type)) {
+        setActiveView(view || null);
+      } else {
+        setActiveView(savedView);
+      }
 
       // ── Background-agent popup: intercept events with nodeSessionId ─────
       // Delegate sub-agent events carry nodeSessionId (injected by DelegateTool's

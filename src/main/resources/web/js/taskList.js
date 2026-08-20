@@ -325,19 +325,18 @@ function buildRow(task, sessionId) {
 // #attachment-preview (reusing the file-attachment mechanism, C18); sending
 // the message is what actually returns the task. Snapshot taken at click
 // time; the backend validates against authoritative state on send (§5.1).
+// B (用户 2026-08-20 打回): 引用块精简——chip 只带任务号+标题（+实时意见预览），
+// 载荷只带 taskId/sessionId/subject；描述/产出不进引用（agent 凭 taskId
+// 定位，记忆里有任务上下文；意见 = 发送时输入框内容，§5.4 后端落 notes）。
 function requestReturn(task, row) {
   if (!state.connected) return;                    // WS down → disabled (§4)
   const sessionId = row.dataset.sessionId || state.activeSessionId;
   if (!sessionId || !activeView || !Array.isArray(activeView.pendingAttachments)) return;
-  const notes = Array.isArray(task.notes) ? task.notes : [];
-  const lastNote = notes.length > 0 ? notes[notes.length - 1] : null;
   activeView.pendingAttachments.push({
     type: 'taskRef',
     taskId: task.id,
     sessionId,
-    subject: task.subject || '',
-    description: task.description || '',
-    output: (lastNote && lastNote.content) || ''   // agent's outcome note
+    subject: task.subject || ''
   });
   import('./chat.js').then(({ renderAttachmentPreview }) => {
     renderAttachmentPreview(activeView);

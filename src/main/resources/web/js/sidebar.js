@@ -322,12 +322,21 @@ function buildSegmentRowHtml(s, i) {
 }
 
 /**
- * STT (speech-to-text) settings block — endpoint/model/apiKey + save/clear.
+ * STT (speech-to-text) settings block — collapsed "advanced" panel (user
+ * ruling 2026-08-20: the free browser path is the default, STT is advanced).
  * Echoes state.stt (serverConfig). The apiKey is NEVER echoed back (backend
  * contract: serverConfig.stt = {sttConfigured, endpoint?, model?} only), so
- * the password input starts empty on every render — saving sends exactly what
- * is typed; all-empty = clear config (back to the free browser path).
+ * the password input starts empty on every render — a "已配置" badge +
+ * masked placeholder carry the configured state instead. Saving sends exactly
+ * what is typed (empty apiKey = omit the field, keep the stored key); the
+ * clear button sends all-empty = clear config (back to the free browser path).
  */
+
+/** Session-memory expand state: reopening settings within the same session
+ *  keeps the panel open; a fresh session starts collapsed (advanced option —
+ *  not persisted to storage on purpose). */
+let sttAdvanceExpanded = false;
+
 function renderSttSection() {
   const stt = state.stt && typeof state.stt === 'object' ? state.stt : {};
   const configured = !!stt.sttConfigured;
@@ -337,21 +346,29 @@ function renderSttSection() {
     ? t('settings.sttConfiguredStatus', { endpoint: escapeHtml(endpoint), model: escapeHtml(model) })
     : t('settings.sttUnconfiguredStatus');
   return `
-    <div class="settings-row">
-      <span class="settings-label">${t('settings.sttTitle')}</span>
+    <div class="settings-row stt-advance-toggle-row">
+      <button type="button" class="settings-collapse-toggle" id="stt-advance-toggle"
+              aria-expanded="${sttAdvanceExpanded}" aria-controls="stt-advance-body">
+        <span class="settings-label">${t('settings.sttAdvanceTitle')}</span>
+        <span class="settings-collapse-chevron" aria-hidden="true"></span>
+      </button>
       <span class="cfg-hint stt-status" id="stt-status-hint">${status}</span>
     </div>
-    <div class="cfg-form-group" id="stt-form-group">
-      <label class="cfg-label" for="stt-endpoint">${t('settings.sttEndpoint')}</label>
-      <input class="cfg-input" id="stt-endpoint" type="text" value="${escapeHtml(endpoint)}" placeholder="https://api.example.com/v1/audio/transcriptions" autocomplete="off" spellcheck="false">
-      <label class="cfg-label" for="stt-model">${t('settings.sttModel')}</label>
-      <input class="cfg-input" id="stt-model" type="text" value="${escapeHtml(model)}" placeholder="${t('settings.sttModelPlaceholder')}" autocomplete="off" spellcheck="false">
-      <label class="cfg-label" for="stt-apikey">${t('settings.sttApiKey')}</label>
-      <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t('settings.sttApiKeyPlaceholder')}" autocomplete="off">
-      <div class="cfg-hint">${t('settings.sttHint')}</div>
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="cfg-btn cfg-btn-primary" id="btn-save-stt">${t('settings.sttSave')}</button>
-        <button class="cfg-btn" id="btn-clear-stt">${t('settings.sttClear')}</button>
+    <div class="settings-collapse-body" id="stt-advance-body" ${sttAdvanceExpanded ? '' : 'hidden'}>
+      <div class="cfg-form-group">
+        <label class="cfg-label" for="stt-endpoint">${t('settings.sttEndpoint')}</label>
+        <input class="cfg-input" id="stt-endpoint" type="text" value="${escapeHtml(endpoint)}" placeholder="https://api.example.com/v1/audio/transcriptions" autocomplete="off" spellcheck="false">
+        <label class="cfg-label" for="stt-model">${t('settings.sttModel')}</label>
+        <input class="cfg-input" id="stt-model" type="text" value="${escapeHtml(model)}" placeholder="${t('settings.sttModelPlaceholder')}" autocomplete="off" spellcheck="false">
+        <label class="cfg-label" for="stt-apikey">${t('settings.sttApiKey')}
+          ${configured ? `<span class="stt-key-configured">${t('settings.sttKeyConfigured')}</span>` : ''}
+        </label>
+        <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t(configured ? 'settings.sttApiKeyConfiguredPlaceholder' : 'settings.sttApiKeyPlaceholder')}" autocomplete="off">
+        <div class="cfg-hint">${t('settings.sttHint')}</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="cfg-btn cfg-btn-primary" id="btn-save-stt">${t('settings.sttSave')}</button>
+          <button class="cfg-btn" id="btn-clear-stt">${t('settings.sttClear')}</button>
+        </div>
       </div>
     </div>`;
 }
@@ -938,20 +955,36 @@ function bindSettingsEvents(content, cfg) {
     list.querySelector(`[data-seg-index="${idx}"] [data-role="start"]`)?.focus();
   });
 
-  // ── STT config (#295) — save sends what's typed; all-empty = clear (back to
-  // the free browser path). The apiKey input is never pre-filled (server never
-  // echoes it) — leaving it blank while changing endpoint/model sends an empty
-  // key; the backend decides keep-vs-clear semantics (联调 item).
+  // ── STT config (#295 + A1/A2) — save sends what's typed; all-empty = clear
+  // (back to the free browser path). The apiKey input is never pre-filled
+  // (server never echoes it) — the "已配置" badge + masked placeholder carry
+  // the configured state; an EMPTY key omits the field from the payload so the
+  // backend merge keeps the stored key (A2: an empty string would REPLACE
+  // stt-config.json without the key and drop the service to unconfigured).
   function sendSttConfig(clear) {
     const endpoint = clear ? '' : (document.getElementById('stt-endpoint')?.value.trim() || '');
     const model = clear ? '' : (document.getElementById('stt-model')?.value.trim() || '');
     const apiKey = clear ? '' : (document.getElementById('stt-apikey')?.value.trim() || '');
     const allEmpty = !endpoint && !model && !apiKey;
-    sendWs({ type: 'setSttConfig', sttConfig: { endpoint, apiKey, model } });
+    // Clear = explicit all-empty (three keys, backend deletes the config file);
+    // normal save omits an empty apiKey so the backend merge keeps the stored
+    // key — never send an empty string on a partial update.
+    const sttConfig = clear
+      ? { endpoint: '', apiKey: '', model: '' }
+      : { endpoint, model, ...(apiKey ? { apiKey } : {}) };
+    sendWs({ type: 'setSttConfig', sttConfig });
     window.__showToast?.(t(allEmpty ? 'settings.sttCleared' : 'settings.sttSaved'), 'success');
   }
   document.getElementById('btn-save-stt')?.addEventListener('click', () => sendSttConfig(false));
   document.getElementById('btn-clear-stt')?.addEventListener('click', () => sendSttConfig(true));
+  // A1: collapsed advanced panel — expand/collapse (session-memory state).
+  document.getElementById('stt-advance-toggle')?.addEventListener('click', () => {
+    sttAdvanceExpanded = !sttAdvanceExpanded;
+    const body = document.getElementById('stt-advance-body');
+    const toggle = document.getElementById('stt-advance-toggle');
+    if (body) body.hidden = !sttAdvanceExpanded;
+    if (toggle) toggle.setAttribute('aria-expanded', String(sttAdvanceExpanded));
+  });
 
   // Language selector
   document.getElementById('cfg-language')?.addEventListener('change', function() {
