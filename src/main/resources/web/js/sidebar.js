@@ -60,6 +60,7 @@ export function openSettingsPanel() {
 /** Close the Settings modal and stop its periodic NebLink refresh. */
 export function closeSettingsPanel() {
   document.getElementById('settings-overlay')?.classList.remove('on');
+  scheduleDraft = null;   // #334: closing the panel discards unsaved edits
   if (window._neblinkRefreshTimer) {
     clearInterval(window._neblinkRefreshTimer);
     window._neblinkRefreshTimer = null;
@@ -275,17 +276,50 @@ export function selectAgent(agentName) {
 // ---------- Settings Panel ----------
 /**
  * Freeze-time (work-schedule) settings block — the toggle row + the segment
- * editor. Echoes state.workSchedule (serverConfig). F2: first enable with no
- * saved segments defaults to one 09:00-12:00 segment.
+ * editor. Renders `scheduleDraft ?? state.workSchedule` — the local edit draft
+ * takes precedence over the server echo while the user is editing. F2: first
+ * enable with no saved segments defaults to one 09:00-12:00 segment.
  *
  * SEMANTICS (user ruling 2026-08-19 23:16): the config is the FREEZE window
  * (non-work hours) — a BLACKLIST. Agents park INSIDE these intervals and work
  * outside them. Segments may cross midnight (start > end, e.g. 23:00-08:00 =
  * frozen overnight); start == end is rejected (zero-length freeze window).
+ *
+ * EXPLICIT SAVE (user ruling 2026-08-20 #334): while the user is editing, every
+ * interaction (toggle / add / remove / time input) only mutates this local
+ * draft — NOTHING is sent to the server until the explicit Save button. The
+ * freeze engine reads state.workSchedule (server truth), so an editing
+ * mid-state can never trigger a freeze. The draft survives renderSettings()
+ * re-runs (serverConfig echoes for unrelated settings would otherwise wipe
+ * in-progress edits); closing the panel discards it (same as the STT config:
+ * unsaved typing does not persist). null = no edits in flight → render the
+ * server state.
  */
+let scheduleDraft = null;
+
+/** Snapshot the current editor state into the draft (local only, no wire). */
+function markScheduleDirty() {
+  const enabled = document.getElementById('toggle-schedule')?.classList.contains('on') ?? false;
+  scheduleDraft = { enabled, segments: collectSegments() };
+  updateScheduleActionRow();
+}
+
+/** Show/hide the save/reset action row + "unsaved edits" hint. The action row
+ *  stays visible whenever a draft exists — even when the schedule was toggled
+ *  OFF while dirty, so the user can still commit (Save) or abandon (Reset) the
+ *  disable. */
+function updateScheduleActionRow() {
+  const dirty = scheduleDraft !== null;
+  const row = document.getElementById('schedule-actions');
+  const hint = document.getElementById('schedule-dirty-hint');
+  if (row) row.style.display = dirty ? 'flex' : 'none';
+  if (hint) hint.style.display = dirty ? 'block' : 'none';
+}
+
 function renderWorkScheduleSection() {
-  const ws = state.workSchedule && typeof state.workSchedule === 'object'
+  const serverWs = state.workSchedule && typeof state.workSchedule === 'object'
     ? state.workSchedule : { enabled: false, segments: [] };
+  const ws = scheduleDraft ?? serverWs;
   const enabled = !!ws.enabled;
   const segs = Array.isArray(ws.segments) ? ws.segments : [];
   const segRows = segs.map((s, i) => buildSegmentRowHtml(s, i)).join('');
@@ -298,6 +332,11 @@ function renderWorkScheduleSection() {
       <div class="segment-list" id="segment-list">${segRows}</div>
       <button class="cfg-btn cfg-btn-add" id="btn-add-segment">${t('settings.addSegment')}</button>
       <div class="cfg-hint">${t('settings.workScheduleOnHint')}</div>
+      <div class="cfg-hint" id="schedule-dirty-hint" style="display:${scheduleDraft !== null ? 'block' : 'none'};margin-top:6px;color:var(--color-text-muted)">${t('settings.scheduleDirtyHint')}</div>
+      <div style="display:${scheduleDraft !== null ? 'flex' : 'none'};gap:8px;margin-top:8px" id="schedule-actions">
+        <button class="cfg-btn cfg-btn-primary" id="btn-save-schedule">${t('settings.scheduleSave')}</button>
+        <button class="cfg-btn" id="btn-reset-schedule">${t('settings.scheduleReset')}</button>
+      </div>
     </div>
     <div class="cfg-hint" id="schedule-off-hint" style="display:${enabled ? 'none' : 'block'};margin-top:-2px">${t('settings.workScheduleOffHint')}</div>`;
 }
@@ -432,16 +471,19 @@ function updateSegmentRowHint(row) {
 /**
  * Validate + persist. Local validation only guards the wire; the backend
  * re-validates (fail-safe → disabled, configUpdateFailed on bad payload).
+ * Returns true when the frame was sent, false on validation failure — the
+ * caller keeps the draft on failure so the user can fix and retry.
  */
 function saveWorkSchedule(enabled, segs, opts) {
   if (enabled && (!Array.isArray(segs) || segs.length === 0)) {
     window.__showToast?.(t('settings.scheduleEmpty'), 'error');
-    return;
+    return false;
   }
   const err = validateSegments(segs);
-  if (err) { window.__showToast?.(err, 'error'); return; }
+  if (err) { window.__showToast?.(err, 'error'); return false; }
   sendWs({ type: 'setWorkSchedule', workSchedule: { enabled, segments: segs } });
   if (opts && opts.toast) window.__showToast?.(t('settings.scheduleSaved'), 'success');
+  return true;
 }
 
 export function renderSettings() {
@@ -933,6 +975,7 @@ function bindSettingsEvents(content, cfg) {
   });
 
   // ── Work schedule (freeze) — spec §3.2 sidebar.js ──────────────────────
+  // #334: all edits go to the local draft only; Save commits to the server.
   document.getElementById('toggle-schedule')?.addEventListener('click', function() {
     const enabled = this.classList.toggle('on');
     const editor = document.getElementById('schedule-editor');
@@ -941,10 +984,11 @@ function bindSettingsEvents(content, cfg) {
     if (offHint) offHint.style.display = enabled ? 'none' : 'block';
     let segs = collectSegments();
     if (enabled && segs.length === 0) {
-      segs = [{ start: '09:00', end: '12:00' }];   // F2: default one segment
+      segs = [{ start: '09:00', end: '12:00' }];   // F2: default one segment (draft)
       renderScheduleEditorRows(segs);
     }
-    saveWorkSchedule(enabled, segs, { toast: true });
+    scheduleDraft = { enabled, segments: segs };
+    updateScheduleActionRow();
   });
 
   document.getElementById('btn-add-segment')?.addEventListener('click', () => {
@@ -953,6 +997,21 @@ function bindSettingsEvents(content, cfg) {
     const idx = list.children.length;
     list.insertAdjacentHTML('beforeend', buildSegmentRowHtml({ start: '', end: '' }, idx));
     list.querySelector(`[data-seg-index="${idx}"] [data-role="start"]`)?.focus();
+    markScheduleDirty();
+  });
+
+  // Explicit commit / abandon — #334: nothing reaches the server until Save.
+  document.getElementById('btn-save-schedule')?.addEventListener('click', () => {
+    const enabled = document.getElementById('toggle-schedule')?.classList.contains('on') ?? false;
+    const segs = collectSegments();
+    if (saveWorkSchedule(enabled, segs, { toast: true })) {
+      scheduleDraft = null;      // committed → back to server-state rendering
+      updateScheduleActionRow(); // hide action row; the serverConfig echo re-renders
+    }
+  });
+  document.getElementById('btn-reset-schedule')?.addEventListener('click', () => {
+    scheduleDraft = null;        // abandon edits → render server truth again
+    renderSettings();
   });
 
   // ── STT config (#295 + A1/A2) — save sends what's typed; all-empty = clear
@@ -1121,18 +1180,15 @@ document.addEventListener('click', (e) => {
   settings.querySelectorAll('#segment-list .segment-row .seg-label').forEach((el, i) => {
     el.textContent = t('settings.segmentLabel', { n: i + 1 });
   });
-  const enabled = document.getElementById('toggle-schedule')?.classList.contains('on');
-  if (enabled) saveWorkSchedule(true, collectSegments());
+  markScheduleDirty();   // #334: local draft only — Save commits
 });
 
 document.addEventListener('change', (e) => {
   const settings = document.getElementById('settings-content');
   if (!settings || !(e.target instanceof Node) || !settings.contains(e.target)) return;
   if (!e.target.classList || !e.target.classList.contains('time-input')) return;
-  const enabled = document.getElementById('toggle-schedule')?.classList.contains('on');
-  if (!enabled) return;
   updateSegmentRowHint(e.target.closest('.segment-row'));
-  saveWorkSchedule(true, collectSegments());
+  markScheduleDirty();   // #334: local draft only — Save commits
 });
 
 function flushConfigToServer() {
