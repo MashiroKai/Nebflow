@@ -129,13 +129,26 @@ class UsageRecordStore(baseDir: os.Path):
    *
    * dim: "provider" | "model" | "agent" | "hour" | "day" | absent (totals only)
    * from/to: epoch millis, inclusive lower / exclusive upper. Both optional.
+   * provider/model/agent: optional exact-match filters applied BEFORE grouping
+   * (orthogonal to dim — e.g. dim=agent + provider=107 groups by agent within
+   * provider 107's records only). Absent = no filtering on that field.
    */
-  def aggregate(dim: Option[String], from: Option[Long], to: Option[Long]): IO[UsageAggregate] =
+  def aggregate(
+    dim: Option[String],
+    from: Option[Long],
+    to: Option[Long],
+    provider: Option[String] = None,
+    model: Option[String] = None,
+    agent: Option[String] = None
+  ): IO[UsageAggregate] =
     loadAll().map { records =>
       val filtered = records.filter { r =>
         val okFrom = from.forall(r.timestamp >= _)
         val okTo = to.forall(r.timestamp < _)
-        okFrom && okTo
+        val okProvider = provider.forall(_ == r.provider)
+        val okModel = model.forall(_ == r.model)
+        val okAgent = agent.forall(_ == r.agent)
+        okFrom && okTo && okProvider && okModel && okAgent
       }
       val dimKey: LlmUsageRecord => String = dim.map(_.toLowerCase) match
         case Some("provider") => r => r.provider

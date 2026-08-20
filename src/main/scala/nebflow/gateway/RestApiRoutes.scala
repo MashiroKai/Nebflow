@@ -58,13 +58,21 @@ class RestApiRoutes(
     // telemetry with dimension slicing.
     //   dim=provider|model|agent|hour|day (absent = totals only)
     //   from/to = epoch millis, inclusive lower / exclusive upper (both optional)
+    //   provider/model/agent = exact-match filters, applied before grouping
+    //     (dashboard D1: orthogonal to dim — all absent = unfiltered, and an
+    //     empty value is treated as absent for backward compatibility)
     case req @ GET -> Root / "usage" / "aggregate" =>
       withAuth(req) {
         val params = req.uri.multiParams
         val dim = params.get("dim").flatMap(_.headOption)
         val from = params.get("from").flatMap(_.headOption).flatMap(_.toLongOption)
         val to = params.get("to").flatMap(_.headOption).flatMap(_.toLongOption)
-        sharedResources.usageRecordStore.aggregate(dim, from, to).flatMap(agg => Ok(agg.asJson))
+        val provider = params.get("provider").flatMap(_.headOption).filter(_.nonEmpty)
+        val model = params.get("model").flatMap(_.headOption).filter(_.nonEmpty)
+        val agent = params.get("agent").flatMap(_.headOption).filter(_.nonEmpty)
+        sharedResources.usageRecordStore
+          .aggregate(dim, from, to, provider, model, agent)
+          .flatMap(agg => Ok(agg.asJson))
       }
 
     // TTS 语音合成（无需 auth，内部调用）
