@@ -2,6 +2,7 @@ package nebflow.core.task
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
@@ -157,4 +158,46 @@ class TodoPanelBackendSpec extends CatsEffectSuite:
     yield
       assert(text.contains("[waiting-user]"), s"human task tagged; got:\n$text")
       assert(text.contains("[pending]"), "agent task still renders as pending")
+
+  // ── reminder refactor (2026-08-20 user ruling): summary rendering ────
+
+  test("renderForPrompt truncates subjects to ~30 chars and counts active in the header"):
+    for
+      _ <- reset()
+      sid = "render-trunc"
+      long = "这是一个非常非常长的任务标题需要被截断到三十个字符以内否则每轮reminder都会浪费token"
+      _ <- store.create(sid, TaskCreateInput(subject = long, description = "d"))
+      text <- store.renderForPrompt(sid)
+    yield
+      assert(text.contains("(1 active)"), s"header carries the active count: $text")
+      assert(!text.contains(long), s"full subject must not render (truncated): $text")
+      assert(text.contains(long.take(30) + "…"), s"truncated subject with ellipsis expected: $text")
+
+  test("renderForPrompt folds pending tasks beyond 8 into a count line"):
+    for
+      _ <- reset()
+      sid = "render-fold"
+      _ <- (1 to 12).toList.traverse(i =>
+        store.create(sid, TaskCreateInput(subject = s"task-$i", description = "d"))
+      )
+      text <- store.renderForPrompt(sid)
+    yield
+      assert(text.contains("(12 active)"), s"header counts all active: $text")
+      assert(!text.contains("task-12"), s"9th+ pending task must be folded: $text")
+      assert(text.contains("+4 more pending"), s"fold count line expected: $text")
+      assert(text.contains("task-8"), s"first 8 pending tasks render: $text")
+
+  test("renderForPrompt keeps in_progress tasks even past the pending fold"):
+    for
+      _ <- reset()
+      sid = "render-fold-progress"
+      ids <- (1 to 10).toList.traverse(i =>
+        store.create(sid, TaskCreateInput(subject = s"task-$i", description = "d"))
+      )
+      // task-9 and task-10 would be folded as pending; push task-9 in_progress
+      _ <- store.update(sid, ids(8), TaskUpdateInput(status = Some(TaskStatus.InProgress)))
+      text <- store.renderForPrompt(sid)
+    yield
+      assert(text.contains("[in_progress] task-9"), s"in_progress must never fold: $text")
+      assert(!text.contains("task-10"), s"plain pending past the fold still folds: $text")
 end TodoPanelBackendSpec

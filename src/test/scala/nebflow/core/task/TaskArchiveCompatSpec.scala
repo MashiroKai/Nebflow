@@ -191,7 +191,10 @@ class TaskArchiveCompatSpec extends FunSuite:
 
   // ===== R5 (red line): renderForPrompt byte-identical =====
   // v2 note: the header sentence changed with the five-state lifecycle (C15 —
-  // needs_confirmation is the completion lane); the body rendering is unchanged.
+  // needs_confirmation is the completion lane).
+  // Reminder refactor (2026-08-20): instruction block migrated to the cached
+  // systemStable "Task List Protocol" section (D6); header carries the active
+  // count. Line rendering itself unchanged.
 
   test("R5: renderForPrompt output is byte-identical to the frozen baseline") {
     val sid = "sess-r5"
@@ -205,17 +208,14 @@ class TaskArchiveCompatSpec extends FunSuite:
     os.write(dir / "3.json", t3.asJson.noSpaces)
     val out = FileTaskStore.renderForPrompt(sid).unsafeRunSync()
     val expected =
-      "## Current Tasks\n\n" +
-        "Your task list is below. Work through tasks in order. When a task is fully done, " +
-        "mark it needs_confirmation (NOT completed) and attach a note with the outcome — " +
-        "completed is reserved for the user's confirmation. Tasks marked [needs_confirmation] " +
-        "are DONE and awaiting user confirmation: do NOT work on them again; if the user " +
-        "returns one with feedback, a [打回任务] block tells you what to revise.\n\n" +
+      "## Current Tasks (2 active)\n" +
         "#2 [in_progress] subject2 — activeForm2\n" +
         "#3 [pending] subject3\n"
     assertEquals(out, expected)
     // completed task's subject must not leak
     assert(!out.contains("subject1"))
+    // the instruction block moved to systemStable (PromptSections.tasksGuideSection)
+    assert(!out.contains("Your task list is below"))
     // new fields never appear in the prompt render
     assert(!out.contains("completedAt") && !out.contains("notes") && !out.contains("events"))
   }
