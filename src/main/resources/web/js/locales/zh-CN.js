@@ -131,6 +131,8 @@ export default {
   'settings.ttlSave': '保存清理配置',
   'settings.ttlSaved': '清理配置已保存',
   'settings.ttlSaveFailed': '清理配置保存失败',
+  'settings.ttlInvalidInt': '{field}必须是整数',
+  'settings.ttlOutOfRange': '{field}需在 {min} – {max} 之间',
   'stt.timeout': '语音转写超时，请重试',
   'stt.micDenied': '麦克风权限被拒绝，请在浏览器地址栏授权后重试',
   'stt.micBusy': '麦克风被其他应用或页签占用（请关闭正在使用麦克风的应用后重试）',
