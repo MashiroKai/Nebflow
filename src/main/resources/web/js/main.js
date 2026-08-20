@@ -69,6 +69,7 @@ import { initDropbox } from './dropbox.js';
 import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
 import { formatLiveDuration } from './chat.js';
+import { collapseTurn, failTurn } from './turnGroup.js';
 import * as planMode from './planMode.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initLightbox } from './lightbox.js';
@@ -818,6 +819,17 @@ onMessage('done', (msg, view) => {
     activeView.stream.agentBubbles = {};
     activeView.stream.activeAgentId = null;
     clearStatus();
+    // #346: gather this turn's process rows and collapse immediately
+    // (synchronous, no linger). The summary freezes the phrase the duration
+    // badge just rendered; model/timestamp ride in the title tooltip.
+    const lastBadge = Array.from(activeView.dom.chat.querySelectorAll('.duration-badge')).pop();
+    collapseTurn(activeView, {
+      durationMs,
+      model: msg.model,
+      phrase: lastBadge?.querySelector('.duration-badge-text')?.textContent || '',
+      title: [msg.model, lastBadge?.querySelector('.duration-badge-time')?.textContent].filter(Boolean).join(' · '),
+      sessionId: sid,
+    });
   } else {
     markSessionUnread(msg.sessionId);
   }
@@ -883,6 +895,7 @@ onMessage('error', (msg, view) => {
     }
     finishThinking();
     finishAi();
+    failTurn(activeView); // #346: group but keep expanded for troubleshooting
     renderError(msg.message);
     clearStatus();
   } else {
@@ -911,6 +924,7 @@ onMessage('interrupted', (msg, view) => {
     }
     finishThinking();
     finishAi();
+    failTurn(activeView); // #346: interrupted turns stay expanded
     clearStatus();
   }
 });
@@ -927,6 +941,7 @@ onMessage('timeout', (msg, view) => {
   if (view) {
     finishThinking();
     finishAi();
+    failTurn(activeView); // #346: timed-out turns stay expanded
     renderTimeoutNotice();
     clearStatus();
   } else {
@@ -953,6 +968,7 @@ onMessage('maxTokens', (msg, view) => {
     }
     finishThinking();
     finishAi();
+    failTurn(activeView); // #346: truncated turns stay expanded
     renderError('Max tokens reached — response truncated');
     clearStatus();
   } else {

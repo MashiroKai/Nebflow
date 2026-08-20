@@ -8,7 +8,8 @@ import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
-import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow } from './chat.js';
+import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow, thoughtDurationLabel, bindCollapsibleToggle, chevronSvg } from './chat.js';
+import { buildTurnGroupsForHistory } from './turnGroup.js';
 
 // ---------- AI message badge (no duration) ----------
 // Builds a duration-badge pill with timestamp + copy button, matching
@@ -328,7 +329,11 @@ export function restoreFromStorage() {
         tBubble.className = 'bubble ai thinking-bubble thinking-done';
         const tLabel = document.createElement('div');
         tLabel.className = 'thinking-label collapsible';
-        tLabel.textContent = t('chat.thinkingLabel');
+        tLabel.appendChild(chevronSvg());
+        const tLabelText = document.createElement('span');
+        tLabelText.className = 'thinking-label-text';
+        tLabelText.textContent = t('chat.thought'); // #345: history has no segment timing → degraded label
+        tLabel.appendChild(tLabelText);
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         tContent.innerHTML = renderMarkdownWithMath(m.thinking);
@@ -342,11 +347,7 @@ export function restoreFromStorage() {
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
         chat.appendChild(tRow);
-        tLabel.onclick = () => {
-          const visible = tContent.style.display !== 'none';
-          tContent.style.display = visible ? 'none' : '';
-          tLabel.classList.toggle('expanded', !visible);
-        };
+        bindCollapsibleToggle(tLabel, () => tContent);
       }
       // Only render AI bubble if there's actual text content
       if (m.text) {
@@ -556,6 +557,7 @@ export function restoreFromStorage() {
       chat.appendChild(row);
     }
   });
+  buildTurnGroupsForHistory(chat); // #346 E4: rebuild turn groups from flat rows
   chat.scrollTop = chat.scrollHeight;
   if (activeView) activeView.stream.scrollSnapped = true;
   // Schedule deferred scrolls to catch async iframe height changes from card rendering.
@@ -651,7 +653,11 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         tBubble.className = 'bubble ai thinking-bubble thinking-done';
         const tLabel = document.createElement('div');
         tLabel.className = 'thinking-label collapsible';
-        tLabel.textContent = t('chat.thinkingLabel');
+        tLabel.appendChild(chevronSvg());
+        const tLabelText = document.createElement('span');
+        tLabelText.className = 'thinking-label-text';
+        tLabelText.textContent = t('chat.thought'); // #345: history has no segment timing → degraded label
+        tLabel.appendChild(tLabelText);
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         deferMd(tContent, m.thinking);
@@ -665,11 +671,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
         fragment.appendChild(tRow);
-        tLabel.onclick = () => {
-          const visible = tContent.style.display !== 'none';
-          tContent.style.display = visible ? 'none' : '';
-          tLabel.classList.toggle('expanded', !visible);
-        };
+        bindCollapsibleToggle(tLabel, () => tContent);
       }
       // Only render AI bubble if there's actual text content
       if (m.text) {
@@ -891,6 +893,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     }
   });
   chat.appendChild(fragment);
+  buildTurnGroupsForHistory(chat); // #346 E4: rebuild turn groups from flat rows
   // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
   // followed by deferred rAF (catches late layout changes from streaming state restoration, etc.).
   // Caller can set scrollToBottom=false (e.g. scroll-up pagination preserves position).
