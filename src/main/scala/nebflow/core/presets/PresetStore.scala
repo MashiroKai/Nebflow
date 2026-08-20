@@ -247,6 +247,26 @@ end PresetStore
 object PresetStore:
 
   /**
+   * Preset catalog rendered for tool parameter docs (2026-08-20, user-noticed
+   * gap: preset descriptions written in Settings were invisible to agents).
+   * Each line: "Name — description" (name only when the preset has no
+   * description). Read fresh so tool schemas pick up preset edits without
+   * restart — consumers (Delegate/SubTask inputSchema) are rebuilt per LLM
+   * call and the store reads the file on every load (small file, rare
+   * writes). Any read failure degrades to Nil (catalog simply omitted).
+   */
+  def catalogLines(): List[String] = catalogLines(new PresetStore())
+
+  /** DI variant for tests (temp config path). */
+  def catalogLines(store: PresetStore): List[String] =
+    scala.util.Try(store.load()).toOption
+      .map(_.presets.values.toList.sortBy(_.name).map { p =>
+        val note = p.description.trim
+        if note.isEmpty then p.name else s"${p.name} — $note"
+      })
+      .getOrElse(Nil)
+
+  /**
    * 种子链（D-a，#339）：**llm.model 迁移优先**（服务存量 nebflow.json），
    * 否则 **providers 推导**（首个含模型 provider 的首模型，单元素链）。
    * 冷启动（首配 provider、无 llm.model）自然走后者——与旧前端"首配只设
