@@ -14,6 +14,7 @@ import { sendWs, onMessage, setFlowStepInterceptor } from './ws.js';
 import { restoreFromBackendHistory } from './persistence.js';
 import state from './state.js';
 import { key } from './branding.js';
+import { t } from './i18n.js';
 
 // ── Per-agent state ───────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -146,7 +147,8 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--color-text-muted); opacity: 0.5; flex-shrink: 0;
 }
-.flow-agent-footer.running .fa-status-dot {
+.flow-agent-footer.running .fa-status-dot,
+.flow-agent-footer.responding .fa-status-dot {
   background: var(--color-primary, #07c160); opacity: 1;
   animation: fa-pulse 1.4s ease-in-out infinite;
 }
@@ -165,6 +167,21 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 .flow-agent-footer.frozen .fa-task {
   color: rgb(var(--sapphire));
+}
+/* #343 phase granularity: thinking = sapphire pulse, tool = amber pulse */
+.flow-agent-footer.thinking .fa-status-dot {
+  background: rgb(var(--sapphire)); opacity: 1;
+  animation: fa-pulse 1.4s ease-in-out infinite;
+}
+.flow-agent-footer.tool .fa-status-dot {
+  background: #d4a030; opacity: 1;
+  animation: fa-pulse 0.9s ease-in-out infinite;
+}
+.flow-agent-footer .fa-phase {
+  flex-shrink: 0;
+  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted);
+  margin-left: 2px;
 }
 @keyframes fa-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 .flow-agent-footer .fa-task {
@@ -562,6 +579,9 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
           <button class="icon-btn" id="flow-attach-btn" title="Attach file">
             <i data-lucide="paperclip"></i>
           </button>
+          <button class="icon-btn" id="flow-voice-btn" title="Voice input">
+            <i data-lucide="mic"></i>
+          </button>
           <div class="fa-input-wrap">
             <div id="flow-attachment-preview" class="attachment-preview"></div>
             <textarea id="flow-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
@@ -573,6 +593,7 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
       <div class="flow-agent-footer" id="flow-agent-footer">
         <span class="fa-status-dot"></span>
         <span class="fa-task">${esc(entry.meta.task || 'Session')}</span>
+        <span class="fa-phase" style="display:none"></span>
       </div>
     </div>
   `;
@@ -602,11 +623,12 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   v.dom.attPreview = popupOverlay.querySelector('#flow-attachment-preview');
   v.dom.slashDropdown = popupOverlay.querySelector('#flow-slash-dropdown');
   v.dom.queueBar = popupOverlay.querySelector('#flow-queue-bar');
-  // Voice elements — create dummy elements so initInput doesn't crash on null
-  v.dom.voiceBtn = document.createElement('button');
+  // Voice elements (#343): real mic button in the input bar — initInput binds
+  // push-and-hold dictation on it. Overlay/text stay inert dummies (initInput
+  // only touches voiceBtn + input).
+  v.dom.voiceBtn = popupOverlay.querySelector('#flow-voice-btn');
   v.dom.voiceOverlay = document.createElement('div');
   v.dom.voiceText = document.createElement('div');
-  v.dom.voiceBtn.style.display = 'none';
 
   // Disable input if no sessionId (can't route messages)
   if (!nodeSessionId) {
@@ -614,10 +636,17 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
     v.dom.input.placeholder = 'Agent not running — cannot send messages';
     v.dom.sendBtn.disabled = true;
     v.dom.attachBtn.disabled = true;
+    v.dom.voiceBtn.disabled = true;
     v.dom.sendBtn.style.opacity = '0.4';
     v.dom.attachBtn.style.opacity = '0.4';
-  } else if (!v._inputBound) {
-    // Bind input events (idempotent — only once per view)
+    v.dom.voiceBtn.style.opacity = '0.4';
+  } else {
+    // Bind input events on the FRESH elements. The popup DOM is rebuilt on
+    // every open, so per-element handlers MUST be re-bound each time — the
+    // old elements are detached and their handlers die with them. (BUG A: the
+    // one-shot _inputBound guard left a reopened popup's input with ZERO
+    // handlers — the user-visible "cannot type / cannot stop" in sub-agent
+    // popups.)
     v._inputBound = true;
     import('./input.js').then(({ initInput }) => {
       import('./chat.js').then(({ refreshSendButtonState }) => {
@@ -854,6 +883,24 @@ export function interceptFlowStep(msg) {
   } else if (msg.type === 'agentDone' || msg.type === 'agentEnd') {
     entry.meta.status = 'done';
     scheduleStepViewRemoval(msg.nodeSessionId);
+  } else if (msg.type === 'agentFrozen') {
+    entry.meta.status = 'frozen';
+    entry.meta.frozenResumeAt = msg.resumeAt || null;
+  } else if (msg.type === 'agentResumed') {
+    entry.meta.status = 'running';
+    entry.meta.frozenResumeAt = null;
+  } else if (msg.type === 'agentThinking') {
+    // Granular phase (#343): LLM reasoning in progress — set once, subsequent
+    // delta chunks no-op so the footer doesn't churn on every token.
+    if (entry.meta.status !== 'thinking') entry.meta.status = 'thinking';
+  } else if (msg.type === 'agentToolStart') {
+    entry.meta.status = 'tool';
+    entry.meta.toolLabel = msg.label || '';
+  } else if (msg.type === 'agentToolEnd') {
+    entry.meta.status = 'running';
+    entry.meta.toolLabel = '';
+  } else if (msg.type === 'agentTextDelta') {
+    if (entry.meta.status !== 'responding') entry.meta.status = 'responding';
   }
 
   // Set activeView so chat.js rendering functions target this view's container.
@@ -914,17 +961,37 @@ export function handleFlowAgentHistory(msg) {
 function updateFooterStatus(entry) {
   if (!entry.footerEl) return;
   const status = entry.meta.status || '';
-  entry.footerEl.classList.remove('running', 'done', 'failed');
+  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding');
   if (status) entry.footerEl.classList.add(status);
   const taskEl = entry.footerEl.querySelector('.fa-task');
   if (taskEl) {
-    const label = entry.meta.task
-      ? entry.meta.task
-      : status === 'running' ? 'Running…'
-      : status === 'done' ? 'Done'
-      : status === 'failed' ? 'Failed'
-      : 'Session';
-    taskEl.textContent = label;
+    if (status === 'frozen') {
+      // Frozen tile: "已冻结 · HH:mm 恢复" — resumeAt epoch → local HH:mm
+      const at = entry.meta.frozenResumeAt;
+      const clock = at ? (() => {
+        const d = new Date(at);
+        if (Number.isNaN(d.getTime())) return '';
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      })() : '';
+      taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
+    } else {
+      taskEl.textContent = entry.meta.task || 'Session';
+    }
+  }
+  // Phase text (#343): granular activity — thinking / tool / responding.
+  const phaseEl = entry.footerEl.querySelector('.fa-phase');
+  if (phaseEl) {
+    const phaseMap = {
+      running: 'Working…',
+      thinking: 'Thinking…',
+      responding: 'Responding…',
+      tool: entry.meta.toolLabel ? `Using tool: ${entry.meta.toolLabel}` : 'Running tool…',
+      done: 'Done',
+      failed: 'Failed',
+    };
+    const text = phaseMap[status] || '';
+    phaseEl.textContent = text;
+    phaseEl.style.display = text ? '' : 'none';
   }
   syncInputButtons(entry);
 }
