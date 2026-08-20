@@ -1523,6 +1523,8 @@
   margin-bottom: 6px;
   font-size: 12px;
   padding: 4px 12px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s,
+              box-shadow 0.15s, opacity 0.15s;
 }
 @media (prefers-reduced-motion: reduce) {
   .option-box.ob-fade-in,
@@ -1563,9 +1565,11 @@
   position: absolute;
   top: 6px;
   right: 6px;
-  font-size: 11px;
+  font-size: 12px;
   padding: 2px 8px;
   border-radius: 6px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s,
+              box-shadow 0.15s, opacity 0.15s;
 }
 /* Summary / error action rows (glass controls, §8.2 — save button keeps the
    translucent-green send-button accent). */
@@ -1573,6 +1577,10 @@
   display: flex;
   gap: 8px;
   margin-top: 10px;
+}
+.ob-actions button {
+  transition: background 0.15s, color 0.15s, border-color 0.15s,
+              box-shadow 0.15s, opacity 0.15s;
 }
 .glass-control.ob-primary {
   background: rgba(7, 193, 96, 0.42);
