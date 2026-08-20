@@ -9,6 +9,8 @@ import nebflow.llm.SendMessageParams
 import nebflow.shared.*
 import munit.CatsEffectSuite
 
+import scala.jdk.CollectionConverters.*
+
 class OpenAiAdapterSpec extends CatsEffectSuite:
 
   private val adapter = new OpenAiAdapter("https://api.example.com/v1", "test-key", null)
@@ -303,6 +305,95 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   test("hasReasoningContent: truly empty response (no content, no reasoning)") {
     val json = parse("""{"choices":[{"message":{"content":null},"finish_reason":"length"}]}""").toOption.get
     assert(!adapter.hasReasoningContent(json), "no reasoning field means empty response")
+  }
+
+  // ====== Streaming: qwen degenerate-fragment guard (2026-08-20 incident) ======
+  // Production evidence: DashScope compatible-mode occasionally emits tool-call
+  // fragments whose id AND name are literal empty strings while arguments stay
+  // valid. Before the guard these accumulated into ToolCall(name=""), which the
+  // agent's allowed-tool whitelist dropped as "Tool not available: <empty>" —
+  // every tool appeared broken and agents retried in a storm.
+
+  test("processOpenAiData: degenerate qwen start (id=\"\" and name=\"\"\") never creates a tool call") {
+    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](Map.empty)
+    val params = SendMessageParams(Nil, "qwen3.8-max")
+    // Exact production frame shape: empty id + empty name + valid arguments
+    val frag1 =
+      """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"{\"command\":\"echo test\",\"description\":\"probe\"}"}}]},"finish_reason":null}]}"""
+    // Continuation frames (id="", name absent) must not resurrect the call
+    val frag2 =
+      """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"arguments":""}}]},"finish_reason":null}]}"""
+    val finish = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
+
+    // Anti-regression nail for the dead-logging defect (qa 2026-08-20): the
+    // warn on degenerate fragments is the ONLY capture point for DashScope's
+    // server-side trigger (not reproducible locally) — pure chunk assertions
+    // cannot tell whether the log line was built-but-discarded. Attach a
+    // list-appender and require the WARN to actually fire.
+    val lbLogger =
+      org.slf4j.LoggerFactory.getLogger("nebflow.llm.openai").asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+
+    IO
+      .delay {
+        appender.start()
+        lbLogger.addAppender(appender)
+      }
+      .bracket { _ =>
+        for
+          c1 <- adapter.processOpenAiData(frag1, state, params)
+          c2 <- adapter.processOpenAiData(frag2, state, params)
+          c3 <- adapter.processOpenAiData(finish, state, params)
+          fs <- state.get
+        yield
+          // No empty-name ToolCallStart leaked from the degenerate start
+          assert(c1.collect { case StreamChunk.ToolCallStart(n) => n }.forall(_.nonEmpty),
+            s"degenerate start must not emit ToolCallStart, got $c1")
+          // Flush emitted no degenerate ToolCallChunk at all — the call is dropped
+          val toolChunks = (c1 ++ c2 ++ c3).collect { case StreamChunk.ToolCallChunk(tc) => tc }
+          assert(toolChunks.isEmpty, s"expected no ToolCallChunk from degenerate fragments, got $toolChunks")
+          // Stream still terminates cleanly
+          assert((c1 ++ c2 ++ c3).exists(_.isInstanceOf[StreamChunk.Done]), "finish must emit Done")
+          assert(fs.isEmpty, "state must stay empty")
+          // The diagnostic warn FIRED (not built-and-discarded)
+          assert(
+            appender.list.asScala.exists(e =>
+              e.getLevel == ch.qos.logback.classic.Level.WARN &&
+                e.getFormattedMessage.contains("degenerate tool-call fragment")
+            ),
+            s"expected a WARN 'degenerate tool-call fragment' log event, got ${appender.list.asScala.map(_.getFormattedMessage).toList}"
+          )
+      } { _ => IO.delay(lbLogger.detachAppender(appender)) }
+  }
+
+  test("processOpenAiData: late degenerate fragment does NOT clobber a valid started call") {
+    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](
+      Map(0 -> ("call_1", "Bash", new StringBuilder("{\"command\":\"echo hi\"")))
+    )
+    val params = SendMessageParams(Nil, "qwen3.8-max")
+    // Under the pre-guard code this (Some(""),Some("")) fragment hit the
+    // replace branch and DESTROYED the valid ("call_1","Bash",…) entry,
+    // replacing it with ("","",…) — the whole call then dropped at flush.
+    val degenerate =
+      """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"}"}}]},"finish_reason":null}]}"""
+    val finish = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
+    for
+      _ <- adapter.processOpenAiData(degenerate, state, params)
+      fc <- adapter.processOpenAiData(finish, state, params)
+    yield
+      val tc = fc.collect { case StreamChunk.ToolCallChunk(tc) => tc }.head
+      assertEquals(tc.id, "call_1")
+      assertEquals(tc.name, "Bash")
+      assertEquals(tc.input("command").flatMap(_.asString), Some("echo hi"))
+  }
+
+  test("extractToolCalls: non-streaming response with empty-name tool call is dropped") {
+    val json = parse("""{"choices":[{"message":{"tool_calls":[
+      {"id":"call_1","type":"function","function":{"name":"","arguments":"{\"command\":\"ls\"}"}},
+      {"id":"call_2","type":"function","function":{"name":"Grep","arguments":"{}"}}
+    ]}}]}""").toOption.get
+    val tcs = adapter.extractToolCalls(json)
+    assertEquals(tcs.map(_.name), List("Grep"), "empty-name call must be dropped, valid call kept")
   }
 
 end OpenAiAdapterSpec
