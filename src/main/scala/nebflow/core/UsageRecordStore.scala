@@ -53,10 +53,16 @@ object UsageBucket:
 /**
  * Aggregate result for GET /api/usage/aggregate.
  *
- * costEquivalent is a rough billed-token equivalent: cache_read input is
- * priced at 0.1x on most providers (memory: cache_read_input_tokens counts
- * toward input billing at 0.1x), full input/output at 1x. Real currency
- * depends on per-provider pricing — this is the dashboard's comparable unit.
+ * costEquivalent is a rough billed-token equivalent for the INPUT side:
+ * inputTokens is the full input bucket and already CONTAINS cacheRead
+ * (v1.2 spec §1.2 — adapter normalization; empirically in ≥ cr holds), so
+ * the cache-read portion is billed once at 0.1x and the remainder at 1x:
+ *   (totalInput - totalCacheRead) + totalCacheRead * 0.1
+ * The previous `totalInput + cr * 0.1` billed cacheRead at 1x + 0.1x =
+ * 1.1x (double count, inflated ~86% on cache-heavy workloads). Output is
+ * deliberately excluded — display-level "total consumption" is
+ * input + output (spec v1.2 §2.4); this field is the dashboard's
+ * comparable billing unit under the cache-0.1x assumption.
  */
 case class UsageAggregate(
   totalInput: Long,
@@ -178,7 +184,7 @@ class UsageRecordStore(baseDir: os.Path):
       val totalOutput = filtered.map(_.outputTokens.toLong).sum
       val totalCacheRead = filtered.map(_.cacheReadTokens.toLong).sum
       val totalCacheWrite = filtered.map(_.cacheWriteTokens.toLong).sum
-      val costEquivalent = totalInput + (totalCacheRead * 0.1).toLong
+      val costEquivalent = (totalInput - totalCacheRead) + (totalCacheRead * 0.1).toLong
       UsageAggregate(
         totalInput = totalInput,
         totalOutput = totalOutput,

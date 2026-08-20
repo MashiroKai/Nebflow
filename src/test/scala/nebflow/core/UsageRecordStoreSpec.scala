@@ -43,9 +43,36 @@ class UsageRecordStoreSpec extends FunSuite:
     assertEquals(agg.totalOutput, 300L)
     assertEquals(agg.totalCacheRead, 900L)
     assertEquals(agg.totalCacheWrite, 0L)
-    // cost = input + cacheRead*0.1 = 3000 + 90
-    assertEquals(agg.costEquivalent, 3090L)
+    // cost = (input - cacheRead) + cacheRead*0.1 = (3000 - 900) + 90 — inputTokens
+    // already contains cacheRead (v1.2 §1.2), so the cached portion is billed
+    // once at 0.1x, not 1x + 0.1x
+    assertEquals(agg.costEquivalent, 2190L)
     assertEquals(agg.buckets, Nil) // no dim = totals only
+  }
+
+  test("costEquivalent bills cacheRead portion once at 0.1x (no double count)") {
+    val dir = os.temp.dir()
+    val s = store(dir)
+    // Single record: input 1000 of which 900 cache-read → 100 at 1x + 900 at 0.1x = 190.
+    // The pre-fix formula (input + cr*0.1) would give 1090 — 1.1x on the cached portion.
+    s.record(record(1000L, input = 1000, output = 100, cacheRead = 900)).unsafeRunSync()
+    val agg = s.aggregate(None, None, None).unsafeRunSync()
+    assertEquals(agg.costEquivalent, 190L)
+    // No cache: equivalent = raw input
+    val dir2 = os.temp.dir()
+    val s2 = store(dir2)
+    s2.record(record(1000L, input = 500, output = 50, cacheRead = 0)).unsafeRunSync()
+    assertEquals(s2.aggregate(None, None, None).unsafeRunSync().costEquivalent, 500L)
+    // Fully cached input: 0 at 1x + all at 0.1x
+    val dir3 = os.temp.dir()
+    val s3 = store(dir3)
+    s3.record(record(1000L, input = 500, output = 50, cacheRead = 500)).unsafeRunSync()
+    assertEquals(s3.aggregate(None, None, None).unsafeRunSync().costEquivalent, 50L)
+    // Output excluded from the input-side equivalent
+    val dir4 = os.temp.dir()
+    val s4 = store(dir4)
+    s4.record(record(1000L, input = 100, output = 10_000, cacheRead = 0)).unsafeRunSync()
+    assertEquals(s4.aggregate(None, None, None).unsafeRunSync().costEquivalent, 100L)
   }
 
   test("aggregate by provider groups correctly") {
