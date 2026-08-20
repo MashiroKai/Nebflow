@@ -1792,8 +1792,8 @@
   padding: 3px 12px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--color-text-muted);
-  opacity: 0.55;
+  color: var(--color-text-dim);
+  opacity: 0.9;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
@@ -1802,7 +1802,7 @@
   transition: opacity 0.15s ease;
   animation: turnSummaryIn 0.15s ease-out;
 }
-.turn-summary:hover { opacity: 0.8; }
+.turn-summary:hover { opacity: 1; }
 .turn-summary:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.6);
   outline-offset: 1px;
@@ -1816,7 +1816,7 @@
 .turn-steps { /* rows keep their own spacing; container is plain */ }
 @keyframes turnSummaryIn {
   from { opacity: 0; }
-  to { opacity: 0.55; }
+  to { opacity: 0.9; }
 }
 @media (prefers-reduced-motion: reduce) {
   .turn-summary { animation-duration: 0.01s; transition-duration: 0.01s; }
