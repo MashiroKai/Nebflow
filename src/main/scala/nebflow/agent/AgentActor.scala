@@ -744,27 +744,39 @@ object AgentActor extends AgentCore with AgentSession:
         for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery)
         yield idle(agentDef, resources, depth, parentRef, state)
 
-      // Queued mail arriving in idle — drain immediately as a new turn
+      // Queued mail arriving in idle — drain immediately as a new turn.
+      // Idempotent guard (#22): activation sends a head-trigger MailQueued AND
+      // the delivering path sends its own for the same item — without the
+      // head-check the duplicate injected the same task as TWO turns (double
+      // LLM calls, double tool work). Only drain when this item is still the
+      // disk head; stale/duplicate triggers are no-ops.
       case AgentCommand.MailQueued(item, _) =>
         val sid = state.sessionId.getOrElse("")
         for
-          _ <- nebflow.core.flow.MailQueueStore.removeHead(sid).void
-          // G3: re-read attachment paths at drain time (D6 — queue persists
-          // paths, not base64). Lost files degrade to placeholder text.
-          attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
-          blocks = nebflow.core.tools.ImageInject.messageBlocks(item.message, attBlocks)
-          _ <- ctx.self ! AgentCommand.UserInput(
-            item.message,
-            None,
-            None,
-            blocks,
-            0,
-            source = Some("mail-queue"),
-            sender = Some(item.from),
-            delivery = Some("queue")
-          )
-          // Emit WS so frontend removes the pending item
-          _ <- emitDequeuedWs(state.wsSend, sid, item.id)
+          items <- nebflow.core.flow.MailQueueStore.load(sid)
+          _ <- items.headOption match
+            case Some(head) if head.id == item.id =>
+              for
+                _ <- nebflow.core.flow.MailQueueStore.removeHead(sid).void
+                // G3: re-read attachment paths at drain time (D6 — queue
+                // persists paths, not base64). Lost files degrade to
+                // placeholder text.
+                attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
+                blocks = nebflow.core.tools.ImageInject.messageBlocks(item.message, attBlocks)
+                _ <- ctx.self ! AgentCommand.UserInput(
+                  item.message,
+                  None,
+                  None,
+                  blocks,
+                  0,
+                  source = Some("mail-queue"),
+                  sender = Some(item.from),
+                  delivery = Some("queue")
+                )
+                // Emit WS so frontend removes the pending item
+                _ <- emitDequeuedWs(state.wsSend, sid, item.id)
+              yield ()
+            case _ => IO.unit
         yield idle(agentDef, resources, depth, parentRef, state)
 
       // Supervisor restart in idle state
