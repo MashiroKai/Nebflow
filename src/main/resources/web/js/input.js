@@ -36,6 +36,13 @@ const slashCommands = {
     run: () => {
       enterAskMode();
     }
+  },
+  '/onboarding': {
+    desc: () => t('slash.onboarding'),
+    run: () => {
+      // Replay the fixed chat-native onboarding greeting (same as first run).
+      import('./onboarding.js').then(m => m.replayOnboarding()).catch(() => {});
+    }
   }
 };
 

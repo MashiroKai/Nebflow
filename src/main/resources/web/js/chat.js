@@ -1443,6 +1443,66 @@ export function renderCompactFailCard(view = activeView, text) {
 // Renders an inline option picker. Used by AskUser tool, /thinking, permission prompts.
 const ASKUSER_DRAFTS_KEY = key('askuser_drafts');
 
+// AskUser cards registry — lets Canvas iframes answer a visible single-choice
+// question via postMessage (askuser-canvas-integration-spec, direction C §3.2).
+// The Canvas button is a REMOTE TRIGGER: it writes into the card's answers
+// array and runs the same confirm path — it does not hold state. Only cards
+// rendered via renderAskUser carry an askSessionId; permission prompts /
+// slash-cmd pickers pass undefined and stay out of the registry.
+const askCardRegistry = new Map(); // sessionId → { questions, answers, shouldShow, selectOption, confirmIfReady }
+
+/** Build the inline preview slot for an option (direction C §2.1/§4.1).
+ *  swatch: 1-5 color stripes filling the 56×40 slot; image: object-fit cover.
+ *  Returns '' when the preview is absent/invalid so the button renders exactly
+ *  like the pre-preview version (E1/E3 zero regression). */
+function buildOptionPreview(pv) {
+  if (!pv || typeof pv !== 'object') return '';
+  if (pv.type === 'swatch') {
+    const colors = Array.isArray(pv.colors) ? pv.colors.filter(c => typeof c === 'string' && c.trim()) : [];
+    if (colors.length === 0) return ''; // E3: empty swatch → no preview
+    const inner = colors.map((c, i) =>
+      `<span class="preview-swatch" style="background:${escapeHtml(c.trim())};${i > 0 ? 'border-left:1px solid var(--color-surface)' : ''}"></span>`
+    ).join('');
+    return `<span class="option-preview" aria-hidden="true">${inner}</span>`;
+  }
+  if (pv.type === 'image' && pv.src) {
+    // E2: on error the slot hides itself; label/desc stay clickable.
+    return `<span class="option-preview" aria-hidden="true"><img class="preview-img" src="${escapeHtml(pv.src)}" alt="" loading="lazy" onerror="this.closest('.option-preview').style.display='none'"></span>`;
+  }
+  return '';
+}
+
+/** Broadcast an answered/locked AskUser card to every Canvas iframe so their
+ *  embedded "pick this" buttons disable (§5.1 S5, spec §11.2). */
+function broadcastAskState(sid) {
+  document.querySelectorAll('.canvas-tab-pane iframe').forEach(iframe => {
+    try {
+      /** @type {HTMLIFrameElement} */ (iframe).contentWindow?.postMessage({ _nfAskState: { sessionId: sid, answered: true } }, '*');
+    } catch { /* cross-origin/no window — ignore */ }
+  });
+}
+
+// Canvas → parent answer channel (direction C §3.2). The iframe content is
+// UNTRUSTED (agent-produced HTML) — every payload is validated against the
+// current visible card state; anything not matching is silently dropped.
+// Bound once at module scope; cards self-register via showOptions.
+window.addEventListener('message', (e) => {
+  const payload = e.data && e.data._nfAskAnswer;
+  if (!payload) return;
+  const entry = askCardRegistry.get(payload.sessionId);
+  if (!entry) return;                              // E9 no such card / E6 already locked
+  const qi = Number(payload.questionIndex);
+  if (!Number.isInteger(qi) || qi < 0) return;
+  const item = entry.questions[qi];
+  if (!item || item.multiple === true) return;     // E4 multi stays on the card path
+  if (!entry.shouldShow(qi)) return;               // E5 dependsOn-hidden question
+  const answer = typeof payload.answer === 'string' ? payload.answer : '';
+  const labels = (item.options || []).map(o => typeof o === 'string' ? o : o.label);
+  if (!labels.includes(answer)) return;            // E7 invalid label (incl. Other free text)
+  entry.selectOption(qi, answer);
+  entry.confirmIfReady();                          // S3b → S4: confirm when all visible answered
+});
+
 function loadAskDrafts(sid) {
   try { return JSON.parse(localStorage.getItem(ASKUSER_DRAFTS_KEY))?.[sid] || {}; } catch { return {}; }
 }
@@ -1488,7 +1548,16 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   function updateVisibility() {
     questionWrappers.forEach((wrapper, qi) => {
       const visible = shouldShow(qi);
+      const wasHidden = wrapper.style.display === 'none';
       wrapper.style.display = visible ? '' : 'none';
+      // A-2 (onboarding spec §7): dependsOn reveal animates in; hide is
+      // instant. The initial updateVisibility() runs before the box enters
+      // the DOM, so the reveal class cannot fire on first render.
+      if (visible && wasHidden) {
+        wrapper.classList.remove('ob-q-reveal');
+        void wrapper.offsetWidth; // reflow to restart the animation
+        wrapper.classList.add('ob-q-reveal');
+      }
       if (!visible && answers[qi] !== null) {
         answers[qi] = null;
         wrapper.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
@@ -1542,7 +1611,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         const desc = isStr ? '' : (opt.desc || opt.description || '');
         if (isMulti) {
           btn.dataset.label = label;
-          btn.innerHTML = '<span class="option-check"></span><span class="option-text">' +
+          const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
+          if (preview) btn.classList.add('has-preview');
+          btn.innerHTML = '<span class="option-check"></span>' + (preview ? buildOptionPreview(preview) : '') + '<span class="option-text">' +
             escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '') + '</span>';
           btn.onclick = () => {
             btn.classList.toggle('picked');
@@ -1551,7 +1622,14 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
             checkAllAnswered();
           };
         } else {
-          btn.innerHTML = escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '');
+          btn.dataset.label = label;
+          const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
+          if (preview) btn.classList.add('has-preview');
+          if (preview) {
+            btn.innerHTML = buildOptionPreview(preview) + '<span class="option-text">' + escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '') + '</span>';
+          } else {
+            btn.innerHTML = escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '');
+          }
           btn.onclick = () => {
             answers[qi] = label;
             optsDiv.querySelectorAll('.option-btn').forEach((el, i) => {
@@ -1674,6 +1752,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   cancelBtn.className = 'option-cancel';
   cancelBtn.textContent = t('chat.cancel');
   cancelBtn.onclick = () => {
+    if (askSessionId) askCardRegistry.delete(askSessionId);
     box.querySelectorAll('.option-btn, .option-confirm').forEach(el => { el.disabled = true; });
     cancelBtn.disabled = true;
     confirmBtn.disabled = true;
@@ -1686,6 +1765,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   confirmBtn.innerHTML = '<i data-lucide="check"></i><span>' + escapeHtml(confirmLabel) + '</span>';
   confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || answers[qi] !== null);
   confirmBtn.onclick = () => {
+    // Lock the card: drop it from the Canvas answer registry (E6: late
+    // _nfAskAnswer postMessages find no entry and are silently discarded).
+    if (askSessionId) askCardRegistry.delete(askSessionId);
     box.querySelectorAll('.option-btn').forEach(el => { el.disabled = true; });
     cancelBtn.disabled = true;
     confirmBtn.disabled = true;
@@ -1708,6 +1790,31 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   btnRow.appendChild(cancelBtn);
   btnRow.appendChild(confirmBtn);
   box.appendChild(btnRow);
+
+  // Register as a remote-answerable AskUser card (Canvas channel, direction C
+  // §3.2). Deleted on confirm/cancel — a missing entry is the
+  // "locked/answered" signal (E6/E9). The Canvas button is a remote trigger:
+  // it writes the same answers[] slot and runs the same confirm path.
+  if (askSessionId) {
+    askCardRegistry.set(askSessionId, {
+      questions, answers, shouldShow,
+      selectOption(qi, label) {
+        const wrapper = questionWrappers[qi];
+        if (!wrapper) return;
+        answers[qi] = label;
+        wrapper.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
+        wrapper.querySelectorAll('.option-btn').forEach(el => {
+          if (el.dataset.label === label) el.classList.add('picked');
+        });
+        checkAllAnswered();
+      },
+      confirmIfReady() { if (!confirmBtn.disabled) confirmBtn.click(); },
+    });
+  }
+
+  // A-1 (onboarding spec §7): whole card fades in. Class applied before the
+  // box enters the DOM so the animation fires exactly once on insert.
+  box.classList.add('ob-fade-in');
   container.appendChild(box);
   createIconsIn(box);
   smartScroll();
@@ -1718,6 +1825,15 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 }
 
 // ---------- AskUser ----------
+/** Open an AskUser comparison page in Canvas (direction C §2.1 canvas field).
+ *  Read failure must not block the question card (E8) — errors are silent. */
+function openAskCanvas(tabId, absPath) {
+  import('./canvas.js').then(({ openWorkspaceItem }) => {
+    openWorkspaceItem({ id: tabId, itemType: '', title: String(absPath).split('/').pop() || 'compare', content: '', absPath })
+      .catch(() => {});
+  }).catch(() => {});
+}
+
 export function renderAskUser(items, askSessionId, agentName, requestId) {
   if (!Array.isArray(items) || items.length === 0) {
     renderError(t('chat.waitingQuestion'));
@@ -1740,6 +1856,18 @@ export function renderAskUser(items, askSessionId, agentName, requestId) {
     bubble.appendChild(badge);
   }
   chat.appendChild(row);
+  // canvas field (direction C §2.1): auto-open the comparison page in Canvas
+  // and offer a glass "view comparison" button beside the question.
+  const canvasPath = items.map(i => i && i.canvas).find(Boolean) || null;
+  if (canvasPath) {
+    const tabId = 'askcanvas:' + canvasPath;
+    const viewBtn = document.createElement('button');
+    viewBtn.className = 'glass-control ob-compare-btn';
+    viewBtn.textContent = t('askUser.viewCompare');
+    viewBtn.onclick = () => openAskCanvas(tabId, canvasPath);
+    bubble.appendChild(viewBtn);
+    openAskCanvas(tabId, canvasPath);
+  }
   // Use the sessionId from the askUser message, not the currently active session
   const targetSid = askSessionId || activeView.sessionId;
   try {
@@ -1747,11 +1875,13 @@ export function renderAskUser(items, askSessionId, agentName, requestId) {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers, ...(requestId && { requestId }) }));
       }
+      broadcastAskState(targetSid);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, t('chat.confirm'), () => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'], ...(requestId && { requestId }) }));
       }
+      broadcastAskState(targetSid);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, targetSid);
   } catch (e) {
