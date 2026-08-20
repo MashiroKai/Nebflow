@@ -2211,6 +2211,52 @@ export function renderAskError(msg) {
 let _pendingThinkingRAF = null;
 // Capture the bubble + chat at schedule time so the rAF renders into the correct
 let _thinkingRafTarget = null;
+
+// #345 segment-level thinking collapse (OpenAI paradigm): the label shows
+// 「思考中…」+ pulse dots while streaming (content hidden), and switches to a
+// duration label at finishThinking. Per-segment timer: first delta → finish.
+let _thinkingSegmentStart = 0;
+
+/** #345 duration label: <2s「思考了片刻」/ {n} 秒 / {m} 分钟; null → degraded
+ *  「已思考」(history without timing data — no fake numbers). */
+export function thoughtDurationLabel(durationMs) {
+  if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) return t('chat.thought');
+  const s = Math.round(durationMs / 1000);
+  if (s < 2) return t('chat.thoughtMoment');
+  if (s < 60) return t('chat.thoughtSeconds', { n: s });
+  return t('chat.thoughtMinutes', { m: Math.round(s / 60) });
+}
+
+/** Shared keyboard-activatable toggle for thinking labels and the #346 turn
+ *  summary bar (spec §8: both implementations share one helper). */
+export function bindCollapsibleToggle(el, getContent, onToggle) {
+  el.setAttribute('role', 'button');
+  el.setAttribute('tabindex', '0');
+  el.setAttribute('aria-expanded', el.classList.contains('expanded') ? 'true' : 'false');
+  const toggle = () => {
+    const content = getContent();
+    if (!content) return;
+    const visible = content.style.display !== 'none';
+    content.style.display = visible ? 'none' : '';
+    el.classList.toggle('expanded', !visible);
+    el.setAttribute('aria-expanded', String(!visible));
+    onToggle?.(!visible);
+  };
+  el.onclick = toggle;
+  el.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+  };
+}
+
+/** 12px inline chevron (currentColor) shared by #345 thinking labels and the
+ *  #346 turn summary bar — no icon library, muted color follows the text. */
+export function chevronSvg() {
+  const span = document.createElement('span');
+  span.className = 'nf-chevron';
+  span.setAttribute('aria-hidden', 'true');
+  span.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+  return span;
+}
 export function appendThinkingDelta(delta) {
   // NOTE: always accumulate thinking text for saveMsg even if we skip DOM creation
   activeView.stream.thinkingText += delta;
@@ -2230,15 +2276,32 @@ export function appendThinkingDelta(delta) {
     const bubble = document.createElement('div');
     bubble.className = 'bubble ai thinking-bubble';
     const label = document.createElement('div');
-    label.className = 'thinking-label';
-    label.textContent = t('chat.thinkingLabel');
+    label.className = 'thinking-label thinking-streaming';
+    label.appendChild(chevronSvg());
+    const labelText = document.createElement('span');
+    labelText.className = 'thinking-label-text';
+    labelText.textContent = t('chat.thinkingInProgress');
+    label.appendChild(labelText);
+    // #345: three pulse dots after the label (OpenAI paradigm)
+    for (let i = 0; i < 3; i++) {
+      const dot = document.createElement('span');
+      dot.className = 'thinking-dot';
+      if (i === 1) dot.style.animationDelay = '0.15s';
+      if (i === 2) dot.style.animationDelay = '0.3s';
+      label.appendChild(dot);
+    }
     const content = document.createElement('div');
     content.className = 'thinking-content';
+    content.style.display = 'none'; // #345: streaming-collapsed by default
     bubble.appendChild(label);
     bubble.appendChild(content);
     row.appendChild(bubble);
     chat.appendChild(row);
+    // #345: streaming-expanded is reachable — click/Enter reveals live content
+    // (rAF keeps rendering into it); finishThinking preserves the open state.
+    bindCollapsibleToggle(label, () => content);
     activeView.stream.currentThinkingBubble = bubble;
+    _thinkingSegmentStart = Date.now();
   }
   // Capture the render target synchronously (correct during ws.js push/pull window).
   // Store accumulated text on the bubble node so the rAF reads it regardless of
@@ -2287,14 +2350,19 @@ export function finishThinking() {
     activeView.stream.currentThinkingBubble.classList.add('thinking-done');
     const label = activeView.stream.currentThinkingBubble.querySelector('.thinking-label');
     const content = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
-    if (content) content.style.display = 'none';
+    // #345: done label = segment duration; a user-expanded streaming bubble
+    // STAYS expanded (spec §2.3) — only collapse when not manually opened.
     if (label) {
+      label.classList.remove('thinking-streaming');
       label.classList.add('collapsible');
-      label.onclick = () => {
-        const visible = content.style.display !== 'none';
-        content.style.display = visible ? 'none' : '';
-        label.classList.toggle('expanded', !visible);
-      };
+      const labelText = label.querySelector('.thinking-label-text');
+      if (labelText) labelText.textContent = thoughtDurationLabel(Date.now() - _thinkingSegmentStart);
+      const wasExpanded = label.classList.contains('expanded');
+      if (content) content.style.display = wasExpanded ? '' : 'none';
+      label.setAttribute('aria-expanded', String(wasExpanded));
+      bindCollapsibleToggle(label, () => content);
+    } else if (content) {
+      content.style.display = 'none';
     }
     const text = activeView.stream.thinkingText;
     activeView.stream.currentThinkingBubble = null;
