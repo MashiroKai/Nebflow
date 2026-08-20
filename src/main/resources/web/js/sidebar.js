@@ -486,6 +486,19 @@ function saveWorkSchedule(enabled, segs, opts) {
   return true;
 }
 
+/**
+ * Nearest effort level for the persisted thinking config (#345) — used only
+ * for dropdown echo. Boundaries mirror OpenAiAdapter.budgetToEffort so the
+ * displayed level always equals what the adapter would send upstream.
+ */
+function effortFromConfig() {
+  if (!state.thinkingMode?.enabled) return 'off';
+  const b = state.thinkingMode.budgetTokens ?? 32000;
+  if (b <= 2048) return 'low';
+  if (b <= 8192) return 'medium';
+  return 'high'; // covers ≤32768 and legacy >32768 (xhigh collapsed to high)
+}
+
 export function renderSettings() {
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
@@ -509,13 +522,11 @@ export function renderSettings() {
       <div class="settings-section-title">${t('settings.runtime')}</div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.thinkingMode')}</span>
-        <div class="toggle ${state.thinkingMode ? 'on' : ''}" id="toggle-thinking"></div>
+        <select class="cfg-select" id="cfg-thinking-effort" style="width:auto">
+          ${['off','low','medium','high'].map(lvl => `<option value="${lvl}"${effortFromConfig() === lvl ? ' selected' : ''}>${t('settings.thinkingEffort.' + lvl)}</option>`).join('')}
+        </select>
       </div>
-      <div class="cfg-form-group" id="thinking-budget-group" style="display:${state.thinkingMode ? 'block' : 'none'}">
-        <label class="cfg-label">${t('settings.thinkingBudget')}</label>
-        <input class="cfg-input" id="cfg-thinking-budget" type="number" min="1024" value="${state.thinkingMode?.budgetTokens ?? 32000}" autocomplete="off">
-        <div class="cfg-hint">${t('settings.thinkingBudgetHint')}</div>
-      </div>
+      <div class="cfg-hint">${t('settings.thinkingEffortHint')}</div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.llmLog')}</span>
         <div class="toggle ${state.llmLogEnabled !== false ? 'on' : ''}" id="toggle-llm-log"></div>
@@ -946,24 +957,21 @@ onMessage('autostartStatusResult', (msg) => {
 
 
 function bindSettingsEvents(content, cfg) {
-  // Thinking toggle
-  document.getElementById('toggle-thinking')?.addEventListener('click', function() {
-    this.classList.toggle('on');
-    const enabled = this.classList.contains('on');
-    const budgetEl = document.getElementById('cfg-thinking-budget');
-    const budgetVal = budgetEl ? parseInt(budgetEl.value) || 32000 : 32000;
-    state.thinkingMode = enabled ? {enabled: true, budgetTokens: budgetVal} : null;
-    sendWs({type: 'setThinking', thinking: state.thinkingMode});
-    const group = document.getElementById('thinking-budget-group');
-    if (group) group.style.display = enabled ? 'block' : 'none';
-  });
-
-  document.getElementById('cfg-thinking-budget')?.addEventListener('change', function() {
-    const val = parseInt(this.value) || 32000;
-    if (state.thinkingMode?.enabled) {
-      state.thinkingMode = {enabled: true, budgetTokens: val};
-      sendWs({type: 'setThinking', thinking: state.thinkingMode});
+  // Thinking effort selector (#345, user ruling 2026-08-20): OpenAI-style
+  // off/low/medium/high dropdown replaces the Anthropic numeric budget input.
+  // Levels map to budget_tokens at the same boundaries OpenAiAdapter.
+  // budgetToEffort uses (≤2048 low / ≤8192 medium / ≤32768 high), so a saved
+  // value round-trips through the adapter unchanged. Legacy numeric configs
+  // are displayed at their nearest level (no migration needed — saving
+  // rewrites the canonical number for that level).
+  const EFFORT_BUDGETS = { low: 2048, medium: 8192, high: 32768 };
+  document.getElementById('cfg-thinking-effort')?.addEventListener('change', function() {
+    if (this.value === 'off') {
+      state.thinkingMode = null;
+    } else {
+      state.thinkingMode = { enabled: true, budgetTokens: EFFORT_BUDGETS[this.value] };
     }
+    sendWs({ type: 'setThinking', thinking: state.thinkingMode });
   });
 
   // LLM Log toggle
