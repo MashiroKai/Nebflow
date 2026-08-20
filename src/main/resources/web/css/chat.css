@@ -1780,6 +1780,48 @@
   font-size: 12px;
 }
 
+/* ── #346 turn-level collapse: summary bar ───────────────────────────────
+   Muted text form (same design language as the #345 thinking label): no
+   background, no glass, no hover fill — chevron + text brighten on hover. */
+.turn-group { margin: 2px 0; }
+.turn-summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 85%;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  opacity: 0.55;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity 0.15s ease;
+  animation: turnSummaryIn 0.15s ease-out;
+}
+.turn-summary:hover { opacity: 0.8; }
+.turn-summary:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+.turn-summary-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.turn-group[data-turn-state="failed"] .turn-summary { display: none; }
+.turn-steps { /* rows keep their own spacing; container is plain */ }
+@keyframes turnSummaryIn {
+  from { opacity: 0; }
+  to { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-summary { animation-duration: 0.01s; transition-duration: 0.01s; }
+}
+
 /* Streaming cursor */
 .cursor {
   display: inline-block;

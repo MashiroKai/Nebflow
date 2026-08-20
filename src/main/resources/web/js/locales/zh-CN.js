@@ -429,6 +429,8 @@ export default {
   'chat.thoughtSeconds': '已思考 {n} 秒',
   'chat.thoughtMinutes': '已思考 {m} 分钟',
   'chat.thought': '已思考',
+  'chat.turnSummaryTools': '工具 {n} 次',
+  'chat.turnSummaryToolsOne': '工具 1 次',
   'chat.thinking.0': '星海漫游中...',
   'chat.thinking.1': '凝望深空中...',
   'chat.thinking.2': '星际航行中...',
