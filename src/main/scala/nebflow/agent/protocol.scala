@@ -1077,7 +1077,11 @@ extension (s: AgentState)
     execution = ExecutionContext.idle(s.execution.messages, s.execution.turnIdx, s.execution.currentTurnId)
       // Sub-agent barrier: held results survive an interrupt — they are still due.
       .copy(pendingEvents = s.execution.pendingEvents,
-            outstandingSubagentResults = s.execution.outstandingSubagentResults),
+            outstandingSubagentResults = s.execution.outstandingSubagentResults,
+            // #13: undelivered immediate inputs (queued Mail) survive
+            // interrupt/restart — they are user-originated work; resetting
+            // them away silently dropped tasks on every restartAgent.
+            pendingImmediateInputs = s.execution.pendingImmediateInputs),
     compaction = s.compaction.copy(pendingJob = None)
   )
 end extension

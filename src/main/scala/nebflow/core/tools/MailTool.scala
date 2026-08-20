@@ -600,8 +600,9 @@ Message type (optional, default "INFO"):
   private[tools] def resolveNebulaRootSession(res: SharedResources): IO[Option[String]] =
     res.agentRegistry.get.map(_.collectFirst { case (_, rec) if rec.kind == AgentKind.Root => rec.sessionId })
 
-  /** Persist to MailQueueStore, activate target, send MailQueued command. */
-  private def queueToSession(
+  /** Persist to MailQueueStore, activate target, send MailQueued command.
+    * private[tools] for ColdQueueActivationSpec (issue #22). */
+  private[tools] def queueToSession(
       sessionId: String,
       shortName: String,
       message: String,
@@ -629,14 +630,19 @@ Message type (optional, default "INFO"):
           _ <- MailQueueStore.append(sessionId, item)
           // 2. Record in mailbox history
           _ <- onMailDelivered(senderSessionId, sessionId, shortName, message, ctx)
-          // 3. Get or activate the target actor
-          existingOpt <- TeamSessionRegistry.getRunningActor(sessionId)
-          refOpt <- existingOpt match
-            case Some(ref) => IO.pure(Some(ref))
-            case None     => activateAgent(sessionId, resources, actorSystem, ctx)
-          // 4. Send MailQueued command
+          // 3. Get or activate the target actor (#22: with liveness probe —
+          // a stale dead ref would swallow MailQueued into an unconsumed queue)
+          refOpt <- MailTool.this.liveActorOrActivate(sessionId, resources, actorSystem, ctx)
+          // 4. Send MailQueued command (triggers drain on the live actor)
           _ <- refOpt.traverse_(_ ! AgentCommand.MailQueued(item, senderSessionId))
-          // 5. Emit WS event
+          _ <- IO {
+            if refOpt.isDefined then
+              logger.info(
+                s"[mail] queue mail delivered to $shortName (session=${sessionId.take(8)}, from=$senderName) — agent active, drain triggered"
+              )
+          }
+          // 4+5. Emit WS event regardless of activation outcome (the item IS
+          // persisted either way — the frontend should see the queue grow)
           pendingCount <- MailQueueStore.size(sessionId)
           _ <- emitWsEvent(ctx, Json.obj(
             "type" -> "mailQueued".asJson,
@@ -647,7 +653,18 @@ Message type (optional, default "INFO"):
             "pendingCount" -> pendingCount.asJson,
             "timestamp" -> item.timestamp.asJson
           ))
-        yield Right(s"Message queued to $shortName. Will be processed after current work completes (position #$pendingCount in queue).")
+        yield refOpt match
+          case Some(_) =>
+            Right(s"Message queued to $shortName. Will be processed after current work completes (position #$pendingCount in queue).")
+          case None =>
+            // #22 honesty: activation failed (session meta or agent def not
+            // loadable). The item IS on disk and will drain on the agent's
+            // next successful activation — but claiming "will be processed"
+            // unconditionally was a silent-loss lie.
+            Left(ToolError(
+              s"Message persisted to $shortName's queue (position #$pendingCount), but cold activation FAILED — session metadata or agent definition not found for session ${sessionId.take(8)}. " +
+                s"The item will drain once the agent is loadable (check the agent exists in its team). See logs: \"[mail] activation failed\"."
+            ))
       case _ =>
         IO.pure(Left(ToolError(s"Cannot deliver queue mail to '$shortName': missing resources")))
   end queueToSession
@@ -878,13 +895,9 @@ Message type (optional, default "INFO"):
     (ctx.sharedResources, ctx.actorSystem) match
       case (Some(resources), Some(actorSystem)) =>
         for
-          // Check if actor already running
-          existingOpt <- TeamSessionRegistry.getRunningActor(sessionId)
-          refOpt <- existingOpt match
-            case Some(ref) => IO.pure(Some(ref))
-            case None =>
-              // Activate agent from session
-              activateAgent(sessionId, resources, actorSystem, ctx)
+          // Check if actor already running (#22: probe liveness — dead cached
+          // ref would swallow ImmediateInput into an unconsumed queue)
+          refOpt <- MailTool.this.liveActorOrActivate(sessionId, resources, actorSystem, ctx)
           result <- refOpt match
             case Some(ref) => sendMail(ref, shortName, message, blocks, mailType, ctx, system)
             case None =>
@@ -896,6 +909,30 @@ Message type (optional, default "INFO"):
       case _ =>
         IO.pure(Left(ToolError(s"Cannot activate session for '$shortName': missing resources")))
 
+  /** getRunningActor + liveness probe (#22): a cached ref whose actor loop
+    * has exited (crash / TTL / stop whose deathwatch cleanup missed) still
+    * accepts offers into an unconsumed queue — a queue-mode Mail delivered to
+    * it persists, sends MailQueued into the void, and NEVER activates the
+    * agent: no error, no retry, silent loss (issue #22's mechanism). Probe
+    * the actor system registry; dead ref → reactivate. */
+  private def liveActorOrActivate(
+      sessionId: String,
+      resources: SharedResources,
+      system: ActorSystem,
+      ctx: ToolContext
+  ): IO[Option[ActorRef[AgentCommand]]] =
+    TeamSessionRegistry.getRunningActor(sessionId).flatMap {
+      case Some(ref) =>
+        system.isAlive(ref.path).flatMap {
+          case true => IO.pure(Some(ref))
+          case false =>
+            IO(logger.warn(
+              s"[mail] stale actor ref for session=${sessionId.take(8)} — actor dead but actorMap kept it; reactivating (issue #22)"
+            )) *> activateAgent(sessionId, resources, system, ctx)
+        }
+      case None => activateAgent(sessionId, resources, system, ctx)
+    }
+
   /** Activate a team agent session by spawning an AgentActor (replaces FlowAgentActivator).
     * Package-visible for the lifecycle spec (respawn history + death watch). */
   private[tools] def activateAgent(
@@ -906,6 +943,10 @@ Message type (optional, default "INFO"):
   ): IO[Option[ActorRef[AgentCommand]]] =
     for
       sessionOpt <- resources.sessionStore.getSessionMeta(sessionId)
+      _ <- IO {
+        if sessionOpt.isEmpty then
+          logger.warn(s"[mail] activation failed: session ${sessionId.take(8)} not found in session store (issue #22 observability)")
+      }
       refOpt <- sessionOpt.traverse_ { session =>
         val agentName = session.agentName.getOrElse("")
         for
@@ -920,6 +961,12 @@ Message type (optional, default "INFO"):
           entryOpt <- session.flowName match
             case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
             case None => EntityLoader.loadAgent(agentName)
+          _ <- IO {
+            if entryOpt.isEmpty then
+              logger.warn(
+                s"[mail] activation failed: agent def '$agentName' not loadable (team=${session.flowName.getOrElse("-")}) for session ${sessionId.take(8)} (issue #22 observability)"
+              )
+          }
           _ <- entryOpt.traverse_ { entry =>
             val agentDef = entry.toAgentDef
             // Route team agent events with a "team-" prefixed nodeSessionId so

@@ -744,36 +744,46 @@ object AgentActor extends AgentCore with AgentSession:
         for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery)
         yield idle(agentDef, resources, depth, parentRef, state)
 
-      // Queued mail arriving in idle — drain immediately as a new turn
+      // Queued mail arriving in idle — drain immediately as a new turn.
+      // Idempotent guard (#22): activation sends a head-trigger MailQueued AND
+      // the delivering path sends its own for the same item — without the
+      // head-check the duplicate injected the same task as TWO turns (double
+      // LLM calls, double tool work). Only drain when this item is still the
+      // disk head; stale/duplicate triggers are no-ops.
       case AgentCommand.MailQueued(item, _) =>
         val sid = state.sessionId.getOrElse("")
         for
-          _ <- nebflow.core.flow.MailQueueStore.removeHead(sid).void
-          // G3: re-read attachment paths at drain time (D6 — queue persists
-          // paths, not base64). Lost files degrade to placeholder text.
-          attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
-          blocks = nebflow.core.tools.ImageInject.messageBlocks(item.message, attBlocks)
-          _ <- ctx.self ! AgentCommand.UserInput(
-            item.message,
-            None,
-            None,
-            blocks,
-            0,
-            source = Some("mail-queue"),
-            sender = Some(item.from),
-            delivery = Some("queue")
-          )
-          // Emit WS so frontend removes the pending item
-          _ <- emitDequeuedWs(state.wsSend, sid, item.id)
+          items <- nebflow.core.flow.MailQueueStore.load(sid)
+          _ <- items.headOption match
+            case Some(head) if head.id == item.id =>
+              for
+                _ <- nebflow.core.flow.MailQueueStore.removeHead(sid).void
+                // G3: re-read attachment paths at drain time (D6 — queue
+                // persists paths, not base64). Lost files degrade to
+                // placeholder text.
+                attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
+                blocks = nebflow.core.tools.ImageInject.messageBlocks(item.message, attBlocks)
+                _ <- ctx.self ! AgentCommand.UserInput(
+                  item.message,
+                  None,
+                  None,
+                  blocks,
+                  0,
+                  source = Some("mail-queue"),
+                  sender = Some(item.from),
+                  delivery = Some("queue")
+                )
+                // Emit WS so frontend removes the pending item
+                _ <- emitDequeuedWs(state.wsSend, sid, item.id)
+              yield ()
+            case _ => IO.unit
         yield idle(agentDef, resources, depth, parentRef, state)
 
       // Supervisor restart in idle state
       case AgentCommand.RestartAgent(level) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart-idle", s"level=${level.toString}")
-        val restartState = level match
-          case RestartLevel.Rollback => rollbackLastToolCall(state)
-          case _ => state
         for
+          restartState <- restartStateFor(level, state, resources)
           _ <- state
             .wsSend(
               Json.obj(
@@ -1447,13 +1457,7 @@ object AgentActor extends AgentCore with AgentSession:
             .flatMap(_.replyDeferred)
             .traverse_(d => d.complete(Left("Restarted by supervisor")).void.handleErrorWith(_ => IO.unit))
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
-          restartState = level match
-            case RestartLevel.Soft =>
-              state.resetForInterrupt.withPendingCompaction(None)
-            case RestartLevel.Rollback =>
-              rollbackLastToolCall(state.resetForInterrupt.withPendingCompaction(None))
-            case _ =>
-              state.resetForInterrupt.withPendingCompaction(None)
+          restartState <- restartStateFor(level, state, resources)
           _ <- state
             .wsSend(
               Json.obj(
@@ -1997,6 +2001,34 @@ object AgentActor extends AgentCore with AgentSession:
    *  Assistant message onwards, inject a supervisor error message.
    *  If no tool call is found, returns state unchanged.
    */
+  /** Restart state by level (#13). Soft cancels current work keeping
+    * messages; Rollback additionally truncates the last tool pair; Full
+    * rebuilds message state from persisted history (documented "(future)
+    * reset to empty, reload from persisted history" — implemented per issue
+    * #13; it was silently aliased to Soft). Prune stays a Soft alias until
+    * context-prune exists. Disk-load failure degrades to Soft (fail-safe). */
+  private def restartStateFor(
+      level: RestartLevel,
+      state: AgentState,
+      resources: SharedResources
+  ): IO[AgentState] =
+    def base: AgentState = state.resetForInterrupt.withPendingCompaction(None)
+    level match
+      case RestartLevel.Rollback => IO.pure(rollbackLastToolCall(base))
+      case RestartLevel.Full =>
+        val sid = state.sessionId.getOrElse("")
+        if sid.isEmpty then IO.pure(base)
+        else
+          resources.sessionStore.loadMessagesForSession(sid)
+            .map(msgs => base.copy(execution = base.execution.copy(messages = msgs)))
+            .handleErrorWith { e =>
+              logger.warn(
+                s"Full restart: history reload failed for $sid (${e.getMessage}) — degrading to Soft"
+              ) *> IO.pure(base)
+            }
+      case _ => IO.pure(base)
+  end restartStateFor
+
   private def rollbackLastToolCall(state: AgentState): AgentState =
     val messages = state.messages
     // Find the index of the last Assistant message containing ToolUse blocks
@@ -2772,13 +2804,7 @@ object AgentActor extends AgentCore with AgentSession:
             .flatMap(_.replyDeferred)
             .traverse_(d => d.complete(Left("Restarted by supervisor")).void.handleErrorWith(_ => IO.unit))
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
-          restartState = level match
-            case RestartLevel.Soft =>
-              state.resetForInterrupt.withPendingCompaction(None)
-            case RestartLevel.Rollback =>
-              rollbackLastToolCall(state.resetForInterrupt.withPendingCompaction(None))
-            case _ =>
-              state.resetForInterrupt.withPendingCompaction(None)
+          restartState <- restartStateFor(level, state, resources)
           _ <- state
             .wsSend(
               Json.obj(
