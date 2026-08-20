@@ -18,6 +18,7 @@ import scala.concurrent.duration.*
 class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, Fs2Streams[IO]])
     extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
+  private val logger = NebflowLogger.forName("nebflow.llm.openai")
 
   /** Full endpoint URL: use base as-is if it already points to /chat/completions, otherwise append. */
   private val endpoint =
@@ -148,12 +149,23 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       .downField("tool_calls")
       .as[List[Json]]
       .getOrElse(Nil)
-      .map { tc =>
+      .flatMap { tc =>
         val id = tc.hcursor.downField("id").as[String].getOrElse("")
         val name = tc.hcursor.downField("function").downField("name").as[String].getOrElse("")
         val args = tc.hcursor.downField("function").downField("arguments").as[String].getOrElse("{}")
-        val input = ToolInputJson.parseToolInput(name, args)
-        ToolCall(id, name, input)
+        // qwen-degenerate guard (2026-08-20 incident): a tool call with an
+        // empty name (and/or empty id) cannot pass the agent's allowed-tool
+        // whitelist — it would surface as "Tool not available: " and send the
+        // model into a retry storm. Drop it here instead of fabricating a
+        // call that can never execute.
+        if name.trim.isEmpty then
+          logger.warnSync(
+            s"dropped tool call with empty name (degenerate provider frame): ${tc.noSpaces.take(160)}"
+          )
+          None
+        else
+          val input = ToolInputJson.parseToolInput(name, args)
+          Some(ToolCall(id, name, input))
       }
 
   /**
@@ -389,6 +401,38 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
 
               d.hcursor.downField("tool_calls").as[List[Json]].toOption match
                 case Some(tcs) =>
+                  // Fragment classification. A fragment STARTS a tool call only
+                  // when both id and name are present AND non-empty. DashScope
+                  // compatible-mode (qwen) occasionally emits degenerate start
+                  // fragments with literal EMPTY strings ("" on the wire, not
+                  // absent — observed in production 2026-08-20: valid arguments
+                  // with id=""/name="", 76 blocks over 72 requests). The old
+                  // (Some, Some) match accepted them, the finish flush then
+                  // emitted ToolCall(name=""), the agent's allowed-tool
+                  // whitelist dropped it as "Tool not available: <empty>" for
+                  // EVERY tool, and agents on the Vision fallback chain
+                  // (kimi→qwen→zhipu) entered a two-day retry storm. A late
+                  // degenerate fragment after a valid start is even worse
+                  // under the old code: the `case _` replace branch clobbered
+                  // the valid entry. Degenerate fragments now route to the
+                  // continuation branch — never starting, never clobbering.
+                  def continueFragment(
+                    acc: List[StreamChunk],
+                    index: Int,
+                    args: Option[String]
+                  ): IO[List[StreamChunk]] =
+                    toolCallState
+                      .modify { m =>
+                        m.get(index) match
+                          case Some((tid, tname, sb)) =>
+                            args.foreach(sb.append)
+                            val chunks =
+                              args.filter(_.nonEmpty).map(a => StreamChunk.ToolArgDelta(tname, a)).toList
+                            (m.updated(index, (tid, tname, sb)), chunks)
+                          case None => (m, Nil)
+                      }
+                      .map(chunks => acc ++ chunks)
+
                   tcs
                     .foldM(Nil: List[StreamChunk]) { (acc, tc) =>
                       val index = tc.hcursor.downField("index").as[Int].getOrElse(0)
@@ -397,7 +441,8 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                       val args = tc.hcursor.downField("function").downField("arguments").as[String].toOption
 
                       (id, name) match
-                        case (Some(toolId), Some(toolName)) =>
+                        case (Some(toolId), Some(toolName))
+                            if toolId.nonEmpty && toolName.nonEmpty =>
                           toolCallState
                             .modify { m =>
                               // Some OpenAI-compatible providers repeat id+name
@@ -419,18 +464,18 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                                 args.filter(_.nonEmpty).map(a => StreamChunk.ToolArgDelta(toolName, a)).toList
                               acc ++ (start :: argChunks)
                             }
+                        case (Some(_), Some(_)) =>
+                          // Degenerate start (explicit empty id and/or name) —
+                          // log the raw frame so the server-side trigger stays
+                          // diagnosable, then treat as continuation.
+                          IO.delay(
+                            logger.warn(
+                              s"degenerate tool-call fragment (empty id/name) treated as continuation: " +
+                                tc.noSpaces.take(160)
+                            )
+                          ) *> continueFragment(acc, index, args)
                         case _ =>
-                          toolCallState
-                            .modify { m =>
-                              m.get(index) match
-                                case Some((tid, tname, sb)) =>
-                                  args.foreach(sb.append)
-                                  val chunks =
-                                    args.filter(_.nonEmpty).map(a => StreamChunk.ToolArgDelta(tname, a)).toList
-                                  (m.updated(index, (tid, tname, sb)), chunks)
-                                case None => (m, Nil)
-                            }
-                            .map(chunks => acc ++ chunks)
+                          continueFragment(acc, index, args)
                       end match
                     }
                     .flatMap { acc =>
