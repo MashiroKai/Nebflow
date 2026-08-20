@@ -42,6 +42,17 @@ jobs:
       - name: Check src/main for user-specific identifiers
         run: bash scripts/check-user-knowledge.sh
 
+  dead-logging-gate:
+    name: Dead Logging Gate
+    # Fail-fast static gate: NebulaLogger double-wrap (IO(IO[Unit]) — inner
+    # log never runs; all known instances sat on error-recovery paths).
+    # Same logic locally: bash scripts/check-dead-logging.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check src/main for NebulaLogger double-wrap
+        run: bash scripts/check-dead-logging.sh
+
   compile:
     name: Compile (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
