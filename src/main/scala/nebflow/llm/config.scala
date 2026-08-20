@@ -156,7 +156,11 @@ case class NebflowServiceConfig(
   /** 冻结调度（freeze-schedule，#337 黑名单语义）：顶层 workSchedule 节原样 JSON
     * （键名保留前端契约，语义=冻结时段，支持跨午夜）——FreezeSchedule.load
     * fail-safe 解析（非法配置视为关闭）。updateConfig 深合并保留未提及顶层键。 */
-  workSchedule: Option[io.circe.Json] = None
+  workSchedule: Option[io.circe.Json] = None,
+  /** 工具结果 TTL 清理（#341，docs/Nebflow/20260820_tool-result-ttl.md）：顶层
+    * toolResultTtl 节原样 JSON——ToolResultTtlConfig.load fail-safe 解析（非法
+    * 配置视为关闭）。默认关（enabled=false）。request-only 清理，会话文件不动。 */
+  toolResultTtl: Option[io.circe.Json] = None
 )
 
 object NebflowServiceConfig:

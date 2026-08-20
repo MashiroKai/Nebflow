@@ -546,8 +546,26 @@ private[agent] trait AgentCore:
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
           // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
+          // #341 工具结果 TTL 清理（docs/Nebflow/20260820_tool-result-ttl.md）：
+          // REQUEST-ONLY——只作用于本次请求的消息副本，stateWithReminder 与
+          // 落盘会话零改动（语义三分：显示/LLM 上下文/会话文件）。门控与
+          // FastMicroCompact 相同的 turn 排除（压缩/存档/ask 需要全量输入）；
+          // keepRecent 窗保证 turn 中途的当前结果永不被清理（构造性安全）。
+          ttlCleanedMessages =
+            if isCompactTurn || isSaveTurn || isAskTurn then None
+            else ToolResultTtl.cleanRequestMessages(stateWithReminder.messages, resources.toolResultTtl)
+          _ = ttlCleanedMessages.foreach { _ =>
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "tool-result-ttl",
+              "request-only cleanup applied (session history untouched)"
+            )
+          }
           request = LlmRequest(
-            messages = stateWithReminder.messages ++ contextMsg ++ branchMsg ++ maintenanceMsg,
+            messages = ttlCleanedMessages.getOrElse(stateWithReminder.messages) ++ contextMsg ++ branchMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = freshDef.name,
             tools = freshTools,
