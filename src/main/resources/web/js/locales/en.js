@@ -326,6 +326,7 @@ export default {
   'chat.frozenCanceled': 'Freeze canceled for all agents',
   'chat.typeAnswer': 'Type your answer...',
   'chat.failedRender': 'Failed to render options. Please try again.',
+  'askUser.viewCompare': 'View comparison',
   'chat.waitingQuestion': 'Waiting for question...',
   'chat.askFailed': 'Ask failed',
   'chat.askLabel': 'Ask',
