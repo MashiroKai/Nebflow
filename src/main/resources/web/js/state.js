@@ -97,6 +97,10 @@ export default {
   // serverConfig echo of the stt node: { sttConfigured, endpoint?, model? } — the
   // apiKey is NEVER echoed (server-side only). null/absent = free browser path.
   stt: null,
+  // Tool result TTL echo (#341): { enabled, ttlMinutes, keepRecent, minChars } —
+  // fetched via getToolResultTtl, refreshed by toolResultTtl/toolResultTtlSaved
+  // frames. null = not fetched yet (panel renders backend defaults).
+  toolResultTtl: null,
 
   // Timestamp of the last textDelta/thinkingDelta received (ms).
   lastStreamActivity: 0,
