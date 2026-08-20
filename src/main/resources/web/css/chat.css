@@ -1531,6 +1531,63 @@
   }
 }
 
+/* ---------- Chat-native onboarding (onboarding-redesign-spec §8.4) ---------- */
+/* Typewriter simulation: paragraph stack + blinking cursor + skip button.
+   Zero new colors — cursor uses var(--color-text), skip inherits .glass-control. */
+.ob-sim-bubble {
+  position: relative; /* anchor for the absolute skip button */
+}
+.ob-body {
+  margin-top: 4px;
+}
+.ob-para {
+  margin: 0;
+}
+.ob-para + .ob-para {
+  margin-top: 4px;
+}
+.ob-cursor {
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--color-text);
+  animation: ob-blink 1s steps(2) infinite;
+}
+@keyframes ob-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.ob-skip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+/* Summary / error action rows (glass controls, §8.2 — save button keeps the
+   translucent-green send-button accent). */
+.ob-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.glass-control.ob-primary {
+  background: rgba(7, 193, 96, 0.42);
+}
+.ob-probing {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ob-cursor {
+    display: none;
+  }
+}
+
 /* ===== Top Overlays (task list + notifications) ===== */
 #top-overlays {
   position: absolute;
