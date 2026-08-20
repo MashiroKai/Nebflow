@@ -257,7 +257,19 @@ case class AgentRecord(
    * AgentControl：任务归属的父会话（SubAgentTaskStore 文件键）。Delegate/
    * SubTask 注册点已有值；list/restart 用它反查任务元数据，避免全目录扫描。
    */
-  parentSessionId: String = ""
+  parentSessionId: String = "",
+  /**
+   * issue #31 (2026-08-20) Fix D — phantom barrier 可见化：该 agent 自身
+   * outstandingSubagentResults 的最近快照（spawn 计数 / ExternalEvent 三分支
+   * 时刷新）。诊断语义：idle 期 outstanding > 0 且无在飞任务 = barrier 被
+   * phantom slot 占据（成员 hang/停止失败时发生，held 结果永不注入）。
+   */
+  outstandingSubagents: Int = 0,
+  /**
+   * issue #31 Fix D — 同上：该 agent pendingEvents（被 HOLD 的子代理结果
+   * 队列）长度的最近快照。outstanding>0 时 pending>0 = 有结果被扣留等批。
+   */
+  pendingEventCount: Int = 0
 )
 
 // ============================================================

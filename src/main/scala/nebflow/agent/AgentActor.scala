@@ -152,6 +152,27 @@ object AgentActor extends AgentCore with AgentSession:
     else if replyTo.exists(_.path.name.startsWith("fork-adapter")) then Some("ask")
     else Some("tool")
 
+  /** issue #31 Fix D (2026-08-20)：把自身 barrier 状态快照进 agentRegistry，
+    * 供 AgentControl list/status 展示——phantom slot（成员 hang / 停止失败时
+    * barrier 永不归还）从日志考古变成一条命令可见。诊断语义：idle 期
+    * outstanding > 0 且无在飞任务 = phantom；outstanding > 0 且 pending > 0 =
+    * 有结果被 HOLD 扣留等批。幂等，registry 无该 session 时 no-op。
+    * 刷新点：spawn 计数（tools-complete）、ExternalEvent 三分支。 */
+  private def touchBarrierSnapshot(
+    resources: SharedResources,
+    sessionId: Option[String],
+    outstanding: Int,
+    pending: Int
+  ): IO[Unit] =
+    sessionId.fold(IO.unit) { sid =>
+      resources.agentRegistry.modify { m =>
+        m.get(sid) match
+          case Some(rec) =>
+            (m.updated(sid, rec.copy(outstandingSubagents = outstanding, pendingEventCount = pending)), ())
+          case None => (m, ())
+      }
+    }
+
   /**
    * ExternalEvent sources whose result-notification payload should render as a
    * visible injected-user bubble (任务 Q, report §3 🔴). Low-value internal
@@ -209,7 +230,8 @@ object AgentActor extends AgentCore with AgentSession:
     eventType: Option[String] = None,
     sender: Option[String] = None,
     senderTeam: Option[String] = None,
-    delivery: Option[String] = None
+    delivery: Option[String] = None,
+    waitingForBatch: Boolean = false
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
       val base = Json.obj(
@@ -223,8 +245,15 @@ object AgentActor extends AgentCore with AgentSession:
       val withSender = sender.fold(withEt)(s => withEt.deepMerge(Json.obj("sender" -> s.asJson)))
       val withTeam = senderTeam.fold(withSender)(t => withSender.deepMerge(Json.obj("senderTeam" -> t.asJson)))
       val withDelivery = delivery.fold(withTeam)(d => withTeam.deepMerge(Json.obj("delivery" -> d.asJson)))
+      // issue #31 Fix C (2026-08-20): HOLD 分支的完成气泡标注「等待同批任务」——
+      // 把「COMPLETED 但父不动」从 bug 观感变成可理解的等待状态（前端展示
+      // 待 Frontend 消费此字段）。顺修既有 bug：此处原发 withTeam，
+      // withDelivery 被算出后丢弃（delivery 字段从未到达前端）。
+      val withWaiting =
+        if waitingForBatch then withDelivery.deepMerge(Json.obj("waitingForBatch" -> true.asJson))
+        else withDelivery
       ctx.forkTurn(
-        wsSend(withTeam).handleErrorWith(e => IO(logger.warn(s"injected user event failed: ${e.getMessage}")))
+        wsSend(withWaiting).handleErrorWith(e => IO(logger.warn(s"injected user event failed: ${e.getMessage}")))
       )
     }
 
@@ -574,7 +603,7 @@ object AgentActor extends AgentCore with AgentSession:
         // Receive-time visibility (stream event + bubble) — mirrors the
         // processing-state path so the UI shows each result arriving even when
         // the LLM injection is held back by the batch barrier.
-        val receiveVisibility: IO[Unit] =
+        def receiveVisibility(waiting: Boolean): IO[Unit] =
           emitStream(
             state.wsSend,
             AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
@@ -583,7 +612,15 @@ object AgentActor extends AgentCore with AgentSession:
           ) *> (visSource match
             case Some(s) =>
               val agentName = metadata("agentName").flatMap(_.asString)
-              emitInjectedUserEvent(state.wsSend, state.sessionId, payload, s, Some(eventType), agentName)
+              emitInjectedUserEvent(
+                state.wsSend,
+                state.sessionId,
+                payload,
+                s,
+                Some(eventType),
+                agentName,
+                waitingForBatch = waiting
+              )
             case None => IO.unit
           )
         // ── Sub-agent result barrier (worker blocking semantics) ──────────
@@ -601,7 +638,8 @@ object AgentActor extends AgentCore with AgentSession:
           // no turn starts until the batch completes (the completing branch
           // below marks busy).
           for
-            _ <- receiveVisibility
+            _ <- receiveVisibility(waiting = true)
+            _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, held.size + 1)
           yield idle(
             agentDef,
             resources,
@@ -620,7 +658,8 @@ object AgentActor extends AgentCore with AgentSession:
           val batchMessage = buildEventReminder(held :+ event)
           for
             _ <- sessionBusyIO
-            _ <- receiveVisibility
+            _ <- receiveVisibility(waiting = false)
+            _ <- touchBarrierSnapshot(resources, state.sessionId, 0, 0)
             result <- pipeLlmCall(
               agentDef,
               resources,
@@ -640,7 +679,8 @@ object AgentActor extends AgentCore with AgentSession:
           // Single immediate result (no batch in flight) or non-subagent event.
           for
             _ <- sessionBusyIO
-            _ <- receiveVisibility
+            _ <- receiveVisibility(waiting = false)
+            _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
             result <- pipeLlmCall(
               agentDef,
               resources,
@@ -1437,6 +1477,7 @@ object AgentActor extends AgentCore with AgentSession:
               )
           )
           _ <- immEventIO
+          _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, remainingEvents.size)
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
         yield result
 
