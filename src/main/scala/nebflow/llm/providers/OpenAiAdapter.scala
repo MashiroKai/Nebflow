@@ -13,7 +13,29 @@ import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
 
+import scala.collection.mutable
 import scala.concurrent.duration.*
+
+/** Per-index accumulator for one streaming tool call (OpenAI adapter).
+  * The StringBuilder and the empty-id/name counters are deliberately mutable
+  * and updated in place inside Ref.modify — SSE lines are evaluated
+  * sequentially per request (evalMap), the Ref only threads state across
+  * chunks, so there is no concurrent access.
+  *
+  * The empty-id/name bookkeeping aggregates qwen's argument-stream
+  * continuation frames (literal "" id/name) so the adapter can emit ONE
+  * summary WARN per tool call at the finish flush instead of one WARN per
+  * frame (~26 frames/call flooded logs at peak 1038 lines/min, 2026-08-21).
+  */
+private[providers] final class ToolCallEntry(val id: String, val name: String, initialArgs: String = ""):
+  val sb = new StringBuilder(initialArgs)
+  /** Continuation frames with literal empty id/name merged into this call. */
+  var emptyIdNameFrames = 0
+  /** Total argument chars contributed by those frames. */
+  var emptyIdNameChars = 0
+  /** Raw frame samples for the aggregated summary (first few only). */
+  val emptyIdNameSamples = mutable.ListBuffer.empty[String]
+end ToolCallEntry
 
 class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, Fs2Streams[IO]])
     extends ProviderAdapter[IO]:
@@ -304,7 +326,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
       case _ => bodyWithThinking
 
-    Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
+    Stream.eval(IO.ref(Map.empty[Int, ToolCallEntry])).flatMap { toolCallState =>
       val request = basicRequest
         .post(uri"$endpoint")
         .header("Authorization", s"Bearer $apiKey")
@@ -318,7 +340,15 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           case Left(error) =>
             Stream.eval(IO.raiseError(new RuntimeException(s"OpenAI API error: $error")))
           case Right(byteStream) =>
+            // If the stream dies mid-tool-call (transport error, or downstream
+            // cancellation from the no-progress watchdog / a fallback switch),
+            // the finish flush never runs — this finalizer emits whatever
+            // empty-id/name summaries were already counted so aggregation
+            // never silently loses content (日志完整性优先). After a normal
+            // finish flush the state map is empty and this is a no-op;
+            // getAndSet makes it idempotent under any termination path.
             parseOpenAiSseIncrementally(byteStream, toolCallState, params)
+              .onFinalize(flushEmptyIdNameSummaries(toolCallState, params))
       }
     }
 
@@ -326,7 +356,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
 
   private def parseOpenAiSseIncrementally(
     byteStream: Stream[IO, Byte],
-    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
+    toolCallState: Ref[IO, Map[Int, ToolCallEntry]],
     params: SendMessageParams
   ): Stream[IO, StreamChunk] =
     byteStream
@@ -344,7 +374,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
 
   private[providers] def processOpenAiData(
     data: String,
-    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
+    toolCallState: Ref[IO, Map[Int, ToolCallEntry]],
     params: SendMessageParams
   ): IO[List[StreamChunk]] =
     def makeMeta: LlmMeta = LlmMeta(
@@ -403,35 +433,58 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                 case Some(tcs) =>
                   // Fragment classification. A fragment STARTS a tool call only
                   // when both id and name are present AND non-empty. DashScope
-                  // compatible-mode (qwen) occasionally emits degenerate start
-                  // fragments with literal EMPTY strings ("" on the wire, not
-                  // absent — observed in production 2026-08-20: valid arguments
-                  // with id=""/name="", 76 blocks over 72 requests). The old
-                  // (Some, Some) match accepted them, the finish flush then
-                  // emitted ToolCall(name=""), the agent's allowed-tool
-                  // whitelist dropped it as "Tool not available: <empty>" for
-                  // EVERY tool, and agents on the Vision fallback chain
-                  // (kimi→qwen→zhipu) entered a two-day retry storm. A late
-                  // degenerate fragment after a valid start is even worse
-                  // under the old code: the `case _` replace branch clobbered
-                  // the valid entry. Degenerate fragments now route to the
-                  // continuation branch — never starting, never clobbering.
+                  // compatible-mode (qwen) streams its argument continuation
+                  // frames with literal EMPTY strings for id/name ("" on the
+                  // wire, not absent — their standard continuation shape,
+                  // ~26 frames per tool call; 2026-08-20 incident: treating
+                  // those as starts produced ToolCall(name=""), which the
+                  // agent's allowed-tool whitelist dropped as "Tool not
+                  // available: <empty>" for EVERY tool, a two-day retry
+                  // storm. A late degenerate fragment under the old code also
+                  // clobbered a valid entry). Empty-id/name frames now route
+                  // to the continuation branch — never starting, never
+                  // clobbering — and are counted per call; ONE aggregated
+                  // summary WARN is emitted at the finish flush (the
+                  // per-frame WARN flooded logs at peak 1038 lines/min,
+                  // 2026-08-21; content preserved, only granularity changed).
                   def continueFragment(
                     acc: List[StreamChunk],
                     index: Int,
-                    args: Option[String]
+                    args: Option[String],
+                    emptyIdNameRaw: Option[String] = None
                   ): IO[List[StreamChunk]] =
                     toolCallState
                       .modify { m =>
                         m.get(index) match
-                          case Some((tid, tname, sb)) =>
-                            args.foreach(sb.append)
+                          case Some(entry) =>
+                            args.foreach(entry.sb.append)
+                            emptyIdNameRaw.foreach { raw =>
+                              entry.emptyIdNameFrames += 1
+                              entry.emptyIdNameChars += args.map(_.length).getOrElse(0)
+                              if entry.emptyIdNameSamples.size < MaxEmptyIdNameSamples then
+                                entry.emptyIdNameSamples += raw
+                            }
                             val chunks =
-                              args.filter(_.nonEmpty).map(a => StreamChunk.ToolArgDelta(tname, a)).toList
-                            (m.updated(index, (tid, tname, sb)), chunks)
-                          case None => (m, Nil)
+                              args.filter(_.nonEmpty).map(a => StreamChunk.ToolArgDelta(entry.name, a)).toList
+                            (m, (chunks, false))
+                          case None => (m, (Nil, emptyIdNameRaw.isDefined))
                       }
-                      .map(chunks => acc ++ chunks)
+                      .flatMap { case (chunks, orphan) =>
+                        // Orphan empty-id/name frame: no valid start seen for
+                        // this index, its args are dropped, and no flush can
+                        // ever cover a call that never started — log it now
+                        // (0 occurrences in production 2026-08-20/21; this
+                        // stays silent in normal operation and is the only
+                        // remaining per-frame WARN path).
+                        if orphan then
+                          logger
+                            .warn(
+                              s"orphan empty-id/name continuation frame dropped (no valid start for index $index): " +
+                                emptyIdNameRaw.getOrElse("")
+                            )
+                            .as(acc ++ chunks)
+                        else IO.pure(acc ++ chunks)
+                      }
 
                   tcs
                     .foldM(Nil: List[StreamChunk]) { (acc, tc) =>
@@ -452,11 +505,11 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                               // were silently lost (same class as issue #18).
                               // Accumulate instead when the entry is the same call.
                               m.get(index) match
-                                case Some((id0, name0, sb)) if id0 == toolId && name0 == toolName =>
-                                  args.foreach(sb.append)
-                                  (m.updated(index, (toolId, toolName, sb)), ())
+                                case Some(entry) if entry.id == toolId && entry.name == toolName =>
+                                  args.foreach(entry.sb.append)
+                                  (m.updated(index, entry), ())
                                 case _ =>
-                                  (m.updated(index, (toolId, toolName, new StringBuilder(args.getOrElse("")))), ())
+                                  (m.updated(index, ToolCallEntry(toolId, toolName, args.getOrElse(""))), ())
                             }
                             .as {
                               val start = StreamChunk.ToolCallStart(toolName)
@@ -465,35 +518,33 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                               acc ++ (start :: argChunks)
                             }
                         case (Some(_), Some(_)) =>
-                          // Degenerate start (explicit empty id and/or name) —
-                          // log the raw frame so the server-side trigger stays
-                          // diagnosable, then treat as continuation.
-                          // logger.warn already returns IO[Unit] — wrapping it in IO.delay
-                          // would build-but-never-run the inner IO (qa catch:
-                          // dead logging, same family as TaskStuckWatcher:93).
-                          logger.warn(
-                            s"degenerate tool-call fragment (empty id/name) treated as continuation: " +
-                              tc.noSpaces.take(160)
-                          ) *> continueFragment(acc, index, args)
+                          // qwen's standard argument-stream continuation frame
+                          // (empty id/name) — merge as continuation, count for
+                          // the aggregated flush summary. logger.warn returns
+                          // IO[Unit]; never wrap it in IO.delay (builds-but-
+                          // never-runs the inner IO — qa 2026-08-20 catch).
+                          continueFragment(acc, index, args, Some(tc.noSpaces.take(160)))
                         case _ =>
                           continueFragment(acc, index, args)
                       end match
                     }
                     .flatMap { acc =>
                       if finishReason.contains("tool_calls") || finishReason.contains("function_call") then
-                        toolCallState.getAndSet(Map.empty).map { m =>
-                          val toolChunks = m.values.toList.map { case (id, name, sb) =>
-                            val input = ToolInputJson.parseToolInput(name, sb.toString)
-                            StreamChunk.ToolCallChunk(ToolCall(id, name, input))
+                        toolCallState.getAndSet(Map.empty).flatMap { m =>
+                          logEmptyIdNameSummaries(m, params).as {
+                            val toolChunks = m.values.toList.map { entry =>
+                              val input = ToolInputJson.parseToolInput(entry.name, entry.sb.toString)
+                              StreamChunk.ToolCallChunk(ToolCall(entry.id, entry.name, input))
+                            }
+                            // Include any text/thinking deltas from this chunk AND a Done chunk,
+                            // consistent with the case None branch below.
+                            allTextDeltas ++ acc ++ toolChunks :+ StreamChunk.Done(
+                              finishReason,
+                              usageOpt,
+                              Some(makeMeta),
+                              None
+                            )
                           }
-                          // Include any text/thinking deltas from this chunk AND a Done chunk,
-                          // consistent with the case None branch below.
-                          allTextDeltas ++ acc ++ toolChunks :+ StreamChunk.Done(
-                            finishReason,
-                            usageOpt,
-                            Some(makeMeta),
-                            None
-                          )
                         }
                       else if finishReason.isDefined then
                         IO.pure(allTextDeltas ++ acc :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None))
@@ -503,12 +554,14 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                   // finish_reason may arrive in a chunk with empty delta (no tool_calls field).
                   // Flush accumulated tool call state when finish_reason indicates tool use.
                   if finishReason.exists(fr => fr.contains("tool_calls") || fr.contains("function_call")) then
-                    toolCallState.getAndSet(Map.empty).map { m =>
-                      val toolChunks = m.values.toList.map { case (id, name, sb) =>
-                        val input = ToolInputJson.parseToolInput(name, sb.toString)
-                        StreamChunk.ToolCallChunk(ToolCall(id, name, input))
+                    toolCallState.getAndSet(Map.empty).flatMap { m =>
+                      logEmptyIdNameSummaries(m, params).as {
+                        val toolChunks = m.values.toList.map { entry =>
+                          val input = ToolInputJson.parseToolInput(entry.name, entry.sb.toString)
+                          StreamChunk.ToolCallChunk(ToolCall(entry.id, entry.name, input))
+                        }
+                        allTextDeltas ++ toolChunks :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None)
                       }
-                      allTextDeltas ++ toolChunks :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None)
                     }
                   else if finishReason.isDefined then
                     IO.pure(allTextDeltas :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None))
@@ -518,4 +571,42 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         end if
     end match
   end processOpenAiData
+  /** Raw frame samples kept per tool call for the aggregated summary. */
+  private val MaxEmptyIdNameSamples = 3
+
+  /** Emit ONE aggregated WARN per flushed tool call that received qwen-style
+    * empty-id/name continuation frames — replaces the per-frame WARN that
+    * flooded logs at ~26 lines per tool call (peak 1038 lines/min,
+    * 2026-08-21). Content preserved: frame count, argument char volume,
+    * merge health of the accumulated args, session/agent correlation (the
+    * old per-frame WARN had none — multi-stream attribution was guesswork),
+    * and the first raw frames (≤160 chars each, same truncation as before).
+    */
+  private def logEmptyIdNameSummaries(m: Map[Int, ToolCallEntry], params: SendMessageParams): IO[Unit] =
+    m.toList.traverse_ { case (index, entry) =>
+      IO.whenA(entry.emptyIdNameFrames > 0) {
+        val mergeHealth =
+          if entry.sb.isEmpty then "no args"
+          else if parse(entry.sb.toString).isRight then "parsed OK"
+          else "not strict JSON (rescue path)"
+        logger.warn(
+          s"empty-id/name continuation frames merged into tool ${entry.name} (index $index): " +
+            s"${entry.emptyIdNameFrames} frames, ${entry.emptyIdNameChars} arg chars, " +
+            s"merged args ${entry.sb.length} chars ($mergeHealth), " +
+            s"session ${params.sessionId.getOrElse("-")} agent ${params.agentId.getOrElse("-")}; " +
+            s"first frames: ${entry.emptyIdNameSamples.mkString(" | ")}"
+        )
+      }
+    }
+
+  /** Flush aggregated empty-id/name summaries when the stream terminates
+    * abnormally (error or cancellation) so the finish-flush aggregation
+    * never silently loses content it already counted.
+    */
+  private def flushEmptyIdNameSummaries(
+    toolCallState: Ref[IO, Map[Int, ToolCallEntry]],
+    params: SendMessageParams
+  ): IO[Unit] =
+    toolCallState.getAndSet(Map.empty).flatMap(logEmptyIdNameSummaries(_, params))
+
 end OpenAiAdapter

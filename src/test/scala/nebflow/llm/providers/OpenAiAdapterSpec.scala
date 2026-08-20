@@ -2,6 +2,7 @@ package nebflow.llm.providers
 
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
+import cats.syntax.all.*
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
@@ -170,7 +171,7 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   // ====== Streaming: processOpenAiData ======
 
   test("processOpenAiData: tool call start") {
-    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](Map.empty)
+    val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](Map.empty)
     val data =
       """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"Read","arguments":""}}]},"finish_reason":null}]}"""
     val params = SendMessageParams(Nil, "gpt-4o")
@@ -182,12 +183,12 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
       assert(chunks.head.isInstanceOf[StreamChunk.ToolCallStart])
       assertEquals(chunks.head.asInstanceOf[StreamChunk.ToolCallStart].name, "Read")
       assert(fs.contains(0))
-      assertEquals(fs(0)._1, "call_abc")
+      assertEquals(fs(0).id, "call_abc")
   }
 
   test("processOpenAiData: CRITICAL - empty delta + finish_reason=tool_calls flushes state") {
-    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](
-      Map(0 -> ("call_abc", "Read", new StringBuilder("{\"file_path\":\"/test.txt\"}")))
+    val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](
+      Map(0 -> ToolCallEntry("call_abc", "Read", "{\"file_path\":\"/test.txt\"}"))
     )
     val data = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
     val params = SendMessageParams(Nil, "gpt-4o")
@@ -204,8 +205,8 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   }
 
   test("processOpenAiData: finish_reason=tool_calls with tool_calls in delta") {
-    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](
-      Map(0 -> ("call_1", "Read", new StringBuilder("{\"file_path\":")))
+    val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](
+      Map(0 -> ToolCallEntry("call_1", "Read", "{\"file_path\":"))
     )
     val data =
       """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"/t.txt\"}"}}]},"finish_reason":"tool_calls"}]}"""
@@ -217,7 +218,7 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   }
 
   test("processOpenAiData: usage-only chunk") {
-    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](Map.empty)
+    val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](Map.empty)
     val data = """{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20}}"""
     val params = SendMessageParams(Nil, "gpt-4o")
     for chunks <- adapter.processOpenAiData(data, state, params)
@@ -229,7 +230,7 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   }
 
   test("processOpenAiData: text delta") {
-    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](Map.empty)
+    val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](Map.empty)
     val data = """{"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"""
     val params = SendMessageParams(Nil, "gpt-4o")
     for chunks <- adapter.processOpenAiData(data, state, params)
@@ -239,7 +240,7 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   }
 
   test("processOpenAiData: reasoning_content => ThinkingDelta") {
-    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](Map.empty)
+    val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](Map.empty)
     val data = """{"choices":[{"index":0,"delta":{"reasoning_content":"thinking..."},"finish_reason":null}]}"""
     val params = SendMessageParams(Nil, "gpt-4o")
     for chunks <- adapter.processOpenAiData(data, state, params)
@@ -251,8 +252,8 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   // ====== Streaming: issue #18 regressions ======
 
   test("processOpenAiData: unquoted ISO arguments rescued at finish flush (issue #18)") {
-    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](
-      Map(0 -> ("call_1", "Schedule", new StringBuilder("""{"content":"x","triggerAt":2026-08-18T00:00:00+08:00}""")))
+    val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](
+      Map(0 -> ToolCallEntry("call_1", "Schedule", """{"content":"x","triggerAt":2026-08-18T00:00:00+08:00}"""))
     )
     val data = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
     val params = SendMessageParams(Nil, "glm-5.3")
@@ -264,7 +265,7 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   }
 
   test("processOpenAiData: providers repeating id+name per fragment accumulate all fragments") {
-    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](Map.empty)
+    val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](Map.empty)
     val params = SendMessageParams(Nil, "gpt-4o")
     val frag1 = """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Schedule","arguments":"{\"content\":\"x\","}}]},"finish_reason":null}]}"""
     val frag2 = """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"Schedule","arguments":"\"triggerAt\":\"in 2 hours\"}"}}]},"finish_reason":null}]}"""
@@ -315,7 +316,7 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   // every tool appeared broken and agents retried in a storm.
 
   test("processOpenAiData: degenerate qwen start (id=\"\" and name=\"\"\") never creates a tool call") {
-    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](Map.empty)
+    val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](Map.empty)
     val params = SendMessageParams(Nil, "qwen3.8-max")
     // Exact production frame shape: empty id + empty name + valid arguments
     val frag1 =
@@ -326,8 +327,8 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
     val finish = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
 
     // Anti-regression nail for the dead-logging defect (qa 2026-08-20): the
-    // warn on degenerate fragments is the ONLY capture point for DashScope's
-    // server-side trigger (not reproducible locally) — pure chunk assertions
+    // orphan warn is the ONLY capture point for DashScope frames that arrive
+    // with no valid start (not reproducible locally) — pure chunk assertions
     // cannot tell whether the log line was built-but-discarded. Attach a
     // list-appender and require the WARN to actually fire.
     val lbLogger =
@@ -355,20 +356,25 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
           // Stream still terminates cleanly
           assert((c1 ++ c2 ++ c3).exists(_.isInstanceOf[StreamChunk.Done]), "finish must emit Done")
           assert(fs.isEmpty, "state must stay empty")
-          // The diagnostic warn FIRED (not built-and-discarded)
+          // The diagnostic WARN FIRED (not built-and-discarded). With no valid
+          // start these frames are ORPHANS — the immediate per-frame path that
+          // per-call aggregation cannot cover (0 occurrences in production).
+          val warns = appender.list.asScala.filter(_.getLevel == ch.qos.logback.classic.Level.WARN).toList
           assert(
-            appender.list.asScala.exists(e =>
-              e.getLevel == ch.qos.logback.classic.Level.WARN &&
-                e.getFormattedMessage.contains("degenerate tool-call fragment")
-            ),
-            s"expected a WARN 'degenerate tool-call fragment' log event, got ${appender.list.asScala.map(_.getFormattedMessage).toList}"
+            warns.exists(_.getFormattedMessage.contains("orphan empty-id/name continuation frame dropped")),
+            s"expected an orphan WARN log event, got ${warns.map(_.getFormattedMessage)}"
           )
+          // No per-call summary without a flushed call; retired wording must not return
+          assert(!warns.exists(_.getFormattedMessage.contains("merged into tool")),
+            s"no summary WARN expected without a flushed call, got ${warns.map(_.getFormattedMessage)}")
+          assert(!warns.exists(_.getFormattedMessage.contains("degenerate tool-call fragment")),
+            s"retired per-frame wording must not reappear, got ${warns.map(_.getFormattedMessage)}")
       } { _ => IO.delay(lbLogger.detachAppender(appender)) }
   }
 
   test("processOpenAiData: late degenerate fragment does NOT clobber a valid started call") {
-    val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](
-      Map(0 -> ("call_1", "Bash", new StringBuilder("{\"command\":\"echo hi\"")))
+    val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](
+      Map(0 -> ToolCallEntry("call_1", "Bash", "{\"command\":\"echo hi\""))
     )
     val params = SendMessageParams(Nil, "qwen3.8-max")
     // Under the pre-guard code this (Some(""),Some("")) fragment hit the
@@ -394,6 +400,103 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
     ]}}]}""").toOption.get
     val tcs = adapter.extractToolCalls(json)
     assertEquals(tcs.map(_.name), List("Grep"), "empty-name call must be dropped, valid call kept")
+  }
+
+  // ====== Streaming: empty-id/name WARN aggregation (2026-08-21 flood) ======
+  // qwen streams its argument continuation frames with literal "" id/name —
+  // normal wire shape, ~26 frames per tool call. The per-frame WARN flooded
+  // logs (peak 1038 lines/min). Aggregation contract: count per call, ONE
+  // summary WARN at the finish flush with frame count / arg volume / merge
+  // health / session-agent correlation / first raw samples; orphan frames
+  // (no valid start) still log immediately.
+
+  test("processOpenAiData: empty-id/name frames aggregate into ONE summary WARN per call at flush") {
+    val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](Map.empty)
+    val params =
+      SendMessageParams(Nil, "qwen3.8-max", sessionId = Some("sess-agg-1"), agentId = Some("visual-reviewer"))
+    // Valid start frame (real id+name), then five empty-id/name continuation
+    // frames carrying the argument stream. 5 frames > 3-sample cap also pins
+    // the raw-sample limit.
+    val start =
+      """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_agg1","type":"function","function":{"name":"Read","arguments":""}}]},"finish_reason":null}]}"""
+    val parts = List("""{"command":"ec""", """ho hel""", """lo","fl""", """ag":tr""", """ue}""")
+    def esc(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"")
+    val conts = parts.map { p =>
+      s"""{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"${esc(p)}"}}]},"finish_reason":null}]}"""
+    }
+    val finish = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
+
+    val lbLogger =
+      org.slf4j.LoggerFactory.getLogger("nebflow.llm.openai").asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+
+    IO
+      .delay {
+        appender.start()
+        lbLogger.addAppender(appender)
+      }
+      .bracket { _ =>
+        for
+          _ <- adapter.processOpenAiData(start, state, params)
+          _ <- conts.traverse_(c => adapter.processOpenAiData(c, state, params))
+          fin <- adapter.processOpenAiData(finish, state, params)
+          fs <- state.get
+        yield
+          // Merge semantics preserved (5e109ef8): empty-id/name frames still
+          // continue the valid call — flushed ToolCallChunk carries full args.
+          val tcs = fin.collect { case StreamChunk.ToolCallChunk(tc) => tc }
+          assertEquals(tcs.map(_.name), List("Read"))
+          assertEquals(tcs.head.input("command").flatMap(_.asString), Some("echo hello"))
+          assertEquals(tcs.head.input("flag").flatMap(_.asBoolean), Some(true))
+          assert(fin.exists(_.isInstanceOf[StreamChunk.Done]), "finish must emit Done")
+          assert(fs.isEmpty, "state must be cleared after flush")
+          // ONE aggregated WARN — not one per frame (the flood defect)
+          val warns = appender.list.asScala.filter(_.getLevel == ch.qos.logback.classic.Level.WARN).toList
+          assertEquals(warns.size, 1, s"expected exactly 1 summary WARN, got: ${warns.map(_.getFormattedMessage)}")
+          val msg = warns.head.getFormattedMessage
+          assert(msg.contains("empty-id/name continuation frames merged into tool Read"), s"missing tool name: $msg")
+          assert(msg.contains("5 frames"), s"missing frame count: $msg")
+          assert(msg.contains(s"${parts.map(_.length).sum} arg chars"), s"missing arg char volume: $msg")
+          assert(msg.contains("parsed OK"), s"missing merge health: $msg")
+          assert(msg.contains("session sess-agg-1"), s"missing session correlation: $msg")
+          assert(msg.contains("agent visual-reviewer"), s"missing agent correlation: $msg")
+          assert(msg.contains("first frames:"), s"missing raw samples: $msg")
+          // 5 frames but only first 3 samples kept => exactly 2 " | " separators
+          assertEquals(msg.count(_ == '|'), 2, s"expected 3 raw samples (2 separators), got: $msg")
+      } { _ => IO.delay(lbLogger.detachAppender(appender)) }
+  }
+
+  test("processOpenAiData: compliant continuation frames (id/name absent) stay silent — no WARN") {
+    val state = Ref.unsafe[IO, Map[Int, ToolCallEntry]](Map.empty)
+    val params = SendMessageParams(Nil, "gpt-4o")
+    // Standard OpenAI shape: start carries id+name, continuation omits both.
+    val start =
+      """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_q1","type":"function","function":{"name":"Read","arguments":""}}]},"finish_reason":null}]}"""
+    val cont =
+      """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"a\":1}"}}]},"finish_reason":null}]}"""
+    val finish = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
+
+    val lbLogger =
+      org.slf4j.LoggerFactory.getLogger("nebflow.llm.openai").asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+
+    IO
+      .delay {
+        appender.start()
+        lbLogger.addAppender(appender)
+      }
+      .bracket { _ =>
+        for
+          _ <- adapter.processOpenAiData(start, state, params)
+          _ <- adapter.processOpenAiData(cont, state, params)
+          fin <- adapter.processOpenAiData(finish, state, params)
+        yield
+          val tcs = fin.collect { case StreamChunk.ToolCallChunk(tc) => tc }
+          assertEquals(tcs.map(_.name), List("Read"))
+          assertEquals(tcs.head.input("a").flatMap(_.as[Int].toOption), Some(1))
+          val warns = appender.list.asScala.filter(_.getLevel == ch.qos.logback.classic.Level.WARN).toList
+          assert(warns.isEmpty, s"compliant frames must not warn, got: ${warns.map(_.getFormattedMessage)}")
+      } { _ => IO.delay(lbLogger.detachAppender(appender)) }
   }
 
 end OpenAiAdapterSpec
