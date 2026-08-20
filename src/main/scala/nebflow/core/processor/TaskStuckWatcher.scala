@@ -3,7 +3,7 @@ package nebflow.core.processor
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, AgentStatus, SharedResources}
+import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentRecord, AgentStatus, SharedResources}
 import nebflow.core.NebflowLogger
 import nebflow.gateway.WsHub
 
@@ -36,6 +36,14 @@ import scala.concurrent.duration.FiniteDuration
  *     session 累计 StopAttempts(=2) 次无响应后，watcher 升级为经 inflight
  *     注册表按 session 硬取消在飞 LLM 请求（StuckAbort→Fatal，不 fallback
  *     不重发上下文）——turn 走 llm-fail，mailbox 恢复轮转，Stop 终于被消费。
+ *   - issue #31 终极兜底（2026-08-20）：硬取消后仍 stuck（attempts ≥
+ *     StopAttempts+2，即 escalate 后约两轮扫描仍无活动）——Stop 与硬取消
+ *     双失效（当晚 design-engineer 47 次 Stop + 反复 hard-cancel 全无效，
+ *     turn fiber 挂在无取消注册的等待上），supervisor 永远等不到终态 →
+ *     父 barrier 留 phantom slot、held 结果永久滞留。此时经 supervisorRef
+ *     发 AgentEvent.Cancelled（AgentControl cancel 同链路）：父 barrier 归还、
+ *     held 注入触发轮次、taskStore cancelled、registry 移除、child Stop、
+ *     supervisor 自停。
  *   - 根 agent（无 parentRef）：不自动重启——广播 taskStuck WS 事件 + 日志，
  *     由用户决定。
  *
@@ -189,7 +197,40 @@ object TaskStuckWatcher:
                     logger.warn(s"TaskStuckWatcher: hard-cancel for ${rec.sessionId} failed: ${e.getMessage}")
                   )
                 else IO.unit
-              escalate *> (rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
+              // issue #31 (2026-08-20): escalate 后两轮扫描仍 stuck = Stop
+              // (mailbox，suspended 不消费) 与 hard-cancel (halt Deferred，
+              // 当晚实证 turn fiber 挂在无取消注册的等待上、complete 无效) 双失效
+              // ——supervisor 永远等不到终态，父的 outstandingSubagentResults 留下
+              // phantom slot，held 结果永久滞留（root 永不触发轮次，直到重启）。
+              // 兜底：经 supervisor 的 Cancelled 分支走完整清理链（与 AgentControl
+              // cancel 同一路径，当晚 Nebula 手动 cancel 已实证可释放 barrier）：
+              // 父 ExternalEvent(source=delegate/subtask → barrier 精确递减一次) +
+              // taskStore cancelled + registry 移除 + child Stop + supervisor 自停。
+              // reason 文本随 payload 注入父 LLM，指引重新派发。
+              // 无 supervisorRef 的 Ephemeral/Flow 不进 barrier、无 phantom 风险
+              // ——维持现状（Stop 循环），不发兜底。
+              val giveUp =
+                if attempts >= StopAttempts + 2 then
+                  rec.supervisorRef match
+                    case Some(sup) =>
+                      logger.warn(
+                        s"TaskStuckWatcher: ${rec.sessionId} still stuck after hard-cancel (attempt $attempts) — " +
+                          "releasing parent barrier via supervisor Cancelled (Stop and hard-cancel both ineffective)"
+                      ) *>
+                        (sup ! AgentEvent.Cancelled(
+                          rec.sessionId,
+                          s"stuck for ${idleSecs}s with Stop and hard-cancel both ineffective — " +
+                            "released by TaskStuckWatcher; consider re-delegating this task"
+                        )).handleErrorWith(e =>
+                          logger.warn(s"TaskStuckWatcher: supervisor Cancelled for ${rec.sessionId} failed: ${e.getMessage}")
+                        ) *>
+                        // 清掉本 session 的 Stop 计数：supervisor 自停后 registry 记录
+                        // 被移除、下轮 scan 不再命中，此处手动清是双保险（避免同
+                        // sessionId 未来回合继承旧计数提前触发 giveUp）。
+                        stopCounts.update(_ - rec.sessionId)
+                    case None => IO.unit
+                else IO.unit
+              escalate *> giveUp *> (rec.ref ! AgentCommand.Stop(s"stuck-task-${rec.sessionId}"))
                 .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: Stop to stuck sub-agent ${rec.sessionId} failed: ${e.getMessage}"))
             }
         case None =>
