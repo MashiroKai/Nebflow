@@ -1740,7 +1740,7 @@ export function renderAskUser(items, askSessionId, agentName) {
 }
 
 // ---------- Permission prompt ----------
-export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession) {
+export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession, sourceTeam) {
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
@@ -1783,12 +1783,14 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   }
 
   // Source badge: show which sub-agent this permission request came from
+  // (with team attribution when the requester is a team agent — #12)
   if (sourceAgent) {
     const sourceBadge = document.createElement('div');
     sourceBadge.className = 'perm-source-badge';
     const shortSession = sourceSession ? sourceSession.substring(0, 12) : '';
+    const agentLabel = sourceTeam ? `${sourceTeam}/${sourceAgent}` : sourceAgent;
     sourceBadge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17l9.2-9.2M17 17V7H7"/></svg>' +
-      '<span>' + escapeHtml(t('chat.permSource', { agent: sourceAgent, session: shortSession })) + '</span>';
+      '<span>' + escapeHtml(t('chat.permSource', { agent: agentLabel, session: shortSession })) + '</span>';
     bubble.appendChild(sourceBadge);
   }
 
