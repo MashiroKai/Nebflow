@@ -424,6 +424,8 @@ export default {
   'chat.thoughtSeconds': 'Thought for {n} seconds',
   'chat.thoughtMinutes': 'Thought for {m} minutes',
   'chat.thought': 'Thought',
+  'chat.turnSummaryTools': '{n} tool calls',
+  'chat.turnSummaryToolsOne': '1 tool call',
   'chat.thinking.0': 'Drifting through the cosmos...',
   'chat.thinking.1': 'Gazing into the deep...',
   'chat.thinking.2': 'Sailing the stellar winds...',
