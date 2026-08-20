@@ -32,6 +32,12 @@ object LlmInterface:
     * it to None in a finally. */
   private[llm] var noProgressTimeoutOverride: Option[FiniteDuration] = None
 
+  /** Test hook (fallback seam spec): overrides the per-provider two-phase
+    * watchdog windows (Defaults.LlmFirstTokenTimeoutSec /
+    * LlmStreamInactivitySec) — (firstToken, subsequent). Global var — specs
+    * MUST reset it to None in a finally. */
+  private[llm] var streamInactivityOverride: Option[(FiniteDuration, FiniteDuration)] = None
+
   // ── In-flight LLM request registry (shutdown abort, Task 2 2026-08-19) ──
   // Every active sendStream registers an abort signal here; a JVM shutdown
   // hook (Main.startGateway) and the GatewayMain graceful-cleanup guarantee
@@ -541,8 +547,12 @@ object LlmInterface:
                                     // Applied per-provider so a timeout on one allows fallback.
                                     .through(
                                       inactivityTimeout(
-                                        Defaults.LlmFirstTokenTimeoutSec.seconds,
-                                        Defaults.LlmStreamInactivitySec.seconds
+                                        streamInactivityOverride
+                                          .map(_._1)
+                                          .getOrElse(Defaults.LlmFirstTokenTimeoutSec.seconds),
+                                        streamInactivityOverride
+                                          .map(_._2)
+                                          .getOrElse(Defaults.LlmStreamInactivitySec.seconds)
                                       )
                                     )
                                     .evalTap { chunk =>
@@ -694,15 +704,38 @@ object LlmInterface:
                                           if isEmptyCompletion && hadImage && !candidate.vision then
                                             rawClassification.copy(reason = FailoverReason.CapabilityMismatch)
                                           else rawClassification
-                                        // Timeout needs special handling: even if partial content was
-                                        // streamed (locked), we allow fallback to try the next provider.
-                                        // Other errors with locked=true are propagated to avoid duplication.
+                                        // Seam guard: content chunks that enter the final
+                                        // aggregation (TextDelta / ThinkingDelta /
+                                        // ToolCallChunk) were already pulled downstream
+                                        // (compile.toList) — they CANNOT be recalled.
+                                        // Continuing the fallback chain would stitch the
+                                        // next provider's output after our partial content
+                                        // into the same aggregation — user-visible
+                                        // duplication (production evidence 2026-08-20: one
+                                        // stream mixing qwen tool_use fragments with kimi
+                                        // end_turn/usage). The old timeout carve-out
+                                        // (reset lock + fall through) was exactly this
+                                        // seam. Timeout-with-partial-content now behaves
+                                        // like every other error-with-partial-content:
+                                        // the whole stream fails; the agent's llm-fail
+                                        // path surfaces it (per the 2026-08-18 token-
+                                        // incident ruling, non-overload transients do not
+                                        // auto-retry at the agent level).
                                         val isTimeout = classification.reason == FailoverReason.Timeout
                                         fs2.Stream.eval(lockedRef.get).flatMap { locked =>
-                                          if locked && !isTimeout then fs2.Stream.eval(IO.raiseError(err))
+                                          if locked then
+                                            val seamWarn =
+                                              if isTimeout then
+                                                logger.warn(
+                                                  s"Stream aborted after partial content " +
+                                                    s"(${candidate.providerId}/${candidate.model}): " +
+                                                    "inactivity timeout — provider switch suppressed " +
+                                                    "(emitted chunks cannot be recalled; stitched-output guard)"
+                                                )
+                                              else IO.unit
+                                            fs2.Stream.eval(seamWarn) *> fs2.Stream
+                                              .eval(IO.raiseError(err))
                                           else
-                                            val resetLock =
-                                              if isTimeout && locked then lockedRef.set(false) else IO.unit
                                             val attempt = FallbackAttempt(
                                               candidate.providerId,
                                               candidate.model,
@@ -728,7 +761,7 @@ object LlmInterface:
                                               case ErrorPermanence.Fatal =>
                                                 // Error affects all providers — abort entire stream
                                                 fs2.Stream.eval(
-                                                  resetLock *> logger.warn(
+                                                  logger.warn(
                                                     s"Stream fatal: ${candidate.providerId}/${candidate.model} ${classification.reason} — aborting"
                                                   )
                                                     *> failureRef.update(_ :+ attempt)
@@ -738,8 +771,7 @@ object LlmInterface:
                                                 )
                                               case ErrorPermanence.Permanent =>
                                                 fs2.Stream.eval(
-                                                  resetLock *>
-                                                    logger.warn(
+                                                  logger.warn(
                                                       s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
                                                     )
                                                     *> failureRef.update(_ :+ attempt)
@@ -760,7 +792,7 @@ object LlmInterface:
                                                   // the stream path.
                                                   val delay = Fallback.retryDelayMs(backoffMs, classification.reason, jitter)
                                                   fs2.Stream.eval(
-                                                    resetLock *> notify *> logger.warn(
+                                                    notify *> logger.warn(
                                                       s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
                                                     ) *> IO.sleep(delay.millis)
                                                   ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
@@ -773,14 +805,13 @@ object LlmInterface:
                                                   // Align with the Rust handle.rs fallback branch: timeout is
                                                   // classified Permanent, so the stream ALWAYS markDowns here
                                                   // (Rust handle.rs L720-735 has no locked check on mark_down).
-                                                  // The locked-stream guard only: (1) propagates non-timeout
-                                                  // errors when partial content was streamed (L681-685), and
-                                                  // (2) resets the lock on timeout so the Done-without-content
-                                                  // check doesn't fire mid-fallback. Scala mirrors both above.
+                                                  // This branch is only reachable with locked=false (the seam
+                                                  // guard above propagates every error once partial content
+                                                  // was streamed), so the lock needs no reset.
                                                   // DOWN→probe→UP→timeout→DOWN churn is bounded by the
                                                   // waitForAnyUp timeout (120s) at the all-Down gate.
                                                   fs2.Stream.eval(
-                                                    resetLock *> logger.warn(
+                                                    logger.warn(
                                                       s"Stream fallback: ${candidate.providerId}/${candidate.model} $skipMsg"
                                                     )
                                                       *> failureRef.update(_ :+ attempt)
