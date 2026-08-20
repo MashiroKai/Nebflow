@@ -1696,7 +1696,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 }
 
 // ---------- AskUser ----------
-export function renderAskUser(items, askSessionId, agentName) {
+export function renderAskUser(items, askSessionId, agentName, requestId) {
   if (!Array.isArray(items) || items.length === 0) {
     renderError(t('chat.waitingQuestion'));
     return { type: 'askUser', items: [] };
@@ -1723,12 +1723,12 @@ export function renderAskUser(items, askSessionId, agentName) {
   try {
     showOptions(bubble, items, (answers) => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers }));
+        state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers, ...(requestId && { requestId }) }));
       }
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, t('chat.confirm'), () => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'] }));
+        state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'], ...(requestId && { requestId }) }));
       }
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, targetSid);
@@ -1736,11 +1736,11 @@ export function renderAskUser(items, askSessionId, agentName) {
     console.error('[askUser] render failed:', e);
     bubble.textContent = t('chat.failedRender');
   }
-  return { type: 'askUser', items };
+  return { type: 'askUser', items, requestId };
 }
 
 // ---------- Permission prompt ----------
-export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession) {
+export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession, requestId) {
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
@@ -1800,7 +1800,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   // If bypass is enabled for this session, auto-approve immediately
   if (state.bypassSessions.has(targetSid)) {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: true }));
+      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: true, ...(requestId && { requestId }) }));
     }
     const autoBadge = document.createElement('div');
     autoBadge.className = 'perm-auto-approved';
@@ -1829,7 +1829,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   showOptions(bubble, items, (answers) => {
     const approved = answers[0] === allowLabel;
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved }));
+      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved, ...(requestId && { requestId }) }));
     }
     // Track answered permission: prevents re-creating interactive prompt on
     // session switch-back while tool is still executing (askPermission is still
@@ -1840,7 +1840,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
   }, t('chat.confirm'), () => {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: false }));
+      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: false, ...(requestId && { requestId }) }));
     }
     // Track denied permission (same reason as above)
     state.answeredPermissions.add(targetSid);
