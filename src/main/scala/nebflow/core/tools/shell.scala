@@ -378,7 +378,7 @@ final class ShellSession private (
    */
   private def sampleCpuTimeViaPs(rootPid: Long): Long =
     try
-      val pb = new ProcessBuilder("ps", "-A", "-o", "pid=,ppid=")
+      val pb = new ProcessBuilder("ps", "-A", "-o", "pid=,ppid=,time=")
       pb.redirectInput(new File("/dev/null"))
       pb.redirectOutput(ProcessBuilder.Redirect.PIPE)
       pb.redirectErrorStream(true)
@@ -393,29 +393,54 @@ final class ShellSession private (
         sumCpuTimeFromProcessTree(output, rootPid)
     catch case _: Exception => 0L
 
-  /** Parse `ps` output, build process tree, and sum CPU time of root + all descendants. */
+  /** Parse `ps -A -o pid=,ppid=,time=` output, build process tree, and sum the
+    * kernel-reported cumulative CPU of root + all descendants.
+    *
+    * #17 completion (2026-08-10 qa 打回链): the `time` column is the ONLY CPU
+    * source that covers GRANDCHILDREN on macOS — ProcessHandle
+    * .totalCpuDuration() is only implemented for the current JVM process
+    * there (empirically: 1 of allProcesses() reports it). Tree-blind sampling
+    * false-killed redirected-output jobs whose work runs in a forked child
+    * (sbt run, Maven exec) even after the tree-aware enumeration "fix".
+    * `time` format: macOS `MM:SS.cc` (centisecond granularity — 10ms, equal
+    * to CpuActiveThresholdNanos; a busy child accrues ~2s per 2s sample
+    * window), Linux `[[dd-]hh:]mm:ss`. */
   private def sumCpuTimeFromProcessTree(psOutput: String, rootPid: Long): Long =
-    val childrenMap = scala.collection.mutable.Map.empty[Long, List[Long]]
+    case class ProcEntry(ppid: Long, cpuNanos: Long)
+    val procs = scala.collection.mutable.Map.empty[Long, ProcEntry]
     for line <- psOutput.linesIterator do
       val parts = line.trim.split("\\s+")
-      if parts.length >= 2 then
+      if parts.length >= 3 then
         parts(0).toLongOption.foreach { pid =>
           parts(1).toLongOption.foreach { ppid =>
-            childrenMap(ppid) = pid :: childrenMap.getOrElse(ppid, Nil)
+            procs(pid) = ProcEntry(ppid, parsePsTimeToNanos(parts(2)))
           }
-        }
+      }
+    val childrenMap = scala.collection.mutable.Map.empty[Long, List[Long]]
+    procs.foreach { case (pid, e) =>
+      childrenMap(e.ppid) = pid :: childrenMap.getOrElse(e.ppid, Nil)
+    }
     def collect(pid: Long): List[Long] =
       childrenMap.getOrElse(pid, Nil).flatMap(child => child :: collect(child))
-    val allPids = rootPid :: collect(rootPid)
-    allPids.map { pid =>
-      val phOpt = ProcessHandle.of(pid)
-      if phOpt.isPresent then
-        val cpuOpt = phOpt.get().info().totalCpuDuration()
-        if cpuOpt.isPresent then cpuOpt.get().toNanos else 0L
-      else 0L
-    }.sum
+    (rootPid :: collect(rootPid)).map(pid => procs.get(pid).map(_.cpuNanos).getOrElse(0L)).sum
 
-  end sumCpuTimeFromProcessTree
+  /** `[[dd-]hh:]mm:ss[.cc]` → nanos. Returns 0 on unparseable input (ps format
+    * drift degrades to "no signal seen", never crashes the detector). */
+  private def parsePsTimeToNanos(t: String): Long =
+    try
+      val (days, rest) = t.split("-").toList match
+        case d :: r if r.nonEmpty => (d.toLong, r.mkString("-"))
+        case other                => (0L, other.mkString)
+      val units = rest.split(":").map(_.trim).filter(_.nonEmpty).map(_.toDouble)
+      // rightmost = seconds, then minutes, hours
+      var secs = 0.0
+      var mult = 1.0
+      units.reverse.foreach { u =>
+        secs += u * mult
+        mult *= 60.0
+      }
+      ((days * 86400.0 + secs) * 1e9).toLong
+    catch case _: Exception => 0L
 
   private def runProcess(
     command: String,
