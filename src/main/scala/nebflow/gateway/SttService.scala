@@ -120,17 +120,22 @@ object SttService:
 end SttService
 
 /**
- * STT 语音识别服务。使用 OpenAI 兼容的音频转录 API。
- *
- * 配置文件: ~/.nebflow/stt-config.json
- * {
- *   "apiKey": "your-key",
- *   "model": "glm-asr-2512",
- *   "endpoint": "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions"
- * }
- *
- * 支持任何兼容 OpenAI 音频转录格式的 API 提供商。
- */
+  * STT 语音识别服务。按 endpoint 后缀自动识别两种协议（2026-08-21 MiMo 支持）：
+  *
+  * 1. **chat/completions 协议**——endpoint 以 `/chat/completions` 结尾。MiMo 的
+  *    「OpenAI API Compatibility」是 chat 协议而非 transcriptions（无
+  *    /v1/audio/transcriptions，全部 404）。实测定稿：input_audio data-URL
+  *    (WAV base64) + asr_options.language（仅 auto/zh/en），转写文本在
+  *    choices[0].message.content。
+  * 2. **multipart transcriptions 协议**（原有路径）——OpenAI Whisper 风格服务。
+  *
+  * 不加新配置字段，按 endpoint 后缀分流。配置文件: ~/.nebflow/stt-config.json
+  * {
+  *   "apiKey": "your-key",
+  *   "model": "mimo-v2.5-asr",
+  *   "endpoint": "https://api.xiaomimimo.com/v1/chat/completions"
+  * }
+  */
 class SttService private[gateway] (
   apiKey: String,
   /** 转录模型名（serverConfig 广播可见；apiKey 永不外露）。 */
@@ -148,69 +153,143 @@ class SttService private[gateway] (
   /**
    * 转录 WAV 音频数据，返回识别文本。
    *
-   * @param wavBytes WAV 格式的音频字节数组
-   * @param language 语言代码 (zh, en 等)，可选
-   * @return 识别到的文本，失败时返回 None
+   * @param wavBytes WAV 格式的音频字节数组（前端固定 16kHz mono WAV）
+   * @param language 语言代码（前端传 BCP-47 如 zh-CN/en-US；两协议各自映射）
+   * @return Right(识别文本) 或 Left(错误消息，回传前端)
    */
   def transcribe(wavBytes: Array[Byte], language: Option[String]): IO[Either[String, String]] =
     if wavBytes.isEmpty then IO.pure(Left("Empty audio data"))
-    else
-      // Build multipart/form-data body
-      val boundary = "----nebflow-stt-" + System.currentTimeMillis().toHexString
-      val header = s"--$boundary\r\n".getBytes(StandardCharsets.UTF_8)
-      val footer = s"\r\n--$boundary--\r\n".getBytes(StandardCharsets.UTF_8)
-
-      // file part
-      val filePartHeader =
-        s"Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n" +
-          "Content-Type: audio/wav\r\n\r\n"
-      val filePartHeaderBytes = filePartHeader.getBytes(StandardCharsets.UTF_8)
-
-      // model part
-      val modelPartHeader =
-        s"--$boundary\r\n" +
-          "Content-Disposition: form-data; name=\"model\"\r\n\r\n" +
-          s"$model\r\n"
-      val modelPartBytes = modelPartHeader.getBytes(StandardCharsets.UTF_8)
-
-      // language part (optional)
-      val langBytes = language match
-        case Some(lang) =>
-          (s"--$boundary\r\n" +
-            "Content-Disposition: form-data; name=\"language\"\r\n\r\n" +
-            s"$lang\r\n").getBytes(StandardCharsets.UTF_8)
-        case None => Array.emptyByteArray
-
-      // Combine all parts
-      val bodyBytes: Array[Byte] =
-        header ++ modelPartBytes ++ langBytes ++ filePartHeaderBytes ++ wavBytes ++ footer
-
-      val request = HttpRequest
-        .newBuilder()
-        .uri(URI.create(endpoint))
-        .header("Authorization", s"Bearer $apiKey")
-        .header("Content-Type", s"multipart/form-data; boundary=$boundary")
-        .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
-        .timeout(java.time.Duration.ofSeconds(30))
-        .build()
-
-      IO.blocking {
-        val response = client.send(request, HttpResponse.BodyHandlers.ofString())
-        if response.statusCode() != 200 then
-          logger.warn(s"STT API error ${response.statusCode()}: ${response.body().take(300)}")
-          Left(s"STT API error: ${response.statusCode()}")
-        else
-          parse(response.body()).toOption match
-            case Some(json) =>
-              json.hcursor.downField("text").as[String] match
-                case Right(text) => Right(text.trim)
-                case Left(_) => Left("STT API returned unexpected format")
-            case None =>
-              // Some APIs return plain text
-              val text = response.body().trim
-              if text.nonEmpty then Right(text) else Left("Empty response from STT API")
-      }.handleErrorWith { e =>
-        logger.warn(s"STT transcription failed: ${e.getMessage}").as(Left(e.getMessage))
-      }
+    else if isChatCompletionsEndpoint then transcribeViaChat(wavBytes, language)
+    else transcribeViaMultipart(wavBytes, language)
   end transcribe
+
+  /** chat/completions 协议判定：仅按 endpoint 后缀（trim 后），无新配置字段。 */
+  private def isChatCompletionsEndpoint: Boolean =
+    endpoint.trim.endsWith("/chat/completions")
+
+  /** chat 协议语言映射：MiMo asr_options.language 仅接受 auto/zh/en。前端传
+    * BCP-47（zh-CN/en-US/...）——startsWith 前缀映射，其余（含 None）→ auto。 */
+  private def mapLanguage(language: Option[String]): String =
+    language.map(_.trim.toLowerCase) match
+      case Some(l) if l.startsWith("zh") => "zh"
+      case Some(l) if l.startsWith("en") => "en"
+      case _                             => "auto"
+
+  /** MiMo 风格 chat/completions ASR（2026-08-21 实测定稿，0.8s 中文转写验证）。 */
+  private def transcribeViaChat(
+      wavBytes: Array[Byte],
+      language: Option[String]
+  ): IO[Either[String, String]] =
+    val audioB64 = Base64.getEncoder.encodeToString(wavBytes)
+    val body = Json.obj(
+      "model" -> model.asJson,
+      "messages" -> Json.arr(
+        Json.obj(
+          "role" -> "user".asJson,
+          "content" -> Json.arr(
+            Json.obj(
+              "type" -> "input_audio".asJson,
+              "input_audio" -> Json.obj(
+                "data" -> s"data:audio/wav;base64,$audioB64".asJson,
+                "format" -> "wav".asJson
+              )
+            )
+          )
+        )
+      ),
+      "asr_options" -> Json.obj("language" -> mapLanguage(language).asJson)
+    )
+
+    val request = HttpRequest
+      .newBuilder()
+      .uri(URI.create(endpoint.trim))
+      .header("Authorization", s"Bearer $apiKey")
+      .header("Content-Type", "application/json")
+      .POST(HttpRequest.BodyPublishers.ofString(body.noSpaces, StandardCharsets.UTF_8))
+      .timeout(java.time.Duration.ofSeconds(30))
+      .build()
+
+    IO.blocking {
+      val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+      if response.statusCode() != 200 then
+        // 语句位在 IO.blocking 内——必须 *Sync（裸 logger.warn 返回 IO[Unit] 被丢弃=死日志）
+        logger.warnSync(s"STT API error ${response.statusCode()}: ${response.body().take(300)}")
+        Left(s"STT API error: ${response.statusCode()}")
+      else
+        parse(response.body()).toOption match
+          case Some(json) =>
+            json.hcursor
+              .downField("choices").downArray
+              .downField("message").downField("content").as[String] match
+              case Right(text) => Right(text.trim)
+              case Left(_)     => Left("STT API returned unexpected format")
+          case None => Left("Empty response from STT API")
+    }.handleErrorWith { e =>
+      logger.warn(s"STT transcription failed: ${e.getMessage}").as(Left(e.getMessage))
+    }
+  end transcribeViaChat
+
+  private def transcribeViaMultipart(
+      wavBytes: Array[Byte],
+      language: Option[String]
+  ): IO[Either[String, String]] =
+    // Build multipart/form-data body
+    val boundary = "----nebflow-stt-" + System.currentTimeMillis().toHexString
+    val header = s"--$boundary\r\n".getBytes(StandardCharsets.UTF_8)
+    val footer = s"\r\n--$boundary--\r\n".getBytes(StandardCharsets.UTF_8)
+
+    // file part
+    val filePartHeader =
+      s"Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n" +
+        "Content-Type: audio/wav\r\n\r\n"
+    val filePartHeaderBytes = filePartHeader.getBytes(StandardCharsets.UTF_8)
+
+    // model part
+    val modelPartHeader =
+      s"--$boundary\r\n" +
+        "Content-Disposition: form-data; name=\"model\"\r\n\r\n" +
+        s"$model\r\n"
+    val modelPartBytes = modelPartHeader.getBytes(StandardCharsets.UTF_8)
+
+    // language part (optional)
+    val langBytes = language match
+      case Some(lang) =>
+        (s"--$boundary\r\n" +
+          "Content-Disposition: form-data; name=\"language\"\r\n\r\n" +
+          s"$lang\r\n").getBytes(StandardCharsets.UTF_8)
+      case None => Array.emptyByteArray
+
+    // Combine all parts
+    val bodyBytes: Array[Byte] =
+      header ++ modelPartBytes ++ langBytes ++ filePartHeaderBytes ++ wavBytes ++ footer
+
+    val request = HttpRequest
+      .newBuilder()
+      .uri(URI.create(endpoint))
+      .header("Authorization", s"Bearer $apiKey")
+      .header("Content-Type", s"multipart/form-data; boundary=$boundary")
+      .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
+      .timeout(java.time.Duration.ofSeconds(30))
+      .build()
+
+    IO.blocking {
+      val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+      if response.statusCode() != 200 then
+        // 语句位在 IO.blocking 内——必须 *Sync（原裸 logger.warn 是死日志，本批顺手复活）
+        logger.warnSync(s"STT API error ${response.statusCode()}: ${response.body().take(300)}")
+        Left(s"STT API error: ${response.statusCode()}")
+      else
+        parse(response.body()).toOption match
+          case Some(json) =>
+            json.hcursor.downField("text").as[String] match
+              case Right(text) => Right(text.trim)
+              case Left(_) => Left("STT API returned unexpected format")
+          case None =>
+            // Some APIs return plain text
+            val text = response.body().trim
+            if text.nonEmpty then Right(text) else Left("Empty response from STT API")
+    }.handleErrorWith { e =>
+      logger.warn(s"STT transcription failed: ${e.getMessage}").as(Left(e.getMessage))
+    }
+  end transcribeViaMultipart
 end SttService
