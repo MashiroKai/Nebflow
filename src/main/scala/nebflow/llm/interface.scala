@@ -26,6 +26,12 @@ final class StuckAbort(val sessionId: String)
 object LlmInterface:
   private val logger = NebflowLogger.forName("nebflow.llm")
 
+  /** Test hook (issue #31 Fix B spec): overrides the whole-stream no-progress
+    * window (Defaults.LlmStreamNoProgressTimeoutSec) so the outer watchdog can
+    * be exercised in tests without waiting 600s. Global var — specs MUST reset
+    * it to None in a finally. */
+  private[llm] var noProgressTimeoutOverride: Option[FiniteDuration] = None
+
   // ── In-flight LLM request registry (shutdown abort, Task 2 2026-08-19) ──
   // Every active sendStream registers an abort signal here; a JVM shutdown
   // hook (Main.startGateway) and the GatewayMain graceful-cleanup guarantee
@@ -798,6 +804,28 @@ object LlmInterface:
                     }
                   }
                 }
+                // issue #31 Fix B (2026-08-20): whole-stream no-progress watchdog.
+                // The per-provider inactivityTimeout (inside tryCandidate) only
+                // arms AFTER sendMessageStream starts producing — the
+                // intake→first-chunk evaluation chain (candidates resolve /
+                // health check / gate queue / adapter fetch / HTTP setup /
+                // consumer-side processing) had NO coverage: a fiber parked
+                // there hangs forever with the barrier slot held (incident:
+                // intake at 22:48:41, then 40min zero traces, Stop + hard-cancel
+                // both ineffective). This outer guard bounds the blind window:
+                // no chunk within Defaults.LlmStreamNoProgressTimeoutSec →
+                // TimeoutException, which propagates OUTSIDE tryCandidate's
+                // per-provider handleErrorWith (those wrap the inner stream
+                // only) — the whole sendStream fails, the agent's llm-fail
+                // path takes over. Reuses the same two-phase pipe with equal
+                // windows: legal fallback silences (queue + backoff +
+                // first-token per hop) are bounded well below 600s.
+                .through(
+                  inactivityTimeout(
+                    noProgressTimeoutOverride.getOrElse(Defaults.LlmStreamNoProgressTimeoutSec.seconds),
+                    noProgressTimeoutOverride.getOrElse(Defaults.LlmStreamNoProgressTimeoutSec.seconds)
+                  )
+                )
                 .interruptWhen(halt.get)
                 .onFinalize(unregisterInflight(key))
               }
