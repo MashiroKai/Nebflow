@@ -37,6 +37,23 @@ object Defaults:
    */
   val LlmStreamInactivitySec: Int = 60
 
+  /**
+   * Whole-stream no-progress watchdog (issue #31, 2026-08-20): bounds the blind
+   * window BEFORE the per-provider inactivityTimeout arms. The per-provider
+   * watchdog (LlmFirstTokenTimeoutSec / LlmStreamInactivitySec) only covers a
+   * provider stream once it starts producing — the intake→first-chunk
+   * evaluation chain (candidates resolve / health check / gate queue / adapter
+   * fetch / HTTP setup / consumer-side processing) has NO coverage: a fiber
+   * parked there hangs forever (incident: intake logged at 22:48:41, then 40min
+   * of zero traces; Stop and hard-cancel both ineffective because the fiber was
+   * suspended on a non-cancellable wait). This outer guard fails the whole
+   * sendStream when NO chunk appears within this window (and likewise between
+   * chunks — legal fallback silences are bounded well below it: queue 120s +
+   * overload backoff 60s + first-token 90s per hop). Aligned with LlmTimeoutMs
+   * (the non-streaming per-request timeout) as the "10min total" mental model.
+   */
+  val LlmStreamNoProgressTimeoutSec: Int = 600
+
   /** Per-provider LLM request timeout (covers streaming generation). */
   val LlmTimeoutMs: Long = 600_000L
 
