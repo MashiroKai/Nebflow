@@ -1069,6 +1069,23 @@ export function injectUserMessage(text, options = {}) {
 }
 
 // ---------- Initialize all input event listeners ----------
+
+// Close the active view's slash dropdown on outside clicks. Bound ONCE at
+// module scope: popup ChatViews rebuild their input DOM on every open
+// (openStepPopup re-runs initInput each time), so a per-initInput document
+// binding would both accumulate listeners and reference stale detached
+// elements. Resolution goes through activeView — only one dropdown can be
+// open at a time (updateSlashDropdown renders into activeView.dom only).
+document.addEventListener('click', (e) => {
+  const v = activeView;
+  if (!v || !v.dom || !v.dom.input || !v.dom.slashDropdown) return;
+  if (!v.dom.input.contains(e.target) && !v.dom.slashDropdown.contains(e.target)) {
+    v.dom.slashDropdown.classList.remove('on');
+    v.slashMatches = [];
+    v.slashSelectedIndex = -1;
+  }
+});
+
 export function initInput(view) {
   const input = view.dom.input;
   const sendBtn = view.dom.sendBtn;
@@ -1392,15 +1409,8 @@ export function initInput(view) {
     });
   }
 
-  // Slash dropdown input listener and document click listener
+  // Slash dropdown input listener
   input.addEventListener('input', () => { setActiveView(view); updateSlashDropdown(); });
-  document.addEventListener('click', (e) => {
-    if (!input.contains(e.target) && !slashDropdown.contains(e.target)) {
-      slashDropdown.classList.remove('on');
-      view.slashMatches = [];
-      view.slashSelectedIndex = -1;
-    }
-  });
 
   // Ask/skill indicator cancel buttons
   {
