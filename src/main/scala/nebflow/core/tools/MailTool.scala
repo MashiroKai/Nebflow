@@ -926,9 +926,9 @@ Message type (optional, default "INFO"):
         system.isAlive(ref.path).flatMap {
           case true => IO.pure(Some(ref))
           case false =>
-            IO(logger.warn(
+            logger.warn(
               s"[mail] stale actor ref for session=${sessionId.take(8)} — actor dead but actorMap kept it; reactivating (issue #22)"
-            )) *> activateAgent(sessionId, resources, system, ctx)
+            ) *> activateAgent(sessionId, resources, system, ctx)
         }
       case None => activateAgent(sessionId, resources, system, ctx)
     }
@@ -1120,9 +1120,9 @@ Message type (optional, default "INFO"):
               case SystemSignal.Terminated(_) =>
                 TeamSessionRegistry.unregisterActor(sessionId, resources) *>
                   TeamSessionRegistry.markIdle(sessionId) *>
-                  IO(logger.info(
+                  logger.info(
                     s"team agent actor stopped: agent=$agentName session=$sessionId — registry unregistered, busy cleared"
-                  )).as(Behaviors.stopped[SystemSignal])
+                  ).as(Behaviors.stopped[SystemSignal])
       }
     }
   end teamAgentDeathWatch

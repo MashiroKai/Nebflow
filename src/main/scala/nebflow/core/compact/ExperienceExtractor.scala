@@ -74,7 +74,7 @@ object ExperienceExtractor:
       .send(request)
       .map(resp => parseResponse(resp.reply))
       .handleErrorWith(e =>
-        IO(logger.warn(s"Experience extraction LLM call failed for $agentName: ${e.getMessage}")).as(None)
+        logger.warn(s"Experience extraction LLM call failed for $agentName: ${e.getMessage}").as(None)
       )
 
   end callLlm

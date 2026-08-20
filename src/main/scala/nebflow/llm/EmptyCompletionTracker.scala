@@ -66,7 +66,7 @@ final class EmptyCompletionTracker:
   private def setVisionOverrideFalse(providerId: String, modelId: String, reason: String): IO[Unit] =
     val key = ref(providerId, modelId)
     runtimeOverrides.update(_.updated(key, false)) *>
-      IO(logger.warn(s"Runtime vision override: $key marked vision=false ($reason)")) *>
+      logger.warn(s"Runtime vision override: $key marked vision=false ($reason)") *>
       IO.blocking {
         // Best-effort persistence — a write failure must not break the stream.
         try ModelRegistry.persistVision(providerId, modelId, vision = false)
