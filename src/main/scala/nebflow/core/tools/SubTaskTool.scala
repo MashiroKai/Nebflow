@@ -18,6 +18,9 @@ import nebflow.shared.{ContentBlock, Message, MessageRole}
  *   - **Self-clone only**: no `agent`/`flow` targeting, no `lifecycle`,
  *     no `fork`. The worker starts with a clean context — the prompt is its
  *     only input.
+ *   - **Not for the root agent**: rejected when the caller is Nebula (#28) —
+ *     the root orchestrator exists exactly once and must never be
+ *     self-cloned, even if a custom agent.json lists the tool.
  *   - **No Mail identity**: never registered in TeamSessionRegistry / sessionMap.
  *     The worker is a leaf: Mail/SubTask/Delegate are stripped from its tool
  *     set (see AgentCore.buildAllowedToolSet), and the Worker Identity Block
@@ -119,6 +122,15 @@ A task with 2+ independent parts — different file domains, or different nature
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-task depth ($MaxDepth) reached. Cannot delegate further.")))
+    else if ctx.agentDef.exists(_.name == "Nebula") then
+      // #28 (2026-08-20): Nebula's toolset has no SubTask, but guard
+      // structurally — the root orchestrator exists exactly once and must not
+      // spawn copies of itself, even if a custom agent.json lists the tool.
+      IO.pure(
+        Left(ToolError(
+          "SubTask is not available to the root agent — the root orchestrator (Nebula) exists exactly once and must never be self-cloned (issue #28). Use Delegate with an explicit standalone target instead."
+        ))
+      )
     else
       // G3: resolve optional image attachments before spawning — fail fast on
       // invalid paths (nothing is spawned).
