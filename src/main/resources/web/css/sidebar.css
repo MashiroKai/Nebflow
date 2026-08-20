@@ -697,6 +697,51 @@
   color: var(--color-frame-text);
 }
 
+/* STT 高级设置折叠面板（用户 2026-08-20 打回：默认收起，免费路径为默认）——
+   复用 settings-row 基线，chevron 旋转表达开合，无新增颜色 token。 */
+.stt-advance-toggle-row {
+  cursor: pointer;
+}
+.settings-collapse-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  color: var(--color-frame-text);
+}
+.settings-collapse-toggle .settings-label {
+  font-weight: 500;
+}
+.settings-collapse-chevron {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--color-frame-text-muted);
+  transition: transform 0.18s ease;
+}
+.settings-collapse-toggle[aria-expanded="true"] .settings-collapse-chevron {
+  transform: rotate(180deg);
+}
+.settings-collapse-body {
+  padding: 4px 0 6px;
+}
+.stt-key-configured {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgb(var(--sapphire));
+  border: 1px solid rgb(var(--sapphire) / 0.3);
+  border-radius: 999px;
+  vertical-align: 1px;
+}
+
 /* Toggle switch */
 .toggle {
   width: 36px;

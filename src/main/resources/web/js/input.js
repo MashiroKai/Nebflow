@@ -661,12 +661,12 @@ export function send() {
   v.historyDraft = '';
   try {
     const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    // v2 §5.2/§6.1: split taskRefs (return references) from file/image
-    // attachments — taskRefs ride the default user-message branch as their
-    // own array; absent/empty = v1 path, zero behavior change.
+    // v2 §5.2/§6.1 + B (2026-08-20): taskRefs carry taskId/sessionId/subject —
+    // 描述/产出不重复进载荷（agent 凭 taskId 定位任务，记忆里有上下文）；
+    // 用户意见 = 本帧 content（§5.4，后端落 notes）。
     const taskRefs = (v.pendingAttachments || [])
       .filter(a => a.type === 'taskRef')
-      .map(a => ({ taskId: a.taskId, sessionId: a.sessionId || v.sessionId }));
+      .map(a => ({ taskId: a.taskId, sessionId: a.sessionId || v.sessionId, ...(a.subject ? { subject: a.subject } : {}) }));
     sendWs({
       content: text,
       ...(taskRefs.length > 0 ? { taskRefs } : {}),
