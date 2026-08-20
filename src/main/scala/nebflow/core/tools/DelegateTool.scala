@@ -99,7 +99,7 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
 - You want a flow pipeline (multi-agent DAG) — use FlowTrigger instead
 
 **Targeting:**
-- Default: spawns a copy of the calling agent (self-clone)
+- Default (no `agent` param): spawns a self-clone of the calling agent — it inherits your system prompt INCLUDING your routing rules. If your rules already assign this task type to a specific agent (e.g. research → Explorer), pass `agent=` directly instead: a self-cloned router agent will re-delegate, creating a wasteful two-layer chain (double token cost, and results may not propagate back).
 - With `agent` parameter: spawns the specified standalone agent (e.g. Coder, Explorer)
 - Cannot target team agents — those require Mail
 
@@ -315,6 +315,7 @@ $prompt"""
                 attachments = attachments,
                 description = description,
                 agentName = agentName,
+                isSelfClone = targetAgentName.isEmpty,
                 initialMessages = initialMessages,
                 system = system,
                 resources = resources,
@@ -342,6 +343,7 @@ $prompt"""
     attachments: List[ContentBlock],
     description: String,
     agentName: String,
+    isSelfClone: Boolean = false,
     initialMessages: List[Message],
     system: ActorSystem,
     resources: SharedResources,
@@ -459,7 +461,7 @@ $prompt"""
         blocks = ImageInject.messageBlocks(prompt, attachments)
       )
     yield Right(
-      s"""Sub-agent '$agentName' started in background for: $description.
+      s"""Sub-agent '$agentName'${if isSelfClone then " (self-clone of you)" else ""} started in background for: $description.
 You will be notified when it completes via a system message.
 Do NOT duplicate this agent's work — avoid working with the same files or topics it is using. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response."""
     )
