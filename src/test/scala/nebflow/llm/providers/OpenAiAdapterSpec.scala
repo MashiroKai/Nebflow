@@ -9,6 +9,8 @@ import io.circe.{Json, JsonObject}
 import nebflow.llm.SendMessageParams
 import nebflow.shared.*
 import munit.CatsEffectSuite
+import sttp.capabilities.fs2.Fs2Streams
+import sttp.client4.{GenericRequest, Response, StreamBackend}
 
 import scala.jdk.CollectionConverters.*
 
@@ -496,6 +498,116 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
           assertEquals(tcs.head.input("a").flatMap(_.as[Int].toOption), Some(1))
           val warns = appender.list.asScala.filter(_.getLevel == ch.qos.logback.classic.Level.WARN).toList
           assert(warns.isEmpty, s"compliant frames must not warn, got: ${warns.map(_.getFormattedMessage)}")
+      } { _ => IO.delay(lbLogger.detachAppender(appender)) }
+  }
+
+  // ====== sendMessageStream end-to-end: production frame replay ======
+  // Drives the full stream plumbing (SSE line parse -> fragment merge ->
+  // finish flush -> onFinalize) with the exact qwen wire shapes captured in
+  // production: start frame carries real id+name, argument continuation
+  // frames carry literal "" id/name (nebflow.log WARN captures, 2026-08-21).
+
+  /** Minimal in-memory StreamBackend serving a canned SSE body. */
+  private class CannedSseBackend(body: fs2.Stream[IO, Byte]) extends StreamBackend[IO, Fs2Streams[IO]]:
+    def send[T](
+        request: GenericRequest[T, Fs2Streams[IO] & sttp.capabilities.Effect[IO]]
+    ): IO[Response[T]] =
+      IO.pure(
+        Response(
+          Right(body).asInstanceOf[T],
+          sttp.model.StatusCode.Ok,
+          "",
+          Nil
+        )
+      )
+    def monad: sttp.monad.MonadError[IO] =
+      new sttp.client4.impl.cats.CatsMonadError[IO](using IO.asyncForIO)
+    def close(): IO[Unit] = IO.unit
+
+  private def sseLines(frames: String*): fs2.Stream[IO, Byte] =
+    fs2.Stream
+      .emits(frames.map(f => s"data: $f\n\n"))
+      .through(fs2.text.utf8.encode)
+
+  // Real production sequence: valid start, then name:"" continuations.
+  private val prodStart =
+    """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_r1","type":"function","function":{"name":"Bash","arguments":""}}]},"finish_reason":null}]}"""
+  private def prodCont(args: String) =
+    s"""{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"","arguments":"$args"}}]},"finish_reason":null}]}"""
+  private val prodFinish = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
+
+  private def withAppender[A](f: => IO[A]): IO[(A, List[String])] =
+    val lbLogger =
+      org.slf4j.LoggerFactory.getLogger("nebflow.llm.openai").asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+    IO
+      .delay {
+        appender.start()
+        lbLogger.addAppender(appender)
+      }
+      .bracket { _ =>
+        f.map(a =>
+          a -> appender.list.asScala.toList
+            .filter(_.getLevel == ch.qos.logback.classic.Level.WARN)
+            .map(_.getFormattedMessage)
+        )
+      } { _ => IO.delay(lbLogger.detachAppender(appender)) }
+
+  test("sendMessageStream: production qwen frame replay aggregates to ONE summary and merges args") {
+    val backend = new CannedSseBackend(
+      sseLines(
+        prodStart,
+        prodCont("""{\"command\":\"ec"""),
+        prodCont("ho hel"),
+        prodCont("""lo\"}"""),
+        prodFinish,
+        "[DONE]"
+      )
+    )
+    val adapter = new OpenAiAdapter("https://api.example.com/v1", "k", backend)
+    val params = SendMessageParams(Nil, "qwen3.8-max", sessionId = Some("sess-e2e"), agentId = Some("vr"))
+    for (chunks, warns) <- withAppender(adapter.sendMessageStream(params).compile.toList)
+    yield
+      val tcs = chunks.collect { case StreamChunk.ToolCallChunk(tc) => tc }
+      assertEquals(tcs.map(_.name), List("Bash"))
+      assertEquals(tcs.head.input("command").flatMap(_.asString), Some("echo hello"))
+      assert(chunks.exists(_.isInstanceOf[StreamChunk.Done]), "stream must terminate with Done")
+      assertEquals(warns.size, 1, s"expected exactly 1 summary WARN, got: $warns")
+      val msg = warns.head
+      assert(msg.contains("merged into tool Bash"), msg)
+      assert(msg.contains("3 frames"), msg)
+      assert(msg.contains("session sess-e2e"), msg)
+      assert(msg.contains("agent vr"), msg)
+  }
+
+  test("sendMessageStream: stream dies mid-args — onFinalize flushes the counted summary") {
+    // Transport error mid-tool-call: the finish flush never runs; the
+    // onFinalize path must still emit the aggregated summary (日志完整性优先).
+    val backend = new CannedSseBackend(
+      sseLines(prodStart, prodCont("""{\"command\":\"ec"""), prodCont("ho ")) ++
+        fs2.Stream.raiseError[IO](new RuntimeException("connection reset mid-args"))
+    )
+    val adapter = new OpenAiAdapter("https://api.example.com/v1", "k", backend)
+    val params = SendMessageParams(Nil, "qwen3.8-max", sessionId = Some("sess-e2e-err"), agentId = Some("vr"))
+    val lbLogger =
+      org.slf4j.LoggerFactory.getLogger("nebflow.llm.openai").asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+    IO
+      .delay {
+        appender.start()
+        lbLogger.addAppender(appender)
+      }
+      .bracket { _ =>
+        adapter.sendMessageStream(params).compile.toList.attempt.map { result =>
+          assert(result.isLeft, s"stream error must propagate, got $result")
+          val warns = appender.list.asScala.toList
+            .filter(_.getLevel == ch.qos.logback.classic.Level.WARN)
+            .map(_.getFormattedMessage)
+          assertEquals(warns.size, 1, s"onFinalize must flush exactly 1 summary, got: $warns")
+          assert(warns.head.contains("2 frames"), warns.head)
+          assert(warns.head.contains("session sess-e2e-err"), warns.head)
+          assert(warns.head.contains("not strict JSON"), warns.head) // args incomplete: merge health reflects it
+        }
       } { _ => IO.delay(lbLogger.detachAppender(appender)) }
   }
 
