@@ -984,6 +984,15 @@
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
+/* Queue #2: Pop/Card artifact rows open their content in Canvas on click
+   (instead of jumping to the message). A restrained ↗ arrow on the type
+   badge hints at the open-in-Canvas affordance. */
+.search-result[data-artifact="1"] .search-result-type::after {
+  content: '↗';
+  margin-left: 5px;
+  opacity: 0.65;
+  font-size: 11px;
+}
 .search-result-preview {
   font-size: 12px;
   line-height: 1.5;
