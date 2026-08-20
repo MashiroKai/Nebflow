@@ -646,12 +646,21 @@ object AgentActor extends AgentCore with AgentSession:
               resources,
               depth,
               parentRef,
-              state.withMessages(
-                // Reminder refactor (2026-08-20): always carry a source marker —
-                // external-event turns are system events, not real user input
-                // (fromUser = Message.source.isEmpty).
-                state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource.orElse(Some("external")))
-              ),
+              state
+                .withMessages(
+                  // Reminder refactor (2026-08-20): always carry a source marker —
+                  // external-event turns are system events, not real user input
+                  // (fromUser = Message.source.isEmpty).
+                  state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource.orElse(Some("external")))
+                )
+                // #25: apply the barrier decrement. Pre-fix this branch
+                // computed newOutstanding and dropped it — a single-result
+                // batch (spawn 1, receive 1, held empty) left the counter
+                // stuck at 1 forever. Invisible while Completed fired
+                // unconditionally at turn end; once the completion debt is
+                // parked (#25) a stuck counter means the debt is NEVER paid
+                // and the waiting supervisor/bridge hangs.
+                .withOutstandingSubagentResults(newOutstanding),
               None
             )
           yield result
@@ -1220,7 +1229,13 @@ object AgentActor extends AgentCore with AgentSession:
                     )
                 )
               }
-              _ <- replyTo.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
+              // #25: a fatal failure must discharge the completion debt with
+              // Failed — a parked requester (supervisor/bridge waiting for the
+              // post-batch answer) would otherwise hang forever, and the clone
+              // would sit registered as running. Targets = this turn's replyTo
+              // plus any parked debt (deduped).
+              failTargets = (replyTo.toList ++ state.execution.owedCompletion).distinct
+              _ <- failTargets.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
               // Mail team members have no replyTo (their turns are driven by
               // UserInput(replyTo=None)), so the notification above is a no-op
               // for them and a fatal LLM failure evaporated silently — the
@@ -1230,8 +1245,12 @@ object AgentActor extends AgentCore with AgentSession:
               // mirroring BackoffSupervisor's notifyParentAndStop metadata
               // contract (failedSessionId / retryable / failureType) so the
               // parent's re-delegate system-reminder kicks in.
-              _ <- (replyTo, parentRef) match
-                case (None, Some(parent)) =>
+              // #25: only when NO requester at all (no replyTo AND no parked
+              // debt) — a debt discharge above already reaches the parent via
+              // the supervisor's source="delegate/subtask" failed event (which
+              // also releases the parent's barrier; source="team" would not).
+              _ <- (failTargets, parentRef) match
+                case (Nil, Some(parent)) =>
                   val sid = cleanedState.sessionId.getOrElse("")
                   val sessionInfo = if sid.nonEmpty then s" [session=$sid]" else ""
                   // ActorRef.! returns IO[Unit] — return it directly.
@@ -1266,6 +1285,9 @@ object AgentActor extends AgentCore with AgentSession:
               val fatalState = cleanedState
                 .withStatus(AgentStatus.Error(error.getMessage))
                 .withPendingCompaction(None)
+                // #25: the debt was discharged with Failed above — never
+                // carry it into the idle state.
+                .withOwedCompletion(Nil)
               val finalState =
                 if compactionWasPending then
                   logAgentEvent(
@@ -2252,6 +2274,27 @@ object AgentActor extends AgentCore with AgentSession:
       s"msgs=${state.messages.size} textLen=${text.length} textStreamed=$textStreamed " +
         s"thinking=${thinking.map(_.length).getOrElse(0)} model=${model.getOrElse("-")}"
     )
+    // #25 (nested delegation dead-letter): "turn ended" is NOT "task completed"
+    // while spawned sub-agents are still in flight. The completion notification
+    // (supervisor adapter / ask fork / flow bridge) is PARKED in
+    // execution.owedCompletion instead of being sent — BackoffSupervisor would
+    // otherwise stop this actor on Completed and the grandchildren's results
+    // would dead-letter. When a later turn ends with the barrier at 0, every
+    // parked target receives the Completed event carrying the FINAL synthesized
+    // text and the debt clears. Root agents (replyTo=None, no debt) unaffected.
+    val completionTargets: List[ActorRef[AgentEvent]] =
+      (replyTo.toList ++ state.execution.owedCompletion).distinct
+    val subagentsInFlight = state.execution.outstandingSubagentResults > 0
+    val owedAfter: List[ActorRef[AgentEvent]] = if subagentsInFlight then completionTargets else Nil
+    if subagentsInFlight && completionTargets.nonEmpty then
+      logAgentEvent(
+        agentDef,
+        depth,
+        state.sessionId,
+        state.sessionName,
+        "completion-parked",
+        s"outstanding=${state.execution.outstandingSubagentResults} parked=${completionTargets.size}"
+      )
     // Barrier-aware drain: while a parallel sub-agent batch is outstanding,
     // subtask/delegate results stay held (worker blocking semantics) — they are
     // injected ALL together when the batch completes. Other event types keep
@@ -2291,7 +2334,9 @@ object AgentActor extends AgentCore with AgentSession:
           .copy(pendingEvents = remainingEvents, pendingImmediateInputs = state.execution.pendingImmediateInputs,
                 pendingMailQueueCount = state.execution.pendingMailQueueCount,
                 pendingUserInputs = state.execution.pendingUserInputs,
-                outstandingSubagentResults = state.execution.outstandingSubagentResults)
+                outstandingSubagentResults = state.execution.outstandingSubagentResults,
+                // #25: hold/replay the completion debt across this injection.
+                owedCompletion = owedAfter)
       )
       for
         _ <- roundCompleteIO
@@ -2307,7 +2352,11 @@ object AgentActor extends AgentCore with AgentSession:
               )
           )
         )
-        _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithPending))
+        _ <-
+          // #25: never signal turn-terminal Completed while sub-agents are in
+          // flight — park the debt (owedAfter) and keep the requester waiting.
+          if subagentsInFlight then IO.unit
+          else completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithPending))
         result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
       yield result
       end for
@@ -2350,7 +2399,9 @@ object AgentActor extends AgentCore with AgentSession:
                   // Sub-agent barrier: held subtask/delegate results and the
                   // outstanding count survive the turn boundary.
                   pendingEvents = state.execution.pendingEvents,
-                  outstandingSubagentResults = state.execution.outstandingSubagentResults)
+                  outstandingSubagentResults = state.execution.outstandingSubagentResults,
+                  // #25: hold/replay the completion debt across this injection.
+                  owedCompletion = owedAfter)
         )
       for
         _ <- roundCompleteIO
@@ -2378,7 +2429,10 @@ object AgentActor extends AgentCore with AgentSession:
               )
           )
         )
-        _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithImmediate))
+        _ <-
+          // #25: park the completion debt while sub-agents are in flight.
+          if subagentsInFlight then IO.unit
+          else completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithImmediate))
         result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
       yield result
       end for
@@ -2410,7 +2464,9 @@ object AgentActor extends AgentCore with AgentSession:
                         pendingUserInputs = state.execution.pendingUserInputs,
                         // Sub-agent barrier: held results survive the turn boundary.
                         pendingEvents = state.execution.pendingEvents,
-                        outstandingSubagentResults = state.execution.outstandingSubagentResults)
+                        outstandingSubagentResults = state.execution.outstandingSubagentResults,
+                        // #25: hold/replay the completion debt across this injection.
+                        owedCompletion = owedAfter)
               )
               _ <- nebflow.core.flow.MailQueueStore.removeHead(sid)
               _ <-
@@ -2427,7 +2483,10 @@ object AgentActor extends AgentCore with AgentSession:
                     IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
                   )
               )
-              _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithQueue))
+              _ <-
+                // #25: park the completion debt while sub-agents are in flight.
+                if subagentsInFlight then IO.unit
+                else completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithQueue))
               r <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
             yield r
           case None =>
@@ -2497,7 +2556,15 @@ object AgentActor extends AgentCore with AgentSession:
               )
           )
         )
-        _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), newMessages))
+        _ <-
+          // #25 (THE fix): the terminal Completed must NOT fire while spawned
+          // sub-agents are in flight — BackoffSupervisor.notifyParentAndStop
+          // would stop this actor and the grandchildren's results would
+          // dead-letter (the root would only ever see the relay text). Park
+          // the debt instead; the batch-completion injection turn re-enters
+          // finishTurnCont with the barrier at 0 and pays it off there.
+          if subagentsInFlight then IO.unit
+          else completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), newMessages))
         // Turn fully finished (no pending events / immediate inputs) — back to
         // idle, so clear the team busy mark. The two earlier branches re-enter
         // pipeLlmCall which re-marks busy, so they must NOT clear here.
@@ -2531,7 +2598,10 @@ object AgentActor extends AgentCore with AgentSession:
                 // outstanding count survive the turn boundary (the batch may
                 // still be running — they are injected when it completes).
                 pendingEvents = state.execution.pendingEvents,
-                outstandingSubagentResults = state.execution.outstandingSubagentResults
+                outstandingSubagentResults = state.execution.outstandingSubagentResults,
+                // #25: parked completion debt survives the turn boundary —
+                // paid off when a later turn ends with the barrier at 0.
+                owedCompletion = owedAfter
               )
           )
           .withMailTurnCount(state.mailTurnCount + 1)
