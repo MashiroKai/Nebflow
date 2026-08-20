@@ -406,6 +406,14 @@ function parseTtlInt(value) {
   return Number.isSafeInteger(n) ? n : null;
 }
 
+/** Typed accessor for the TTL number inputs — getElementById returns
+ *  HTMLElement (no .value/.disabled), so cast once here instead of at every
+ *  call site (checkJs-clean). */
+/** @param {string} id @returns {HTMLInputElement|null} */
+function ttlInput(id) {
+  return /** @type {HTMLInputElement|null} */ (document.getElementById(id));
+}
+
 /**
  * Tool result TTL settings block (#341 frontend tail) — collapsed advanced
  * panel mirroring the STT advance pattern. Echoes state.toolResultTtl
@@ -478,7 +486,7 @@ function bindTtlEvents() {
       const on = sw.classList.toggle('on');
       sw.setAttribute('aria-checked', String(on));
       ['ttl-minutes', 'ttl-keep-recent', 'ttl-min-chars'].forEach(id => {
-        const inp = document.getElementById(id);
+        const inp = ttlInput(id);
         if (inp) inp.disabled = !on;
       });
     };
@@ -497,9 +505,9 @@ function bindTtlEvents() {
   document.getElementById('btn-save-ttl')?.addEventListener('click', () => {
     const enabled = document.getElementById('toggle-ttl-enabled')?.classList.contains('on') ?? false;
     const values = {
-      ttlMinutes: parseTtlInt(document.getElementById('ttl-minutes')?.value),
-      keepRecent: parseTtlInt(document.getElementById('ttl-keep-recent')?.value),
-      minChars: parseTtlInt(document.getElementById('ttl-min-chars')?.value),
+      ttlMinutes: parseTtlInt(ttlInput('ttl-minutes')?.value),
+      keepRecent: parseTtlInt(ttlInput('ttl-keep-recent')?.value),
+      minChars: parseTtlInt(ttlInput('ttl-min-chars')?.value),
     };
     const fieldKey = {
       ttlMinutes: 'settings.ttlMinutesLabel',
