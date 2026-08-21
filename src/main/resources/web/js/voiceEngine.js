@@ -2,11 +2,22 @@
 //
 // Dual mode (#295, user ruling 2026-08-18):
 //   1. Cloud STT (serverConfig.stt.sttConfigured === true): getUserMedia →
-//      PCM capture → WAV (16 kHz mono) → base64 → WS {type:'transcribe',
+//      PCM capture → sliced incremental submit → WS {type:'transcribe',
 //      audio, language} → transcription {text|error}. The apiKey lives
 //      server-side only — the frontend never touches it.
 //   2. Browser Web Speech (default, zero config): Chrome/Edge/Safari built-in
 //      recognition. No API key, no backend dependency, no model download.
+//
+// Cloud streaming (2026-08-21, user feedback 「边说边出字」): the cloud ASR
+// (MiMo chat/completions) is whole-utterance with no streaming API, so the
+// frontend slices the recording — every 1.5-2.0s (or on energy-VAD silence)
+// a segment is cut and submitted through the existing WS transcribe endpoint
+// (backend untouched). Segments flow through a SERIALIZED pipeline (the next
+// submit fires only after the previous answer lands) so ordering is
+// guaranteed by construction — the wire protocol carries no seq echo. Interim
+// display = concatenation of finalized segments; on stop the unsubmitted tail
+// merges with any queued segments into one final request. Segments shorter
+// than 0.3s with low energy are dropped as pure noise.
 //
 // Public API:
 //   startDictation(cb)  → start listening; transcribe until stopDictation()
@@ -28,7 +39,6 @@ const SpeechRecognitionAPI =
 // Cloud STT: target sample rate for the WAV we send upstream. 16 kHz mono
 // 16-bit PCM is the de-facto standard for speech-to-text providers.
 const CLOUD_SAMPLE_RATE = 16000;
-const CLOUD_TRANSCRIBE_TIMEOUT_MS = 20000;
 
 let recognition = null;
 let dictating = false;
@@ -36,8 +46,24 @@ let lastInterim = '';
 const cb = {};
 
 // Cloud recording state — one push-to-talk session at a time.
-let cloudRec = null; // { stream, ctx, processor, chunks, token }
-let pendingTranscribe = null; // { token, timer }
+let cloudRec = null; // { stream, ctx, processor, token, recorded }
+
+// Streaming slice parameters (user feedback 2026-08-21: 边说边出字).
+const SEG_MIN_MS = 1500;   // never cut a segment shorter than this (time cut)
+const SEG_MAX_MS = 2000;   // hard time-based cut
+const SILENCE_MS = 450;    // sustained silence that triggers an early cut
+const SILENCE_RMS = 0.01;  // chunk RMS below this counts as silence
+const NOISE_MIN_MS = 300;  // segments shorter than this AND low-energy = noise
+const NOISE_RMS = 0.012;
+const SEG_TIMEOUT_MS = 20000;
+
+// Streaming session state (reset on cloudStart).
+let segBuf = null;    // { samples: Float32Array[], len, startMs, silentMs, sumSq, n }
+let segQueue = [];    // downsampled 16k Float32Array segments awaiting submit
+let segFinals = [];   // finalized segment texts, in order
+let segInFlight = false;
+let segStopping = false;
+let segTimer = null;  // watchdog for the in-flight segment request
 
 function getLang() {
   const loc = getLocale();
@@ -75,7 +101,7 @@ function classifyMicError(e) {
 }
 
 async function cloudStart() {
-  cancelPendingTranscribe(); // a fresh recording invalidates any stale result
+  resetStreaming(); // a fresh recording invalidates any stale pipeline state
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -97,12 +123,11 @@ async function cloudStart() {
   // to the speakers.
   const zero = ctx.createGain();
   zero.gain.value = 0;
-  const chunks = [];
   const token = Date.now() + '_' + Math.random().toString(36).slice(2);
-  cloudRec = { stream, ctx, processor, chunks, token };
+  cloudRec = { stream, ctx, processor, token, recorded: 0 };
   processor.onaudioprocess = (e) => {
     if (cloudRec && cloudRec.token === token) {
-      chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+      onMicChunk(ctx, new Float32Array(e.inputBuffer.getChannelData(0)));
     }
   };
   source.connect(processor);
@@ -111,70 +136,178 @@ async function cloudStart() {
   cb.onState?.('listening');
 }
 
-function cloudStop() {
-  const rec = cloudRec;
-  cloudRec = null;
-  if (!rec) return;
-  const { stream, ctx, processor, chunks, token } = rec;
-  try { processor.disconnect(); } catch (_) {}
-  try { sourceTracks(stream); } catch (_) {}
-  try { ctx.close(); } catch (_) {}
+// ── Streaming slice pipeline (2026-08-21: 边说边出字) ────────────────────
 
-  const total = chunks.reduce((n, c) => n + c.length, 0);
-  if (total === 0) {
-    // Recorded nothing (mic stream opened but onaudioprocess never fired, or
-    // the push-to-talk was too short) — surface it instead of silently
-    // dropping back to idle (#stt-hotfix).
-    cb.onState?.('error', t('stt.noAudio'));
-    return;
+/** Locale-aware joiner for segment texts (zh concatenates, en spaces). */
+function joinParts(parts) {
+  const clean = parts.map(p => (p || '').trim()).filter(Boolean);
+  return clean.join(getLang().startsWith('zh') ? '' : ' ');
+}
+
+function resetStreaming() {
+  segBuf = null;
+  segQueue = [];
+  segFinals = [];
+  segInFlight = false;
+  segStopping = false;
+  if (segTimer) { clearTimeout(segTimer); segTimer = null; }
+}
+
+/** Accumulate a mic chunk; energy-VAD + time budget decide when to cut. */
+function onMicChunk(ctx, chunk) {
+  if (segStopping) return; // stop pressed — slicing frozen, tail already cut
+  cloudRec.recorded += chunk.length;
+  if (!segBuf) {
+    segBuf = { samples: [], len: 0, startMs: Date.now(), silentMs: 0, sumSq: 0, n: 0 };
   }
-  const all = new Float32Array(total);
+  const chunkMs = (chunk.length / ctx.sampleRate) * 1000;
+  let sumSq = 0;
+  for (let i = 0; i < chunk.length; i++) sumSq += chunk[i] * chunk[i];
+  const rms = Math.sqrt(sumSq / Math.max(1, chunk.length));
+  segBuf.samples.push(chunk);
+  segBuf.len += chunk.length;
+  segBuf.sumSq += sumSq;
+  segBuf.n += chunk.length;
+  segBuf.silentMs = rms < SILENCE_RMS ? segBuf.silentMs + chunkMs : 0;
+
+  const dur = Date.now() - segBuf.startMs;
+  if (dur >= SEG_MAX_MS || (dur >= SEG_MIN_MS && segBuf.silentMs >= SILENCE_MS)) {
+    cutSegment(ctx);
+  }
+}
+
+/** Close the current segment: noise-drop or enqueue, then pump the pipeline. */
+function cutSegment(ctx) {
+  if (!segBuf) return;
+  const buf = segBuf;
+  segBuf = null;
+  const dur = Date.now() - buf.startMs;
+  const rms = Math.sqrt(buf.sumSq / Math.max(1, buf.n));
+  const all = new Float32Array(buf.len);
   let off = 0;
-  for (const c of chunks) { all.set(c, off); off += c.length; }
+  for (const c of buf.samples) { all.set(c, off); off += c.length; }
+  if (dur < NOISE_MIN_MS && rms < NOISE_RMS) return; // pure noise — drop
   const samples = ctx.sampleRate !== CLOUD_SAMPLE_RATE
     ? downsample(all, ctx.sampleRate, CLOUD_SAMPLE_RATE)
     : all;
-  const wav = encodeWav(samples, CLOUD_SAMPLE_RATE);
-  const audioB64 = bufferToBase64(wav);
-  cb.onState?.('processing');
+  if (samples.length === 0) return;
+  segQueue.push(samples);
+  // While stopping, cloudStop owns the submit choreography (merge-then-pump);
+  // pumping here would send queued segments one-by-one before the merge.
+  if (!segStopping) pumpSegments();
+}
 
-  const pt = { token, timer: null };
-  pendingTranscribe = pt;
-  pt.timer = setTimeout(() => {
-    if (pendingTranscribe === pt) {
-      pendingTranscribe = null;
-      cb.onState?.('error', t('stt.timeout'));
+/** Serialized pipeline: at most one segment request in flight — ordering is
+ *  guaranteed by construction (the wire protocol carries no seq echo).
+ *  NOTE: merge-on-stop happens in cloudStop (single submit point). By the time
+ *  the pump runs while stopping there is exactly one tail request left. */
+function pumpSegments() {
+  if (segInFlight) return;
+  if (segQueue.length === 0) return; // finalize lives in the transcription handler
+  const seg = segQueue.shift();
+  const wav = encodeWav(seg, CLOUD_SAMPLE_RATE);
+  const audioB64 = bufferToBase64(wav);
+  segInFlight = true;
+  segTimer = setTimeout(() => {
+    if (segInFlight) {
+      segInFlight = false;
+      abortStreaming(t('stt.timeout'));
     }
-  }, CLOUD_TRANSCRIBE_TIMEOUT_MS);
+  }, SEG_TIMEOUT_MS);
   sendWs({ type: 'transcribe', audio: audioB64, language: getLang() });
+}
+
+function abortStreaming(errMsg) {
+  const rec = cloudRec;
+  cloudRec = null;
+  if (rec) {
+    try { rec.processor.disconnect(); } catch (_) {}
+    try { sourceTracks(rec.stream); } catch (_) {}
+    try { rec.ctx.close(); } catch (_) {}
+  }
+  resetStreaming();
+  cb.onState?.('error', errMsg);
+}
+
+/** Stop path with nothing left to submit: finalize whatever segments said. */
+function finishStreamingNoTail() {
+  const rec = cloudRec;
+  cloudRec = null;
+  const recorded = rec ? rec.recorded : 0;
+  if (rec) {
+    try { rec.processor.disconnect(); } catch (_) {}
+    try { sourceTracks(rec.stream); } catch (_) {}
+    try { rec.ctx.close(); } catch (_) {}
+  }
+  const text = joinParts(segFinals);
+  resetStreaming();
+  if (recorded === 0) {
+    // Mic opened but onaudioprocess never fired, or push-to-talk too short
+    // (#stt-hotfix: surface instead of silently dropping to idle).
+    cb.onState?.('error', t('stt.noAudio'));
+    return;
+  }
+  if (text) cb.onText?.(text);
+  cb.onState?.('idle');
+}
+
+/** Stop recording. The unsubmitted tail is cut once (noise rule applies),
+ *  any queued segments merge into ONE final-bound request (tail latency ≤ 2
+ *  requests: the in-flight one + the merged tail), and the transcription
+ *  handler finalizes the whole utterance when the last answer lands. */
+function cloudStop() {
+  const rec = cloudRec;
+  if (!rec) return;
+  segStopping = true;
+  // Cut the unsubmitted tail once; slicing freezes afterwards (onMicChunk
+  // guards on cloudRec which survives until finalize/abort).
+  cutSegment(rec.ctx);
+  // Merge the remaining queue into a single tail request (stop is the only
+  // place that merges — the pump sees at most one queued segment afterwards).
+  if (segQueue.length > 1) {
+    const total = segQueue.reduce((n, s) => n + s.length, 0);
+    const merged = new Float32Array(total);
+    let off = 0;
+    for (const s of segQueue) { merged.set(s, off); off += s.length; }
+    segQueue = [merged];
+  }
+  // input.js strips the interim slot synchronously on stopVoice — re-hang the
+  // finalized segments right away so the box never goes blank while the tail
+  // request drains (the final onText appends the tail text atomically).
+  if (segFinals.length) cb.onInterim?.(joinParts(segFinals));
+  if (segQueue.length === 0 && !segInFlight) {
+    finishStreamingNoTail();
+    return;
+  }
+  pumpSegments(); // send the lone queued tail when the pipeline is idle
 }
 
 function sourceTracks(stream) {
   stream.getTracks().forEach(tr => tr.stop());
 }
 
-function cancelPendingTranscribe() {
-  if (pendingTranscribe) {
-    clearTimeout(pendingTranscribe.timer);
-    pendingTranscribe = null;
-  }
-}
-
 // The backend answers {type:'transcription', text} or {type:'transcription',
-// error} — no sessionId, so ws.js routes it to the primary view and we consume
-// it here via the pending token (one push-to-talk at a time).
+// error} — no sessionId, no seq echo. The serialized pipeline (one request in
+// flight) makes arrival order = segment order, so each answer appends to the
+// finalized list and refreshes the interim display (边说边出字). The LAST
+// answer (stopping + queue drained) finalizes synchronously via onText —
+// input.js strips the interim slot on stopVoice, so only onText survives it.
 onMessage('transcription', (msg) => {
-  if (!pendingTranscribe) return; // stale / not ours
-  const pt = pendingTranscribe;
-  pendingTranscribe = null;
-  clearTimeout(pt.timer);
+  if (!segInFlight) return; // stale / not ours
+  segInFlight = false;
+  if (segTimer) { clearTimeout(segTimer); segTimer = null; }
   if (msg.error) {
-    cb.onState?.('error', msg.error);
+    abortStreaming(msg.error);
     return;
   }
   const text = (msg.text || '').trim();
-  if (text) cb.onText?.(text);
-  cb.onState?.('idle');
+  if (text) segFinals.push(text);
+  if (segStopping && segQueue.length === 0) {
+    finishStreamingNoTail(); // last answer — commit the whole utterance
+    return;
+  }
+  if (!segStopping) cb.onInterim?.(joinParts(segFinals));
+  pumpSegments(); // next queued segment
 });
 
 // ── WAV encoding helpers ───────────────────────────────────────────────
