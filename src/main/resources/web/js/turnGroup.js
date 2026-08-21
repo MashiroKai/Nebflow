@@ -2,10 +2,11 @@
 //
 // On `done` the turn's process rows (thinking rows, tool cards, intermediate
 // text segments) are gathered into a `.turn-group` and collapsed behind a
-// one-line summary bar (frozen work-status phrase + tool count; model and
-// timestamp live in the title tooltip). Failed turns (`error`/`interrupted`/
-// `timeout`/`maxTokens`) are grouped but NEVER collapsed — no summary bar,
-// rows stay visible for troubleshooting. Streaming path is untouched: rows
+// one-line summary bar: `✻ phrase, model · tool count` (v1.2: model name is
+// visible summary text; timestamp stays in the title tooltip). Failed turns
+// (`error`/`interrupted`/`timeout`/`maxTokens`) are grouped but NEVER
+// collapsed — no summary bar (spec A5: the element does not exist), rows
+// stay visible for troubleshooting. Streaming path is untouched: rows
 // append directly to the chat as today; gathering happens once, at terminal.
 //
 // Zero protocol/backend changes (spec D1): success vs failure is executed
@@ -52,8 +53,10 @@ function findFinalRow(scope) {
 
 /** Build the group DOM around the given process rows (DOM moves, no
  *  rebuild — listeners and scroll memory survive). Returns null when there
- *  is nothing to group (E5 zero-process; E6 thinking-only = final product). */
-function buildGroup(chat, processRows, finalRow, meta) {
+ *  is nothing to group (E5 zero-process; E6 thinking-only = final product).
+ *  `withSummary` controls whether a summary bar element is created — failed
+ *  groups pass false: spec A5 asserts `.turn-summary` does NOT exist there. */
+function buildGroup(chat, processRows, finalRow, meta, withSummary = true) {
   const steps = processRows.filter(r => r !== finalRow);
   if (steps.length === 0) return null;
   // E6: a lone thinking row with no text reply IS the user's only readable
@@ -67,13 +70,16 @@ function buildGroup(chat, processRows, finalRow, meta) {
   stepsEl.className = 'turn-steps';
   stepsEl.id = 'turn-steps-' + (meta.sessionId || 'view') + '-' + idx;
 
-  const summary = document.createElement('div');
-  summary.className = 'turn-summary';
-  summary.appendChild(chevronSvg());
-  const text = document.createElement('span');
-  text.className = 'turn-summary-text';
-  summary.appendChild(text);
-  group.appendChild(summary);
+  let summary = null, text = null;
+  if (withSummary) {
+    summary = document.createElement('div');
+    summary.className = 'turn-summary';
+    summary.appendChild(chevronSvg());
+    text = document.createElement('span');
+    text.className = 'turn-summary-text';
+    summary.appendChild(text);
+    group.appendChild(summary);
+  }
   group.appendChild(stepsEl);
 
   chat.insertBefore(group, processRows[0]);
@@ -81,13 +87,16 @@ function buildGroup(chat, processRows, finalRow, meta) {
   return { group, steps: stepsEl, summary, text };
 }
 
-/** Fill the summary bar: frozen status-line phrase (✻ …) + tool count;
- *  model/timestamp in the title tooltip (v1.1 user ruling). */
+/** Fill the summary bar: frozen status-line phrase (✻ …, duration embedded)
+ *  + model name + tool count — all visible text (v1.2 user ruling 2026-08-21
+ *  12:08: model moves from tooltip to summary text; footer keeps only
+ *  time + copy). Timestamp stays in the title tooltip. */
 function fillSummary(built, meta) {
   const toolCount = built.steps.querySelectorAll('.tool-card').length;
   const phrase = meta.phrase || (meta.durationMs != null ? pickThinkingPhrase(meta.durationMs, meta.seed) : '');
   const parts = [];
   if (phrase) parts.push(phrase);
+  if (meta.model) parts.push(meta.model);
   parts.push(t(toolCount === 1 ? 'chat.turnSummaryToolsOne' : 'chat.turnSummaryTools', { n: toolCount }));
   built.text.textContent = parts.join(' · ');
   built.summary.title = meta.title || '';
@@ -134,11 +143,11 @@ export function failTurn(view) {
   const scope = rows.slice(lastUserIdx + 1);
   const processRows = scope.filter(isProcessRow);
   if (processRows.length === 0) return null;
-  const built = buildGroup(chat, processRows, findFinalRow(scope), {});
+  // A5: failed groups carry NO summary element (not merely hidden).
+  const built = buildGroup(chat, processRows, findFinalRow(scope), {}, false);
   if (!built) return null;
   built.group.dataset.turnState = 'failed';
   built.group.classList.add('turn-failed');
-  built.summary.style.display = 'none';
   return built.group;
 }
 
@@ -179,16 +188,20 @@ function groupSegment(chat, seg) {
   const processRows = seg.filter(isProcessRow);
   if (processRows.length === 0) return;
   const finalRow = findFinalRow(seg);
-  // E4 P0: success = some Ai row in the segment carries a duration badge
+  // E4 P0: success = some Ai row in the segment carries a done-badge
   // (SessionRecorder backfills durationMs on done — the implicit marker).
-  const badge = seg.reduce((acc, r) => r.querySelector('.duration-badge-text') || acc, null);
+  // v1.2: footers are time + copy only, so phrase/model ride on the badge's
+  // data-nf-phrase / data-nf-model attributes instead of visible spans.
+  const badge = findDoneBadge(seg);
   const success = !!badge;
   const meta = success ? {
-    phrase: badge ? badge.textContent : '',
-    title: historyBadgeTitle(seg),
+    phrase: badge.dataset.nfPhrase || '',
+    model: badge.dataset.nfModel || '',
+    title: historyBadgeTitle(seg, badge),
     sessionId: chat.dataset?.sessionId || '',
   } : {};
-  const built = buildGroup(chat, processRows, finalRow, meta);
+  // A5: failed segments build the group WITHOUT a summary element.
+  const built = buildGroup(chat, processRows, finalRow, meta, success);
   if (!built) return;
   if (success) {
     fillSummary(built, meta);
@@ -198,14 +211,23 @@ function groupSegment(chat, seg) {
   } else {
     built.group.dataset.turnState = 'failed';
     built.group.classList.add('turn-failed');
-    built.summary.style.display = 'none';
   }
 }
 
-function historyBadgeTitle(seg) {
-  const badgeRow = seg.find(r => r.querySelector('.duration-badge-text'));
-  if (!badgeRow) return '';
-  const model = badgeRow.querySelector('.duration-badge-model')?.textContent || '';
-  const time = badgeRow.querySelector('.duration-badge-time')?.textContent || '';
-  return [model, time].filter(Boolean).join(' · ');
+/** The turn's implicit done-marker: an AI footer badge carrying a duration
+ *  phrase (data-nf-phrase). Copy-only footers (no duration) don't count. */
+function findDoneBadge(seg) {
+  for (let i = seg.length - 1; i >= 0; i--) {
+    const badges = seg[i].querySelectorAll('.duration-badge');
+    for (let j = badges.length - 1; j >= 0; j--) {
+      if (badges[j].dataset.nfPhrase) return badges[j];
+    }
+  }
+  return null;
+}
+
+function historyBadgeTitle(seg, badge) {
+  // v1.2: model is visible summary text; the tooltip carries the timestamp only.
+  const row = badge?.closest('.row') || seg.find(r => r.contains(badge));
+  return row?.querySelector('.duration-badge-time')?.textContent || '';
 }
