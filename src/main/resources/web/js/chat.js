@@ -739,7 +739,15 @@ export function pickThinkingPhrase(durationMs, seed) {
 
 /**
  * Create a duration badge DOM element (pill style).
- * Shows the full phrase with duration embedded, plus optional model tag and timestamp.
+ *
+ * v1.2 user ruling (2026-08-21 12:08): AI bubble footers are uniformly
+ * time + copy only — no phrase, no model tag in the footer. The phrase
+ * (with embedded duration) and model name still travel on the badge as
+ * dataset attributes (data-nf-phrase / data-nf-model) so the turn-group
+ * summary row (#346) can recover them: live path via main.js, history
+ * reload via turnGroup.groupSegment. The summary row is now the sole
+ * display home of the phrase/model metadata.
+ *
  * @param {number} durationMs
  * @param {string} [model]
  * @param {number} [seed]
@@ -749,21 +757,10 @@ export function pickThinkingPhrase(durationMs, seed) {
 export function createDurationBadgeElement(durationMs, model, seed, timestamp, copyText) {
   const badge = document.createElement('div');
   badge.className = 'duration-badge';
-
-  const phraseSpan = document.createElement('span');
-  phraseSpan.className = 'duration-badge-text';
-  phraseSpan.textContent = pickThinkingPhrase(durationMs, seed);
-  badge.appendChild(phraseSpan);
-
-  if (model) {
-    const div = document.createElement('span');
-    div.className = 'duration-badge-divider';
-    badge.appendChild(div);
-    const modelSpan = document.createElement('span');
-    modelSpan.className = 'duration-badge-model';
-    modelSpan.textContent = model;
-    badge.appendChild(modelSpan);
-  }
+  // Metadata for #346 summary reconstruction (not rendered — footer is
+  // time + copy only, v1.2 ruling).
+  badge.dataset.nfPhrase = pickThinkingPhrase(durationMs, seed);
+  if (model) badge.dataset.nfModel = model;
 
   if (timestamp) {
     const div = document.createElement('span');
@@ -2184,7 +2181,8 @@ export function finishAskAnswer(durationMs, model) {
     }
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(activeView.stream.currentAskBubble, durationMs, model, seed, Date.now());
+      // v1.2 footer ruling: time + copy only (metadata lives in the summary row)
+      renderDurationBadge(activeView.stream.currentAskBubble, durationMs, model, seed, Date.now(), activeView.stream.askAnswerText);
     }
     activeView.stream.currentAskBubble = null;
     activeView.stream.askAnswerText = '';

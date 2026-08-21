@@ -820,14 +820,14 @@ onMessage('done', (msg, view) => {
     activeView.stream.activeAgentId = null;
     clearStatus();
     // #346: gather this turn's process rows and collapse immediately
-    // (synchronous, no linger). The summary freezes the phrase the duration
-    // badge just rendered; model/timestamp ride in the title tooltip.
+    // (synchronous, no linger). The summary freezes the phrase + model
+    // (both visible, v1.2); the timestamp rides in the title tooltip.
     const lastBadge = Array.from(activeView.dom.chat.querySelectorAll('.duration-badge')).pop();
     collapseTurn(activeView, {
       durationMs,
       model: msg.model,
-      phrase: lastBadge?.querySelector('.duration-badge-text')?.textContent || '',
-      title: [msg.model, lastBadge?.querySelector('.duration-badge-time')?.textContent].filter(Boolean).join(' · '),
+      phrase: lastBadge?.dataset.nfPhrase || '',
+      title: lastBadge?.querySelector('.duration-badge-time')?.textContent || '',
       sessionId: sid,
     });
   } else {

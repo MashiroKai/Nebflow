@@ -514,7 +514,8 @@ export function restoreFromStorage() {
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
+          // v1.2 footer ruling: time + copy only
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.answer);
           aRow.appendChild(badge);
         }
         chat.appendChild(aRow);
@@ -850,7 +851,8 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
+          // v1.2 footer ruling: time + copy only
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.answer);
           aRow.appendChild(badge);
         }
         fragment.appendChild(aRow);
