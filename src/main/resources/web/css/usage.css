@@ -179,6 +179,7 @@
   display: flex;
   gap: 10px;
   align-items: flex-start;
+  justify-content: center;
   flex-shrink: 0;
   animation: ud-fade 0.15s ease-out;
 }
@@ -195,6 +196,7 @@
   margin-bottom: 4px;
   height: 12px;
 }
+#usage-months span { white-space: nowrap; }
 #usage-grid {
   display: grid;
   grid-auto-flow: column;
