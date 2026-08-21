@@ -60,6 +60,7 @@ import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initDaemons } from './daemons.js';
 import { initChatSearch } from './chatSearch.js';
+import { initUsageDashboard } from './usageDashboard.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { handleFlowAgentHistory, openStepPopup as openFlowStepPopup } from './flowAgentPopup.js';
@@ -2482,6 +2483,7 @@ if (!restoreTabs()) {
 initScheduledTask();
 initDaemons();
 initChatSearch();
+initUsageDashboard();
 initNeblink();
 initDropbox();
 initContacts();
