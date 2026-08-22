@@ -314,6 +314,11 @@ export function interceptBgAgentStep(msg) {
     entry.meta.toolLabel = '';
   } else if (msg.type === 'agentTextDelta') {
     if (entry.meta.status !== 'responding') entry.meta.status = 'responding';
+  } else if (msg.type === 'interrupted') {
+    // User pressed stop — the turn ended by intent, not failure. The agent
+    // goes idle; retry is offered (restart makes sense for a stopped task).
+    entry.meta.status = 'stopped';
+    entry.meta.stuck = null;
   }
 
   setActiveView(entry.view);
@@ -363,7 +368,7 @@ export function handleBgAgentHistory(msg) {
 function updateFooterStatus(entry) {
   if (!entry.footerEl) return;
   const status = entry.meta.status || '';
-  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding', 'stuck');
+  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding', 'stuck', 'stopped');
   if (status) entry.footerEl.classList.add(status);
   const taskEl = entry.footerEl.querySelector('.fa-task');
   if (taskEl) {
@@ -396,6 +401,7 @@ function updateFooterStatus(entry) {
       done: 'Done',
       failed: 'Failed',
       stuck: 'Stuck',
+      stopped: 'Stopped',
     };
     const text = phaseMap[status] || '';
     phaseEl.textContent = text;
