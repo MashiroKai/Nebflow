@@ -206,7 +206,7 @@ export function bindTileClicks() {
       const flowName = el.getAttribute('data-flow') || '';
       const agentName = el.getAttribute('data-agent') || '';
       const sid = el.getAttribute('data-sid') || null;
-      openStepPopup(`${flowName}/${agentName}`, agentName, agentName, flowName, sid || null);
+      openStepPopup(`${flowName}/${agentName}`, agentName, agentName, flowName, sid || null, 'Team');
     });
   });
 }
@@ -337,7 +337,7 @@ export function bindFlowRowClicks(runningFlows, reRender) {
       const flowName = el.getAttribute('data-flow') || '';
       const agentName = el.getAttribute('data-agent') || '';
       const nodeId = el.getAttribute('data-node') || '';
-      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, null);
+      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, null, 'Flow');
     });
   });
 }
