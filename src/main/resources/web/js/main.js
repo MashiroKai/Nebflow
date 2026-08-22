@@ -2686,6 +2686,11 @@ onMessage('activeAgents', (msg) => {
       name: a.agentName || a.agentId,
       task: a.task || '',
       sessionId: a.sessionId || '',
+      // Management panel (2026-08-22): kind drives the permission matrix
+      // (Delegate/SubTask/Ephemeral operable, Team/Flow read-only); startedAt
+      // powers uptime restore once the backend adds it to the snapshot.
+      kind: a.kind || '',
+      startedAt: a.startedAt || null,
       currentTool: null,
       done: false,
     };
