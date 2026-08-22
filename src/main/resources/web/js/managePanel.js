@@ -37,7 +37,7 @@ export function isProcessingStatus(status) {
 
 /** True when a restart makes sense (retry button visible). */
 export function isRetryableStatus(status) {
-  return status === 'failed' || status === 'stuck';
+  return status === 'failed' || status === 'stuck' || status === 'stopped';
 }
 
 function fmtUptime(ms) {
