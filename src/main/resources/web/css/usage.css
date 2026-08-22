@@ -1,6 +1,8 @@
-/* usage.css — Token usage dashboard (#310, spec token-dashboard-spec.md v1.2.1).
+/* usage.css — Token usage dashboard (#310, spec token-dashboard-spec.md v1.3).
    Glass modal, no overlay dimming (visual-style ruling). Zero new color
-   tokens: sapphire alpha variants only. */
+   tokens: sapphire alpha variants only.
+   v1.3: full-year heatmap (horizontal scroll), stats-range buttons driving
+   summary cards only, intraday 24h curve (SVG), heatmap dimension param. */
 
 #usage-overlay {
   position: fixed;
@@ -108,15 +110,83 @@
 }
 .ud-trend { color: rgb(var(--sapphire) / 0.9); }
 
-/* ── Controls ─────────────────────────────────────────────────────── */
-.ud-controls {
+/* ── Controls (v1.3: three independent groups) ───────────────────── */
+.ud-filters { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; }
+/* stats range + summary cards (ruling ④) */
+.ud-stats { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+.ud-stats-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ud-stats-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+.ud-sranges {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--glass-etched-bg);
+}
+.ud-srange {
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.ud-srange:hover { color: var(--color-text); }
+.ud-srange[aria-checked="true"] {
+  background: var(--sapphire-edge-strong);
+  color: var(--color-text);
+  font-weight: 600;
+}
+/* heatmap controls row (ruling ⑤ dims + v1.1 color mode) */
+.ud-heat-controls {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   flex-shrink: 0;
 }
-.ud-filters { display: flex; gap: 6px; }
+.ud-hdims {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--glass-etched-bg);
+}
+.ud-hdim {
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.ud-hdim:hover { color: var(--color-text); }
+.ud-hdim[aria-checked="true"] {
+  background: var(--sapphire-edge-strong);
+  color: var(--color-text);
+  font-weight: 600;
+}
+.ud-dimlabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgb(var(--sapphire) / 0.9);
+  font-variant-numeric: tabular-nums;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ud-dimlabel[hidden] { display: none; }
 .ud-select {
   appearance: none;
   -webkit-appearance: none;
@@ -132,14 +202,14 @@
   background-repeat: no-repeat;
 }
 .ud-select:disabled { opacity: 0.5; cursor: not-allowed; }
-.ud-ranges, .ud-colormode, .ud-drill-dims {
+.ud-colormode, .ud-drill-dims {
   display: flex;
   gap: 2px;
   padding: 2px;
   border-radius: 8px;
   background: var(--glass-etched-bg);
 }
-.ud-range, .ud-cm, .ud-dim {
+.ud-cm, .ud-dim {
   border: none;
   background: transparent;
   font-size: 12px;
@@ -150,42 +220,42 @@
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.ud-range:hover, .ud-cm:hover, .ud-dim:hover { color: var(--color-text); }
-.ud-range[aria-checked="true"], .ud-cm[aria-checked="true"], .ud-dim[aria-checked="true"] {
+.ud-cm:hover, .ud-dim:hover { color: var(--color-text); }
+.ud-cm[aria-checked="true"], .ud-dim[aria-checked="true"] {
   background: var(--sapphire-edge-strong);
   color: var(--color-text);
   font-weight: 600;
 }
-.ud-range:focus-visible, .ud-cm:focus-visible, .ud-dim:focus-visible,
-.ud-select:focus-visible, .ud-date:focus-visible {
+.ud-srange:focus-visible, .ud-hdim:focus-visible,
+.ud-cm:focus-visible, .ud-dim:focus-visible,
+.ud-select:focus-visible {
   outline: 2px solid var(--glass-etched-border-focus);
   outline-offset: 1px;
 }
-.ud-custom-range { display: flex; align-items: center; gap: 4px; }
-.ud-custom-range[hidden] { display: none; }
-.ud-date {
-  font-size: 12px;
-  color: var(--color-text);
-  padding: 3px 8px;
-  border-radius: 8px;
-  font-variant-numeric: tabular-nums;
-}
-.ud-date-sep { color: var(--color-text-muted); font-size: 12px; }
 .ud-colormode { margin-left: auto; }
 
-/* ── Heatmap ──────────────────────────────────────────────────────── */
+/* ── Heatmap (v1.3: full year, horizontal scroll) ─────────────────── */
 #usage-heatwrap {
   --ud-cell: 11px;
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  justify-content: center;
   flex-shrink: 0;
   animation: ud-fade 0.15s ease-out;
+  min-width: 0;
 }
 #usage-heatwrap.ud-reloading { opacity: 0.5; pointer-events: none; }
 @keyframes ud-fade { from { opacity: 0; } to { opacity: 1; } }
-#usage-heatmain { min-width: 0; }
+/* horizontal scroll container for the 53-column year grid */
+#usage-heatscroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-width: 0;
+  flex: 1;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+#usage-heatmain { min-width: max-content; }
 #usage-months {
   display: grid;
   grid-auto-flow: column;
@@ -195,6 +265,7 @@
   color: var(--color-text-muted);
   margin-bottom: 4px;
   height: 12px;
+  width: max-content;
 }
 #usage-months span { white-space: nowrap; }
 #usage-grid {
@@ -203,6 +274,7 @@
   grid-template-rows: repeat(7, var(--ud-cell, 11px));
   grid-auto-columns: var(--ud-cell, 11px);
   gap: 2px;
+  width: max-content;
 }
 .ud-week { display: contents; }
 .ud-cell {
@@ -279,7 +351,55 @@
 .ud-empty-title { font-size: 14px; font-weight: 600; color: var(--color-text); margin-bottom: 4px; }
 .ud-empty-hint { font-size: 12px; }
 
-/* ── Drilldown drawer ─────────────────────────────────────────────── */
+/* ── Intraday curve (v1.3, ruling ③) ──────────────────────────────── */
+.ud-curve {
+  border-top: 1px solid var(--color-border);
+  padding-top: 10px;
+  animation: ud-curve-in 0.2s ease-out;
+  flex-shrink: 0;
+}
+.ud-curve[hidden] { display: none; }
+@keyframes ud-curve-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ud-curve-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ud-curve-title { font-size: 13px; font-weight: 600; color: var(--color-text); }
+.ud-drill-open { margin-left: auto; }
+.ud-curve-body {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.ud-curve-svg { display: block; width: 100%; height: 132px; }
+.ud-curve-bar { fill: rgb(var(--sapphire) / 0.55); }
+.ud-curve-bar:hover { fill: rgb(var(--sapphire) / 0.85); }
+.ud-curve-bar.ud-curve-peak { fill: rgb(var(--sapphire) / 0.85); }
+.ud-curve-axis {
+  font-size: 9px;
+  fill: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ud-curve-peak-label {
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+.ud-curve-empty {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  padding: 24px 0;
+  text-align: center;
+}
+
+/* ── Drilldown drawer (v1.3 secondary panel) ─────────────────────── */
 .ud-drill {
   border-top: 1px solid var(--color-border);
   padding-top: 10px;
@@ -382,10 +502,11 @@
 /* ── reduced motion ───────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   #usage-dashboard, #usage-overlay.closing #usage-dashboard,
-  .ud-drill, .ud-drill.closing, .ud-tooltip, #usage-heatwrap {
+  .ud-drill, .ud-drill.closing, .ud-tooltip, #usage-heatwrap,
+  .ud-curve {
     animation-duration: 0.01s;
   }
-  .ud-range, .ud-cm, .ud-dim, .ud-cell[data-date]:hover { transition-duration: 0.01s; }
+  .ud-srange, .ud-hdim, .ud-cm, .ud-dim, .ud-cell[data-date]:hover { transition-duration: 0.01s; }
 }
 
 /* ── 375px ────────────────────────────────────────────────────────── */

@@ -1,5 +1,15 @@
 // usageDashboard.js — #310 Token usage dashboard (spec token-dashboard-spec.md
-// v1.2.1). GitHub-style day×week heatmap + summary cards + drilldown drawer.
+// v1.3). GitHub-style day×week heatmap FIXED to a full year + independent
+// stats-range summary cards + intraday 24h curve + drilldown as secondary.
+//
+// v1.3 rulings (user 2026-08-22 23:58, five points):
+//   ① heatmap fills a full year (no gaps; empty days = level-0)
+//   ② cost levels by order of magnitude: 0 / <1M / 1M-10M / 10M-100M / ≥100M
+//   ③ clicking a cell shows the intraday 24h curve (dim=hour, SVG bars)
+//   ④ stats-range buttons (1d/1w/1m/3m) drive ONLY the summary cards —
+//      zero coupling with the heatmap
+//   ⑤ heatmap dimension param: total | model | agent (Top-1 day distribution
+//      when filter = all), legend label marks the active dimension value
 //
 // Data: GET /api/usage/aggregate (dim=day|hour|provider|model|agent, from/to
 // epoch ms, provider/model/agent exact-match filters — D1 landed in backend).
@@ -21,21 +31,32 @@ import { createIconsIn } from './utils.js';
 const NO_CACHE_PROVIDERS = [];
 
 const MS_DAY = 86400000;
+const YEAR_WEEKS = 52; // 52 full weeks before the current week column (53 cols)
 
 // ── module state ────────────────────────────────────────────────────
 let overlay = null;
 let isOpen = false;
-let rangeDays = 30;
-let customFrom = ''; // yyyy-mm-dd
-let customTo = '';
+/** stats range for summary cards only (spec §2.3/§2.4, ruling ④) */
+let statRange = '1w'; // '1d' | '1w' | '1m' | '3m'
+/** heatmap dimension (spec §2.5, ruling ⑤) */
+let heatDim = 'total'; // 'total' | 'model' | 'agent'
+/** dimension value currently coloring the heatmap ('' = total view) */
+let heatDimValue = '';
 /** @type {{provider: string, model: string, agent: string}} */
 let filters = { provider: '', model: '', agent: '' };
 let colorMode = 'cost'; // 'cost' | 'hitRate'
-/** @type {Map<string, any>} */
-let dayData = new Map();
-/** @type {string[]} ordered date keys inside the window */
+/** @type {Map<string, any>} day buckets backing the current heatmap render */
+let activeDayData = new Map();
+/** @type {string[]} ordered date keys inside the one-year window */
 let windowKeys = [];
-let drillDate = null; // 'YYYY-MM-DD' or null
+// caches (cleared on filter change)
+let mainDayAgg = null; // total dim=day one-year aggregate
+/** @type {Map<string, any>} */
+const rankCache = new Map(); // 'model'|'agent' -> year-window rank aggregate
+/** @type {Map<string, any>} */
+const dimDayCache = new Map(); // '<dim>:<value>' -> filtered dim=day aggregate
+let curveDate = null; // 'YYYY-MM-DD' of the selected cell (curve section)
+let drillOpen = false; // drilldown table expanded (secondary panel)
 let drillDim = 'agent';
 let mainFailCount = 0;
 let lastTotals = null;
@@ -63,14 +84,21 @@ function keyToMs(key) {
   const [y, m, d] = key.split('-').map(Number);
   return new Date(y, m - 1, d).getTime();
 }
-function windowRange() {
-  const to = startOfToday() + MS_DAY; // exclusive upper = tomorrow 00:00
-  if (rangeDays === 0) {
-    const f = customFrom ? keyToMs(customFrom) : to - 30 * MS_DAY;
-    const t2 = customTo ? keyToMs(customTo) + MS_DAY : to;
-    return { from: f, to: t2 };
-  }
-  return { from: to - rangeDays * MS_DAY, to };
+/** Fixed one-year heatmap window (ruling ①): ends today, starts on the
+ *  Sunday of the week 52 weeks back — columns always align to weeks. */
+function yearWindow() {
+  const today = startOfToday();
+  const dow = new Date(today).getDay(); // 0 = Sunday
+  const thisSunday = today - dow * MS_DAY;
+  const from = thisSunday - YEAR_WEEKS * 7 * MS_DAY;
+  return { from, to: today + MS_DAY };
+}
+/** Summary-card window driven by the stats-range buttons (ruling ④). */
+function statWindow() {
+  const today = startOfToday();
+  const days = { '1d': 1, '1w': 7, '1m': 30, '3m': 90 }[statRange] || 7;
+  const from = statRange === '1d' ? today : today - (days - 1) * MS_DAY;
+  return { from, to: today + MS_DAY };
 }
 
 // ── formatting (spec §5.4) ──────────────────────────────────────────
@@ -87,6 +115,9 @@ function fmtTokens(v) {
   return new Intl.NumberFormat(loc).format(Math.round(v));
 }
 function fmtPct(v) { return (Math.round(v * 10) / 10).toFixed(1); }
+function fmtDateLong(ms) {
+  return new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'zh-CN', { month: 'long', day: 'numeric' }).format(new Date(ms));
+}
 /** v1.2 hit rate = cacheRead / input; null when no data (spec §6.9). */
 function hitRateOf(b) {
   const inn = b.inputTokens || 0;
@@ -145,13 +176,7 @@ function buildShell() {
   closeBtn.innerHTML = '<i data-lucide="x"></i>';
   header.append(title, closeBtn);
 
-  // summary cards
-  const summary = el('div', '');
-  summary.id = 'usage-summary';
-  summary.setAttribute('role', 'group');
-
-  // controls
-  const controls = el('div', 'ud-controls');
+  // filter row (global filters — spec §2.3)
   const filtersWrap = el('div', 'ud-filters');
   for (const dim of ['provider', 'model', 'agent']) {
     const sel = document.createElement('select');
@@ -160,46 +185,59 @@ function buildShell() {
     sel.setAttribute('aria-label', t('usage.dim.' + dim));
     sel.addEventListener('change', () => {
       filters[dim] = sel.value;
-      loadMain();
+      reloadAll();
     });
     filtersWrap.appendChild(sel);
   }
-  const ranges = el('div', 'ud-ranges');
+
+  // stats range + summary cards (ruling ④ — range drives ONLY the cards)
+  const statsWrap = el('div', 'ud-stats');
+  const statsRow = el('div', 'ud-stats-row');
+  const statsLabel = el('span', 'ud-stats-label', t('usage.statsRangeLabel'));
+  const ranges = el('div', 'ud-sranges');
+  ranges.id = 'usage-stats-ranges';
   ranges.setAttribute('role', 'radiogroup');
-  ranges.setAttribute('aria-label', t('usage.range.30'));
-  for (const [days, key] of [[7, 'usage.range.7'], [30, 'usage.range.30'], [90, 'usage.range.90'], [0, 'usage.range.custom']]) {
-    const b = el('button', 'ud-range', t(key));
+  ranges.setAttribute('aria-label', t('usage.statsRangeLabel'));
+  for (const [val, key] of [['1d', 'usage.stats.1d'], ['1w', 'usage.stats.1w'], ['1m', 'usage.stats.1m'], ['3m', 'usage.stats.3m']]) {
+    const b = el('button', 'ud-srange', t(key));
     b.setAttribute('role', 'radio');
-    b.setAttribute('aria-checked', String(days === rangeDays));
-    b.dataset.days = String(days);
+    b.setAttribute('aria-checked', String(val === statRange));
+    b.dataset.range = val;
     b.addEventListener('click', () => {
-      for (const r of ranges.querySelectorAll('.ud-range')) r.setAttribute('aria-checked', 'false');
+      if (statRange === val) return;
+      statRange = val;
+      for (const r of ranges.querySelectorAll('.ud-srange')) r.setAttribute('aria-checked', 'false');
       b.setAttribute('aria-checked', 'true');
-      rangeDays = Number(days);
-      customWrap.hidden = Number(days) !== 0;
-      loadMain();
+      loadSummary(); // heatmap untouched (zero coupling, ruling ④)
     });
     ranges.appendChild(b);
   }
-  const customWrap = el('div', 'ud-custom-range');
-  customWrap.hidden = true;
-  const dFrom = document.createElement('input');
-  dFrom.type = 'date'; dFrom.className = 'ud-date glass-control'; dFrom.id = 'usage-from';
-  const dSep = el('span', 'ud-date-sep', '–');
-  const dTo = document.createElement('input');
-  dTo.type = 'date'; dTo.className = 'ud-date glass-control'; dTo.id = 'usage-to';
-  const applyCustom = () => {
-    customFrom = dFrom.value; customTo = dTo.value;
-    if (customFrom && customTo) {
-      const span = (keyToMs(customTo) - keyToMs(customFrom)) / MS_DAY;
-      if (span > 365) { window.__showToast?.(t('usage.range.tooLong'), 'error'); return; }
-      loadMain();
-    }
-  };
-  dFrom.addEventListener('change', applyCustom);
-  dTo.addEventListener('change', applyCustom);
-  customWrap.append(dFrom, dSep, dTo);
+  statsRow.append(statsLabel, ranges);
+  const summary = el('div', '');
+  summary.id = 'usage-summary';
+  summary.setAttribute('role', 'group');
+  statsWrap.append(statsRow, summary);
 
+  // heatmap controls (ruling ⑤ dimension + v1.1 color mode)
+  const heatControls = el('div', 'ud-heat-controls');
+  const dimSeg = el('div', 'ud-hdims');
+  dimSeg.id = 'usage-heat-dims';
+  dimSeg.setAttribute('role', 'radiogroup');
+  dimSeg.setAttribute('aria-label', t('usage.heatDim'));
+  for (const [dim, key] of [['total', 'usage.heatDim.total'], ['model', 'usage.heatDim.model'], ['agent', 'usage.heatDim.agent']]) {
+    const b = el('button', 'ud-hdim', t(key));
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(dim === heatDim));
+    b.dataset.dim = dim;
+    b.addEventListener('click', () => {
+      if (heatDim === dim) return;
+      heatDim = dim;
+      for (const r of dimSeg.querySelectorAll('.ud-hdim')) r.setAttribute('aria-checked', 'false');
+      b.setAttribute('aria-checked', 'true');
+      switchHeatDim();
+    });
+    dimSeg.appendChild(b);
+  }
   const colorModeWrap = el('div', 'ud-colormode');
   colorModeWrap.setAttribute('role', 'radiogroup');
   colorModeWrap.setAttribute('aria-label', t('usage.colorMode'));
@@ -216,11 +254,16 @@ function buildShell() {
     });
     colorModeWrap.appendChild(b);
   }
-  controls.append(filtersWrap, ranges, customWrap, colorModeWrap);
+  const dimLabel = el('span', 'ud-dimlabel');
+  dimLabel.id = 'usage-dimlabel';
+  dimLabel.hidden = true;
+  heatControls.append(dimSeg, dimLabel, colorModeWrap);
 
   // heatmap area
   const heatwrap = el('div', '');
   heatwrap.id = 'usage-heatwrap';
+  const heatscroll = el('div', '');
+  heatscroll.id = 'usage-heatscroll';
   const heatmain = el('div', '');
   heatmain.id = 'usage-heatmain';
   const months = el('div', '');
@@ -230,16 +273,22 @@ function buildShell() {
   grid.setAttribute('role', 'grid');
   grid.setAttribute('aria-label', t('usage.heatmapLabel'));
   heatmain.append(months, grid);
+  heatscroll.appendChild(heatmain);
   const legend = el('div', '');
   legend.id = 'usage-legend';
-  heatwrap.append(heatmain, legend);
+  heatwrap.append(heatscroll, legend);
 
   const empty = el('div', 'ud-empty');
   empty.id = 'usage-empty';
   empty.hidden = true;
   empty.append(el('div', 'ud-empty-title', t('usage.empty')), el('div', 'ud-empty-hint', t('usage.emptyHint')));
 
-  // drilldown drawer
+  // intraday curve section (ruling ③)
+  const curve = el('div', 'ud-curve');
+  curve.id = 'usage-curve';
+  curve.hidden = true;
+
+  // drilldown drawer (secondary panel, v1.3)
   const drill = el('div', 'ud-drill');
   drill.id = 'usage-drill';
   drill.hidden = true;
@@ -250,7 +299,7 @@ function buildShell() {
   tip.id = 'usage-tooltip';
   tip.hidden = true;
 
-  panel.append(header, summary, controls, heatwrap, empty, drill);
+  panel.append(header, filtersWrap, statsWrap, heatControls, heatwrap, empty, curve, drill);
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   overlay.appendChild(tip);
@@ -263,7 +312,7 @@ function buildShell() {
   grid.addEventListener('click', (e) => {
     const target = /** @type {HTMLElement} */ (e.target);
     const cell = /** @type {HTMLElement|null} */ (target.closest('.ud-cell[data-date]'));
-    if (cell) toggleDrill(cell.dataset.date || null, cell);
+    if (cell) toggleCurve(cell.dataset.date || null, cell);
   });
   grid.addEventListener('keydown', onGridKeydown);
   grid.addEventListener('mouseover', (e) => {
@@ -293,7 +342,7 @@ export function openUsageDashboard() {
   const btn = document.getElementById('usage-btn');
   btn?.classList.add('active');
   refreshLocale();
-  loadMain();
+  reloadAll();
   // focus first focusable
   setTimeout(() => { document.getElementById('usage-close')?.focus(); }, 30);
 }
@@ -316,7 +365,8 @@ function onDocKeydown(e) {
   if (!isOpen) return;
   if (e.key === 'Escape') {
     e.stopPropagation();
-    if (drillDate) closeDrill();
+    if (drillOpen) closeDrill();
+    else if (curveDate) closeCurve();
     else closeUsageDashboard();
     return;
   }
@@ -349,7 +399,7 @@ function onGridKeydown(e) {
   else if (e.key === 'ArrowLeft') next = idx - 7 >= 0 ? idx - 7 : idx;
   else if (e.key === 'ArrowDown') next = (idx % 7) + 1 < 7 ? idx + 1 : idx;
   else if (e.key === 'ArrowUp') next = (idx % 7) - 1 >= 0 ? idx - 1 : idx;
-  else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDrill(cell.dataset.date || null, cell); return; }
+  else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCurve(cell.dataset.date || null, cell); return; }
   else return;
   e.preventDefault();
   if (next >= 0 && next !== idx) {
@@ -361,17 +411,37 @@ function onGridKeydown(e) {
 }
 
 // ── data loading ────────────────────────────────────────────────────
-async function loadMain() {
+function clearCaches() {
+  mainDayAgg = null;
+  rankCache.clear();
+  dimDayCache.clear();
+}
+
+/** Full reload: open / filter change. Heatmap + summary cards (+ curve if open). */
+async function reloadAll() {
   if (!overlay) return;
+  clearCaches();
   const heatwrap = document.getElementById('usage-heatwrap');
   heatwrap?.classList.add('ud-reloading');
-  const { from, to } = windowRange();
+  try {
+    await Promise.all([loadSummary(), loadHeatmap()]);
+  } finally {
+    heatwrap?.classList.remove('ud-reloading');
+  }
+  if (curveDate) await loadCurve(curveDate);
+  if (drillOpen && curveDate) loadDrill(curveDate);
+}
+
+/** Summary cards only (ruling ④ — stats range switch lands here alone). */
+async function loadSummary() {
+  if (!overlay) return;
+  const { from, to } = statWindow();
   const fp = filterParams();
   const today = startOfToday();
-  const wkStart = today - 6 * MS_DAY; // rolling 7-day week incl. today
+  const wkStart = today - 6 * MS_DAY; // rolling 7-day week incl. today (absolute)
   try {
-    const [days, todayH, yestH, thisW, lastW, agents, models] = await Promise.all([
-      fetchAgg({ dim: 'day', from, to, ...fp }),
+    const [totals, todayH, yestH, thisW, lastW, agents, models] = await Promise.all([
+      fetchAgg({ from, to, ...fp }),
       fetchAgg({ dim: 'hour', from: today, to: today + MS_DAY, ...fp }),
       fetchAgg({ dim: 'hour', from: today - MS_DAY, to: today, ...fp }),
       fetchAgg({ from: wkStart, to: today + MS_DAY, ...fp }),
@@ -380,11 +450,7 @@ async function loadMain() {
       fetchAgg({ dim: 'model', from, to, ...fp }),
     ]);
     mainFailCount = 0;
-    lastTotals = days;
-    dayData = new Map();
-    for (const b of days.buckets || []) dayData.set(b.key, b);
-    windowKeys = [];
-    for (let ms = from; ms < to; ms += MS_DAY) windowKeys.push(dateKeyOf(ms));
+    lastTotals = totals;
 
     // today vs yesterday-same-time from hour buckets
     const nowHour = new Date().getHours();
@@ -419,13 +485,72 @@ async function loadMain() {
 
     populateFilterOptions(agents);
     renderSummary();
-    renderHeatmap();
     const emptyEl = document.getElementById('usage-empty');
-    if (emptyEl) emptyEl.hidden = (days.count || 0) > 0;
-    if (drillDate) loadDrill(drillDate);
+    if (emptyEl) emptyEl.hidden = (totals.count || 0) > 0 || activeDayData.size > 0;
   } catch (err) {
     mainFailCount++;
     renderSummaryError();
+  }
+}
+
+/** Heatmap data only (one-year window, ruling ①). */
+async function loadHeatmap() {
+  const { from, to } = yearWindow();
+  const fp = filterParams();
+  try {
+    if (heatDim === 'total') {
+      if (!mainDayAgg) mainDayAgg = await fetchAgg({ dim: 'day', from, to, ...fp });
+      activeDayData = bucketsToMap(mainDayAgg.buckets || []);
+      heatDimValue = '';
+    } else {
+      let target = filters[heatDim];
+      if (!target) {
+        if (!rankCache.has(heatDim)) {
+          rankCache.set(heatDim, await fetchAgg({ dim: heatDim, from, to, ...fp }));
+        }
+        const rk = /** @type {any} */ (rankCache.get(heatDim));
+        let best = null;
+        for (const b of rk.buckets || []) {
+          if (!best || (b.costEquivalent || 0) > (best.costEquivalent || 0)) best = b;
+        }
+        target = best ? best.key : '';
+      }
+      heatDimValue = target;
+      if (target) {
+        const cacheKey = heatDim + ':' + target;
+        if (!dimDayCache.has(cacheKey)) {
+          // NB: ...fp first — its empty-string values must not clobber the
+          // dimension filter (aggUrl drops '' params, but ordering matters
+          // for the computed key when both are set).
+          dimDayCache.set(cacheKey, await fetchAgg({ ...fp, dim: 'day', [heatDim]: target, from, to }));
+        }
+        activeDayData = bucketsToMap((/** @type {any} */ (dimDayCache.get(cacheKey))).buckets || []);
+      } else {
+        activeDayData = new Map();
+      }
+    }
+    windowKeys = [];
+    for (let ms = from; ms < to; ms += MS_DAY) windowKeys.push(dateKeyOf(ms));
+    renderHeatmap();
+  } catch (err) {
+    mainFailCount++;
+    renderSummaryError();
+  }
+}
+function bucketsToMap(buckets) {
+  const m = new Map();
+  for (const b of buckets) m.set(b.key, b);
+  return m;
+}
+
+/** Heatmap dimension switch (ruling ⑤): re-color the heatmap only. */
+async function switchHeatDim() {
+  const heatwrap = document.getElementById('usage-heatwrap');
+  heatwrap?.classList.add('ud-reloading');
+  try {
+    await loadHeatmap();
+    if (curveDate) await loadCurve(curveDate);
+    if (drillOpen && curveDate) loadDrill(curveDate);
   } finally {
     heatwrap?.classList.remove('ud-reloading');
   }
@@ -533,16 +658,17 @@ function renderSummaryError() {
   const c = el('div', 'ud-card');
   const l = el('div', 'ud-card-label', t('usage.loadError'));
   const retry = el('button', 'glass-control cfg-btn cfg-btn-sm ud-retry', t('usage.retry'));
-  retry.addEventListener('click', () => loadMain());
+  retry.addEventListener('click', () => reloadAll());
   c.append(l, retry);
   wrap.appendChild(c);
 }
 
 // ── heatmap ─────────────────────────────────────────────────────────
+/** v1.3 thresholds (ruling ②): orders of magnitude 0 / 1M / 10M / 100M. */
 function costLevel(v) {
   if (v <= 0) return 0;
-  if (v < 1e4) return 1;
-  if (v < 1e6) return 2;
+  if (v < 1e6) return 1;
+  if (v < 1e7) return 2;
   if (v < 1e8) return 3;
   return 4;
 }
@@ -567,7 +693,8 @@ function renderHeatmap() {
   if (windowKeys.length === 0) return;
   const fromMs = keyToMs(windowKeys[0]);
   const toMs = keyToMs(windowKeys[windowKeys.length - 1]);
-  // align to weeks: Sunday-first columns
+  // align to weeks: Sunday-first columns (window already Sunday-aligned, but
+  // keep the generic padding for safety)
   const first = new Date(fromMs);
   const leadPad = first.getDay(); // 0=Sun
   const last = new Date(toMs);
@@ -599,14 +726,14 @@ function renderHeatmap() {
         weekEl.appendChild(pad);
         return;
       }
-      const b = dayData.get(k);
+      const b = activeDayData.get(k);
       const cell = el('button', 'ud-cell');
       cell.dataset.date = k;
       cell.setAttribute('role', 'gridcell');
       const level = colorMode === 'cost' ? costLevel(b ? totalOf(b) : 0) : hitLevel(b || { inputTokens: 0, cacheReadTokens: 0 });
       cell.classList.add(colorMode === 'cost' ? 'level-' + level : 'hit-' + level);
       cell.setAttribute('tabindex', '-1');
-      if (k === drillDate) cell.classList.add('ud-active');
+      if (k === curveDate) cell.classList.add('ud-active');
       // aria-label = tooltip content (spec §7.2)
       cell.setAttribute('aria-label', cellAria(k, b));
       weekEl.appendChild(cell);
@@ -616,6 +743,13 @@ function renderHeatmap() {
   // roving tabindex: first cell focusable
   const firstCell = grid.querySelector('.ud-cell[data-date]');
   if (firstCell) firstCell.setAttribute('tabindex', '0');
+
+  // GitHub convention: initial view shows the most recent weeks — scroll the
+  // year strip to the right edge on every render (dimension switches too).
+  // Deferred to the next frame: scrollWidth is only accurate after layout
+  // settles (synchronous assignment raced the first layout pass).
+  const scroll = document.getElementById('usage-heatscroll');
+  if (scroll) requestAnimationFrame(() => { scroll.scrollLeft = scroll.scrollWidth; });
 
   // legend
   const labels = colorMode === 'cost' ? t('usage.legend.cost').split(' · ') : t('usage.legend.hitRate').split(' · ');
@@ -630,6 +764,18 @@ function renderHeatmap() {
     row.append(sw, lb);
     legend.appendChild(row);
   }
+
+  // dimension label (ruling ⑤): which dimension value colors the heatmap
+  const dimLabel = document.getElementById('usage-dimlabel');
+  if (dimLabel) {
+    if (heatDim !== 'total' && heatDimValue) {
+      dimLabel.hidden = false;
+      dimLabel.textContent = t('usage.heatDimLabel', { dim: t('usage.heatDim.' + heatDim), value: heatDimValue });
+    } else {
+      dimLabel.hidden = true;
+      dimLabel.textContent = '';
+    }
+  }
 }
 function legendColor(i) {
   const alphas = [0, 0.15, 0.32, 0.55, 0.85];
@@ -637,8 +783,7 @@ function legendColor(i) {
   return `rgba(91, 127, 191, ${alphas[i]})`;
 }
 function cellAria(k, b) {
-  const d = new Date(keyToMs(k));
-  const dateStr = new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'zh-CN', { month: 'long', day: 'numeric' }).format(d);
+  const dateStr = fmtDateLong(keyToMs(k));
   const tokens = fmtTokens(b ? totalOf(b) : 0);
   const calls = b ? (b.count || 0) : 0;
   if (b && hasCacheData(b)) {
@@ -653,7 +798,7 @@ function showTip(cell, e) {
   const tip = document.getElementById('usage-tooltip');
   if (!tip) return;
   const k = cell.dataset.date || '';
-  const b = dayData.get(k);
+  const b = activeDayData.get(k);
   tip.innerHTML = '';
   const d = new Date(keyToMs(k));
   const dateStr = new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'zh-CN', { month: 'short', day: 'numeric' }).format(d);
@@ -685,22 +830,159 @@ function hideTip() {
   if (tip) tip.hidden = true;
 }
 
-// ── drilldown ───────────────────────────────────────────────────────
-function toggleDrill(dateKey, cell) {
+// ── intraday curve (ruling ③) ───────────────────────────────────────
+function toggleCurve(dateKey, cell) {
   if (!dateKey) return;
-  if (drillDate === dateKey) { closeDrill(); return; }
-  drillDate = dateKey;
+  if (curveDate === dateKey) { closeCurve(); return; }
+  curveDate = dateKey;
   document.querySelectorAll('#usage-grid .ud-cell.ud-active').forEach((c) => c.classList.remove('ud-active'));
   cell?.classList.add('ud-active');
+  const curve = document.getElementById('usage-curve');
+  if (curve) curve.hidden = false;
+  loadCurve(dateKey);
+}
+function closeCurve() {
+  curveDate = null;
+  closeDrill();
+  const curve = document.getElementById('usage-curve');
+  if (curve) curve.hidden = true;
+  document.querySelectorAll('#usage-grid .ud-cell.ud-active').forEach((c) => c.classList.remove('ud-active'));
+}
+
+/** Intraday 24h bar chart (lightweight SVG, spec §2.5.1). */
+async function loadCurve(dateKey) {
+  const curve = document.getElementById('usage-curve');
+  if (!curve) return;
+  const from = keyToMs(dateKey);
+  const to = from + MS_DAY;
+  const fp = filterParams();
+  const dimFp = heatDim !== 'total' && heatDimValue ? { [heatDim]: heatDimValue } : {};
+  curve.innerHTML = '';
+
+  const header = el('div', 'ud-curve-header');
+  const cTitle = el('span', 'ud-curve-title', t('usage.curveTitle', { date: fmtDateLong(from) }));
+  cTitle.id = 'usage-curve-title';
+  header.appendChild(cTitle);
+  const drillBtn = el('button', 'glass-control cfg-btn cfg-btn-sm ud-drill-open', t('usage.drillOpen'));
+  drillBtn.addEventListener('click', () => {
+    if (drillOpen) closeDrill();
+    else openDrill(dateKey);
+  });
+  header.appendChild(drillBtn);
+  curve.appendChild(header);
+
+  const body = el('div', 'ud-curve-body');
+  body.id = 'usage-curve-body';
+  curve.appendChild(body);
+
+  try {
+    const agg = await fetchAgg({ dim: 'hour', from, to, ...fp, ...dimFp });
+    renderCurveBars(body, agg, dateKey);
+  } catch (err) {
+    body.appendChild(el('div', 'ud-curve-empty', t('usage.loadError')));
+  }
+}
+
+function renderCurveBars(body, agg, dateKey) {
+  const buckets = agg.buckets || [];
+  if (buckets.length === 0) {
+    body.appendChild(el('div', 'ud-curve-empty', t('usage.curveEmpty')));
+    return;
+  }
+  /** @type {Map<number, any>} */
+  const byHour = new Map();
+  for (const b of buckets) {
+    const h = parseInt(String(b.key).slice(11, 13) || '0', 10);
+    byHour.set(h, b);
+  }
+  let max = 0;
+  let peakHour = 0;
+  for (const [h, b] of byHour) {
+    const v = totalOf(b);
+    if (v > max) { max = v; peakHour = h; }
+  }
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const W = 504, H = 132, BASE = 104, HEAD = 16; // 24 slots × 21px; HEAD = room for peak label
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', t('usage.curveTitle', { date: fmtDateLong(keyToMs(dateKey)) }));
+  svg.classList.add('ud-curve-svg');
+
+  const barW = 15, slot = 21;
+  for (let h = 0; h < 24; h++) {
+    const b = byHour.get(h);
+    const v = b ? totalOf(b) : 0;
+    const x = h * slot + 3;
+    const rect = document.createElementNS(NS, 'rect');
+    const bh = max > 0 ? Math.max(v > 0 ? 2 : 0, Math.round((v / max) * (BASE - HEAD))) : 0;
+    rect.setAttribute('x', String(x));
+    rect.setAttribute('y', String(BASE - bh));
+    rect.setAttribute('width', String(barW));
+    rect.setAttribute('height', String(bh));
+    rect.setAttribute('rx', '2');
+    rect.classList.add('ud-curve-bar');
+    if (h === peakHour && max > 0) rect.classList.add('ud-curve-peak');
+    rect.setAttribute('aria-label', t('usage.curveBar', {
+      hour: String(h).padStart(2, '0'),
+      tokens: fmtTokens(v),
+      calls: String(b ? b.count || 0 : 0),
+    }));
+    svg.appendChild(rect);
+  }
+
+  // axis labels: 0/6/12/18/23
+  for (const h of [0, 6, 12, 18, 23]) {
+    const txt = document.createElementNS(NS, 'text');
+    txt.setAttribute('x', String(h * slot + 3 + barW / 2));
+    txt.setAttribute('y', String(BASE + 16));
+    txt.setAttribute('text-anchor', 'middle');
+    txt.classList.add('ud-curve-axis');
+    txt.textContent = String(h).padStart(2, '0');
+    svg.appendChild(txt);
+  }
+
+  // peak annotation above the tallest bar (HEAD room keeps it inside viewBox)
+  if (max > 0) {
+    const ptxt = document.createElementNS(NS, 'text');
+    ptxt.setAttribute('x', String(Math.min(Math.max(peakHour * slot + 3 + barW / 2, 40), W - 40)));
+    ptxt.setAttribute('y', String(BASE - (BASE - HEAD) - 6));
+    ptxt.setAttribute('text-anchor', 'middle');
+    ptxt.classList.add('ud-curve-peak-label');
+    ptxt.textContent = fmtTokens(max);
+    ptxt.setAttribute('aria-label', t('usage.curvePeak', { tokens: fmtTokens(max), hour: String(peakHour).padStart(2, '0') }));
+    svg.appendChild(ptxt);
+  }
+
+  body.appendChild(svg);
+
+  // hover tooltip on bars (delegate)
+  svg.addEventListener('mousemove', (e) => {
+    const target = /** @type {Element} */ (e.target);
+    if (!target.classList?.contains('ud-curve-bar')) { hideTip(); return; }
+    const tip = document.getElementById('usage-tooltip');
+    if (!tip) return;
+    const label = target.getAttribute('aria-label') || '';
+    tip.innerHTML = '';
+    tip.appendChild(el('div', 'tt-line', label));
+    tip.hidden = false;
+    moveTip(e);
+  });
+  svg.addEventListener('mouseleave', hideTip);
+}
+
+// ── drilldown (secondary panel, v1.3) ───────────────────────────────
+function openDrill(dateKey) {
+  drillOpen = true;
   const drill = document.getElementById('usage-drill');
   if (drill) drill.hidden = false;
   loadDrill(dateKey);
 }
 function closeDrill() {
-  drillDate = null;
+  drillOpen = false;
   const drill = document.getElementById('usage-drill');
   if (drill) drill.hidden = true;
-  document.querySelectorAll('#usage-grid .ud-cell.ud-active').forEach((c) => c.classList.remove('ud-active'));
 }
 
 async function loadDrill(dateKey) {
@@ -709,11 +991,10 @@ async function loadDrill(dateKey) {
   const from = keyToMs(dateKey);
   const to = from + MS_DAY;
   const fp = filterParams();
+  const dimFp = heatDim !== 'total' && heatDimValue ? { [heatDim]: heatDimValue } : {};
   drill.innerHTML = '';
   const header = el('div', 'ud-drill-header');
-  const d = new Date(from);
-  const dateStr = new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'zh-CN', { month: 'long', day: 'numeric' }).format(d);
-  const dTitle = el('span', '', t('usage.drilldownTitle', { date: dateStr }));
+  const dTitle = el('span', '', t('usage.drilldownTitle', { date: fmtDateLong(from) }));
   dTitle.id = 'usage-drill-title';
   header.appendChild(dTitle);
   const dims = el('div', 'ud-drill-dims');
@@ -744,7 +1025,7 @@ async function loadDrill(dateKey) {
   drill.appendChild(rankWrap);
 
   try {
-    const agg = await fetchAgg({ dim: drillDim, from, to, ...fp });
+    const agg = await fetchAgg({ dim: drillDim, from, to, ...fp, ...dimFp });
     const buckets = agg.buckets || [];
     if (buckets.length === 0) {
       drill.appendChild(el('div', 'ud-drill-empty', t('usage.drillEmpty')));
@@ -848,11 +1129,16 @@ function refreshLocale() {
   if (closeBtn) { closeBtn.title = t('usage.close'); closeBtn.setAttribute('aria-label', t('usage.close')); }
   const btn = document.getElementById('usage-btn');
   if (btn) { btn.title = t('usage.activityEntryHint'); btn.setAttribute('aria-label', t('usage.activityEntry')); }
-  // range + colormode + dim labels
-  overlay.querySelectorAll('.ud-range').forEach((b) => {
-    const days = Number(/** @type {HTMLElement} */ (b).dataset.days);
-    const key = days === 0 ? 'usage.range.custom' : 'usage.range.' + days;
-    /** @type {HTMLElement} */ (b).textContent = t(key);
+  // stats range + heat dims + colormode labels
+  overlay.querySelectorAll('.ud-srange').forEach((b) => {
+    const r = /** @type {HTMLElement} */ (b).dataset.range || '1w';
+    /** @type {HTMLElement} */ (b).textContent = t('usage.stats.' + r);
+  });
+  const statsLabels = overlay.querySelectorAll('.ud-stats-label');
+  statsLabels.forEach((n) => { /** @type {HTMLElement} */ (n).textContent = t('usage.statsRangeLabel'); });
+  overlay.querySelectorAll('.ud-hdim').forEach((b) => {
+    const d = /** @type {HTMLElement} */ (b).dataset.dim || 'total';
+    /** @type {HTMLElement} */ (b).textContent = t('usage.heatDim.' + d);
   });
   overlay.querySelectorAll('.ud-cm').forEach((b) => {
     const m = /** @type {HTMLElement} */ (b).dataset.mode;
@@ -865,6 +1151,7 @@ function refreshLocale() {
   }
   renderSummary();
   renderHeatmap();
+  if (curveDate) loadCurve(curveDate);
 }
 
 // ── init ────────────────────────────────────────────────────────────
