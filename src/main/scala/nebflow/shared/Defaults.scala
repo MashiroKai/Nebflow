@@ -135,6 +135,18 @@ object Defaults:
   /** Persist queued LLM requests to disk so they survive a restart. */
   val LlmQueuePersistDefault: Boolean = true
 
+  // ---- Mail queue delivery dedup (P0 投递层指纹去重) ----
+
+  /**
+   * Fingerprint dedup window for queue-delivery: the same sender + recipient
+   * + content hash delivers at most once per window. Covers the restart-replay
+   * root cause (MailTool restart recovery re-fires MailQueued for the disk
+   * head). Content-identical mails outside the window deliver normally —
+   * legitimate re-sends are never eaten. Window long enough to span a restart
+   * cycle, short enough to never eat a deliberate re-send minutes later.
+   */
+  val MailDedupWindowMs: Long = 30 * 60 * 1000L
+
   // ---- Task stuck detection (P0 阶段 3) ----
 
   /**
