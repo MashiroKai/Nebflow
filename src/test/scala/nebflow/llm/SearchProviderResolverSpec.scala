@@ -48,6 +48,23 @@ class SearchProviderResolverSpec extends CatsEffectSuite:
     assertEquals(SearchProviderResolver.capabilityFor("ustc-gw", "https://api.llm.ustc.edu.cn/v1"), None)
   }
 
+  test("capabilityFor: id family tokens (interception path has no baseUrl)") {
+    // OpenAI-compatible companion ids users build next to an anthropic-
+    // protocol config — resolved from the model chain head WITHOUT baseUrl.
+    assertEquals(
+      SearchProviderResolver.capabilityFor("qwen-openai", ""),
+      Some(ProviderSearchKind.QwenEnableSearch)
+    )
+    assertEquals(
+      SearchProviderResolver.capabilityFor("zhipu-openai", ""),
+      Some(ProviderSearchKind.ZhipuWebSearchTool)
+    )
+    assertEquals(SearchProviderResolver.capabilityFor("my-kimi-proxy", ""), Some(ProviderSearchKind.KimiBuiltinWebSearch))
+    // Token equality, not substring: no false positives.
+    assertEquals(SearchProviderResolver.capabilityFor("qwenty", ""), None)
+    assertEquals(SearchProviderResolver.capabilityFor("107", ""), None)
+  }
+
   test("chainHeadProviderId: preferred, else first fallback") {
     assertEquals(
       SearchProviderResolver.chainHeadProviderId(Some(AgentModelConfig(Some("zhipu/glm-5.3"), List("kimi/k3")))),
@@ -192,6 +209,25 @@ class SearchProviderResolverSpec extends CatsEffectSuite:
         assert(result.get.contains("https://example.com/1"))
         assert(result.get.contains("s1"))
       }
+  }
+
+  test("searchEntries: zhipu real-entry shape (link field, not url)") {
+    // Verified against the live zhipu endpoint 2026-08-23: web_search entries
+    // carry `link` (URL) + `content` (snippet), NOT `url`.
+    val zhipuReal = Json.arr(
+      Json.obj(
+        "title" -> "36小时天气预报".asJson,
+        "link" -> "https://www.bj.cma.cn/example".asJson,
+        "content" -> "多云 西南风3级 最高气温32℃".asJson,
+        "media" -> "北京市气象局".asJson,
+        "publish_date" -> "2026-08-22".asJson
+      )
+    )
+    val entries = SearchProviderResolver.searchEntries(zhipuReal)
+    assert(entries.isDefined, "link-field entries must normalize")
+    assertEquals(entries.get.size, 1)
+    assertEquals(entries.get.head._2, "https://www.bj.cma.cn/example")
+    assert(entries.get.head._3.contains("西南风"))
   }
 
   test("executor: NO evidence (no searchInfo, no kimi round-trip) → None (anti-hallucination)") {
