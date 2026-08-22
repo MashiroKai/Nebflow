@@ -8,7 +8,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.NebflowLogger
-import nebflow.llm.{AdapterResponse, ProviderAdapter, SendMessageParams}
+import nebflow.llm.{AdapterResponse, ProviderAdapter, ProviderSearchKind, SendMessageParams}
 import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
@@ -151,17 +151,93 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       end match
     }
 
-  private def toOpenAiTools(tools: List[ToolDefinition]): Json =
-    Json.fromValues(tools.map { t =>
-      Json.obj(
-        "type" -> "function".asJson,
-        "function" -> Json.obj(
-          "name" -> t.name.asJson,
-          "description" -> t.description.asJson,
-          "parameters" -> Json.fromJsonObject(t.inputSchema)
-        )
+  private def toolDefJson(t: ToolDefinition): Json =
+    Json.obj(
+      "type" -> "function".asJson,
+      "function" -> Json.obj(
+        "name" -> t.name.asJson,
+        "description" -> t.description.asJson,
+        "parameters" -> Json.fromJsonObject(t.inputSchema)
       )
-    })
+    )
+
+  private def toOpenAiTools(tools: List[ToolDefinition]): Json =
+    Json.fromValues(tools.map(toolDefJson))
+
+  // ── WebSearch P0: provider-native search injection ─────────────────
+  // Injection shapes per provider (SearchProviderResolver.capabilityFor):
+  //   zhipu  → {"type":"web_search","web_search":{"search_result":true}}
+  //            (search_result:true makes the response carry the structured
+  //            `web_search` field — the evidence for the Tier 2 executor)
+  //   kimi   → {"type":"builtin_function","function":{"name":"$web_search"}}
+  //            (round-trip tool: the model emits $web_search, AgentCore
+  //            echoes the arguments back verbatim; thinking must be off)
+  //   qwen   → request-level enable_search:true (no tools entry)
+
+  private[providers] def searchToolEntries(kind: ProviderSearchKind): List[Json] =
+    kind match
+      case ProviderSearchKind.ZhipuWebSearchTool =>
+        List(
+          Json.obj(
+            "type" -> "web_search".asJson,
+            "web_search" -> Json.obj("search_result" -> true.asJson)
+          )
+        )
+      case ProviderSearchKind.KimiBuiltinWebSearch =>
+        List(
+          Json.obj(
+            "type" -> "builtin_function".asJson,
+            "function" -> Json.obj("name" -> nebflow.llm.SearchProviderResolver.KimiWebSearchToolName.asJson)
+          )
+        )
+      case ProviderSearchKind.QwenEnableSearch => Nil
+
+  /** Merge tools: agent function tools first, provider search tool APPENDED —
+    * deepMerge would REPLACE the array, clobbering the agent's tool
+    * definitions (the P0 spec's explicit deepMerge-order regression point). */
+  private[providers] def bodyWithSearchTools(
+      body: Json,
+      tools: Option[List[ToolDefinition]],
+      search: Option[ProviderSearchKind]
+  ): Json =
+    val agentTools = tools.getOrElse(Nil)
+    val extra = search.toList.flatMap(searchToolEntries)
+    if agentTools.isEmpty && extra.isEmpty then body
+    else body.deepMerge(Json.obj("tools" -> Json.fromValues(agentTools.map(toolDefJson) ++ extra)))
+
+  /** Thinking with kimi-search interplay: $web_search is mutually exclusive
+    * with thinking — when kimi search is armed, skip the model's thinking
+    * body entirely (incl. reasoning_effort) and force thinking disabled. */
+  private[providers] def bodyWithSearchThinking(
+      body: Json,
+      model: String,
+      thinking: Option[io.circe.Json],
+      search: Option[ProviderSearchKind]
+  ): Json =
+    if search.contains(ProviderSearchKind.KimiBuiltinWebSearch) then
+      body.deepMerge(Json.obj("thinking" -> Json.obj("type" -> "disabled".asJson)))
+    else body.deepMerge(thinkingBody(model, thinking))
+
+  /** Non-tools request-level extras (qwen enable_search). */
+  private[providers] def searchRequestExtras(
+      search: Option[ProviderSearchKind]
+  ): Json =
+    search match
+      case Some(ProviderSearchKind.QwenEnableSearch) =>
+        Json.obj("enable_search" -> true.asJson)
+      case _ => Json.obj()
+
+  /** Structured search results from the response (zhipu `web_search` array /
+    * qwen `search_info` object) — the Tier 2 evidence source. Streaming
+    * responses don't capture this in P0 (only the non-streaming executor
+    * path consumes it). */
+  private[providers] def extractSearchInfo(response: Json): Option[Json] =
+    response.hcursor
+      .downField("web_search")
+      .as[Json]
+      .toOption
+      .orElse(response.hcursor.downField("search_info").as[Json].toOption)
+      .filter(j => j.isArray || j.isObject)
 
   private[providers] def extractToolCalls(response: Json): List[ToolCall] =
     response.hcursor
@@ -187,7 +263,9 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           None
         else
           val input = ToolInputJson.parseToolInput(name, args)
-          Some(ToolCall(id, name, input))
+          // rawArguments kept byte-faithful for provider round-trip semantics
+          // (kimi $web_search echo — see SearchProviderResolver.kimiEchoContent).
+          Some(ToolCall(id, name, input, Some(args)))
       }
 
   /**
@@ -213,14 +291,15 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       "messages" -> Json.fromValues(allMessages),
       "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokensCompact)).asJson
     )
-    val bodyWithTools = params.tools.filter(_.nonEmpty) match
-      case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
-      case None => body
+    // WebSearch P0: search tool appended AFTER agent tools (never replaces);
+    // kimi search forces thinking disabled; qwen gets enable_search.
+    val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)
     // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
-    val bodyWithThinking = bodyWithTools.deepMerge(thinkingBody(params.model, params.thinking))
+    val bodyWithThinking = bodyWithSearchThinking(bodyWithTools, params.model, params.thinking, params.providerSearch)
+    val bodyWithSearchExtras = bodyWithThinking.deepMerge(searchRequestExtras(params.providerSearch))
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
-        bodyWithThinking.deepMerge(
+        bodyWithSearchExtras.deepMerge(
           Json.obj(
             "metadata" -> Json.obj(
               "session_id" -> sid.asJson,
@@ -229,10 +308,10 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           )
         )
       case (Some(sid), _) =>
-        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
+        bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
       case (_, Some(aid)) =>
-        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
-      case _ => bodyWithThinking
+        bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
+      case _ => bodyWithSearchExtras
 
     val request = basicRequest
       .post(uri"$endpoint")
@@ -286,7 +365,9 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                         s"LLM returned empty response$detail"
                       )
                     )
-                  else IO.pure(AdapterResponse(reply, toolCalls, usage))
+                  else
+                    val searchInfo = extractSearchInfo(json)
+                    IO.pure(AdapterResponse(reply, toolCalls, usage, searchInfo))
                   end if
                 }
           }
@@ -305,14 +386,16 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       "stream" -> true.asJson,
       "stream_options" -> Json.obj("include_usage" -> true.asJson)
     )
-    val bodyWithTools = params.tools.filter(_.nonEmpty) match
-      case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
-      case None => body
+    // WebSearch P0: same injection chain as the non-streaming path (see
+    // sendMessage) — the main conversation is streaming, so provider-native
+    // search must be armed here too.
+    val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)
     // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
-    val bodyWithThinking = bodyWithTools.deepMerge(thinkingBody(params.model, params.thinking))
+    val bodyWithThinking = bodyWithSearchThinking(bodyWithTools, params.model, params.thinking, params.providerSearch)
+    val bodyWithSearchExtras = bodyWithThinking.deepMerge(searchRequestExtras(params.providerSearch))
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
-        bodyWithThinking.deepMerge(
+        bodyWithSearchExtras.deepMerge(
           Json.obj(
             "metadata" -> Json.obj(
               "session_id" -> sid.asJson,
@@ -321,10 +404,10 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           )
         )
       case (Some(sid), _) =>
-        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
+        bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
       case (_, Some(aid)) =>
-        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
-      case _ => bodyWithThinking
+        bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
+      case _ => bodyWithSearchExtras
 
     Stream.eval(IO.ref(Map.empty[Int, ToolCallEntry])).flatMap { toolCallState =>
       val request = basicRequest
@@ -533,7 +616,9 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                           logEmptyIdNameSummaries(m, params).as {
                             val toolChunks = m.values.toList.map { entry =>
                               val input = ToolInputJson.parseToolInput(entry.name, entry.sb.toString)
-                              StreamChunk.ToolCallChunk(ToolCall(entry.id, entry.name, input))
+                              StreamChunk.ToolCallChunk(
+                                ToolCall(entry.id, entry.name, input, Some(entry.sb.toString))
+                              )
                             }
                             // Include any text/thinking deltas from this chunk AND a Done chunk,
                             // consistent with the case None branch below.
@@ -557,7 +642,9 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                       logEmptyIdNameSummaries(m, params).as {
                         val toolChunks = m.values.toList.map { entry =>
                           val input = ToolInputJson.parseToolInput(entry.name, entry.sb.toString)
-                          StreamChunk.ToolCallChunk(ToolCall(entry.id, entry.name, input))
+                          StreamChunk.ToolCallChunk(
+                            ToolCall(entry.id, entry.name, input, Some(entry.sb.toString))
+                          )
                         }
                         allTextDeltas ++ toolChunks :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None)
                       }

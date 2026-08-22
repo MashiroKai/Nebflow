@@ -15,6 +15,52 @@ object WebSearchTool extends Tool:
   val DEFAULT_MAX_CHARS = 15_000
   val BATCH_SIZE = 3 // race this many engines at a time
 
+  private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.websearch")
+
+  /** Anti-scraping garbage fingerprints (WebSearch P0, C4). A result entry
+    * whose text hits one of these is an anti-bot interstitial (JS
+    * cookie/captcha machinery), not a search result — dropping the entry
+    * beats shipping it to the agent as a "successful" result (2026-08-22
+    * Sogou incident: a checkSNUID cookie script was extracted and passed
+    * through as the Sogou "results" with zero user-visible anomaly).
+    * Lowercase contains-match; entries are dropped individually so a single
+    * false positive (e.g. a JS tutorial snippet) cannot kill a whole batch. */
+  private val GarbageFingerprints: List[String] = List(
+    "checksnuid",
+    "document.cookie",
+    "window.location",
+    "location.href",
+    "antispider"
+  )
+
+  /** Drop garbage entries from an extraction. Returns the cleaned text —
+    * empty when EVERYTHING was garbage, which makes searchOne treat the
+    * engine as failed (batch-level degradation per C4: "parsed something
+    * trustworthy" is the bar, not "parsed something"). */
+  private[tools] def stripGarbageResults(text: String, engine: String): String =
+    val entries = text.split("\n\n")
+    val kept = entries.filter { entry =>
+      val lower = entry.toLowerCase
+      val garbage = GarbageFingerprints.exists(lower.contains)
+      if garbage then
+        // Synchronous context (searchOne runs inside IO.blocking) — the
+        // IO-returning warn would be built-then-discarded (dead-logging trap).
+        logger.warnSync(
+          s"dropped anti-scraping garbage result from $engine " +
+            s"(fingerprint hit): ${entry.replaceAll("\\s+", " ").take(120)}"
+        )
+      !garbage
+    }
+    kept.mkString("\n\n")
+
+  /** Tier 3 provenance annotation — the builtin aggregation is a zero-config
+    * fallback, not a product-grade search (keyless HTML scraping, no SLA).
+    * Every Tier 3 result says so; provider-routed results carry their own
+    * "Search source: provider:<id>" header instead. */
+  private[tools] def tier3Annotation(academic: Boolean): String =
+    if academic then "Source: builtin academic API (non-guaranteed fallback tier)"
+    else "Source: builtin aggregation (non-guaranteed — keyless HTML scraping, no SLA; verify before relying on results)"
+
   case class SearchEngine(name: String, url: String, region: String)
 
   // Ordered by reliability (determined via empirical testing):
@@ -208,7 +254,7 @@ Usage:
       if !response.code.isSuccess then Left(s"${engine.name}: HTTP ${response.code}")
       else
         val html = response.body
-        val text = extractSearchResults(html, engine.name)
+        val text = stripGarbageResults(extractSearchResults(html, engine.name), engine.name)
         if text.trim.isEmpty || text.trim.length < 50 then Left(s"${engine.name}: No meaningful results")
         else Right((engine, text))
     catch case e: Exception => Left(s"${engine.name}: ${e.getMessage.take(120)}")
@@ -391,7 +437,7 @@ Usage:
       val engine = engineMap(engineName.get)
       IO.blocking(searchAcademic(query, engine)).map {
         case Right((e, text)) =>
-          Right(s"Search engine: ${e.name}\n\n${truncate(text, maxChars)}")
+          Right(s"Search engine: ${e.name}\n${tier3Annotation(academic = true)}\n\n${truncate(text, maxChars)}")
         case Left(err) =>
           Left(ToolError(err))
       }
@@ -435,7 +481,9 @@ Usage:
               case Right((engine, text)) =>
                 var result = truncate(text, maxChars)
                 result = filterDomains(result, allowed, blocked)
-                IO.pure(Right(s"Search engine: ${engine.name}\n\n$result"))
+                IO.pure(
+                  Right(s"Search engine: ${engine.name}\n${tier3Annotation(academic = false)}\n\n$result")
+                )
               case Left(err) =>
                 tryBatches(rest, accErrors :+ err)
             }
