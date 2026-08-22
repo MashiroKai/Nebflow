@@ -278,6 +278,23 @@ object LlmInterface:
         val emptyTracker = EmptyCompletionTracker.shared
         val result =
 
+          /** WebSearch P0: provider-native search injection for one candidate
+            * — resolved per-candidate so a fallback switch drops the previous
+            * provider's injection. The gate semantics (searchAllowed /
+            * tools.isDefined / OpenAI-only) live in the pure resolver and
+            * are unit-tested there (SearchProviderResolver.searchInjectionFor). */
+          def searchInjectionFor(
+              req: LlmRequest,
+              candidate: ModelCandidate
+          ): Option[ProviderSearchKind] =
+            SearchProviderResolver.searchInjectionFor(
+              req.searchAllowed,
+              req.tools,
+              candidate.provider.protocol,
+              candidate.providerId,
+              candidate.provider.baseUrl
+            )
+
           val handle = new LlmHandle[IO]:
             def send(req: LlmRequest): IO[LlmResponse] =
               val start = System.currentTimeMillis()
@@ -335,7 +352,8 @@ object LlmInterface:
                           req.systemStable,
                           req.systemDynamic,
                           Some(req.sessionId),
-                          Some(req.agentId)
+                          Some(req.agentId),
+                          searchInjectionFor(req, candidate)
                         )
                       ).guarantee(permit.release)
                       // On success, clear the empty-completion counter.
@@ -377,7 +395,8 @@ object LlmInterface:
                       durationMs = durationMs,
                       fallbackChain = fallbackChain,
                       contextWindow = Some(result.usedCandidate.contextWindow)
-                    )
+                    ),
+                    searchInfo = result.data.searchInfo
                   )
                 )
               }
@@ -536,7 +555,8 @@ object LlmInterface:
                                         req.systemStable,
                                         req.systemDynamic,
                                         Some(req.sessionId),
-                                        Some(req.agentId)
+                                        Some(req.agentId),
+                                        searchInjectionFor(req, candidate)
                                       )
                                     ).onFinalize(permit.release)
                                     )
