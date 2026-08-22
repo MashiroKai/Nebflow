@@ -824,26 +824,41 @@ object AgentActor extends AgentCore with AgentSession:
           items <- nebflow.core.flow.MailQueueStore.load(sid)
           _ <- items.headOption match
             case Some(head) if head.id == item.id =>
-              for
-                _ <- nebflow.core.flow.MailQueueStore.removeHead(sid).void
-                // G3: re-read attachment paths at drain time (D6 — queue
-                // persists paths, not base64). Lost files degrade to
-                // placeholder text.
-                attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
-                blocks = nebflow.core.tools.ImageInject.messageBlocks(item.message, attBlocks)
-                _ <- ctx.self ! AgentCommand.UserInput(
-                  item.message,
-                  None,
-                  None,
-                  blocks,
-                  0,
-                  source = Some("mail-queue"),
-                  sender = Some(item.from),
-                  delivery = Some("queue")
-                )
-                // Emit WS so frontend removes the pending item
-                _ <- emitDequeuedWs(state.wsSend, sid, item.id)
-              yield ()
+              // Delivery-layer fingerprint dedup (P0): suppresses the same
+              // sender+recipient+content within the 30min window — covers the
+              // restart-replay root cause (MailTool restart recovery re-fires
+              // MailQueued for the disk head). The persisted fingerprint file
+              // survives the restart boundary.
+              nebflow.core.flow.MailDeliveryDedup
+                .tryDeliver(sid, nebflow.core.flow.MailDeliveryDedup.fingerprint(item.from, sid, item.message))
+                .flatMap {
+                  case false =>
+                    // Duplicate within window: consume the item (queue + WS)
+                    // but inject nothing — sender semantics untouched.
+                    nebflow.core.flow.MailQueueStore.removeHead(sid).void *>
+                      emitDequeuedWs(state.wsSend, sid, item.id)
+                  case true =>
+                    for
+                      _ <- nebflow.core.flow.MailQueueStore.removeHead(sid).void
+                      // G3: re-read attachment paths at drain time (D6 — queue
+                      // persists paths, not base64). Lost files degrade to
+                      // placeholder text.
+                      attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
+                      blocks = nebflow.core.tools.ImageInject.messageBlocks(item.message, attBlocks)
+                      _ <- ctx.self ! AgentCommand.UserInput(
+                        item.message,
+                        None,
+                        None,
+                        blocks,
+                        0,
+                        source = Some("mail-queue"),
+                        sender = Some(item.from),
+                        delivery = Some("queue")
+                      )
+                      // Emit WS so frontend removes the pending item
+                      _ <- emitDequeuedWs(state.wsSend, sid, item.id)
+                    yield ()
+                }
             case _ => IO.unit
         yield idle(agentDef, resources, depth, parentRef, state)
 
@@ -2505,50 +2520,70 @@ object AgentActor extends AgentCore with AgentSession:
         headOpt = items.headOption
         result <- headOpt match
           case Some(item) =>
-            for
-              // G3: re-read attachment paths at drain time (D6). Lost files
-              // degrade to placeholder text instead of failing the turn.
-              attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
-              queueMessage = (attBlocks match
-                case Nil => Message(MessageRole.User, Left(item.message))
-                case blocks =>
-                  // Message text MUST be the first Text block — blocks replace
-                  // the string content entirely.
-                  Message(MessageRole.User, Right(ContentBlock.Text(item.message) :: blocks))
-              ).copy(source = Some("mail-queue"))
-              messagesWithQueue = newMessages ++ List(queueMessage)
-              updatedState = state.copy(execution =
-                ExecutionContext
-                  .idle(messagesWithQueue, state.execution.turnIdx)
-                  .copy(pendingMailQueueCount = state.execution.pendingMailQueueCount - 1,
-                        pendingUserInputs = state.execution.pendingUserInputs,
-                        // Sub-agent barrier: held results survive the turn boundary.
-                        pendingEvents = state.execution.pendingEvents,
-                        outstandingSubagentResults = state.execution.outstandingSubagentResults,
-                        // #25: hold/replay the completion debt across this injection.
-                        owedCompletion = owedAfter)
-              )
-              _ <- nebflow.core.flow.MailQueueStore.removeHead(sid)
-              _ <-
-                if !isSubagent then emitSessionBusy(state.wsSend, sid, busy = true)
-                else IO.unit
-              _ <- emitInjectedUserEvent(
-                state.wsSend, state.sessionId, item.message,
-                "mail-queue", Some("queue"), Some(item.from), None, Some("queue")
-              )
-              _ <- ctx.forkTurn(
-                (resources.sessionStore.saveMessagesForSession(sid, messagesWithQueue) *>
-                  resources.sessionStore.flushIndex)
-                  .handleErrorWith(e =>
-                    NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
-                  )
-              )
-              _ <-
-                // #25: park the completion debt while sub-agents are in flight.
-                if subagentsInFlight then IO.unit
-                else completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithQueue))
-              r <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
-            yield r
+            val deliver =
+              for
+                // G3: re-read attachment paths at drain time (D6). Lost files
+                // degrade to placeholder text instead of failing the turn.
+                attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
+                queueMessage = (attBlocks match
+                  case Nil => Message(MessageRole.User, Left(item.message))
+                  case blocks =>
+                    // Message text MUST be the first Text block — blocks replace
+                    // the string content entirely.
+                    Message(MessageRole.User, Right(ContentBlock.Text(item.message) :: blocks))
+                ).copy(source = Some("mail-queue"))
+                messagesWithQueue = newMessages ++ List(queueMessage)
+                updatedState = state.copy(execution =
+                  ExecutionContext
+                    .idle(messagesWithQueue, state.execution.turnIdx)
+                    .copy(pendingMailQueueCount = state.execution.pendingMailQueueCount - 1,
+                          pendingUserInputs = state.execution.pendingUserInputs,
+                          // Sub-agent barrier: held results survive the turn boundary.
+                          pendingEvents = state.execution.pendingEvents,
+                          outstandingSubagentResults = state.execution.outstandingSubagentResults,
+                          // #25: hold/replay the completion debt across this injection.
+                          owedCompletion = owedAfter)
+                )
+                _ <- nebflow.core.flow.MailQueueStore.removeHead(sid)
+                _ <-
+                  if !isSubagent then emitSessionBusy(state.wsSend, sid, busy = true)
+                  else IO.unit
+                _ <- emitInjectedUserEvent(
+                  state.wsSend, state.sessionId, item.message,
+                  "mail-queue", Some("queue"), Some(item.from), None, Some("queue")
+                )
+                _ <- ctx.forkTurn(
+                  (resources.sessionStore.saveMessagesForSession(sid, messagesWithQueue) *>
+                    resources.sessionStore.flushIndex)
+                    .handleErrorWith(e =>
+                      NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
+                    )
+                )
+                _ <-
+                  // #25: park the completion debt while sub-agents are in flight.
+                  if subagentsInFlight then IO.unit
+                  else completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithQueue))
+                r <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
+              yield r
+            // Delivery-layer fingerprint dedup (P0): same sender+recipient+content
+            // within the 30min window is consumed without injection — the
+            // restart-replay backstop (fingerprints persist across restarts).
+            nebflow.core.flow.MailDeliveryDedup
+              .tryDeliver(sid, nebflow.core.flow.MailDeliveryDedup.fingerprint(item.from, sid, item.message))
+              .flatMap {
+                case false =>
+                  // Duplicate within window: consume the head, keep draining —
+                  // recurse with count-1 so the next item is tried (or the
+                  // queue settles to the done branch when count hits 0).
+                  nebflow.core.flow.MailQueueStore.removeHead(sid).void *>
+                    finishTurnCont(
+                      agentDef, resources, depth, parentRef,
+                      state.copy(execution = state.execution.copy(
+                        pendingMailQueueCount = state.execution.pendingMailQueueCount - 1)),
+                      replyTo, newMessages, text, model, thinking, thinkingSignature, textStreamed, isSubagent
+                    )
+                case true => deliver
+              }
           case None =>
             // Count > 0 but disk queue empty (items cancelled while busy) — reset
             // count and re-enter finishTurnCont which will hit the idle branch.
