@@ -68,16 +68,27 @@ object SearchProviderResolver:
 
   private val logger = NebflowLogger.forName("nebflow.llm.search")
 
-  /** Capability lookup by provider id and/or baseUrl host. baseUrl is the
-    * stronger signal (works for any user-chosen provider id pointing at the
-    * canonical endpoint); the id match covers setups that keep the family
-    * name behind a custom base. Either signal alone is sufficient. */
+  /** Capability lookup by provider id and/or baseUrl host.
+    *
+    * Two signals, either sufficient:
+    *   - baseUrl host match (strongest — works for any user-chosen provider
+    *     id pointing at the canonical endpoint; used by the request
+    *     construction injection, which has the real baseUrl);
+    *   - id family-token match: the provider id split into alphanumeric
+    *     tokens (qwen-openai → {qwen, openai}). Used by the WebSearch
+    *     interception path, which resolves from the agent's model chain head
+    *     WITHOUT a baseUrl. Token equality (not prefix/substring) keeps
+    *     "qwenty" and "107" clean. */
   def capabilityFor(providerId: String, baseUrl: String): Option[ProviderSearchKind] =
     val id = providerId.trim.toLowerCase
     val url = baseUrl.trim.toLowerCase
-    if id == "zhipu" || url.contains("bigmodel.cn") then Some(ProviderSearchKind.ZhipuWebSearchTool)
-    else if id == "kimi" || url.contains("moonshot") then Some(ProviderSearchKind.KimiBuiltinWebSearch)
-    else if id == "qwen" || url.contains("dashscope") then Some(ProviderSearchKind.QwenEnableSearch)
+    val tokens = id.split("[^a-z0-9]+").filter(_.nonEmpty).toSet
+    if url.contains("bigmodel.cn") || id == "zhipu" || tokens.contains("zhipu") then
+      Some(ProviderSearchKind.ZhipuWebSearchTool)
+    else if url.contains("moonshot") || id == "kimi" || tokens.contains("kimi") then
+      Some(ProviderSearchKind.KimiBuiltinWebSearch)
+    else if url.contains("dashscope") || id == "qwen" || tokens.contains("qwen") then
+      Some(ProviderSearchKind.QwenEnableSearch)
     else None
 
   /** Tier resolution for a provider (P0: Tier 1 MCP is a future stub — resolve
@@ -252,7 +263,9 @@ object SearchProviderResolver:
 
   /** Normalize zhipu's `web_search` array / qwen's `search_info` object into
     * (title, url, snippet) triples. Entries without a URL are dropped — a
-    * source-less entry cannot be cited. */
+    * source-less entry cannot be cited. Field-name note: zhipu's entries use
+    * `link` for the URL (verified against the real endpoint 2026-08-23);
+    * qwen uses `url` — accept both. */
   private[llm] def searchEntries(searchInfo: Json): Option[List[(String, String, String)]] =
     val arr: Option[List[Json]] =
       if searchInfo.isArray then searchInfo.asArray.map(_.toList)
@@ -265,7 +278,9 @@ object SearchProviderResolver:
       else None
     arr.map(_.flatMap { entry =>
       val h = entry.hcursor
-      h.downField("url").as[String].toOption.filter(u => u.startsWith("http")).map { url =>
+      val urlOpt = h.downField("url").as[String].toOption
+        .orElse(h.downField("link").as[String].toOption)
+      urlOpt.filter(u => u.startsWith("http")).map { url =>
         val title = h.downField("title").as[String].toOption.getOrElse("")
         val snippet =
           h.downField("content").as[String].toOption
