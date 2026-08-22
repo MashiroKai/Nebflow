@@ -151,6 +151,7 @@ const TERMINAL_MSG_TYPES = new Set([
   'askUser', 'askPermission',
   'frozen', 'resumed', 'agentFrozen', 'agentResumed',
   'taskStuck', // sub-agent management panel (2026-08-22): stuck visibility for any session
+  'cancelAgentResult', // management panel stop action result (2026-08-23 upgrade)
   'historyPage' // flow agent popups receive historyPage with their own sessionId
 ]);
 const STREAM_MSG_TYPES = new Set([

@@ -2688,9 +2688,13 @@ onMessage('activeAgents', (msg) => {
       sessionId: a.sessionId || '',
       // Management panel (2026-08-22): kind drives the permission matrix
       // (Delegate/SubTask/Ephemeral operable, Team/Flow read-only); startedAt
-      // powers uptime restore once the backend adds it to the snapshot.
+      // powers uptime restore; status ("Error(msg)" form) powers the failed
+      // state and retryCount the retries chip after a page refresh (backend
+      // fields landed @179a009e).
       kind: a.kind || '',
       startedAt: a.startedAt || null,
+      status: a.status || '',
+      retryCount: typeof a.retryCount === 'number' ? a.retryCount : 0,
       currentTool: null,
       done: false,
     };

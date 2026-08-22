@@ -142,6 +142,7 @@ export default {
   'manage.readonlyTeam': 'Team agents are read-only',
   'manage.readonlyFlow': 'Flow node agents are read-only',
   'manage.stopSent': 'Stop command sent',
+  'manage.stopFailed': 'Stop failed',
   'manage.retrySent': 'Restart command sent',
   'stt.micDenied': 'Microphone permission denied — grant access from the browser address bar and retry',
   'stt.micBusy': 'Microphone is held by another app or tab (close apps using the mic, then retry)',
