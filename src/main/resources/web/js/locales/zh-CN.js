@@ -141,7 +141,6 @@ export default {
   'manage.uptime': '运行 {time}',
   'manage.readonlyTeam': '团队 agent 只读，不可操作',
   'manage.readonlyFlow': 'Flow 节点 agent 只读，不可操作',
-  'manage.notRunning': 'agent 未在运行',
   'manage.stopSent': '已发送停止指令',
   'manage.retrySent': '已发送重试指令',
   'stt.micDenied': '麦克风权限被拒绝，请在浏览器地址栏授权后重试',

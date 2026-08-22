@@ -141,7 +141,6 @@ export default {
   'manage.uptime': 'Up {time}',
   'manage.readonlyTeam': 'Team agents are read-only',
   'manage.readonlyFlow': 'Flow node agents are read-only',
-  'manage.notRunning': 'Agent is not running',
   'manage.stopSent': 'Stop command sent',
   'manage.retrySent': 'Restart command sent',
   'stt.micDenied': 'Microphone permission denied — grant access from the browser address bar and retry',
