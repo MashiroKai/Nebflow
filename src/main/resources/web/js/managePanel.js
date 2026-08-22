@@ -2,20 +2,25 @@
 //
 // User ruling 2026-08-22: sub-agent windows are MANAGEMENT surfaces, not
 // conversation surfaces — the message input bar is removed and replaced by
-// state display + control buttons mapped onto the backend's existing
-// AgentControl capabilities:
-//   - stop   → WS {type:'interrupt', sessionId}   (AgentCommand.Interrupt)
-//   - retry  → WS {type:'restartAgent', sessionId, level:'soft'}
+// state display + control buttons mapped onto the backend's AgentControl
+// capabilities (WS layer landed 2026-08-22 @179a009e):
+//   - stop   → WS {type:'cancelAgent', sessionId} (terminal cancel; result
+//              frame cancelAgentResult {ok, sessionId, message?|error?})
+//              with graceful fallback to {type:'interrupt'} when the result
+//              reports the handler missing (pre-restart instances)
+//   - retry  → WS {type:'restartAgent', sessionId, level:'soft'} (soft only —
+//              rollback/prune/full mutate session history, never bare-exposed)
 //   - stuck  ← WS taskStuck {sessionId, kind, idleSecs, action}
-//   - retries← WS agentRetryStatus {agentId, message}
-//   - uptime ← agentStart arrival (frontend) / activeAgents startedAt (backend gap)
+//   - retries← WS taskStuck action=restart count + snapshot retryCount
+//   - uptime ← snapshot startedAt (epoch ms, 0=unknown) / agentStart arrival
+//   - failed ← snapshot status startsWith('Error') (no WS failed event yet)
 //
 // Permission matrix (AgentControl spec §4): Delegate/SubTask/Ephemeral are
 // operable; Team/Flow/Root are read-only (buttons greyed + tooltip reason).
 // Buttons are state-linked — no permanent dead buttons: stop only while the
 // agent is processing, retry only on failed/stuck.
 
-import { sendWs } from './ws.js';
+import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
 import { showToast } from './modal.js';
 
@@ -35,10 +40,49 @@ export function isProcessingStatus(status) {
   return status === 'running' || status === 'thinking' || status === 'tool' || status === 'responding';
 }
 
-/** True when a restart makes sense (retry button visible). */
+/** True when a restart makes sense (retry button visible).
+ *  'failed' comes from the activeAgents snapshot status ("Error(msg)" form —
+ *  the backend has no WS failed event for sub-agents yet). */
 export function isRetryableStatus(status) {
   return status === 'failed' || status === 'stuck' || status === 'stopped';
 }
+
+/** Snapshot status parse: AgentStatus.toString yields "Error(msg)" for the
+ *  failed state (msg may contain spaces/parens — prefix check only). */
+export function isFailedSnapshotStatus(status) {
+  return typeof status === 'string' && status.startsWith('Error');
+}
+
+// ── cancelAgent result-driven stop with graceful fallback ─────────────
+// The WS cancelAgent handler landed 2026-08-22 (@179a009e). Pre-restart
+// instances silently drop unknown frames (handleMessage case _ => IO.unit) —
+// no cancelAgentResult ever arrives. So: send cancelAgent, arm a short timer;
+// a result frame settles it, timer expiry falls back to interrupt (the
+// pre-upgrade semantics) so the stop button never goes dead on old backends.
+const CANCEL_FALLBACK_MS = 1500;
+const pendingCancelTimers = new Map(); // sessionId → timeout handle
+const cancelListeners = new Set();
+
+/** Popup modules register a listener for settled cancel outcomes
+ *  (bg and flow popups each watch their own open session). */
+export function onCancelResult(fn) { cancelListeners.add(fn); }
+
+/** Feed a cancelAgentResult frame: clear the fallback timer, notify listeners. */
+export function noteCancelResult(msg) {
+  const timer = pendingCancelTimers.get(msg.sessionId);
+  if (timer) { clearTimeout(timer); pendingCancelTimers.delete(msg.sessionId); }
+  for (const fn of cancelListeners) fn(msg);
+}
+
+// WS result frame for the panel stop action (whitelisted in ws.js TERMINAL).
+// ok=false → error toast (stale id / read-only kind); ok=true is silent — the
+// footer transition rides the subsequent interrupted/agentEnd event.
+onMessage('cancelAgentResult', (msg) => {
+  noteCancelResult(msg);
+  if (msg && msg.ok === false && msg.error) {
+    showToast(t('manage.stopFailed') + ' — ' + msg.error, 'error');
+  }
+});
 
 function fmtUptime(ms) {
   if (ms == null || ms < 0) return '';
@@ -75,13 +119,23 @@ export function buildManageBar() {
   return { root, stopBtn, retryBtn, uptimeEl, retriesEl };
 }
 
-/** Wire stop/retry actions for a session. */
+/** Wire stop/retry actions for a session.
+ *  stop = cancelAgent (terminal) with interrupt fallback for pre-upgrade
+ *  backends (see CANCEL_FALLBACK_MS); retry = restartAgent soft only. */
 export function bindManageActions(bar, getSessionId) {
   bar.stopBtn.addEventListener('click', () => {
     const sid = getSessionId();
     if (!sid) return;
-    sendWs({ type: 'interrupt', sessionId: sid });
+    sendWs({ type: 'cancelAgent', sessionId: sid });
     showToast(t('manage.stopSent'), 'info');
+    // Fallback: pre-restart instances drop unknown frames silently — if no
+    // cancelAgentResult settles this session within the window, send the
+    // legacy interrupt so the button never goes dead.
+    if (pendingCancelTimers.has(sid)) clearTimeout(pendingCancelTimers.get(sid));
+    pendingCancelTimers.set(sid, setTimeout(() => {
+      pendingCancelTimers.delete(sid);
+      sendWs({ type: 'interrupt', sessionId: sid });
+    }, CANCEL_FALLBACK_MS));
   });
   bar.retryBtn.addEventListener('click', () => {
     const sid = getSessionId();

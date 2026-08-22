@@ -142,6 +142,7 @@ export default {
   'manage.readonlyTeam': '团队 agent 只读，不可操作',
   'manage.readonlyFlow': 'Flow 节点 agent 只读，不可操作',
   'manage.stopSent': '已发送停止指令',
+  'manage.stopFailed': '停止失败',
   'manage.retrySent': '已发送重试指令',
   'stt.micDenied': '麦克风权限被拒绝，请在浏览器地址栏授权后重试',
   'stt.micBusy': '麦克风被其他应用或页签占用（请关闭正在使用麦克风的应用后重试）',
