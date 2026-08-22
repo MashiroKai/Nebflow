@@ -63,6 +63,8 @@ const EXEMPTIONS = new Map([
  *   vendor/<f>              → /vendor/<f>         (single segment)
  *   vendor/fonts/<f>        → /vendor/fonts/<f>   (single segment)
  *   vendor/monaco/<deep…>   → /vendor/monaco/<deep…> (multi-segment, manual parse)
+ *   vendor/pdfjs/<deep…>    → /vendor/pdfjs/<deep…> (multi-segment, manual parse;
+ *                             route added with the PDF viewer, c2c7d9f3)
  *   assets/<deep…>          → /assets/<deep…>     (dist mode only, P1 route)
  */
 function toUrl(rel) {
@@ -77,6 +79,7 @@ function toUrl(rel) {
     if (segs.length === 2) return `/vendor/${second}`;
     if (second === 'fonts') return segs.length === 3 ? `/vendor/fonts/${segs[2]}` : null;
     if (second === 'monaco') return segs.length >= 3 ? `/vendor/monaco/${segs.slice(2).join('/')}` : null;
+    if (second === 'pdfjs') return segs.length >= 3 ? `/vendor/pdfjs/${segs.slice(2).join('/')}` : null;
     return null;
   }
   return null;
