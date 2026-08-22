@@ -3,6 +3,7 @@ package nebflow.agent
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
+import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.agent.AgentCommand.*
@@ -640,7 +641,11 @@ private[agent] trait AgentCore:
             maxTokens = Some(resources.agentLibrary.globalMaxTokens),
             thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
             systemStable = Some(systemStable),
-            agentModel = freshDef.model
+            agentModel = freshDef.model,
+            // WebSearch P0: housekeeping turns (compact/save/ask) opt out of
+            // provider-native search injection — a server-side search tool
+            // must never leak into summarization or memory-maintenance loops.
+            searchAllowed = !(isCompactTurn || isSaveTurn || isAskTurn)
           )
         yield (turnCtx, request, stateWithCache)
 
@@ -817,7 +822,13 @@ private[agent] trait AgentCore:
       effectiveDef = currentDefOpt.getOrElse(agentDef)
       allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker)
       (filteredCalls, droppedCalls) =
-        val (kept, dropped) = result.toolCalls.partition(tc => allowedTools.contains(tc.name))
+        // WebSearch P0: kimi's native $web_search tool call bypasses the
+        // agent-tool whitelist — it is provider-injected (not an agent tool)
+        // and MUST pass through; filtering it here would re-create the
+        // "Tool not available" retry storm (2026-08-20 qwen incident shape).
+        val (kept, dropped) = result.toolCalls.partition(tc =>
+          allowedTools.contains(tc.name) || tc.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName
+        )
         // warnSync: this is a synchronous code path — the plain IO-returning
         // warn would be discarded silently (it was, before 2026-08-15).
         if dropped.nonEmpty then
@@ -865,15 +876,31 @@ private[agent] trait AgentCore:
              sessionIdOpt
            )
          else IO.unit) *>
-          permissionDecision(resources, state, call)
-            .flatMap {
-              case PermissionDecision.Allow => executeTool(call, callCtx)
-              case PermissionDecision.Deny =>
-                IO.pure(
-                  ToolExecResult(s"Tool ${call.name} is denied by the session permission policy", isError = true)
+          (
+            // WebSearch P0: kimi's native $web_search round-trip — the caller
+            // echoes the model's arguments back VERBATIM as the tool result
+            // (Moonshot semantics: the search then runs server-side next
+            // round). Pure echo, zero side effects — bypasses the permission
+            // system (an Ask here would deadlock the round-trip on a
+            // synthetic tool the user never configured).
+            if call.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName then
+              IO.delay(
+                NebflowLogger.forName("nebflow.agent").infoSync(
+                  s"[${agentDef.name}] kimi native web search round-trip (echo ${call.rawArguments
+                      .map(_.length)
+                      .getOrElse(0)} chars)"
                 )
-              case PermissionDecision.Ask => askUserPermission(call, state, permissionDeferredRef, permissionDenialsRef, callCtx)
-            }
+              ).as(ToolExecResult(nebflow.llm.SearchProviderResolver.kimiEchoContent(call)))
+            else permissionDecision(resources, state, call)
+              .flatMap {
+                case PermissionDecision.Allow => executeTool(call, callCtx)
+                case PermissionDecision.Deny =>
+                  IO.pure(
+                    ToolExecResult(s"Tool ${call.name} is denied by the session permission policy", isError = true)
+                  )
+                case PermissionDecision.Ask => askUserPermission(call, state, permissionDeferredRef, permissionDenialsRef, callCtx)
+              }
+          )
             .map(r => (call, r))
             .attempt
             .map {
@@ -1102,6 +1129,13 @@ private[agent] trait AgentCore:
   end sendPermissionRequest
 
   protected def executeTool(call: ToolCall, ctx: ToolContext): IO[ToolExecResult] =
+    // WebSearch P0: defense in depth — the turn loop normally handles kimi's
+    // native $web_search before the permission gate; if one ever reaches here
+    // (e.g. via the deferred-approval path), echo instead of failing it
+    // through the malformed/registry checks below.
+    if call.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName then
+      IO.pure(ToolExecResult(nebflow.llm.SearchProviderResolver.kimiEchoContent(call)))
+    else
     // Issue #18: adapters mark tool calls whose arguments JSON could not be
     // parsed (rescued past repair). Executing them would surface a misleading
     // "parameter is required" error — report the parse failure itself instead,
@@ -1154,7 +1188,14 @@ private[agent] trait AgentCore:
                         }
                     }
                   case _ =>
-                    tool.call(finalInput, ctx).flatMap {
+                    // WebSearch P0: Tier 2 routing — capable provider executes
+                    // the search natively (SLA-backed, with provenance); any
+                    // miss degrades to the builtin aggregation (Tier 3).
+                    val baseCall: IO[Either[ToolError, String]] = tool.call(finalInput, ctx)
+                    val routedCall: IO[Either[ToolError, String]] =
+                      if call.name == "WebSearch" then routeWebSearchThroughProvider(finalInput, ctx, baseCall)
+                      else baseCall
+                    routedCall.flatMap {
                       case Left(err) =>
                         hookEngine.afterToolFailure(call.name, finalInput, err.message, hookCtx).map { postResult =>
                           val appended = postResult.additionalContext match
@@ -1192,6 +1233,37 @@ private[agent] trait AgentCore:
             }
         }
       case None => IO.pure(ToolExecResult(s"No such tool available: ${call.name}", isError = true))
+
+  /** WebSearch P0: Tier 2 routing for the WebSearch tool call. When the
+    * session's provider has native search (zhipu/kimi/qwen — resolved from
+    * the agent's model chain head) and the call did NOT pin a specific
+    * engine, the search runs on the provider; results carry provenance
+    * ("Search source: provider:<id>") and structured URLs. Any miss — no
+    * capability, no search evidence, or an execution error — degrades to the
+    * builtin aggregation (Tier 3, annotated non-guaranteed). An explicitly
+    * requested engine (e.g. engine="arXiv") always goes to the builtin path:
+    * the caller asked for THAT engine. */
+  private def routeWebSearchThroughProvider(
+      input: JsonObject,
+      ctx: ToolContext,
+      fallback: IO[Either[ToolError, String]]
+  ): IO[Either[ToolError, String]] =
+    val enginePinned = input("engine").flatMap(_.asString).exists(_.trim.nonEmpty)
+    val query = input("query").flatMap(_.asString).getOrElse("")
+    if enginePinned || query.isBlank then fallback
+    else
+      nebflow.llm.SearchProviderResolver
+        .executeProviderSearchFor(
+          query,
+          ctx.llm,
+          ctx.sessionId.getOrElse(""),
+          ctx.agentDef.map(_.name).getOrElse("-"),
+          ctx.agentDef.flatMap(_.model)
+        )
+        .flatMap {
+          case Some(result) => IO.pure(Right(result))
+          case None         => fallback
+        }
 
   protected def buildAllowedToolSet(agentDef: AgentDef, depth: Int = 0, isSubTaskWorker: Boolean = false): Set[String] =
     val base = agentDef.tools match

@@ -74,7 +74,14 @@ case class ToolDefinition(
 
 // ===== Tool Call =====
 
-case class ToolCall(id: String, name: String, input: JsonObject)
+/** Raw wire-format arguments string as received from the provider, kept
+  * byte-faithful alongside the parsed JsonObject. Needed by provider-native
+  * round-trip semantics (kimi $web_search: the caller must echo the model's
+  * arguments back verbatim as the tool result — re-serializing the parsed
+  * object would break byte-identity, and rescued/malformed inputs would
+  * degrade to "{}").
+  */
+case class ToolCall(id: String, name: String, input: JsonObject, rawArguments: Option[String] = None)
 
 // ===== LLM =====
 
@@ -98,9 +105,14 @@ case class LlmRequest(
   systemDynamic: Option[String] = None,
   /**
    * Per-agent model configuration (preferred + fallbacks). When set, the
-   *  candidate chain is built from this instead of the global model chain.
+   * candidate chain is built from this instead of the global model chain.
    */
-  agentModel: Option[AgentModelConfig] = None
+  agentModel: Option[AgentModelConfig] = None,
+  /** WebSearch P0: provider-native search injection is allowed for this
+    * request. Housekeeping turns (compaction / save-turn / ask) and
+    * maintenance LLM calls set this to false so a server-side search tool
+    * never leaks into summarization or memory-extraction requests. */
+  searchAllowed: Boolean = true
 )
 
 case class TokenUsage(
@@ -124,7 +136,11 @@ case class LlmResponse(
   reply: String,
   toolCalls: List[ToolCall],
   usage: Option[TokenUsage],
-  meta: LlmMeta
+  meta: LlmMeta,
+  /** WebSearch P0: structured search results from a provider-native search
+    * (zhipu `web_search` response field / qwen `search_info`), when present.
+    * None on providers/paths without structured search output. */
+  searchInfo: Option[Json] = None
 )
 
 case class LlmOptions(configPath: Option[String] = None)

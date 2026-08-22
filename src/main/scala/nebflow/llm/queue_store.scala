@@ -58,7 +58,8 @@ object LlmQueueStore:
       "thinking" -> r.thinking.asJson,
       "systemStable" -> r.systemStable.asJson,
       "systemDynamic" -> r.systemDynamic.asJson,
-      "agentModel" -> r.agentModel.asJson
+      "agentModel" -> r.agentModel.asJson,
+      "searchAllowed" -> r.searchAllowed.asJson
     )
   }
 
@@ -75,7 +76,8 @@ object LlmQueueStore:
       systemStable = c.downField("systemStable").as[Option[String]].toOption.flatten
       systemDynamic = c.downField("systemDynamic").as[Option[String]].toOption.flatten
       agentModel = c.downField("agentModel").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
-    yield LlmRequest(messages, sessionId, agentId, tools, maxTokens, thinking, systemStable, systemDynamic, agentModel)
+      searchAllowed = c.downField("searchAllowed").as[Option[Boolean]].toOption.flatten.getOrElse(true)
+    yield LlmRequest(messages, sessionId, agentId, tools, maxTokens, thinking, systemStable, systemDynamic, agentModel, searchAllowed)
   }
 
   private given Encoder[QueueItem] = Encoder.instance { i =>
