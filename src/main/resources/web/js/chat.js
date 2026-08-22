@@ -483,11 +483,24 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   bubble.className = 'bubble injected';
   const label = document.createElement('div');
   label.className = 'ask-label injected-source-label';
-  label.textContent = injectedSourceLabel(source, eventType, sender, sourceTeam);
-  appendDeliveryBadge(label, delivery);
+  const trimmed = (text || '').trim();
   const content = document.createElement('div');
-  if (deferFn) deferFn(content, (text || '').trim());
-  else content.innerHTML = renderMarkdownWithMath((text || '').trim(), false);
+  if (deferFn) deferFn(content, trimmed);
+  else content.innerHTML = renderMarkdownWithMath(trimmed, false);
+
+  // Default-collapsed (2026-08-23 ruling): blue injected bubbles show only the
+  // category header (SOURCE · AGENT · EVENT_TYPE); the body expands on click.
+  // Same product thought as #346: the stream stays clean, observability is
+  // on-demand. Expansion is not persisted — refresh returns to collapsed.
+  // Only collapses when there IS content; empty injected markers stay flat.
+  const collapsible = trimmed.length > 0;
+  if (collapsible) {
+    label.appendChild(chevronSvg());
+    content.style.display = 'none'; // collapsed default
+    bindCollapsibleToggle(label, () => content);
+  }
+  label.appendChild(document.createTextNode(injectedSourceLabel(source, eventType, sender, sourceTeam)));
+  appendDeliveryBadge(label, delivery);
   bubble.appendChild(label);
   bubble.appendChild(content);
   row.appendChild(bubble);

@@ -619,6 +619,16 @@
   color: rgb(var(--sapphire) / 0.85);
   opacity: 1;
 }
+/* Collapsible injected header (2026-08-23 ruling): when the label is wired as
+ * a toggle it gains a chevron + role="button" — show pointer + gentle hover.
+ * Restrained: opacity feedback only, matching .thinking-label.collapsible. */
+.bubble.injected .injected-source-label[role="button"] {
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.bubble.injected .injected-source-label[role="button"]:hover {
+  opacity: 0.8;
+}
 
 /* Mail delivery mode badge (ask/queue/immediate) in the injected bubble
  * source label. ask = emphasis (sender is synchronously waiting), queue =
