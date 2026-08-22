@@ -32,10 +32,15 @@ class MailDeliveryDedupSpec extends FunSuite:
     val sid = "sess-recipient-1"
     val fp = MailDeliveryDedup.fingerprint("alice", sid, "same task content")
     val now = System.currentTimeMillis()
+    val before = MailDeliveryDedup.suppressedTotal
     val first = MailDeliveryDedup.tryDeliver(sid, fp, now).unsafeRunSync()
     val second = MailDeliveryDedup.tryDeliver(sid, fp, now + 1000).unsafeRunSync()
     assert(first, "first delivery must pass")
     assert(!second, "same fingerprint within the window must be suppressed")
+    assertEquals(
+      MailDeliveryDedup.suppressedTotal - before, 1L,
+      "suppression must bump the dedup counter (WARN+count observability)"
+    )
   }
 
   test("② different content / sender / recipient all pass") {

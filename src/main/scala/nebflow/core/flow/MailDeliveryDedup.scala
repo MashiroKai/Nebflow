@@ -47,6 +47,13 @@ object MailDeliveryDedup:
   private val cache = Ref.unsafe[IO, Map[String, Long]](Map.empty)
   private val loaded = new java.util.concurrent.atomic.AtomicBoolean(false)
 
+  /** Cumulative count of suppressed duplicate deliveries (observability, task
+    * requirement "WARN + dedup count"). Monotonic within the process. */
+  private val suppressedCount = new java.util.concurrent.atomic.AtomicLong(0L)
+
+  /** Total suppressed duplicates since process start. */
+  def suppressedTotal: Long = suppressedCount.get()
+
   private def loadDiskIntoCache(now: Long): IO[Unit] =
     val file = storeFile
     IO.blocking {
@@ -92,8 +99,9 @@ object MailDeliveryDedup:
       _ <-
         if allowed then persist(now)
         else
+          val n = suppressedCount.incrementAndGet()
           logger.warn(
-            s"[mail-dedup] duplicate queue delivery suppressed (recipient=${recipientSessionId.take(8)}, fp=${fp.take(12)}…, window=${Defaults.MailDedupWindowMs / 60000}min)"
+            s"[mail-dedup] duplicate queue delivery suppressed (recipient=${recipientSessionId.take(8)}, fp=${fp.take(12)}…, window=${Defaults.MailDedupWindowMs / 60000}min, suppressedTotal=$n)"
           ) *> persist(now)
     yield allowed
 
