@@ -83,7 +83,9 @@ When to use:
 
   // ── kind policy（§4 矩阵）──────────────────────────────────
 
-  private val CancelableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Ephemeral)
+  /** Cancelable kinds（WS cancelAgent handler 复用同一白名单——子 agent 管理面板
+    * 与工具层一致：Team/Flow/Root 只读）。 */
+  val CancelableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Ephemeral)
   private val RestartableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask)
 
   private def kindRejection(kind: AgentKind, action: String): Option[String] =
@@ -298,7 +300,11 @@ When to use:
           }
     }
 
-  private def doCancel(resources: SharedResources, rec: AgentRecord, reason: String): IO[Either[ToolError, String]] =
+  /** Cancel 终止任务终态（区别于 Interrupt 停当前 turn）。public：WS cancelAgent
+    * handler（子 agent 管理面板）复用同链路——supervisorRef 优先（Cancelled →
+    * notifyParentAndStop，barrier 正确释放），无 supervisor 走降级兜底
+    * （Stop + 自补通知 + taskStore cancelled + registry 移除）。 */
+  def doCancel(resources: SharedResources, rec: AgentRecord, reason: String): IO[Either[ToolError, String]] =
     val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
     rec.supervisorRef match
       case Some(sup) =>
