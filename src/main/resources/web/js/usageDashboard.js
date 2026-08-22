@@ -14,8 +14,11 @@ import state from './state.js';
 import { authHeaders } from './flowHelpers.js';
 import { createIconsIn } from './utils.js';
 
-/** Providers known not to report cache fields (spec §6.9c). */
-const NO_CACHE_PROVIDERS = ['kimi'];
+/** Providers known not to report cache fields (spec §6.9c).
+ *  Empty since 2026-08-21: reconciliation (report f5e80ca §4 F2) confirmed kimi
+ *  reports cache normally (169/177 records cr>0, hit rate on par with the main
+ *  provider). Mechanism kept; list empty — extend here if a new case appears. */
+const NO_CACHE_PROVIDERS = [];
 
 const MS_DAY = 86400000;
 
