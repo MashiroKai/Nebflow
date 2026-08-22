@@ -80,95 +80,160 @@ private[agent] trait AgentCore:
     if state.pendingCompaction.isDefined then None
     else
       val config = CompactConfig()
-      val backoffOk =
-        if state.compactionFailures == 0 then true
-        else
-          val elapsed = System.currentTimeMillis() - state.lastCompactionFailureAt
-          val ok = config.isBackoffSatisfied(state.compactionFailures, elapsed)
-          if !ok then
+      // ── P0-2（2026-08-22 Write-only 循环批）：满上下文硬截断前置 ──
+      // 估算/上轮上报超 0.95×window 时，LLM 依赖的压缩路径（save turn 与
+      // compact turn 都要带全量消息再调一次 LLM）数学上不可行。原
+      // emergencyClean 保底挂在 circuitBreaker 之后且失败计数是内存态
+      // （激活-失败-放弃循环中 actor 重建重置，circuitBreakerMax 永远攒不
+      // 够）——满死锁下不可达。前置到一切回退条件之前：backoff 未满足也
+      // 不能挡（否则 dispatch 裸奔超窗 LLM 调用，intake 后静默死）。
+      // estimate 是 500/msg 粗估（可高估）——但正常路径早在 80% 阈值就触发
+      // LLM 压缩，能走到 0.95 的只有「压缩持续失败/被卡」，正是 emergency
+      // 的既定场景。
+      val hardLimit = (state.contextWindow.toDouble * 0.95).toInt
+      val reported = state.latestUsage.map(_.inputTokens).filter(_ > 0)
+      val estimatedNow = TokenEstimator.estimate(state.messages)
+      // Cooldown: emergencyClean keeps the last N messages — if those tails
+      // alone still estimate above the limit, an unthrottled guard would
+      // re-fire on every dispatch of the SAME turn chain (infinite loop,
+      // found by SaveTurnGuardSpec). Re-checking is fine a minute later.
+      val cooldownOk =
+        System.currentTimeMillis() - state.lastCompactionFailureAt > EmergencyHardGuardCooldownMs
+      if (reported.exists(_ > hardLimit) || estimatedNow > hardLimit) && cooldownOk then
+        runEmergencyCompact(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state,
+          replyTo,
+          processing,
+          s"P0-2 hard-guard: estimated=$estimatedNow reported=${reported.getOrElse(0)} hardLimit=$hardLimit messages=${state.messages.size}"
+        )
+      else
+        val backoffOk =
+          if state.compactionFailures == 0 then true
+          else
+            val elapsed = System.currentTimeMillis() - state.lastCompactionFailureAt
+            val ok = config.isBackoffSatisfied(state.compactionFailures, elapsed)
+            if !ok then
+              logAgentEvent(
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "auto-compact-skipped",
+                s"backoff=${config.backoffMs(state.compactionFailures)}ms elapsed=${elapsed}ms failures=${state.compactionFailures}"
+              )
+            ok
+        if !backoffOk then None
+        else if state.compactionFailures >= config.circuitBreakerMax then
+          if !config.emergencyAutoFallback then
             logAgentEvent(
               agentDef,
               depth,
               state.sessionId,
               state.sessionName,
               "auto-compact-skipped",
-              s"backoff=${config.backoffMs(state.compactionFailures)}ms elapsed=${elapsed}ms failures=${state.compactionFailures}"
+              s"circuitBreakerOpen failures=${state.compactionFailures} max=${config.circuitBreakerMax}"
             )
-          ok
-      if !backoffOk then None
-      else if state.compactionFailures >= config.circuitBreakerMax then
-        if !config.emergencyAutoFallback then
-          logAgentEvent(
-            agentDef,
-            depth,
-            state.sessionId,
-            state.sessionName,
-            "auto-compact-skipped",
-            s"circuitBreakerOpen failures=${state.compactionFailures} max=${config.circuitBreakerMax}"
-          )
-          None
+            None
+          else
+            runEmergencyCompact(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state,
+              replyTo,
+              processing,
+              s"circuitBreakerOpen failures=${state.compactionFailures} messages=${state.messages.size}"
+            )
+
         else
-          // Emergency fallback: non-LLM rule-based compaction.
-          // Strips tool results, removes old tool-result pairs, truncates to last N.
-          logAgentEvent(
-            agentDef,
-            depth,
-            state.sessionId,
-            state.sessionName,
-            "emergency-compact-trigger",
-            s"circuitBreakerOpen failures=${state.compactionFailures} messages=${state.messages.size}"
-          )
-          val (cleaned, desc) = CompactUtils.emergencyClean(state.messages, config.emergencyKeepMessages)
-          val emergencyState = state
-            .withMessages(cleaned)
-            .withCompactionFailures(0)
-            .withLatestUsage(None)
-          Some(for
-            _ <- ctx.forkTurn(
-              emitStreamIO(
-                state.wsSend,
-                AgentStreamEvent.CompactComplete(state.messages.size, cleaned.size, None),
-                isSubagent = depth > 0,
-                state.sessionId
-              ).handleErrorWith(_ => IO.unit)
-            )
-            _ <- state.sessionId.fold(IO.unit)(sid =>
-              ctx.forkTurn(
-                resources.historyArchiver
-                  .archiveCompaction(
-                    sessionId = sid,
-                    sessionName = state.sessionName,
-                    agentName = agentDef.name,
-                    before = state.messages,
-                    after = cleaned,
-                    mode = "emergency",
-                    extra = Map("description" -> desc)
-                  )
-                  .void
-                  .handleErrorWith(_ => IO.unit)
-              )
-            )
-            result <- pipeLlmCall(agentDef, resources, depth, parentRef, emergencyState, replyTo, processing)
-          yield result)
-      else
-        val inputTokensOpt = state.latestUsage.map(_.inputTokens)
-        // Unified threshold: hardcoded, role-independent (CompactThreshold).
-        val threshold = CompactThreshold.threshold(state.contextWindow)
-        val shouldCompact = inputTokensOpt match
-          case Some(inputTokens) if inputTokens > 0 && inputTokens > threshold =>
-            Some(s"inputTokens=$inputTokens threshold=$threshold")
-          case _ =>
-            val estimated = TokenEstimator.estimate(state.messages)
-            if estimated > threshold then
-              Some(s"estimated=$estimated threshold=$threshold (provider did not report inputTokens)")
-            else None
-        shouldCompact match
-          case Some(detail) =>
-            logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "auto-compact-trigger", detail)
-            Some(startDirectCompaction(agentDef, resources, depth, parentRef, state, replyTo, processing, "full"))
-          case None => None
+          val inputTokensOpt = state.latestUsage.map(_.inputTokens)
+          // Unified threshold: hardcoded, role-independent (CompactThreshold).
+          val threshold = CompactThreshold.threshold(state.contextWindow)
+          val shouldCompact = inputTokensOpt match
+            case Some(inputTokens) if inputTokens > 0 && inputTokens > threshold =>
+              Some(s"inputTokens=$inputTokens threshold=$threshold")
+            case _ =>
+              val estimated = TokenEstimator.estimate(state.messages)
+              if estimated > threshold then
+                Some(s"estimated=$estimated threshold=$threshold (provider did not report inputTokens)")
+              else None
+          shouldCompact match
+            case Some(detail) =>
+              logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "auto-compact-trigger", detail)
+              Some(startDirectCompaction(agentDef, resources, depth, parentRef, state, replyTo, processing, "full"))
+            case None => None
 
       end if
+
+  /**
+   * Emergency fallback: non-LLM rule-based compaction (extracted 2026-08-22
+   * Write-only loop batch). Strips tool results, removes old tool-result
+   * pairs, truncates to last N. Two callers:
+   *   - P0-2 hard guard: estimated/reported tokens > 0.95×contextWindow — the
+   *     LLM-dependent compaction paths are mathematically infeasible there
+   *     (both stages resend the full history; the saturated-window call dies
+   *     silently after intake — the a5431750 deadlock).
+   *   - circuitBreaker open (original behavior, unchanged).
+   * withLatestUsage(None) is load-bearing for P0-2: a stale over-limit
+   * reported usage would re-trigger the guard right after truncation.
+   */
+  /** P0-2 hard-guard cooldown: minimum spacing between emergencyClean runs
+    * for the SAME session (guards against re-fire loops when the retained
+    * tail alone still estimates above 0.95×window). */
+  protected val EmergencyHardGuardCooldownMs: Long = 60_000L
+
+  protected def runEmergencyCompact(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    processing: ProcessingFn,
+    reason: String
+  )(using ctx: ActorContext[AgentCommand]): Option[IO[Behavior[AgentCommand]]] =
+    val config = CompactConfig()
+    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "emergency-compact-trigger", reason)
+    val (cleaned, desc) = CompactUtils.emergencyClean(state.messages, config.emergencyKeepMessages)
+    val emergencyState = state
+      .withMessages(cleaned)
+      .withCompactionFailures(0)
+      .withLatestUsage(None)
+      // Timestamp doubles as the P0-2 hard-guard cooldown anchor (compaction
+      // failures are reset to 0 above, so the backoff reader is unaffected).
+      .withLastCompactionFailureAt(System.currentTimeMillis())
+    Some(for
+      _ <- ctx.forkTurn(
+        emitStreamIO(
+          state.wsSend,
+          AgentStreamEvent.CompactComplete(state.messages.size, cleaned.size, None),
+          isSubagent = depth > 0,
+          state.sessionId
+        ).handleErrorWith(_ => IO.unit)
+      )
+      _ <- state.sessionId.fold(IO.unit)(sid =>
+        ctx.forkTurn(
+          resources.historyArchiver
+            .archiveCompaction(
+              sessionId = sid,
+              sessionName = state.sessionName,
+              agentName = agentDef.name,
+              before = state.messages,
+              after = cleaned,
+              mode = "emergency",
+              extra = Map("description" -> desc, "reason" -> reason)
+            )
+            .void
+            .handleErrorWith(_ => IO.unit)
+        )
+      )
+      result <- pipeLlmCall(agentDef, resources, depth, parentRef, emergencyState, replyTo, processing)
+    yield result)
 
   /**
    * Whether this agent gets a save-memory turn before compaction.

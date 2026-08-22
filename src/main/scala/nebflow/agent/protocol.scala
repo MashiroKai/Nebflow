@@ -822,7 +822,17 @@ case class CompactionState(
   compactionFailures: Int = 0,
   lastCompactionFailureAt: Long = 0L,
   latestUsage: Option[TokenUsage] = None,
-  lastModel: Option[String] = None
+  lastModel: Option[String] = None,
+  /** P0-1（2026-08-22 Write-only 循环批）：Save 阶段累计工具轮数——超预算
+    * 强制转 Compact（正常 memory 维护 2-5 轮；上限 AgentActor.SaveMaxToolRounds）。
+    * 内存态（AgentState 不持久化），压缩跨阶段完成或 agent 重建自然归零。 */
+  saveToolRounds: Int = 0,
+  /** P0-1：Save 阶段最近 Write 的 (file_path, content-hash)——同元组连续
+    * N 次写入 = 零进展（生产形态：/tmp/wbv-verify.mjs 24 连 (no changes)）。 */
+  saveWriteHistory: List[(String, String)] = Nil,
+  /** P1-4：Save 阶段任务漂移计数——Write/Edit 落点在 memory/skill 路径集外
+    * 累计；一级注入强化 reminder，二级强制转 Compact。 */
+  saveDriftStrikes: Int = 0
 )
 
 case class AgentSessionInfo(

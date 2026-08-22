@@ -63,6 +63,34 @@ object CompactService:
       case _ => RootSaveMemoryReminder
     Message(MessageRole.User, Left(prompt))
 
+  /**
+   * P1-4（2026-08-22 Write-only 循环批）：save-turn 任务漂移一级 reminder。
+   * 触发条件：save 阶段模型对 memory/skill 路径集之外的文件做 Write/Edit
+   * （= 回到原任务——生产形态：/tmp/wbv-verify.mjs 24 连重写）。注入一次；
+   * 再漂移由 guardSaveTurn 强制转 Compact。要点：明确告诉模型原任务不会
+   * 丢（压缩后继续），消除「必须先做完任务」的续写压力。
+   */
+  def saveTurnDriftReminder: Message =
+    Message(
+      MessageRole.User,
+      Left(
+        """<system-reminder>
+          |The file operations above target files OUTSIDE your memory/skill paths —
+          |that is the ORIGINAL TASK, not memory maintenance.
+          |
+          |You are in the pre-compaction MEMORY SAVE phase. The original task is NOT
+          |lost: it resumes automatically after compaction completes. Its full state
+          |is preserved in the compaction summary step that follows.
+          |
+          |Do this now: finish or abandon the memory maintenance cycle using ONLY
+          |your memory files (memory.md / User.md) and skill drafts
+          |(~/.nebflow/skills/), then STOP — call no more tools and write no more
+          |text. Stopping proceeds to compaction automatically; continuing to write
+          |task files will trigger a forced transition to compaction.
+          |</system-reminder>""".stripMargin
+      )
+    )
+
   /** Shared preamble for all save-memory profiles. */
   private val SaveMemoryPreamble =
     """<system-reminder>
