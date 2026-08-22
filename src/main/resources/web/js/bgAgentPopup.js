@@ -14,7 +14,7 @@ import { isBgAgentId } from './utils.js';
 import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
-import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
+import { buildManageBar, bindManageActions, syncManageControls, onCancelResult, isFailedSnapshotStatus } from './managePanel.js';
 
 // ── Per-sub-agent state ────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -96,6 +96,14 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
     if (row) {
       if (row.kind) entry.meta.kind = row.kind;
       if (row.startedAt) entry.meta.startedAt = entry.meta.startedAt || row.startedAt;
+      // Snapshot refresh fields (@179a009e): restore status/retries across a
+      // page refresh. Live events win — only seed when meta has no live state.
+      if (!entry.meta.status && row.status) {
+        if (isFailedSnapshotStatus(row.status)) entry.meta.status = 'failed';
+        else if (row.status === 'Processing') entry.meta.status = 'running';
+        else if (row.status === 'Frozen') entry.meta.status = 'frozen';
+      }
+      if (row.retryCount > 0) entry.meta.retries = Math.max(entry.meta.retries || 0, row.retryCount);
       break;
     }
   }
@@ -410,6 +418,20 @@ function updateFooterStatus(entry) {
   // Management cluster: state-linked buttons + permission matrix.
   syncManageControls(entry.manageBar, entry.meta);
 }
+
+// ── cancelAgent result linkage (stop button, @179a009e) ────────────────
+// ok=true: terminal cancel accepted — settle the footer to stopped
+// immediately (retry offered); the backend's terminal event (agentEnd/
+// interrupted) refines/cleans up afterwards. ok=false is toasted by
+// managePanel's own handler (stale id / read-only kind).
+onCancelResult((msg) => {
+  if (!msg || msg.sessionId !== currentStepId) return;
+  const entry = stepViews.get(msg.sessionId);
+  if (!entry || msg.ok !== true) return;
+  entry.meta.status = 'stopped';
+  entry.meta.stuck = null;
+  updateFooterStatus(entry);
+});
 
 // ── Stuck visibility (taskStuck broadcast, whitelisted 2026-08-22) ──────
 // taskStuck carries the child's bare sessionId — the same key stepViews uses.
