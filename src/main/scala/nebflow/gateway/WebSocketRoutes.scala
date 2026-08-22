@@ -945,6 +945,52 @@ class WebSocketRoutes(
                 ensureAgent(rSessionId)(ref => ref ! nebflow.agent.AgentCommand.RestartAgent(rLevel))
             else IO.unit
 
+          case "cancelAgent" =>
+            // 子 agent 管理面板（2026-08-22 缺口 1）：终止任务终态——复用
+            // AgentControlTool.doCancel 同链路（supervisor Cancelled → barrier
+            // 释放 + taskStore cancelled + Stop；无 supervisor 走降级兜底）。
+            // 区别于 interrupt（只停当前 turn，任务可继续）。用户面板路径无
+            // caller 概念（工具层的自杀/同桶守卫不适用），仅保留 kind 白名单。
+            val cJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val cSessionId = cJson.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
+            val cReason = cJson.hcursor.downField("reason").as[String].toOption.getOrElse("")
+            def cancelReply(ok: Boolean, extra: (String, Json)*): IO[Unit] =
+              wsSend(
+                io.circe.Json.obj(
+                  Seq(
+                    ("type", "cancelAgentResult".asJson),
+                    ("ok", ok.asJson),
+                    ("sessionId", cSessionId.asJson)
+                  ) ++ extra*
+                )
+              )
+            if cSessionId.isEmpty then
+              cancelReply(ok = false, "error" -> "cancelAgent requires sessionId".asJson)
+            else
+              logger.info(s"cancelAgent (panel) for session $cSessionId") *>
+                sharedResources.agentRegistry.get.flatMap { registry =>
+                  registry.get(cSessionId) match
+                    case None =>
+                      cancelReply(
+                        ok = false,
+                        "error" ->
+                          s"No live agent with sessionId='$cSessionId' (registry is in-memory; stale ids vanish after restart)".asJson
+                      )
+                    case Some(rec) if !nebflow.core.tools.AgentControlTool.CancelableKinds.contains(rec.kind) =>
+                      cancelReply(
+                        ok = false,
+                        "error" -> s"Kind ${rec.kind} is read-only (cancelable: Delegate / SubTask / Ephemeral)".asJson
+                      )
+                    case Some(rec) =>
+                      val reason = if cReason.nonEmpty then cReason else "cancelled from panel"
+                      nebflow.core.tools.AgentControlTool
+                        .doCancel(sharedResources, rec, reason)
+                        .flatMap {
+                          case Right(msg) => cancelReply(ok = true, "message" -> msg.asJson)
+                          case Left(err)  => cancelReply(ok = false, "error" -> err.message.asJson)
+                        }
+                }
+
           case "immediateInput" =>
             val immJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val immSessionId = immJson.hcursor.downField("sessionId").as[String].getOrElse("")
@@ -2239,8 +2285,12 @@ class WebSocketRoutes(
               WebSocketRoutes.filterActiveAgents(registry).flatMap { active =>
                 active
                   .traverse { rec =>
-                    sessionStore.getSessionMeta(rec.sessionId).map { meta =>
-                      WebSocketRoutes.activeAgentEntryJson(rec, meta)
+                    // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
+                    // 字段之一；Ephemeral/无任务记录 → 0）
+                    sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
+                      sessionStore.getSessionMeta(rec.sessionId).map { meta =>
+                        WebSocketRoutes.activeAgentEntryJson(rec, meta, taskOpt.map(_.retryCount))
+                      }
                     }
                   }
                   .flatMap { agents =>
@@ -4532,12 +4582,20 @@ object WebSocketRoutes:
     * Standalone (zero class deps) so the contract is directly unit-testable
     * (ActiveAgentsEntrySpec).
     */
-  def activeAgentEntryJson(rec: AgentRecord, meta: Option[SessionMeta]): Json =
+  def activeAgentEntryJson(rec: AgentRecord, meta: Option[SessionMeta], retryCount: Option[Int] = None): Json =
     Json.obj(
       "sessionId"      -> rec.sessionId.asJson,
       "agentId"        -> rec.sessionId.asJson,
       "agentName"      -> meta.flatMap(_.agentName).getOrElse(rec.sessionId).asJson,
       "rootSessionId"  -> rec.rootSessionId.asJson,
       "kind"           -> rec.kind.toString.asJson,
-      "task"           -> meta.map(_.name).getOrElse("").asJson
+      "task"           -> meta.map(_.name).getOrElse("").asJson,
+      // 2026-08-22 缺口 2：快照自带可刷新恢复三字段（向后兼容——旧字段不动，
+      // 旧前端无感）。status=AgentStatus toString（Idle/Processing/.../Error）；
+      // startedAt epoch ms（0=unknown）；retryCount 来自 taskStore（缺省 0——
+      // Ephemeral 不落 taskStore）。不加 agentStatus 变更广播（改动面大，裁定
+      // 不做——快照轮询由前端按需刷新）。
+      "status"         -> rec.status.toString.asJson,
+      "startedAt"      -> rec.startedAt.asJson,
+      "retryCount"     -> retryCount.getOrElse(0).asJson
     )

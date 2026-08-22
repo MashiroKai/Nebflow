@@ -70,4 +70,35 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(json.hcursor.get[String]("task"), Right(""))
   }
 
+  // ── 2026-08-22 缺口 2：快照自带可刷新恢复三字段 ───────────
+
+  test("panel refresh fields: status/startedAt/retryCount present with defaults") {
+    // 不传 retryCount（默认）——Ephemeral/无 taskStore 记录 → 0
+    val json = WebSocketRoutes.activeAgentEntryJson(rec("sid-r1", AgentKind.Delegate), None)
+    assertEquals(json.hcursor.get[String]("status"), Right("Idle"))
+    assertEquals(json.hcursor.get[Long]("startedAt"), Right(0L))
+    assertEquals(json.hcursor.get[Int]("retryCount"), Right(0))
+    // 向后兼容：六字段不变（旧前端无感）
+    assertEquals(json.hcursor.get[String]("agentId"), Right("sid-r1"))
+    assertEquals(json.hcursor.get[String]("kind"), Right("Delegate"))
+  }
+
+  test("panel refresh fields: status/startedAt/retryCount reflect record+taskStore") {
+    val r = rec("sid-r2", AgentKind.SubTask).copy(
+      status = nebflow.agent.AgentStatus.Processing,
+      startedAt = 1724336000000L
+    )
+    val json = WebSocketRoutes.activeAgentEntryJson(r, None, retryCount = Some(3))
+    assertEquals(json.hcursor.get[String]("status"), Right("Processing"))
+    assertEquals(json.hcursor.get[Long]("startedAt"), Right(1724336000000L))
+    assertEquals(json.hcursor.get[Int]("retryCount"), Right(3))
+  }
+
+  test("panel refresh fields: Error status renders with message (toString wire form)") {
+    val r = rec("sid-r3", AgentKind.Delegate)
+      .copy(status = nebflow.agent.AgentStatus.Error("boom"))
+    val json = WebSocketRoutes.activeAgentEntryJson(r, None)
+    assertEquals(json.hcursor.get[String]("status"), Right("Error(boom)"))
+  }
+
 end ActiveAgentsEntrySpec
