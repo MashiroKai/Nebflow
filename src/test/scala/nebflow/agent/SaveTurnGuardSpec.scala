@@ -219,6 +219,11 @@ class SaveTurnGuardSpec extends CatsEffectSuite:
     assertEquals(toolNames(reqs(3)), List("Edit", "Read", "Write"))
     // compact turn: tools disabled
     assertEquals(reqs(4).tools, Some(Nil))
+    // WebSearch P0: housekeeping turns (save/compact) opt out of provider
+    // search injection; the user turn opts in.
+    assert(reqs(0).searchAllowed, "user turn must allow provider search injection")
+    assert(!reqs(4).searchAllowed, "compact turn must opt out of provider search injection")
+    assert(!reqs(1).searchAllowed, "save turn must opt out of provider search injection")
     // compaction actually shrank messages
     val done = evs.find(j => j.hcursor.get[String]("type").exists(_.contains("compactComplete"))).get
     assert(done.hcursor.get[Int]("before").getOrElse(0) > done.hcursor.get[Int]("after").getOrElse(0))
