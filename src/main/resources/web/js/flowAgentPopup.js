@@ -10,11 +10,12 @@
 // draggable — position is always centered.
 
 import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
-import { sendWs, onMessage, setFlowStepInterceptor } from './ws.js';
+import { sendWs, onMessage, setFlowStepInterceptor, setTeamMetaApplier } from './ws.js';
 import { restoreFromBackendHistory } from './persistence.js';
 import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
+import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
 
 // ── Per-agent state ───────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -190,6 +191,47 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   color: var(--color-text-muted);
 }
 
+/* ── Management cluster (2026-08-22 user ruling: sub-agent window = manage
+   surface). Right-aligned in the footer; buttons reuse .glass-control
+   material at 28px, stop tinted with the existing error token, retry with
+   sapphire. Read-only kinds grey out instead of hiding (permission matrix). */
+.flow-agent-footer .fa-manage {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 8px;
+  flex-shrink: 0;
+}
+.flow-agent-footer .fa-mgmt-btn {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s, box-shadow 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.flow-agent-footer .fa-mgmt-btn svg { width: 13px; height: 13px; stroke-width: 2.5; }
+.flow-agent-footer .fa-mgmt-stop { color: var(--color-error, #f44336); }
+.flow-agent-footer .fa-mgmt-retry { color: rgb(var(--sapphire)); }
+.flow-agent-footer .fa-mgmt-btn.readonly {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.flow-agent-footer .fa-retries {
+  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: #d4a030;
+}
+.flow-agent-footer .fa-uptime {
+  font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+/* Stuck: restrained red — dot + task text only, no full-panel alarm. */
+.flow-agent-footer.stuck .fa-status-dot {
+  background: var(--color-error, #f44336); opacity: 1;
+  animation: fa-pulse 0.9s ease-in-out infinite;
+}
+.flow-agent-footer.stuck .fa-task { color: var(--color-error, #f44336); }
+
 /* Hidden containers for background rendering */
 .flow-agent-hidden {
   position: absolute;
@@ -214,260 +256,10 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   margin: 6vh auto;
 }
 
-/* ── Input area — mirrors main-window css/input.css exactly. ─────────────
-   Main-window input styles are ID-scoped (#input / #send-btn / #stop-btn /
-   #slash-dropdown / #queue-bar), so popup elements (ids bgagent-*, flow-*)
-   cannot inherit them. These rules mirror the exact values from
-   input.css: #input-bar :12 / #input :153 / .icon-btn :173 / #send-btn :207 /
-   #stop-btn :261 / #slash-dropdown :350 / #queue-bar :446 / dark :673.
-   If main-window input.css changes, sync these values here. (popup-input-polish spec) */
-.flow-agent-input-area {
-  position: relative;  /* anchor for slash-dropdown (absolute bottom:100%) */
-  padding: 4px 16px 10px;  /* bottom ≥10px breathing above footer border (input.css #input-area:8) */
-  flex-shrink: 0;
-}
-.fa-input-bar {
-  position: relative;
-  pointer-events: auto;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 20px;
-  padding: 8px 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
-}
-.fa-input-bar::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 10%; right: 10%;
-  height: 1px;
-  background: linear-gradient(90deg,
-    transparent 10%,
-    var(--sapphire-refraction) 50%,
-    transparent 90%);
-  pointer-events: none;
-  z-index: 1;
-  border-radius: inherit;
-}
-.fa-input-wrap {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;  /* allow textarea to shrink inside flex (main window has room; popup may not) */
-}
-.flow-agent-input-area textarea {
-  border: none;
-  background: transparent;
-  border-radius: 18px;
-  padding: 8px 14px;
-  font-size: 14.5px;
-  outline: none;
-  width: 100%;
-  line-height: 1.4;
-  resize: none;
-  overflow-y: auto;
-  max-height: 200px;
-  font-family: inherit;
-  box-sizing: border-box;
-  color: var(--color-text);
-}
-.flow-agent-input-area textarea::placeholder {
-  color: var(--color-text-muted);
-}
-/* Attach button: DOM now uses the global .icon-btn class (input.css:173) —
-   styling and svg sizing (20px/stroke 2) come with the class, zero new CSS. */
+/* Input-area CSS removed 2026-08-22 (user ruling: sub-agent windows are
+   management surfaces — no message input bar). Management cluster styles
+   live above (fa-manage / fa-mgmt-btn / stuck). */
 
-/* Send — light-green glass, identical material to #send-btn (input.css:207) */
-#bgagent-send-btn, #flow-send-btn {
-  background: rgba(7, 193, 96, 0.42);
-  -webkit-backdrop-filter: blur(8px) saturate(1.3);
-  backdrop-filter: blur(8px) saturate(1.3);
-  color: #fff;
-  border: 1px solid rgba(7, 193, 96, 0.15);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 1px 4px rgba(7, 193, 96, 0.2),
-    0 2px 8px rgba(0, 0, 0, 0.06);
-  border-radius: 50%;
-  width: 36px; height: 36px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: background 0.2s, box-shadow 0.2s, border-color 0.2s;
-}
-#bgagent-send-btn:hover, #flow-send-btn:hover {
-  background: rgba(7, 193, 96, 0.55);
-  border-color: rgba(7, 193, 96, 0.25);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 2px 8px rgba(7, 193, 96, 0.28),
-    0 2px 12px rgba(0, 0, 0, 0.08);
-}
-#bgagent-send-btn:active, #flow-send-btn:active {
-  box-shadow:
-    inset 0 1px 3px rgba(0, 0, 0, 0.12),
-    0 1px 2px rgba(7, 193, 96, 0.12);
-}
-#bgagent-send-btn:disabled, #flow-send-btn:disabled {
-  background: rgba(170, 170, 170, 0.3);
-  border-color: rgba(0, 0, 0, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
-  cursor: default;
-}
-#bgagent-send-btn.disconnected, #flow-send-btn.disconnected {
-  background: rgba(170, 170, 170, 0.3);
-  border-color: rgba(0, 0, 0, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
-  cursor: not-allowed;
-}
-#bgagent-send-btn.disconnected:hover, #flow-send-btn.disconnected:hover {
-  background: rgba(170, 170, 170, 0.3);
-}
-#bgagent-send-btn svg, #flow-send-btn svg,
-#bgagent-stop-btn svg, #flow-stop-btn svg {
-  width: 18px; height: 18px; stroke-width: 2.5;
-}
-
-/* Stop — red glass, identical material to #stop-btn (input.css:261) */
-#bgagent-stop-btn, #flow-stop-btn {
-  background: var(--color-error);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  -webkit-backdrop-filter: blur(8px) saturate(1.3);
-  backdrop-filter: blur(8px) saturate(1.3);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.3),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.12),
-    0 1px 4px rgba(0, 0, 0, 0.12);
-  border-radius: 50%;
-  width: 36px; height: 36px;
-  cursor: pointer;
-  display: none;  /* syncInputButtons toggles inline display flex/none */
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: background 0.15s, box-shadow 0.15s;
-}
-#bgagent-stop-btn:hover, #flow-stop-btn:hover { background: #d32f2f; }
-
-/* Attachment preview chips container (input.css #attachment-preview :56) */
-.flow-agent-input-area .attachment-preview {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 4px;
-  flex-wrap: wrap;
-}
-
-/* Slash command dropdown (input.css #slash-dropdown :350) */
-.flow-agent-input-area .slash-dropdown {
-  position: absolute;
-  bottom: 100%;
-  left: 0; right: 0;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 20px;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
-  margin-bottom: 4px;
-  max-height: 200px;
-  overflow-y: auto;
-  display: none;
-  z-index: 50;
-  pointer-events: auto;
-}
-.flow-agent-input-area .slash-dropdown.on { display: block; }
-
-/* Queue bar (input.css #queue-bar :446) — container only; item classes
-   (.queue-item etc.) are global and already styled */
-.flow-agent-input-area #bgagent-queue-bar,
-.flow-agent-input-area #flow-queue-bar {
-  position: relative;
-  pointer-events: auto;
-  flex-shrink: 0;
-  max-height: 0;
-  opacity: 0;
-  margin-bottom: 0;
-  border: 0;
-  overflow: hidden;
-  transition: max-height 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-              opacity 0.22s ease,
-              margin-bottom 0.28s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.flow-agent-input-area #bgagent-queue-bar.visible,
-.flow-agent-input-area #flow-queue-bar.visible {
-  max-height: 280px;
-  opacity: 1;
-  margin-bottom: 4px;
-  overflow-y: auto;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 20px;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
-}
-.flow-agent-input-area #bgagent-queue-bar.visible::before,
-.flow-agent-input-area #flow-queue-bar.visible::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 10%; right: 10%;
-  height: 1px;
-  background: linear-gradient(90deg,
-    transparent 10%,
-    var(--sapphire-refraction) 50%,
-    transparent 90%);
-  pointer-events: none;
-  z-index: 1;
-}
-.flow-agent-input-area #bgagent-queue-bar.collapsed,
-.flow-agent-input-area #flow-queue-bar.collapsed {
-  max-height: 40px;
-  overflow: hidden;
-}
-
-/* ── Dark theme (input.css:673) ── */
-@media (prefers-color-scheme: dark) {
-  .fa-input-bar {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
-  .flow-agent-input-area textarea { color: #e0e2e5; }
-  .flow-agent-input-area textarea::placeholder { color: #555860; }
-  .flow-agent-input-area .slash-dropdown {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 4px 16px rgba(0, 0, 0, 0.30),
-      0px 8px 32px rgba(0, 0, 0, 0.45);
-  }
-  .flow-agent-input-area #bgagent-queue-bar.visible,
-  .flow-agent-input-area #flow-queue-bar.visible {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
-}
 </style>`;
 
 if (!document.getElementById('flow-agent-popup-css')) {
@@ -532,13 +324,16 @@ function resetCardWidths(container) {
 
 // ── Open popup ────────────────────────────────────────────
 
-export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessionId) {
+export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessionId, kindHint) {
   closeStepPopup();
   currentStepId = nodeSessionId || stepId;
 
   // Ensure view exists (in case no events arrived yet)
   const entry = ensureStepView(currentStepId);
   entry.view.visible = true;
+  // Permission matrix source: caller knows the attribution (team tile = Team,
+  // DAG node = Flow); snapshot kind from activeAgents may refine later.
+  entry.meta.kind = kindHint || 'Flow';
 
   // Events were skipped while hidden → DOM is stale or empty. Force a full
   // refresh from backend history (same pipeline as first open) and seed
@@ -572,28 +367,11 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
         <span class="flow-agent-ctx" id="flow-agent-ctx"></span>
         <div class="flow-agent-close" id="flow-agent-close">✕</div>
       </div>
-      <div class="flow-agent-input-area" id="flow-input-area">
-        <div id="flow-slash-dropdown" class="slash-dropdown"></div>
-        <div id="flow-queue-bar"></div>
-        <div class="fa-input-bar" id="flow-input-bar">
-          <button class="icon-btn" id="flow-attach-btn" title="Attach file">
-            <i data-lucide="paperclip"></i>
-          </button>
-          <button class="icon-btn" id="flow-voice-btn" title="Voice input">
-            <i data-lucide="mic"></i>
-          </button>
-          <div class="fa-input-wrap">
-            <div id="flow-attachment-preview" class="attachment-preview"></div>
-            <textarea id="flow-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
-          </div>
-          <button class="glass-control" id="flow-send-btn" title="Send"><i data-lucide="send"></i></button>
-          <button class="glass-control" id="flow-stop-btn" title="Stop" style="display:none"><i data-lucide="square"></i></button>
-        </div>
-      </div>
       <div class="flow-agent-footer" id="flow-agent-footer">
         <span class="fa-status-dot"></span>
         <span class="fa-task">${esc(entry.meta.task || 'Session')}</span>
         <span class="fa-phase" style="display:none"></span>
+        <span class="fa-manage-slot"></span>
       </div>
     </div>
   `;
@@ -606,63 +384,19 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   mountEl.appendChild(popupOverlay);
 
   // Move the pre-rendered container from hidden root into the modal,
-  // inserting it BEFORE the input area so the layout is header / chat / input / footer.
+  // inserting it BEFORE the footer so the layout is header / chat / footer.
   const modal = popupOverlay.querySelector('.flow-agent-modal');
   const footer = popupOverlay.querySelector('#flow-agent-footer');
-  const inputArea = popupOverlay.querySelector('#flow-input-area');
-  modal.insertBefore(entry.container, inputArea);
+  modal.insertBefore(entry.container, footer);
   entry.footerEl = footer;
 
-  // Wire view.dom to real input elements so initInput() can bind events
+  // Management panel (2026-08-22 ruling): no input bar — stop/retry + state.
   const v = entry.view;
-  v.dom.input = popupOverlay.querySelector('#flow-input');
-  v.dom.inputBar = popupOverlay.querySelector('#flow-input-bar'); // #303 drag-drop routing
-  v.dom.sendBtn = popupOverlay.querySelector('#flow-send-btn');
-  v.dom.stopBtn = popupOverlay.querySelector('#flow-stop-btn');
-  v.dom.attachBtn = popupOverlay.querySelector('#flow-attach-btn');
-  v.dom.attPreview = popupOverlay.querySelector('#flow-attachment-preview');
-  v.dom.slashDropdown = popupOverlay.querySelector('#flow-slash-dropdown');
-  v.dom.queueBar = popupOverlay.querySelector('#flow-queue-bar');
-  // Voice elements (#343): real mic button in the input bar — initInput binds
-  // push-and-hold dictation on it. Overlay/text stay inert dummies (initInput
-  // only touches voiceBtn + input).
-  v.dom.voiceBtn = popupOverlay.querySelector('#flow-voice-btn');
-  v.dom.voiceOverlay = document.createElement('div');
-  v.dom.voiceText = document.createElement('div');
-
-  // Disable input if no sessionId (can't route messages)
-  if (!nodeSessionId) {
-    v.dom.input.readOnly = true;
-    v.dom.input.placeholder = 'Agent not running — cannot send messages';
-    v.dom.sendBtn.disabled = true;
-    v.dom.attachBtn.disabled = true;
-    v.dom.voiceBtn.disabled = true;
-    v.dom.sendBtn.style.opacity = '0.4';
-    v.dom.attachBtn.style.opacity = '0.4';
-    v.dom.voiceBtn.style.opacity = '0.4';
-  } else {
-    // Bind input events on the FRESH elements. The popup DOM is rebuilt on
-    // every open, so per-element handlers MUST be re-bound each time — the
-    // old elements are detached and their handlers die with them. (BUG A: the
-    // one-shot _inputBound guard left a reopened popup's input with ZERO
-    // handlers — the user-visible "cannot type / cannot stop" in sub-agent
-    // popups.)
-    v._inputBound = true;
-    import('./input.js').then(({ initInput }) => {
-      import('./chat.js').then(({ refreshSendButtonState }) => {
-        setActiveView(v);
-        initInput(v);
-        refreshSendButtonState();
-      });
-    });
-  }
-
-  // Render lucide icons for the new input-area buttons
-  import('./utils.js').then(({ createIconsIn }) => {
-    createIconsIn(popupOverlay.querySelector('#flow-input-area'));
-  });
-
-  syncInputButtons(entry);
+  const bar = buildManageBar();
+  footer.querySelector('.fa-manage-slot').replaceWith(bar.root);
+  entry.manageBar = bar;
+  bindManageActions(bar, () => currentStepId);
+  import('./utils.js').then(({ createIconsIn }) => { createIconsIn(bar.root); });
 
   // Sync footer with any meta captured before opening
   updateFooterStatus(entry);
@@ -871,17 +605,21 @@ function enforceStepViewCap() {
 // so chat.js rendering functions target the right container.
 // Returns true if the event was handled (should NOT render into primary chat).
 
-export function interceptFlowStep(msg) {
-  if (!msg.nodeSessionId) return false;
-  const entry = ensureStepView(msg.nodeSessionId);
-
-  // Capture meta + lifecycle status from key events.
+/** Shared meta capture for flow/team agent lifecycle events. The team branch
+ *  in ws.js routes converted events itself but must still update popup meta —
+ *  it calls applyTeamMeta() for the raw msg. */
+export function applyAgentMeta(msg) {
+  if (!msg.nodeSessionId) return null;
+  const entry = stepViews.get(msg.nodeSessionId) || ensureStepView(msg.nodeSessionId);
   if (msg.type === 'agentStart') {
     entry.meta.agentName = msg.name || '';
     entry.meta.task = msg.taskDescription || '';
     entry.meta.status = 'running';
+    entry.meta.startedAt = entry.meta.startedAt || Date.now(); // uptime anchor
+    entry.meta.stuck = null;
   } else if (msg.type === 'agentDone' || msg.type === 'agentEnd') {
     entry.meta.status = 'done';
+    entry.meta.stuck = null;
     scheduleStepViewRemoval(msg.nodeSessionId);
   } else if (msg.type === 'agentFrozen') {
     entry.meta.status = 'frozen';
@@ -902,6 +640,21 @@ export function interceptFlowStep(msg) {
   } else if (msg.type === 'agentTextDelta') {
     if (entry.meta.status !== 'responding') entry.meta.status = 'responding';
   }
+  return entry;
+}
+
+/** Team branch entry (ws.js): raw team-* events update popup meta even though
+ *  converted-event routing happens in ws.js itself. */
+export function applyTeamMeta(msg) {
+  if (!msg.nodeSessionId || !msg.nodeSessionId.startsWith('team-')) return;
+  const entry = applyAgentMeta({ ...msg, nodeSessionId: msg.nodeSessionId.replace(/^team-/, '') });
+  if (entry && currentStepId === entry.view.sessionId) updateFooterStatus(entry);
+}
+
+export function interceptFlowStep(msg) {
+  if (!msg.nodeSessionId) return false;
+  const entry = applyAgentMeta(msg);
+  if (!entry) return false;
 
   // Set activeView so chat.js rendering functions target this view's container.
   // This is the same mechanism used for the primary chat window.
@@ -925,6 +678,7 @@ export function interceptFlowStep(msg) {
 // circular import (ws.js → flowAgentPopup.js → ws.js). ws.js holds the
 // interceptor in a variable and calls it at runtime during onmessage.
 setFlowStepInterceptor(interceptFlowStep);
+setTeamMetaApplier(applyTeamMeta);
 
 // ── historyPage handler ───────────────────────────────────
 // When the backend responds to getHistory for a flow agent session,
@@ -961,7 +715,7 @@ export function handleFlowAgentHistory(msg) {
 function updateFooterStatus(entry) {
   if (!entry.footerEl) return;
   const status = entry.meta.status || '';
-  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding');
+  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding', 'stuck');
   if (status) entry.footerEl.classList.add(status);
   const taskEl = entry.footerEl.querySelector('.fa-task');
   if (taskEl) {
@@ -974,6 +728,10 @@ function updateFooterStatus(entry) {
         return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       })() : '';
       taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
+    } else if (status === 'stuck' && entry.meta.stuck) {
+      taskEl.textContent = entry.meta.stuck.action === 'restart'
+        ? t('manage.stuckAutoRestart')
+        : t('manage.stuck', { secs: entry.meta.stuck.idleSecs ?? '' });
     } else {
       taskEl.textContent = entry.meta.task || 'Session';
     }
@@ -988,21 +746,26 @@ function updateFooterStatus(entry) {
       tool: entry.meta.toolLabel ? `Using tool: ${entry.meta.toolLabel}` : 'Running tool…',
       done: 'Done',
       failed: 'Failed',
+      stuck: 'Stuck',
     };
     const text = phaseMap[status] || '';
     phaseEl.textContent = text;
     phaseEl.style.display = text ? '' : 'none';
   }
-  syncInputButtons(entry);
+  // Management cluster: state-linked buttons + permission matrix.
+  syncManageControls(entry.manageBar, entry.meta);
 }
 
-/** Toggle send/stop button visibility based on agent busy state. */
-function syncInputButtons(entry) {
-  if (!entry.view.dom.sendBtn || !entry.view.dom.stopBtn) return;
-  const busy = entry.meta.status === 'running';
-  entry.view.dom.sendBtn.style.display = busy ? 'none' : 'flex';
-  entry.view.dom.stopBtn.style.display = busy ? 'flex' : 'none';
-}
+// ── Stuck visibility (taskStuck broadcast, whitelisted 2026-08-22) ──────
+// Team/Flow popups key stepViews on the bare sessionId — taskStuck carries it.
+onMessage('taskStuck', (msg) => {
+  const entry = stepViews.get(msg.sessionId);
+  if (!entry) return;
+  entry.meta.status = 'stuck';
+  entry.meta.stuck = { idleSecs: msg.idleSecs, action: msg.action };
+  if (msg.action === 'restart') entry.meta.retries = (entry.meta.retries || 0) + 1;
+  if (currentStepId === msg.sessionId) updateFooterStatus(entry);
+});
 
 // ── Utils ────────────────────────────────────────────────
 function esc(str) {

@@ -49,6 +49,12 @@ export function setFlowStepInterceptor(fn) { flowStepInterceptor = fn; }
 let bgAgentStepInterceptor = null;
 export function setBgAgentStepInterceptor(fn) { bgAgentStepInterceptor = fn; }
 
+// ── Team lifecycle meta applier (registered by flowAgentPopup.js) ─────────
+// The team branch routes converted events itself; the popup footer still
+// needs raw lifecycle meta. Injected to avoid a ws→popup circular import.
+let teamMetaApplier = null;
+export function setTeamMetaApplier(fn) { teamMetaApplier = fn; }
+
 // ── Hidden-view render gating ─────────────────────────────────────────────
 // Popup ChatViews (flow / bg-agent / team) have visible === false while their
 // popup is closed. Streaming events for hidden views are dispatched with
@@ -144,6 +150,7 @@ const TERMINAL_MSG_TYPES = new Set([
   'backgroundTaskUpdate', 'taskListUpdate',
   'askUser', 'askPermission',
   'frozen', 'resumed', 'agentFrozen', 'agentResumed',
+  'taskStuck', // sub-agent management panel (2026-08-22): stuck visibility for any session
   'historyPage' // flow agent popups receive historyPage with their own sessionId
 ]);
 const STREAM_MSG_TYPES = new Set([
@@ -476,6 +483,10 @@ export function connect() {
         const bareSid = msg.nodeSessionId.replace(/^team-/, '');
         const teamView = findViewBySessionId(bareSid) || null;
         setActiveView(teamView);
+        // Management panel (2026-08-22): the team branch routes converted
+        // events itself, but the popup's status footer still needs the raw
+        // lifecycle meta (running/thinking/tool/stuck-clear) — apply it here.
+        if (teamMetaApplier) teamMetaApplier(msg);
         const converted = convertAgentEvent({ ...msg, nodeSessionId: bareSid });
         if (converted) {
           const convList = handlers[converted.type];

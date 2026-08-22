@@ -250,7 +250,7 @@ export function bindDagNodeClicks() {
       const flowName = el.getAttribute('data-flow') || '';
       const agentName = el.getAttribute('data-agent') || '';
       const nodeId = el.getAttribute('data-node') || '';
-      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, null);
+      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, null, 'Flow');
     });
   });
   // Legacy .dag-node binding (kept for compatibility)
@@ -260,7 +260,7 @@ export function bindDagNodeClicks() {
       const flowName = el.getAttribute('data-flow') || '';
       const agentName = el.getAttribute('data-agent') || '';
       const nodeId = el.getAttribute('data-node') || '';
-      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, null);
+      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, null, 'Flow');
     });
   });
   // Bind cancel buttons on active DAG flow cards
@@ -391,7 +391,7 @@ export function bindStellarNodeClicks() {
       const agentName = el.getAttribute('data-agent') || '';
       const nodeId = el.getAttribute('data-node') || '';
       const instanceId = card?.dataset.instance || '';
-      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, instanceId);
+      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, instanceId, 'Flow');
     });
   });
   document.querySelectorAll('.stellar-card .dag-card-cancel').forEach(btn => {

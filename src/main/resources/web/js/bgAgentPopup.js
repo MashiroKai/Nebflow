@@ -14,6 +14,7 @@ import { isBgAgentId } from './utils.js';
 import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
+import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
 
 // ── Per-sub-agent state ────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -86,6 +87,18 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
 
   const entry = ensureStepView(currentStepId);
   entry.view.visible = true;
+  // Permission matrix: bg popups are Delegate/SubTask/Ephemeral (operable);
+  // snapshot kind from activeAgents refines when present (backend gap: kind
+  // arrives via sessionBgAgents once main.js stores it).
+  entry.meta.kind = entry.meta.kind || 'Delegate';
+  for (const byRoot of Object.values(state.sessionBgAgents || {})) {
+    const row = byRoot && byRoot[nodeSessionId];
+    if (row) {
+      if (row.kind) entry.meta.kind = row.kind;
+      if (row.startedAt) entry.meta.startedAt = entry.meta.startedAt || row.startedAt;
+      break;
+    }
+  }
 
   // Events were skipped while hidden → DOM is stale or empty. Force a full
   // refresh from backend history (same pipeline as first open) and seed
@@ -114,28 +127,11 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
         <span class="flow-agent-ctx" id="bgagent-ctx"></span>
         <div class="flow-agent-close" id="bgagent-close">✕</div>
       </div>
-      <div class="flow-agent-input-area" id="bgagent-input-area">
-        <div id="bgagent-slash-dropdown" class="slash-dropdown"></div>
-        <div id="bgagent-queue-bar"></div>
-        <div class="fa-input-bar" id="bgagent-input-bar">
-          <button class="icon-btn" id="bgagent-attach-btn" title="Attach file">
-            <i data-lucide="paperclip"></i>
-          </button>
-          <button class="icon-btn" id="bgagent-voice-btn" title="Voice input">
-            <i data-lucide="mic"></i>
-          </button>
-          <div class="fa-input-wrap">
-            <div id="bgagent-attachment-preview" class="attachment-preview"></div>
-            <textarea id="bgagent-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
-          </div>
-          <button class="glass-control" id="bgagent-send-btn" title="Send"><i data-lucide="send"></i></button>
-          <button class="glass-control" id="bgagent-stop-btn" title="Stop" style="display:none"><i data-lucide="square"></i></button>
-        </div>
-      </div>
       <div class="flow-agent-footer" id="bgagent-footer">
         <span class="fa-status-dot"></span>
         <span class="fa-task">${esc(entry.meta.task || 'Session')}</span>
         <span class="fa-phase" style="display:none"></span>
+        <span class="fa-manage-slot"></span>
       </div>
     </div>
   `;
@@ -150,60 +146,16 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   const modal = popupOverlay.querySelector('.flow-agent-modal');
 
   const footer = popupOverlay.querySelector('#bgagent-footer');
-  const inputArea = popupOverlay.querySelector('#bgagent-input-area');
-  modal.insertBefore(entry.container, inputArea);
+  modal.insertBefore(entry.container, footer);
   entry.footerEl = footer;
 
-  // Wire view.dom to real input elements so initInput() can bind events
+  // Management panel (2026-08-22 ruling): no input bar — stop/retry + state.
   const v = entry.view;
-  v.dom.input = popupOverlay.querySelector('#bgagent-input');
-  v.dom.inputBar = popupOverlay.querySelector('#bgagent-input-bar'); // #303 drag-drop routing
-  v.dom.sendBtn = popupOverlay.querySelector('#bgagent-send-btn');
-  v.dom.stopBtn = popupOverlay.querySelector('#bgagent-stop-btn');
-  v.dom.attachBtn = popupOverlay.querySelector('#bgagent-attach-btn');
-  v.dom.attPreview = popupOverlay.querySelector('#bgagent-attachment-preview');
-  v.dom.slashDropdown = popupOverlay.querySelector('#bgagent-slash-dropdown');
-  v.dom.queueBar = popupOverlay.querySelector('#bgagent-queue-bar');
-  // Voice elements (#343): real mic button in the input bar — initInput binds
-  // push-and-hold dictation on it. Overlay/text stay inert dummies (initInput
-  // only touches voiceBtn + input).
-  v.dom.voiceBtn = popupOverlay.querySelector('#bgagent-voice-btn');
-  v.dom.voiceOverlay = document.createElement('div');
-  v.dom.voiceText = document.createElement('div');
-
-  // Disable input if no sessionId (can't route messages)
-  if (!nodeSessionId) {
-    v.dom.input.readOnly = true;
-    v.dom.input.placeholder = 'Agent not running — cannot send messages';
-    v.dom.sendBtn.disabled = true;
-    v.dom.attachBtn.disabled = true;
-    v.dom.voiceBtn.disabled = true;
-    v.dom.sendBtn.style.opacity = '0.4';
-    v.dom.attachBtn.style.opacity = '0.4';
-    v.dom.voiceBtn.style.opacity = '0.4';
-  } else {
-    // Bind input events on the FRESH elements. The popup DOM is rebuilt on
-    // every open, so per-element handlers MUST be re-bound each time — the
-    // old elements are detached and their handlers die with them. (BUG A: the
-    // one-shot _inputBound guard left a reopened popup's input with ZERO
-    // handlers — the user-visible "cannot type / cannot stop" in sub-agent
-    // popups.)
-    v._inputBound = true;
-    import('./input.js').then(({ initInput }) => {
-      import('./chat.js').then(({ refreshSendButtonState }) => {
-        setActiveView(v);
-        initInput(v);
-        refreshSendButtonState();
-      });
-    });
-  }
-
-  // Render lucide icons for the new input-area buttons
-  import('./utils.js').then(({ createIconsIn }) => {
-    createIconsIn(popupOverlay.querySelector('#bgagent-input-area'));
-  });
-
-  syncInputButtons(entry);
+  const bar = buildManageBar();
+  footer.querySelector('.fa-manage-slot').replaceWith(bar.root);
+  entry.manageBar = bar;
+  bindManageActions(bar, () => currentStepId);
+  import('./utils.js').then(({ createIconsIn }) => { createIconsIn(bar.root); });
 
   updateFooterStatus(entry);
 
@@ -339,8 +291,11 @@ export function interceptBgAgentStep(msg) {
     entry.meta.agentName = msg.name || '';
     entry.meta.task = msg.taskDescription || '';
     entry.meta.status = 'running';
+    entry.meta.startedAt = entry.meta.startedAt || Date.now(); // uptime anchor
+    entry.meta.stuck = null;
   } else if (msg.type === 'agentDone' || msg.type === 'agentEnd') {
     entry.meta.status = 'done';
+    entry.meta.stuck = null;
   } else if (msg.type === 'agentFrozen') {
     entry.meta.status = 'frozen';
     entry.meta.frozenResumeAt = msg.resumeAt || null;
@@ -408,7 +363,7 @@ export function handleBgAgentHistory(msg) {
 function updateFooterStatus(entry) {
   if (!entry.footerEl) return;
   const status = entry.meta.status || '';
-  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding');
+  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding', 'stuck');
   if (status) entry.footerEl.classList.add(status);
   const taskEl = entry.footerEl.querySelector('.fa-task');
   if (taskEl) {
@@ -421,6 +376,11 @@ function updateFooterStatus(entry) {
         return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       })() : '';
       taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
+    } else if (status === 'stuck' && entry.meta.stuck) {
+      // Restrained red stuck label (manage-panel, 2026-08-22).
+      taskEl.textContent = entry.meta.stuck.action === 'restart'
+        ? t('manage.stuckAutoRestart')
+        : t('manage.stuck', { secs: entry.meta.stuck.idleSecs ?? '' });
     } else {
       taskEl.textContent = entry.meta.task || 'Session';
     }
@@ -435,21 +395,28 @@ function updateFooterStatus(entry) {
       tool: entry.meta.toolLabel ? `Using tool: ${entry.meta.toolLabel}` : 'Running tool…',
       done: 'Done',
       failed: 'Failed',
+      stuck: 'Stuck',
     };
     const text = phaseMap[status] || '';
     phaseEl.textContent = text;
     phaseEl.style.display = text ? '' : 'none';
   }
-  syncInputButtons(entry);
+  // Management cluster: state-linked buttons + permission matrix.
+  syncManageControls(entry.manageBar, entry.meta);
 }
 
-/** Toggle send/stop button visibility based on agent busy state. */
-function syncInputButtons(entry) {
-  if (!entry.view.dom.sendBtn || !entry.view.dom.stopBtn) return;
-  const busy = entry.meta.status === 'running';
-  entry.view.dom.sendBtn.style.display = busy ? 'none' : 'flex';
-  entry.view.dom.stopBtn.style.display = busy ? 'flex' : 'none';
-}
+// ── Stuck visibility (taskStuck broadcast, whitelisted 2026-08-22) ──────
+// taskStuck carries the child's bare sessionId — the same key stepViews uses.
+// action=restart counts as one auto-restart (the visible "retries" number);
+// any subsequent activity event clears stuck in the interceptor.
+onMessage('taskStuck', (msg) => {
+  const entry = stepViews.get(msg.sessionId);
+  if (!entry) return;
+  entry.meta.status = 'stuck';
+  entry.meta.stuck = { idleSecs: msg.idleSecs, action: msg.action };
+  if (msg.action === 'restart') entry.meta.retries = (entry.meta.retries || 0) + 1;
+  if (currentStepId === msg.sessionId) updateFooterStatus(entry);
+});
 
 // ── Cleanup when a sub-agent session ends ─────────────────
 // Called from main.js agentDone handler when a background sub-agent finishes.
