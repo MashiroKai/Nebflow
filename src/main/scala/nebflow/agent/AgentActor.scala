@@ -103,6 +103,20 @@ object AgentActor extends AgentCore with AgentSession:
   /** Max "you must call Mail" reminder injections before giving up (initial + retries). */
   private val MaxMailReminders = 2
 
+  // ── Save-turn guards (P0-1/P1-4, 2026-08-22 Write-only loop batch) ──────
+  // Production evidence (session a5431750): 24 consecutive identical Writes to
+  // /tmp/wbv-verify.mjs (~50 no-progress turns), each re-sending the full
+  // context. Normal memory maintenance is 2-5 tool rounds — 10 leaves ample
+  // headroom for a thorough VERIFY step while capping the unbounded loop.
+  private val SaveMaxToolRounds = 10
+
+  /** Consecutive identical (file_path, content-hash) Writes that constitute
+    * zero progress (report P0-1: "≥3 次 hash 不变"). */
+  private val SaveZeroProgressWindow = 3
+
+  /** Task-drift strikes (P1-4) before forced Save→Compact transition. */
+  private val SaveMaxDriftStrikes = 2
+
   /**
    * Max llm-fail retries for overload-class failures (429 rate-limit / 529
    * overloaded): the provider is saturated — a ≥5s backoff gives it a chance
@@ -2144,12 +2158,17 @@ object AgentActor extends AgentCore with AgentSession:
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     // Two-stage compaction:
     //  - Save turn, agent stopped calling tools → save phase complete → compact turn
-    //  - Save turn, agent still calling tools → continue the tool loop
+    //  - Save turn, agent still calling tools → guardSaveTurn (P0-1/P1-4, 2026-08-22
+    //    Write-only loop batch): budget + zero-progress + drift guards, then loop.
+    //    Production shape of the unguarded loop: save-phase toolset [W/E/R] vs an
+    //    in-flight task needing Bash — the model re-wrote the same file 24×
+    //    (tool result "(no changes)") while thinking planned Bash every round;
+    //    toolCalls-never-empty starved the Save→Compact transition forever.
     // Completion signal = system-native turn complete (toolCalls.isEmpty), zero text parsing.
     if state.pendingCompaction.exists(_.phase == CompactionPhase.Save) && result.toolCalls.isEmpty then
       handleSavePhaseComplete(agentDef, resources, depth, parentRef, state, replyTo, pending)
     else if state.pendingCompaction.exists(_.phase == CompactionPhase.Save) && result.toolCalls.nonEmpty then
-      pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
+      guardSaveTurn(agentDef, resources, depth, parentRef, state, replyTo, pending, result)
     else if state.pendingCompaction.isDefined && result.toolCalls.isEmpty && result.text.nonEmpty then
       handleCompactResponse(agentDef, resources, depth, parentRef, state, result.text)
     else if state.pendingCompaction.isDefined && result.toolCalls.nonEmpty then
@@ -3127,6 +3146,129 @@ object AgentActor extends AgentCore with AgentSession:
           .withMessages(state.messages :+ CompactService.buildCompactReminder(depth, isLead))
         pipeLlmCall(agentDef, resources, depth, parentRef, compactState, replyTo)
       }
+
+  // ============================================================
+  // Save-turn guards (P0-1 + P1-4, 2026-08-22 Write-only loop batch)
+  // ============================================================
+
+  /**
+   * Guards for "save turn still calling tools" — the exact loop shape of the
+   * a5431750 incident. Three defenses, checked in order; any hit transitions
+   * via handleSavePhaseComplete (the same path as a natural stop), so the
+   * Save→Compact completion signal can no longer be starved by tool calls:
+   *
+   *  1. Round budget (P0-1): SaveMaxToolRounds tool rounds in the Save phase.
+   *  2. Zero progress (P0-1): SaveZeroProgressWindow consecutive Writes with
+   *     identical (file_path, content-hash) — the production shape was 24×
+   *     identical re-writes whose tool result read "(no changes)".
+   *  3. Task drift (P1-4, two strikes): Write/Edit targets outside the
+   *     memory/skill path set (= the original task, e.g. /tmp/xxx.mjs while the
+   *     save-phase toolset has no Bash to advance it). First strike injects a
+   *     reinforced reminder; the second forces the transition.
+   *
+   * The saveTurnTools whitelist [Write, Edit, Read] itself is deliberately
+   * untouched (anti-divergence design) — guards cap the loop, not the toolset.
+   */
+  private def guardSaveTurn(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    pending: List[AgentCommand],
+    result: ConsumeResult
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    val compaction = state.compaction
+    val rounds = compaction.saveToolRounds + 1
+    val writes: List[(String, String)] = result.toolCalls.toList.collect {
+      case tc if tc.name == "Write" =>
+        val path = tc.input("file_path").flatMap(_.asString).getOrElse("")
+        val content = tc.input("content").flatMap(_.asString).getOrElse("")
+        (path, sha256Hex(content))
+    }.filter(_._1.nonEmpty)
+    val history = (compaction.saveWriteHistory ++ writes).takeRight(SaveZeroProgressWindow)
+    val drifted = result.toolCalls.exists { tc =>
+      (tc.name == "Write" || tc.name == "Edit") && tc
+        .input("file_path")
+        .flatMap(_.asString)
+        .exists(p => !isSaveTurnLegitimateTarget(p))
+    }
+    val strikes = compaction.saveDriftStrikes + (if drifted then 1 else 0)
+    val guarded = state.copy(
+      compaction = compaction.copy(
+        saveToolRounds = rounds,
+        saveWriteHistory = history,
+        saveDriftStrikes = strikes
+      )
+    )
+
+    def escalate(event: String, detail: String): IO[Behavior[AgentCommand]] =
+      logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, event, detail)
+      handleSavePhaseComplete(agentDef, resources, depth, parentRef, guarded, replyTo, pending)
+
+    if rounds > SaveMaxToolRounds then
+      escalate(
+        "save-turn-budget-exhausted",
+        s"rounds=$rounds max=$SaveMaxToolRounds toolCalls=${result.toolCalls.size}"
+      )
+    else if history.size == SaveZeroProgressWindow && history.distinct.size == 1 then
+      val (path, hash) = history.head
+      escalate(
+        "save-turn-zero-progress",
+        s"identical write x$SaveZeroProgressWindow path=$path hash=${hash.take(8)}"
+      )
+    else if strikes >= SaveMaxDriftStrikes then
+      escalate(
+        "save-turn-drift-escalated",
+        s"strikes=$strikes off-target Write/Edit in save turn (memory/skill paths only)"
+      )
+    else if drifted then
+      // P1-4 first strike: reinforced reminder, then keep looping — the round
+      // budget above is the hard backstop if the model keeps drifting.
+      logAgentEvent(
+        agentDef,
+        depth,
+        state.sessionId,
+        state.sessionName,
+        "save-turn-drift-reminder",
+        s"strikes=$strikes off-target Write/Edit — reinforced reminder injected"
+      )
+      val nudged = guarded.withMessages(guarded.messages :+ CompactService.saveTurnDriftReminder)
+      pipeToolExecutions(
+        agentDef,
+        resources,
+        depth,
+        parentRef,
+        nudged.withEmptyResponseRetries(0),
+        result,
+        replyTo
+      )
+    else
+      pipeToolExecutions(
+        agentDef,
+        resources,
+        depth,
+        parentRef,
+        guarded.withEmptyResponseRetries(0),
+        result,
+        replyTo
+      )
+  end guardSaveTurn
+
+  /** P1-4: legitimate save-phase Write/Edit targets. Deliberately broad (a
+    * guardrail, not a security boundary): agent memory files (memory.md),
+    * user-level memory (User.md), and skill drafts (~/.nebflow/skills/).
+    * Read is exempt entirely — the VERIFY step legitimately reads code. */
+  private def isSaveTurnLegitimateTarget(path: String): Boolean =
+    val p = path.toLowerCase
+    p.endsWith("memory.md") || p.endsWith("user.md") || p.contains("/skills/")
+
+  private def sha256Hex(s: String): String =
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    digest.map(b => f"${b & 0xff}%02x").mkString
+
 
   // ============================================================
   // Compact response handlers
