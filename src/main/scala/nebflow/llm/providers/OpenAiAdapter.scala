@@ -177,10 +177,17 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
   private[providers] def searchToolEntries(kind: ProviderSearchKind): List[Json] =
     kind match
       case ProviderSearchKind.ZhipuWebSearchTool =>
+        // enable:true is REQUIRED (omitting it → zhipu 1210 "API 调用参数有误",
+        // verified against the real endpoint 2026-08-23). search_result:true
+        // makes the response carry the structured `web_search` field — the
+        // evidence for the Tier 2 executor.
         List(
           Json.obj(
             "type" -> "web_search".asJson,
-            "web_search" -> Json.obj("search_result" -> true.asJson)
+            "web_search" -> Json.obj(
+              "enable" -> true.asJson,
+              "search_result" -> true.asJson
+            )
           )
         )
       case ProviderSearchKind.KimiBuiltinWebSearch =>
@@ -227,16 +234,30 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         Json.obj("enable_search" -> true.asJson)
       case _ => Json.obj()
 
+  /** Observability for provider-native search (smoke diagnostics): which
+    * injection was armed for this request — one INFO line per request, only
+    * when injection is active (no log spam in normal traffic). */
+  private def logSearchInjection(params: SendMessageParams): Unit =
+    params.providerSearch.foreach { kind =>
+      logger.infoSync(
+        s"provider search armed: $kind (session ${params.sessionId.getOrElse("-")} " +
+          s"agent ${params.agentId.getOrElse("-")})"
+      )
+    }
+
   /** Structured search results from the response (zhipu `web_search` array /
-    * qwen `search_info` object) — the Tier 2 evidence source. Streaming
-    * responses don't capture this in P0 (only the non-streaming executor
-    * path consumes it). */
+    * qwen `search_info` object) — the Tier 2 evidence source. Both top-level
+    * and message-level placements are checked (zhipu returns top-level
+    * `web_search`; DashScope nests `search_info` under choices[0].message).
+    * Streaming responses don't capture this in P0 (only the non-streaming
+    * executor path consumes it). */
   private[providers] def extractSearchInfo(response: Json): Option[Json] =
-    response.hcursor
-      .downField("web_search")
-      .as[Json]
-      .toOption
-      .orElse(response.hcursor.downField("search_info").as[Json].toOption)
+    val message = response.hcursor.downField("choices").downN(0).downField("message")
+    def both(h: io.circe.ACursor): Option[Json] =
+      h.downField("web_search").as[Json].toOption
+        .orElse(h.downField("search_info").as[Json].toOption)
+    both(response.hcursor)
+      .orElse(both(message))
       .filter(j => j.isArray || j.isObject)
 
   private[providers] def extractToolCalls(response: Json): List[ToolCall] =
@@ -318,7 +339,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       .header("Authorization", s"Bearer $apiKey")
       .header("content-type", "application/json")
       .body(bodyWithMetadata.noSpaces)
-
+    IO.delay(logSearchInjection(params)) *>
     backend.send(request).flatMap { response =>
       response.body match
         case Left(error) =>
@@ -385,8 +406,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokensCompact)).asJson,
       "stream" -> true.asJson,
       "stream_options" -> Json.obj("include_usage" -> true.asJson)
-    )
-    // WebSearch P0: same injection chain as the non-streaming path (see
+    )    // WebSearch P0: same injection chain as the non-streaming path (see
     // sendMessage) — the main conversation is streaming, so provider-native
     // search must be armed here too.
     val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)
@@ -409,7 +429,8 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
       case _ => bodyWithSearchExtras
 
-    Stream.eval(IO.ref(Map.empty[Int, ToolCallEntry])).flatMap { toolCallState =>
+    Stream.eval(IO.delay(logSearchInjection(params))).drain ++
+      Stream.eval(IO.ref(Map.empty[Int, ToolCallEntry])).flatMap { toolCallState =>
       val request = basicRequest
         .post(uri"$endpoint")
         .header("Authorization", s"Bearer $apiKey")

@@ -70,8 +70,13 @@ class OpenAiAdapterSearchSpec extends CatsEffectSuite:
     assertEquals(tools(0).hcursor.downField("function").downField("name").as[String].toOption, Some("Bash"))
     assertEquals(tools(1).hcursor.downField("function").downField("name").as[String].toOption, Some("Read"))
     assertEquals(tools(2).hcursor.downField("type").as[String].toOption, Some("web_search"))
-    // search_result:true — makes the response carry the structured web_search
-    // field (the Tier 2 evidence source).
+    // enable:true REQUIRED (omitting it → zhipu 1210, verified live 2026-08-23);
+    // search_result:true → response carries the structured web_search field
+    // (the Tier 2 evidence source).
+    assertEquals(
+      tools(2).hcursor.downField("web_search").downField("enable").as[Boolean].toOption,
+      Some(true)
+    )
     assertEquals(
       tools(2).hcursor.downField("web_search").downField("search_result").as[Boolean].toOption,
       Some(true)
@@ -186,6 +191,14 @@ class OpenAiAdapterSearchSpec extends CatsEffectSuite:
   test("extractSearchInfo: absent on ordinary responses") {
     val resp = parse(okResponse).toOption.get
     assertEquals(adapter.extractSearchInfo(resp), None)
+  }
+
+  test("extractSearchInfo: DashScope nests search_info under choices[0].message") {
+    val resp = parse(
+      """{"choices":[{"message":{"content":"a","search_info":{"search_results":[{"url":"https://e.com/nested"}]}}}]}"""
+    ).toOption.get
+    val info = adapter.extractSearchInfo(resp)
+    assert(info.isDefined, "message-level search_info must be found")
   }
 
   // ── rawArguments preservation (kimi echo source) ─────────────────────
