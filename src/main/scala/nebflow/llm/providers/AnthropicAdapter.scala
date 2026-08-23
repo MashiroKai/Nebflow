@@ -37,7 +37,7 @@ class AnthropicAdapter(
 
   // private[providers] for spec access (pure JSON mapping, no backend needed)
   private[providers] def toAnthropicMessages(messages: List[Message]): List[Json] =
-    mergeConsecutive(messages.filterNot(_.role == MessageRole.System)).map { msg =>
+    mergeConsecutive(pairToolResults(messages.filterNot(_.role == MessageRole.System))).map { msg =>
       val role = msg.role match
         case MessageRole.User => "user"
         case MessageRole.Assistant => "assistant"
@@ -100,6 +100,46 @@ class AnthropicAdapter(
           if filtered.isEmpty then Json.obj("role" -> Json.fromString(role), "content" -> Json.fromString(" "))
           else Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(filtered))
       end match
+    }
+
+  /**
+   * Protocol-level pairing defense for Anthropic tool calls.
+   *
+   * Root cause (2026-08-23 deepseek 422 loop): a user(tool_result) message can
+   * survive context cleanup while its preceding assistant(tool_use) message is
+   * truncated away — the orphaned tool_result then heads the message list and
+   * the provider rejects it (`Each tool_result block must have a corresponding
+   * tool_use block in the previous message`). Observed live: Manager session
+   * started with an orphan `[Output removed to free context space]` result
+   * referencing a yesterday tool_use id → deepseek DOWN/recovered loop.
+   *
+   * Fix: scan the message list, collect every tool_use id seen in assistant
+   * messages (in order), and drop tool_result blocks whose id was never seen.
+   * An assistant message whose tool_use was consumed by cleanup (all remaining
+   * blocks are the now-dangling tool_result's siblings) keeps its text —
+   * dropping ONLY the orphaned result block, never whole messages.
+   */
+  private def pairToolResults(messages: List[Message]): List[Message] =
+    val seen = scala.collection.mutable.HashSet.empty[String]
+    messages.map {
+      case msg @ Message(MessageRole.Assistant, Right(blocks), _, _) =>
+        blocks.foreach {
+          case ContentBlock.ToolUse(id, _, _) => seen += id
+          case _                              => ()
+        }
+        msg
+      case msg @ Message(MessageRole.User, Right(blocks), _, _) =>
+        val paired = blocks.filter {
+          case ContentBlock.ToolResult(toolUseId, _, _) => seen.contains(toolUseId)
+          case _                                        => true
+        }
+        if paired.size == blocks.size then msg
+        else
+          val newBlocks =
+            if paired.isEmpty then List(ContentBlock.Text("[dropped orphaned tool_result: referenced tool_use no longer in history]"))
+            else paired
+          msg.copy(content = Right(newBlocks))
+      case other => other
     }
 
   /** Merge consecutive messages of the same role to prevent tool_use/tool_result pairing issues. */
