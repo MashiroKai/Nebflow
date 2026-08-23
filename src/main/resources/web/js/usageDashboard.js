@@ -599,8 +599,16 @@ function renderSummary() {
   const hit = (tot.totalInput || 0) > 0 ? (tot.totalCacheRead || 0) / tot.totalInput * 100 : null;
 
   const cards = [];
-  cards.push(card(t('usage.total'), fmtTokens(total), String(total),
-    fmtTokens(tot.costEquivalent || 0) + ' · ' + t('usage.costEquivalent')));
+  // total card: sub = "<cost> · 计费等效" — "· 计费等效" kept unbreakable so a
+  // narrow card wraps before the separator instead of mid-phrase; full hint in tooltip.
+  const costFrag = document.createDocumentFragment();
+  costFrag.append(el('span', 'ud-sub-num', fmtTokens(tot.costEquivalent || 0)),
+    document.createTextNode(' '),
+    el('span', 'ud-sub-tag', '· ' + t('usage.costEquivalent')));
+  const totalCard = card(t('usage.total'), fmtTokens(total), String(total), costFrag);
+  const totalSub = totalCard.querySelector('.ud-card-sub');
+  if (totalSub) totalSub.title = t('usage.costEquivalentHint');
+  cards.push(totalCard);
 
   // today + trend vs yesterday same time
   let todaySub = t('usage.noData');
@@ -646,7 +654,8 @@ function card(label, value, title, sub, trend) {
   if (title) c.title = title;
   c.append(l, v);
   if (sub) {
-    const s = el('div', 'ud-card-sub' + (trend ? ' ud-trend' : ''), sub);
+    const s = el('div', 'ud-card-sub' + (trend ? ' ud-trend' : ''));
+    if (typeof sub === 'string') s.textContent = sub; else s.appendChild(sub);
     c.appendChild(s);
   }
   return c;
