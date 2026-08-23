@@ -103,11 +103,11 @@
   font-size: 10px;
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.35;
+  overflow-wrap: break-word;
   margin-top: 1px;
 }
+.ud-card-sub .ud-sub-tag { white-space: nowrap; }
 .ud-trend { color: rgb(var(--sapphire) / 0.9); }
 
 /* ── Controls (v1.3: three independent groups) ───────────────────── */
