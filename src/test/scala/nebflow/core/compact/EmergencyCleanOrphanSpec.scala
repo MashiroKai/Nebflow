@@ -26,14 +26,24 @@ class EmergencyCleanOrphanSpec extends FunSuite:
     )
 
   test("phase-3 truncation with orphaned head tool_result drops the dangling head message") {
-    // Build a history where the tail cut lands exactly between an
+    // Build a history long enough to reach phase 3 (> keepAtEnd*2 messages
+    // after phase 1/2) where the takeRight tail cut lands exactly between an
     // assistant(tool_use) and its user(tool_result): the result becomes head
     // with no preceding tool_use in the kept tail.
     val msgs: List[Message] =
-      List(userText("old task"), assistantToolUseMsg("call_kept_1")) ++
-        List(toolResultMsg("call_kept_1"), userText("more"), assistantText("done"))
-    // keepAtEnd=3 → phase3 keeps [toolResultMsg("call_kept_1"), userText("more"), assistantText("done")]
-    // — the head is an orphaned tool_result (its tool_use call_kept_1 was cut).
+      List(
+        userText("old task"),
+        assistantToolUseMsg("call_kept_a"),
+        toolResultMsg("call_kept_a"), // index 2 — removed by phase 2 (too old)
+        userText("mid"),
+        assistantToolUseMsg("call_kept_b"),
+        toolResultMsg("call_kept_b"), // index 5 — lands at the head of the keepAtEnd=3 tail
+        userText("tail"),
+        assistantText("done")
+      )
+    // keepAtEnd=3 → phase3 keeps the last 3 of the 7 post-phase-2 messages:
+    // [toolResultMsg("call_kept_b"), userText("tail"), assistantText("done")]
+    // — the head is an orphaned tool_result (its tool_use call_kept_b was cut).
     val (cleaned, desc) = CompactUtils.emergencyClean(msgs, keepAtEnd = 3)
     assert(
       !cleaned.headOption.exists(_.content.toOption.toList.flatten.exists(_.isInstanceOf[ContentBlock.ToolResult])),
