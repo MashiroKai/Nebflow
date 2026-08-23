@@ -282,4 +282,82 @@ class WebSearchWiringSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
   }
 
+  // ── 3. #356: deepseek-headed chain routes the search to a capable fallback ──
+
+  test("#356: deepseek chain head + kimi fallback → WebSearch routed to kimi (real result, not Tier 3)") {
+    val system = ActorSystem("ws-route356-test")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val searchInfo = Json.arr(
+        Json.obj(
+          "title" -> "CZT pixel detector".asJson,
+          "url" -> "https://example.com/czt-pixel".asJson,
+          "content" -> "Sub-pixel readout with resistive networks.".asJson
+        )
+      )
+      val sendResp = LlmResponse(
+        reply = "searched",
+        toolCalls = Nil,
+        usage = None,
+        meta = LlmMeta("ws-route356", "WsProbe", "kimi", "k3", 5)
+      ).copy(searchInfo = Some(searchInfo))
+      val llm = new RecordingLlm(
+        List(
+          call("call_ws356", "WebSearch", JsonObject("query" -> "CZT pixel detector sub-pixel readout".asJson)),
+          text("Summarized from kimi provider search.")
+        ),
+        List(sendResp)
+      )
+      // The MAIN chain head is deepseek — no builtin search. The #356
+      // reordering must route the Tier 2 sub-request to kimi (fallback).
+      val mainModel = Some(AgentModelConfig(Some("deepseek/v4"), List("kimi/k3")))
+      val program = for
+        resources <- mkResources(system, tmp, llm, "ws-route356-root")
+        wsEvents <- IO.ref(List.empty[Json])
+        agent <- system.spawn(
+          AgentActor(
+            agentDef = probeDef(mainModel),
+            resources = resources,
+            wsSend = j => wsEvents.update(_ :+ j),
+            depth = 0,
+            parentRef = None,
+            sessionId = Some("ws-route356-session"),
+            sessionName = Some("WsProbe"),
+            safetyMode = "auto-all"
+          ),
+          "ws-route356-actor"
+        )
+        _ <- agent ! AgentCommand.UserInput("search CZT pixel detector sub-pixel readout")
+        _ <- waitFor(wsEvents, j => (j \\ "busy").exists(!_.asBoolean.getOrElse(true)),
+          "turn did not finish", 30000)
+        reqs <- llm.requests.get.map(_.reverse)
+        sendReqs <- llm.sendRequests.get.map(_.reverse)
+      yield (reqs, sendReqs)
+      val (reqs, sendReqs) = program.unsafeRunSync()
+
+      assertEquals(reqs.size, 2, "tool-calling turn: WebSearch call + post-tool summary")
+      assertEquals(sendReqs.size, 1, "exactly one provider search sub-request — routed, not Tier 3")
+      // The sub-request carries the REORDERED model config: kimi leads, so
+      // LlmHandle's candidate pipeline lands on the search-capable provider.
+      assertEquals(
+        sendReqs.head.agentModel,
+        Some(AgentModelConfig(Some("kimi/k3"), List("deepseek/v4")))
+      )
+      assert(sendReqs.head.messages.exists(_.textContent.contains("CZT pixel detector")))
+      // Turn-2 messages carry the kimi-sourced result with provenance + URL —
+      // NOT the "All search engines failed" Tier 3 degrade.
+      val results = toolResultsOf(reqs(1), "call_ws356")
+      assertEquals(results.size, 1)
+      assert(results.head.contains("Search source: provider:kimi"), results.head.take(120))
+      assert(results.head.contains("https://example.com/czt-pixel"))
+      assert(!results.head.contains("All search engines failed"), "Tier 3 degrade must NOT happen when kimi is available")
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+  }
+
 end WebSearchWiringSpec
