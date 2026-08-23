@@ -115,7 +115,7 @@ class AnthropicAdapter(
    *
    * Fix: scan the message list, collect every tool_use id seen in assistant
    * messages (in order), and drop tool_result blocks whose id was never seen.
-   * An assistant message whose tool_use was consumed by cleanup (all remaining
+   * A user message whose tool_use was consumed by cleanup (all remaining
    * blocks are the now-dangling tool_result's siblings) keeps its text —
    * dropping ONLY the orphaned result block, never whole messages.
    */
