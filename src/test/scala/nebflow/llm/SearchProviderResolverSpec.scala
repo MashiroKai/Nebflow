@@ -76,6 +76,51 @@ class SearchProviderResolverSpec extends CatsEffectSuite:
     )
   }
 
+  // ── #356: search-aware chain reordering ──────────────────────────────
+
+  test("searchOrderedModel: search-capable providers lead, original relative order preserved") {
+    // deepseek (no builtin search) heads the chain; qwen/kimi (capable) are
+    // fallbacks → qwen first (original order among capable), kimi second,
+    // deepseek sinks to the tail.
+    assertEquals(
+      SearchProviderResolver.searchOrderedModel(
+        Some(AgentModelConfig(Some("deepseek/v4"), List("qwen/qwen3.8-max", "kimi/k3")))
+      ),
+      Some(AgentModelConfig(Some("qwen/qwen3.8-max"), List("kimi/k3", "deepseek/v4")))
+    )
+    // capable members keep their relative order among themselves.
+    assertEquals(
+      SearchProviderResolver.searchOrderedModel(
+        Some(AgentModelConfig(Some("deepseek/v4"), List("kimi/k3", "qwen/qwen3.8-max")))
+      ),
+      Some(AgentModelConfig(Some("kimi/k3"), List("qwen/qwen3.8-max", "deepseek/v4")))
+    )
+  }
+
+  test("searchOrderedModel: chain head already capable → head unchanged (zero behavior change)") {
+    // Stable partition: the incumbent zhipu-headed path must not move.
+    assertEquals(
+      SearchProviderResolver.searchOrderedModel(
+        Some(AgentModelConfig(Some("zhipu/glm-5.3"), List("deepseek/v4", "kimi/k3")))
+      ),
+      Some(AgentModelConfig(Some("zhipu/glm-5.3"), List("kimi/k3", "deepseek/v4")))
+    )
+    // Single capable member, no fallbacks → identical config.
+    assertEquals(
+      SearchProviderResolver.searchOrderedModel(Some(AgentModelConfig(Some("kimi/k3"), Nil))),
+      Some(AgentModelConfig(Some("kimi/k3"), Nil))
+    )
+  }
+
+  test("searchOrderedModel: no search-capable member → chain unchanged (still Tier 3 via head)") {
+    assertEquals(
+      SearchProviderResolver.searchOrderedModel(
+        Some(AgentModelConfig(Some("deepseek/v4"), List("107/glm-5.2-107")))
+      ),
+      Some(AgentModelConfig(Some("deepseek/v4"), List("107/glm-5.2-107")))
+    )
+  }
+
   // ── kimi echo byte-identity ──────────────────────────────────────────
 
   test("kimiEchoContent: raw arguments preserved byte-identically (formatting, order)") {
@@ -287,6 +332,64 @@ class SearchProviderResolverSpec extends CatsEffectSuite:
       .flatMap { result =>
         assertEquals(result, None)
         llm.requests.get.map(reqs => assertEquals(reqs.size, 0, "Tier 3 directly — no provider sub-request"))
+      }
+  }
+
+  test("#356: deepseek-headed chain with kimi fallback → routed to kimi (builtin search), real result") {
+    // The MAIN chain head (deepseek) has no builtin search, but the reordered
+    // chain leads with kimi — the Tier 2 sub-request lands on kimi, whose
+    // structured search evidence produces a real result instead of Tier 3.
+    val kimiInfo = Json.obj(
+      "search_results" -> Json.arr(
+        Json.obj("title" -> "CZT pixel detector".asJson, "url" -> "https://example.com/czt".asJson, "snippet" -> "sub-pixel readout".asJson)
+      )
+    )
+    val llm = new ScriptedLlm(List(LlmResponse("ans", Nil, None, meta("kimi"), Some(kimiInfo))))
+    val model = Some(AgentModelConfig(Some("deepseek/v4"), List("kimi/k3")))
+    SearchProviderResolver
+      .executeProviderSearchFor("CZT pixel detector sub-pixel readout", Some(llm), "s", "a", model)
+      .flatMap { result =>
+        assert(result.isDefined, "deepseek-headed chain must route to kimi and produce a real result")
+        assert(result.get.contains("provider:kimi"), result.get)
+        assert(result.get.contains("https://example.com/czt"), result.get)
+        llm.requests.get.map { reqs =>
+          assertEquals(reqs.size, 1, "one provider sub-request, on the reordered chain")
+          // The sub-request carries the REORDERED model config — LlmHandle's
+          // candidate pipeline (health/gate/fallback) then lands on kimi.
+          assertEquals(reqs.head.agentModel, Some(AgentModelConfig(Some("kimi/k3"), List("deepseek/v4"))))
+        }
+      }
+  }
+
+  test("#356: only non-search providers in chain → Tier 3 directly, LLM never called") {
+    // All chain members lack builtin search (deepseek + 107 gateway) — the
+    // reordered chain is identical and its head still has no capability.
+    val llm = new ScriptedLlm(List(LlmResponse("x", Nil, None, meta("deepseek"))))
+    val model = Some(AgentModelConfig(Some("deepseek/v4"), List("107/glm-5.2-107")))
+    SearchProviderResolver
+      .executeProviderSearchFor("q", Some(llm), "s", "a", model)
+      .flatMap { result =>
+        assertEquals(result, None)
+        llm.requests.get.map(reqs => assertEquals(reqs.size, 0, "Tier 3 — no search-capable member"))
+      }
+  }
+
+  test("#356: chain head already capable → sub-request on the ORIGINAL head (regression-free)") {
+    // zhipu heads the chain: reordering keeps zhipu at the head; the
+    // sub-request must still carry a zhipu-led reordered config.
+    val zhipuInfo = Json.arr(
+      Json.obj("title" -> "t".asJson, "url" -> "https://example.com/z".asJson, "content" -> "s".asJson)
+    )
+    val llm = new ScriptedLlm(List(LlmResponse("ans", Nil, None, meta("zhipu"), Some(zhipuInfo))))
+    val model = Some(AgentModelConfig(Some("zhipu/glm-5.3"), List("deepseek/v4", "kimi/k3")))
+    SearchProviderResolver
+      .executeProviderSearchFor("q", Some(llm), "s", "a", model)
+      .flatMap { result =>
+        assert(result.isDefined)
+        assert(result.get.contains("provider:zhipu"))
+        llm.requests.get.map(reqs =>
+          assertEquals(reqs.head.agentModel, Some(AgentModelConfig(Some("zhipu/glm-5.3"), List("kimi/k3", "deepseek/v4"))))
+        )
       }
   }
 

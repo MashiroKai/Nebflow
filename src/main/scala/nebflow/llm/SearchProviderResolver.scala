@@ -51,6 +51,15 @@ end SearchRoute
   *     when the model still calls WebSearch, a dedicated provider search
   *     request is issued and its results returned with provenance.
   *
+  * #356 (2026-08-23): the interception's Tier 2 decision is chain-WIDE, not
+  * chain-head-bound. The model chain is reordered (search-capable providers
+  * lead, original relative order preserved, the rest sink to the tail) so a
+  * deepseek-headed chain whose fallbacks include kimi routes the search to
+  * kimi — only when NO chain member has builtin search do we degrade to
+  * Tier 3. A chain whose head already has search capability reorders to the
+  * same head (stable partition) — zero behavioral change on the incumbent
+  * paths.
+  *
   * Anti-hallucination evidence rule: a provider search only counts as
   * successful when the response carries PROOF of a real search — structured
   * searchInfo (zhipu `web_search` field / qwen `search_info` field) with at
@@ -98,26 +107,51 @@ object SearchProviderResolver:
       case Some(kind) => SearchRoute.ProviderSearch(providerId, kind)
       case None       => SearchRoute.BuiltinAggregated
 
-  /** Head provider id of a model chain: agent's preferred, else first
-    * fallback, else the global default preset's preferred. Used by the
-    * WebSearch interception to decide Tier 2 vs Tier 3. */
-  def chainHeadProviderId(agentModel: Option[AgentModelConfig]): Option[String] =
-    val agentChain = agentModel.toList.flatMap(m => m.preferred.toList ++ m.fallbacks)
-    val chain = agentChain match
+  /** Full model-ref chain for a WebSearch decision: agent's preferred ++
+    * fallbacks, else the global default preset chain (mirrors
+    * ProviderRegistry.getCandidates' fallback semantics). */
+  private def modelChainRefs(agentModel: Option[AgentModelConfig]): List[String] =
+    agentModel.toList.flatMap(m => m.preferred.toList ++ m.fallbacks) match
       case nonEmpty @ _ :: _ => nonEmpty
       case Nil =>
-        // Agent has no model config → global default preset chain (mirrors
-        // ProviderRegistry.getCandidates' fallback semantics).
         try
           val (am, _) = nebflow.core.presets.PresetStore().resolve(None, None)
           am.preferred.toList ++ am.fallbacks
         catch case _: Exception => Nil
-    chain.headOption.flatMap { ref =>
-      try
-        val (providerId, _) = Config.parseModelRef(ref)
-        Some(providerId)
-      catch case _: Exception => None
-    }
+
+  private def providerIdOf(ref: String): Option[String] =
+    try Some(Config.parseModelRef(ref)._1)
+    catch case _: Exception => None
+
+  /** Head provider id of a model chain: agent's preferred, else first
+    * fallback, else the global default preset's preferred. Used by the
+    * WebSearch interception to decide Tier 2 vs Tier 3. */
+  def chainHeadProviderId(agentModel: Option[AgentModelConfig]): Option[String] =
+    modelChainRefs(agentModel).headOption.flatMap(providerIdOf)
+
+  /** Reorder the model chain for a Tier 2 provider search (#356): providers
+    * with a builtin search capability float to the front (original relative
+    * order preserved), the rest sink to the tail. The LlmHandle pipeline
+    * (health/gate/fallback) then naturally lands on the FIRST AVAILABLE
+    * search-capable provider — a deepseek-headed chain (no builtin search)
+    * whose fallbacks include kimi now routes the search to kimi instead of
+    * degrading straight to Tier 3. When every search-capable provider is
+    * down/unavailable the request falls through to a non-search provider →
+    * no search evidence → Tier 3 (existing degrade semantics, acceptance #3).
+    *
+    * A chain whose head already has search capability reorders to the same
+    * head (stable partition) — zero behavioral change for the incumbent
+    * zhipu/qwen/kimi paths (acceptance #2). Returns None only when the
+    * chain is empty (nothing to route → caller goes Tier 3 directly). */
+  def searchOrderedModel(agentModel: Option[AgentModelConfig]): Option[AgentModelConfig] =
+    val refs = modelChainRefs(agentModel)
+    if refs.isEmpty then None
+    else
+      val (capable, rest) = refs.partition(ref =>
+        providerIdOf(ref).exists(pid => capabilityFor(pid, "").isDefined)
+      )
+      val ordered = capable ++ rest
+      Some(AgentModelConfig(Some(ordered.head), ordered.tail))
 
   /** kimi echo content: the model's arguments, byte-identical. Falls back to
     * compact re-serialization only when no raw string survived (hand-built
@@ -186,10 +220,19 @@ object SearchProviderResolver:
     llm match
       case None => IO.pure(None)
       case Some(handle) =>
-        chainHeadProviderId(agentModel).flatMap(capabilityFor(_, "")) match
-          case None => IO.pure(None) // Tier 3 directly (deepseek/107/unknown)
-          case Some(kind) =>
-            execute(query, handle, sessionId, agentId, agentModel, kind)
+        // #356: the search sub-request must not be bound to the MAIN chain
+        // head's search capability. Reorder the chain so search-capable
+        // providers lead — the full LlmHandle pipeline (health/gate/fallback)
+        // then lands on the first AVAILABLE search-capable provider. Only
+        // when NO chain member has builtin search (or the chain is empty)
+        // do we go Tier 3 directly.
+        searchOrderedModel(agentModel) match
+          case None => IO.pure(None) // Tier 3 directly (no chain / deepseek-only / 107 / unknown)
+          case Some(ordered) =>
+            chainHeadProviderId(Some(ordered)).flatMap(capabilityFor(_, "")) match
+              case None => IO.pure(None) // no search-capable member in chain → Tier 3
+              case Some(kind) =>
+                execute(query, handle, sessionId, agentId, Some(ordered), kind)
 
   private def execute(
       query: String,
