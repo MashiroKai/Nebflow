@@ -257,7 +257,7 @@ export function loadMsgs() {
 // ---------- Replay all stored messages into the DOM (localStorage fallback) ----------
 // Builds DOM directly (doesn't call render functions from chat.js) to avoid
 // circular deps and to avoid re-saving.
-export function restoreFromStorage() {
+export function restoreFromStorage(opts = {}) {
   const chat = activeView?.dom?.chat;
   if (!chat) return;
   const msgs = loadMsgs();
@@ -554,7 +554,7 @@ export function restoreFromStorage() {
       chat.appendChild(row);
     }
   });
-  buildTurnGroupsForHistory(chat); // #346 E4: rebuild turn groups from flat rows
+  buildTurnGroupsForHistory(chat, { busyTail: !!opts.busyTail }); // #346 E4: rebuild turn groups from flat rows
   chat.scrollTop = chat.scrollHeight;
   if (activeView) activeView.stream.scrollSnapped = true;
   // Schedule deferred scrolls to catch async iframe height changes from card rendering.
@@ -567,7 +567,7 @@ export function restoreFromStorage() {
 // Same logic as restoreFromStorage but takes messages array directly (from backend).
 // Uses DocumentFragment to batch DOM insertions and avoids redundant scroll operations.
 export function restoreFromBackendHistory(msgs, opts = {}) {
-  const { scrollToBottom = true } = opts;
+  const { scrollToBottom = true, busyTail = false } = opts;
   const chat = activeView.dom.chat;
   const fragment = document.createDocumentFragment();
   let skipMsg = false;
@@ -887,7 +887,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     }
   });
   chat.appendChild(fragment);
-  buildTurnGroupsForHistory(chat); // #346 E4: rebuild turn groups from flat rows
+  buildTurnGroupsForHistory(chat, { busyTail }); // #346 E4: rebuild turn groups from flat rows
   // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
   // followed by deferred rAF (catches late layout changes from streaming state restoration, etc.).
   // Caller can set scrollToBottom=false (e.g. scroll-up pagination preserves position).

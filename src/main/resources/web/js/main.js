@@ -1146,7 +1146,11 @@ onMessage('historyPage', (msg, view) => {
     view.pagination.offset = msg.offset;
     view.pagination.total = msg.total;
     view.pagination.hasMore = msg.hasMore;
-    restoreFromBackendHistory(msg.messages);
+    // #346 boundary fix (2026-08-24): when the session is still mid-turn at
+    // reload/reconnect, the trailing segment must stay flat — grouping it
+    // would stamp it 'failed' and strand a zombie group (see turnGroup.js).
+    const isStillBusy = state.busySessionIds.has(sid);
+    restoreFromBackendHistory(msg.messages, { busyTail: isStillBusy });
 
     // Detect if the agent is waiting for AskUser — in that case it's NOT actively streaming.
     const histMsgs = msg.messages;
@@ -1163,7 +1167,7 @@ onMessage('historyPage', (msg, view) => {
     }
 
     // Re-create streaming/completed state from sessionTexts/sessionThinkingBuffers/pendingRestore.
-    const isStillBusy = state.busySessionIds.has(sid);
+    // (isStillBusy computed above for the busyTail history-restore hint.)
     if (!isAskUserPending && !isAskPermissionPending) {
       // If the backend history already includes the completed message, clean up pendingRestore
       // to avoid duplication. Check last AI message text+thinking match.
@@ -1922,7 +1926,7 @@ onMessage('messageRecalled', (msg) => {
           cleanupCardIframes(activeView.dom.chat);
           activeView.dom.chat.innerHTML = '';
         }
-        restoreFromStorage();
+        restoreFromStorage({ busyTail: state.busySessionIds.has(sid) });
       });
     }
   }
