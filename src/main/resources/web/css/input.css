@@ -26,6 +26,11 @@
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
     0px 2px 8px rgba(0, 0, 0, 0.04),
     0px 8px 24px rgba(0, 0, 0, 0.06);
+  /* 2026-08-24 frozen-input spec §4: freeze/unfreeze material transition —
+     300ms Material standard easing on the three painted properties. */
+  transition: border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    background 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 #input-bar::before {
   content: '';
@@ -57,19 +62,37 @@
   outline: 2px dashed var(--color-primary);
   outline-offset: -2px;
 }
-/* Frozen (freeze-schedule, task b): the input bar shows a cold sapphire tint
-   while the session's agent is parked at a dispatch boundary. The placeholder
-   carries the wake hint; the tint is the visual "agent is frozen" cue. */
+/* Frozen "ice-sealed" input bar (2026-08-24 spec, user ruling: the bar itself
+   carries the frozen state — no standalone status row). Cold sapphire glass:
+   stronger tint + border, a 3px frost ring, a frost glow, and the refraction
+   line brightened to an ice edge. Frozen ≠ disabled: the field stays fully
+   editable and the send button keeps its green (send = wake). Zero new color
+   tokens — sapphire/sapphire-glow alpha variants only. */
 #input-bar.frozen,
 .fa-input-bar.frozen {
-  border-color: rgb(var(--sapphire) / 0.4);
-  background: rgb(var(--sapphire) / 0.06);
+  border-color: rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.10);
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.2),
-    0 0 0 3px rgb(var(--sapphire) / 0.08),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0 0 0 3px rgb(var(--sapphire) / 0.10),
+    0 0 18px rgb(var(--sapphire-glow) / 0.22),
     0px 2px 8px rgba(0, 0, 0, 0.04),
     0px 8px 24px rgba(0, 0, 0, 0.06);
-  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+#input-bar.frozen::before,
+.fa-input-bar.frozen::before {
+  background: linear-gradient(90deg,
+    transparent 10%,
+    rgb(var(--sapphire-glow) / 0.55) 50%,
+    transparent 90%
+  );
+}
+/* Ice-blue placeholder with a frost halo (text-shadow carries the "frosted
+   glass text" feel — blurring the glyphs themselves is forbidden). */
+#input-bar.frozen #input::placeholder,
+.fa-input-bar.frozen .fa-input::placeholder {
+  color: rgb(var(--sapphire) / 0.9);
+  text-shadow: 0 0 8px rgb(var(--sapphire-glow) / 0.35);
 }
 #attachment-preview {
   display: flex;
@@ -154,6 +177,8 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .att-taskref { animation: none; }
+  /* frozen spec §4: material transition compresses to ≤0.01s */
+  #input-bar, .fa-input-bar { transition-duration: 0.01s !important; }
 }
 .att-error {
   background: rgba(244, 67, 54, 0.12);
@@ -703,6 +728,31 @@
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 2px 8px rgba(0, 0, 0, 0.20),
       0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  /* Frozen ice material — dark values (spec §5.1/§5.2) */
+  #input-bar.frozen,
+  .fa-input-bar.frozen {
+    border-color: rgb(var(--sapphire) / 0.50);
+    background: rgb(var(--sapphire) / 0.14);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0 0 0 3px rgb(var(--sapphire) / 0.14),
+      0 0 18px rgb(var(--sapphire-glow) / 0.30),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  #input-bar.frozen::before,
+  .fa-input-bar.frozen::before {
+    background: linear-gradient(90deg,
+      transparent 10%,
+      rgb(var(--sapphire-glow) / 0.40) 50%,
+      transparent 90%
+    );
+  }
+  #input-bar.frozen #input::placeholder,
+  .fa-input-bar.frozen .fa-input::placeholder {
+    color: rgb(var(--sapphire-glow) / 0.9);
+    text-shadow: 0 0 8px rgb(var(--sapphire-glow) / 0.45);
   }
   #input {
     color: #e0e2e5;
