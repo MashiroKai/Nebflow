@@ -131,6 +131,10 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   padding: 8px 16px;
   border-top: 1px solid var(--glass-border);
   position: relative;
+  /* 2026-08-24 frozen-input spec §4: 300ms material transition */
+  transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .flow-agent-footer::before {
   content: '';
@@ -161,6 +165,24 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 /* Frozen (work-schedule park, freeze-spec §3.2): sapphire dot + tint ring,
    sapphire task text — distinct from running (pulse green) / done (green) */
+/* 2026-08-24 frozen-input spec §5.3: the footer container itself takes the
+   ice-blue material (weaker frost glow than the main input bar — hierarchy).
+   Zero new tokens: sapphire/sapphire-glow alpha variants only. */
+.flow-agent-footer.frozen {
+  background: rgb(var(--sapphire) / 0.08);
+  border-top-color: rgb(var(--sapphire) / 0.30);
+  box-shadow: 0 0 12px rgb(var(--sapphire-glow) / 0.18);
+}
+@media (prefers-color-scheme: dark) {
+  .flow-agent-footer.frozen {
+    background: rgb(var(--sapphire) / 0.12);
+    border-top-color: rgb(var(--sapphire) / 0.35);
+    box-shadow: 0 0 12px rgb(var(--sapphire-glow) / 0.24);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-agent-footer { transition-duration: 0.01s !important; }
+}
 .flow-agent-footer.frozen .fa-status-dot {
   background: rgb(var(--sapphire)); opacity: 1;
   box-shadow: 0 0 0 3px rgb(var(--sapphire) / 0.15);

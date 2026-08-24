@@ -32,7 +32,7 @@ import {
   appendAskAnswer, finishAskAnswer, renderAskError,
   appendThinkingDelta, finishThinking,
   appendToolStreamDelta, cancelToolStreamRAF,
-  showFrozenStatus, hideFrozenStatus
+  formatResumeClock
 } from './chat.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
@@ -293,14 +293,14 @@ function clearBusyFor(msg) {
     delete state.sessionBusyTimeouts[sid];
   }
   // Freeze fallback (spec §7 risk table): a terminal event while frozen must
-  // clear the frozen marker + status bar too — 'done' arriving without a
+  // clear the frozen marker + input-bar visual too — 'done' arriving without a
   // resumed event would otherwise leave a stale frozen bar over a dead turn.
   if (sid && state.frozenSessions.has(sid)) {
     state.frozenSessions.delete(sid);
-    hideFrozenStatus(sid);
     const fv = findViewBySessionId(sid);
     if (fv && fv.dom && fv.dom.inputBar) {
       fv.dom.inputBar.classList.remove('frozen');
+      delete fv.dom.inputBar.dataset.frozen;
       // Restore the mode-appropriate placeholder when the frozen session is
       // the one on screen (otherwise it self-heals on next view activation).
       if (fv === activeView && fv.dom.input) {
@@ -352,11 +352,18 @@ onMessage('frozen', (msg) => {
   const v = findViewBySessionId(sid);
   if (v) {
     setActiveView(v);
-    showFrozenStatus(sid, msg.resumeAt || null);
-    // Wake hint in the input box (spec §4 behavior 4)
-    if (v.dom && v.dom.input) v.dom.input.placeholder = t('chat.frozenWakeHint');
-    // Frozen visual state on the input bar — cold sapphire tint (task b)
-    if (v.dom && v.dom.inputBar) v.dom.inputBar.classList.add('frozen');
+    // 2026-08-24 ruling: no standalone status bar — the input bar itself
+    // carries the frozen state (ice-blue material + placeholder).
+    if (v.dom && v.dom.inputBar) {
+      v.dom.inputBar.classList.add('frozen');
+      v.dom.inputBar.dataset.frozen = 'true';
+    }
+    if (v.dom && v.dom.input) {
+      const clock = formatResumeClock(msg.resumeAt || null);
+      v.dom.input.placeholder = clock
+        ? t('chat.frozenPlaceholder', { time: clock })
+        : t('chat.frozenPlaceholderNoTime');
+    }
   }
 });
 
@@ -368,12 +375,64 @@ onMessage('resumed', (msg) => {
   const v = findViewBySessionId(sid);
   if (v) {
     setActiveView(v);
-    hideFrozenStatus(sid);
-    if (v.dom && v.dom.inputBar) v.dom.inputBar.classList.remove('frozen');
+    if (v.dom && v.dom.inputBar) {
+      v.dom.inputBar.classList.remove('frozen');
+      delete v.dom.inputBar.dataset.frozen;
+    }
     // Restore the mode-appropriate placeholder (default / skill / ask / plan)
     import('./input.js').then(({ applyInputModes }) => applyInputModes());
   }
 });
+
+// ── ⑩ Local schedule freeze (2026-08-24 ruling) ───────────────────────────
+// "处于冻结时间段，如果没有在工作过程（idle），也应该立即冻结消息输入框" —
+// the frozen display follows the schedule window itself, not just the
+// backend's park events (which only fire at dispatch boundaries mid-work).
+// Determined locally from the serverConfig-echoed schedule; the event path
+// (frozen/resumed) keeps authority over parked (frozenSessions) sessions.
+function freezeWindowState() {
+  const ws = state.workSchedule;
+  if (!ws || !ws.enabled || !Array.isArray(ws.segments)) return null;
+  const now = new Date();
+  const cur = now.getHours() * 60 + now.getMinutes();
+  for (const seg of ws.segments) {
+    const [sh, sm] = String(seg.start || '').split(':').map(Number);
+    const [eh, em] = String(seg.end || '').split(':').map(Number);
+    if ([sh, sm, eh, em].some(Number.isNaN)) continue;
+    const s = sh * 60 + sm, e = eh * 60 + em;
+    // Blacklist semantics; cross-midnight segments (start > end) are legal.
+    const inside = s < e ? (cur >= s && cur < e) : (cur >= s || cur < e);
+    if (inside) {
+      const end = new Date(now);
+      end.setHours(eh, em, 0, 0);
+      if (end <= now) end.setDate(end.getDate() + 1); // cross-midnight → tomorrow
+      return { resumeAt: end.getTime() };
+    }
+  }
+  return null;
+}
+
+function applyLocalFreeze() {
+  const v = activeView;
+  const bar = v && v.dom && v.dom.inputBar;
+  if (!bar || !v.sessionId) return;
+  const win = freezeWindowState();
+  const parked = state.frozenSessions.has(v.sessionId); // event path owns it
+  const busy = state.busySessionIds.has(v.sessionId);   // woken mid-window: working
+  if (win && !parked && !busy) {
+    if (!bar.classList.contains('frozen')) {
+      bar.classList.add('frozen');
+      bar.dataset.frozen = 'true';
+      if (v.dom.input) v.dom.input.placeholder = t('chat.frozenPlaceholder', { time: formatResumeClock(win.resumeAt) });
+    }
+  } else if ((!win || busy) && !parked && bar.classList.contains('frozen')) {
+    bar.classList.remove('frozen');
+    delete bar.dataset.frozen;
+    import('./input.js').then(({ applyInputModes }) => applyInputModes());
+  }
+}
+// Window boundary crossings (window start/end) without any event: tick.
+setInterval(applyLocalFreeze, 60000);
 
 // Sub-agent freeze: mark the sessionBgAgents entry so the bg-agent dropdown
 // badge reflects the parked state (agentFrozen carries agentId; bgAgentPopup
@@ -1596,6 +1655,8 @@ window.addEventListener('nebflow-session-change', (e) => {
   refreshExplorer(e.detail.sessionId);
   refreshScheduledTasks(e.detail.sessionId);
   if (e.detail.sessionId) sendWs({ type: 'getTaskList', sessionId: e.detail.sessionId });
+  // ⑩ the frozen input-bar visual follows the newly activated session.
+  applyLocalFreeze();
 });
 
 onMessage('treeBranchMounted', () => {
@@ -1795,6 +1856,8 @@ onMessage('serverConfig', (msg, view) => {
   }
   if (msg.workSchedule) {
     state.workSchedule = msg.workSchedule;
+    // ⑩ schedule change re-evaluates the local freeze display immediately.
+    applyLocalFreeze();
     // Re-render the settings panel if open so the schedule editor echoes the
     // authoritative server config (freeze-schedule spec F2/F5).
     const settingsOverlay = document.getElementById('settings-overlay');
@@ -1977,6 +2040,9 @@ onMessage('sessionBusy', (msg, view) => {
       clearStatus();
     }
   }
+  // ⑩ busy start (woken mid-window) drops the frozen visual; busy end (idle
+  // again inside the window) restores it.
+  applyLocalFreeze();
 });
 
 // --- Task list ---

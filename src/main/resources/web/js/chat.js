@@ -212,73 +212,18 @@ export function clearStatus() {
   stopSpinner();
 }
 
-// ---------- Freeze status bar (work schedule, freeze-schedule spec §3.2) ----
-// The legacy statusWrap container is never built (setStatus above is a
-// compatibility no-op), so the frozen state gets its own element appended to
-// the chat body — replaces the busy spinner's visual role while the agent is
-// parked at a dispatch boundary. Per-session map so popups/session switches
-// never cross-contaminate.
-const frozenStatusEls = new Map();
-
-function formatResumeClock(resumeAt) {
+// ---------- Freeze visuals (work schedule, freeze-schedule spec §3.2) ------
+// 2026-08-24 ruling: the standalone .frozen-status bar is RETIRED — the input
+// bar itself carries the frozen state (ice-blue material + placeholder). Only
+// the resume-clock formatter survives (shared by the event path and the
+// schedule-window local path in main.js).
+export function formatResumeClock(resumeAt) {
   if (!resumeAt) return '';
   const d = new Date(resumeAt);
   if (Number.isNaN(d.getTime())) return '';
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
   return `${hh}:${mm}`;
-}
-
-export function showFrozenStatus(sid, resumeAtMillis) {
-  hideFrozenStatus(sid);
-  const v = findViewBySessionId(sid);
-  if (!v || !v.dom.chat) return;
-  const el = document.createElement('div');
-  el.className = 'frozen-status';
-  el.dataset.sid = sid;
-  const clock = formatResumeClock(resumeAtMillis);
-  const text = clock
-    ? t('chat.frozen', { time: clock })
-    : t('chat.frozenNoTime');
-  const hint = document.createElement('div');
-  hint.className = 'frozen-wake-hint';
-  hint.textContent = t('chat.frozenHint');
-  const icon = document.createElement('div');
-  icon.className = 'frozen-icon';
-  const textEl = document.createElement('div');
-  textEl.className = 'frozen-text';
-  textEl.textContent = text;
-  el.appendChild(icon);
-  const body = document.createElement('div');
-  body.appendChild(textEl);
-  body.appendChild(hint);
-  el.appendChild(body);
-  // Global cancel (task c): clicking disables the schedule — the window becomes
-  // permanently open (backend fail-safe), FreezeScheduler wakes every frozen
-  // agent. NOT a per-agent unfreeze; the freeze setting is global (spec D5).
-  const cancelBtn = document.createElement('button');
-  cancelBtn.className = 'frozen-cancel-btn';
-  cancelBtn.type = 'button';
-  cancelBtn.textContent = t('chat.frozenCancel');
-  cancelBtn.title = t('chat.frozenCancel');
-  cancelBtn.addEventListener('click', () => {
-    const segs = Array.isArray(state.workSchedule && state.workSchedule.segments)
-      ? state.workSchedule.segments : [];
-    sendWs({ type: 'setWorkSchedule', workSchedule: { enabled: false, segments: segs } });
-    window.__showToast?.(t('chat.frozenCanceled'), 'success');
-  });
-  el.appendChild(cancelBtn);
-  v.dom.chat.appendChild(el);
-  frozenStatusEls.set(sid, el);
-  smartScroll();
-}
-
-export function hideFrozenStatus(sid) {
-  const el = frozenStatusEls.get(sid);
-  if (el) {
-    el.remove();
-    frozenStatusEls.delete(sid);
-  }
 }
 
 export function renderRetryStatus(msg) {
