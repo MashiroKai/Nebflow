@@ -1677,13 +1677,18 @@ object AgentCore:
    * Fixed tools for a given agent: base tools plus category-specific tools.
    * These are auto-injected and should NOT be stored in agent.json.
    *
-   * - Team agents: BaseTools + Mail (communication primitive)
-   * - Flow agents: BaseTools + FlowReport (no Mail)
-   * - Standalone agents: BaseTools only (no Mail, no FlowReport)
+   * - Team agents: BaseTools + Mail + SubTask (user ruling 2026-08-24:
+   *   team members get SubTask at the mechanism layer — relying on manual
+   *   agent.json declarations is error-prone; html-deck-studio missed it for
+   *   all four members). SubTask workers are still stripped of it downstream
+   *   (isSubTaskWorker leaf rule in buildAllowedToolSet).
+   * - Flow agents: BaseTools + FlowReport (no Mail, no SubTask — flow nodes
+   *   are leaves)
+   * - Standalone agents: BaseTools only (no Mail, no SubTask)
    */
   def fixedToolsFor(agentDef: AgentDef): Set[String] =
     agentDef.category match
-      case "team" => BaseTools + "Mail"
+      case "team" => BaseTools + "Mail" + "SubTask"
       case "flow" => BaseTools + "FlowReport"
       case _ => BaseTools
 

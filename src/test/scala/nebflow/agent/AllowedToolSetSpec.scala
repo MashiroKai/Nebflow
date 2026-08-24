@@ -12,6 +12,8 @@ import nebflow.core.tools.ToolRegistry
  *   - a concrete tools list → those tools + fixed tools (base + category-specific)
  *   - "*" → all registered tools
  *   - Mail is team-only (auto-injected for team agents, never for flow/standalone)
+ *   - SubTask is team-only (user ruling 2026-08-24: auto-injected at the
+ *     mechanism layer — manual agent.json declarations are error-prone)
  *   - FlowReport is flow-only
  *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate)
  *   - FlowTrigger is whitelist-driven: present iff agentDef.flows is non-empty
@@ -30,12 +32,12 @@ class AllowedToolSetSpec extends FunSuite:
   private def mkDef(name: String, tools: List[String], mcpServers: List[String] = Nil): AgentDef =
     AgentDef(name = name, description = "", tools = tools, systemPrompt = "", mcpServers = mcpServers)
 
-  test("team agent concrete tools list yields those tools + base + Mail"):
+  test("team agent concrete tools list yields those tools + base + Mail + SubTask"):
     val defn = mkDef("researcher", List("Read", "Glob", "Grep")).copy(category = "team")
     val allowed = CoreProbe.allowed(defn)
     assertEquals(
       allowed,
-      Set("Read", "Glob", "Grep", "Write", "Edit", "Bash", "Issue", "Mail")
+      Set("Read", "Glob", "Grep", "Write", "Edit", "Bash", "Issue", "Mail", "SubTask")
     )
 
   test("standalone agent gets base fixed tools but NOT Mail"):
@@ -173,6 +175,53 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Mail"), "team agent keeps Mail")
     assert(allowed.contains("SubTask"), "team agent keeps SubTask")
+
+  // ===== SubTask team auto-injection (user ruling 2026-08-24) =====
+
+  test("team member WITHOUT explicit SubTask gets it auto-injected"):
+    // The ruling's core case: a team member whose agent.json tools list omits
+    // SubTask must still have it (html-deck-studio missed it for all four
+    // members; manual declaration is error-prone).
+    val defn = mkDef("visual-reviewer", List("Read", "Grep", "Bash")).copy(category = "team")
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("SubTask"), "team member gets SubTask without declaring it")
+    assert(allowed.contains("Mail"), "team member keeps Mail")
+    assert(allowed.contains("Read"), "declared tools unaffected")
+
+  test("team member with '*' wildcard keeps SubTask"):
+    val defn = mkDef("omni-team", List("*")).copy(category = "team")
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("SubTask"), "wildcard team member keeps SubTask")
+
+  test("standalone agents do NOT get SubTask auto-injected"):
+    val solo = mkDef("solo", List("Read", "Grep"))
+    val allowed = CoreProbe.allowed(solo)
+    assert(!allowed.contains("SubTask"), "standalone agent has no SubTask (leaf — no team context)")
+    // Explicit listing still works (opt-in), same as Mail for standalone.
+    val explicit = mkDef("solo-explicit", List("Read", "SubTask"))
+    assert(CoreProbe.allowed(explicit).contains("SubTask"), "standalone explicitly listing SubTask keeps it")
+
+  test("flow agents do NOT get SubTask auto-injected"):
+    val flow = mkDef("scanner", List("Read", "Grep")).copy(category = "flow")
+    val allowed = CoreProbe.allowed(flow)
+    assert(!allowed.contains("SubTask"), "flow node is a leaf — no SubTask")
+    assert(!allowed.contains("Mail"), "flow node keeps the structural Mail block")
+
+  test("SubTask worker stripped of SubTask even when auto-injected team member"):
+    // A SubTask worker self-clones its team-member def (category=team →
+    // SubTask auto-injected) but the isSubTaskWorker leaf rule must still
+    // strip it — workers cannot delegate further.
+    val defn = mkDef("backend", List("Read", "Grep")).copy(category = "team")
+    val allowed = CoreProbe.allowed(defn, isSubTaskWorker = true)
+    assert(!allowed.contains("SubTask"), "worker: SubTask stripped despite team category")
+    assert(!allowed.contains("Mail"), "worker: Mail stripped")
+    assert(allowed.contains("Read"), "worker: domain tools kept")
+
+  test("Nebula is not affected by the team SubTask injection"):
+    val nebula = mkDef("Nebula", List("Read", "Delegate"))
+    val allowed = CoreProbe.allowed(nebula)
+    assert(!allowed.contains("SubTask"), "Nebula (standalone category) unchanged — uses Delegate")
+    assert(allowed.contains("Delegate"), "Nebula keeps Delegate")
 
   // ===== Flow agents: Mail structurally disabled (08-14 P0 root cause) =====
 
