@@ -85,6 +85,7 @@ export function applyLocaleToHtml() {
     'memory-modal-cancel': ['text', 'modal.cancel'],
     'memory-modal-save': ['text', 'memory.save'],
     'memory-content-input': ['placeholder', 'memory.placeholder'],
+    'daemon-btn': ['title', 'daemons.title'],
   };
 
   // Static elements with IDs
