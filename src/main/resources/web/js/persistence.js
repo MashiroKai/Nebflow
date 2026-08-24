@@ -8,7 +8,7 @@ import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
-import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow, thoughtDurationLabel, bindCollapsibleToggle, chevronSvg } from './chat.js';
+import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow, bindCollapsibleToggle } from './chat.js';
 import { buildTurnGroupsForHistory } from './turnGroup.js';
 
 // ---------- AI message badge (no duration) ----------
@@ -329,11 +329,7 @@ export function restoreFromStorage() {
         tBubble.className = 'bubble ai thinking-bubble thinking-done';
         const tLabel = document.createElement('div');
         tLabel.className = 'thinking-label collapsible';
-        tLabel.appendChild(chevronSvg());
-        const tLabelText = document.createElement('span');
-        tLabelText.className = 'thinking-label-text';
-        tLabelText.textContent = t('chat.thought'); // #345: history has no segment timing → degraded label
-        tLabel.appendChild(tLabelText);
+        tLabel.textContent = t('chat.thinkingLabel'); // pre-#345 label restored (2026-08-24 ruling)
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         tContent.innerHTML = renderMarkdownWithMath(m.thinking);
@@ -654,11 +650,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         tBubble.className = 'bubble ai thinking-bubble thinking-done';
         const tLabel = document.createElement('div');
         tLabel.className = 'thinking-label collapsible';
-        tLabel.appendChild(chevronSvg());
-        const tLabelText = document.createElement('span');
-        tLabelText.className = 'thinking-label-text';
-        tLabelText.textContent = t('chat.thought'); // #345: history has no segment timing → degraded label
-        tLabel.appendChild(tLabelText);
+        tLabel.textContent = t('chat.thinkingLabel'); // pre-#345 label restored (2026-08-24 ruling)
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         deferMd(tContent, m.thinking);

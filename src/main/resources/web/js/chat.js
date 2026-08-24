@@ -493,9 +493,11 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   // Same product thought as #346: the stream stays clean, observability is
   // on-demand. Expansion is not persisted — refresh returns to collapsed.
   // Only collapses when there IS content; empty injected markers stay flat.
+  // Expand affordance (2026-08-24 ruling): NO chevron icon — the quiet muted
+  // label itself is the toggle (old「思考过程」interaction: cursor + hover
+  // opacity only), which also fixes the icon's vertical misalignment.
   const collapsible = trimmed.length > 0;
   if (collapsible) {
-    label.appendChild(chevronSvg());
     content.style.display = 'none'; // collapsed default
     bindCollapsibleToggle(label, () => content);
   }
@@ -2224,19 +2226,13 @@ let _pendingThinkingRAF = null;
 let _thinkingRafTarget = null;
 
 // #345 segment-level thinking collapse (OpenAI paradigm): the label shows
-// 「思考中…」+ pulse dots while streaming (content hidden), and switches to a
-// duration label at finishThinking. Per-segment timer: first delta → finish.
-let _thinkingSegmentStart = 0;
+// 「思考中…」+ pulse dots while streaming (content hidden), collapsing to the
+// quiet「思考过程」label at finishThinking (2026-08-24 ruling: no duration
+// numbers, no chevron — pre-#345 look restored).
 
-/** #345 duration label: <2s「思考了片刻」/ {n} 秒 / {m} 分钟; null → degraded
- *  「已思考」(history without timing data — no fake numbers). */
-export function thoughtDurationLabel(durationMs) {
-  if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) return t('chat.thought');
-  const s = Math.round(durationMs / 1000);
-  if (s < 2) return t('chat.thoughtMoment');
-  if (s < 60) return t('chat.thoughtSeconds', { n: s });
-  return t('chat.thoughtMinutes', { m: Math.round(s / 60) });
-}
+/** #345 duration label removed (2026-08-24 ruling): the done label reverts to
+ *  the pre-#345 design — always「思考过程」(chat.thinkingLabel), no duration
+ *  numbers, no chevron icon. */
 
 /** Shared keyboard-activatable toggle for thinking labels and the #346 turn
  *  summary bar (spec §8: both implementations share one helper). */
@@ -2259,8 +2255,9 @@ export function bindCollapsibleToggle(el, getContent, onToggle) {
   };
 }
 
-/** 12px inline chevron (currentColor) shared by #345 thinking labels and the
- *  #346 turn summary bar — no icon library, muted color follows the text. */
+/** 12px inline chevron (currentColor) used by the #346 turn summary bar —
+ *  no icon library, muted color follows the text. (2026-08-24 ruling: thinking
+ *  labels and injected-bubble headers no longer use it.) */
 export function chevronSvg() {
   const span = document.createElement('span');
   span.className = 'nf-chevron';
@@ -2288,7 +2285,6 @@ export function appendThinkingDelta(delta) {
     bubble.className = 'bubble ai thinking-bubble';
     const label = document.createElement('div');
     label.className = 'thinking-label thinking-streaming';
-    label.appendChild(chevronSvg());
     const labelText = document.createElement('span');
     labelText.className = 'thinking-label-text';
     labelText.textContent = t('chat.thinkingInProgress');
@@ -2312,7 +2308,6 @@ export function appendThinkingDelta(delta) {
     // (rAF keeps rendering into it); finishThinking preserves the open state.
     bindCollapsibleToggle(label, () => content);
     activeView.stream.currentThinkingBubble = bubble;
-    _thinkingSegmentStart = Date.now();
   }
   // Capture the render target synchronously (correct during ws.js push/pull window).
   // Store accumulated text on the bubble node so the rAF reads it regardless of
@@ -2361,13 +2356,15 @@ export function finishThinking() {
     activeView.stream.currentThinkingBubble.classList.add('thinking-done');
     const label = activeView.stream.currentThinkingBubble.querySelector('.thinking-label');
     const content = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
-    // #345: done label = segment duration; a user-expanded streaming bubble
-    // STAYS expanded (spec §2.3) — only collapse when not manually opened.
+    // #345: done label reverts to the pre-#345 design (2026-08-24 ruling):
+    // text「思考过程」, streaming dots removed, no chevron; a user-expanded
+    // streaming bubble STAYS expanded — only collapse when not manually opened.
     if (label) {
       label.classList.remove('thinking-streaming');
       label.classList.add('collapsible');
+      label.querySelectorAll('.thinking-dot').forEach((d) => d.remove());
       const labelText = label.querySelector('.thinking-label-text');
-      if (labelText) labelText.textContent = thoughtDurationLabel(Date.now() - _thinkingSegmentStart);
+      if (labelText) labelText.textContent = t('chat.thinkingLabel');
       const wasExpanded = label.classList.contains('expanded');
       if (content) content.style.display = wasExpanded ? '' : 'none';
       label.setAttribute('aria-expanded', String(wasExpanded));
