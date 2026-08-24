@@ -69,16 +69,47 @@ class TodoFiveStateSpec extends CatsEffectSuite:
       r <- store.update(sid, tid, TaskUpdateInput(status = Some(TaskStatus.NeedsConfirmation))).attempt
     yield assert(r.isRight)
 
-  test("B1: needs_confirmation -> in_progress via agent TaskUpdate is REJECTED (user-return only)"):
+  test("B1/2026-08-24: needs_confirmation -> in_progress via agent TaskUpdate WITH note is legal (dialogue feedback)"):
     for
       _ <- reset()
       sid = "b1-agentback"
       tid <- mkAgentTask(sid)
       _ <- toNeedsConfirmation(sid, tid)
+      r <- store.update(sid, tid, TaskUpdateInput(
+        status = Some(TaskStatus.InProgress),
+        note = Some("用户对话反馈：卡片样式要改成毛玻璃")
+      )).attempt
+      after <- store.get(sid, tid)
+    yield
+      assert(r.isRight, s"agent must be able to self-return on dialogue feedback: $r")
+      assertEquals(after.get.status, TaskStatus.InProgress)
+      assert(after.get.notes.map(_.content).contains("用户对话反馈：卡片样式要改成毛玻璃"), "feedback must be recorded as a note")
+
+  test("B1/2026-08-24: needs_confirmation -> in_progress WITHOUT note is REJECTED (anti-abuse)"):
+    for
+      _ <- reset()
+      sid = "b1-agentback-nonote"
+      tid <- mkAgentTask(sid)
+      _ <- toNeedsConfirmation(sid, tid)
       r <- store.update(sid, tid, TaskUpdateInput(status = Some(TaskStatus.InProgress))).attempt
       after <- store.get(sid, tid)
     yield
-      assert(r.isLeft, "agent must not yank a task out of awaiting-ruling")
+      assert(r.isLeft, "self-return without a note must be rejected")
+      assert(r.left.toOption.get.getMessage.contains("note"), s"error should mention the note requirement: ${r.left.toOption.get.getMessage}")
+      assertEquals(after.get.status, TaskStatus.NeedsConfirmation, "task must stay awaiting ruling after rejected return")
+
+  test("B1/2026-08-24: needs_confirmation -> in_progress with blank note is REJECTED (anti-abuse)"):
+    for
+      _ <- reset()
+      sid = "b1-agentback-blank"
+      tid <- mkAgentTask(sid)
+      _ <- toNeedsConfirmation(sid, tid)
+      r <- store.update(sid, tid, TaskUpdateInput(
+        status = Some(TaskStatus.InProgress), note = Some("   ")
+      )).attempt
+      after <- store.get(sid, tid)
+    yield
+      assert(r.isLeft, "blank note must be rejected")
       assertEquals(after.get.status, TaskStatus.NeedsConfirmation)
 
   test("B1: needs_confirmation -> completed via complete(by=user) is legal (user confirmation)"):

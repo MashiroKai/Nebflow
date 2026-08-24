@@ -158,9 +158,11 @@ object FileTaskStore extends TaskStore:
     }
 
   // Issue #2 + todo-panel v2 §2.2: state transition validation matrix.
-  // needs_confirmation -> in_progress is NOT in this matrix — it is the
-  // user-only return() path (spec C16/C17); the agent TaskUpdate path must
-  // not be able to yank a task out of the awaiting-user-ruling state.
+  // needs_confirmation -> in_progress: user ruling 2026-08-24 (对话反馈=打回).
+  // The PANEL return (C16/C17 returnTask) is the canonical path, but when the
+  // user revises a task via DIALOGUE (no panel click) the agent must be able to
+  // take it back itself — update() additionally requires a note describing the
+  // user feedback (anti-abuse: no silent self-return without a recorded reason).
   private def isValidTransition(from: TaskStatus, to: TaskStatus): Boolean =
     (from, to) match
       case (TaskStatus.Pending, TaskStatus.InProgress) => true
@@ -172,6 +174,7 @@ object FileTaskStore extends TaskStore:
       case (TaskStatus.InProgress, TaskStatus.Completed) => true
       case (TaskStatus.InProgress, TaskStatus.Failed) => true
       case (TaskStatus.InProgress, TaskStatus.InProgress) => true // no-op
+      case (TaskStatus.NeedsConfirmation, TaskStatus.InProgress) => true // 2026-08-24: agent return on dialogue feedback (note required in update())
       case (TaskStatus.NeedsConfirmation, TaskStatus.NeedsConfirmation) => true // no-op
       case (TaskStatus.NeedsConfirmation, TaskStatus.Completed) => true // user confirm (complete())
       case (TaskStatus.NeedsConfirmation, TaskStatus.Dismissed) => true // user dismiss
@@ -240,6 +243,20 @@ object FileTaskStore extends TaskStore:
             IO.raiseError(
               new IllegalStateException(
                 s"Invalid status transition: ${existing.status} -> $newStatus for task #$taskId"
+              )
+            )
+          else if
+            // Anti-abuse (2026-08-24): the agent may return a task from
+            // awaiting-ruling on DIALOGUE feedback, but must record the reason —
+            // a note describing the user feedback is mandatory. Without it the
+            // return is rejected (the panel return path is unaffected).
+            existing.status == TaskStatus.NeedsConfirmation &&
+            newStatus == TaskStatus.InProgress &&
+            !updates.note.exists(_.trim.nonEmpty)
+          then
+            IO.raiseError(
+              new IllegalStateException(
+                s"Task #$taskId is awaiting user confirmation: returning it to in_progress requires a note describing the user feedback (TaskUpdate note field)"
               )
             )
           else

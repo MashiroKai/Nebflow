@@ -20,7 +20,8 @@ object TaskUpdateTool extends Tool:
 - After confirming, check your task list in the system prompt for the next task
 - If you encounter errors, blockers, or cannot finish, mark as failed
 - Never mark needs_confirmation if tests are failing, implementation is partial, or you encountered unresolved errors
-- While a task is `needs_confirmation` (awaiting user ruling), do NOT change its status — the user either confirms it or returns it with feedback (a [打回任务] block in your next input tells you what to revise; then re-mark needs_confirmation)
+- While a task is `needs_confirmation` (awaiting user ruling), the user either confirms it (panel circle → completed) or returns it. If the user revises it via DIALOGUE feedback (no panel click), take it back yourself: set status back to `in_progress` AND attach a `note` quoting/describing the user feedback — the backend REQUIRES the note on this transition (anti-abuse). Then revise per the feedback and re-mark `needs_confirmation` when done.
+- A [打回任务] block in your input means the user returned it via the PANEL — it is already back in `in_progress`; revise per the block and re-mark needs_confirmation
 
 **Update task details or dependencies:**
 - Set status to `in_progress` when starting work on a task
@@ -42,8 +43,11 @@ Single-task calls {"taskId": "1", "status": "needs_confirmation"} work exactly a
 
 `pending` -> `in_progress` -> `needs_confirmation` (done, awaiting user confirmation) or `failed`
 
+- `needs_confirmation` -> `in_progress` is legal when the user returns the task with feedback
+  (panel click, or dialogue feedback you take back yourself with a note)
+
 - The user confirms needs_confirmation tasks themselves (todos panel circle) — that moves them to `completed`
-- The user may also return a needs_confirmation task to you with feedback — it goes back to `in_progress`
+- The user may return a needs_confirmation task to you with feedback — panel return goes straight back to `in_progress` (with a [打回任务] block); dialogue feedback you take back yourself via `in_progress` + a note describing the feedback
 - Terminal states: `completed` and `failed` cannot transition to any other state.
 
 ## Dependency Management
