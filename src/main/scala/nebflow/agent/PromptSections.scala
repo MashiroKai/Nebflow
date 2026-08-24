@@ -593,7 +593,7 @@ object PromptSections:
       |
       |Semantics:
       |- Work through tasks in order. When a task is fully done, mark it needs_confirmation (NOT completed) and attach a note with the outcome — completed is reserved for the user's confirmation.
-      |- Tasks marked [needs_confirmation] are DONE and awaiting user confirmation: do NOT work on them again. If the user returns one with feedback, a [打回任务] block tells you what to revise.
+      |- Tasks marked [needs_confirmation] are DONE and awaiting user confirmation: do NOT work on them again. If the user returns one via the panel, a [打回任务] block tells you what to revise (it is already back in_progress). If the user revises it via DIALOGUE feedback instead, take it back yourself: TaskUpdate status=in_progress WITH a note describing the feedback (note required), then revise and re-mark needs_confirmation.
       |- Tasks marked [waiting-user] are human todos — reminders for the user, never part of your own work loop.
       |- Subject lines are truncated (~30 chars) and pending tasks beyond the first 8 fold into a count line — use the TaskList/Task tools for full details.""".stripMargin
 
