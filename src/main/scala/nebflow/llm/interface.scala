@@ -305,7 +305,10 @@ object LlmInterface:
                   .filterNot(c =>
                     overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
                   )
-                (up, _) <- healthMonitor.filterCandidates(candidates)
+                // #33: drop stale session overrides whose provider was removed
+                // by a config hot-reload — graceful skip, never "Unknown provider".
+                filtered <- registry.filterKnownProviders(candidates)
+                (up, _) <- healthMonitor.filterCandidates(filtered)
                 _ <- IO.raiseWhen(up.isEmpty)(new RuntimeException("All providers unavailable"))
                 result <- Fallback.tryProviderWithFallback[AdapterResponse](
                   up,
@@ -423,10 +426,13 @@ object LlmInterface:
                     for
                       overrides <- sessionOverrides.get
                       regCandidates <- registry.getCandidatesForAgent(req.agentModel)
-                    yield overrides.get(req.sessionId).toList ++ regCandidates
-                      .filterNot(c =>
-                        overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
-                      )
+                      candidates = overrides.get(req.sessionId).toList ++ regCandidates
+                        .filterNot(c =>
+                          overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
+                        )
+                      // #33: same graceful skip as the non-streaming path.
+                      filtered <- registry.filterKnownProviders(candidates)
+                    yield filtered
                   )
                   .flatMap { candidates =>
 

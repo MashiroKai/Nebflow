@@ -203,8 +203,21 @@ class ProviderRegistry(
 
   end resolveCapabilities
 
-  /** Reload: re-read config from disk and clear adapter cache. */
-  def reloadConfig(): IO[Unit] =
+  /**
+   * Reload: re-read config from disk, clear adapter/gate caches and drop
+   * per-session model overrides whose provider no longer exists (#33).
+   *
+   * The in-memory session overrides are `ModelCandidate` snapshots built from
+   * the OLD config — after a hot-reload removes a provider, a stale override
+   * would raise "Unknown provider" at the adapter/gate on the next request.
+   * Dropping it here makes the session follow the new global chain (same
+   * semantics as `clearAllSessionModels` at startup — a reload is a soft
+   * restart of the model config). Returns the dropped session ids so callers
+   * can also clear the persisted session meta (`modelRef`) for UI consistency.
+   */
+  def reloadConfig(
+    overridesRef: Option[Ref[IO, Map[String, ModelCandidate]]] = None
+  ): IO[List[String]] =
     for
       newConfig <- IO.blocking {
         try Config.loadServiceConfig()
@@ -222,5 +235,24 @@ class ProviderRegistry(
       // Gates derive their params from ProviderConfig — rebuild on reload so
       // maxConcurrency/rpm changes apply without restart (design §4.3).
       _ <- gatesRef.set(Map.empty)
-    yield ()
+      staleIds <- overridesRef match
+        case Some(ref) =>
+          ref.modify { overrides =>
+            val (keep, drop) = overrides.partition { case (_, c) => newConfig.llm.providers.contains(c.providerId) }
+            (keep, drop.keys.toList)
+          }
+        case None => IO.pure(Nil)
+    yield staleIds
+
+  /**
+   * Graceful skip for candidates whose provider is not present in the current
+   * config (#33). A stale session-model override (set before a hot-reload
+   * removed the provider) would otherwise surface "Unknown provider" at the
+   * adapter/gate. The request chain simply continues with the remaining
+   * candidates — reload-time invalidation ([[reloadConfig]]) is the primary
+   * fix; this is the request-time safety net for any stale entry that slips
+   * through (e.g. a race between setSessionModel and a concurrent reload).
+   */
+  def filterKnownProviders(candidates: List[ModelCandidate]): IO[List[ModelCandidate]] =
+    configRef.get.map(cfg => candidates.filter(c => cfg.llm.providers.contains(c.providerId)))
 end ProviderRegistry
