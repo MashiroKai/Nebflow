@@ -1205,6 +1205,17 @@ class RestApiRoutes(
                       case _ => Json.fromString("abort")
                     )
                   )
+                case p: nebflow.core.entity.NodeRoute.ParallelDynamic =>
+                  Json.obj(
+                    "parallel" -> Json.obj(
+                      "slots" -> Json.fromString(p.slotField),
+                      "template" -> Json.fromString(p.template)
+                    ),
+                    "onFail" -> (p.onFail match
+                      case nebflow.core.entity.NodeRoute.OnFailMode.Collect => Json.fromString("collect")
+                      case _ => Json.fromString("abort")
+                    )
+                  )
                 case nebflow.core.entity.NodeRoute.Switch(expr, cases, _, _) =>
                   val casesObj = io.circe.JsonObject.fromIterable(cases.map { (k, v) =>
                     val target: String = v match
@@ -1597,12 +1608,14 @@ class RestApiRoutes(
               case NodeRoute.Goto(target) => List((nodeId, target, None))
               case NodeRoute.Return => List((nodeId, "$return", None))
               case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, None))
+              case p: NodeRoute.ParallelDynamic => List((nodeId, p.template, None))
               case NodeRoute.Switch(_, cases, _, _) =>
                 cases.toList.map { (cond, route) =>
                   route match
                     case NodeRoute.Goto(t)     => List((nodeId, t, Some(cond)))
                     case NodeRoute.Return      => List((nodeId, "$return", Some(cond)))
                     case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, Some(cond)))
+                    case p: NodeRoute.ParallelDynamic => List((nodeId, p.template, Some(cond)))
                     case _                     => List((nodeId, "?", Some(cond)))
                 }.flatten
           }
