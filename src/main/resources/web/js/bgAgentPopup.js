@@ -364,7 +364,10 @@ export function handleBgAgentHistory(msg) {
     view.pagination.hasMore = msg.hasMore;
 
     setActiveView(view);
-    restoreFromBackendHistory(msg.messages);
+    // #346 boundary fix: mid-turn tail stays flat when the agent is still
+    // active (running/thinking/tool/frozen/stuck) — terminal event gathers it.
+    const busyTail = ['running', 'thinking', 'tool', 'frozen', 'stuck'].includes(entry.meta.status);
+    restoreFromBackendHistory(msg.messages, { busyTail });
 
     requestAnimationFrame(() => {
       entry.container.scrollTop = entry.container.scrollHeight;

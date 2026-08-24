@@ -112,6 +112,7 @@ function fillSummary(built, meta) {
  */
 export function collapseTurn(view, meta = {}) {
   const chat = view.dom.chat;
+  ungroupTail(chat); // boundary heal: see ungroupTail below
   const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
   let lastUserIdx = -1;
   rows.forEach((r, i) => { if (r.classList.contains('user')) lastUserIdx = i; });
@@ -137,6 +138,7 @@ export function collapseTurn(view, meta = {}) {
  */
 export function failTurn(view) {
   const chat = view.dom.chat;
+  ungroupTail(chat); // boundary heal: see ungroupTail below
   const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
   let lastUserIdx = -1;
   rows.forEach((r, i) => { if (r.classList.contains('user')) lastUserIdx = i; });
@@ -165,14 +167,42 @@ export function expandGroupContaining(el) {
   return true;
 }
 
+/** Boundary heal (2026-08-24): a mid-turn tail can get grouped by a history
+ *  rebuild (refresh / WS reconnect full-reload / popup open) before the turn's
+ *  terminal event arrives — stamped 'failed' and stranded expanded forever,
+ *  while the live terminal then gathers only the post-rebuild rows into a
+ *  second group ("half-expanded dead state"). Terminal events must always
+ *  heal the DOM: hoist every turn-group after the last user row back to flat
+ *  rows (order preserved) so the whole turn is gathered exactly once. */
+function ungroupTail(chat) {
+  const kids = Array.from(chat.children);
+  let lastUserIdx = -1;
+  kids.forEach((r, i) => { if (r.classList && r.classList.contains('row') && r.classList.contains('user')) lastUserIdx = i; });
+  for (let i = lastUserIdx + 1; i < kids.length; i++) {
+    const g = kids[i];
+    if (!g.classList || !g.classList.contains('turn-group')) continue;
+    const steps = g.querySelector('.turn-steps');
+    if (steps) while (steps.firstChild) chat.insertBefore(steps.firstChild, g);
+    g.remove();
+  }
+}
+
 /**
  * History reload (E4 P0 heuristic): rebuild turn groups from the flat row
  * sequence. Turn boundaries = `.row.user` (injected included — they trigger
  * turns too). Per segment: a duration badge on the final Ai row = success →
  * collapsed; process rows without it = failed/unfinished → expanded.
  * Uncertain → expanded (observability over tidiness).
+ *
+ * opts.busyTail (2026-08-24 boundary fix): when the session is still mid-turn
+ * at rebuild time (refresh/reconnect/popup open during streaming), the
+ * trailing segment has no done badge YET but is not failed. Grouping it would
+ * stamp it 'failed' and strand a zombie group. Skip it when it carries no
+ * done badge — the live stream keeps appending flat rows and the terminal
+ * event gathers them. A badge-carrying tail is complete → grouped normally.
  */
-export function buildTurnGroupsForHistory(chat) {
+export function buildTurnGroupsForHistory(chat, opts = {}) {
+  const { busyTail = false } = opts;
   const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
   let segStart = 0;
   const flush = (end) => {
@@ -181,7 +211,7 @@ export function buildTurnGroupsForHistory(chat) {
   rows.forEach((r, i) => {
     if (r.classList.contains('user')) { flush(i); segStart = i + 1; }
   });
-  flush(rows.length);
+  if (!busyTail || findDoneBadge(rows.slice(segStart))) flush(rows.length);
 }
 
 function groupSegment(chat, seg) {
