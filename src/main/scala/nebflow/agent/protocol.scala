@@ -32,7 +32,11 @@ object AgentCommand:
     /** Team name of the sender for Mail-delivered messages (shown as attribution label). */
     senderTeam: Option[String] = None,
     /** Delivery mode marker: "ask" | "queue" | "immediate" for Mail-injected inputs. */
-    delivery: Option[String] = None
+    delivery: Option[String] = None,
+    /** Structured event type (e.g. completion status) for the UI source label —
+     *  carried through from ImmediateInput so flow results render
+     *  'Flow · <name> · Completed/Failed' instead of a bare 'Flow'. */
+    eventType: Option[String] = None
   ) extends AgentCommand
 
   case class ImmediateInput(

@@ -413,7 +413,7 @@ object AgentActor extends AgentCore with AgentSession:
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
-      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery) =>
+      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType) =>
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then
           logger.info(s"Dropping duplicate message with clientMessageId=${clientMessageId.getOrElse("")}")
@@ -454,6 +454,7 @@ object AgentActor extends AgentCore with AgentSession:
                 stateWithWidth.sessionId,
                 text,
                 src,
+                eventType,
                 sender = sender,
                 senderTeam = senderTeam,
                 delivery = delivery
@@ -808,8 +809,8 @@ object AgentActor extends AgentCore with AgentSession:
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
-      case AgentCommand.ImmediateInput(text, blocks, source, _, sender, senderTeam, delivery) =>
-        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery)
+      case AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery) =>
+        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery, eventType)
         yield idle(agentDef, resources, depth, parentRef, state)
 
       // Queued mail arriving in idle — drain immediately as a new turn.
@@ -2871,7 +2872,7 @@ object AgentActor extends AgentCore with AgentSession:
             else IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, window.nextChangeAt))
         yield result
 
-      case AgentCommand.UserInput(text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery) =>
+      case AgentCommand.UserInput(text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType) =>
         if clientMessageId.isDefined then
           // ★ 用户唤醒（B5）：注入用户消息到冻结中的上下文，立即 dispatch——
           // 冻结前组装好的工具结果 + 用户新指令同轮喂给 LLM。dedup 防止 WS
@@ -2901,7 +2902,7 @@ object AgentActor extends AgentCore with AgentSession:
           val queued = state.copy(execution =
             state.execution.copy(
               pendingUserInputs = state.execution.pendingUserInputs :+ AgentCommand.UserInput(
-                text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery
+                text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType
               )
             )
           )
