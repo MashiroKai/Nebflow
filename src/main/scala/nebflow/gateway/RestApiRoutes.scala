@@ -194,10 +194,17 @@ class RestApiRoutes(
           ConfigService.updateConfig(cfgStr).flatMap {
             case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
             case Right(_) =>
-              sharedResources.providerRegistry.reloadConfig().attempt.flatMap {
-                case Right(_) => logger.info("Config hot-reloaded via REST")
-                case Left(e) => logger.warn(s"Config hot-reload failed: ${e.getMessage}")
-              } *> Ok(Json.obj("updated" -> true.asJson))
+              sharedResources.providerRegistry
+                .reloadConfig(Some(sharedResources.sessionModelOverrides))
+                .attempt
+                .flatMap {
+                  case Right(staleIds) =>
+                    // #33: keep the persisted session meta in sync (see
+                    // WebSocketRoutes updateConfig — same cleanup).
+                    staleIds.traverse_(id => sessionStore.updateSessionModel(id, None)) *>
+                      logger.info("Config hot-reloaded via REST")
+                  case Left(e) => logger.warn(s"Config hot-reload failed: ${e.getMessage}")
+                } *> Ok(Json.obj("updated" -> true.asJson))
           }
         }
       }

@@ -3185,12 +3185,19 @@ class WebSocketRoutes(
                       case Left(e)  => logger.warn(s"Default preset seeding failed: ${e.getMessage}")
                     } *>
                   // Hot-reload: update in-memory config and clear adapter cache
-                  sharedResources.providerRegistry.reloadConfig().attempt.flatMap {
-                    case Right(_) =>
-                      logger.info("Config hot-reloaded successfully")
-                    case Left(e) =>
-                      logger.warn(s"Config hot-reload failed: ${e.getMessage}")
-                  } *> wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+                  sharedResources.providerRegistry
+                    .reloadConfig(Some(sharedResources.sessionModelOverrides))
+                    .attempt
+                    .flatMap {
+                      case Right(staleIds) =>
+                        // #33: keep the persisted session meta in sync — dropped
+                        // overrides also clear their modelRef on disk so the UI
+                        // state matches the in-memory session overrides.
+                        staleIds.traverse_(id => sessionStore.updateSessionModel(id, None)) *>
+                          logger.info("Config hot-reloaded successfully")
+                      case Left(e) =>
+                        logger.warn(s"Config hot-reload failed: ${e.getMessage}")
+                    } *> wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
               }
             else IO.unit
 
