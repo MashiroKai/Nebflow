@@ -443,16 +443,32 @@ export function setActiveTab(id) {
  *  @param {string} rootPath — explorer root (absolute, '' = default root) */
 export function retargetFileTabs(oldRel, newRel, rootPath) {
   const root = (rootPath || '').replace(/\/+$/, '');
-  const absOf = (rel) => (rel ? (root ? root + '/' + rel : rel) : root);
-  const absOld = absOf(oldRel);
-  const absNew = absOf(newRel);
+  const absOld = root ? root + '/' + oldRel : null;
+  const absNew = root ? root + '/' + newRel : null;
+  const relId = `file:${oldRel}`;
   let changed = false;
   for (const [id, entry] of [...tabs]) {
-    if (!entry.absPath) continue;
-    if (entry.absPath !== absOld && !entry.absPath.startsWith(absOld + '/')) continue;
-    entry.absPath = absNew + entry.absPath.slice(absOld.length);
-    const relId = `file:${oldRel}`;
-    if (id === relId || id.startsWith(relId + '/')) {
+    const idMatch = id === relId || id.startsWith(relId + '/');
+    const absMatch = !!(absOld && entry.absPath &&
+      (entry.absPath === absOld || entry.absPath.startsWith(absOld + '/')));
+    if (!idMatch && !absMatch) continue;
+    // Retarget the stored absolute path. Prefix swap when the project root is
+    // known; suffix swap when it is not — with the default project root the
+    // explorer passes rootPath=null (server-resolved), so absOld cannot be
+    // constructed. Explorer-opened tabs are keyed file:<rel> and their
+    // absPath ends with that same relative path.
+    if (entry.absPath) {
+      if (absMatch) {
+        entry.absPath = absNew + entry.absPath.slice(absOld.length);
+      } else if (idMatch) {
+        const tail = oldRel + id.slice(relId.length);
+        const newTail = newRel + id.slice(relId.length);
+        if (entry.absPath === tail || entry.absPath.endsWith('/' + tail)) {
+          entry.absPath = entry.absPath.slice(0, entry.absPath.length - tail.length) + newTail;
+        }
+      }
+    }
+    if (idMatch) {
       const newId = `file:${newRel}` + id.slice(relId.length);
       tabs.delete(id);
       tabs.set(newId, entry);
@@ -464,7 +480,7 @@ export function retargetFileTabs(oldRel, newRel, rootPath) {
     }
     // Save path is form-sensitive: explorer-opened editors store the relative
     // path, source-toggle editors the absolute one — setPath picks correctly.
-    entry.paneEl?._editorHandle?.setPath?.(newRel, entry.absPath);
+    entry.paneEl?._editorHandle?.setPath?.(newRel + (idMatch ? id.slice(relId.length) : ''), entry.absPath);
     changed = true;
   }
   if (changed) persistTabs();

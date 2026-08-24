@@ -2239,7 +2239,9 @@ class WebSocketRoutes(
             val mpSessionId = hc.downField("sessionId").as[String].getOrElse("")
             val mpPath = hc.downField("path").as[String].getOrElse("")
             val mpTargetDir = hc.downField("targetDir").as[String].getOrElse("")
-            if mpSessionId.nonEmpty && mpPath.nonEmpty && mpTargetDir.nonEmpty then
+            // targetDir may be empty: dropping onto the tree's blank root area
+            // moves the item to the project root (frontend contract).
+            if mpSessionId.nonEmpty && mpPath.nonEmpty then
               val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
               (for
                 pr <- overrideRoot match
@@ -4430,7 +4432,9 @@ object WebSocketRoutes:
   private[gateway] def movePathSafely(path: String, targetDir: String, root: os.Path): Either[String, String] =
     try
       val basePath = PathUtil.resolvePath(path, root)
-      val targetBase = PathUtil.resolvePath(targetDir, root)
+      // Empty targetDir = move to the project root itself (resolvePath("")
+      // semantics are os-lib-version-sensitive — be explicit).
+      val targetBase = if targetDir.isEmpty then root else PathUtil.resolvePath(targetDir, root)
       val canonicalBase = basePath.toIO.getCanonicalPath
       val canonicalTarget = targetBase.toIO.getCanonicalPath
       val canonicalRoot = root.toIO.getCanonicalPath
