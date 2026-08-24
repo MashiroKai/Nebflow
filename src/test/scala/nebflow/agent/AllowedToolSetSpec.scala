@@ -26,8 +26,13 @@ class AllowedToolSetSpec extends FunSuite:
   // AgentCore.buildAllowedToolSet is protected; expose it via a minimal stub.
   private object CoreProbe extends AgentCore:
 
-    def allowed(defn: AgentDef, depth: Int = 0, isSubTaskWorker: Boolean = false): Set[String] =
-      buildAllowedToolSet(defn, depth, isSubTaskWorker)
+    def allowed(
+        defn: AgentDef,
+        depth: Int = 0,
+        isSubTaskWorker: Boolean = false,
+        forkContext: Boolean = false
+    ): Set[String] =
+      buildAllowedToolSet(defn, depth, isSubTaskWorker, forkContext)
 
   private def mkDef(name: String, tools: List[String], mcpServers: List[String] = Nil): AgentDef =
     AgentDef(name = name, description = "", tools = tools, systemPrompt = "", mcpServers = mcpServers)
@@ -283,4 +288,62 @@ class AllowedToolSetSpec extends FunSuite:
       CoreProbe.allowed(worker, isSubTaskWorker = false).contains("FlowTrigger"),
       "same def as a normal agent would keep it (sanity)"
     )
+
+  // ===== #30: Mail ask/fork contexts strip side-effect tools =====
+
+  test("fork context strips dispatch tools (Mail/SubTask/FlowTrigger/Delegate)"):
+    val teamMember = mkDef("backend", List("*")).copy(category = "team", flows = List("code-review"))
+    val allowed = CoreProbe.allowed(teamMember, forkContext = true)
+    assert(!allowed.contains("Mail"), "fork must not dispatch via Mail")
+    assert(!allowed.contains("SubTask"), "fork must not spawn sub-workers")
+    assert(!allowed.contains("FlowTrigger"), "fork must not trigger pipelines")
+    assert(!allowed.contains("Delegate"), "fork must not delegate")
+    assert(!allowed.contains("AgentControl"), "fork must not control agents")
+    assert(!allowed.contains("Load"), "fork must not mount entities")
+    assert(!allowed.contains("TransferFile"), "fork must not transfer files")
+
+  test("fork context strips write/shell/schedule side effects, keeps retrieval"):
+    val member = mkDef("backend", List("*")).copy(category = "team")
+    val allowed = CoreProbe.allowed(member, forkContext = true)
+    // side-effect tools gone
+    assert(!allowed.contains("Write"), "fork must not write files (memory double-write race)")
+    assert(!allowed.contains("Edit"), "fork must not edit files")
+    assert(!allowed.contains("MultiEdit"), "fork must not multi-edit")
+    assert(!allowed.contains("Bash"), "fork must not run shell")
+    assert(!allowed.contains("Curl"), "fork must not issue network requests")
+    assert(!allowed.contains("SaveTurn"), "fork must not run save-turn memory cycle")
+    assert(!allowed.contains("Schedule"), "fork must not schedule tasks")
+    assert(!allowed.contains("AskUserQuestion"), "fork must not ask the user")
+    assert(!allowed.contains("TaskCreate"), "fork must not create tasks")
+    assert(!allowed.contains("TaskUpdate"), "fork must not update tasks")
+    // retrieval stays for answering questions
+    assert(allowed.contains("Read"), "fork keeps Read")
+    assert(allowed.contains("Glob"), "fork keeps Glob")
+    assert(allowed.contains("Grep"), "fork keeps Grep")
+    assert(allowed.contains("WebSearch"), "fork keeps WebSearch")
+    assert(allowed.contains("WebFetch"), "fork keeps WebFetch")
+    assert(allowed.contains("Pop"), "fork keeps Pop")
+    assert(allowed.contains("TaskQuery"), "fork keeps read-only task query")
+
+  test("fork context is inert for non-fork spawns (default false)"):
+    val member = mkDef("backend", List("*")).copy(category = "team")
+    val normal = CoreProbe.allowed(member)
+    assert(normal.contains("Mail"), "normal team spawn keeps Mail")
+    assert(normal.contains("Write"), "normal spawn keeps Write")
+    assert(normal.contains("Bash"), "normal spawn keeps Bash")
+
+  test("fork context does not resurrect tools stripped by other rules"):
+    // worker + fork: worker leaf rule and fork strip compose
+    val worker = mkDef("backend", List("*")).copy(category = "team")
+    val w = CoreProbe.allowed(worker, isSubTaskWorker = true, forkContext = true)
+    assert(!w.contains("Mail"), "worker leaf rule strips Mail, fork or not")
+    assert(!w.contains("Write"), "fork strip applies on top of worker rule")
+    assert(!w.contains("Bash"), "fork strip applies on top of worker rule")
+    assert(w.contains("Read"), "worker keeps its retrieval tools")
+    // flow + fork: flow Mail strip and fork strip compose
+    val flow = mkDef("node", List("*")).copy(category = "flow")
+    val f = CoreProbe.allowed(flow, forkContext = true)
+    assert(!f.contains("Mail"), "flow agents never get Mail, fork or not")
+    assert(!f.contains("FlowReport"), "fork strips FlowReport too")
+    assert(f.contains("Read"), "flow fork keeps retrieval")
 end AllowedToolSetSpec

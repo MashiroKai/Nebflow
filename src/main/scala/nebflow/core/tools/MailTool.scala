@@ -326,7 +326,12 @@ Message type (optional, default "INFO"):
           projectRoot = Some(ctx.projectRoot),
           safetyMode = callerSafetyMode,
           expectsMail = false,
-          rootSessionId = callerRootSessionId
+          rootSessionId = callerRootSessionId,
+          // #30: ask forks only answer — side-effect tools (Mail/Write/Edit/
+          // Bash/…) stripped by buildAllowedToolSet(forkContext=true). The
+          // 2026-08-21 incident: an ask fork dispatched team members and
+          // wrote memory in parallel with the real agent (double-write race).
+          forkContext = true
         ),
         s"fork-${agentDef.name}-${java.util.UUID.randomUUID().toString.take(8)}"
       )
