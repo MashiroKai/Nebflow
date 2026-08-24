@@ -435,6 +435,41 @@ export function setActiveTab(id) {
   if (entry) scheduleFileRefresh(entry);
 }
 
+/** Retarget open file tabs after an explorer drag-to-move: update absPaths,
+ *  rewrite `file:<rel>` tab ids, and sync the mounted editor's save path so a
+ *  later Cmd+S writes to the NEW location (save() captured opts.path).
+ *  @param {string} oldRel — old explorer-relative path prefix
+ *  @param {string} newRel — new explorer-relative path prefix
+ *  @param {string} rootPath — explorer root (absolute, '' = default root) */
+export function retargetFileTabs(oldRel, newRel, rootPath) {
+  const root = (rootPath || '').replace(/\/+$/, '');
+  const absOf = (rel) => (rel ? (root ? root + '/' + rel : rel) : root);
+  const absOld = absOf(oldRel);
+  const absNew = absOf(newRel);
+  let changed = false;
+  for (const [id, entry] of [...tabs]) {
+    if (!entry.absPath) continue;
+    if (entry.absPath !== absOld && !entry.absPath.startsWith(absOld + '/')) continue;
+    entry.absPath = absNew + entry.absPath.slice(absOld.length);
+    const relId = `file:${oldRel}`;
+    if (id === relId || id.startsWith(relId + '/')) {
+      const newId = `file:${newRel}` + id.slice(relId.length);
+      tabs.delete(id);
+      tabs.set(newId, entry);
+      entry.id = newId;
+      entry.tabEl.dataset.tabId = newId;
+      entry.paneEl.dataset.tabId = newId;
+      if (activeTabId === id) activeTabId = newId;
+      for (const [k, v] of previewTabs) { if (v === id) previewTabs.set(k, newId); }
+    }
+    // Save path is form-sensitive: explorer-opened editors store the relative
+    // path, source-toggle editors the absolute one — setPath picks correctly.
+    entry.paneEl?._editorHandle?.setPath?.(newRel, entry.absPath);
+    changed = true;
+  }
+  if (changed) persistTabs();
+}
+
 /** Get the content pane element for a tab.
  *  External code (e.g. flowCanvas) uses this to render into their tab.
  *  @param {string} id — Tab identifier.
@@ -599,12 +634,18 @@ export async function openWorkspaceItem(item) {
     // activation back to the binary tab — "can't switch away from an image").
     entry._lastRefreshAt = Date.now();
     if (content && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
-      if (entry.paneEl._editorHandle) {
-        entry.paneEl._editorHandle.dispose();
-        entry.paneEl._editorHandle = null;
+      // Skip the re-render when the live editor already shows this content —
+      // remounting Monaco on every refresh would steal the cursor/scroll for
+      // zero visible change (matters for focus-triggered refreshes).
+      const live = entry.paneEl._editorHandle?.model?.getValue?.();
+      if (live === undefined || live !== content) {
+        if (entry.paneEl._editorHandle) {
+          entry.paneEl._editorHandle.dispose();
+          entry.paneEl._editorHandle = null;
+        }
+        const { renderFile } = await import('./fileViewers.js');
+        await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
       }
-      const { renderFile } = await import('./fileViewers.js');
-      await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
     }
     // Background refresh responses must not steal activation — the user may
     // have clicked another tab while the request was in flight.
@@ -722,6 +763,14 @@ export function initCanvas() {
   // Listen for workspace-open-item events (dispatched on window by explorer.js).
   window.addEventListener('workspace-open-item', (e) => {
     if (e.detail) openWorkspaceItem(e.detail);
+  });
+
+  // Window-focus refresh (dispatched by explorer.js after reloading the tree):
+  // re-check the active file tab for external edits. Dirty-guarded, debounced,
+  // and unchanged content never re-renders (see openWorkspaceItem).
+  window.addEventListener('explorer-focus-refresh', () => {
+    const entry = activeTabId ? tabs.get(activeTabId) : null;
+    if (entry) scheduleFileRefresh(entry);
   });
 
   // Listen for Pop tool WS messages — agent opens a file in Canvas.

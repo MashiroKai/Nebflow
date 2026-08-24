@@ -670,6 +670,10 @@ export default {
   'explorer.deleteTitle': 'Delete Files',
   'explorer.deleteConfirmN': 'Delete these {count} items? This cannot be undone.',
   'explorer.deleteResult': '{ok} deleted, {fail} failed: {path}: {error}',
+  'explorer.moved': 'Moved {name}',
+  // === Canvas save feedback ===
+  'canvas.saved': 'Saved {name}',
+  'canvas.saveFailed': 'Failed to save {name}: {error}',
   // === Lightbox (image preview) ===
   'lightbox.ariaLabel': 'Image preview',
   'lightbox.close': 'Close preview',
