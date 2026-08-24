@@ -42,12 +42,12 @@ Required: address, message
 The address depends on your team context:
 - OUTSIDE any team (Nebula root / standalone agents): use a TEAM name
   (e.g. "nebflow-project") — the message goes to the team's lead agent
-  (Manager), who dispatches to members. Bare member short names are not
-  routable from outside a team.
+  (Manager), who dispatches to members. Bare member short names and
+  "team/agent" addresses are NOT routable from outside a team.
 - INSIDE a team: use a member short name (e.g. "backend") — resolved within
   your team first (same-team priority).
 - "team/agent" (e.g. "nebflow-project/Backend") — explicit scoped route to a
-  specific member from anywhere.
+  specific member, usable from inside a team context.
 
 For spawning standalone agents, use the Delegate tool. For triggering flows, use FlowTrigger.
 
@@ -86,7 +86,7 @@ Message type (optional, default "INFO"):
       "properties" -> Json.obj(
         "address" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Outside a team: a team name (e.g. \"nebflow-project\") routed to its Manager. Inside a team: a member short name (e.g. \"backend\"). Or explicit \"team/agent\" (e.g. \"nebflow-project/Backend\").".asJson
+          "description" -> "Outside a team: a team name (e.g. \"nebflow-project\") routed to its Manager. Inside a team: a member short name (e.g. \"backend\") or an explicit \"team/agent\" route (e.g. \"nebflow-project/Backend\").".asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
