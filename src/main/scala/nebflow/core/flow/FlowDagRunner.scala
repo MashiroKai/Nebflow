@@ -53,12 +53,18 @@ object FlowDagRunner:
             case Right(output) =>
               (replyTo ! AgentCommand.ImmediateInput(
                 s"[Flow '${flowDef.name}' completed]\n$output",
-                source = Some("flow")
+                source = Some("flow"),
+                // sender/eventType feed the injected-bubble source label:
+                // 'Flow · <flow name> · Completed' (373 — flow name was invisible).
+                eventType = Some("completed"),
+                sender = Some(flowDef.name)
               )).void
             case Left(err) =>
               (replyTo ! AgentCommand.ImmediateInput(
                 s"[Flow '${flowDef.name}' failed]\n$err",
-                source = Some("flow")
+                source = Some("flow"),
+                eventType = Some("failed"),
+                sender = Some(flowDef.name)
               )).void
         yield Behaviors.stopped
         end for

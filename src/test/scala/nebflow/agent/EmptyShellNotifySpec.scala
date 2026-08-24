@@ -30,7 +30,7 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
   /** A child that replies Completed with the given messages, replying to whoever asked. */
   private def completingChild(messages: List[Message]): Behavior[AgentCommand] =
     Behaviors.receiveMessage[AgentCommand] {
-      case AgentCommand.UserInput(_, replyTo, _, _, _, _, _, _, _) =>
+      case AgentCommand.UserInput(_, replyTo, _, _, _, _, _, _, _, _) =>
         // NOTE: `!` returns IO[Unit] (the send action) — it MUST be chained
         // into the returned IO, not discarded by foreach.
         val send = replyTo.fold(IO.unit)(ref => ref ! AgentEvent.Completed("", messages))

@@ -73,7 +73,7 @@ class CrashResumeSpec extends CatsEffectSuite:
   /** A child actor that immediately stops (simulates crash) on first message. */
   private def crashingChild: Behavior[AgentCommand] =
     Behaviors.receiveMessage[AgentCommand] {
-      case AgentCommand.UserInput(_, _, _, _, _, _, _, _, _) =>
+      case AgentCommand.UserInput(_, _, _, _, _, _, _, _, _, _) =>
         IO.pure(Behaviors.stopped[AgentCommand])
       case _ => IO.pure(Behaviors.stopped[AgentCommand])
     }
@@ -110,7 +110,7 @@ class CrashResumeSpec extends CatsEffectSuite:
               spawnReceived.update(_ :+ recovered) *>
                 system.spawn(
                   Behaviors.receiveMessage[AgentCommand] {
-                    case AgentCommand.UserInput(text, _, _, _, _, _, _, _, _) =>
+                    case AgentCommand.UserInput(text, _, _, _, _, _, _, _, _, _) =>
                       inputReceived.update(_ :+ text).as(Behaviors.stopped[AgentCommand])
                     case _ => IO.pure(Behaviors.stopped[AgentCommand])
                   },
@@ -183,7 +183,7 @@ class CrashResumeSpec extends CatsEffectSuite:
               spawnReceived.update(_ :+ recovered) *>
                 system.spawn(
                   Behaviors.receiveMessage[AgentCommand] {
-                    case AgentCommand.UserInput(text, _, _, _, _, _, _, _, _) =>
+                    case AgentCommand.UserInput(text, _, _, _, _, _, _, _, _, _) =>
                       inputReceived.update(_ :+ text).as(Behaviors.stopped[AgentCommand])
                     case _ => IO.pure(Behaviors.stopped[AgentCommand])
                   },
