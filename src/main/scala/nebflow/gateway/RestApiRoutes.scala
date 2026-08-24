@@ -1841,7 +1841,11 @@ class RestApiRoutes(
           case Some(svc) =>
             val store = new DaemonStore()
             store.load().flatMap { configs =>
-              svc.getStates(configs).flatMap { states =>
+              // Reconcile first: a daemons.json hot-edit (config removed /
+              // changed under a running entry) must stop the stale process NOW,
+              // not leave a ghost holding the port until the panel's stop can
+              // no longer reach it (id changed/removed → 404).
+              svc.reconcile(configs) *> svc.getStates(configs).flatMap { states =>
                 val cfgById = configs.map(c => c.id -> c).toMap
                 val statesJson = states.map { st =>
                   st.asJson.deepMerge(
@@ -1918,12 +1922,17 @@ class RestApiRoutes(
                   port = port
                 )
                 val store = new DaemonStore()
-                store.add(config).flatMap { _ =>
-                  // Auto-start if requested
-                  val startIO = if autoStart then svc.start(config).void.handleErrorWith(_ => IO.unit) else IO.unit
-                  startIO *> svc.getState(id).flatMap {
-                    case Some(state) => Ok(state.asJson)
-                    case None => Ok(config.asJson)
+                store.add(config).flatMap { updated =>
+                  // Reconcile: adding with an existing id replaces the config —
+                  // a running process of the OLD config must be stopped so the
+                  // port is free for the new one.
+                  svc.reconcile(updated) *> {
+                    // Auto-start if requested
+                    val startIO = if autoStart then svc.start(config).void.handleErrorWith(_ => IO.unit) else IO.unit
+                    startIO *> svc.getState(id).flatMap {
+                      case Some(state) => Ok(state.asJson)
+                      case None => Ok(config.asJson)
+                    }
                   }
                 }
               end if
@@ -1944,7 +1953,10 @@ class RestApiRoutes(
             // to delete the daemon, so daemons.json is updated regardless —
             // otherwise the entry reappears on the next GET /daemons.
             val store = new DaemonStore()
-            svc.stop(daemonId).timeout(15.seconds).handleErrorWith { e =>
+            // svc.remove (not stop): also drops the entry so the takeover
+            // fiber exits — stop alone would leave it probing and resurrect
+            // the deleted daemon once the port freed.
+            svc.remove(daemonId).timeout(15.seconds).handleErrorWith { e =>
               logger.warn(
                 s"Stop failed/timed out for daemon '$daemonId' during delete; removing config anyway: ${e.getMessage}"
               )
