@@ -691,6 +691,15 @@ case class SessionContext(
    */
   isSubTaskWorker: Boolean = false,
   /**
+   * #30: true when this agent is a Mail ask fork (forkToSession). Ask forks
+   * only answer a question — side-effect tools (Mail/Write/Edit/Bash/…) are
+   * stripped from the allowed set so the fork can never dispatch work or
+   * write memory while the real agent's own turn is running (2026-08-21
+   * double-write race: an ask fork dispatched team members and wrote memory
+   * in parallel with the main agent).
+   */
+  forkContext: Boolean = false,
+  /**
    * D11 交互豁免（freeze-schedule spec v1.1）：用户在场等待的交互会话（plan
    * agent 等）不参与冻结——冻结它们省下的 token 远低于浪费的用户等待时间。
    * PlanAgent.spawn 传 true；其余 spawn 点默认 false 零改动。ask 轮的豁免走
@@ -927,6 +936,7 @@ object AgentState:
     expectsMail: Boolean = false,
     rootSessionId: String = "",
     isSubTaskWorker: Boolean = false,
+    forkContext: Boolean = false,
     freezeExempt: Boolean = false
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
@@ -950,6 +960,7 @@ object AgentState:
         expectsMail = expectsMail,
         rootSessionId = rootSessionId,
         isSubTaskWorker = isSubTaskWorker,
+        forkContext = forkContext,
         freezeExempt = freezeExempt
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
@@ -997,6 +1008,7 @@ extension (s: AgentState)
   def rootSessionId: String = s.session.rootSessionId
   def expectsMail: Boolean = s.session.expectsMail
   def isSubTaskWorker: Boolean = s.session.isSubTaskWorker
+  def forkContext: Boolean = s.session.forkContext
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)
