@@ -207,6 +207,111 @@ function handleSelectClick(e, path) {
   return false;
 }
 
+// ── Drag-to-move (VS Code-style) ──────────────────────────────────────
+// Files drag with the existing 'application/x-nebflow-file' MIME (shared with
+// the input-bar attach flow); dirs drag with a dedicated dir MIME so the input
+// bar never treats a folder as an attachment. Drop targets are folder rows and
+// the blank area of the root container. The actual move is a backend `movePath`
+// op answered by `pathMoved` / `fileOpError`.
+
+const DIR_DRAG_MIME = 'application/x-nebflow-dir';
+
+/** Current in-tree drag payload: { path, isDir } | null. Set on dragstart,
+ *  cleared on dragend — dataTransfer data is unreadable during dragover. */
+let dragMoveSrc = null;
+
+/** Validate dropping dragMoveSrc onto targetDir (explorer-relative, '' = root).
+ *  Guards: no src, drop onto itself, into its own descendant (cycle), and
+ *  same-parent no-ops. */
+function isValidDropTarget(srcPath, targetDir) {
+  if (!srcPath) return false;
+  if (targetDir === srcPath) return false;                          // onto itself
+  if (targetDir.startsWith(srcPath + '/')) return false;            // own subtree
+  if (getTargetDir(srcPath) === targetDir) return false;            // same parent
+  return true;
+}
+
+/** Row currently highlighted as a drop target (cleared on drop/dragend/leave). */
+let dropTargetEl = null;
+function setDropTarget(el, valid = false) {
+  if (dropTargetEl === el && (!el || el.classList.contains(valid ? 'drop-target' : 'drop-invalid'))) return;
+  clearDropTarget();
+  if (!el) return;
+  el.classList.add(valid ? 'drop-target' : 'drop-invalid');
+  dropTargetEl = el;
+}
+function clearDropTarget() {
+  if (dropTargetEl) {
+    dropTargetEl.classList.remove('drop-target', 'drop-invalid');
+    dropTargetEl = null;
+  }
+}
+
+/** Resolve the drop-target directory for a drag event over the tree:
+ *  a folder row → that dir; blank root area → ''. null = not a drop zone. */
+function dropDirForEvent(e) {
+  const folder = e.target instanceof Element
+    ? /** @type {HTMLElement|null} */ (e.target.closest('.explorer-item.explorer-folder'))
+    : null;
+  if (folder && folder.dataset.path !== undefined) return folder.dataset.path;
+  // Blank area of the root container (not on any item) → move to root.
+  const rootChildren = e.target instanceof Element ? e.target.closest('.explorer-root > .explorer-children') : null;
+  if (rootChildren && !(e.target instanceof Element && e.target.closest('.explorer-item'))) return '';
+  return null;
+}
+
+function bindTreeDragMove(tree) {
+  tree.addEventListener('dragover', (e) => {
+    if (!dragMoveSrc) return;
+    const dir = dropDirForEvent(e);
+    if (dir === null) { setDropTarget(null); return; }
+    const valid = isValidDropTarget(dragMoveSrc.path, dir);
+    // stopPropagation: keep the input-bar's document-level dragover from
+    // overriding dropEffect for file-MIME drags inside the tree.
+    e.stopPropagation();
+    const zone = dir
+      ? (e.target instanceof Element ? e.target.closest('.explorer-item.explorer-folder') : null)
+      : tree.querySelector('.explorer-root');
+    if (!valid) { setDropTarget(zone, false); return; }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDropTarget(zone, true);
+  });
+
+  tree.addEventListener('dragleave', (e) => {
+    if (!dragMoveSrc) return;
+    // Leaving the tree entirely → clear highlight (child-element transitions
+    // keep relatedTarget inside the tree and are ignored).
+    if (!tree.contains(e.relatedTarget)) setDropTarget(null);
+  });
+
+  tree.addEventListener('drop', (e) => {
+    if (!dragMoveSrc) return;
+    const dir = dropDirForEvent(e);
+    const src = dragMoveSrc;
+    setDropTarget(null);
+    if (dir === null || !isValidDropTarget(src.path, dir)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    sendWs({ type: 'movePath', sessionId: state.activeSessionId, path: src.path, targetDir: dir, rootPath: explorerRoot });
+  });
+}
+
+/** Read dragMoveSrc into a dragstart payload + visual state. */
+function startRowDrag(e, node, path, isDir) {
+  dragMoveSrc = { path, isDir };
+  if (isDir) {
+    e.dataTransfer.setData(DIR_DRAG_MIME, JSON.stringify({ path, rootPath: explorerRoot || '' }));
+    e.dataTransfer.effectAllowed = 'move';
+  } else {
+    // Same payload the input-bar attach flow consumes (#303).
+    e.dataTransfer.setData('application/x-nebflow-file',
+      JSON.stringify({ path, rootPath: explorerRoot || '' }));
+    e.dataTransfer.effectAllowed = 'copyMove';   // copy → input bar, move → tree
+  }
+  node.classList.add('dragging');
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function $(sel) { return document.querySelector(sel); }
@@ -293,6 +398,19 @@ function buildDirNode(path, isRoot, depth) {
   row.appendChild(icon);
   row.appendChild(label);
 
+  // Drag-to-move: folder rows are draggable onto other folders (or root).
+  // The drop targets are bound once on the tree container (bindTreeDragMove).
+  row.draggable = true;
+  row.addEventListener('dragstart', (e) => {
+    e.stopPropagation();
+    startRowDrag(e, row, path, true);
+  });
+  row.addEventListener('dragend', () => {
+    row.classList.remove('dragging');
+    dragMoveSrc = null;
+    clearDropTarget();
+  });
+
   const children = document.createElement('div');
   children.className = 'explorer-children';
   children.style.display = 'none';
@@ -328,20 +446,19 @@ function buildFileNode(path, depth) {
   node.appendChild(icon);
   node.appendChild(label);
 
-  // #303 internal drag: FILE rows are draggable into a chat input bar (dirs are
-  // not draggable in v1). The payload carries the explorer-relative path + root
-  // so the drop handler re-reads the file through the same readFile/nf-file
-  // channels the tree uses. input.js consumes this in initGlobalFileDrop.
+  // #303 internal drag: FILE rows are draggable into a chat input bar (copy)
+  // AND onto tree folders (move, VS Code-style). The payload carries the
+  // explorer-relative path + root; input.js consumes the copy channel in
+  // initGlobalFileDrop, the tree consumes the move channel (bindTreeDragMove).
   node.draggable = true;
   node.addEventListener('dragstart', (e) => {
     e.stopPropagation();
-    e.dataTransfer.setData('application/x-nebflow-file',
-      JSON.stringify({ path, rootPath: explorerRoot || '' }));
-    e.dataTransfer.effectAllowed = 'copy';
-    node.classList.add('dragging');   // semi-transparent while dragging
+    startRowDrag(e, node, path, false);
   });
   node.addEventListener('dragend', () => {
     node.classList.remove('dragging');
+    dragMoveSrc = null;
+    clearDropTarget();
   });
 
   // Single click → open as preview tab (italic, temporary)
@@ -481,6 +598,24 @@ onMessage('dirListing', (msg) => {
     pending.container.innerHTML = '<div class="explorer-empty">Empty</div>';
   }
 
+  // Restore expansion state: a directory reload wipes its subtree DOM, which
+  // would otherwise silently collapse every expanded child (focus refresh,
+  // pathMoved, fileCreated all reload ancestors). Re-expand + reload any child
+  // dir still present in expandedDirs.
+  for (const child of pending.container.children) {
+    if (!child.classList.contains('explorer-dir-wrapper')) continue;
+    const p = child.dataset.path;
+    if (!p || !expandedDirs.has(p)) continue;
+    const chevron = child.querySelector('.explorer-chevron');
+    const kids = child.querySelector('.explorer-children');
+    if (chevron && kids) {
+      chevron.classList.add('expanded');
+      kids.style.display = '';
+      kids.innerHTML = '';
+      loadDir(p, kids, p.split('/').length);
+    }
+  }
+
   // Directory re-rendered — restore .selected classes from the selection model
   applySelectionClasses();
 
@@ -576,6 +711,13 @@ export function initExplorer() {
 
   // Context menu — right-click on tree items
   const tree = document.getElementById('explorer-tree');
+
+  // Drag-to-move: delegated drop targets on folder rows + root blank area.
+  if (tree && !tree._dragMoveBound) {
+    tree._dragMoveBound = true;
+    bindTreeDragMove(tree);
+  }
+
   if (tree && !tree._ctxBound) {
     tree._ctxBound = true;
     tree.addEventListener('contextmenu', (e) => {
@@ -621,6 +763,8 @@ export function initExplorer() {
       renderTree();
     }
   });
+
+  bindFocusRefresh();
 
   if (state.activeSessionId) {
     expandedDirs.clear();
@@ -841,6 +985,25 @@ onMessage('fileOpError', (msg) => {
   window.__showToast?.(msg.error || 'File operation failed', 'error');
 });
 
+/** Drag-to-move response: { type:'pathMoved', oldPath, newPath } — refresh both
+ *  parent dirs, retarget open canvas tabs (ids, absPaths, editor save paths),
+ *  drop the stale path from the selection, and confirm with a toast. */
+onMessage('pathMoved', (msg) => {
+  const { oldPath, newPath } = msg;
+  if (!oldPath || !newPath) return;
+  // New parent FIRST: refreshing the old parent may wipe the target dir's
+  // subtree DOM when the target sits inside it (e.g. root refresh rebuilds
+  // all rows collapsed) — the reverse order would silently drop the target
+  // refresh. An ancestor refresh simply re-collapses the target dir; its next
+  // expand reloads from disk anyway.
+  refreshDirOf(newPath);
+  if (getTargetDir(oldPath) !== getTargetDir(newPath)) refreshDirOf(oldPath);
+  import('./canvas.js').then(({ retargetFileTabs }) =>
+    retargetFileTabs(oldPath, newPath, explorerRoot || ''));
+  pruneSelection(oldPath);
+  window.__showToast?.(t('explorer.moved', { name: newPath.split('/').pop() }), 'info');
+});
+
 /** Refresh the parent directory of a created/deleted path. */
 function refreshDirOf(path) {
   const dirPath = getTargetDir(path);
@@ -872,4 +1035,51 @@ export function refreshExplorer(sessionId) {
     const body = $('#explorer-tree');
     if (body) body.innerHTML = '';
   }
+}
+
+// ── Focus refresh ─────────────────────────────────────────────────────
+// External edits (another editor, an agent on the host) don't reach the UI:
+// the tree only reloads on expand, and file tabs only on activation. When the
+// window regains focus, reload the root + every expanded dir and ask canvas to
+// re-check the active file tab (dirty-guarded + content-compare downstream).
+
+/** Reload the root listing and every currently expanded directory in place. */
+function refreshExpandedDirs() {
+  const rootChildren = document.querySelector('.explorer-root > .explorer-children');
+  if (rootChildren && !loadingDirs.has('')) {
+    rootChildren.innerHTML = '';
+    loadDir('', rootChildren, 0);
+  }
+  for (const p of [...expandedDirs]) {
+    if (!p || loadingDirs.has(p)) continue;
+    const wrapper = document.querySelector(`.explorer-dir-wrapper[data-path="${CSS.escape(p)}"]`);
+    const children = wrapper?.querySelector('.explorer-children');
+    if (children) {
+      children.innerHTML = '';
+      loadDir(p, children, p.split('/').length);
+    }
+  }
+}
+
+let focusRefreshTimer = null;
+function onRegainFocus() {
+  clearTimeout(focusRefreshTimer);
+  focusRefreshTimer = setTimeout(() => {
+    // Tree not rendered yet (no session) — nothing to refresh.
+    if (!document.querySelector('.explorer-root')) return;
+    refreshExpandedDirs();
+    // canvas.js listens and re-checks the active file tab (dirty-safe).
+    window.dispatchEvent(new CustomEvent('explorer-focus-refresh'));
+  }, 250);
+}
+
+/** Bind window focus/visibility refresh once (called from initExplorer). */
+function bindFocusRefresh() {
+  const win = /** @type {any} */ (window);
+  if (win.__explorerFocusBound) return;
+  win.__explorerFocusBound = true;
+  window.addEventListener('focus', onRegainFocus);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) onRegainFocus();
+  });
 }

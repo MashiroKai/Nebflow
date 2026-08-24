@@ -173,10 +173,18 @@ const STREAM_MSG_TYPES = new Set([
 /**
  * @param {string} type - incoming event name (TERMINAL_MSG_TYPES / STREAM_MSG_TYPES)
  * @param {WSMessageHandler} handler
+ * @returns {() => void} unsubscribe - removes this handler (one-shot response
+ *   listeners like fileSaved rely on it; push() alone returns a number, and
+ *   calling that as a function throws inside the dispatch loop).
  */
 export function onMessage(type, handler) {
   if (!handlers[type]) handlers[type] = [];
   handlers[type].push(handler);
+  return () => {
+    const list = handlers[type];
+    const i = list.indexOf(handler);
+    if (i >= 0) list.splice(i, 1);
+  };
 }
 
 // ---------- Reconnect callback registry ----------
@@ -454,7 +462,7 @@ export function connect() {
           // Render live (pre-gating behavior). Memory stays bounded via
           // cleanupBgAgentView's post-done TTL + the stepViews LRU cap.
           const convView = activeView;
-          if (convList) for (const h of convList) {
+          if (convList) for (const h of convList.slice()) {
             try { h(converted, convView); }
             catch (e) { console.error('[ws] bg-agent handler error for', converted.type, ':', e.message); }
           }
@@ -462,7 +470,7 @@ export function connect() {
         // Also dispatch the original event (for bg-agent indicator status, etc.)
         const origView = activeView;
         const list = handlers[msg.type];
-        if (list) for (const h of list) {
+        if (list) for (const h of list.slice()) {
           try { h(msg, origView); }
           catch (e) { console.error('[ws] bg-agent handler error for', msg.type, ':', e.message); }
         }
@@ -492,7 +500,7 @@ export function connect() {
         if (converted) {
           const convList = handlers[converted.type];
           const convView = streamDispatchView(teamView);
-          if (convList) for (const h of convList) {
+          if (convList) for (const h of convList.slice()) {
             try { h(converted, convView); }
             catch (e) { console.error('[ws] team handler error for', converted.type, ':', e.message); }
           }
@@ -500,7 +508,7 @@ export function connect() {
         // Also dispatch the original event (status tracking, delegate
         // indicator, stream timeouts) with the pre-routed view.
         const teamList = handlers[msg.type];
-        if (teamList) for (const h of teamList) {
+        if (teamList) for (const h of teamList.slice()) {
           try { h(msg, view); }
           catch (e) { console.error('[ws] team handler error for', msg.type, ':', e.message); }
         }
@@ -522,7 +530,7 @@ export function connect() {
           const convList = handlers[converted.type];
           // Hidden popup → view=null: accumulate state buffers only, no DOM.
           const convView = streamDispatchView(activeView);
-          if (convList) for (const h of convList) {
+          if (convList) for (const h of convList.slice()) {
             try { h(converted, convView); }
             catch (e) { console.error('[ws] handler error for', converted.type, ':', e.message); }
           }
@@ -531,7 +539,7 @@ export function connect() {
         // Interactive events keep the real view (render into hidden container).
         const origView = (msg.type === 'askUser' || msg.type === 'askPermission') ? activeView : streamDispatchView(activeView);
         const list = handlers[msg.type];
-        if (list) for (const h of list) {
+        if (list) for (const h of list.slice()) {
           try { h(msg, origView); }
           catch (e) { console.error('[ws] handler error for', msg.type, ':', e.message); }
         }
@@ -546,7 +554,7 @@ export function connect() {
       // bg-agent indicator and tool activity.
       if (msg.agentId && state.planAgentId === msg.agentId && msg.type === 'agentTextDelta') {
         const planList = handlers['_planAgent'];
-        if (planList) for (const h of planList) {
+        if (planList) for (const h of planList.slice()) {
           try { h(msg); }
           catch (e) { console.error('[ws] plan handler error:', e.message); }
         }
@@ -555,7 +563,7 @@ export function connect() {
 
       // Dispatch to handlers
       const list = handlers[msg.type];
-      if (list) for (const h of list) {
+      if (list) for (const h of list.slice()) {
         try { h(msg, view); }
         catch (e) { console.error('[ws] handler error for', msg.type, ':', e.message); }
       }
