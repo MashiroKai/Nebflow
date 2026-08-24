@@ -469,33 +469,25 @@ object LlmLogWriter:
         .toString
         .take(10)
 
-      // 1. Delete old JSONL files and collect remaining hashes
+      // 1. Delete old JSONL files and collect remaining hashes.
+      //    Only `_full.jsonl` entries carry object refs (system_ref /
+      //    tools_ref / message_refs) — summary and sse files are pure
+      //    stats/events and are NEVER scanned (#26: sse files reach
+      //    hundreds of MB; readAllLines on them OOMs the JVM).
       val usedHashes = scala.collection.mutable.Set.empty[String]
+      // Oversized full files are skipped (their refs unknown) — when that
+      // happens the orphan sweep is suppressed so live objects are never
+      // mistaken for orphans and deleted.
+      val scanIncomplete =
+        if Files.exists(logDir) then
+          val cutoffDelete = cutoff
+          scanFullLogsForRefs(logDir, cutoffDelete, usedHashes, MaxPruneScanBytes)
+        else false
 
-      if Files.exists(logDir) then
-        for
-          file <- Files.list(logDir).iterator().asScala.toList
-          if file.getFileName.toString.endsWith(".jsonl")
-        do
-          val fname = file.getFileName.toString
-          val dateStr = fname.take(10)
-          if dateStr < cutoff then Files.deleteIfExists(file)
-          else
-            // Collect referenced hashes from remaining files
-            for line <- Files.readAllLines(file).asScala if line.nonEmpty do
-              io.circe.parser.parse(line).toOption.flatMap(_.asObject) match
-                case Some(obj) =>
-                  obj("system_ref").flatMap(_.asString).foreach(usedHashes += _)
-                  obj("tools_ref").flatMap(_.asString).foreach(usedHashes += _)
-                  obj("message_refs")
-                    .flatMap(_.asArray)
-                    .foreach:
-                      _.foreach(_.asString.foreach(usedHashes += _))
-                case None => ()
-      end if
-
-      // 2. Delete orphaned objects
-      if Files.exists(objectsDir) then
+      // 2. Delete orphaned objects — only when every full file was fully
+      //    scanned; a skipped file's refs are unknown, so deleting "orphans"
+      //    could remove objects still in use.
+      if !scanIncomplete && Files.exists(objectsDir) then
         for
           file <- Files.list(objectsDir).iterator().asScala.toList
           if file.getFileName.toString.endsWith(".json")
@@ -505,5 +497,61 @@ object LlmLogWriter:
 
       logger.infoSync(s"Log retention: pruned files older than $cutoff")
     catch case e: Exception => logger.warnSync(s"Log retention error: ${e.getMessage}")
+
+  /** Max size of a single full.jsonl file we are willing to scan for refs. */
+  private val MaxPruneScanBytes: Long = 128L * 1024 * 1024
+
+  /** Scan jsonl files in `dir` for retention: delete files older than
+    * `cutoff` (date-prefix compare), and collect object refs from remaining
+    * `_full.jsonl` files into `usedHashes`.
+    *
+    * Returns true when any remaining full file was SKIPPED because it
+    * exceeded `maxBytes` — the caller must then suppress the orphan sweep
+    * (a skipped file's refs are unknown, so deleting "orphans" could remove
+    * objects still in use).
+    *
+    * Only `_full.jsonl` is scanned: summary/sse entries carry no object
+    * refs. Package-visible for tests (#26). */
+  private[core] def scanFullLogsForRefs(
+      dir: Path,
+      cutoff: String,
+      usedHashes: scala.collection.mutable.Set[String],
+      maxBytes: Long
+  ): Boolean =
+    var incomplete = false
+    for
+      file <- Files.list(dir).iterator().asScala.toList
+      if file.getFileName.toString.endsWith(".jsonl")
+    do
+      val fname = file.getFileName.toString
+      val dateStr = fname.take(10)
+      if dateStr < cutoff then Files.deleteIfExists(file)
+      else if fname.endsWith("_full.jsonl") then
+        // Stream line-by-line (bounded memory); skip gigantic files rather
+        // than risking OOM — pruning is best-effort cleanup.
+        if Files.size(file) <= maxBytes then collectReferencedHashes(file, usedHashes)
+        else incomplete = true
+    incomplete
+
+  /** Stream one full.jsonl line-by-line, collecting object refs. Memory is
+    * bounded to a single line (readAllLines would load the whole file —
+    * #26: multi-hundred-MB files OOM under the default 1g heap). */
+  private def collectReferencedHashes(file: Path, usedHashes: scala.collection.mutable.Set[String]): Unit =
+    val reader = Files.newBufferedReader(file)
+    try
+      var line = reader.readLine()
+      while line != null do
+        if line.nonEmpty then
+          io.circe.parser.parse(line).toOption.flatMap(_.asObject) match
+            case Some(obj) =>
+              obj("system_ref").flatMap(_.asString).foreach(usedHashes += _)
+              obj("tools_ref").flatMap(_.asString).foreach(usedHashes += _)
+              obj("message_refs")
+                .flatMap(_.asArray)
+                .foreach:
+                  _.foreach(_.asString.foreach(usedHashes += _))
+            case None => ()
+        line = reader.readLine()
+    finally reader.close()
 
 end LlmLogWriter
