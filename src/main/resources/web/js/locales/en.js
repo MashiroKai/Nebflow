@@ -655,10 +655,10 @@ export default {
   'search.toolDisabledHint': 'Tool filter not applicable in this tab',
   'search.dateDisabledInPop': 'Date anchor not applicable in Pop tab',
 
-  // === Daemons (Dev Servers) ===
-  'daemons.title': 'Dev Servers',
-  'daemons.empty': 'No dev servers',
-  'daemons.emptyHint': 'Click + to add a daemon',
+  // === Daemons (Heartbeat) ===
+  'daemons.title': 'Heartbeat',
+  'daemons.empty': 'No heartbeats',
+  'daemons.emptyHint': 'Click + to add a heartbeat',
   'daemons.start': 'Start',
   'daemons.stop': 'Stop',
   'daemons.restart': 'Restart',
