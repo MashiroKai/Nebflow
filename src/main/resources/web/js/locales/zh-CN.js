@@ -660,10 +660,10 @@ export default {
   'search.toolDisabledHint': '当前栏目下不适用工具筛选',
   'search.dateDisabledInPop': 'Pop 栏目下不可用日期定位',
 
-  // === Daemons (Dev Servers) ===
-  'daemons.title': '开发服务器',
-  'daemons.empty': '暂无服务',
-  'daemons.emptyHint': '点击 + 添加守护进程',
+  // === Daemons (Heartbeat) ===
+  'daemons.title': '心跳进程',
+  'daemons.empty': '暂无心跳进程',
+  'daemons.emptyHint': '点击 + 添加心跳进程',
   'daemons.start': '启动',
   'daemons.stop': '停止',
   'daemons.restart': '重启',
