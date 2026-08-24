@@ -27,12 +27,15 @@ object FlowDagRunner:
      * flow nodes inherit the caller's root session so their permission/AskUser
      * requests render in the same Nebula window and share its policy.
      */
-    rootSessionId: String = ""
+    rootSessionId: String = "",
+    // Structured trigger parameters (validated against flow.params schema by
+    // the caller); node inputs reference them via $params.<name>.
+    params: Map[String, Json] = Map.empty
   )
 
   def apply(resources: SharedResources, wsSend: Option[Json => IO[Unit]]): Behavior[RunFlow] =
     Behaviors.receiveMessage:
-      case RunFlow(flowDef, taskInput, replyTo, rootSessionId) =>
+      case RunFlow(flowDef, taskInput, replyTo, rootSessionId, params) =>
         val instanceId = s"flow-${flowDef.name.take(15)}-${java.util.UUID.randomUUID().toString.take(8)}"
         val parentAgentRef = Some(replyTo) // replyTo is the AgentRef of the agent that triggered the flow
         for
@@ -46,7 +49,8 @@ object FlowDagRunner:
               wsSend,
               instanceId,
               parentAgentRef,
-              rootSessionId
+              rootSessionId,
+              params
             )
             .handleErrorWith(e => logger.warn(s"FlowDagExecutor failed: ${e.getMessage}").as(Left(e.getMessage)))
           _ <- result match

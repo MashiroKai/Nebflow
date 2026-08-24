@@ -291,4 +291,179 @@ class FlowTriggerExecutionSpec extends CatsEffectSuite:
           "the rebuilt tool list must contain FlowTrigger"
         )
     }
+
+  // ===== Dynamic fanout + params: FlowTrigger → FlowDagRunner → executor (real chain) =====
+
+  test("FlowTrigger with params drives a dynamic-fanout flow end-to-end (3 topics → 3 instances → aggregated join)"):
+    val requestsRef: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
+    val answeredRef: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
+    val llm = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] =
+        IO.raiseError(new RuntimeException("send not expected in this test"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      ): Stream[IO, StreamChunk] =
+        Stream.eval(requestsRef.update(req :: _)) >>
+          Stream.eval(IO(req.sessionId)).flatMap { sid =>
+            if sid.startsWith("dag-dynflow-") then
+              // flow node session: dag-dynflow-<nodeId>-<ts>
+              val nodeId = sid.split("-").apply(2)
+              Stream
+                .eval(
+                  answeredRef.get.flatMap(a =>
+                    if a(sid) then IO.pure(false) else answeredRef.update(_ + sid).as(true)
+                  )
+                )
+                .flatMap {
+                  case true if nodeId == "p" =>
+                    // planner: one FlowReport carrying the topics array slot
+                    Stream(
+                      StreamChunk.ToolCallChunk(ToolCall(
+                        "call-p1",
+                        "FlowReport",
+                        JsonObject.fromIterable(
+                          List(
+                            "verdict" -> Json.fromString("done"),
+                            "output" -> Json.fromString("PLANNER"),
+                            "slots" -> JsonObject.fromIterable(
+                              List("topics" -> List(Json.fromString("A"), Json.fromString("B"), Json.fromString("C")).asJson)
+                            ).asJson
+                          )
+                        )
+                      )),
+                      StreamChunk.Done(Some("tool_use"), None)
+                    )
+                  case true if nodeId.startsWith("researcher#") =>
+                    textAnswer(s"OUT-${nodeId.split("#").last}")
+                  case true if nodeId == "j" =>
+                    textAnswer("JOIN-DONE")
+                  case _ => textAnswer("done")
+                }
+            else
+              // caller agent session: first request calls FlowTrigger with params
+              Stream
+                .eval(
+                  answeredRef.get.flatMap(a =>
+                    if a(sid) then IO.pure(false) else answeredRef.update(_ + sid).as(true)
+                  )
+                )
+                .flatMap {
+                  case true =>
+                    Stream(
+                      StreamChunk.ToolCallChunk(ToolCall(
+                        "call-ft-1",
+                        "FlowTrigger",
+                        JsonObject.fromIterable(
+                          List(
+                            "flow" -> Json.fromString("dynflow"),
+                            "prompt" -> Json.fromString("research three topics"),
+                            "params" -> JsonObject.fromIterable(List("fanout" -> Json.fromInt(3))).asJson
+                          )
+                        )
+                      )),
+                      StreamChunk.Done(Some("tool_use"), None)
+                    )
+                  case false => textAnswer("ok")
+                }
+          }
+    val system = ActorSystem(s"ftf-dyn-${UUID.randomUUID().toString.take(6)}")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val dataRoot = tmp / "data"
+    IO.delay {
+      os.makeDir.all(dataRoot)
+      // Flow-node agents live under flows/<name>/agents/<agent> — the loader
+      // infers category "flow" from the /flows/ path, which auto-injects
+      // FlowReport into the node's tool set (a standalone agent referenced by
+      // a flow would have FlowReport filtered → silent slot loss).
+      os.makeDir.all(dataRoot / "flows" / "dynflow" / "agents" / "Restored")
+      os.write(
+        dataRoot / "flows" / "dynflow" / "agents" / "Restored" / "agent.json",
+        """{"name":"Restored","description":"flow node agent","tools":["Read"],"flows":["dynflow"]}"""
+      )
+      os.makeDir.all(dataRoot / "flows")
+      // The dynamic-fanout flow loaded from DISK — exercises the real
+      // parseFlowJson → FlowStructure.validate path with the new syntax.
+      os.write(
+        dataRoot / "flows" / "dynflow.json",
+        """{"name":"dynflow","description":"dynamic fanout smoke","entry":"p","maxFanout":4,
+           |"params":{"fanout":{"type":"int","default":2,"min":1,"max":4,"description":"并行路数"}},
+           |"nodes":{
+           |  "p":{"agent":"Restored","input":"$task\n\nfanout=$params.fanout","outputs":{"topics":"array"},"onComplete":{"parallel":{"slots":"topics","template":"researcher"}}},
+           |  "researcher":{"agent":"Restored","input":"Track {{index}}: {{item}}","onComplete":"j"},
+           |  "j":{"agent":"Restored","input":"=== ALL ===\n$researcher.all.output","onComplete":"$return"}
+           |}}""".stripMargin
+      )
+      PathUtil.setDataRoot(dataRoot)
+    }.bracket { _ =>
+      mkResources(system, tmp, llm).flatMap { resources =>
+        val memberDef = AgentDef(
+          name = "Restored",
+          description = "flows-declaring agent",
+          tools = List("Read"),
+          systemPrompt = "",
+          category = "standalone",
+          flows = List("dynflow")
+        )
+        for
+          ref <- system.spawn(
+            AgentActor(
+              agentDef = memberDef,
+              resources = resources,
+              wsSend = _ => IO.unit,
+              depth = 0,
+              sessionId = Some(s"ftf-dynsmoke-${UUID.randomUUID().toString.take(6)}"),
+              sessionName = Some("Restored")
+            ),
+            "ftf-dynsmoke-agent"
+          )
+          _ <- ref ! AgentCommand.UserInput("trigger the dynamic flow")
+          // Caller turn (2 requests) + flow nodes (6) + completion delivery (1):
+          // wait until the caller saw the flow-completed ImmediateInput (its 3rd request).
+          _ <- waitUntil(60.seconds)(requestsRef.get.map(_.size >= 9))
+          reqs <- requestsRef.get.map(_.reverse)
+          callerMsgs = reqs.filterNot(_.sessionId.startsWith("dag-dynflow-")).flatMap(r =>
+            r.messages.flatMap(_.content.toOption.toList.flatten).collect { case ContentBlock.ToolResult(_, c, _) => c }
+          )
+          // The flow-completion ImmediateInput arrives as a USER message
+          // ("[Flow '<name>' completed]…"), not a ToolResult.
+          callerUserText = reqs
+            .filterNot(_.sessionId.startsWith("dag-dynflow-"))
+            .flatMap(r => r.messages.filter(_.role == MessageRole.User).flatMap(m => m.content.fold(t => List(t), bs => bs.collect { case ContentBlock.Text(t) => t })))
+            .mkString("\n")
+          flowReqs = reqs.filter(_.sessionId.startsWith("dag-dynflow-"))
+          userTexts = (r: LlmRequest) =>
+            r.messages
+              .filter(_.role == MessageRole.User)
+              .flatMap(m => m.content.fold(t => List(t), bs => bs.collect { case ContentBlock.Text(t) => t }))
+              .mkString("\n")
+          joinText = flowReqs.filter(_.sessionId.contains("-j-")).map(userTexts).mkString("\n")
+          pText = flowReqs.filter(_.sessionId.contains("-p-")).map(userTexts).mkString("\n")
+          instSessions = flowReqs.map(_.sessionId).filter(_.contains("researcher#")).map(_.split("-").apply(2)).toSet
+        yield
+          // FlowTrigger tool accepted the params and started the flow
+          assert(callerMsgs.exists(_.contains("Flow 'dynflow' started")), s"tool result: $callerMsgs")
+          // $params.fanout reached the planner input (validated + merged)
+          assert(
+            pText.contains("fanout=3"),
+            s"planner saw params.fanout=3 — pText=[$pText] sessions=[${flowReqs.map(_.sessionId).mkString(" | ")}]"
+          )
+          // 3 instances ran (slots [A,B,C] → researcher#1..#3)
+          assertEquals(instSessions, Set("researcher#1", "researcher#2", "researcher#3"), s"instance sessions: $instSessions")
+          // join aggregated all 3 tracks in index order
+          assert(joinText.contains("=== Track 1 ===") && joinText.contains("OUT-1"), s"track 1: $joinText")
+          assert(joinText.contains("=== Track 2 ===") && joinText.contains("OUT-2"), s"track 2: $joinText")
+          assert(joinText.contains("=== Track 3 ===") && joinText.contains("OUT-3"), s"track 3: $joinText")
+          // completion delivered back to the caller (ImmediateInput → user message)
+          assert(
+            callerUserText.contains("[Flow 'dynflow' completed]"),
+            s"completion delivered: [$callerUserText]"
+          )
+      }
+    } { _ =>
+      IO.delay(PathUtil.setDataRoot(prevRoot)) *>
+        system.stopAll.attempt.void *>
+        IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
+    }
 end FlowTriggerExecutionSpec

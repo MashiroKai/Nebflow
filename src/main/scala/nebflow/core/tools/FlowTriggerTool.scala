@@ -4,6 +4,7 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
+import nebflow.core.entity.FlowParamSpec
 
 /**
  * FlowTriggerTool — triggers a flow DAG pipeline.
@@ -31,6 +32,7 @@ object FlowTriggerTool extends Tool:
 **Parameters:**
 - flow (required): flow name. Must be declared in your agent's flows whitelist — calling with an undeclared flow is rejected.
 - prompt (required): self-contained task input for the flow's entry node.
+- params (optional): structured parameters the flow declares in its `params` schema (e.g. { "fanout": 3 }). Validated against declared types/ranges; missing keys fall back to the flow's defaults. Node inputs reference them via $params.<name>.
 
 **Behavior:**
 - Returns immediately after the flow starts; the pipeline runs in the background
@@ -54,6 +56,11 @@ object FlowTriggerTool extends Tool:
         "prompt" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "Self-contained task input for the flow's entry node. Must include all context the pipeline needs.".asJson
+        ),
+        "params" -> Json.obj(
+          "type" -> "object".asJson,
+          "description" -> "Optional structured parameters declared in the flow's params schema (validated against types/ranges; defaults apply for missing keys).".asJson,
+          "additionalProperties" -> Json.True
         )
       ),
       "required" -> Json.arr("flow".asJson, "prompt".asJson)
@@ -62,14 +69,64 @@ object FlowTriggerTool extends Tool:
 
   def summarize(input: JsonObject): String =
     val flow = input("flow").flatMap(_.asString).getOrElse("?")
-    s"FlowTrigger(→ flow:$flow)"
+    val params = input("params").flatMap(_.asObject).map(_.keys.toList.sorted.mkString(",")).getOrElse("")
+    s"FlowTrigger(→ flow:$flow${if params.nonEmpty then s" params:$params" else ""})"
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.length > 200 then result.take(197) + "..." else result
 
+  /**
+   * Validate trigger params against the flow's declared schema. Unknown keys
+   * are rejected (catches typos), types and int ranges are enforced, and
+   * declared defaults fill in missing keys. Returns the effective param map
+   * (defaults ++ provided) or a clear rejection reason.
+   */
+  private[tools] def validateFlowParams(
+    declared: Map[String, FlowParamSpec],
+    provided: JsonObject
+  ): Either[String, Map[String, Json]] =
+    provided.keys.find(k => !declared.contains(k)) match
+      case Some(k) =>
+        val known = if declared.isEmpty then "(flow declares no params)" else declared.keys.toList.sorted.mkString(", ")
+        Left(s"unknown parameter '$k' — declared: $known")
+      case None =>
+        provided.toList.foldLeft[Either[String, Map[String, Json]]](Right(declared.collect {
+          case (k, spec) if spec.default.nonEmpty => k -> spec.default.get
+        })) { (acc, kv) =>
+          val (k, v) = kv
+          acc.flatMap { m =>
+            val spec = declared(k)
+            val typeOk = spec.`type` match
+              case "int"    => v.isNumber
+              case "string" => v.isString
+              case "bool"   => v.isBoolean
+              case _        => false
+            if !typeOk then
+              Left(s"parameter '$k' must be ${spec.`type`} (got ${v.name})")
+            else
+              val rangeOk = spec.`type` match
+                case "int" =>
+                  (spec.min, spec.max, v.asNumber.flatMap(_.toInt)) match
+                    case (Some(lo), Some(hi), Some(x)) => x >= lo && x <= hi
+                    case (Some(lo), None, Some(x))     => x >= lo
+                    case (None, Some(hi), Some(x))     => x <= hi
+                    case _                             => true
+                case _ => true
+              if !rangeOk then
+                val bounds = (spec.min, spec.max) match
+                  case (Some(lo), Some(hi)) => s"[$lo, $hi]"
+                  case (Some(lo), None)     => s">= $lo"
+                  case (None, Some(hi))     => s"<= $hi"
+                  case _                    => ""
+                Left(s"parameter '$k' out of range $bounds (got ${v.noSpaces})")
+              else Right(m + (k -> v))
+          }
+        }
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val flowName = input("flow").flatMap(_.asString).filter(_.nonEmpty)
     val prompt = input("prompt").flatMap(_.asString).getOrElse("")
+    val paramsInput = input("params").flatMap(_.asObject).getOrElse(JsonObject.empty)
 
     if flowName.isEmpty then IO.pure(Left(ToolError("Missing required parameter: flow")))
     else if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
@@ -100,18 +157,23 @@ object FlowTriggerTool extends Tool:
                 flowOpt <- nebflow.core.entity.EntityLoader.loadFlow(flowName.get)
                 r <- flowOpt match
                   case Some(flowDef) =>
-                    for
-                      runnerRef <- sys.spawn(
-                        nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
-                        s"dag-runner-${flowName.get.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
-                      )
-                      _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(
-                        flowDef,
-                        prompt,
-                        callerRef,
-                        callerRoot
-                      )).void
-                    yield Right(s"Flow '${flowName.get}' started. Result will be delivered when complete.")
+                    validateFlowParams(flowDef.params, paramsInput) match
+                      case Left(err) =>
+                        IO.pure(Left(ToolError(s"Flow '${flowName.get}' params rejected: $err")))
+                      case Right(effectiveParams) =>
+                        for
+                          runnerRef <- sys.spawn(
+                            nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
+                            s"dag-runner-${flowName.get.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
+                          )
+                          _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(
+                            flowDef,
+                            prompt,
+                            callerRef,
+                            callerRoot,
+                            effectiveParams
+                          )).void
+                        yield Right(s"Flow '${flowName.get}' started. Result will be delivered when complete.")
                   case None =>
                     IO.pure(Left(ToolError(s"Flow '${flowName.get}' not found")))
               yield r
