@@ -2231,6 +2231,49 @@ class WebSocketRoutes(
             else IO.unit
             end if
 
+          // F1 file-explorer single-item move: relocate a file/dir into a
+          // target directory within the same project root (rename semantics).
+          case "movePath" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val mpSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            val mpPath = hc.downField("path").as[String].getOrElse("")
+            val mpTargetDir = hc.downField("targetDir").as[String].getOrElse("")
+            if mpSessionId.nonEmpty && mpPath.nonEmpty && mpTargetDir.nonEmpty then
+              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+              (for
+                pr <- overrideRoot match
+                  case Some(root) => IO.pure(root)
+                  case None =>
+                    for
+                      metaOpt <- sessionStore.getSessionMeta(mpSessionId)
+                      folderId = metaOpt.flatMap(_.folderId)
+                      prOpt <- sessionStore.resolveProjectRoot(folderId)
+                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+                rootPath = os.Path(pr)
+                newPath <- IO
+                  .blocking(WebSocketRoutes.movePathSafely(mpPath, mpTargetDir, rootPath))
+                  .flatMap {
+                    case Right(np) => IO.pure(np)
+                    case Left(err) => IO.raiseError(new RuntimeException(err))
+                  }
+              yield (mpPath, newPath))
+                .flatMap { case (oldPath, newPath) =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "pathMoved".asJson,
+                      "oldPath" -> oldPath.asJson,
+                      "newPath" -> newPath.asJson
+                    )
+                  )
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"movePath failed: ${e.getMessage}")
+                  wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
+                }
+            else IO.unit
+            end if
+
           // F1 file-explorer multi-select: batch delete in ONE round trip.
           // Per-path guards identical to deletePath; failures are aggregated
           // per item so a partial failure never blocks the rest.
@@ -4377,6 +4420,38 @@ object WebSocketRoutes:
       if !canonicalBase.startsWith(canonicalRoot) then Left("path outside project root")
       else if canonicalBase == canonicalRoot then Left("cannot delete project root")
       else Right(basePath)
+    catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
+
+  /**
+   * Resolve + guard + perform one move (mirror of movePath's checks).
+   * Returns Right(relative new path) on success; Left(error message) on any
+   * guard failure or move failure. Never overwrites an existing destination.
+   */
+  private[gateway] def movePathSafely(path: String, targetDir: String, root: os.Path): Either[String, String] =
+    try
+      val basePath = PathUtil.resolvePath(path, root)
+      val targetBase = PathUtil.resolvePath(targetDir, root)
+      val canonicalBase = basePath.toIO.getCanonicalPath
+      val canonicalTarget = targetBase.toIO.getCanonicalPath
+      val canonicalRoot = root.toIO.getCanonicalPath
+      // Source and target must both stay inside the project root.
+      if !canonicalBase.startsWith(canonicalRoot) then Left("path outside project root")
+      else if !canonicalTarget.startsWith(canonicalRoot) then Left("target directory outside project root")
+      // Cannot move the project root itself.
+      else if canonicalBase == canonicalRoot then Left("cannot move project root")
+      // Source must exist; target must be an existing directory.
+      else if !os.exists(basePath) then Left("source path not found")
+      else if !(os.exists(targetBase) && os.isDir(targetBase)) then Left("target directory not found")
+      // Prevent cycles: target must not be the source itself or inside it.
+      else if canonicalTarget == canonicalBase || canonicalTarget.startsWith(canonicalBase + java.io.File.separator)
+      then Left("cannot move path into itself")
+      else
+        val newBase = targetBase / basePath.last
+        // Never overwrite an existing destination (os.move has no overwrite).
+        if os.exists(newBase) then Left("destination already exists")
+        else
+          os.move(basePath, newBase)
+          Right(newBase.relativeTo(root).toString.replace('\\', '/'))
     catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
 
   /**
