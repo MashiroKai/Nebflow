@@ -420,7 +420,7 @@ private[agent] trait AgentCore:
         val isCompactTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Compact)
         val isSaveTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Save)
         val isAskTurn = state.askMode.isDefined
-        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker)
+        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker, state.forkContext)
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
         // Track the first model that failed (for modelChanged notification)
@@ -457,7 +457,7 @@ private[agent] trait AgentCore:
           freshDef = turnCtx.agentDef
           voiceMuted <- resources.voiceMutedRef.get
           voiceEnabled = freshDef.voiceEnabled && !voiceMuted
-          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker)
+          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext)
           // #16 observability: one log line per LLM call when MCP tools are
           // injected — names the servers explicitly so phantom-tool suspicion
           // can be settled by grepping the log instead of reconstructing
@@ -607,8 +607,8 @@ private[agent] trait AgentCore:
             else Nil
           freshTools =
             if isCompactTurn then Some(Nil)
-            else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker)
-            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker)
+            else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext)
+            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext)
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
           // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
@@ -820,7 +820,7 @@ private[agent] trait AgentCore:
         case None => IO.pure(None)
       currentDefOpt <- ContextRefresher.loadCurrentDef(teamNameOpt, resources, agentDef)
       effectiveDef = currentDefOpt.getOrElse(agentDef)
-      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker)
+      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker, state.forkContext)
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
         // agent-tool whitelist — it is provider-injected (not an agent tool)
@@ -1265,7 +1265,12 @@ private[agent] trait AgentCore:
           case None         => fallback
         }
 
-  protected def buildAllowedToolSet(agentDef: AgentDef, depth: Int = 0, isSubTaskWorker: Boolean = false): Set[String] =
+  protected def buildAllowedToolSet(
+    agentDef: AgentDef,
+    depth: Int = 0,
+    isSubTaskWorker: Boolean = false,
+    forkContext: Boolean = false
+  ): Set[String] =
     val base = agentDef.tools match
       case Nil => Set.empty[String]
       case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
@@ -1306,22 +1311,30 @@ private[agent] trait AgentCore:
     // no FlowTrigger (workers don't trigger pipelines). Delegate is
     // Nebula-exclusive (filtered above for everyone else); these strips also
     // defend against a worker whose agent.json explicitly lists the tools.
-    if isSubTaskWorker then mcpFiltered -- Set("Mail", "SubTask", "Delegate", "FlowTrigger")
-    // Flow agents have no Mail — flow nodes report via FlowReport, not Mail.
-    // Structurally defends against the 08-14 P0 root cause: a flow agent
-    // whose agent.json lists Mail (or uses "*") could block forever on a
-    // Mail ask (flow callers cannot receive background notifications).
-    else if agentDef.category == "flow" then mcpFiltered - "Mail"
-    else mcpFiltered
+    val categoryFiltered =
+      if isSubTaskWorker then mcpFiltered -- Set("Mail", "SubTask", "Delegate", "FlowTrigger")
+      // Flow agents have no Mail — flow nodes report via FlowReport, not Mail.
+      // Structurally defends against the 08-14 P0 root cause: a flow agent
+      // whose agent.json lists Mail (or uses "*") could block forever on a
+      // Mail ask (flow callers cannot receive background notifications).
+      else if agentDef.category == "flow" then mcpFiltered - "Mail"
+      else mcpFiltered
+    // #30: Mail ask forks only answer a question — strip every side-effect
+    // tool so the fork can never dispatch work, write memory/files, or mutate
+    // state while the real agent's own turn is running. Read-only retrieval
+    // (Read/Glob/Grep/WebSearch/WebFetch/Pop/TaskQuery) stays for answers.
+    if forkContext then categoryFiltered -- AgentCore.ForkSideEffectTools
+    else categoryFiltered
 
   end buildAllowedToolSet
 
   protected def buildToolList(
     agentDef: AgentDef,
     depth: Int = 0,
-    isSubTaskWorker: Boolean = false
+    isSubTaskWorker: Boolean = false,
+    forkContext: Boolean = false
   ): Option[List[ToolDefinition]] =
-    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker)
+    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, forkContext)
     Some(ToolRegistry.ALL_TOOLS.flatMap { td =>
       if !allowedSet.contains(td.name) then None
       // R8-P1: flow node agents get their per-node contract (verdict enum +
@@ -1349,9 +1362,10 @@ private[agent] trait AgentCore:
   protected def saveTurnTools(
     agentDef: AgentDef,
     depth: Int = 0,
-    isSubTaskWorker: Boolean = false
+    isSubTaskWorker: Boolean = false,
+    forkContext: Boolean = false
   ): Option[List[ToolDefinition]] =
-    buildToolList(agentDef, depth, isSubTaskWorker).map(_.filter(td => SaveTurnToolWhitelist.contains(td.name)))
+    buildToolList(agentDef, depth, isSubTaskWorker, forkContext).map(_.filter(td => SaveTurnToolWhitelist.contains(td.name)))
 
   private val SaveTurnToolWhitelist: Set[String] = Set("Write", "Edit", "Read")
 
@@ -1658,6 +1672,36 @@ object AgentCore:
 
   /** Tools available to Nebula and Team Leads, but NOT workers. */
   val LeadLevelTools = Set("TaskCreate", "TaskUpdate")
+
+  /**
+   * #30: tools stripped in Mail ask/fork contexts (forkContext=true). An ask
+   * fork only answers a question — it must never dispatch work, write
+   * memory/files, execute shell, or mutate other state. The 2026-08-21
+   * incident: an ask fork ran the full toolset in parallel with the real
+   * agent, dispatching team members and writing memory (double-write race).
+   * Read-only retrieval (Read/Glob/Grep/WebSearch/WebFetch/Pop/TaskQuery)
+   * stays available so the fork can still answer from context + research.
+   */
+  val ForkSideEffectTools = Set(
+    "Mail",
+    "Delegate",
+    "SubTask",
+    "FlowTrigger",
+    "AgentControl",
+    "Load",
+    "TransferFile",
+    "FlowReport",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "Bash",
+    "Curl",
+    "SaveTurn",
+    "Schedule",
+    "AskUserQuestion",
+    "TaskCreate",
+    "TaskUpdate"
+  )
 
   /**
    * Base tools always available to ALL agents regardless of category.

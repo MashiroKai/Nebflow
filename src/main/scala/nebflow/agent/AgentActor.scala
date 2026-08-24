@@ -297,6 +297,8 @@ object AgentActor extends AgentCore with AgentSession:
      */
     rootSessionId: String = "",
     isSubTaskWorker: Boolean = false,
+    /** #30: Mail ask fork — side-effect tools stripped (see SessionContext.forkContext). */
+    forkContext: Boolean = false,
     /** D11 交互豁免：freezeExempt 会话不参与冻结（PlanAgent.spawn 传 true）。 */
     freezeExempt: Boolean = false
   ): Behavior[AgentCommand] =
@@ -339,6 +341,7 @@ object AgentActor extends AgentCore with AgentSession:
             expectsMail = expectsMail,
             rootSessionId = effectiveRootSessionId,
             isSubTaskWorker = isSubTaskWorker,
+            forkContext = forkContext,
             freezeExempt = freezeExempt
           )
         )(using ctx)
