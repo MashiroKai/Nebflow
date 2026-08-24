@@ -186,9 +186,9 @@ Message type (optional, default "INFO"):
 
   /** Routing rule: senders without a team context mail TEAM names only. */
   private val TeamOnlyRoutingError =
-    "Agents outside a team mail TEAM names only (e.g. \"nebflow-project\") — the team Manager dispatches to members. Team members use short names internally. Or use explicit \"team/agent\" (e.g. \"nebflow-project/Backend\")."
+    "Agents outside a team mail TEAM names only (e.g. \"nebflow-project\") — the team Manager dispatches to members. \"team/agent\" explicit addresses and bare short names are not routable from outside a team."
 
-  private def forkAndAsk(
+  private[tools] def forkAndAsk(
       address: String,
       question: String,
       blocks: Option[List[ContentBlock]],
@@ -213,9 +213,10 @@ Message type (optional, default "INFO"):
             case None =>
               // Not a team name — short agent name. Routable only for senders
               // with a team context (same-team priority); outside a team, only
-              // team names, "Nebula", and explicit team/agent are valid.
+              // team names and "Nebula" are valid (user ruling 08-24 — the
+              // team/agent escape hatch is closed for root senders).
               TeamSessionRegistry.teamOfSession(senderSid).flatMap {
-                case None if address != "Nebula" && !address.contains("/") =>
+                case None if address != "Nebula" =>
                   IO.pure(Left(ToolError(TeamOnlyRoutingError)))
                 case _ =>
                   for
@@ -491,7 +492,7 @@ Message type (optional, default "INFO"):
   // Queue mode: persisted FIFO, drained one-per-turn
   // ============================================================
 
-  private def deliverQueue(
+  private[tools] def deliverQueue(
       address: String,
       message: String,
       mailType: String,
@@ -546,7 +547,7 @@ Message type (optional, default "INFO"):
           for
             senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
             sr <- senderTeamOpt match
-              case None if address != "Nebula" && !address.contains("/") =>
+              case None if address != "Nebula" =>
                 IO.pure(Left(ToolError(TeamOnlyRoutingError)))
               case _ =>
                 for
@@ -744,7 +745,7 @@ Message type (optional, default "INFO"):
   private def resolveNebulaRef(resources: SharedResources): IO[Option[ActorRef[AgentCommand]]] =
     resources.agentRegistry.get.map(_.collectFirst { case (_, rec) if rec.kind == AgentKind.Root => rec.ref })
 
-  private def deliverShortNameUnscoped(
+  private[tools] def deliverShortNameUnscoped(
     address: String,
     message: String,
     blocks: Option[List[ContentBlock]],
@@ -780,11 +781,12 @@ Message type (optional, default "INFO"):
         case None =>
           // Not a team name — short agent name. Routable only for senders
           // with a team context (same-team priority); outside a team, only
-          // team names, "Nebula", and explicit team/agent are valid.
+          // team names and "Nebula" are valid (user ruling 08-24 — the
+          // team/agent escape hatch is closed for root senders).
           for
             senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
             sr <- senderTeamOpt match
-              case None if address != "Nebula" && !address.contains("/") =>
+              case None if address != "Nebula" =>
                 IO.pure(Left(ToolError(TeamOnlyRoutingError)))
               case _ =>
                 for
