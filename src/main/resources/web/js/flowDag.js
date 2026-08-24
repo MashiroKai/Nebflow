@@ -11,13 +11,26 @@
 //   renderFlowsPanel(scroll, runningFlows) — list of solar cards (flowCanvas.js)
 //   bindDagNodeClicks()        — bind node popups + cancel buttons (flowCanvas.js)
 
-import { openStepPopup } from './flowAgentPopup.js';
+import { openStepPopup, resolveFlowNodeSession } from './flowAgentPopup.js';
 import { esc } from './flowHelpers.js';
+import { t } from './i18n.js';
 
-const NODE_W = 110;   // glass card width
-const NODE_H = 80;    // glass card height (compact 36px orbit + labels)
+/** Shared DAG-node click: resolve the node's REAL dag-* session before
+ *  opening the popup — without it the popup keyed on a synthetic "flow/node"
+ *  id and showed an empty window (372-1). Nodes that never ran get a toast. */
+export async function openFlowNodePopup(flowName, agentName, nodeId) {
+  const sid = await resolveFlowNodeSession(flowName, nodeId);
+  if (!sid) {
+    window.__showToast?.(t('flow.noSession'), 'info');
+    return;
+  }
+  openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, sid, 'Flow');
+}
+
+const NODE_W = 124;   // glass card width (372-3: +14 so nodeId labels fit inside the card)
+const NODE_H = 88;    // glass card height (372-3: +8 — sub line no longer clipped)
 const V_SPACING = 120;
-const H_SPACING = 160;
+const H_SPACING = 172;
 const PAD = 60;       // canvas padding around nodes
 
 /** Topological sort of DAG nodes following edges from entry.
@@ -58,7 +71,7 @@ export function dagNodeInlineHtml(item, flowName) {
       <div class="dag-inline-node ${st}" data-flow="${esc(flowName)}" data-agent="${esc(agent)}" data-node="${esc(nodeId)}">
         <div class="dag-inline-dot"></div>
         <div class="dag-inline-id">${esc(nodeId)}</div>
-        <div class="dag-inline-agent">${esc(agent)}</div>
+        ${agent && agent !== nodeId ? `<div class="dag-inline-agent">${esc(agent)}</div>` : ''}
       </div>`;
 }
 
@@ -137,8 +150,8 @@ function solarNodeHtml(n, flowName, pos, statusOf, originX) {
         <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
         <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
       </div>
-      <div class="solar-node-label" title="${esc(agent)}">${esc(agent)}</div>
-      <div class="solar-node-sub">${esc(nodeId)}${statusIcon}</div>
+      <div class="solar-node-label" title="${esc(agent)}">${esc(nodeId)}</div>
+      ${agent && agent !== nodeId ? `<div class="solar-node-sub">${esc(agent)}${statusIcon}</div>` : (statusIcon ? `<div class="solar-node-sub">${statusIcon}</div>` : '')}
     </div>`;
 }
 
@@ -247,20 +260,14 @@ export function bindDagNodeClicks() {
   document.querySelectorAll('.solar-node').forEach(el => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
-      const flowName = el.getAttribute('data-flow') || '';
-      const agentName = el.getAttribute('data-agent') || '';
-      const nodeId = el.getAttribute('data-node') || '';
-      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, null, 'Flow');
+      openFlowNodePopup(el.getAttribute('data-flow') || '', el.getAttribute('data-agent') || '', el.getAttribute('data-node') || '');
     });
   });
   // Legacy .dag-node binding (kept for compatibility)
   document.querySelectorAll('.dag-node').forEach(el => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
-      const flowName = el.getAttribute('data-flow') || '';
-      const agentName = el.getAttribute('data-agent') || '';
-      const nodeId = el.getAttribute('data-node') || '';
-      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, null, 'Flow');
+      openFlowNodePopup(el.getAttribute('data-flow') || '', el.getAttribute('data-agent') || '', el.getAttribute('data-node') || '');
     });
   });
   // Bind cancel buttons on active DAG flow cards
@@ -346,8 +353,8 @@ function orbitNodeHtml(node, pos) {
     <div class="flow-ring middle"><div class="flow-dot"></div></div>
     <div class="flow-ring inner"><div class="flow-dot"></div></div>
     <div class="flow-orbit-content">
-      <div class="flow-orbit-agent">${esc(agent)}</div>
-      <div class="flow-orbit-nodeid">${esc(nodeId)}</div>
+      <div class="flow-orbit-nodeid" title="${esc(agent)}">${esc(nodeId)}</div>
+      ${agent && agent !== nodeId ? `<div class="flow-orbit-agent">${esc(agent)}</div>` : ''}
       ${icon ? `<div class="flow-orbit-status">${icon}</div>` : ''}
     </div>
   </div>`;
@@ -388,10 +395,9 @@ export function bindStellarNodeClicks() {
       e.stopPropagation();
       const card = el.closest('.stellar-card');
       const flowName = card?.querySelector('.stellar-title')?.textContent || '';
-      const agentName = el.getAttribute('data-agent') || '';
-      const nodeId = el.getAttribute('data-node') || '';
-      const instanceId = card?.dataset.instance || '';
-      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, instanceId, 'Flow');
+      // 372-1: previously passed the INSTANCE id as the node session id —
+      // the popup then loaded no history. Resolve the real dag-* session.
+      openFlowNodePopup(flowName, el.getAttribute('data-agent') || '', el.getAttribute('data-node') || '');
     });
   });
   document.querySelectorAll('.stellar-card .dag-card-cancel').forEach(btn => {
