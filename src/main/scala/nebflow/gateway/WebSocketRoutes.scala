@@ -1,7 +1,7 @@
 package nebflow.gateway
 
 import cats.effect.std.{Dispatcher, Queue}
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.parser.parse
@@ -57,6 +57,13 @@ class WebSocketRoutes(
   private val rootAgents: Ref[IO, Map[String, nebflow.actor.ActorRef[AgentCommand]]] =
     Ref.unsafe(Map.empty)
 
+  /** In-flight root-agent spawns (sessionId -> completion). WS connect now
+    * eagerly spawns the root agent (⑦ team restore), so concurrent first-use
+    * paths (connect + user message) must not double-spawn — the self-cloned
+    * actor registry would end up with two live fibers for one session. */
+  private val rootSpawnInFlight: Ref[IO, Map[String, Deferred[IO, Unit]]] =
+    Ref.unsafe(Map.empty)
+
   /** Resolve agent definition: global agent → flow agent from disk → Nebula fallback. */
   private def resolveAgentDef(
     sessionId: String,
@@ -94,98 +101,129 @@ class WebSocketRoutes(
       agents.get(sessionId) match
         case Some(ref) => IO.pure(ref)
         case None =>
-          val broadcastWsSend = (json: io.circe.Json) => wsHub.broadcast(json)
-          val recordingWsSend = makeRecordingWsSend(sessionId, broadcastWsSend)
-          val agentIo = for
-            history <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
-            metaOpt <- sharedResources.sessionStore.getSessionMeta(sessionId)
-            agentDef <- resolveAgentDef(sessionId, metaOpt, sharedResources)
-            readTracker <- nebflow.core.tools.ReadTracker.create
-            fileHistory <- nebflow.core.tools.FileHistory.create()
-            modelOverrides <- sharedResources.sessionModelOverrides.get
-            contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
-            // Resolve folder-level projectRoot and inherited rules
-            folderId = metaOpt.flatMap(_.folderId)
-            resolvedProjectRoot <- sharedResources.sessionStore.resolveProjectRoot(folderId)
-            agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-            // Compute effective projectRoot: folder setting → unified ~/.nebflow/projects
-            effectiveProjectRoot <- resolvedProjectRoot match
-              case Some(pr) => IO.pure(Some(pr))
+          // Single-flight: WS connect + user message can race on first use.
+          // The claimer spawns and completes the Deferred; joiners wait and
+          // re-read the registry.
+          rootSpawnInFlight.modify { inFlight =>
+            inFlight.get(sessionId) match
+              case Some(done) => (inFlight, Right(done))
               case None =>
-                val projectsDir = PathUtil.dataRoot / "projects"
-                IO.blocking {
-                  if !os.exists(projectsDir) then os.makeDir.all(projectsDir)
-                }.as(Some(projectsDir.toString))
-            // Resolve inherited rules from folder chain
-            resolvedRules = folderId.map { fid =>
-              nebflow.service.RulesStore.resolveInheritedRules(
-                fid,
-                id => sharedResources.sessionStore.getFolderParentId(id)
-              )
-            }.flatten
-            ref <- nebulaSystem.spawn(
-              AgentActor(
-                agentDef,
-                sharedResources,
-                recordingWsSend,
-                depth = 0,
-                parentRef = None,
-                sessionId = Some(sessionId),
-                sessionName = metaOpt.map(_.name),
-                initialMessages = history,
-                readTracker = Some(readTracker),
-                fileHistory = Some(fileHistory),
-                contextWindow = contextWindow,
-                projectRoot = effectiveProjectRoot,
-                rulesMd = resolvedRules,
-                folderId = folderId,
-                safetyMode = metaOpt.map(_.safetyMode).getOrElse("confirm-edits"),
-                gitBranch = metaOpt.flatMap(_.gitBranch),
-                rootSessionId = sessionId
-              ),
-              s"agent-$sessionId"
-            )
-            pr = effectiveProjectRoot.getOrElse("")
-            safetyMode = metaOpt.map(_.safetyMode).getOrElse("confirm-edits")
-          yield (ref, pr, safetyMode)
-          agentIo.flatMap { case (ref, pr, safetyMode) =>
-            val hookCtx = nebflow.core.hooks.HookContext(
-              sessionId = Some(sessionId),
-              projectRoot = pr,
-              cwd = pr
-            )
-            sharedResources.hookEngine
-              .onSessionStart(hookCtx)
-              .handleErrorWith { e =>
-                nebflow.core.NebflowLogger
-                  .forName("nebflow.hooks")
-                  .warn(s"SessionStart hook failed: ${e.getMessage}")
-                  .as(nebflow.core.hooks.HookResult.allow)
+                val done = Deferred.unsafe[IO, Unit]
+                (inFlight + (sessionId -> done), Left(done))
+          }.flatMap {
+            case Right(done) =>
+              done.get *> rootAgents.get.map(_.get(sessionId)).flatMap {
+                case Some(ref) => IO.pure(ref)
+                case None =>
+                  // Claimer failed before registering — retry once.
+                  rootSpawnInFlight.update(_ - sessionId) *> ensureRootAgent(sessionId)
               }
-              .void *>
-              rootAgents.update(_ + (sessionId -> ref)) *>
-              sharedResources.agentRegistry.update(
-                _ + (
-                  sessionId -> AgentRecord(
-                    sessionId = sessionId,
-                    ref = ref,
-                    kind = AgentKind.Root,
-                    rootSessionId = sessionId,
-                    parentRef = None
-                  )
-                )
-              ) *>
-              // P2: register this root session as the InteractionHub render
-              // target (cards/questions appear in the Nebula window) and seed
-              // its permission-policy bucket from persisted session meta
-              // (backward compatible with per-session safetyMode).
-              registerRootInteraction(sessionId, recordingWsSend) *>
-              seedPermissionPolicy(sessionId, safetyMode) *>
-              initFlowTree(sessionId, ref, pr, safetyMode)
-                .handleErrorWith(e => logger.error(s"initFlowTree failed for session $sessionId: ${e.getMessage}"))
-                .start
-                .as(ref)
+            case Left(done) =>
+              doSpawnRootAgent(sessionId)
+                .guaranteeCase {
+                  case cats.effect.Outcome.Succeeded(_) =>
+                    rootSpawnInFlight.update(_ - sessionId) *>
+                      done.complete(()).void.handleErrorWith(_ => IO.unit)
+                  case _ =>
+                    rootSpawnInFlight.update(_ - sessionId) *>
+                      done.complete(()).void.handleErrorWith(_ => IO.unit)
+                }
           }
+    }
+
+  /** The actual spawn half of ensureRootAgent (single-flight). */
+  private def doSpawnRootAgent(sessionId: String): IO[nebflow.actor.ActorRef[AgentCommand]] =
+    val broadcastWsSend = (json: io.circe.Json) => wsHub.broadcast(json)
+    val recordingWsSend = makeRecordingWsSend(sessionId, broadcastWsSend)
+    val agentIo = for
+      history <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
+      metaOpt <- sharedResources.sessionStore.getSessionMeta(sessionId)
+      agentDef <- resolveAgentDef(sessionId, metaOpt, sharedResources)
+      readTracker <- nebflow.core.tools.ReadTracker.create
+      fileHistory <- nebflow.core.tools.FileHistory.create()
+      modelOverrides <- sharedResources.sessionModelOverrides.get
+      contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
+      // Resolve folder-level projectRoot and inherited rules
+      folderId = metaOpt.flatMap(_.folderId)
+      resolvedProjectRoot <- sharedResources.sessionStore.resolveProjectRoot(folderId)
+      agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+      // Compute effective projectRoot: folder setting → unified ~/.nebflow/projects
+      effectiveProjectRoot <- resolvedProjectRoot match
+        case Some(pr) => IO.pure(Some(pr))
+        case None =>
+          val projectsDir = PathUtil.dataRoot / "projects"
+          IO.blocking {
+            if !os.exists(projectsDir) then os.makeDir.all(projectsDir)
+          }.as(Some(projectsDir.toString))
+      // Resolve inherited rules from folder chain
+      resolvedRules = folderId.map { fid =>
+        nebflow.service.RulesStore.resolveInheritedRules(
+          fid,
+          id => sharedResources.sessionStore.getFolderParentId(id)
+        )
+      }.flatten
+      ref <- nebulaSystem.spawn(
+        AgentActor(
+          agentDef,
+          sharedResources,
+          recordingWsSend,
+          depth = 0,
+          parentRef = None,
+          sessionId = Some(sessionId),
+          sessionName = metaOpt.map(_.name),
+          initialMessages = history,
+          readTracker = Some(readTracker),
+          fileHistory = Some(fileHistory),
+          contextWindow = contextWindow,
+          projectRoot = effectiveProjectRoot,
+          rulesMd = resolvedRules,
+          folderId = folderId,
+          safetyMode = metaOpt.map(_.safetyMode).getOrElse("confirm-edits"),
+          gitBranch = metaOpt.flatMap(_.gitBranch),
+          rootSessionId = sessionId
+        ),
+        s"agent-$sessionId"
+      )
+      pr = effectiveProjectRoot.getOrElse("")
+      safetyMode = metaOpt.map(_.safetyMode).getOrElse("confirm-edits")
+    yield (ref, pr, safetyMode)
+    agentIo.flatMap { case (ref, pr, safetyMode) =>
+      val hookCtx = nebflow.core.hooks.HookContext(
+        sessionId = Some(sessionId),
+        projectRoot = pr,
+        cwd = pr
+      )
+      sharedResources.hookEngine
+        .onSessionStart(hookCtx)
+        .handleErrorWith { e =>
+          nebflow.core.NebflowLogger
+            .forName("nebflow.hooks")
+            .warn(s"SessionStart hook failed: ${e.getMessage}")
+            .as(nebflow.core.hooks.HookResult.allow)
+        }
+        .void *>
+        rootAgents.update(_ + (sessionId -> ref)) *>
+        sharedResources.agentRegistry.update(
+          _ + (
+            sessionId -> AgentRecord(
+              sessionId = sessionId,
+              ref = ref,
+              kind = AgentKind.Root,
+              rootSessionId = sessionId,
+              parentRef = None
+            )
+          )
+        ) *>
+        // P2: register this root session as the InteractionHub render
+        // target (cards/questions appear in the Nebula window) and seed
+        // its permission-policy bucket from persisted session meta
+        // (backward compatible with per-session safetyMode).
+        registerRootInteraction(sessionId, recordingWsSend) *>
+        seedPermissionPolicy(sessionId, safetyMode) *>
+        initFlowTree(sessionId, ref, pr, safetyMode)
+          .handleErrorWith(e => logger.error(s"initFlowTree failed for session $sessionId: ${e.getMessage}"))
+          .start
+          .as(ref)
     }
 
   /**
@@ -226,6 +264,13 @@ class WebSocketRoutes(
       safetyMode = safetyMode
     )
     for
+      // ⑦ (2026-08-24): mark restore in flight BEFORE spawn so a concurrent
+      // GET /api/teams/mounted (awaitRestore) waits for restoreTeams to
+      // finish instead of fast-pathing past it and returning an empty list.
+      // The completion signal always fires (signalRestoreComplete in the
+      // actor setup, even for a zero-team home), so the wait is bounded to
+      // the restore itself — no fixed stall.
+      _ <- FlowTreeRegistry.markRestoreStarted
       treeRef <- nebulaSystem.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")
       _ <- FlowTreeRegistry.register(sessionId, treeRef)
       _ = logger.info(s"FlowTreeActor created for session $sessionId (pipelines auto-restored on startup)")
@@ -431,6 +476,21 @@ class WebSocketRoutes(
           )
           activeMeta <- sessionStore.getActiveMeta
           agentName = activeMeta.flatMap(_.agentName).getOrElse("Nebula")
+          // ⑦ (2026-08-24): restore mounted teams right on WS connect — not
+          // only on first user message. Team mount recovery lives in
+          // FlowTreeActor startup (restoreTeams → TeamSessionRegistry), and
+          // the actor is only created alongside the root agent. After a
+          // restart, a client that connects but sends no message would leave
+          // /api/teams/mounted empty → "No active teams" panel. ensureRootAgent
+          // is idempotent (existing ref is returned) and chains initFlowTree
+          // on first spawn, so a plain call covers both the cold start (new
+          // agent → tree → restore) and the warm path (existing agent/tree →
+          // no-op).
+          _ <- activeMeta.traverse_(meta =>
+            ensureRootAgent(meta.id).void.handleErrorWith(e =>
+              logger.warn(s"WS-connect team restore failed for session ${meta.id}: ${e.getMessage}")
+            )
+          )
           _ <- sessionService.sendSessionList(perConnWsSend, agentName)
           ws <- wsb.build(sendStream, receivePipe)
         yield ws
