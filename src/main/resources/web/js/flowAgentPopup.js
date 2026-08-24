@@ -12,6 +12,7 @@
 import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
 import { sendWs, onMessage, setFlowStepInterceptor, setTeamMetaApplier } from './ws.js';
 import { restoreFromBackendHistory } from './persistence.js';
+import { authHeaders } from './flowHelpers.js';
 import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
@@ -301,6 +302,46 @@ function getHiddenRoot() {
     document.body.appendChild(hiddenRoot);
   }
   return hiddenRoot;
+}
+
+// ── Resolve a DAG node's real session id ──────────────────
+// Flow node sessions are spawned as `dag-<flow[:10]>-<nodeId>-<millis6>`
+// (FlowDagExecutor). Every node click site historically passed NO session id
+// (or the instanceId), so the popup opened on a synthetic "flow/node" key —
+// no getHistory, no live routing, an empty window (372-1 "消息不可见").
+// Resolution: live stepViews first (this app session's node events), then a
+// REST disk scan (sessions survive page reloads and flow completion).
+
+/** True when id is a dag session for exactly this flowName + nodeId. */
+function isDagSessionOf(id, flowName, nodeId) {
+  const prefix = `dag-${String(flowName).slice(0, 10)}-${nodeId}-`;
+  return id.startsWith(prefix) && /^\d{6}$/.test(id.slice(prefix.length));
+}
+
+/** Resolve the newest session id for a flow node, or null when the node has
+ *  never run (pending) within reach of live state or disk history. */
+export async function resolveFlowNodeSession(flowName, nodeId) {
+  // Live: stepViews were keyed by real node session ids as node events
+  // arrived; prefer the most recently started attempt (restarts re-run a node
+  // under a fresh millis suffix).
+  let best = null;
+  for (const [sid, entry] of stepViews) {
+    if (!isDagSessionOf(sid, flowName, nodeId)) continue;
+    if (!best || (entry.meta.startedAt || 0) > (best.startedAt || 0)) best = { sid, startedAt: entry.meta.startedAt || 0 };
+  }
+  if (best) return best.sid;
+  // REST fallback: includeUnindexed scans .ui.json files on disk (dag-*
+  // sessions never enter the session index), sorted by -updatedAt — the first
+  // match is the latest run.
+  try {
+    const resp = await fetch('/api/sessions?includeUnindexed=1', { headers: authHeaders() });
+    if (resp.ok) {
+      const data = await resp.json();
+      const hit = (data.sessions || []).find(s => isDagSessionOf(s.id || '', flowName, nodeId));
+      if (hit) return hit.id;
+    }
+  } catch { /* non-critical */ }
+  return null;
 }
 
 // ── Ensure a ChatView exists for a nodeSessionId ──────────

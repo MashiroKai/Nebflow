@@ -408,40 +408,44 @@ export const FLOW_CSS = `
 .flow-edge-label { font: 400 9px ui-monospace; fill: var(--color-text-muted); }
 
 /* Node card — glass material (V4) */
+/* 372-3: 124x88 (was 110x80) — the old box clipped the 10px sub line in half
+ * (content 67px > 64px available) and a 120px label max-width overflowed the
+ * 82px inner width, bleeding text into neighbouring glass cards. */
 .solar-node {
-  position: absolute; width: 110px; height: 80px;
+  position: absolute; width: 124px; height: 88px;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   background: var(--glass-bg, rgba(255,255,255,0.08));
   -webkit-backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
   border: 1px solid var(--glass-border, rgba(255,255,255,0.12));
   border-radius: 14px;
-  padding: 8px 14px;
+  padding: 8px 10px;
+  box-sizing: border-box;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
   text-align: center;
   cursor: pointer; user-select: none;
   transition: opacity 0.4s ease;
 }
 
-/* Orbit — compact 36px, three counter-spinning rings (V4) */
-.solar-orbit { position: relative; width: 36px; height: 36px; margin: 0 auto 4px; flex-shrink: 0; }
+/* Orbit — compact 30px, three counter-spinning rings (V4) */
+.solar-orbit { position: relative; width: 30px; height: 30px; margin: 0 auto 4px; flex-shrink: 0; }
 .solar-ring {
   position: absolute; top: 50%; left: 50%;
   border: 1px solid var(--color-border);
   border-radius: 50%; transform: translate(-50%, -50%);
   box-sizing: border-box;
 }
-.ring-1 { width: 8px; height: 8px; }
-.ring-2 { width: 18px; height: 18px; }
-.ring-3 { width: 28px; height: 28px; }
+.ring-1 { width: 6px; height: 6px; }
+.ring-2 { width: 14px; height: 14px; }
+.ring-3 { width: 24px; height: 24px; }
 .solar-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; }
 .solar-dot {
   position: absolute; width: 3px; height: 3px;
   background: var(--color-text); border-radius: 50%; top: -1.5px;
 }
-.ring-1 .solar-dot { left: 3px; }
-.ring-2 .solar-dot { left: 8px; }
-.ring-3 .solar-dot { left: 13px; }
+.ring-1 .solar-dot { left: 2px; }
+.ring-2 .solar-dot { left: 6px; }
+.ring-3 .solar-dot { left: 11px; }
 
 /* Initial angles — three dots spread around the orbit */
 .ring-1 .solar-dot-wrap { transform: rotate(0deg); }
@@ -467,15 +471,17 @@ export const FLOW_CSS = `
 .solar-node-status.ok { color: #4caf50; }
 .solar-node-status.err { color: #f44336; }
 
-/* Node label */
+/* Node label — primary line shows the nodeId (unique per node); the agent
+ * name, when different, moves to the sub line. max-width:100% keeps text
+ * inside the card (372-3). */
 .solar-node-label {
-  font: 600 12px -apple-system, sans-serif; color: var(--color-text);
-  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 12px/1.25 -apple-system, sans-serif; color: var(--color-text);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   margin-top: 3px;
 }
 .solar-node-sub {
-  font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted);
-  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 400 10px/1.3 -apple-system, sans-serif; color: var(--color-text-muted);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   opacity: 0.7;
 }
 
@@ -566,8 +572,8 @@ export const FLOW_CSS = `
   cursor: pointer; z-index: 2;
 }
 .flow-orbit-content { position: relative; z-index: 3; text-align: center; pointer-events: none; }
-.flow-orbit-agent { font: 600 11px -apple-system; color: var(--color-text); }
-.flow-orbit-nodeid { font: 400 9px ui-monospace; color: var(--color-text-muted); margin-top: 2px; }
+.flow-orbit-agent { font: 400 9px ui-monospace; color: var(--color-text-muted); margin-top: 2px; }
+.flow-orbit-nodeid { font: 600 11px -apple-system; color: var(--color-text); }
 .flow-orbit-status { font: 600 16px -apple-system; margin-top: 2px; }
 
 /* Three orbit rings — scoped to flow-orbit-node (transform-based centering) */
