@@ -7,7 +7,7 @@
 
 import { openStepPopup } from './flowAgentPopup.js';
 import { esc, authHeaders, overlayRoot, teamPendingCount } from './flowHelpers.js';
-import { orderDagNodes, dagNodeInlineHtml } from './flowDag.js';
+import { orderDagNodes, dagNodeInlineHtml, openFlowNodePopup } from './flowDag.js';
 import state from './state.js';
 import { onMessage } from './ws.js';
 
@@ -330,14 +330,14 @@ export function bindFlowRowClicks(runningFlows, reRender) {
     });
   });
 
-  // Inline DAG node clicks — open agent popup
+  // Inline DAG node clicks — open agent popup (372-1: resolve real dag-* session first)
   document.querySelectorAll('.dag-inline-node').forEach(el => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       const flowName = el.getAttribute('data-flow') || '';
       const agentName = el.getAttribute('data-agent') || '';
       const nodeId = el.getAttribute('data-node') || '';
-      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, null, 'Flow');
+      openFlowNodePopup(flowName, agentName, nodeId);
     });
   });
 }

@@ -676,6 +676,8 @@ export default {
   'explorer.deleteConfirmN': '删除这 {count} 项？此操作不可撤销。',
   'explorer.deleteResult': '{ok} 项已删除，{fail} 项失败：{path}: {error}',
   'explorer.moved': '已移动 {name}',
+  'flow.noSession': '该节点还没有会话记录',
+  'flow.runningInTab': '正在运行的流程已在其标签页中展示',
   // === Canvas 保存反馈 ===
   'canvas.saved': '已保存 {name}',
   'canvas.saveFailed': '保存 {name} 失败：{error}',

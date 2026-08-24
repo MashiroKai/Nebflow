@@ -671,6 +671,8 @@ export default {
   'explorer.deleteConfirmN': 'Delete these {count} items? This cannot be undone.',
   'explorer.deleteResult': '{ok} deleted, {fail} failed: {path}: {error}',
   'explorer.moved': 'Moved {name}',
+  'flow.noSession': 'No session recorded for this node yet',
+  'flow.runningInTab': 'Running flows are shown in their own tab',
   // === Canvas save feedback ===
   'canvas.saved': 'Saved {name}',
   'canvas.saveFailed': 'Failed to save {name}: {error}',

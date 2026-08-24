@@ -11,6 +11,7 @@ import { renderFlowRunInto, renderFlowsPanel, bindDagNodeClicks, dagCardHtml, re
 import { renderFlowList } from './flowList.js';
 import { closeViewer, openMailbox, openRules, openDefinition, refreshMailboxPending } from './flowViewers.js';
 import { onReconnect } from './ws.js';
+import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 
 // ── State ──────────────────────────────────────────────────
@@ -99,17 +100,16 @@ function renderFlowsTab() {
       </div>
     </div>`;
   }
-  let runningHtml = '';
-  if (runningFlows.length > 0) {
-    runningHtml = `<div class="flow-running-section">
-      <div class="flow-defs-header">Running Instances</div>
-      ${runningFlows.map(rf => dagCardHtml(rf)).join('')}
-    </div>`;
-  }
+  // 372-2: Running Instances block removed from the panel — a running flow
+  // already auto-opens a dedicated flow-run tab (maybeAutoOpenFlowsTab), so
+  // listing it here duplicated the same content in two places. Watch a live
+  // run in its tab instead.
   if (flowDefs.length === 0 && runningFlows.length === 0) {
     scroll.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">No flows defined</div></div>`;
   } else {
-    scroll.innerHTML = defsHtml + runningHtml;
+    scroll.innerHTML = defsHtml || (runningFlows.length > 0
+      ? `<div class="dag-empty"><div style="font:600 13px -apple-system;color:var(--color-text-muted)">${esc(t('flow.runningInTab'))}</div></div>`
+      : '');
   }
   overlayRoot();
   bindDagNodeClicks();
