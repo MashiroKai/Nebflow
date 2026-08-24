@@ -1,12 +1,14 @@
 package nebflow.core.tools
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.SharedResources
+import nebflow.agent.{AgentRecord, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.flow.TeamSessionRegistry
+import nebflow.gateway.SessionStore
+import nebflow.llm.{ModelCandidate, ThinkingConfig}
 
 /**
  * User ruling 2026-08-24: root/outside-team senders mail TEAM names only.
@@ -121,12 +123,49 @@ class MailToolRootSenderSpec extends FunSuite:
 
   test("queue: root sender + TEAM name routes to the team Manager (lead)"):
     TeamSessionRegistry.registerSession("myteam", "boss", "boss-sid").unsafeRunSync()
-    val res = MailTool.deliverQueue("myteam", "hello team", "INFO", Nil, rootCtx, null).unsafeRunSync()
-    res match
-      case Left(err) =>
-        assert(err.message.contains("boss"), s"should target the Manager lead: ${err.message}")
-        assert(!err.message.contains("TEAM names only"), s"must NOT be rejected by the routing rule: ${err.message}")
-      case Right(_) => fail(s"expected queueToSession outcome, got success: $res")
+    val sys = ActorSystem("mail-root-spec")
+    val store = SessionStore(os.temp.dir(), os.temp.dir())
+    val res = MailTool
+      .deliverQueue(
+        "myteam",
+        "hello team",
+        "INFO",
+        Nil,
+        rootCtx.copy(
+          actorSystem = Some(sys),
+          sharedResources = Some(
+            new SharedResources(
+              llm = null,
+              dispatcher = null,
+              sessionStore = store,
+              projectRoot = os.pwd,
+              thinkingConfigRef = Ref.unsafe[IO, ThinkingConfig](ThinkingConfig()),
+              rateLimiter = null,
+              fileChangeTracker = null,
+              contextWindow = 100_000,
+              agentLibrary = null,
+              taskStore = null,
+              historyArchiver = null,
+              fileLockManager = null,
+              sessionModelOverrides = Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty),
+              providerRegistry = null,
+              healthMonitor = null,
+              actorSystem = null,
+              agentRegistry = Ref.unsafe[IO, Map[String, AgentRecord]](Map.empty),
+              voiceMutedRef = Ref.unsafe[IO, Boolean](false)
+            )
+          )
+        ),
+        sys
+      )
+      .unsafeRunSync()
+    // End-to-end routing evidence: the mail landed in the Manager's persisted
+    // queue (dataRoot/sessions/<manager-sid>/mail-queue.json), from the root sender.
+    val qFile = tempRoot / "sessions" / "boss-sid" / "mail-queue.json"
+    assert(os.exists(qFile), s"mail must be queued to the Manager session: $res")
+    val qContent = os.read(qFile)
+    assert(qContent.contains("hello team"), s"queue should carry the message: $qContent")
+    assert(qContent.contains("Nebula"), s"queue from-field should be the root sender: $qContent")
 
   // ── team-internal paths: untouched (acceptance 4) ──
 
