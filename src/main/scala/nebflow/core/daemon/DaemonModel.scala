@@ -117,3 +117,31 @@ case class DaemonConfigFile(daemons: List[DaemonConfig] = Nil)
 object DaemonConfigFile:
   given Encoder[DaemonConfigFile] = deriveEncoder
   given Decoder[DaemonConfigFile] = deriveDecoder
+
+/**
+ * Runtime marker persisted when DaemonService spawns a process
+ * (~/.nebflow/daemon-pids.json). Lets a NEW instance identify and kill
+ * processes orphaned by an abnormally-killed previous instance (SIGKILL /
+ * restart-script escalation) that would otherwise hold the daemon's port
+ * forever — the "Dev Server 无法打开" ghost. Removed on clean stop; cleared
+ * at boot after reclaim.
+ */
+case class DaemonPidMarker(
+  id: String,
+  pid: Long,
+  name: String,
+  port: Option[Int] = None,
+  /** process start epoch-ms, recorded at spawn — pid-reuse guard at reclaim. */
+  startedAt: Long = 0L
+)
+
+object DaemonPidMarker:
+  given Encoder[DaemonPidMarker] = deriveEncoder
+  given Decoder[DaemonPidMarker] = deriveDecoder
+
+/** Marker file root format: { "markers": [ ... ] } */
+case class DaemonPidMarkerFile(markers: List[DaemonPidMarker] = Nil)
+
+object DaemonPidMarkerFile:
+  given Encoder[DaemonPidMarkerFile] = deriveEncoder
+  given Decoder[DaemonPidMarkerFile] = deriveDecoder

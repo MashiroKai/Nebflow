@@ -3,10 +3,13 @@ package nebflow.core.daemon
 import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import nebflow.core.{NebflowLogger, PathUtil}
+import io.circe.parser.decode
+import io.circe.syntax.*
+import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 import nebflow.core.util.ProcessTree
 
 import java.io.{BufferedReader, InputStreamReader}
+import java.util.concurrent.locks.ReentrantLock
 
 import scala.collection.mutable
 import scala.concurrent.duration.*
@@ -19,7 +22,12 @@ import scala.jdk.StreamConverters.*
  * Process state is tracked in a Ref[Map[String, DaemonEntry]].
  * Each running process gets a background fiber reading stdout/stderr into a ring buffer.
  */
-final class DaemonService(dispatcher: Dispatcher[IO]):
+final class DaemonService(
+  dispatcher: Dispatcher[IO],
+  /** Marker file recording spawned pids — used to reclaim stale processes of
+   *  an abnormally-killed previous instance at boot (see reclaimStaleDaemons). */
+  markerFile: os.Path = PathUtil.dataRoot / "daemon-pids.json"
+):
 
   private val logger = NebflowLogger.forName("nebflow.daemon")
 
@@ -55,22 +63,36 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
 
   private val entries: Ref[IO, Map[String, DaemonEntry]] = Ref.unsafe(Map.empty)
 
+  /** Guards the marker file's read-modify-write (parallel daemon starts). */
+  private val markerLock = new ReentrantLock()
+
   // ── Lifecycle ──────────────────────────────────────────
 
-  /** Start all daemons with autoStart=true. Called once on gateway boot. */
+  /**
+   * Start all daemons with autoStart=true. Called once on gateway boot.
+   *
+   * Runs stale-process reclaim FIRST: a previous instance killed outside its
+   * shutdown hook (SIGKILL, restart-script KILL escalation) leaves its spawned
+   * daemons orphaned and holding the configured ports forever — the boot would
+   * then see every port "open" and silently refuse to start (Stopped +
+   * portOpen=true), i.e. the "Dev Server 无法打开" symptom. Reclaim kills only
+   * processes we recorded ourselves (marker file + pid start-time match), so a
+   * server the user started manually is never touched.
+   */
   def autoStart(store: DaemonStore): IO[Unit] =
-    store.load().flatMap { configs =>
-      val autoStartConfigs = configs.filter(_.autoStart)
-      if autoStartConfigs.nonEmpty then
-        logger.info(
-          s"[daemon] Auto-starting ${autoStartConfigs.length} daemon(s): ${autoStartConfigs.map(_.name).mkString(", ")}"
-        )
-          *> autoStartConfigs.traverse_(cfg =>
-            start(cfg)
-              .handleErrorWith(e => logger.error(s"[daemon] Failed to auto-start '${cfg.name}': ${e.getMessage}"))
+    reclaimStaleDaemons() *>
+      store.load().flatMap { configs =>
+        val autoStartConfigs = configs.filter(_.autoStart)
+        if autoStartConfigs.nonEmpty then
+          logger.info(
+            s"[daemon] Auto-starting ${autoStartConfigs.length} daemon(s): ${autoStartConfigs.map(_.name).mkString(", ")}"
           )
-      else IO.unit
-    }
+            *> autoStartConfigs.traverse_(cfg =>
+              start(cfg)
+                .handleErrorWith(e => logger.error(s"[daemon] Failed to auto-start '${cfg.name}': ${e.getMessage}"))
+            )
+        else IO.unit
+      }
 
   /** Stop all running daemons. Called on gateway shutdown. */
   def stopAll(): IO[Unit] =
@@ -106,7 +128,10 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
       case Some(entry) if entry.status == DaemonStatus.Running =>
         doStop(id, entry)
       case Some(entry) =>
-        IO.pure(Some(toState(id, entry)))
+        // Not running. Mark stopRequested so any takeover fiber probing this
+        // entry's port stops waiting (an explicit stop = "leave it alone").
+        entries.update(map => map.updated(id, entry.copy(stopRequested = true))) *>
+          IO.pure(Some(toState(id, entry)))
       case None => IO.pure(None)
     }
 
@@ -115,6 +140,42 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
     stop(id).flatMap {
       case None => IO.pure(None)
       case Some(_) => startById(store, id)
+    }
+
+  /**
+   * Stop (if running) and forget a daemon — the config-removal path (DELETE
+   * /api/daemons/:id). Dropping the entry also terminates the low-rate
+   * takeover fiber: without this, removing a daemon whose port was held by an
+   * external process left the fiber probing forever and RESURRECTING the
+   * deleted daemon once the port freed.
+   */
+  def remove(id: String): IO[Unit] =
+    entries.get.map(_.get(id)).flatMap {
+      case Some(entry) if entry.status == DaemonStatus.Running =>
+        doStop(id, entry) *> dropEntry(id, "removed")
+      case Some(entry) => dropEntry(id, "removed")
+      case None => IO.unit
+    }
+
+  /**
+   * Sync in-memory entries with the store's configs (the source of truth).
+   * Call after any config mutation (GET /daemons, create) so a daemons.json
+   * hot-edit cannot leave ghosts:
+   *   - entry whose id is no longer in the store (config removed) → stop the
+   *     process and drop the entry;
+   *   - entry whose config changed under it (same id, different command/port/
+   *     env/...) → the running process belongs to the OLD config → stop and
+   *     drop; the new config starts fresh on demand (autoStart at boot).
+   * Running entries whose config is unchanged are left untouched.
+   */
+  def reconcile(configs: List[DaemonConfig]): IO[Unit] =
+    val cfgById = configs.map(c => c.id -> c).toMap
+    entries.get.flatMap { map =>
+      map.toList.traverse_ { case (id, entry) =>
+        if !cfgById.contains(id) then dropEntry(id, "config removed")
+        else if cfgById(id) != entry.config then dropEntry(id, "config changed")
+        else IO.unit
+      }
     }
 
   // ── Queries ────────────────────────────────────────────
@@ -178,12 +239,20 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
         case Some(e) if e.status == DaemonStatus.Stopped && !e.stopRequested =>
           e.config.port match
             case Some(p) if !probePort(p) =>
-              logger.info(s"[daemon] '${e.config.name}' port $p freed — taking over") *>
-                doStartInternal(e.config, 0).void
-                  .handleErrorWith(err => logger.error(s"[daemon] Takeover start failed for '${e.config.name}': ${err.getMessage}") *> loop)
+              // Re-check before starting: another takeover fiber (or the user)
+              // may have won the race and started the daemon already.
+              entries.get.map(_.get(id)).flatMap {
+                case Some(e2) if e2.status == DaemonStatus.Stopped && !e2.stopRequested =>
+                  logger.info(s"[daemon] '${e2.config.name}' port $p freed — taking over") *>
+                    doStartInternal(e2.config, 0).void
+                      .handleErrorWith(err =>
+                        logger.error(s"[daemon] Takeover start failed for '${e2.config.name}': ${err.getMessage}") *> loop
+                      )
+                case _ => IO.unit // someone else started it — done
+              }
             case Some(_) => loop // port still held — keep probing
             case None => IO.unit // no port configured — nothing to wait for
-        case _ => IO.unit // user stopped it, or we started it — done
+        case _ => IO.unit // user stopped it, entry removed, or we started it — done
       )
     loop
   private def doStartInternal(config: DaemonConfig, restartCount: Int): IO[DaemonState] =
@@ -218,7 +287,13 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
       val readIO = readOutput(config.id, process)
 
       // We need to store the entry first, then start the fiber, then update with fiber ref
+      val markerIO = pid.fold(IO.unit)(p =>
+        // Persist the spawn marker (best-effort): lets the NEXT instance
+        // reclaim this process if we die without the shutdown hook (SIGKILL).
+        mutateMarkers(_ + (config.id -> DaemonPidMarker(config.id, p, config.name, config.port, now)))
+      )
       entries.update(_ + (config.id -> entry)) *>
+        markerIO *>
         readIO.start.flatMap { fiber =>
           entries.update(
             _ + (config.id ->
@@ -247,6 +322,9 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
         entry.process.getOrElse(throw new IllegalStateException(s"Daemon '$id' has no process"))
       ) *>
       entry.readFiber.traverse_(_.cancel) *>
+      // Forget the spawn marker — a cleanly-stopped daemon must not be
+      // reclaimed (it is no longer a stale process of a previous instance).
+      mutateMarkers(_ - id) *>
       entries.update { map =>
         map.updated(
           id,
@@ -263,6 +341,21 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
           case Some(e) => toStateIO(id, e).map(Some(_))
           case None => IO.pure(Some(toState(id, entry)))
       }
+
+  /**
+   * Stop (if running) and drop an entry from the map — reconcile / remove
+   * path. Dropping the entry terminates takeover fibers (they exit when the
+   * id is gone from entries). `reason` is logged for observability.
+   */
+  private def dropEntry(id: String, reason: String): IO[Unit] =
+    entries.get.map(_.get(id)).flatMap {
+      case Some(entry) if entry.status == DaemonStatus.Running =>
+        doStop(id, entry).void *> dropEntry(id, reason)
+      case Some(entry) =>
+        mutateMarkers(_ - id) *> entries.update(_ - id) *>
+          logger.info(s"[daemon] Reconciled '${entry.config.name}' ($reason) — no ghost process")
+      case None => IO.unit
+    }
 
   /** Background fiber: read stdout+stderr lines into ring buffer. */
   private def readOutput(id: String, process: Process): IO[Unit] =
@@ -480,21 +573,107 @@ final class DaemonService(dispatcher: Dispatcher[IO]):
    *
    * Tries IPv4 first, then IPv6 — Node/Astro/Vite dev servers often bind
    * only to `[::1]`, which a pure `127.0.0.1` probe would miss.
+   *
+   * Uses SocketChannel (not `new Socket()`): on macOS + JDK 23, an unbound
+   * java.net.Socket connecting to `::1:<port>` returns success WITHOUT a
+   * completed handshake (phantom connect — the write/read then times out).
+   * That made probePort report EVERY port "open": doStart refused to spawn,
+   * and the takeover loop's `!probePort` condition never became true — the
+   * daemon stayed Stopped+portOpen forever = "Dev Server 无法打开"
+   * (2026-08-24, root-caused via instrumented probe + standalone repro).
+   * SocketChannel performs a real handshake: refused stays refused.
    */
   private def probePort(port: Int): Boolean =
     def tryConnect(host: String): Boolean =
-      val socket = new java.net.Socket()
+      val channel = java.nio.channels.SocketChannel.open()
       try
-        socket.connect(new java.net.InetSocketAddress(host, port), 500)
+        channel.socket().connect(new java.net.InetSocketAddress(host, port), 500)
         true
       catch case _: Exception => false
       finally
-        try socket.close()
+        try channel.close()
         catch case _: Exception => ()
+    tryConnect("127.0.0.1") || tryConnect("::1")
     tryConnect("127.0.0.1") || tryConnect("::1")
 
   private def getPid(process: Process): Option[Long] =
     try Some(process.pid())
     catch case _: Exception => None
+
+  // ── Stale-process reclaim (marker file) ─────────────────
+
+  /**
+   * Kill daemon processes orphaned by an abnormally-killed previous instance
+   * and clear the marker file. Only processes WE recorded (marker pid + start
+   * time match) are touched — a manually-started server or a recycled pid
+   * pointing at an unrelated process is never killed.
+   */
+  private def reclaimStaleDaemons(): IO[Unit] =
+    loadMarkers().flatMap { markers =>
+      if markers.isEmpty then IO.unit
+      else
+        markers.values.toList.flatMap { m =>
+          Option(ProcessHandle.of(m.pid).orElse(null)).map(ph => m -> ph)
+        } match
+          case Nil => clearMarkers() // all markers dead already
+          case alive =>
+            val ours = alive.filter { case (m, ph) =>
+              val startMs =
+                try
+                  val opt = ph.info.startInstant()
+                  if opt.isPresent then opt.get().toEpochMilli else 0L
+                catch case _: Exception => 0L
+              // Guard against pid reuse: a recycled pid has a DIFFERENT start
+              // time than the one we recorded at spawn → not our process.
+              startMs != 0L && math.abs(startMs - m.startedAt) <= 2000
+            }
+            ours.traverse_ { case (m, ph) =>
+              logger.info(
+                s"[daemon] Reclaiming stale process of previous instance: '${m.name}' (pid=${m.pid}${m.port.map(p => s", port $p").getOrElse("")})"
+              ) *>
+                ProcessTree.killProcessTree(ph).handleErrorWith(e =>
+                  logger.warn(s"[daemon] Reclaim kill failed for '${m.name}': ${e.getMessage}")
+                )
+            } *> clearMarkers()
+    }
+
+  private def loadMarkers(): IO[Map[String, DaemonPidMarker]] =
+    IO.blocking {
+      if !os.exists(markerFile) then Map.empty
+      else
+        decode[DaemonPidMarkerFile](os.read(markerFile)) match
+          case Right(f) => f.markers.map(m => m.id -> m).toMap
+          case Left(_) => Map.empty
+    }
+
+  private def clearMarkers(): IO[Unit] =
+    IO.blocking {
+      if os.exists(markerFile) then
+        try os.remove(markerFile)
+        catch case _: Exception => ()
+    }
+
+  /**
+   * Read-modify-write the marker file under a lock (parallel daemon starts
+   * must not lose each other's markers). AtomicJson temp+rename keeps the
+   * file crash-safe. Best-effort: a marker write failure never fails the
+   * daemon start — the worst case is a missing reclaim at the next boot.
+   */
+  private def mutateMarkers(fn: Map[String, DaemonPidMarker] => Map[String, DaemonPidMarker]): IO[Unit] =
+    IO.blocking {
+      markerLock.lock()
+      try
+        val current =
+          if !os.exists(markerFile) then Map.empty[String, DaemonPidMarker]
+          else
+            decode[DaemonPidMarkerFile](os.read(markerFile)) match
+              case Right(f) => f.markers.map(m => m.id -> m).toMap
+              case Left(_) => Map.empty
+        AtomicJson.writeSync(markerFile, DaemonPidMarkerFile(fn(current).values.toList).asJson.noSpaces)
+      catch
+        case e: Throwable =>
+          logger.warnSync(s"[daemon] marker file update failed: ${e.getMessage}")
+      finally markerLock.unlock()
+    }
 
 end DaemonService

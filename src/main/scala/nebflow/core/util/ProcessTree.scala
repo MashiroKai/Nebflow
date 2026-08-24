@@ -26,10 +26,18 @@ object ProcessTree:
    *  - SIGTERM all → wait 5s → SIGKILL all (fresh enumeration ∪ remembered)
    *    → wait 2s → one more SIGKILL sweep for late forkers.
    */
-  def killProcessTree(p: Process): IO[Unit] =
+  def killProcessTree(p: Process): IO[Unit] = killProcessTree(p.toHandle)
+
+  /**
+   * PID-based variant of [[killProcessTree]] — for stale-process reclaim when
+   * only the pid is known (daemon marker file from a previous instance).
+   * Same hardened strategy; the final force sweep also runs when the ROOT
+   * exits quickly but a descendant survived SIGTERM (reparented orphan holding
+   * the port — the ghost-process shape this reclaim exists to remove).
+   */
+  def killProcessTree(root: ProcessHandle): IO[Unit] =
     IO.blocking {
       try
-        val root = p.toHandle
         var known: List[ProcessHandle] = Nil
 
         def sweep(force: Boolean): Unit =
@@ -39,10 +47,21 @@ object ProcessTree:
           targets.foreach(ph => if force then ph.destroyForcibly() else ph.destroy())
           if force then root.destroyForcibly() else root.destroy()
 
+        def waitExit(ms: Long): Unit =
+          var waited = 0L
+          while root.isAlive && waited < ms do
+            Thread.sleep(100)
+            waited += 100
+
         sweep(force = false) // SIGTERM
-        if !p.waitFor(5, TimeUnit.SECONDS) then
+        waitExit(5000)
+        // Kill survivors regardless of root state: a descendant that ignored
+        // SIGTERM survives even when the root exits within the window (the
+        // old Process.waitFor gating skipped the force sweep in that case,
+        // leaving reparented orphans — the #22 incident shape).
+        if root.isAlive || known.exists(_.isAlive) then
           sweep(force = true) // SIGKILL — fresh snapshot catches late forkers
-          p.waitFor(2, TimeUnit.SECONDS)
+          waitExit(2000)
           sweep(force = true) // final sweep: TERM survivors / stragglers
       catch case _: Exception => ()
     }
