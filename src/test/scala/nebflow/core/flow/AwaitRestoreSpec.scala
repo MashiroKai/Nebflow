@@ -81,3 +81,21 @@ class AwaitRestoreSpec extends FunSuite:
     )
     assert(dur >= 130.millis, "must wait while restore is genuinely in flight")
   }
+
+  // ⑦ (2026-08-24): initFlowTree now marks restore in flight BEFORE spawn.
+  // A WS connect (which previously never created a FlowTreeActor at all)
+  // must make /api/teams/mounted WAIT for the restore instead of
+  // fast-pathing past it with an empty list — the exact regression this
+  // test pins: mark-started happens, then the completion signal arrives,
+  // and a concurrent awaitRestore wakes on it.
+  test("WS-connect restore: markRestoreStarted → concurrent awaitRestore waits and wakes") {
+    val (done, started) = mkState
+    // Simulate initFlowTree: mark started, then async restore completes.
+    started.set(true).unsafeRunSync()
+    (IO.sleep(120.millis) *> done.complete(())).unsafeRunAndForget()
+    val (_, dur) = elapsed(
+      FlowTreeRegistry.awaitRestoreUsing(done, started, timeoutMs = 5000L)
+    )
+    assert(dur >= 100.millis, "must have waited for the WS-triggered restore")
+    assert(dur < 2000.millis, s"should wake on restore completion, took ${dur.toMillis}ms")
+  }
