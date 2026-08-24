@@ -191,15 +191,30 @@ object NodeRoute:
     onFail: OnFailMode = OnFailMode.Abort
   ) extends NodeRoute
 
+  /**
+   * Dynamic parallel fan-out: after the owner node completes, read its
+   * `slotField` array slot → N = min(len, maxFanout) → instantiate N runtime
+   * nodes from `template` (as `template#1` … `template#N`), run them
+   * concurrently. The template node is a normal FlowNode declared in
+   * flow.json; only this route references it for instantiation. Its input
+   * supports `{{item}}` (the array element) and `{{index}}` (1-based).
+   */
+  case class ParallelDynamic(
+    slotField: String,
+    template: String,
+    onFail: OnFailMode = OnFailMode.Abort
+  ) extends NodeRoute
+
   /** Terminate the flow, return result. */
   case object Return extends NodeRoute
 
   /**
-   * Parse NodeRoute from JSON. Supports three formats:
+   * Parse NodeRoute from JSON. Supports four formats:
    *  - string: "reviewer" -> Goto("reviewer"), "$return" -> Return
    *  - switch object: { "switch": "...", "cases": { ... } } -> Switch
    *    (case values recursively accept all three forms — a case may fan out)
-   *  - parallel object: { "parallel": ["r1","r2"], "onFail": "collect" } -> Parallel
+   *  - parallel object with array value: { "parallel": ["r1","r2"], "onFail": "collect" } -> Parallel
+   *  - parallel object with object value: { "parallel": { "slots": "topics", "template": "researcher" } } -> ParallelDynamic
    */
   given Decoder[NodeRoute] = Decoder.instance { c =>
     c.as[String] match
@@ -207,10 +222,23 @@ object NodeRoute:
         if s == "$return" then Right(Return)
         else Right(Goto(s))
       case Left(_) =>
-        c.downField("parallel").as[Option[List[String]]] match
-          case Right(Some(fan)) =>
-            for onFail <- c.downField("onFail").as[Option[OnFailMode]]
-            yield Parallel(fan, onFail.getOrElse(OnFailMode.Abort))
+        c.downField("parallel").as[Option[Json]] match
+          case Right(Some(pJson)) =>
+            pJson.asArray match
+              case Some(fan) =>
+                for
+                  ids <- fan.toList.traverse(_.as[String])
+                  onFail <- c.downField("onFail").as[Option[OnFailMode]]
+                yield Parallel(ids, onFail.getOrElse(OnFailMode.Abort))
+              case None =>
+                for
+                  slotField <- pJson.hcursor.downField("slots").as[String]
+                  template <- pJson.hcursor.downField("template").as[String]
+                  // onFail sits OUTSIDE the parallel object — same placement as
+                  // the static array form, so the two shapes stay uniform
+                  // ({ "parallel": ... , "onFail": ... }).
+                  onFail <- c.downField("onFail").as[Option[OnFailMode]]
+                yield ParallelDynamic(slotField, template, onFail.getOrElse(OnFailMode.Abort))
           case _ =>
             for
               switchExpr <- c.downField("switch").as[String]
@@ -227,6 +255,14 @@ object NodeRoute:
     case Parallel(fan, onFail) =>
       Json.obj(
         "parallel" -> fan.asJson,
+        "onFail" -> (if onFail == OnFailMode.Collect then Json.fromString("collect") else Json.Null)
+      )
+    case ParallelDynamic(slotField, template, onFail) =>
+      Json.obj(
+        "parallel" -> Json.obj(
+          "slots" -> Json.fromString(slotField),
+          "template" -> Json.fromString(template)
+        ),
         "onFail" -> (if onFail == OnFailMode.Collect then Json.fromString("collect") else Json.Null)
       )
     case Switch(expr, cases, default, lenient) =>
@@ -324,7 +360,11 @@ case class FlowDagDef(
   // migrated; flipped to true by explicit "strictVerdict": true).
   strictVerdict: Boolean = false,
   // R8-P2: parallel fan-out cap (cost guardrail now that timeouts are gone).
-  maxFanout: Int = 4
+  maxFanout: Int = 4,
+  // Structured trigger parameters: name → spec. FlowTrigger callers may pass
+  // `params` (validated against type/range); node inputs reference them via
+  // $params.<name> (defaults apply, missing → "[param <name> not provided]").
+  params: Map[String, FlowParamSpec] = Map.empty
 )
 
 object FlowDagDef:
@@ -338,9 +378,11 @@ object FlowDagDef:
       maxLoop <- c.downField("maxLoop").as[Option[Int]]
       strictVerdict <- c.downField("strictVerdict").as[Option[Boolean]]
       maxFanout <- c.downField("maxFanout").as[Option[Int]]
+      params <- c.downField("params").as[Option[Map[String, FlowParamSpec]]]
     yield FlowDagDef(
       name, description, nodes, entry,
-      maxLoop.getOrElse(10), strictVerdict.getOrElse(false), maxFanout.getOrElse(4)
+      maxLoop.getOrElse(10), strictVerdict.getOrElse(false), maxFanout.getOrElse(4),
+      params.getOrElse(Map.empty)
     )
   }
 
@@ -352,10 +394,51 @@ object FlowDagDef:
       "entry" -> f.entry.asJson,
       "maxLoop" -> f.maxLoop.asJson,
       "strictVerdict" -> (if f.strictVerdict then Json.fromBoolean(true) else Json.Null),
-      "maxFanout" -> (if f.maxFanout != 4 then f.maxFanout.asJson else Json.Null)
+      "maxFanout" -> (if f.maxFanout != 4 then f.maxFanout.asJson else Json.Null),
+      "params" -> (if f.params.isEmpty then Json.Null else f.params.asJson)
     )
   }
 end FlowDagDef
+
+/** Declared trigger parameter of a flow (flow.json top-level "params"). */
+case class FlowParamSpec(
+  `type`: String, // "int" | "string" | "bool"
+  default: Option[Json] = None,
+  min: Option[Int] = None,
+  max: Option[Int] = None,
+  description: String = ""
+)
+
+object FlowParamSpec:
+
+  private val validTypes = Set("int", "string", "bool")
+
+  given Decoder[FlowParamSpec] = Decoder.instance { c =>
+    for
+      t <- c.downField("type").as[String]
+      _ <-
+        if validTypes.contains(t) then Right(())
+        else Left(DecodingFailure(s"param type must be one of ${validTypes.toList.sorted.mkString(" | ")} (got \"$t\")", c.history))
+      default <- c.downField("default").as[Option[Json]]
+      min <- c.downField("min").as[Option[Int]]
+      max <- c.downField("max").as[Option[Int]]
+      _ <-
+        if t == "int" || (min.isEmpty && max.isEmpty) then Right(())
+        else Left(DecodingFailure("min/max are only valid for int params", c.history))
+      description <- c.downField("description").as[Option[String]]
+    yield FlowParamSpec(t, default, min, max, description.getOrElse(""))
+  }
+
+  given Encoder[FlowParamSpec] = Encoder.instance { p =>
+    Json.obj(
+      "type" -> p.`type`.asJson,
+      "default" -> p.default.getOrElse(Json.Null),
+      "min" -> p.min.asJson,
+      "max" -> p.max.asJson,
+      "description" -> (if p.description.isEmpty then Json.Null else p.description.asJson)
+    )
+  }
+end FlowParamSpec
 
 // ============================================================
 // Runtime state (internal to DAG executor)

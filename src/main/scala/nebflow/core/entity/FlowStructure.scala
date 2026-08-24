@@ -1,6 +1,6 @@
 package nebflow.core.entity
 
-import nebflow.core.entity.NodeRoute.{Goto, Parallel, Return, Switch}
+import nebflow.core.entity.NodeRoute.{Goto, Parallel, ParallelDynamic, Return, Switch}
 
 /**
  * Static structure analysis of a FlowDagDef — single source of truth shared by
@@ -26,6 +26,10 @@ object FlowStructure:
       case Goto(t)      => (t, cond) :: Nil
       case Return       => (ReturnNode, cond) :: Nil
       case Parallel(fan, _) => fan.map(t => (t, cond))
+      // Dynamic fan: the template node stands in for its N runtime instances
+      // (join/display analysis treat it as one branch — the executor arms the
+      // template's downstream join with N at dispatch time).
+      case ParallelDynamic(_, template, _) => (template, cond) :: Nil
       case Switch(_, cases, default, _) =>
         cases.toList.sortBy(_._1).flatMap { (k, r) => routeTargets(r, Some(k)) } ++
           default.toList.flatMap(r => routeTargets(r, Some("default")))
@@ -37,6 +41,7 @@ object FlowStructure:
         case Goto(t)          => (nodeId, t, None) :: Nil
         case Return           => (nodeId, ReturnNode, None) :: Nil
         case Parallel(fan, _) => fan.map(t => (nodeId, t, None))
+        case ParallelDynamic(_, template, _) => (nodeId, template, None) :: Nil
         case Switch(_, cases, _, _) =>
           cases.toList.sortBy(_._1).flatMap { (cond, r) =>
             routeTargets(r, Some(cond)).map((to, c) => (nodeId, to, c))
@@ -78,15 +83,40 @@ object FlowStructure:
           else go(succ.getOrElse(next, Nil) ++ rest, seen + next, foundReturn)
     go(start :: Nil, Set.empty, false)
 
-  /** Every Parallel route declared anywhere in the flow (with its owner node). */
-  def parallelRoutes(flow: FlowDagDef): List[(String, Parallel)] =
-    def routesOf(r: NodeRoute): List[Parallel] =
+  /** Static AND dynamic parallel routes declared anywhere (with owner node). */
+  def parallelRoutes(flow: FlowDagDef): List[(String, Parallel | ParallelDynamic)] =
+    def routesOf(r: NodeRoute): List[Parallel | ParallelDynamic] =
       r match
-        case p: Parallel  => p :: Nil
+        case p: Parallel        => p :: Nil
+        case p: ParallelDynamic => p :: Nil
         case Switch(_, cases, default, _) =>
           cases.values.toList.flatMap(routesOf) ++ default.toList.flatMap(routesOf)
         case _ => Nil
     flow.nodes.toList.sortBy(_._1).flatMap { (id, n) => routesOf(n.onComplete).map(id -> _) }
+
+  /**
+   * Unified fan view for validation: static branches, or the dynamic template
+   * standing in for its N runtime instances (N unknown at load time).
+   */
+  private def fanBranches(p: Parallel | ParallelDynamic): List[String] =
+    p match
+      case Parallel(fan, _)         => fan
+      case ParallelDynamic(_, t, _) => t :: Nil
+
+  /**
+   * Joins introduced by dynamic fans: the template's onComplete target acts
+   * as a counting barrier for N runtime instances even when its static
+   * in-degree is 1 (the executor arms it with N at dispatch time).
+   */
+  def dynamicJoinNodes(flow: FlowDagDef): Set[String] =
+    parallelRoutes(flow).collect {
+      case (_, pd: ParallelDynamic) =>
+        flow.nodes.get(pd.template).flatMap { t =>
+          routeTargets(t.onComplete).headOption.collect {
+            case (target, _) if target != ReturnNode => target
+          }
+        }
+    }.flatten.toSet
 
   /**
    * Structural validation (R8-P2 load checks). Returns a list of reject
@@ -120,14 +150,16 @@ object FlowStructure:
     if !hasReturn then
       errors += "flow has no termination path: no node routes to $return (a pure cycle can only end in 'Max loop exceeded')"
 
-    val joins = joinNodes(flow)
+    val joins = joinNodes(flow) ++ dynamicJoinNodes(flow)
 
-    // 3. fanout cap
+    // 3. fanout cap — static fans only; dynamic fans are clamped at runtime
     parallelRoutes(flow).foreach { (owner, p) =>
-      if p.fan.size > flow.maxFanout then
-        errors += s"parallel fan of node '$owner' has ${p.fan.size} branches — exceeds maxFanout ${flow.maxFanout}"
-      // 4. mid-branch $return
-      p.fan.distinct.foreach { branch =>
+      p match
+        case Parallel(fan, _) if fan.size > flow.maxFanout =>
+          errors += s"parallel fan of node '$owner' has ${fan.size} branches — exceeds maxFanout ${flow.maxFanout}"
+        case _ => () // dynamic: runtime clamp (len > maxFanout → min(len, maxFanout) + warn)
+      // 4. mid-branch $return (dynamic: template downstream must converge)
+      fanBranches(p).distinct.foreach { branch =>
         val (_, reachesReturn) = reachFrom(flow, branch, joins)
         if reachesReturn then
           errors += s"parallel branch '$branch' (fan of '$owner') can reach $$return before converging at a join — branches must converge; early return is ambiguous"
@@ -144,14 +176,19 @@ object FlowStructure:
       analysisEdges(flow).filter(_._2 != ReturnNode).groupBy(_._2).view.mapValues(_.map(_._1)).toMap
     joins.toList.sorted.foreach { j =>
       val armingFans = fans.filter { p =>
-        p.fan.distinct.count { b =>
+        val reachCount = fanBranches(p).distinct.count { b =>
           reachFrom(flow, b, joins)._1.contains(j)
-        } >= 2
+        }
+        p match
+          // A dynamic fan arms its join with N ≥ 1 at runtime — any template
+          // reaching the join can arm it, so count ≥ 1 means arming.
+          case _: ParallelDynamic => reachCount >= 1
+          case _                  => reachCount >= 2
       }
       if armingFans.nonEmpty then
         // valid arrival sources: downstream of any fan that arms this join
         val validSources =
-          armingFans.flatMap(p => p.fan.distinct.flatMap(b => reachFrom(flow, b, joins)._1.toList)).toSet + j
+          armingFans.flatMap(p => fanBranches(p).distinct.flatMap(b => reachFrom(flow, b, joins)._1.toList)).toSet + j
         inEdges.getOrElse(j, Nil).distinct.foreach { src =>
           if !validSources.contains(src) then
             errors += s"join '$j' mixes parallel and serial arrivals: in-edge '$src->$j' originates outside the parallel fan's downstream — a serial arrival would corrupt the barrier count"

@@ -101,6 +101,10 @@ object FlowDagExecutor:
     val slots: Ref[IO, Map[String, Map[String, Json]]] = Ref.unsafe(Map.empty)
     val loopCounts: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
     val pendingJoins: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
+    /** Dynamic fan instances: template node id → instantiated ids in creation order (template#1 … template#N). */
+    val instances: Ref[IO, Map[String, List[String]]] = Ref.unsafe(Map.empty)
+    /** Instantiated node definitions (input substituted): instance id → FlowNode. */
+    val instanceNodes: Ref[IO, Map[String, FlowNode]] = Ref.unsafe(Map.empty)
 
   /**
    * Execute a flow DAG.
@@ -120,7 +124,11 @@ object FlowDagExecutor:
     wsSend: Option[Json => IO[Unit]],
     instanceId: String,
     parentAgentRef: Option[ActorRef[AgentCommand]] = None,
-    rootSessionId: String = ""
+    rootSessionId: String = "",
+    // Structured trigger parameters (validated by FlowTriggerTool against
+    // flow.params schema). Resolved into node inputs via $params.<name>;
+    // a missing key (no default, not provided) inserts a visible placeholder.
+    params: Map[String, Json] = Map.empty
   ): IO[Either[String, String]] =
 
     val emitWs = wsSend.getOrElse((_: Json) => IO.unit)
@@ -139,7 +147,10 @@ object FlowDagExecutor:
     val st = new ExecState
 
     // ---- static graph analysis (immutable per execution) ----
-    val joins: Set[String] = FlowStructure.joinNodes(flow)
+    // Dynamic fans introduce join nodes the static in-degree analysis misses:
+    // N runtime instances converge on the template's onComplete target, which
+    // the dispatch arms with N at runtime.
+    val joins: Set[String] = FlowStructure.joinNodes(flow) ++ FlowStructure.dynamicJoinNodes(flow)
     // For each node: the barrier joins reachable from it WITHOUT crossing
     // another join — i.e. the joins a walker from that node is expected to
     // arrive at. Arms barriers when a parallel fan fires; settles them when
@@ -161,11 +172,58 @@ object FlowDagExecutor:
       for
         outs <- st.outputs.get
         slotsAll <- st.slots.get
+        instsAll <- st.instances.get
       yield
-        val withTask = template.replace("$task", taskInput)
+        // $params.<name> first — structured trigger parameters (string values
+        // insert directly; others compact JSON; missing → visible placeholder
+        // so the planner prompt's fallback wording kicks in).
+        val paramsPattern = "\\$params\\.([a-zA-Z0-9_-]+)".r
+        val withParams = paramsPattern.replaceAllIn(
+          template,
+          m =>
+            java.util.regex.Matcher.quoteReplacement(
+              params.get(m.group(1)) match
+                case Some(json) if json.isString => json.asString.getOrElse("")
+                case Some(json)                  => json.noSpaces
+                case None                        => s"[param ${m.group(1)} not provided]"
+            )
+        )
+        val withTask = withParams.replace("$task", taskInput)
+        // Dynamic-fan aggregates: $<template>.all.output (instances' outputs in
+        // index order, each with a "=== Track {{index}} ===" header) and
+        // $<template>.all.slots.<field> (same order, joined text / compact JSON).
+        def aggregateAllOutputs(t: String): String =
+          instsAll
+            .getOrElse(t, Nil)
+            .map { id =>
+              val idx = id.split("#").last
+              s"=== Track $idx ===\n${outs.getOrElse(id, s"[output of $id not found]")}"
+            }
+            .mkString("\n\n")
+        def aggregateAllSlots(t: String, field: String): String =
+          instsAll
+            .getOrElse(t, Nil)
+            .map { id =>
+              slotsAll.get(id).flatMap(_.get(field)) match
+                case Some(json) if json.isString => json.asString.getOrElse("")
+                case Some(json)                  => json.noSpaces
+                case None => s"[slots.$field of $id not found]"
+            }
+            .mkString("\n")
+        val allSlotsPattern = "\\$([a-zA-Z0-9_-]+)\\.all\\.slots\\.([a-zA-Z0-9_-]+)".r
+        val withAllSlots = allSlotsPattern.replaceAllIn(
+          withTask,
+          m =>
+            java.util.regex.Matcher.quoteReplacement(aggregateAllSlots(m.group(1), m.group(2)))
+        )
+        val allOutputPattern = "\\$([a-zA-Z0-9_-]+)\\.all\\.output".r
+        val withAll = allOutputPattern.replaceAllIn(
+          withAllSlots,
+          m => java.util.regex.Matcher.quoteReplacement(aggregateAllOutputs(m.group(1)))
+        )
         val slotsPattern = "\\$([a-zA-Z0-9_-]+)\\.slots\\.([a-zA-Z0-9_-]+)".r
         val withSlots = slotsPattern.replaceAllIn(
-          withTask,
+          withAll,
           m =>
             java.util.regex.Matcher.quoteReplacement(
               slotsAll.get(m.group(1)).flatMap(_.get(m.group(2))) match
@@ -195,9 +253,15 @@ object FlowDagExecutor:
       if caseKeys.isEmpty && node.outputs.isEmpty then None
       else Some(FlowNodeContract(caseKeys, node.outputs))
 
+    /** Resolve a node definition: static flow nodes, or dynamic instances. */
+    def nodeDefOf(nodeId: String): IO[Option[FlowNode]] =
+      flow.nodes.get(nodeId) match
+        case Some(node) => IO.pure(Some(node))
+        case None       => st.instanceNodes.get.map(_.get(nodeId))
+
     /** Execute a single DAG node: spawn agent, send input, collect output. */
     def executeNode(nodeId: String): IO[NodeResult] =
-      flow.nodes.get(nodeId) match
+      nodeDefOf(nodeId).flatMap {
         case None =>
           IO.pure(NodeResult(nodeId, "", false, Some(s"Unknown node: $nodeId")))
         case Some(node) =>
@@ -228,12 +292,13 @@ object FlowDagExecutor:
             _ <- st.slots.update(_ + (nodeId -> result.slots))
           yield result
           end for
+      }
 
     /** Error handling + retry logic. */
     def handleResult(nodeId: String, result: NodeResult): IO[Either[WalkEnd.Failed, NodeResult]] =
       if result.success then IO.pure(Right(result))
       else
-        flow.nodes.get(nodeId) match
+        nodeDefOf(nodeId).flatMap {
           case None => IO.pure(Left(WalkEnd.Failed(nodeId, s"Unknown node '$nodeId' in error handler")))
           case Some(node) =>
             node.onError.getOrElse(OnError.Stop) match
@@ -258,6 +323,7 @@ object FlowDagExecutor:
                   )
               case OnError.Stop =>
                 IO.pure(Left(WalkEnd.Failed(nodeId, s"Node '$nodeId' failed: ${result.error.getOrElse("unknown")}")))
+        }
 
     /**
      * R8-P1 strict verdict, second line of defense: a switch node that ended
@@ -266,10 +332,10 @@ object FlowDagExecutor:
      * route() backstop). Guess extraction is opt-in via the switch's lenient
      * flag; strictVerdict=false keeps the legacy behavior completely unchanged.
      */
-    def strictVerdictFailure(nodeId: String, result: NodeResult): Option[String] =
+    def strictVerdictFailure(node: Option[FlowNode], result: NodeResult): Option[String] =
       if !(flow.strictVerdict && result.success && result.verdict.isEmpty) then None
       else
-        flow.nodes.get(nodeId).flatMap { n =>
+        node.flatMap { n =>
           n.onComplete match
             case NodeRoute.Switch(expr, cases, _, lenient) if !lenient =>
               Some(
@@ -303,10 +369,11 @@ object FlowDagExecutor:
           else
             for
               _ <- logger.info(s"Flow '${flow.name}': executing node '$nodeId'")
+              nodeDef <- nodeDefOf(nodeId)
               _ <- nebflow.core.flow.RunningFlowRegistry.setNodeStatus(instanceId, nodeId, NodeStatus.Running)
               _ <- emitProgress(nodeId, NodeStatus.Running)
               result0 <- executeNode(nodeId)
-              result = strictVerdictFailure(nodeId, result0) match
+              result = strictVerdictFailure(nodeDef, result0) match
                 case Some(msg) => result0.copy(success = false, error = Some(msg))
                 case None      => result0
               // Cancel may have pierced the node mid-run (executeAgent races
@@ -372,7 +439,7 @@ object FlowDagExecutor:
 
     /** Route to next node based on onComplete rules. */
     def route(result: NodeResult): IO[Either[WalkEnd.Failed, WalkEnd]] =
-      flow.nodes.get(result.nodeId) match
+      nodeDefOf(result.nodeId).flatMap {
         case None =>
           IO.pure(Left(WalkEnd.Failed(result.nodeId, s"Unknown node '${result.nodeId}' in routing")))
         case Some(node) =>
@@ -381,12 +448,14 @@ object FlowDagExecutor:
               case NodeRoute.Return        => IO.pure(Right(WalkEnd.Returned(result.output)))
               case NodeRoute.Goto(target)  => advance(result.nodeId, target)
               case p: NodeRoute.Parallel   => parallelDispatch(result.nodeId, p.fan, p.onFail)
+              case pd: NodeRoute.ParallelDynamic => parallelDispatchDynamic(result.nodeId, pd)
               case NodeRoute.Switch(_, _, _, _) =>
                 IO.pure(Left(WalkEnd.Failed(result.nodeId, "Nested switch not supported in routing")))
           node.onComplete match
             case NodeRoute.Return       => IO.pure(Right(WalkEnd.Returned(result.output)))
             case NodeRoute.Goto(target) => advance(result.nodeId, target)
             case p: NodeRoute.Parallel  => parallelDispatch(result.nodeId, p.fan, p.onFail)
+            case pd: NodeRoute.ParallelDynamic => parallelDispatchDynamic(result.nodeId, pd)
             case NodeRoute.Switch(switchExpr, cases, default, lenient) =>
               // Verdict priority: FlowReport verdict (structured, trustworthy) →
               // extract from output via the legacy pipeline — but ONLY when the
@@ -421,6 +490,7 @@ object FlowDagExecutor:
                         case NodeRoute.Return       => IO.pure(Right(WalkEnd.Returned(result.output)))
                         case NodeRoute.Goto(target) => advance(result.nodeId, target)
                         case p: NodeRoute.Parallel  => parallelDispatch(result.nodeId, p.fan, p.onFail)
+                        case pd: NodeRoute.ParallelDynamic => parallelDispatchDynamic(result.nodeId, pd)
                         case NodeRoute.Switch(_, _, _, _) =>
                           IO.pure(Left(WalkEnd.Failed(result.nodeId, "Nested switch not supported in routing")))
                     matchedKey match
@@ -442,6 +512,31 @@ object FlowDagExecutor:
                             )
                   end match
               }
+      }
+
+    /** Settle barriers a dead branch will never arrive at; returns joins to activate now. */
+    def settleJoins(expected: Set[String]): IO[List[String]] =
+      expected.toList.foldLeft(IO.pure(List.empty[String])) { (acc, j) =>
+        acc.flatMap { fired =>
+          st.pendingJoins
+            .modify { m =>
+              m.get(j) match
+                case Some(n) if n > 1 => (m + (j -> (n - 1)), Nil)
+                case Some(_)          => (m - j, j :: Nil)
+                case None             => (m, Nil) // never armed — nothing owed
+            }
+            .map(fired ++ _)
+        }
+      }
+
+    /** Run fired activations sequentially on this fiber; first failure/return wins. */
+    def activateAll(activations: List[String]): IO[Either[WalkEnd.Failed, WalkEnd]] =
+      activations.foldLeftM[IO, Either[WalkEnd.Failed, WalkEnd]](Right(WalkEnd.Converged)) { (acc, j) =>
+        acc match
+          case Left(_)                  => IO.pure(acc)
+          case Right(WalkEnd.Returned(_)) => IO.pure(acc)
+          case Right(_)                 => walk(j)
+      }
 
     /**
      * Fork one fiber per fan target, all walking the DAG concurrently; arm
@@ -465,30 +560,6 @@ object FlowDagExecutor:
       fan: List[String],
       onFail: NodeRoute.OnFailMode
     ): IO[Either[WalkEnd.Failed, WalkEnd]] =
-
-      /** Settle barriers a dead branch will never arrive at; returns joins to activate now. */
-      def settleJoins(expected: Set[String]): IO[List[String]] =
-        expected.toList.foldLeft(IO.pure(List.empty[String])) { (acc, j) =>
-          acc.flatMap { fired =>
-            st.pendingJoins
-              .modify { m =>
-                m.get(j) match
-                  case Some(n) if n > 1 => (m + (j -> (n - 1)), Nil)
-                  case Some(_)          => (m - j, j :: Nil)
-                  case None             => (m, Nil) // never armed — nothing owed
-              }
-              .map(fired ++ _)
-          }
-        }
-
-      /** Run fired activations sequentially on this fiber; first failure/return wins. */
-      def activateAll(activations: List[String]): IO[Either[WalkEnd.Failed, WalkEnd]] =
-        activations.foldLeftM[IO, Either[WalkEnd.Failed, WalkEnd]](Right(WalkEnd.Converged)) { (acc, j) =>
-          acc match
-            case Left(_)                  => IO.pure(acc)
-            case Right(WalkEnd.Returned(_)) => IO.pure(acc)
-            case Right(_)                 => walk(j)
-        }
 
       /** A branch walk failed — apply the fan's on-fail policy (in the failing fiber). */
       def onBranchFailure(failed: WalkEnd.Failed, branch: String): IO[Either[WalkEnd.Failed, WalkEnd]] =
@@ -557,6 +628,176 @@ object FlowDagExecutor:
         }
 
       forkJoinMerge()
+
+    /**
+     * Dynamic fan-out: read the owner's slot array, instantiate N copies of
+     * the template node ({{item}}/{{index}} substituted), run them all
+     * concurrently, and merge outcomes.
+     *
+     * N = min(len, maxFanout) with a warn when clamped (maxFanout is a cost
+     * cap, not a target). A missing/non-array slot or len==0 follows onFail:
+     * abort → clear error; collect → the template's downstream join runs with
+     * an empty aggregate. Instances converge on the template's onComplete
+     * target, which acts as a counting barrier armed with N (the target is in
+     * `joins` via FlowStructure.dynamicJoinNodes).
+     */
+    def parallelDispatchDynamic(
+      from: String,
+      pd: NodeRoute.ParallelDynamic
+    ): IO[Either[WalkEnd.Failed, WalkEnd]] =
+      val template = pd.template
+      val dynJoin: Option[String] =
+        flow.nodes.get(template).flatMap { t =>
+          FlowStructure.routeTargets(t.onComplete).headOption.collect {
+            case (target, _) if target != FlowStructure.ReturnNode => target
+          }
+        }
+
+      /** A branch walk failed — apply the fan's on-fail policy (in the failing fiber). */
+      def onBranchFailure(failed: WalkEnd.Failed, branch: String): IO[Either[WalkEnd.Failed, WalkEnd]] =
+        nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId).flatMap { userCancelled =>
+          if userCancelled then IO.pure(Left(failed)) // user cancel outranks the policy
+          else
+            pd.onFail match
+              case NodeRoute.OnFailMode.Abort =>
+                for
+                  _ <- logger.warn(
+                    s"Flow '${flow.name}': dynamic instance '$branch' failed at '${failed.nodeId}' " +
+                      s"(${failed.error.take(200)}) — fail-fast, stopping sibling instances"
+                  )
+                  _ <- nebflow.core.flow.RunningFlowRegistry.failFast(instanceId)
+                yield Left(failed)
+              case NodeRoute.OnFailMode.Collect =>
+                for
+                  _ <- logger.warn(
+                    s"Flow '${flow.name}': dynamic instance '$branch' failed at '${failed.nodeId}' — " +
+                      s"collecting placeholder into outputs"
+                  )
+                  _ <- st.outputs.update(_ + (branch -> s"[node $branch failed: ${failed.error}]"))
+                  activations <- settleJoins(expectedJoins.getOrElse(template, Set.empty))
+                  result <- activateAll(activations)
+                yield result
+        }
+
+      /** No valid instances (missing/non-array slot, or empty) — per onFail. */
+      def noInstances(reason: String): IO[Either[WalkEnd.Failed, WalkEnd]] =
+        pd.onFail match
+          case NodeRoute.OnFailMode.Abort =>
+            IO.pure(Left[WalkEnd.Failed, WalkEnd](WalkEnd.Failed(from, reason)))
+          case NodeRoute.OnFailMode.Collect =>
+            logger.warn(
+              s"Flow '${flow.name}': dynamic fanout from '$from' has no instances ($reason) — continuing with empty aggregate"
+            ) *> (dynJoin match
+              case Some(j) => walk(j)
+              case None    => IO.pure(Right(WalkEnd.Converged)))
+
+      st.slots.get.flatMap { slotsAll =>
+        slotsAll.get(from).flatMap(_.get(pd.slotField)) match
+          case None =>
+            noInstances(s"slot '${pd.slotField}' not found on node '$from'")
+          case Some(json) if !json.isArray =>
+            noInstances(s"slot '${pd.slotField}' on node '$from' is not an array")
+          case Some(json) =>
+            val items = json.asArray.get
+            val clamped = items.size > flow.maxFanout
+            val n = math.min(items.size, flow.maxFanout)
+            for
+              _ <-
+                if clamped then
+                  logger.warn(
+                    s"Flow '${flow.name}': dynamic fanout from '$from' produced ${items.size} items — clamped to maxFanout ${flow.maxFanout}"
+                  )
+                else IO.unit
+              result <-
+                if n == 0 then
+                  noInstances(s"slot '${pd.slotField}' on node '$from' is empty (planner produced no topics)")
+                else
+                  val instanceIds = (1 to n).map(i => s"$template#$i").toList
+                  flow.nodes.get(template) match
+                    case None =>
+                      IO.pure(Left[WalkEnd.Failed, WalkEnd](WalkEnd.Failed(from, s"dynamic fan template '$template' not found in flow")))
+                    case Some(templateNode) =>
+                      for
+                        _ <- st.instances.update(m => m.updated(template, m.getOrElse(template, Nil) ++ instanceIds))
+                        _ <- st.instanceNodes.update { m =>
+                          instanceIds.zipWithIndex.foldLeft(m) { case (mm, (id, idx0)) =>
+                            val idx = idx0 + 1
+                            val item = items(idx0)
+                            val itemStr = if item.isString then item.asString.getOrElse("") else item.noSpaces
+                            val input = templateNode.input
+                              .replace("{{item}}", itemStr)
+                              .replace("{{index}}", idx.toString)
+                            mm.updated(id, templateNode.copy(input = input))
+                          }
+                        }
+                        // Register the N runtime node states first (setNodeStatus
+                        // only updates existing entries) + notify the frontend.
+                        _ <- nebflow.core.flow.RunningFlowRegistry.update(instanceId)(rf =>
+                          rf.copy(
+                            nodes = rf.nodes ++ instanceIds.map { id =>
+                              id -> nebflow.core.flow.RunningFlowRegistry.NodeState(
+                                nodeId = id,
+                                agent = templateNode.agent,
+                                status = NodeStatus.Pending
+                              )
+                            }.toMap
+                          )
+                        )
+                        _ <- emitWs(
+                          Json.obj(
+                            "type" -> "flowNodesAdded".asJson,
+                            "instanceId" -> instanceId.asJson,
+                            "flowName" -> flow.name.asJson,
+                            "nodes" -> instanceIds
+                              .map(id =>
+                                Json.obj(
+                                  "nodeId" -> id.asJson,
+                                  "agent" -> templateNode.agent.asJson,
+                                  "status" -> "pending".asJson
+                                )
+                              )
+                              .asJson,
+                            "edges" -> instanceIds
+                              .flatMap(id =>
+                                dynJoin.map(j =>
+                                  Json.obj(
+                                    "from" -> id.asJson,
+                                    "to" -> j.asJson,
+                                    "condition" -> Json.Null
+                                  )
+                                )
+                              )
+                              .asJson
+                          )
+                        )
+                        // Arm the template's downstream joins for N arrivals.
+                        armCounts = expectedJoins
+                          .getOrElse(template, Set.empty)
+                          .toList
+                          .map(j => j -> n)
+                          .toMap
+                        _ <- st.pendingJoins.update(m =>
+                          armCounts.foldLeft(m) { case (mm, (j, c)) => mm.updated(j, mm.getOrElse(j, 0) + c) }
+                        )
+                        _ <- logger.info(
+                          s"Flow '${flow.name}': dynamic fan-out from '$from' → ${instanceIds.mkString(", ")}" +
+                            (if armCounts.isEmpty then ""
+                             else s" (barriers armed: ${armCounts.map((j, c) => s"$j=$c").mkString(", ")})")
+                        )
+                        outcomes <- instanceIds
+                          .traverse { id =>
+                            walk(id)
+                              .flatMap {
+                                case Left(failed) => onBranchFailure(failed, id)
+                                case ok           => IO.pure(ok)
+                              }
+                              .start
+                          }
+                          .flatMap(fibers => fibers.traverse(f => f.joinWithNever.attempt))
+                      yield mergeOutcomes(from, outcomes)
+            yield result
+      }
+    end parallelDispatchDynamic
 
     // Register the running flow, execute, then clean up
     for
