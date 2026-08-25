@@ -10,6 +10,7 @@ import { esc, authHeaders, overlayRoot, teamPendingCount } from './flowHelpers.j
 import { orderDagNodes, dagNodeInlineHtml, openFlowNodePopup } from './flowDag.js';
 import state from './state.js';
 import { onMessage } from './ws.js';
+import { t } from './i18n.js';
 
 // ── Module-level state for flow rows ───────────────────────
 const dagCache = new Map();           // flowName → { ordered: [{nodeId, agent}] }
@@ -99,6 +100,89 @@ function getInlineNodes(flowName, runningFlows) {
   return [];
 }
 
+// ── Team Tasks section (2026-08-25 team-manager-task-tool) ──
+
+/** Localized status word for a team task badge.
+ *  Statuses follow the four-state team matrix (pending → in_progress → completed/failed). */
+function taskStatusLabel(status) {
+  switch (status) {
+    case 'pending': return t('task.pendingShort');
+    case 'in_progress': return t('task.inProgressShort');
+    case 'completed': return t('task.completedShort');
+    case 'failed': return t('task.failedShort');
+    default: return String(status || '');
+  }
+}
+
+/** Cap a subject at n chars with an ellipsis (spec §6.2: subject 截断 30 字符). */
+function truncateSubject(subject, n = 30) {
+  const s = String(subject || '');
+  return s.length > n ? s.slice(0, n - 1) + '\u2026' : s;
+}
+
+/** Compact relative time ("刚刚"/"2m"/"3h"/"2d"); empty when no timestamp.
+ *  Accepts an ISO string (Date.parse) or epoch ms/s. Absent → '' so the row
+ *  omits the time — the A1 contract only guarantees id/subject/status/blockedBy/blocks. */
+function relTime(ts) {
+  if (ts === undefined || ts === null || ts === '') return '';
+  let ms;
+  if (typeof ts === 'number') ms = ts < 1e12 ? ts * 1000 : ts;
+  else ms = Date.parse(String(ts));
+  if (isNaN(ms)) return '';
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return t('task.justNow');
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
+  return `${Math.floor(diff / 86_400_000)}d`;
+}
+
+/** Dependency badges for a task row. Non-emoji text pills (design rule: no emoji);
+ *  spec A5 only asserts the `dep #<id>` text. */
+function depBadgesHtml(task) {
+  const depIds = (task.blockedBy || []).map(id => `#${id}`).join(', ');
+  const blkIds = (task.blocks || []).map(id => `#${id}`).join(', ');
+  let html = '';
+  if (depIds) {
+    html += `<span class="task-dep-badge" title="${esc(t('teamTask.dependsOn', { ids: depIds }))}" data-dep="${esc(depIds)}">dep ${esc(depIds)}</span>`;
+  }
+  if (blkIds) {
+    html += `<span class="task-dep-badge task-dep-badge-block" title="${esc(t('teamTask.blocksIds', { ids: blkIds }))}" data-blocks="${esc(blkIds)}">blocks ${esc(blkIds)}</span>`;
+  }
+  return html;
+}
+
+/** Tasks section HTML — inside a team card, between the agent grid and Flows. */
+function buildTasksSection(tasks) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const header = `<div class="team-tasks-header">${esc(t('teamTask.header'))} (${list.length})</div>`;
+  if (list.length === 0) {
+    return `
+      <div class="team-tasks-divider"></div>
+      <div class="team-tasks-section">
+        ${header}
+        <div class="team-tasks-empty">${esc(t('teamTask.empty'))}</div>
+      </div>`;
+  }
+  const rows = list.map(task => {
+    const id = task.id !== undefined && task.id !== null ? task.id : '';
+    const timeStr = relTime(task.updatedAt);
+    const timeHtml = timeStr ? `<span class="team-task-time">\u00b7 ${esc(timeStr)}</span>` : '';
+    return `
+      <div class="team-task-row" data-task-id="${esc(String(id))}" data-status="${esc(task.status || '')}">
+        <span class="task-status-badge badge-${esc(task.status || '')}">${esc(taskStatusLabel(task.status))}</span>
+        <span class="team-task-subject" title="${esc(task.subject || '')}">#${esc(String(id))} ${esc(truncateSubject(task.subject))}</span>
+        ${timeHtml}
+        ${depBadgesHtml(task)}
+      </div>`;
+  }).join('');
+  return `
+    <div class="team-tasks-divider"></div>
+    <div class="team-tasks-section">
+      ${header}
+      <div class="team-tasks">${rows}</div>
+    </div>`;
+}
+
 // ── Card rendering ─────────────────────────────────────────
 
 export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
@@ -164,6 +248,8 @@ export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
       </div>`;
   }
 
+  const tasksSectionHtml = buildTasksSection(flow.tasks);
+
   return `
     <div class="team-card">
       <div class="team-card-header">
@@ -175,6 +261,7 @@ export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
         <div class="team-card-summary ${summaryCls}"><span class="dot"></span>${summaryText}</div>
       </div>
       <div class="team-agents">${tilesHtml}</div>
+      ${tasksSectionHtml}
       ${flowsSectionHtml}
     </div>`;
 }
