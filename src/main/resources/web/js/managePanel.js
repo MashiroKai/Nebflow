@@ -84,7 +84,9 @@ onMessage('cancelAgentResult', (msg) => {
   }
 });
 
-function fmtUptime(ms) {
+/** Relative uptime formatter — shared with the Sub-Agents dropdown rows
+ *  (main.js renderBgAgentDropdown, subagents-panel spec 2026-08-25). */
+export function fmtUptime(ms) {
   if (ms == null || ms < 0) return '';
   const s = Math.floor(ms / 1000);
   if (s < 60) return s + 's';

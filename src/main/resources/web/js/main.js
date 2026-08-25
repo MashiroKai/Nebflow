@@ -66,6 +66,7 @@ import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView
 import { isErrorReason, normalizeReason, applyErrorFrozen, clearErrorFrozen, renderEscalationCard } from './errorRecovery.js';
 import { handleFlowAgentHistory, openStepPopup as openFlowStepPopup } from './flowAgentPopup.js';
 import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
+import { fmtUptime, isFailedSnapshotStatus } from './managePanel.js';
 import { initNeblink } from './neblink.js';
 import { initDropbox } from './dropbox.js';
 import { initContacts } from './contacts.js';
@@ -1490,6 +1491,7 @@ function updateBgAgentIndicator(targetSid) {
     el.querySelector('.bgagent-count').textContent = count;
   } else {
     el.classList.add('hidden');
+    el.setAttribute('aria-expanded', 'false');
     const dropdown = view.dom.bgagentDropdownEl;
     if (dropdown) dropdown.classList.add('hidden');
   }
@@ -1497,35 +1499,122 @@ function updateBgAgentIndicator(targetSid) {
 }
 state.updateBgAgentIndicator = updateBgAgentIndicator;
 
+// ── Sub-agents panel (2026-08-25 spec, frozen @142535e9) ─────────────
+// Row = [status dot + label][kind chip][name · task][uptime][retries ×N]
+//       + secondary lines: stuck alert label / current tool subtitle.
+// User rulings locked in the spec: barrier hidden, retries only when >0,
+// NO kind grouping (chip instead), NO inline stuck buttons (operations
+// live in the agent popup — A13).
+
+/** Derive the AgentKind from the session-id prefix when the snapshot kind is
+ *  absent (live agentStart carries no kind field). */
+function bgAgentKindFromSession(sessionId) {
+  const raw = sessionId || '';
+  if (raw.startsWith('team-')) return 'Team';
+  if (raw.startsWith('delegate-')) return 'Delegate';
+  if (raw.startsWith('subtask-')) return 'SubTask';
+  if (raw.startsWith('dag-')) return 'Flow';
+  if (raw.startsWith('ephemeral-')) return 'Ephemeral';
+  return '';
+}
+
+/** Row state machine (spec §3): done > stuck > frozen > error > idle > active. */
+function bgRowState(info) {
+  if (info.done) return 'done';
+  if (info.stuck) return 'stuck';
+  if (info.frozen) return 'frozen';
+  if (isFailedSnapshotStatus(info.status)) return 'error';
+  const st = info.status || '';
+  if (st === 'Idle' || st === 'WaitingForUser' || st === 'idle') return 'idle';
+  return 'active';
+}
+
+// Uptime tick: while the dropdown is open, refresh .bg-task-uptime text in
+// place every 15s (no full re-render — keeps keyboard focus). Self-terminates
+// once the dropdown hides, regardless of which close path ran.
+let bgUptimeTick = null;
+function armBgUptimeTick(view) {
+  if (bgUptimeTick) clearTimeout(bgUptimeTick);
+  bgUptimeTick = setTimeout(() => {
+    bgUptimeTick = null;
+    const dd = view && view.dom.bgagentDropdownEl;
+    if (dd && !dd.classList.contains('hidden')) {
+      dd.querySelectorAll('.bg-task-uptime[data-started-at]').forEach(el => {
+        const started = Number(el.getAttribute('data-started-at'));
+        if (started > 0) el.textContent = fmtUptime(Date.now() - started);
+      });
+      armBgUptimeTick(view);
+    }
+  }, 15000);
+}
+
 function renderBgAgentDropdown() {
   if (!activeView) return;
+  const dropdownEl = activeView.dom.bgagentDropdownEl;
   const listEl = activeView.dom.bgagentDropdownListEl;
   if (!listEl) return;
   const sid = activeView?.sessionId;
   const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
   const entries = Object.entries(bgAgents);
+  // Panel header carries the live count (aria-live polite, spec §5).
+  const headerEl = dropdownEl ? dropdownEl.querySelector('.bg-dropdown-header') : null;
+  if (headerEl) headerEl.textContent = t('subagents.header', { count: entries.length });
   if (entries.length === 0) {
-    listEl.innerHTML = '';
+    // Empty state (spec §6): restrained i18n line, never fake rows.
+    listEl.innerHTML = '<div class="bg-dropdown-empty">' + escapeHtml(t('subagents.empty')) + '</div>';
     return;
   }
   listEl.innerHTML = entries.map(([id, info]) => {
-    const toolLabel = info.currentTool || '';
-    const toolPart = toolLabel ? '<span class="bgagent-tool">' + escapeHtml(toolLabel) + '</span>' : '';
-    const status = info.done ? '<span class="bgagent-done">done</span>' : '<span class="bgagent-running">running</span>';
+    const rowState = bgRowState(info);
+    const terminal = rowState === 'done' || rowState === 'error';
+    const statusLabel = t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
+    const dotClass = {
+      active: 'bg-status-active', idle: 'bg-status-idle', stuck: 'bg-status-stuck',
+      error: 'bg-status-error', frozen: 'bg-status-frozen', done: 'bg-status-done',
+    }[rowState];
+    const kind = info.kind || bgAgentKindFromSession(info.sessionId || id);
+    const kindPart = kind ? '<span class="bg-task-kind">' + escapeHtml(kind) + '</span>' : '';
     const displayName = info.name || id;
-    const label = info.task ? displayName + ' · ' + escapeHtml(info.task) : displayName;
+    const taskText = info.task ? displayName + ' · ' + info.task : displayName;
+    const namePart = '<span class="bg-task-name" title="' + escapeHtml(taskText) + '">' + escapeHtml(taskText) + '</span>';
+    // Uptime (spec §2.2): relative duration while non-terminal; hidden once done.
+    const uptimePart = (!terminal && info.startedAt)
+      ? '<span class="bg-task-uptime" data-started-at="' + info.startedAt + '">' + escapeHtml(fmtUptime(Date.now() - info.startedAt)) + '</span>'
+      : '';
+    // Retries chip: only when >0 (0 is noise — user ruling ②).
+    const retries = info.retryCount || 0;
+    const retriesPart = retries > 0
+      ? '<span class="bg-task-retries" title="' + escapeHtml(t('manage.retry')) + ' ×' + retries + '">×' + retries + '</span>'
+      : '';
+    // Stuck: restrained red label with idle seconds (manage-panel semantics).
+    // NO inline cancel/restart buttons — operations live in the agent popup (A13).
+    const stuckPart = (rowState === 'stuck' && info.stuck)
+      ? '<span class="bg-task-stuck" role="alert">' + escapeHtml(
+          info.stuck.action === 'restart'
+            ? t('manage.stuckAutoRestart')
+            : t('manage.stuck', { secs: info.stuck.idleSecs ?? '' })
+        ) + '</span>'
+      : '';
+    const toolLabel = info.currentTool || '';
+    const toolPart = (toolLabel && !terminal)
+      ? '<span class="bgagent-tool" title="' + escapeHtml(toolLabel) + '">↳ ' + escapeHtml(toolLabel) + '</span>'
+      : '';
     // The sub-agent's OWN session id — agentStart carries it as
     // msg.nodeSessionId (delegate-*/subtask-*/team-<sid>/dag-*). Every row
     // is clickable; the click handler strips the team- prefix and routes
     // dag-*/bare sids to the flow popup (same view the Flow panel uses).
     const sessionId = info.sessionId || (isBgAgentId(id) ? id : '');
     const clickAttr = sessionId
-      ? `data-bg-key="${escapeHtml(id)}" data-node-session-id="${escapeHtml(sessionId)}" style="cursor:pointer"`
+      ? `data-bg-key="${escapeHtml(id)}" data-node-session-id="${escapeHtml(sessionId)}"`
       : '';
-    return '<div class="bg-task-row" ' + clickAttr + '>' +
+    return '<div class="bg-task-row' + (rowState === 'done' ? ' done' : '') + '" role="listitem" tabindex="0" ' + clickAttr + '>' +
+      '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
-        '<span class="bg-task-name">' + status + ' ' + label + '</span>' +
-        toolPart +
+        '<div class="bg-task-line">' +
+          '<span class="bg-task-state bg-state-' + rowState + '">' + escapeHtml(statusLabel) + '</span>' +
+          kindPart + namePart + uptimePart + retriesPart +
+        '</div>' +
+        stuckPart + toolPart +
       '</div>' +
     '</div>';
   }).join('');
@@ -1558,6 +1647,24 @@ function renderBgAgentDropdown() {
       }
     });
   });
+
+  // Keyboard (spec §7 / APG listbox): Enter/Space opens the row's popup,
+  // ArrowUp/ArrowDown move between rows. Property assignment — idempotent
+  // across re-renders (no listener accumulation).
+  listEl.onkeydown = (e) => {
+    const row = e.target && e.target.closest ? e.target.closest('.bg-task-row') : null;
+    if (!row) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      row.click();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const rows = [...listEl.querySelectorAll('.bg-task-row')];
+      const i = rows.indexOf(row);
+      const next = rows[e.key === 'ArrowDown' ? i + 1 : i - 1];
+      if (next) next.focus();
+    }
+  };
 }
 
 // Toggle dropdown on indicator click — register for ALL views
@@ -1565,15 +1672,23 @@ Object.values(chatViews).forEach(v => {
   const indicator = v.dom.bgagentIndicatorEl;
   const dropdown = v.dom.bgagentDropdownEl;
   if (!indicator || !dropdown) return;
-  indicator.addEventListener('click', (e) => {
+  const toggle = (e) => {
     e.stopPropagation();
     setActiveView(v);
-    if (dropdown.classList.contains('hidden')) {
+    const opening = dropdown.classList.contains('hidden');
+    if (opening) {
       renderBgAgentDropdown();
       dropdown.classList.remove('hidden');
+      armBgUptimeTick(v);
     } else {
       dropdown.classList.add('hidden');
     }
+    indicator.setAttribute('aria-expanded', String(opening));
+  };
+  indicator.addEventListener('click', toggle);
+  // role=button keyboard parity (spec §7 — non-mouse reachable).
+  indicator.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
   });
 });
 
@@ -1583,7 +1698,10 @@ document.addEventListener('click', (e) => {
     const dropdown = v.dom.bgagentDropdownEl;
     const indicator = v.dom.bgagentIndicatorEl;
     if (dropdown && !dropdown.contains(e.target) && indicator && !indicator.contains(e.target)) {
-      dropdown.classList.add('hidden');
+      if (!dropdown.classList.contains('hidden')) {
+        dropdown.classList.add('hidden');
+        if (indicator) indicator.setAttribute('aria-expanded', 'false');
+      }
     }
   });
 });
@@ -1609,6 +1727,11 @@ onMessage('agentStart', (msg, view) => {
   if (sessionKey && sessionKey !== aid && state.sessionBgAgents[sid][sessionKey]) {
     delete state.sessionBgAgents[sid][sessionKey];
   }
+  // Sub-agents panel (2026-08-25): preserve management fields across turns —
+  // a per-turn agentStart overwrites the entry, so kind/startedAt/retryCount
+  // carry over from the previous entry; a fresh turn clears stuck/frozen
+  // (activity resumed) and marks the row active.
+  const prev = state.sessionBgAgents[sid][aid] || null;
   state.sessionBgAgents[sid][aid] = {
     name: msg.name || aid,
     task: msg.taskDescription || '',
@@ -1617,6 +1740,12 @@ onMessage('agentStart', (msg, view) => {
     // msg.sessionId on delegate/subtask events is the PARENT session (injected
     // by routeWsSend), so using it here loaded the host's history (串台).
     sessionId: msg.nodeSessionId || '',
+    kind: (prev && prev.kind) || bgAgentKindFromSession(msg.nodeSessionId || ''),
+    startedAt: (prev && prev.startedAt) || Date.now(),
+    status: 'Processing',
+    retryCount: (prev && prev.retryCount) || 0,
+    stuck: null,
+    frozen: false,
     currentTool: null,
     done: false,
   };
@@ -1626,11 +1755,25 @@ onMessage('agentStart', (msg, view) => {
   updateBgAgentIndicator(sid);
 });
 
-onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); });
-onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+// Sub-agents panel (2026-08-25): any activity on a stuck entry clears the
+// stuck flag — the row falls back to its live state on the next render.
+function clearBgStuck(msg) {
+  const sid = msg.rootSessionId || msg.sessionId;
+  const aid = msg.agentId;
+  if (!sid || !aid) return;
+  const entry = state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid];
+  if (entry && entry.stuck) {
+    entry.stuck = null;
+    updateBgAgentIndicator(sid);
+  }
+}
+
+onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
+onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
 
 onMessage('agentToolStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
+  clearBgStuck(msg);
   const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
@@ -1643,8 +1786,27 @@ onMessage('agentToolStart', (msg, view) => {
 onMessage('agentToolEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
 onMessage('agentEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
 
-onMessage('agentThinking', (msg, view) => { resetStreamTimeout(msg.sessionId); });
-onMessage('agentRetryStatus', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentThinking', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
+onMessage('agentRetryStatus', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
+
+// Sub-agents panel (2026-08-25 spec §3): taskStuck marks the dropdown row —
+// taskStuck carries the child's BARE sessionId while sessionBgAgents entries
+// store it as info.sessionId (possibly team- wrapped). action=restart counts
+// as one auto-restart (the visible ×N retries chip, manage-panel semantics).
+onMessage('taskStuck', (msg) => {
+  const bare = (msg.sessionId || '').replace(/^team-/, '');
+  if (!bare) return;
+  for (const [rootSid, agents] of Object.entries(state.sessionBgAgents)) {
+    for (const info of Object.values(agents)) {
+      const entrySid = (info.sessionId || '').replace(/^team-/, '');
+      if (entrySid !== bare) continue;
+      info.stuck = { idleSecs: msg.idleSecs, action: msg.action };
+      if (msg.kind) info.kind = msg.kind;
+      if (msg.action === 'restart') info.retryCount = (info.retryCount || 0) + 1;
+      updateBgAgentIndicator(rootSid);
+    }
+  }
+});
 
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
@@ -1664,7 +1826,11 @@ onMessage('agentDone', (msg, view) => {
   if (keys.length && state.sessionBgAgents[sid]) {
     let touched = false;
     for (const k of keys) {
-      if (state.sessionBgAgents[sid][k]) { state.sessionBgAgents[sid][k].done = true; touched = true; }
+      if (state.sessionBgAgents[sid][k]) {
+        state.sessionBgAgents[sid][k].done = true;
+        state.sessionBgAgents[sid][k].stuck = null; // done supersedes stuck (bgRowState order)
+        touched = true;
+      }
     }
     if (touched && view) renderBgAgentDropdown();
     // Clean up bg-agent popup view after a delay
@@ -2470,6 +2636,8 @@ onMessage('forkComplete', (msg, view) => {
     const bgAgentDropdown = document.getElementById('bgagent-dropdown');
     if (bgAgentDropdown && !bgAgentDropdown.classList.contains('hidden')) {
       bgAgentDropdown.classList.add('hidden');
+      const bgAgentIndicator = document.getElementById('bgagent-indicator');
+      if (bgAgentIndicator) bgAgentIndicator.setAttribute('aria-expanded', 'false');
       e.preventDefault();
       return;
     }
@@ -2702,6 +2870,8 @@ onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
 // Re-apply locale when language changes
 window.addEventListener('locale-changed', () => {
   applyLocaleToHtml();
+  // Sub-agents panel: status labels/header/empty state are t()-driven
+  renderBgAgentDropdown();
   // Force session sidebar rebuild by invalidating fingerprint cache
   const sl = state.dom.sessionList;
   if (sl) sl._lastFingerprint = null;

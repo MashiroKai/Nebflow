@@ -164,7 +164,7 @@
           <span class="bg-dot"></span>
           <span class="bg-count">0</span>
         </div>
-        <div id="bgagent-indicator" class="hidden" title="Sub-agents running">
+        <div id="bgagent-indicator" class="hidden" title="Sub-agents running" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="bgagent-dropdown">
           <span class="bgagent-dot"></span>
           <span class="bgagent-count">0</span>
         </div>
@@ -182,8 +182,8 @@
       <button data-mode="auto-all">全部放行</button>
     </div>
     <div id="bgagent-dropdown" class="hidden">
-      <div class="bg-dropdown-header">Sub-agents</div>
-      <div class="bg-dropdown-list"></div>
+      <div class="bg-dropdown-header" aria-live="polite">Sub-agents</div>
+      <div class="bg-dropdown-list" role="list"></div>
     </div>
     <div id="bg-dropdown" class="hidden">
       <div class="bg-dropdown-header">Background tasks</div>
