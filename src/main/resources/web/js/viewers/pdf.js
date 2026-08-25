@@ -31,7 +31,7 @@ function loadPdfJs() {
 }
 
 /** PDF viewer — all pages rendered to canvases, zoomable + scrollable. */
-async function viewPdf(pane, { absPath, fileName }) {
+async function viewPdf(pane, { absPath, fileName, anchor }) {
   pane.innerHTML = '';
   pane.classList.remove('scrollable'); // .pdf-pages is the scroll region
   const wrap = document.createElement('div');
@@ -75,6 +75,32 @@ async function viewPdf(pane, { absPath, fileName }) {
   let scale = 1;
   let renderToken = 0;
 
+  // #303 C3: jump-to-page anchor for document references. A page canvas has
+  // no CSS size until its turn in the render loop (a fresh <canvas> is 300x150
+  // by default, so sized pages are detected via style.height, not the
+  // attribute height). scrollToPage scrolls immediately when dimensions
+  // exist, otherwise stores the target in pendingScrollPage, consumed inside
+  // renderAll right after that page's canvas gets its size (all preceding
+  // pages are sized first — the loop is sequential — so the offset is stable
+  // at that point).
+  let pendingScrollPage = 0;
+
+  function scrollToPage(n) {
+    if (!Number.isFinite(n)) return;
+    const target = Math.max(1, Math.min(numPages, Math.floor(n)));
+    const c = canvases[target - 1];
+    if (!c) return;
+    if (c.style.height) {
+      const dy = c.getBoundingClientRect().top - pages.getBoundingClientRect().top;
+      pages.scrollTop += dy - 12;
+    } else {
+      pendingScrollPage = target;
+    }
+  }
+  // Exposed for canvas.js: a reference jump to an already-open PDF tab scrolls
+  // the live viewer instead of re-rendering.
+  /** @type {any} */ (pane)._scrollToPage = scrollToPage;
+
   async function renderAll() {
     const token = ++renderToken;
     for (let i = 1; i <= numPages; i++) {
@@ -86,6 +112,10 @@ async function viewPdf(pane, { absPath, fileName }) {
       c.height = Math.floor(vp.height);
       c.style.width = Math.floor(vp.width / dpr) + 'px';
       c.style.height = Math.floor(vp.height / dpr) + 'px';
+      if (pendingScrollPage === i) {
+        pendingScrollPage = 0;
+        scrollToPage(i);
+      }
       const ctx2d = c.getContext('2d', { alpha: false });
       // A page render can fail transiently (canvas memory/GPU pressure with
       // very large embedded images, e.g. 5762x4172, at dpr 2 across many
@@ -123,6 +153,10 @@ async function viewPdf(pane, { absPath, fileName }) {
   const avail = (pages.clientWidth || 600) - 32;
   scale = Math.min(Math.max(avail / base.width, 0.25), 3);
   renderAll();
+
+  // #303 C3: initial anchor from a document-reference jump (deferred until
+  // the target page is rendered via pendingScrollPage).
+  if (anchor && Number.isFinite(anchor.pageStart)) scrollToPage(anchor.pageStart);
 
   // Wheel zooms re-render continuously — debounce to one render per gesture.
   let debounce = null;
