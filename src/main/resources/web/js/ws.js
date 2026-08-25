@@ -164,7 +164,7 @@ const STREAM_MSG_TYPES = new Set([
   'agentToolStart', 'agentToolEnd', 'agentEnd',
   'agentThinking', 'agentRetryStatus', 'agentDone',
   'treeBranchMounted', 'treeBranchUnmounted', 'treeBranchUpdated',
-  'flowMail', 'flowStarted', 'flowProgress', 'flowCompleted', 'teamList',
+  'flowMail', 'flowStarted', 'flowNodesAdded', 'flowProgress', 'flowCompleted', 'teamList',
   // #308 actual model: sub-agent usageUpdate (sessionId = nodeSessionId) must
   // survive the entry filter below to reach the popup live-refresh path.
   // Without this, the event is silently dropped for non-active sessions.
