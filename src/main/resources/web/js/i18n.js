@@ -71,6 +71,8 @@ export function applyLocaleToHtml() {
     'memory-btn': ['title', 'header.memory'],
     'bypass-toggle': ['title', 'bypass.toggle'],
     'input': ['placeholder', 'input.placeholder'],
+    'skip-freeze-btn': ['title', 'chat.skipFreeze'],
+    'skip-freeze-label': ['text', 'chat.skipFreeze'],
     'voice-text': ['text', 'input.voiceListening'],
     'voice-hint': ['text', 'input.voiceHint'],
     'modal-title': ['text', 'modal.newSession'],

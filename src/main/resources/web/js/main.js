@@ -455,13 +455,17 @@ function applyLocalFreeze() {
   const win = freezeWindowState();
   const parked = state.frozenSessions.has(v.sessionId); // event path owns it
   const busy = state.busySessionIds.has(v.sessionId);   // woken mid-window: working
-  if (win && !parked && !busy) {
+  // A user who clicked "跳过本次" voided the current window (08-25 ruling:
+  // skip is not permanent — it expires at the window end, so the next window
+  // re-freezes). skipFrozenUntil mirrors the backend freezeSkipUntilRef.
+  const skipped = win && skipFrozenUntil > Date.now();
+  if (win && !parked && !busy && !skipped) {
     if (!bar.classList.contains('frozen')) {
       bar.classList.add('frozen');
       bar.dataset.frozen = 'true';
       if (v.dom.input) v.dom.input.placeholder = t('chat.frozenPlaceholder', { time: formatResumeClock(win.resumeAt) });
     }
-  } else if ((!win || busy) && !parked && bar.classList.contains('frozen')) {
+  } else if ((!win || busy || skipped) && !parked && bar.classList.contains('frozen')) {
     bar.classList.remove('frozen');
     delete bar.dataset.frozen;
     import('./input.js').then(({ applyInputModes }) => applyInputModes());
@@ -469,6 +473,46 @@ function applyLocalFreeze() {
 }
 // Window boundary crossings (window start/end) without any event: tick.
 setInterval(applyLocalFreeze, 60000);
+
+// ── Skip-current-freeze (user ruling 08-25 14:40: "跳过本次" makes the current
+//    freeze window void so the user can keep talking — the message "跳过了才让
+//    说"). Skip is NOT permanent: it expires at the window end (skipFrozenUntil
+//    = resumeAt), so the next schedule window freezes again. ──────────────────
+// Mirrors the backend skipCurrentFreezeWindow (freezeSkipUntilRef). The button
+// also sends {type:'skipFreeze'} — a no-op on backends that have not yet
+// implemented the command (it hits the catch-all with empty content, recording
+// nothing — no fake bubble, no mis-route), and the authoritative wake once they
+// have (skipCurrentFreezeWindow unfreezes all parked agents). The local mirror
+// is what makes the UI recover immediately, independent of the backend.
+let skipFrozenUntil = 0;
+
+function skipCurrentFreeze() {
+  // Record the window end so applyLocalFreeze won't re-freeze the rest of this
+  // window. Guarded: when no local window is found (e.g. the backend parked via
+  // event before the schedule echo landed), we still un-freeze the UI — the
+  // button appearing means .frozen is present, so the click must always work.
+  const win = freezeWindowState();
+  if (win) skipFrozenUntil = win.resumeAt;
+  // Best-effort authoritative wake on the backend (safe no-op if unimplemented).
+  sendWs({ type: 'skipFreeze' });
+  // Immediate local UI unwind: un-freeze the active input bar (skip only the
+  // schedule-frozen state — never the amber error-recovery family).
+  const v = activeView;
+  const bar = v && v.dom && v.dom.inputBar;
+  if (bar) {
+    if (!bar.classList.contains('frozen-error')) {
+      bar.classList.remove('frozen');
+      delete bar.dataset.frozen;
+    }
+  }
+  if (v && v.dom && v.dom.input) {
+    import('./input.js').then(({ applyInputModes }) => applyInputModes());
+  }
+}
+
+// Wire the frozen-mode "跳过本次" button (single static element; shown via CSS
+// only while #input-bar has the schedule-frozen class).
+document.getElementById('skip-freeze-btn')?.addEventListener('click', () => skipCurrentFreeze());
 
 // Sub-agent freeze: mark the sessionBgAgents entry so the bg-agent dropdown
 // badge reflects the parked state (agentFrozen carries agentId; bgAgentPopup
