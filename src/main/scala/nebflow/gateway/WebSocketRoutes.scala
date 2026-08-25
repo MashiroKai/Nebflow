@@ -1139,6 +1139,14 @@ class WebSocketRoutes(
             val umContent = umJson.hcursor.downField("content").as[String].getOrElse("")
             handleUserText(umSessionId, umContent, source = "userMessage")
 
+          // 冻结「跳过本次」按钮（2026-08-25 前端联调）：无文本跳过命令——
+          // 不注入假消息气泡污染上下文，直调 skipCurrentFreezeWindow（置
+          // freezeSkipUntilRef = 当前窗口结束时刻 + FreezeScheduler.scan 全局
+          // 解冻，语义与用户消息触发完全一致；窗口结束后 skip 自然过期，下一
+          // 冻结段照常冻结）。无 payload、无回执（fire-and-forget）。
+          case "skipFreeze" =>
+            skipCurrentFreezeWindow
+
           case "command" =>
             val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
             command match
