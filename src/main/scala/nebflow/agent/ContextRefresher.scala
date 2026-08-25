@@ -337,20 +337,36 @@ object ContextRefresher:
             avatar = agentDef.avatar,
             displayName = agentDef.displayName,
             voiceEnabled = agentDef.voiceEnabled
-          )).map(applyModelOverride(agentDef, _))
+          )).map(applyRuntimeOverrides(agentDef, _))
         }
-      case None => resources.agentLibrary.get(agentDef.name).map(_.map(applyModelOverride(agentDef, _)))
+      case None => resources.agentLibrary.get(agentDef.name).map(_.map(applyRuntimeOverrides(agentDef, _)))
 
   /**
-   * Re-apply a tool-level model override (#291: Delegate/SubTask `preset`
-   * param) onto the freshly reloaded def. The override must win over disk /
-   * panel edits for the actor's lifetime — otherwise the child's first turn
-   * would silently revert to its default model.
+   * Re-apply ALL runtime injections made at spawn time onto the freshly
+   * reloaded disk def. The per-turn reload (panel edits take effect on the
+   * running actor) must not silently drop spawn-time overrides:
+   *
+   *  - modelOverride (#291: Delegate/SubTask `preset` param) — wins over
+   *    disk/panel edits for the actor's lifetime;
+   *  - flowContract + the FlowReport tool append (#406: FlowDagExecutor
+   *    injects both per node via `baseDef.copy(...)`). FlowReport is only
+   *    fixed-injected for category=flow agents; dynamic flows reuse
+   *    standalone/team agents (e.g. Explorer) whose disk def lacks it, so a
+   *    bare reload silently strips the verdict tool and the node can never
+   *    report a structured verdict (strictVerdict switch nodes then FAIL).
    */
-  private def applyModelOverride(running: AgentDef, fresh: AgentDef): AgentDef =
-    running.modelOverride match
+  private def applyRuntimeOverrides(running: AgentDef, fresh: AgentDef): AgentDef =
+    val withModel = running.modelOverride match
       case Some(cfg) => fresh.copy(model = Some(cfg), preset = running.preset, modelOverride = Some(cfg))
       case None => fresh
+    val tools =
+      if running.tools.contains("FlowReport") && !withModel.tools.contains("FlowReport") then
+        withModel.tools :+ "FlowReport"
+      else withModel.tools
+    withModel.copy(
+      tools = tools,
+      flowContract = if running.flowContract.nonEmpty then running.flowContract else withModel.flowContract
+    )
 
   def refreshTurn(
     state: AgentState,
