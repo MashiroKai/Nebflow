@@ -280,6 +280,120 @@
   /* frozen spec §4: material transition compresses to ≤0.01s */
   #input-bar, .fa-input-bar { transition-duration: 0.01s !important; }
 }
+
+/* ── 全局引用输入块（#303 v1.1 §3.5）: .att-ref 定高 36px 单行截断、⤢ 展开。
+   A1-A6 断言基准 —— 高度恒定、不随输入内容变长。沿用 .att-taskref 的 sapphire
+   tint 与视觉语言（零新增颜色 token），但卡片是固定 footprint（A1）。── */
+.att-ref {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;                  /* A1: 固定单行高，含边框 */
+  box-sizing: border-box;
+  max-width: 100%;
+  background: rgb(var(--sapphire) / 0.06);
+  border: 1px solid rgb(var(--sapphire) / 0.25);
+  border-radius: 8px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--color-text);
+  overflow: hidden;              /* A1 */
+  cursor: pointer;
+  position: relative;
+  animation: taskref-in 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.att-ref.expanded {
+  height: auto;                  /* A4: 展开态自己撑高至 ≤72px */
+  max-height: 72px;
+  align-items: flex-start;
+  overflow-y: auto;
+  padding: 6px 8px;
+}
+.att-ref-icon {
+  color: rgb(var(--sapphire));
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.att-ref-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.att-ref-label {
+  font-weight: 500;
+  max-width: 200px;
+  overflow: hidden;              /* A2 */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.att-ref-opinion {
+  color: var(--color-text-muted);
+  overflow: hidden;              /* A2 */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex-shrink: 1;
+  border-left: 1px solid rgb(var(--sapphire) / 0.2);
+  padding-left: 6px;
+}
+.att-ref-opinion:empty { display: none; }
+.att-ref-meta {
+  color: var(--color-text-muted);
+  overflow: hidden;              /* A2 */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  flex-shrink: 0;
+  max-width: 160px;
+  min-width: 0;
+}
+.att-ref.expanded .att-ref-body {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.att-ref.expanded .att-ref-opinion {
+  white-space: normal;           /* A4: 展开可换行 */
+  max-height: 40px;
+  overflow-y: auto;
+  border-left: none;
+  padding-left: 0;
+  flex-basis: 100%;
+}
+.att-ref.expanded .att-ref-meta {
+  flex-basis: 100%;
+}
+.att-ref-expand,
+.att-ref-remove {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+}
+.att-ref-expand:hover,
+.att-ref-remove:hover {
+  color: var(--color-text);
+  background: var(--color-frame-hover);
+}
+.att-ref-remove { color: var(--color-error); }
+.att-ref-remove:hover { color: var(--color-error); background: var(--glass-control-bg-hover); }
+@media (prefers-color-scheme: dark) {
+  .att-ref { background: rgb(var(--sapphire) / 0.10); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .att-ref { animation: none; }
+}
 .att-error {
   background: rgba(244, 67, 54, 0.12);
   color: var(--color-error);

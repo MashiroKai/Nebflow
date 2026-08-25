@@ -11,6 +11,8 @@ import { sendWs, onMessage } from './ws.js';
 import { openPathPickerCallback } from './sidebar.js';
 import { createIconsIn } from './utils.js';
 import { t } from './i18n.js';
+import { makeReference } from './reference.js';
+import { appendRefToActiveView } from './input.js';
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -248,15 +250,19 @@ function clearDropTarget() {
 }
 
 /** Resolve the drop-target directory for a drag event over the tree:
- *  a folder row → that dir; blank root area → ''. null = not a drop zone. */
+ *  a folder row → that dir; blank root area / root container / bottom margin → ''.
+ *  null = not a drop zone. */
 function dropDirForEvent(e) {
   const folder = e.target instanceof Element
     ? /** @type {HTMLElement|null} */ (e.target.closest('.explorer-item.explorer-folder'))
     : null;
   if (folder && folder.dataset.path !== undefined) return folder.dataset.path;
-  // Blank area of the root container (not on any item) → move to root.
-  const rootChildren = e.target instanceof Element ? e.target.closest('.explorer-root > .explorer-children') : null;
-  if (rootChildren && !(e.target instanceof Element && e.target.closest('.explorer-item'))) return '';
+  const t = e.target;
+  if (!(t instanceof Element)) return null;
+  if (t.closest('.explorer-item')) return null;   // on a file (non-folder) row → not a zone
+  // #303 E1/E3: root container, its children's blank area, or the bottom margin
+  // are all root drop zones — return '' (movePath targetDir:'' = project root).
+  if (t.closest('.explorer-root, .explorer-root-drop-margin')) return '';
   return null;
 }
 
@@ -372,6 +378,11 @@ function buildDirNode(path, isRoot, depth) {
     const children = document.createElement('div');
     children.className = 'explorer-children';
     wrapper.appendChild(children);
+    // #303 E3: constant blank bottom drop area — so a full root list still has a
+    // visible "drop here to move to root" landing zone.
+    const dropMargin = document.createElement('div');
+    dropMargin.className = 'explorer-root-drop-margin';
+    wrapper.appendChild(dropMargin);
     loadDir(path, children, depth);
     return wrapper;
   }
@@ -782,6 +793,13 @@ function getTargetDir(forPath) {
   return parts.join('/');
 }
 
+/** Absolute workspace path for an explorer-relative path (explorerRoot join). */
+function absPathFor(relPath) {
+  const root = explorerRoot || '';
+  if (!root) return relPath;
+  return root.endsWith('/') ? root + relPath : root + '/' + relPath;
+}
+
 /** Show inline input for creating a new file or folder in the tree.
  *  @param {boolean} isDir — true for folder, false for file
  *  @param {string} dirPath — directory to create in (relative to root). Defaults to currentDir. */
@@ -910,6 +928,7 @@ function showContextMenu(x, y, path, isDir) {
     ctxMenuEl.appendChild(btn);
   } else {
     ctxMenuEl.innerHTML = `
+      ${path ? `<button data-action="reference" class="reference">${t('explorer.reference')}</button><hr>` : ''}
       <button data-action="new-file">New File</button>
       <button data-action="new-folder">New Folder</button>
       ${path ? `<hr><button data-action="delete" class="danger">Delete</button>` : ''}
@@ -926,8 +945,18 @@ function showContextMenu(x, y, path, isDir) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const action = btn.dataset.action;
-      hideContextMenu();
-      if (action === 'new-file') startCreateNode(false, isDir ? path : getTargetDir(path));
+    hideContextMenu();
+    if (action === 'reference') {
+      // #303 global-reference: right-click → 引用 → produce a file Reference
+      // (@path pointer) into the active view's pendingAttachments.
+      const abs = absPathFor(path);
+      const name = path.split('/').pop() || path;
+      appendRefToActiveView(makeReference({
+        refType: 'file',
+        source: { kind: 'workspace', path: abs, fileName: name, title: name },
+      }));
+    }
+    else if (action === 'new-file') startCreateNode(false, isDir ? path : getTargetDir(path));
       else if (action === 'new-folder') startCreateNode(true, isDir ? path : getTargetDir(path));
       else if (action === 'delete') deleteNode(path);
       else if (action === 'delete-selected') deleteSelected();
