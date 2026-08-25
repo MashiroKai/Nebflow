@@ -323,6 +323,7 @@ export default {
   'provider.rpmHint': '留空 = 不限 · 每 60 秒最多请求数',
   'provider.queueTimeoutMs': '排队超时',
   'provider.queueTimeoutMsHint': '默认 60000 毫秒',
+  'provider.advancedTitle': '高级选项（并发与限流）',
   'provider.invalidMaxConcurrency': '最大并发：非负整数（0 = 不限）',
   'provider.invalidRpm': 'RPM 限制：正整数（留空 = 不限）',
   'provider.invalidQueueTimeoutMs': '排队超时：正整数（毫秒）',
@@ -332,7 +333,6 @@ export default {
   'model.maxTokensPlaceholder': '最大词元',
   'model.contextPlaceholder': '上下文',
   'model.add': '+ 添加模型',
-  'model.visionAuto': 'Vision——运行时自动检测（出错自动降级）',
 
   // Provider model-list auto-fetch (B1)
   'provider.fetchModels': '获取模型列表',
