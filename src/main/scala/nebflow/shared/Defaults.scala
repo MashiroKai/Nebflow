@@ -91,6 +91,26 @@ object Defaults:
    */
   val BgIdleTimeoutSec: Int = 300
 
+  // ---- Bash 卡死防护（#391，2026-08-25 用户裁定：5 分钟自动转后台）----
+
+  /**
+   * 前台命令自动转后台阈值（ms）。用户 08-25 裁定：前台命令运行超过此阈值
+   * （默认 300s/5min）自动转后台——不杀进程、turn 释放、完成时异步通知。
+   * 恢复 #319 前的 registerBackgroundJob 骨架；sleep 类命令同样转后台
+   * （sleep-like 豁免只保留在 no-progress ceiling / idle timeout 语义中）。
+   */
+  val BashAutoBackgroundMs: Long = 300_000L
+
+  /**
+   * 后台命令硬超时（ms）：运行超过此阈值（默认 30min）后进入停滞观察期——
+   * 输出零增长且 CPU 增量 < 10ms/采样窗口 连续 ≥ BashStuckWindowSec 才杀
+   * （双条件裁定：输出零增长且 CPU 零消耗）。CPU 忙的合法任务不杀。
+   */
+  val BashBackgroundHardTimeoutMs: Long = 30 * 60 * 1000L
+
+  /** 硬超时后的停滞观察窗口（s）：停滞连续满此值 → killProcessTree + TimeoutException。 */
+  val BashStuckWindowSec: Int = 120
+
   // ---- Tool Result Guard ----
 
   /**
@@ -183,3 +203,10 @@ object Defaults:
    */
   val ErrorEscalateAfterMs: Long = 10 * 60 * 1000L
 end Defaults
+
+/** Bash 卡死防护阈值配置（#391，nebflow.json 顶层键可覆盖，默认值见 Defaults）。 */
+case class BashResilienceConfig(
+  autoBackgroundMs: Long = Defaults.BashAutoBackgroundMs,
+  hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
+  stuckWindowSec: Int = Defaults.BashStuckWindowSec
+)

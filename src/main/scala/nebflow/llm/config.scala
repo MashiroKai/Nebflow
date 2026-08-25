@@ -174,6 +174,12 @@ case class NebflowServiceConfig(
     * （键名保留前端契约，语义=冻结时段，支持跨午夜）——FreezeSchedule.load
     * fail-safe 解析（非法配置视为关闭）。updateConfig 深合并保留未提及顶层键。 */
   workSchedule: Option[io.circe.Json] = None,
+  /** Bash 卡死防护阈值（#391）：bashAutoBackgroundMs（默认 300s 转后台）、
+    * bashBackgroundHardTimeoutMs（默认 30min 硬超时起点）、bashStuckWindowSec
+    * （默认 120s 停滞窗口）。None → Defaults 值。 */
+  bashAutoBackgroundMs: Option[Long] = None,
+  bashBackgroundHardTimeoutMs: Option[Long] = None,
+  bashStuckWindowSec: Option[Int] = None,
   /** 工具结果 TTL 清理（#341，docs/Nebflow/20260820_tool-result-ttl.md）：顶层
     * toolResultTtl 节原样 JSON——ToolResultTtlConfig.load fail-safe 解析（非法
     * 配置视为关闭）。默认关（enabled=false）。request-only 清理，会话文件不动。 */
