@@ -8,7 +8,7 @@ import fs2.Stream
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.actor.{ActorSystem, ActorRef}
+import nebflow.actor.{ActorSystem, ActorRef, Behavior, Behaviors}
 import nebflow.core.FileChangeTracker
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
@@ -370,6 +370,114 @@ class AgentControlE2ESpec extends CatsEffectSuite:
       program.unsafeRunSync()
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  // ── AC-T: v2 升级链权限分级（§5.3.3 / §7 验收 8）────────────
+  // 分级：Nebula/root 同桶全权不变 → 直接父（调用者==rec.parentSessionId）对
+  // Team 成员 restart/cancel 放行 → 其他调用者 Team 只读拒绝；跨 rootSessionId 拒。
+
+  test("AC-T1: non-parent caller restarting a Team member is rejected (kind read-only)") {
+    val system = ActorSystem("ac-t1")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        resources <- mkResources(system, tmp, null)
+        // 同 root 桶：caller 不是 target 的直接父 → kindRejection Team read-only
+        callerSid = "caller-agent"
+        teamSid = "team-member-agent"
+        _ <- resources.agentRegistry.update(_ ++ Map(
+          callerSid -> AgentRecord(callerSid, null, AgentKind.Team, "rootA", None),
+          teamSid -> AgentRecord(teamSid, null, AgentKind.Team, "rootA", None, parentSessionId = "manager-agent")
+        ))
+        res <- AgentControlTool.call(
+          JsonObject("action" -> "restart".asJson, "sessionId" -> teamSid.asJson, "reason" -> "e2e".asJson),
+          acCtx(resources, callerSid)
+        )
+      yield
+        assert(res.isLeft, s"non-parent restart of Team member must be rejected, got $res")
+        assert(
+          res.left.toOption.exists(_.message.contains("read-only")),
+          s"rejection must cite Team read-only, got ${res.left.toOption.map(_.message)}"
+        )
+      program.unsafeRunSync()
+    finally
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  test("AC-T2: direct parent (caller == parentSessionId) is allowed to restart a Team member") {
+    val system = ActorSystem("ac-t2")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        resources <- mkResources(system, tmp, null)
+        managerSid = "manager-agent"
+        teamSid = "team-member-agent"
+        // probe ref 充当 Team 成员 actor（Stop 被记录；isAlive 会超时 → 执行层
+        // 报「did not stop」——但权限层必须放行：错误不得含 read-only/denied）
+        probeRef <- system.spawn(
+          {
+            def loop: Behavior[AgentCommand] =
+              Behaviors.receiveMessage[AgentCommand](cmd => IO.pure(loop))
+            loop
+          },
+          teamSid
+        )
+        _ <- resources.agentRegistry.update(_ ++ Map(
+          managerSid -> AgentRecord(managerSid, null, AgentKind.Team, "rootA", None),
+          teamSid -> AgentRecord(teamSid, probeRef, AgentKind.Team, "rootA", None, parentSessionId = managerSid)
+        ))
+        res <- AgentControlTool.call(
+          JsonObject("action" -> "restart".asJson, "sessionId" -> teamSid.asJson, "reason" -> "parent-restart".asJson),
+          acCtx(resources, managerSid)
+        )
+      yield
+        assert(
+          res.isLeft && !res.left.toOption.exists(m =>
+            m.message.contains("read-only") || m.message.contains("Permission denied") || m.message.contains("Self-guard")
+          ),
+          s"direct parent must pass the permission layer (execution-layer failure is fine), got $res"
+        )
+      program.unsafeRunSync()
+    finally
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  test("AC-T3: cross-rootSessionId restart is rejected") {
+    val system = ActorSystem("ac-t3")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        resources <- mkResources(system, tmp, null)
+        callerSid = "caller-other-root"
+        teamSid = "team-member-agent"
+        _ <- resources.agentRegistry.update(_ ++ Map(
+          callerSid -> AgentRecord(callerSid, null, AgentKind.Team, "rootB", None),
+          teamSid -> AgentRecord(teamSid, null, AgentKind.Team, "rootA", None, parentSessionId = "manager-agent")
+        ))
+        res <- AgentControlTool.call(
+          JsonObject("action" -> "restart".asJson, "sessionId" -> teamSid.asJson, "reason" -> "e2e".asJson),
+          acCtx(resources, callerSid)
+        )
+      yield
+        assert(
+          res.left.toOption.exists(_.message.contains("Permission denied")),
+          s"cross-root restart must be rejected with Permission denied, got $res"
+        )
+      program.unsafeRunSync()
+    finally
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)

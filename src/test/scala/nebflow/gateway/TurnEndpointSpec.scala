@@ -163,8 +163,12 @@ class TurnEndpointSpec extends CatsEffectSuite:
 
   test("error path: LLM failure -> 200 with status=error and message") {
     withEnv("turn-error") { (tmp, system) =>
+      // v2 冻结式错误恢复（20260824_frozen-error-recovery-plan §1.6）：transient
+      // 错误（"provider exploded" → Unknown → Transient）不再 fatal → 进入
+      // ErrorFrozen（退避到期自动续跑）。fatal 路径只剩 Permanent/Fatal——
+      // 本测试改用 timeout（classifyError → Timeout → Permanent）验证 fatal 语义。
       val llm = new RecordingLlm(List(
-        Stream.raiseError[IO](new RuntimeException("provider exploded"))
+        Stream.raiseError[IO](new RuntimeException("request timeout after 30s"))
       ))
       val sessionStore = new SessionStore(tmp / "sessions", tmp / "tasks")
       val wsHub = new WsHub()

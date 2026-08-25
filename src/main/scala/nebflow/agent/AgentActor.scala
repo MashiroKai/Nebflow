@@ -11,7 +11,7 @@ import nebflow.core.ask.AskService
 import nebflow.core.compact.*
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.tools.AskUserQuestionTool
-import nebflow.llm.{Fallback, FallbackExhaustedError}
+import nebflow.llm.{AllProvidersDownTimeout, Fallback, FallbackExhaustedError}
 import nebflow.shared.*
 import nebflow.shared.given
 
@@ -135,6 +135,24 @@ object AgentActor extends AgentCore with AgentSession:
 
   /** Overload-class failures always back off ≥5s before retrying. */
   private val OverloadBackoffMinMs = 5000L
+
+  // ── v2 冻结式错误恢复（20260824_frozen-error-recovery-plan §3.3/§5.1）─────
+  /** 同 reason 连续 ErrorFrozen ≥ 本值 → 进入升级链（请求父干预，不再直接 fatal）。 */
+  private val ErrorFreezeEscalationThreshold = 3
+
+  /** Network 类错误的 ErrorFrozen 退避窗口：10-30s（含 jitter），短退避后自动重试 1-2 次。 */
+  private val NetworkErrorFreezeBackoffMs = 10_000L
+
+  /** ProviderDown 的 ErrorFrozen 退避：≈ 探测周期（120s+jitter），P0 用 R1 轮询兜底。 */
+  private val ProviderDownFreezeBackoffMs = 120_000L
+
+  /** FreezeReason → wire 字符串（与 protocol.toJson 序列化一致，单源映射）。 */
+  private def reasonStr(r: FreezeReason): String = r match
+    case FreezeReason.Schedule        => "schedule"
+    case FreezeReason.LlmTransient    => "llm-transient"
+    case FreezeReason.Network         => "network"
+    case FreezeReason.ProviderDown    => "provider-down"
+    case FreezeReason.RestartRecovery => "restart-recovery"
 
   /** Overload-class reasons: provider saturated, backoff can heal it. */
   private def isOverloadClass(r: FailoverReason): Boolean =
@@ -1259,124 +1277,158 @@ object AgentActor extends AgentCore with AgentSession:
             ctx.forkTurn(IO.sleep(delayMs.millis)) *>
               pipeLlmCall(agentDef, resources, depth, parentRef, retryState, replyTo)
           else
-            val agentError =
-              AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
-            val errMsg = error match
+            // ── v2 冻结式错误恢复（§3.3/§6.1 步骤 3）────────────────────────
+            // transient 类错误不再 fail-fast（原「turn 死亡」语义）→ 进入
+            // ErrorFrozen：退避到期自动续跑（重新过 gate，条件未消除再入冻结，
+            // 天然闭环）；同 reason 连续 ≥3 次 → 升级父干预（不直接 fatal）。
+            // 保留 Permanent/Fatal（Timeout/EmptyStream/Auth/Format/ModelNotFound/
+            // TurnBudgetExceeded/StuckAbort/context overflow）→ 下方 fatal 路径。
+            val errCls = Fallback.classifyError(error)
+            val shouldErrorFreeze = error match
+              // retryable 预算耗尽（attempts 全 overload）：饱和可能恢复 → 冻结等待
               case e: FallbackExhaustedError =>
-                val attemptSummaries =
-                  e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
-                NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
-              case e: ToolPipelineError =>
-                e.message
-              case _ =>
-                NebflowError.toUserMessage(
-                  NebflowError.Internal(Option(error.getMessage).getOrElse("internalError"))
-                )
-            for
+                e.attempts.forall(a => a.reason.exists(isOverloadClass))
+              // 工具管道错误：工具链路问题，不是 provider 条件性错误 → 不冻结（原语义）
+              case _: ToolPipelineError => false
+              case _ => errCls.permanence == ErrorPermanence.Transient
+            if shouldErrorFreeze then
+              val errReason = error match
+                case _: AllProvidersDownTimeout => FreezeReason.ProviderDown
+                case _ =>
+                  errCls.reason match
+                    case FailoverReason.ConnectionReset => FreezeReason.Network
+                    case _                              => FreezeReason.LlmTransient
+              val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 500)
+              val resumeInMs = errReason match
+                case FreezeReason.Network =>
+                  NetworkErrorFreezeBackoffMs + java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 20_000L)
+                case FreezeReason.ProviderDown => ProviderDownFreezeBackoffMs + jitter
+                case _ =>
+                  // LlmTransient：沿用 overload 退避（预算耗尽时 llmFailRetries ≥ Max → ≥60s）
+                  math.min(
+                    math.max(LlmFailBackoffBaseMs * (1L << math.max(state.llmFailRetries, 1) - 1), OverloadBackoffMinMs),
+                    LlmFailBackoffMaxMs
+                  ) + jitter
+              enterErrorFrozen(agentDef, resources, depth, parentRef, state, replyTo, errReason, resumeInMs, error)
+            else
+              val agentError =
+                AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
+              val errMsg = error match
+                case e: FallbackExhaustedError =>
+                  val attemptSummaries =
+                    e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
+                  NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
+                case e: ToolPipelineError =>
+                  e.message
+                case _ =>
+                  NebflowError.toUserMessage(
+                    NebflowError.Internal(Option(error.getMessage).getOrElse("internalError"))
+                  )
+              for
 
-              _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
-                val doneEvent = AgentStreamEvent.Done(None)
-                val doneJson = doneEvent.toJson(ctx.self.path.name, false, cleanedState.sessionId)
-                ctx.forkTurn(
-                  (cleanedState
-                    .wsSend(
-                      Json.obj(
-                        "type" -> "error".asJson,
-                        "sessionId" -> cleanedState.sessionId.asJson,
-                        "message" -> errMsg.asJson
+                _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
+                  val doneEvent = AgentStreamEvent.Done(None)
+                  val doneJson = doneEvent.toJson(ctx.self.path.name, false, cleanedState.sessionId)
+                  ctx.forkTurn(
+                    (cleanedState
+                      .wsSend(
+                        Json.obj(
+                          "type" -> "error".asJson,
+                          "sessionId" -> cleanedState.sessionId.asJson,
+                          "message" -> errMsg.asJson
+                        )
                       )
-                    )
-                    .handleErrorWith(_ => IO.unit)) *>
-                    cleanedState.wsSend(doneJson).handleErrorWith(_ => IO.unit) *>
-                    emitSessionBusy(cleanedState.wsSend, sid, busy = false)
-                )
-              }
-              _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
-                // Persist the conversation before failing so the parent can
-                // resume from saved history (re-dispatch / fork on this session).
-                ctx.forkTurn(
-                  (resources.sessionStore.saveMessagesForSession(sid, cleanedState.messages) *>
-                    resources.sessionStore.flushIndex)
-                    .handleErrorWith(e =>
-                      NebflowLogger.forName("nebflow.agent").warn(s"Save failed session: ${e.getMessage}")
-                    )
-                )
-              }
-              // #25: a fatal failure must discharge the completion debt with
-              // Failed — a parked requester (supervisor/bridge waiting for the
-              // post-batch answer) would otherwise hang forever, and the clone
-              // would sit registered as running. Targets = this turn's replyTo
-              // plus any parked debt (deduped).
-              failTargets = (replyTo.toList ++ state.execution.owedCompletion).distinct
-              _ <- failTargets.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
-              // Mail team members have no replyTo (their turns are driven by
-              // UserInput(replyTo=None)), so the notification above is a no-op
-              // for them and a fatal LLM failure evaporated silently — the
-              // Manager kept waiting for a [RESULT] that would never come
-              // (2026-08-15: 53-minute mutual-wait deadlock). Route the same
-              // "failed" external event to the parent (team lead) instead,
-              // mirroring BackoffSupervisor's notifyParentAndStop metadata
-              // contract (failedSessionId / retryable / failureType) so the
-              // parent's re-delegate system-reminder kicks in.
-              // #25: only when NO requester at all (no replyTo AND no parked
-              // debt) — a debt discharge above already reaches the parent via
-              // the supervisor's source="delegate/subtask" failed event (which
-              // also releases the parent's barrier; source="team" would not).
-              _ <- (failTargets, parentRef) match
-                case (Nil, Some(parent)) =>
-                  val sid = cleanedState.sessionId.getOrElse("")
-                  val sessionInfo = if sid.nonEmpty then s" [session=$sid]" else ""
-                  // ActorRef.! returns IO[Unit] — return it directly.
-                  parent ! AgentCommand.ExternalEvent(
-                    source = "team",
-                    eventType = "failed",
-                    payload =
-                      s""""${agentDef.name}" (team member) hit a fatal LLM failure: """ +
-                        s"${Option(error.getMessage).getOrElse("unknown").take(200)}$sessionInfo",
-                    metadata = JsonObject(
-                      "failedSessionId" -> sid.asJson,
-                      "retryable" -> true.asJson,
-                      "failureType" -> agentError.errorType.toString.asJson,
-                      "agentName" -> agentDef.name.asJson
-                    ),
-                    correlationId = Some(sid).filter(_.nonEmpty)
+                      .handleErrorWith(_ => IO.unit)) *>
+                      cleanedState.wsSend(doneJson).handleErrorWith(_ => IO.unit) *>
+                      emitSessionBusy(cleanedState.wsSend, sid, busy = false)
                   )
-                case _ => IO.unit
-              // A pending CompactionJob whose LLM call died fatally must not
-              // survive into idle (zombie): the next normal reply would be
-              // misrouted as the compact summary and replace all messages.
-              // Complete the deferred waiter and record the failure — mirrors
-              // finishTurn's zombie guard and the CompactionComplete(Left) path.
-              _ <- state.pendingCompaction
-                .flatMap(_.replyDeferred)
-                .traverse_(d =>
-                  d.complete(Left("Compaction abandoned: LLM failed during compaction")).void
-                    .handleErrorWith(_ => IO.unit)
-                )
-            yield
-              val compactionWasPending = state.pendingCompaction.isDefined
-              val fatalState = cleanedState
-                .withStatus(AgentStatus.Error(error.getMessage))
-                .withPendingCompaction(None)
-                // #25: the debt was discharged with Failed above — never
-                // carry it into the idle state.
-                .withOwedCompletion(Nil)
-              val finalState =
-                if compactionWasPending then
-                  logAgentEvent(
-                    agentDef,
-                    depth,
-                    state.sessionId,
-                    state.sessionName,
-                    "compaction-abandoned",
-                    s"reason=llm-fatal job=${state.pendingCompaction.map(_.subagentId).getOrElse("")}"
+                }
+                _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
+                  // Persist the conversation before failing so the parent can
+                  // resume from saved history (re-dispatch / fork on this session).
+                  ctx.forkTurn(
+                    (resources.sessionStore.saveMessagesForSession(sid, cleanedState.messages) *>
+                      resources.sessionStore.flushIndex)
+                      .handleErrorWith(e =>
+                        NebflowLogger.forName("nebflow.agent").warn(s"Save failed session: ${e.getMessage}")
+                      )
                   )
-                  fatalState
-                    .withCompactionFailures(state.compactionFailures + 1)
-                    .withLastCompactionFailureAt(System.currentTimeMillis())
-                else fatalState
-              idle(agentDef, resources, depth, parentRef, finalState)
-            end for
+                }
+                // #25: a fatal failure must discharge the completion debt with
+                // Failed — a parked requester (supervisor/bridge waiting for the
+                // post-batch answer) would otherwise hang forever, and the clone
+                // would sit registered as running. Targets = this turn's replyTo
+                // plus any parked debt (deduped).
+                failTargets = (replyTo.toList ++ state.execution.owedCompletion).distinct
+                _ <- failTargets.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
+                // Mail team members have no replyTo (their turns are driven by
+                // UserInput(replyTo=None)), so the notification above is a no-op
+                // for them and a fatal LLM failure evaporated silently — the
+                // Manager kept waiting for a [RESULT] that would never come
+                // (2026-08-15: 53-minute mutual-wait deadlock). Route the same
+                // "failed" external event to the parent (team lead) instead,
+                // mirroring BackoffSupervisor's notifyParentAndStop metadata
+                // contract (failedSessionId / retryable / failureType) so the
+                // parent's re-delegate system-reminder kicks in.
+                // #25: only when NO requester at all (no replyTo AND no parked
+                // debt) — a debt discharge above already reaches the parent via
+                // the supervisor's source="delegate/subtask" failed event (which
+                // also releases the parent's barrier; source="team" would not).
+                _ <- (failTargets, parentRef) match
+                  case (Nil, Some(parent)) =>
+                    val sid = cleanedState.sessionId.getOrElse("")
+                    val sessionInfo = if sid.nonEmpty then s" [session=$sid]" else ""
+                    // ActorRef.! returns IO[Unit] — return it directly.
+                    parent ! AgentCommand.ExternalEvent(
+                      source = "team",
+                      eventType = "failed",
+                      payload =
+                        s""""${agentDef.name}" (team member) hit a fatal LLM failure: """ +
+                          s"${Option(error.getMessage).getOrElse("unknown").take(200)}$sessionInfo",
+                      metadata = JsonObject(
+                        "failedSessionId" -> sid.asJson,
+                        "retryable" -> true.asJson,
+                        "failureType" -> agentError.errorType.toString.asJson,
+                        "agentName" -> agentDef.name.asJson
+                      ),
+                      correlationId = Some(sid).filter(_.nonEmpty)
+                    )
+                  case _ => IO.unit
+                // A pending CompactionJob whose LLM call died fatally must not
+                // survive into idle (zombie): the next normal reply would be
+                // misrouted as the compact summary and replace all messages.
+                // Complete the deferred waiter and record the failure — mirrors
+                // finishTurn's zombie guard and the CompactionComplete(Left) path.
+                _ <- state.pendingCompaction
+                  .flatMap(_.replyDeferred)
+                  .traverse_(d =>
+                    d.complete(Left("Compaction abandoned: LLM failed during compaction")).void
+                      .handleErrorWith(_ => IO.unit)
+                  )
+              yield
+                val compactionWasPending = state.pendingCompaction.isDefined
+                val fatalState = cleanedState
+                  .withStatus(AgentStatus.Error(error.getMessage))
+                  .withPendingCompaction(None)
+                  // #25: the debt was discharged with Failed above — never
+                  // carry it into the idle state.
+                  .withOwedCompletion(Nil)
+                val finalState =
+                  if compactionWasPending then
+                    logAgentEvent(
+                      agentDef,
+                      depth,
+                      state.sessionId,
+                      state.sessionName,
+                      "compaction-abandoned",
+                      s"reason=llm-fatal job=${state.pendingCompaction.map(_.subagentId).getOrElse("")}"
+                    )
+                    fatalState
+                      .withCompactionFailures(state.compactionFailures + 1)
+                      .withLastCompactionFailureAt(System.currentTimeMillis())
+                  else fatalState
+                idle(agentDef, resources, depth, parentRef, finalState)
+              end for
           end if
         end if
 
@@ -2821,7 +2873,144 @@ object AgentActor extends AgentCore with AgentSession:
   // Frozen state (freeze-schedule spec 6c / D3)
   // ============================================================
 
-  /** gate 拦截后的转入辅助：Frozen 事件 + registry 标记 + 进入 frozen behavior。 */
+  /** v2 升级链通知（§5.1）：父是 agent → ExternalEvent("error-escalated") 注入
+    * 父上下文（排队不唤醒，T_escalate 兜底）；父是用户（无 parentRef）→ WS
+    * errorEscalated 事件 + UI 升级卡片。通知不消耗本 agent LLM token（D2）。
+    * 幂等：由 enterFrozen 的 escalation.isEmpty 守卫保证每轮升级链只通知一次。 */
+  private def notifyEscalation(
+    agentDef: AgentDef,
+    depth: Int,
+    state: AgentState,
+    parentRef: Option[ActorRef[AgentCommand]],
+    reason: FreezeReason,
+    count: Int,
+    esc: EscalationInfo
+  ): IO[Unit] =
+    val sid = state.sessionId.getOrElse("")
+    parentRef match
+      case Some(parent) =>
+        parent ! AgentCommand.ExternalEvent(
+          source = "team",
+          eventType = "error-escalated",
+          payload = s""""${agentDef.name}" auto-recovery failed $count times (reason=${reasonStr(reason)}); awaiting parent decision (restart/cancel/wait)""",
+          metadata = JsonObject(
+            "reason" -> reasonStr(reason).asJson,
+            "retryCount" -> count.asJson,
+            "level" -> esc.level.asJson,
+            "escalateAfterMs" -> nebflow.shared.Defaults.ErrorEscalateAfterMs.asJson,
+            "failedSessionId" -> sid.asJson,
+            "agentName" -> agentDef.name.asJson
+          ),
+          correlationId = Some(sid).filter(_.nonEmpty)
+        )
+      case None =>
+        // 无父（root/standalone）→ 用户级：WS errorEscalated 事件（前端升级卡片）
+        state
+          .wsSend(
+            Json.obj(
+              "type" -> "errorEscalated".asJson,
+              "sessionId" -> sid.asJson,
+              "reason" -> reasonStr(reason).asJson,
+              "retryCount" -> count.asJson,
+              "level" -> esc.level.asJson,
+              "escalateAt" -> esc.escalateAt.asJson
+            )
+          )
+          .handleErrorWith(_ => IO.unit)
+
+  /** 反查 ActorRef → registry 中对应 sessionId（升级链「父存活」判定）。
+    * registry 小（几十条），O(n) 可接受。 */
+  private def sessionIdOfRef(
+    resources: SharedResources,
+    ref: Option[ActorRef[AgentCommand]]
+  ): IO[Option[String]] =
+    ref match
+      case None => IO.pure(None)
+      case Some(r) =>
+        resources.agentRegistry.get.map(_.collectFirst { case (sid, rec) if rec.ref == r => sid })
+
+  /** registry 的 escalation + frozenReason 快照（FreezeScheduler.scan / WS
+    * parentRestart 只读侧；actor 层为权威）。 */
+  private def updateRegistryEscalation(
+    resources: SharedResources,
+    sessionId: Option[String],
+    esc: Option[EscalationInfo]
+  ): IO[Unit] =
+    sessionId.fold(IO.unit) { sid =>
+      resources.agentRegistry.modify { m =>
+        m.get(sid) match
+          case Some(rec) =>
+            (m.updated(sid, rec.copy(escalation = esc)), ())
+          case None => (m, ())
+      }
+    }
+
+  /** registry 的 frozenReason 快照（WS parentRestart 区分时间表/错误族冻结）。
+    * 冻结进入时写 Some(reasonStr)，恢复/唤醒/中断时清 None。 */
+  private def updateRegistryFrozenReason(
+    resources: SharedResources,
+    sessionId: Option[String],
+    reason: Option[String]
+  ): IO[Unit] =
+    sessionId.fold(IO.unit) { sid =>
+      resources.agentRegistry.modify { m =>
+        m.get(sid) match
+          case Some(rec) => (m.updated(sid, rec.copy(frozenReason = reason)), ())
+          case None => (m, ())
+      }
+    }
+
+  /** v2 错误冻结转入辅助（§3.3/§6.1 步骤 3）：transient 类 LLM 失败 → 立即
+    * persist（复用 fatal 路径的 save 模式）→ enterErrorFrozen——冻结期间零 LLM
+    * 调用（D2），退避到期 CheckFreezeGate 续跑（重新过 gate，天然闭环）。 */
+  private def enterErrorFrozen(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    reason: FreezeReason,
+    resumeInMs: Long,
+    error: Throwable
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    for
+      _ <- state.sessionId.fold(IO.unit) { sid =>
+        ctx.forkTurn(
+          (resources.sessionStore.saveMessagesForSession(sid, state.messages) *>
+            resources.sessionStore.flushIndex)
+            .handleErrorWith(e =>
+              NebflowLogger.forName("nebflow.agent").warn(s"Save failed session: ${e.getMessage}")
+            )
+        )
+      }
+      _ <- IO {
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "error-freeze",
+          s"reason=${reasonStr(reason)} err=${Option(error.getMessage).getOrElse("unknown").take(80)} resumeIn=${resumeInMs}ms"
+        )
+      }
+      result <- enterFrozen(
+        agentDef,
+        resources,
+        depth,
+        parentRef,
+        state,
+        replyTo,
+        Some(System.currentTimeMillis() + resumeInMs),
+        reason,
+        Some(Option(error.getMessage).getOrElse("unknown").take(200))
+      )
+    yield result
+
+  /** gate 拦截后的转入辅助：Frozen 事件 + registry 标记 + 进入 frozen behavior。
+    * v2（冻结式错误恢复）：reason 泛化——Schedule=时间表（默认，旧调用点零改动）；
+    * 错误族（LlmTransient/Network/ProviderDown/RestartRecovery）附加连续计数与
+    * 升级链判定（同 reason 连续 ≥3 → 进入升级链，通知父/用户，不再直接 fatal）。 */
   private def enterFrozen(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -2829,11 +3018,46 @@ object AgentActor extends AgentCore with AgentSession:
     parentRef: Option[ActorRef[AgentCommand]],
     state: AgentState,
     replyTo: Option[ActorRef[AgentEvent]],
-    resumeAt: Option[Long]
+    resumeAt: Option[Long],
+    reason: FreezeReason = FreezeReason.Schedule,
+    detail: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    emitStream(state.wsSend, AgentStreamEvent.Frozen(resumeAt), isSubagent = depth > 0, state.sessionId) *>
+    val isErrorFamily = reason != FreezeReason.Schedule
+    // 连续计数：Schedule 不参与；错误族 reason 相同则 +1（跨恢复累计），变化重置为 1
+    val count =
+      if isErrorFamily then
+        if state.lastErrorFreezeReason.contains(reason) then state.errorFreezeCount + 1 else 1
+      else 0
+    // 升级链进入判定（§5.1）：连续 ≥3 且尚未在升级链中（幂等——不重复通知）
+    val (escalation, escalateNotify): (Option[EscalationInfo], IO[Unit]) =
+      if isErrorFamily && count >= ErrorFreezeEscalationThreshold && state.escalation.isEmpty then
+        val now = System.currentTimeMillis()
+        val esc = EscalationInfo(
+          level = 1,
+          escalateAt = now + nebflow.shared.Defaults.ErrorEscalateAfterMs,
+          awaitedParentSessionId = ""
+        )
+        (Some(esc), notifyEscalation(agentDef, depth, state, parentRef, reason, count, esc))
+      else (state.escalation, IO.unit)
+    escalateNotify *>
+      emitStream(
+        state.wsSend,
+        AgentStreamEvent.Frozen(resumeAt, reason, detail, count, escalation),
+        isSubagent = depth > 0,
+        state.sessionId
+      ) *>
       touchRegistryActivity(resources, state.sessionId, AgentStatus.Frozen) *>
-      IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt))
+      updateRegistryEscalation(resources, state.sessionId, escalation) *>
+      updateRegistryFrozenReason(resources, state.sessionId, Some(reasonStr(reason))) *>
+      // 计数/escalation 写回 state（frozen 闭包参数不持久——LlmFailed 从 state
+      // 读 errorFreezeCount 判定「同 reason 连续」；不写回则每轮都从 0 计数，
+      // 升级链永不触发）。Schedule 冻结不参与计数（原样保留 state）。
+      IO.pure {
+        val frozenState =
+          if isErrorFamily then state.withErrorFreezeCount(count, reason).withEscalation(escalation)
+          else state
+        frozen(agentDef, resources, depth, parentRef, frozenState, replyTo, resumeAt, reason, count, escalation)
+      }
 
   /**
    * frozen behavior：冻结中的 agent——持有完整 state（工具结果已组装并持久化，
@@ -2855,7 +3079,10 @@ object AgentActor extends AgentCore with AgentSession:
     parentRef: Option[ActorRef[AgentCommand]],
     state: AgentState,
     replyTo: Option[ActorRef[AgentEvent]],
-    resumeAt: Option[Long]
+    resumeAt: Option[Long],
+    reason: FreezeReason = FreezeReason.Schedule,
+    retryCount: Int = 0,
+    escalation: Option[EscalationInfo] = None
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
@@ -2864,16 +3091,40 @@ object AgentActor extends AgentCore with AgentSession:
         // 原地留任（静默更新 resumeAt——不重发 Frozen 事件，避免 30s 轮询刷屏）；
         // 冻结时段已过（段外=工作时段）→ Resumed + 恢复挂起的 dispatch
         // （cause=Gated，但已不在冻结段 → 通过）。
-        for
-          cfg <- resources.freezeScheduleRef.get
-          window = nebflow.core.schedule.FreezeSchedule.eval(cfg, System.currentTimeMillis())
-          result <-
-            if !window.frozen then
-              logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-resume", "reason=outside-freeze-segment")
-              emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *>
+        val now = System.currentTimeMillis()
+        reason match
+          case FreezeReason.Schedule =>
+            // 时间表冻结：现有 eval 语义（#337 黑名单——段外=工作时段）
+            for
+              cfg <- resources.freezeScheduleRef.get
+              window = nebflow.core.schedule.FreezeSchedule.eval(cfg, now)
+              result <-
+                if !window.frozen then
+                  logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-resume", "reason=outside-freeze-segment")
+                  emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
+                    pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo)
+                else
+                  IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, window.nextChangeAt, reason, retryCount, escalation))
+            yield result
+          case _ =>
+            // 错误族（LlmTransient/Network/ProviderDown/RestartRecovery）：退避到期
+            // （resumeAt = 进入时计算的退避时刻）→ 续跑——重新过 gate（pipeLlmCall），
+            // 条件未消除再入冻结，天然闭环；ProviderDown 的候选 health 检查 P0 用
+            // 退避到期 + 续跑重试兜底（R1 轮询），P1 接 HealthMonitor markUp 事件。
+            val shouldResume = resumeAt.forall(now >= _)
+            if shouldResume then
+              logAgentEvent(
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "freeze-resume",
+                s"reason=${reasonStr(reason)} backoff-elapsed"
+              )
+              emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
                 pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo)
-            else IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, window.nextChangeAt))
-        yield result
+            else
+              IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.UserInput(text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType) =>
         if clientMessageId.isDefined then
@@ -2883,7 +3134,7 @@ object AgentActor extends AgentCore with AgentSession:
           val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
           if isDuplicate then
             logger.info(s"[frozen] Dropping duplicate wake message clientMessageId=${clientMessageId.getOrElse("")}")
-            IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt))
+            IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
           else
             val userMsg = blocks.filter(_.nonEmpty) match
               case Some(bl) => Message(MessageRole.User, Right(bl))
@@ -2896,7 +3147,7 @@ object AgentActor extends AgentCore with AgentSession:
               .withEmptyResponseRetries(0)
               .withMailUsedThisTurn(false)
             logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"text=${text.take(60)}")
-            emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *>
+            emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
               pipeLlmCall(agentDef, resources, depth, parentRef, wakeState, replyTo2, DispatchCause.UserWake)
         else
           // 系统注入（Mail/Delegate/BackoffSupervisor continue）：排队不唤醒——
@@ -2909,7 +3160,7 @@ object AgentActor extends AgentCore with AgentSession:
               )
             )
           )
-          IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt))
+          IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.AskQuestion(question, _) =>
         // 用户动作（D2）：唤醒——ask 轮本身也是 gate 豁免路径（askMode.isDefined）。
@@ -2919,7 +3170,7 @@ object AgentActor extends AgentCore with AgentSession:
           .withMessages(state.messages :+ askReminder)
           .withAskMode(Some(question))
           .withStatus(AgentStatus.Processing)
-        emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *>
+        emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
           pipeLlmCall(agentDef, resources, depth, parentRef, askState, None, DispatchCause.UserWake)
 
       case AgentCommand.SkillActivate(skillName, input, _, skillContent, _) =>
@@ -2932,7 +3183,7 @@ object AgentActor extends AgentCore with AgentSession:
           )
           .withStatus(AgentStatus.Processing)
         for
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId)
+          _ <- emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None)
           _ <- emitInjectedUserEvent(state.wsSend, state.sessionId, input, "skill", None)
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None, DispatchCause.UserWake)
         yield result
@@ -2955,6 +3206,7 @@ object AgentActor extends AgentCore with AgentSession:
           // frozen 专属：registry 退回 Idle——否则 FreezeScheduler 会持续 ping
           // 一个已回 idle 的 agent（无害但浪费，且面板显示错误）。
           _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
+          _ <- updateRegistryFrozenReason(resources, state.sessionId, None)
         yield
           val interruptedState = state.resetForInterrupt.withPendingCompaction(None)
           idle(agentDef, resources, depth, parentRef, interruptedState)
@@ -2965,6 +3217,7 @@ object AgentActor extends AgentCore with AgentSession:
           _ <- ctx.cancelCurrentTurn()
 
           _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
+          _ <- updateRegistryFrozenReason(resources, state.sessionId, None)
           _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
 
@@ -3005,6 +3258,80 @@ object AgentActor extends AgentCore with AgentSession:
             markTeamIdle(agentDef, state.sessionId) *>
               IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
 
+      case AgentCommand.Escalate =>
+        // v2 升级链到期（§5.2）：FreezeScheduler.scan 发现 escalation.escalateAt
+        // 超时 → level+1，通知上一级；父缺失 → 跳级（P0=到达用户终态）；无父 →
+        // 用户终态（WS errorEscalated，不设超时——用户是最终仲裁）。
+        val current = escalation.getOrElse(EscalationInfo(level = 1, escalateAt = 0L, awaitedParentSessionId = ""))
+        val nextLevel = current.level + 1
+        val now = System.currentTimeMillis()
+        for
+          parentSid <- sessionIdOfRef(resources, parentRef)
+          target = Escalation.nextTarget(nextLevel, parentRef.isDefined, parentSid.isDefined)
+          newEsc =
+            if target == Escalation.Target.User then current.copy(level = nextLevel, escalateAt = 0L)
+            else current.copy(level = nextLevel, escalateAt = now + nebflow.shared.Defaults.ErrorEscalateAfterMs)
+          _ <- IO {
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "error-escalate",
+              s"level=$nextLevel target=$target retryCount=$retryCount"
+            )
+          }
+          _ <- target match
+            case Escalation.Target.Parent =>
+              parentRef.traverse_ { p =>
+                p ! AgentCommand.ExternalEvent(
+                  source = "team",
+                  eventType = "error-escalated",
+                  payload = s""""${agentDef.name}" auto-recovery escalation level $nextLevel (reason=${reasonStr(reason)})""",
+                  metadata = JsonObject(
+                    "reason" -> reasonStr(reason).asJson,
+                    "retryCount" -> retryCount.asJson,
+                    "level" -> nextLevel.asJson,
+                    "escalateAfterMs" -> nebflow.shared.Defaults.ErrorEscalateAfterMs.asJson,
+                    "failedSessionId" -> state.sessionId.getOrElse("").asJson,
+                    "agentName" -> agentDef.name.asJson
+                  ),
+                  correlationId = state.sessionId.filter(_.nonEmpty)
+                )
+              }
+            case Escalation.Target.Grandparent =>
+              // 父缺失跳级（P0）：视同到达用户终态（无再上级信息），WS 通知 + 不设超时
+              state
+                .wsSend(
+                  Json.obj(
+                    "type" -> "errorEscalated".asJson,
+                    "sessionId" -> state.sessionId.getOrElse("").asJson,
+                    "reason" -> reasonStr(reason).asJson,
+                    "retryCount" -> retryCount.asJson,
+                    "level" -> nextLevel.asJson,
+                    "escalateAt" -> 0L.asJson,
+                    "detail" -> "parent-unavailable-skipped".asJson
+                  )
+                )
+                .handleErrorWith(_ => IO.unit)
+            case Escalation.Target.User =>
+              state
+                .wsSend(
+                  Json.obj(
+                    "type" -> "errorEscalated".asJson,
+                    "sessionId" -> state.sessionId.getOrElse("").asJson,
+                    "reason" -> reasonStr(reason).asJson,
+                    "retryCount" -> retryCount.asJson,
+                    "level" -> nextLevel.asJson,
+                    "escalateAt" -> 0L.asJson
+                  )
+                )
+                .handleErrorWith(_ => IO.unit)
+          _ <- updateRegistryEscalation(resources, state.sessionId, Some(newEsc))
+        yield
+          val escalatedState = state.withEscalation(Some(newEsc))
+          frozen(agentDef, resources, depth, parentRef, escalatedState, replyTo, resumeAt, reason, retryCount, Some(newEsc))
+
       case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
         // 排队 pendingEvents（不唤醒）：出冻结段/唤醒后的下一个 turn 边界
         // （ToolsComplete → drainBarrier）统一注入。barrier 计数语义镜像 idle
@@ -3021,7 +3348,7 @@ object AgentActor extends AgentCore with AgentSession:
             pendingEvents = state.execution.pendingEvents :+ event
           )
         )
-        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt))
+        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
 
       case msg: AgentCommand.ImmediateInput =>
         // 排队 pendingImmediateInputs（不唤醒）——恢复后的 turn 边界 drain。
@@ -3029,7 +3356,7 @@ object AgentActor extends AgentCore with AgentSession:
         val queued = state.copy(execution =
           state.execution.copy(pendingImmediateInputs = state.execution.pendingImmediateInputs :+ msg)
         )
-        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt))
+        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.MailQueued(item, _) =>
         // 镜像 processing：计数 +1，实际内容在磁盘（MailQueueStore）。
@@ -3044,7 +3371,7 @@ object AgentActor extends AgentCore with AgentSession:
         val queued = state.copy(execution =
           state.execution.copy(pendingMailQueueCount = state.execution.pendingMailQueueCount + 1)
         )
-        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt))
+        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.StartPlan(task) =>
         // 排队不唤醒：plan 模式是 idle 语义（spawn plan agent + planWaiting），
@@ -3054,7 +3381,7 @@ object AgentActor extends AgentCore with AgentSession:
         val queued = state.copy(execution =
           state.execution.copy(pendingUserInputs = state.execution.pendingUserInputs :+ AgentCommand.StartPlan(task))
         )
-        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt))
+        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.SetSafetyMode(mode) =>
         // 镜像 processing 的轻量状态更新（保持一致性）。
@@ -3075,33 +3402,33 @@ object AgentActor extends AgentCore with AgentSession:
 
       case AgentCommand.UpdateContextWindow(window) =>
         // 轻量存储：恢复后下一次 dispatch 的 autoCompact 自会按新窗口评估溢出。
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withContextWindow(window), replyTo, resumeAt))
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withContextWindow(window), replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.UpdateGitBranch(branch) =>
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withGitBranch(branch), replyTo, resumeAt))
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withGitBranch(branch), replyTo, resumeAt, reason, retryCount, escalation))
 
       case n: AgentCommand.BackgroundTaskNotification =>
         // 转成 ExternalEvent 走上面的排队分支（同 processing 的处理方式）。
         (ctx.self ! n.toExternalEvent) *>
-          IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt))
+          IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.SetPermissionDeferred(deferred) =>
         // 镜像 processing：持有 deferred，防子 agent 权限应答悬空。
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), replyTo, resumeAt))
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.SessionStarted(address, agentName, taskDescription) =>
         val session = AgentSessionInfo(address, agentName, taskDescription, "running")
         IO.pure(
-          frozen(agentDef, resources, depth, parentRef, state.withAgentSessions(state.agentSessions :+ session), replyTo, resumeAt)
+          frozen(agentDef, resources, depth, parentRef, state.withAgentSessions(state.agentSessions :+ session), replyTo, resumeAt, reason, retryCount, escalation)
         )
 
       case AgentCommand.SessionUpdate(address, status) =>
         val updated = state.agentSessions.map(s => if s.address == address then s.copy(status = status) else s)
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), replyTo, resumeAt))
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.SessionClosed(address) =>
         val updated = state.agentSessions.filterNot(_.address == address)
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), replyTo, resumeAt))
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.CompactionComplete(result) =>
         // stale 压缩结果：frozen 不可能由压缩轮直接进入（压缩 dispatch 在
@@ -3123,14 +3450,14 @@ object AgentActor extends AgentCore with AgentSession:
                 .void
                 .handleErrorWith(_ => IO.unit)
             ) *> IO.pure(
-              frozen(agentDef, resources, depth, parentRef, staleState.withPendingCompaction(None), replyTo, resumeAt)
+              frozen(agentDef, resources, depth, parentRef, staleState.withPendingCompaction(None), replyTo, resumeAt, reason, retryCount, escalation)
             )
           case None =>
-            IO.pure(frozen(agentDef, resources, depth, parentRef, staleState, replyTo, resumeAt))
+            IO.pure(frozen(agentDef, resources, depth, parentRef, staleState, replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.ClearReadTracker =>
         state.readTracker.fold(IO.unit)(t => t.clear()) *>
-          IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt))
+          IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.ResetSession =>
         for
@@ -3153,7 +3480,7 @@ object AgentActor extends AgentCore with AgentSession:
       case _ =>
         // stale LlmComplete/LlmFailed/ToolsComplete/TriggerCompaction 等 → 丢弃
         // 留在 frozen（这些消息属于被 gate 拦下的 turn，没有 fiber 在等待它们）。
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt))
+        IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
 
   end frozen
 

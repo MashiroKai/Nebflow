@@ -1051,6 +1051,73 @@ class WebSocketRoutes(
                         }
                 }
 
+          case "parentRestart" =>
+            // v2 冻结式错误恢复升级链（§5.3.3）：用户/父干预卡片——重启冻结中的
+            // 子 agent（断点续跑）。幂等守卫：sessionId 存在 + 处于错误族冻结
+            // （status==Frozen && frozenReason != schedule——时间表冻结是正常调度，
+            // 不可父重启）。按 kind 路由：有 supervisor（Delegate/SubTask）→ Stop →
+            // BackoffSupervisor respawn；Team 成员 → Stop + Mail 激活（history 重建）；
+            // Root → restartAgent soft（现有重启语义）。
+            val prJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val prSessionId = prJson.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
+            def prReply(ok: Boolean, extra: (String, Json)*): IO[Unit] =
+              wsSend(
+                io.circe.Json.obj(
+                  Seq(
+                    ("type", "parentRestartResult".asJson),
+                    ("ok", ok.asJson),
+                    ("sessionId", prSessionId.asJson)
+                  ) ++ extra*
+                )
+              )
+            if prSessionId.isEmpty then
+              prReply(ok = false, "error" -> "parentRestart requires sessionId".asJson)
+            else
+              logger.info(s"parentRestart (error-recovery) for session $prSessionId") *>
+                sharedResources.agentRegistry.get.flatMap { registry =>
+                  registry.get(prSessionId) match
+                    case None =>
+                      prReply(
+                        ok = false,
+                        "error" ->
+                          s"No live agent with sessionId='$prSessionId' (registry is in-memory; stale ids vanish after restart)".asJson
+                      )
+                    case Some(rec)
+                        if rec.status != nebflow.agent.AgentStatus.Frozen ||
+                          !rec.frozenReason.exists(_ != "schedule") =>
+                      val notFrozenErr =
+                        s"Session '$prSessionId' is not in error-frozen state (status=${rec.status}, " +
+                          s"frozenReason=${rec.frozenReason.getOrElse("none")}) — parentRestart only applies to frozen-error agents"
+                      prReply(ok = false, "error" -> notFrozenErr.asJson)
+                    case Some(rec) if rec.kind == nebflow.agent.AgentKind.Root =>
+                      // Root agent：现有 restartAgent soft 语义（冻结中 RestartAgent
+                      // 镜像 processing——cancelCurrentTurn + restartStateFor + 续跑）
+                      (rec.ref ! nebflow.agent.AgentCommand.RestartAgent(nebflow.agent.RestartLevel.Soft)) *>
+                        prReply(ok = true, "message" -> "Root restart (soft) sent; frozen turn will resume from checkpoint".asJson)
+                    case Some(rec) if rec.supervisorRef.isDefined =>
+                      // Delegate/SubTask：Stop → BackoffSupervisor respawn（断点续跑）
+                      (rec.ref ! nebflow.agent.AgentCommand.Stop(s"parent-restart")) *>
+                        prReply(
+                          ok = true,
+                          "message" ->
+                            "Restart sent: the supervisor will respawn from the last persisted checkpoint after a short backoff".asJson
+                        )
+                    case Some(rec) =>
+                      // Team 成员：Stop + Mail 激活（history 重建）——复用 AgentControl 工具链路
+                      val toolCtx = ToolContext(
+                        projectRoot = "",
+                        sessionId = None,
+                        sharedResources = Some(sharedResources),
+                        actorSystem = Some(sharedResources.actorSystem)
+                      )
+                      nebflow.core.tools.AgentControlTool
+                        .doRestart(sharedResources, toolCtx, rec, "parent-restart (WS)")
+                        .flatMap {
+                          case Right(msg) => prReply(ok = true, "message" -> msg.asJson)
+                          case Left(err)  => prReply(ok = false, "error" -> err.message.asJson)
+                        }
+                }
+
           case "immediateInput" =>
             val immJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val immSessionId = immJson.hcursor.downField("sessionId").as[String].getOrElse("")
