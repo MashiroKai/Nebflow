@@ -542,6 +542,12 @@ export default {
   'task.statsBoth': '{todo} 待办 · {progress} 任务',
   'task.completeAria': '标记「{subject}」为完成',
   'task.inProgressShort': '进行中',
+  'task.completedShort': '已完成',
+  // Team Manager 任务面板（2026-08-25 team-manager-task-tool）
+  'teamTask.header': '任务',
+  'teamTask.empty': '暂无团队任务 — Manager 尚未创建',
+  'teamTask.dependsOn': '依赖：{ids}',
+  'teamTask.blocksIds': '阻塞：{ids}',
   'task.archiveTooltip': '打开任务档案',
   'task.completeError': '标记完成失败，请重试',
   'task.cancel': '取消',
