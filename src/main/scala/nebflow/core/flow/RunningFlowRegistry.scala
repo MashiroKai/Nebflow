@@ -137,16 +137,14 @@ object RunningFlowRegistry:
               if status == NodeStatus.Completed || status == NodeStatus.Failed then Some(now) else ns.completedAt
           ))
         case None => rf.nodes
-      val newStatus = status match
-        case NodeStatus.Failed => NodeStatus.Failed
-        case NodeStatus.Completed if nodeId == rf.entry => NodeStatus.Completed
-        case _ => rf.status
-      rf.copy(
-        nodes = updatedNodes,
-        status = newStatus,
-        completedAt =
-          if newStatus == NodeStatus.Completed || newStatus == NodeStatus.Failed then Some(now) else rf.completedAt
-      )
+      // #414 fix 2：setNodeStatus 只更新节点状态，绝不改 flow 整体 status。
+      // 原 `nodeId == rf.entry` 让 entry 节点（planner）一完成 flow 就被标
+      // completed，之后 redo 轮每次节点状态写入都刷新 completedAt（实证
+      // startedAt == completedAt）——「看起来失败但 flow 还在跑」假象来源。
+      // flow 整体 status 只由流程终止路径管理：FlowDagExecutor.execute 末尾
+      // （walk 结果 → Completed/Failed）、RunningFlowRegistry.cancel
+      // （Cancelled）、failFast（abort 后 walk 返回 Failed → execute 末尾）。
+      rf.copy(nodes = updatedNodes)
     }
 
   def list: IO[List[RunningFlow]] =

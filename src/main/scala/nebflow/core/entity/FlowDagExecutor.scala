@@ -272,46 +272,60 @@ object FlowDagExecutor:
           IO.pure(NodeResult(nodeId, "", false, Some(s"Unknown node: $nodeId")))
         case Some(node) =>
           for
-            inputText <- resolveInput(node.input)
-            // #406: dynamic flows resolve node agents from the global library
-            // only (no flows/<name>/agents/ shadowing — see execute docstring).
-            agentEntryOpt <-
-              if dynamic then nebflow.core.entity.EntityLoader.loadAgent(node.agent)
-              else nebflow.core.entity.EntityLoader.loadFlowAgent(flow.name, node.agent)
-            result <- agentEntryOpt match
+            inputText0 <- resolveInput(node.input)
+            // #414 fix 4b：未知占位符（{{...}} 残留）进节点前校验拦截——模板
+            // 变量替换后仍含 {{ 说明 DAG 使用了引擎不认识的占位符（如未实现
+            // 的变量），明确报错而非把坏模板静默喂给 agent（实测 redo-qa 带着
+            // 未替换的 {{index}}/{{len}} 运行，产出误导性结果）。
+            placeholderError =
+              if inputText0.contains("{{") then
+                Some(
+                  s"Unknown template placeholder(s) in node '$nodeId' input (unresolved '{{...}}'): " +
+                    s"'${inputText0.take(160)}' — check {{item}}/{{index}}/{{len}} usage"
+                )
+              else None
+            result <- placeholderError match
+              case Some(err) => IO.pure(NodeResult(nodeId, "", false, Some(err)))
               case None =>
-                IO.pure(
-                  NodeResult(nodeId, "", false, Some(s"Agent '${node.agent}' not found in flow or global library"))
-                )
-              case Some(entry) =>
-                // #406: FlowReport is injected by EXECUTION CONTEXT — every
-                // flow node (predefined OR dynamic) gets the verdict tool
-                // regardless of the agent's category. Predefined flow agents
-                // (category=flow) already receive it via fixedToolsFor; dynamic
-                // flows reuse standalone/team agents which would otherwise lack
-                // it. The tools list is appended (survives "*" — FlowReport is
-                // already in ALL_TOOLS there; survives explicit lists — appended
-                // after the agent's own names).
-                val baseDef = entry.toAgentDef
-                val agentDef = baseDef.copy(
-                  flowContract = nodeContract(node),
-                  tools = if baseDef.tools.contains("FlowReport") then baseDef.tools else baseDef.tools :+ "FlowReport"
-                )
-                executeAgent(
-                  nodeId,
-                  node.agent,
-                  agentDef,
-                  inputText,
-                  resources,
-                  actorSystem,
-                  wsSend,
-                  flow.name,
-                  instanceId,
-                  parentAgentRef,
-                  rootSessionId
-                )
-            _ <- st.outputs.update(_ + (nodeId -> result.output))
-            _ <- st.slots.update(_ + (nodeId -> result.slots))
+                for
+                  agentEntryOpt <-
+                    if dynamic then nebflow.core.entity.EntityLoader.loadAgent(node.agent)
+                    else nebflow.core.entity.EntityLoader.loadFlowAgent(flow.name, node.agent)
+                  result <- agentEntryOpt match
+                    case None =>
+                      IO.pure(
+                        NodeResult(nodeId, "", false, Some(s"Agent '${node.agent}' not found in flow or global library"))
+                      )
+                    case Some(entry) =>
+                      // #406: FlowReport is injected by EXECUTION CONTEXT — every
+                      // flow node (predefined OR dynamic) gets the verdict tool
+                      // regardless of the agent's category. Predefined flow agents
+                      // (category=flow) already receive it via fixedToolsFor; dynamic
+                      // flows reuse standalone/team agents which would otherwise lack
+                      // it. The tools list is appended (survives "*" — FlowReport is
+                      // already in ALL_TOOLS there; survives explicit lists — appended
+                      // after the agent's own names).
+                      val baseDef = entry.toAgentDef
+                      val agentDef = baseDef.copy(
+                        flowContract = nodeContract(node),
+                        tools = if baseDef.tools.contains("FlowReport") then baseDef.tools else baseDef.tools :+ "FlowReport"
+                      )
+                      executeAgent(
+                        nodeId,
+                        node.agent,
+                        agentDef,
+                        inputText0,
+                        resources,
+                        actorSystem,
+                        wsSend,
+                        flow.name,
+                        instanceId,
+                        parentAgentRef,
+                        rootSessionId
+                      )
+                  _ <- st.outputs.update(_ + (nodeId -> result.output))
+                  _ <- st.slots.update(_ + (nodeId -> result.slots))
+                yield result
           yield result
           end for
       }
@@ -714,11 +728,26 @@ object FlowDagExecutor:
               case None    => IO.pure(Right(WalkEnd.Converged)))
 
       st.slots.get.flatMap { slotsAll =>
-        slotsAll.get(from).flatMap(_.get(pd.slotField)) match
+        // #414 fix 4a：slotField 支持 `$node.slots.field` 全引用语法（resolveInput
+        // 同款正则）——Manager 曾写 "slots": "$planner.slots.blocks" 被当字面量
+        // key 查不到 → 0 实例 + onFail=collect 静默空聚合（零校验零告警）。
+        // 引用语法与字面量 key 的「未命中」都是 DAG 引用错误：无论 onFail 都
+        // 明确报错（区别于「key 存在但数组为空」的正常降级语义）。
+        val refMatch = "\\$([a-zA-Z0-9_-]+)\\.slots\\.([a-zA-Z0-9_-]+)".r.findFirstMatchIn(pd.slotField)
+        val (srcNode, field) = refMatch match
+          case Some(m) => (m.group(1), m.group(2))
+          case None    => (from, pd.slotField)
+        slotsAll.get(srcNode).flatMap(_.get(field)) match
           case None =>
-            noInstances(s"slot '${pd.slotField}' not found on node '$from'")
+            val declared = slotsAll.get(srcNode).map(_.keys.mkString(", ")).getOrElse("(node has no slots)")
+            val detail =
+              if refMatch.isDefined then
+                s"slot reference '${pd.slotField}' not found — node '$srcNode' has no slots field '$field' (declared: $declared)"
+              else
+                s"slot '${pd.slotField}' not found on node '$from' (declared: $declared) — check the DAG slots reference"
+            IO.pure(Left[WalkEnd.Failed, WalkEnd](WalkEnd.Failed(from, s"dynamic fanout: $detail")))
           case Some(json) if !json.isArray =>
-            noInstances(s"slot '${pd.slotField}' on node '$from' is not an array")
+            noInstances(s"slot '${pd.slotField}' on node '$srcNode' is not an array")
           case Some(json) =>
             val items = json.asArray.get
             val clamped = items.size > flow.maxFanout
@@ -749,6 +778,9 @@ object FlowDagExecutor:
                             val input = templateNode.input
                               .replace("{{item}}", itemStr)
                               .replace("{{index}}", idx.toString)
+                              // #414 fix 1: {{len}} 模板变量（SKILL.md 已承诺，
+                              // 引擎从未实现）——模板实例总数，供提示词引用规模。
+                              .replace("{{len}}", n.toString)
                             mm.updated(id, templateNode.copy(input = input))
                           }
                         }
