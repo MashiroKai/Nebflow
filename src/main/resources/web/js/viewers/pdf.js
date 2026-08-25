@@ -87,9 +87,32 @@ async function viewPdf(pane, { absPath, fileName }) {
       c.style.width = Math.floor(vp.width / dpr) + 'px';
       c.style.height = Math.floor(vp.height / dpr) + 'px';
       const ctx2d = c.getContext('2d', { alpha: false });
+      // A page render can fail transiently (canvas memory/GPU pressure with
+      // very large embedded images, e.g. 5762x4172, at dpr 2 across many
+      // pages). The old `catch {}` swallowed that silently, leaving a blank
+      // canvas — the user saw "images are empty" with no signal. Retry once
+      // and, if it still fails, draw an explicit placeholder so the failure
+      // is visible instead of silently blank.
       try {
         await page.render({ canvasContext: ctx2d, viewport: vp }).promise;
-      } catch { /* render cancelled by a newer one */ }
+      } catch {
+        if (token !== renderToken || !pane.isConnected) return; // superseded, not an error
+        ctx2d.clearRect(0, 0, c.width, c.height);
+        try {
+          await page.render({ canvasContext: ctx2d, viewport: vp }).promise;
+        } catch (e2) {
+          if (token !== renderToken || !pane.isConnected) return;
+          c.dataset.renderFailed = '1';
+          const g = c.getContext('2d');
+          g.fillStyle = '#f2f3f5';
+          g.fillRect(0, 0, c.width, c.height);
+          g.fillStyle = '#6b6e76';
+          g.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
+          g.textAlign = 'center';
+          g.fillText('Page ' + i + ' render failed', c.width / 2, c.height / 2 - 8);
+          g.fillText(String(e2 && e2.message || e2).slice(0, 80), c.width / 2, c.height / 2 + 14);
+        }
+      }
       if (token !== renderToken) return;
     }
   }
