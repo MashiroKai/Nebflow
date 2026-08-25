@@ -2907,7 +2907,15 @@ object AgentActor extends AgentCore with AgentSession:
       // agent 内部权威 barrier（registry 快照之外的一层防御）
       internalIdle = state.execution.outstandingSubagentResults == 0
       selfOk = nebflow.core.flow.MailIdleGate.isAgentTreeIdle(sid, registry, flows, checkStatus = !skipSelfStatus)
-      senderIsRoot = senderSession.nonEmpty && registry.get(senderSession).exists(_.kind == AgentKind.Root)
+      // #407 fix（E2E 实证）：sender 的「root」判据不能用 AgentKind.Root——
+      // ensureRootAgent 把 team 成员 session 也统一 spawn 成 Root 记录（
+      // WebSocketRoutes.doSpawnRootAgent 对任何 session 写 AgentKind.Root），
+      // team 内成员发 queue Mail 会被误判为 root 发送者 → 走全 team 范围检查
+      // （含发送者自身 Processing）→ 永远 deferred 死锁。正确判据 = 发送者
+      // 不在任何 team（Nebula/standalone 无 team 归属 → 外部投递语义全 team 停；
+      // team 内发送者 → 目标自身子树）。
+      senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSession).map(_.map(_ => ()))
+      senderIsRoot = senderSession.nonEmpty && senderTeamOpt.isEmpty
       result <-
         if senderIsRoot then
           TeamSessionRegistry.teamOfSession(sid).flatMap {
