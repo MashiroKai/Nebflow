@@ -18,7 +18,7 @@ import { chatViews, setActiveView, activeView } from './chatView.js';
 import { cleanupCardIframes } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
-import { preloadModelCapabilities, renderVisionBadge, getVision } from './modelCapabilities.js';
+import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
 import * as presets from './presets.js';
 
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -1608,8 +1608,7 @@ function showProviderModal(existingName, existingData, onSave) {
   const p = existingData || {baseUrl: '', apiKey: '', protocol: 'anthropic', models: []};
   const initialModels = p.models.length > 0 ? p.models.map(m => ({
     ...m,
-    vision: getVision(`${existingName || ''}/${m.id}`)
-  })) : [{id: '', maxTokens: 131072, contextWindow: 200000, vision: true}];
+  })) : [{id: '', maxTokens: 131072, contextWindow: 200000}];
 
   showModal({
     title: isEdit ? t('provider.edit', { name: existingName }) : t('provider.add'),
@@ -1620,10 +1619,11 @@ function showProviderModal(existingName, existingData, onSave) {
       {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: ['anthropic', 'openai']},
       {key: 'models', label: t('provider.models'), type: 'models', value: initialModels},
       // P0 API 并发管理：per-provider concurrency gate. None = use server
-      // defaults (maxConcurrency 3, queueTimeoutMs 60000ms).
-      {key: 'maxConcurrency', label: t('provider.maxConcurrency'), type: 'number', value: p.maxConcurrency != null ? String(p.maxConcurrency) : '', placeholder: t('provider.maxConcurrencyHint'), min: 0},
-      {key: 'rpm', label: t('provider.rpm'), type: 'number', value: p.rpm != null ? String(p.rpm) : '', placeholder: t('provider.rpmHint'), min: 1},
-      {key: 'queueTimeoutMs', label: t('provider.queueTimeoutMs'), type: 'number', value: p.queueTimeoutMs != null ? String(p.queueTimeoutMs) : '', placeholder: t('provider.queueTimeoutMsHint'), min: 1},
+      // defaults (maxConcurrency 3, queueTimeoutMs 60000ms). Advanced option —
+      // collapsed by default (user ruling 2026-08-20 advanced-fold pattern).
+      {key: 'maxConcurrency', label: t('provider.maxConcurrency'), type: 'number', value: p.maxConcurrency != null ? String(p.maxConcurrency) : '', placeholder: t('provider.maxConcurrencyHint'), min: 0, advanced: true},
+      {key: 'rpm', label: t('provider.rpm'), type: 'number', value: p.rpm != null ? String(p.rpm) : '', placeholder: t('provider.rpmHint'), min: 1, advanced: true},
+      {key: 'queueTimeoutMs', label: t('provider.queueTimeoutMs'), type: 'number', value: p.queueTimeoutMs != null ? String(p.queueTimeoutMs) : '', placeholder: t('provider.queueTimeoutMsHint'), min: 1, advanced: true},
     ],
     onConfirm(values) {
       const name = values.name.trim();
@@ -1662,14 +1662,19 @@ function showProviderModal(existingName, existingData, onSave) {
         window.__showToast?.(t('provider.invalidQueueTimeoutMs'), 'error');
         return;
       }
-      // Vision is no longer written from here (B3): the checkbox is a
-      // read-only reflection of the auto-detected state; manual toggling is
-      // retired and runtime demotion persists itself to models.json.
+      // Vision is never written from this form (B1 裁定 2026-08-25): the
+      // edit-modal checkbox snapshot polluted nebflow.json ModelConfig.vision
+      // (inline outranks models.json runtime annotations). An explicit inline
+      // vision set by hand rides through untouched; new models omit the key.
+      const modelsOut = validModels.map(m => {
+        const prev = (p.models || []).find(x => x.id === m.id);
+        return prev && prev.vision !== undefined ? { ...m, vision: prev.vision } : m;
+      });
       onSave(name, {
         baseUrl,
         apiKey,
         protocol: values.protocol,
-        models: validModels,
+        models: modelsOut,
         // undefined = key omitted so existing config keys are preserved
         // (deriveDecoder defaults both to None = server default).
         ...(maxConcurrency !== undefined ? { maxConcurrency } : {}),
@@ -1684,18 +1689,17 @@ function showProviderModal(existingName, existingData, onSave) {
 }
 
 // --- Generic modal ---
-function showModal({title, fields, onConfirm}) {
+function showModal({title, fields, onConfirm, advancedTitle = ''}) {
   // Remove existing modal
   document.getElementById('cfg-modal')?.remove();
 
-  const overlay = document.createElement('div');
-  overlay.id = 'cfg-modal';
-  overlay.className = 'cfg-modal-overlay';
-  overlay.innerHTML = `
-    <div class="cfg-modal">
-      <div class="cfg-modal-title">${escapeHtml(title)}</div>
-      <div class="cfg-modal-body">
-        ${fields.map(f => `
+  // Advanced fields (optional config — user ruling 2026-08-20: advanced
+  // options default collapsed, same pattern as the STT advance panel) render
+  // inside a collapsed section at the end of the form; the save collector
+  // queries the whole overlay, so collapse state never affects saving.
+  const mainFields = fields.filter(f => !f.advanced);
+  const advFields = fields.filter(f => f.advanced);
+  const renderField = (f) => `
           <div class="cfg-form-group">
             <label class="cfg-label">${escapeHtml(f.label)}</label>
             ${f.type === 'select' ? `<select class="cfg-input" data-field="${f.key}" ${f.disabled ? 'disabled' : ''}>
@@ -1708,8 +1712,27 @@ function showModal({title, fields, onConfirm}) {
             f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" style="-webkit-text-security:disc" ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeSvg}</button></div>` :
             f.type === 'number' ? `<input class="cfg-input" type="number" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.min != null ? `min="${f.min}"` : ''} ${f.disabled ? 'disabled' : ''}>` :
             `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.disabled ? 'disabled' : ''}>`}
+          </div>`;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'cfg-modal';
+  overlay.className = 'cfg-modal-overlay';
+  overlay.innerHTML = `
+    <div class="cfg-modal">
+      <div class="cfg-modal-title">${escapeHtml(title)}</div>
+      <div class="cfg-modal-body">
+        ${mainFields.map(renderField).join('')}
+        ${advFields.length ? `
+          <div class="cfg-form-group cfg-adv-toggle-row">
+            <button type="button" class="settings-collapse-toggle" id="cfg-adv-toggle"
+                    aria-expanded="false" aria-controls="cfg-adv-body">
+              <span class="settings-label">${escapeHtml(advancedTitle || t('provider.advancedTitle'))}</span>
+              <span class="settings-collapse-chevron" aria-hidden="true"></span>
+            </button>
           </div>
-        `).join('')}
+          <div class="settings-collapse-body cfg-adv-body" id="cfg-adv-body" hidden>
+            ${advFields.map(renderField).join('')}
+          </div>` : ''}
       </div>
       <div class="cfg-modal-actions">
         <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">${t('modal.cancel')}</button>
@@ -1718,6 +1741,17 @@ function showModal({title, fields, onConfirm}) {
     </div>`;
 
   document.body.appendChild(overlay);
+
+  // Advanced collapse toggle (fresh elements per open — no accumulation).
+  const advToggle = overlay.querySelector('#cfg-adv-toggle');
+  const advBody = overlay.querySelector('#cfg-adv-body');
+  if (advToggle && advBody) {
+    advToggle.addEventListener('click', () => {
+      const expanded = advBody.hidden;
+      advBody.hidden = !expanded;
+      advToggle.setAttribute('aria-expanded', String(expanded));
+    });
+  }
 
   // Wire up models add/remove
   overlay.querySelectorAll('.cfg-model-add').forEach(btn => {
@@ -1764,7 +1798,6 @@ function showModal({title, fields, onConfirm}) {
           id,
           maxTokens: parseInt(row.querySelector('.cfg-model-max').value) || 131072,
           contextWindow: parseInt(row.querySelector('.cfg-model-ctx').value) || 200000,
-          vision: row.querySelector('.cfg-model-vision-cb').checked,
         });
       });
     }
@@ -1777,14 +1810,12 @@ function renderModelRowContent(m) {
   const id = m ? m.id : '';
   const max = m ? m.maxTokens : '';
   const ctx = m ? m.contextWindow : '';
-  const visionChecked = m && m.vision ? 'checked' : '';
   const idField = providerModelChoices && providerModelChoices.length > 0
     ? renderModelIdSelect(id)
     : `<input class="cfg-input cfg-model-id" type="text" value="${escapeHtml(id)}" placeholder="${t('model.idPlaceholder')}">`;
-  // Read-only reflection of the auto-detected vision state (B3): manual
-  // toggling retired — unknown models default optimistic, errors demote.
+  // Vision is auto-detected at runtime (B3) and shown as a read-only badge on
+  // provider cards — no per-model control in this form (B1 裁定 2026-08-25).
   return `${idField}
-<label class="cfg-model-vision-check" title="${t('model.visionAuto')}"><input type="checkbox" class="cfg-model-vision-cb" ${visionChecked} disabled> Vision</label>
 <input class="cfg-input cfg-model-max" type="number" value="${max}" placeholder="${t('model.maxTokensPlaceholder')}">
 <input class="cfg-input cfg-model-ctx" type="number" value="${ctx}" placeholder="${t('model.contextPlaceholder')}">
 <button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;
