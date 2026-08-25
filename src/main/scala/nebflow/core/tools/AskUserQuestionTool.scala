@@ -5,7 +5,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.ActorRef
 import nebflow.agent.AgentCommand
-import nebflow.core.{AskItem, AskOption, HeadlessMode, QuestionDependency}
+import nebflow.core.{AskItem, AskOption, AskPreview, HeadlessMode, QuestionDependency}
 
 object AskUserQuestionTool extends Tool:
   val name = "AskUserQuestion"
@@ -21,6 +21,10 @@ Guidelines:
 - For open-ended questions, omit options so the user gets a free-text input.
 - The UI always provides an "Other..." option so the user can type freely even for multiple-choice.
 - Independent questions are shown together and can be answered at once.
+
+Visual selection support (askuser-canvas direction C):
+- Set `canvas` on a question (absolute file path) to auto-open a comparison page in the Canvas panel when the question appears.
+- Set `preview` on an option to embed an inline thumbnail: `{"type": "swatch", "colors": ["#hex", ...]}` shows 1-5 color stripes; `{"type": "image", "src": "<url>"}` shows an image.
 
 Conditional branching (dependsOn):
 - Give the upstream question an `id`, then set `dependsOn: {"ref": "<id>", "equals": "<answer>"}` on the dependent question.
@@ -62,6 +66,10 @@ Behavior:
                 "description" ->
                   "Allow selecting several options (checkboxes). Default false = single choice. The answer for this question is returned as an array of the selected option values.".asJson
               ),
+              "canvas" -> io.circe.Json.obj(
+                "type" -> "string".asJson,
+                "description" -> "Optional absolute path to a comparison page that is auto-opened in the Canvas panel when this question appears.".asJson
+              ),
               "options" -> io.circe.Json.obj(
                 "type" -> "array".asJson,
                 "description" -> "Predefined choices for this question".asJson,
@@ -71,7 +79,26 @@ Behavior:
                     "label" -> io.circe.Json
                       .obj("type" -> "string".asJson, "description" -> "Short option label".asJson),
                     "description" -> io.circe.Json
-                      .obj("type" -> "string".asJson, "description" -> "Optional explanation".asJson)
+                      .obj("type" -> "string".asJson, "description" -> "Optional explanation".asJson),
+                    "preview" -> io.circe.Json.obj(
+                      "type" -> "object".asJson,
+                      "description" -> "Optional inline preview for this option: {type:'swatch', colors:[...]} shows 1-5 color stripes; {type:'image', src:'<url>'} shows an image thumbnail. Omit for no preview.".asJson,
+                      "properties" -> io.circe.Json.obj(
+                        "type" -> io.circe.Json.obj(
+                          "type" -> "string".asJson,
+                          "description" -> "'swatch' or 'image'".asJson
+                        ),
+                        "colors" -> io.circe.Json.obj(
+                          "type" -> "array".asJson,
+                          "description" -> "For swatch: 1-5 CSS color strings, displayed as equal-width stripes".asJson,
+                          "items" -> io.circe.Json.obj("type" -> "string".asJson)
+                        ),
+                        "src" -> io.circe.Json.obj(
+                          "type" -> "string".asJson,
+                          "description" -> "For image: the thumbnail URL".asJson
+                        )
+                      )
+                    )
                   ),
                   "required" -> io.circe.Json.arr("label".asJson)
                 )
@@ -113,15 +140,24 @@ Behavior:
           equals <- dep.hcursor.downField("equals").as[String].toOption
         yield QuestionDependency(ref, equals)
         val multiple = q.hcursor.downField("multiple").as[Boolean].getOrElse(false)
+        val canvas = q.hcursor.downField("canvas").as[String].toOption
         val options = q.hcursor.downField("options").as[List[io.circe.Json]].getOrElse(Nil)
         val opts = options.flatMap { o =>
           val label = o.hcursor.downField("label").as[String].getOrElse("")
           if label.isBlank then None // skip options with empty label
           else
             val desc = o.hcursor.downField("description").as[String].toOption
-            Some(AskOption(label, desc))
+            val preview = for
+              pv <- o.hcursor.downField("preview").focus
+              t <- pv.hcursor.downField("type").as[String].toOption
+            yield AskPreview(
+              `type` = t,
+              colors = pv.hcursor.downField("colors").as[List[String]].toOption,
+              src = pv.hcursor.downField("src").as[String].toOption
+            )
+            Some(AskOption(label, desc, preview))
         }
-        Some(AskItem(question, opts, id = id, dependsOn = dependsOn, multiple = multiple))
+        Some(AskItem(question, opts, id = id, dependsOn = dependsOn, multiple = multiple, canvas = canvas))
       end if
     }.toList
 
