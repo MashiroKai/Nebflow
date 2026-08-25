@@ -427,12 +427,26 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
             reqs.exists(r => r.sessionId == rootSid && r.messages.exists(_.textContent.contains(AMarker)))
           )
         )
-        aTurn <- requests.get.map(
-          _.find(r => r.sessionId == rootSid && r.messages.exists(_.textContent.contains(AMarker))).get
+        // #418 core assertion: the FIRST delegate result must arrive ALONE in
+        // its own wake turn (immediate injection) — whichever twin finishes
+        // first (A or B is a genuine race). Pre-fix the idle HOLD held the
+        // first result until the second completed and injected BOTH together
+        // in one batch turn — this XOR is the mutation-red catch.
+        firstResultTurn <- requests.get.map(
+          _.find(r =>
+            r.sessionId == rootSid &&
+              (r.messages.exists(_.textContent.contains(AMarker)) || r.messages.exists(_.textContent.contains(BMarker)))
+          ).get
         )
         _ = assert(
-          aTurn.messages.exists(_.textContent.contains("report A")),
-          s"the wake turn must carry the A delegate result, got: ${aTurn.messages.map(_.textContent).mkString(" | ").take(500)}"
+          firstResultTurn.messages.exists(_.textContent.contains(AMarker)) !=
+            firstResultTurn.messages.exists(_.textContent.contains(BMarker)),
+          s"#418: the first result must arrive ALONE (immediate injection, not batched with its twin), got: ${firstResultTurn.messages.map(_.textContent).mkString(" | ").take(500)}"
+        )
+        _ = assert(
+          firstResultTurn.messages.exists(_.textContent.contains("report A")) ||
+            firstResultTurn.messages.exists(_.textContent.contains("report B")),
+          s"the first wake turn must carry a delegate result payload, got: ${firstResultTurn.messages.map(_.textContent).mkString(" | ").take(500)}"
         )
         // B completes → outstanding 0 → its own injection turn (request #4).
         // (The drain that releases B only fires when the barrier hits 0, so a
