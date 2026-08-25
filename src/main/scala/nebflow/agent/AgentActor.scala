@@ -11,6 +11,7 @@ import nebflow.core.ask.AskService
 import nebflow.core.compact.*
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.tools.AskUserQuestionTool
+import nebflow.core.tools.{BgTaskRegistry, ShellSession}
 import nebflow.llm.{AllProvidersDownTimeout, Fallback, FallbackExhaustedError}
 import nebflow.shared.*
 import nebflow.shared.given
@@ -381,6 +382,32 @@ object AgentActor extends AgentCore with AgentSession:
       ctx.forkTurn(resources.hookEngine.onStop(hookCtx) *> resources.hookEngine.onSessionEnd(hookCtx))
     else IO.unit
 
+  /**
+   * #391 机制 E：restart/Stop 联动——杀该 session 全部 shell 进程树（前台 +
+   * 后台 runProcess 注册的 OS 进程）+ 注销 BgTaskRegistry + WS cancelled 通知。
+   *
+   * B9 残留根因链修复：AgentControl restart → Stop → cancelCurrentTurn 只取消
+   * turn fiber（cats-effect Fiber），shell.scala 全程 IO.blocking 取消不中断线程，
+   * bracket release 的 killProcessTree 永不执行 → bash/Chrome/helpers 进程树残留
+   * 需手动 pkill。killSessionProcesses 直接杀注册的进程树，断掉这条链。
+   * 不碰：其他 session 的进程、JVM 自身（ProcessTree 只操作注册的 ProcessHandle）。
+   */
+  private def killSessionShellProcesses(state: AgentState): IO[Unit] =
+    ShellSession.killSessionProcesses(state.sessionId) *>
+      BgTaskRegistry.unregisterSession(state.sessionId).flatMap { removed =>
+        removed.traverse_ { t =>
+          state.wsSend(
+            io.circe.Json.obj(
+              "type" -> "backgroundTaskUpdate".asJson,
+              "sessionId" -> state.sessionId.asJson,
+              "taskId" -> t.jobId.asJson,
+              "description" -> t.description.asJson,
+              "status" -> "cancelled".asJson
+            )
+          ).handleErrorWith(_ => IO.unit)
+        }
+      }
+
   /** Build the "askUser" WS payload for the frontend. When the question comes
     * from a sub-agent (ForwardAskUser), agentName is set to the source agent
     * for attribution and sourceAgent/sourceSession carry the origin info.
@@ -548,6 +575,7 @@ object AgentActor extends AgentCore with AgentSession:
         for
           _ <- ctx.cancelCurrentTurn()
 
+          _ <- killSessionShellProcesses(state)
           _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
 
@@ -1640,6 +1668,7 @@ object AgentActor extends AgentCore with AgentSession:
         for
           _ <- ctx.cancelCurrentTurn()
 
+          _ <- killSessionShellProcesses(state)
           _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
 
@@ -3233,6 +3262,7 @@ object AgentActor extends AgentCore with AgentSession:
         for
           _ <- ctx.cancelCurrentTurn()
 
+          _ <- killSessionShellProcesses(state)
           _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
           _ <- updateRegistryFrozenReason(resources, state.sessionId, None)
           _ <- fireLifecycleStopHooks(resources, state)

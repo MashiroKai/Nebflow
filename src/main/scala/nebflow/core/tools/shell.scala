@@ -39,7 +39,10 @@ case class BackgroundJobHealth(
 
 /** Background job managed by cats-effect Fiber + Deferred */
 private case class BackgroundJob(
-  fiber: Fiber[IO, Throwable, Unit],
+  // #391 机制 A：fiber 类型用存在类型 ?——executeBackground 的 Unit fiber 与
+  // registerBackgroundJob 的 Either[Throwable, ProcessResult] fiber 共用（后者
+  // 让 background_job_id 查询拿到真实结果）。cancel/join.void 对 ? 均可用。
+  fiber: Fiber[IO, Throwable, ?],
   heartbeatFiber: Option[Fiber[IO, Throwable, Unit]],
   healthCheckFiber: Option[Fiber[IO, Throwable, Unit]],
   deferred: Deferred[IO, Either[Throwable, ProcessResult]],
@@ -56,6 +59,11 @@ final class ShellSession private (
   val sessionId: String,
   currentDir: Ref[IO, String],
   backgroundJobs: Ref[IO, Map[String, BackgroundJob]],
+  /** #391 机制 E：本 session 当前存活的 OS 进程（前台 + 后台 runProcess 启动时
+    * 注册、bracket release 注销）。AgentControl restart/Stop 时 killSessionProcesses
+    * 遍历此表杀进程树——修复「cancelCurrentTurn 只取消 fiber、IO.blocking 不中断、
+    * bracket release 永不执行」的 B9 残留根因链。 */
+  private val activeProcesses: Ref[IO, Set[Process]],
   private val cleanupFiber: Fiber[IO, Throwable, Unit],
   private val lastAccessed: Ref[IO, Long],
   private val isAlive: Ref[IO, Boolean],
@@ -115,7 +123,12 @@ final class ShellSession private (
     description: Option[String] = None,
     on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None,
     on_heartbeat: Option[(String, JobHealth) => IO[Unit]] = None,
-    jobIdOverride: Option[String] = None
+    jobIdOverride: Option[String] = None,
+    // #391 机制 B：后台硬超时 + 停滞窗口阈值（nebflow.json 可配，默认 Defaults）。
+    hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
+    stuckWindowSec: Int = Defaults.BashStuckWindowSec,
+    // 测试注入用：health check 采样间隔（生产默认 30s）。
+    healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec
   ): IO[String] =
     lifecycleMutex.lock.surround {
       for
@@ -127,7 +140,15 @@ final class ShellSession private (
         hbFiber <- on_heartbeat match
           case Some(cb) => startHeartbeat(jobId, deferred, health, cb)
           case None => IO.pure(None)
-        hcFiber <- startJobHealthCheck(jobId, deferred, health, command = command)
+        hcFiber <- startJobHealthCheck(
+          jobId,
+          deferred,
+          health,
+          command = command,
+          hardTimeoutMs = hardTimeoutMs,
+          stuckWindowSec = stuckWindowSec,
+          checkIntervalSec = healthCheckIntervalSec
+        )
         job = BackgroundJob(
           fiber,
           hbFiber,
@@ -193,23 +214,48 @@ final class ShellSession private (
 
   /**
    * Register an externally-started fiber as a background job so it can be cancelled
-   * via cancelBackgroundJob. Used for auto-backgrounded commands.
+   * via cancelBackgroundJob. Used for auto-backgrounded commands (#391 机制 A).
+   *
+   * The fiber must produce the command's REAL result (Either[Throwable, ProcessResult])
+   * — the watcher completes the queryable deferred with it AND fires on_complete
+   * (the makeNotifyCallback chain: agent ExternalEvent + WS + BgTaskRegistry unregister),
+   * so an auto-backgrounded command behaves exactly like an explicit run_in_background
+   * job: queryable via background_job_id, cancellable, health-checked.
    */
   def registerBackgroundJob(
     jobId: String,
-    fiber: Fiber[IO, Throwable, Unit],
+    fiber: Fiber[IO, Throwable, Either[Throwable, ProcessResult]],
     command: String,
-    health: JobHealth
+    health: JobHealth,
+    on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None,
+    // #391 机制 B：后台硬超时 + 停滞窗口阈值（转后台任务同样受兜底约束）。
+    hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
+    stuckWindowSec: Int = Defaults.BashStuckWindowSec,
+    // 测试注入用：health check 采样间隔（生产默认 30s）。
+    healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec
   ): IO[Unit] =
     lifecycleMutex.lock.surround {
       for
         _ <- checkAlive *> touch
         deferred <- Deferred[IO, Either[Throwable, ProcessResult]]
-        // Watcher: when the fiber finishes naturally, complete the deferred so the cleanup fiber can evict it
-        _ <- (fiber.joinWithNever.attempt.flatMap { result =>
-          deferred.complete(result.map(_ => ProcessResult("", "", 0, ""))).void
+        // Watcher: when the fiber finishes naturally, complete the deferred with the
+        // REAL result (background_job_id queries see the output) and fire on_complete.
+        _ <- (fiber.joinWithNever.attempt.flatMap {
+          case Right(inner) =>
+            deferred.complete(inner).void *> on_complete.fold(IO.unit)(cb => cb(inner).void)
+          case Left(t) =>
+            deferred.complete(Left(t)).void *> on_complete.fold(IO.unit)(cb => cb(Left(t)).void)
         }).start
-        hcFiber <- startJobHealthCheck(jobId, deferred, health, isRegisteredJob = true, command = command)
+        hcFiber <- startJobHealthCheck(
+          jobId,
+          deferred,
+          health,
+          isRegisteredJob = true,
+          command = command,
+          hardTimeoutMs = hardTimeoutMs,
+          stuckWindowSec = stuckWindowSec,
+          checkIntervalSec = healthCheckIntervalSec
+        )
         job = BackgroundJob(
           fiber = fiber,
           heartbeatFiber = None,
@@ -258,9 +304,26 @@ final class ShellSession private (
     }
 
   /**
+   * #391 机制 E：杀本 session 全部存活 OS 进程树（前台 + 后台 runProcess 注册的
+   * 进程）。幂等 no-op（无注册进程时）。与 kill() 的区别：kill() 只取消后台任务
+   * fiber 并 complete deferred，不碰前台进程——而前台进程卡在 IO.blocking 上时
+   * fiber 取消无效（B9 盲区 4），必须在此直接 killProcessTree。
+   */
+  def killActiveProcesses(): IO[Unit] =
+    lifecycleMutex.lock.surround {
+      activeProcesses.getAndSet(Set.empty).flatMap { procs =>
+        procs.toList.traverse_(p => ProcessTree.killProcessTree(p))
+      }
+    }
+
+  /**
    * Kill this session: cancel all background jobs and cleanup fiber.
    *  Serialised with lifecycleMutex to prevent executeBackground from adding
    *  jobs after we read the map.
+   *
+   * #391 机制 E：kill 现在也杀后台任务的 OS 进程树（原实现只 cancel fiber——
+   * IO.blocking 取消不中断线程，后台命令进程残留）。前台进程由
+   * killActiveProcesses 单独处理（killSessionProcesses 组合两者）。
    */
   def kill(): IO[Unit] =
     lifecycleMutex.lock.surround {
@@ -268,7 +331,9 @@ final class ShellSession private (
         _ <- isAlive.set(false)
         jobs <- backgroundJobs.getAndSet(Map.empty)
         _ <- jobs.values.toList.traverse_(job =>
-          job.deferred.complete(Left(new InterruptedException("Session killed"))).attempt.void *>
+          val proc = job.health.processRef.get()
+          (if proc != null && proc.isAlive then ProcessTree.killProcessTree(proc) else IO.unit) *>
+            job.deferred.complete(Left(new InterruptedException("Session killed"))).attempt.void *>
             job.fiber.cancel *>
             job.heartbeatFiber.traverse(_.cancel) *>
             job.healthCheckFiber.traverse(_.cancel) *>
@@ -356,8 +421,11 @@ final class ShellSession private (
   /**
    * Minimum CPU delta (nanos) during sampling to consider a process "active".
    * 10ms of CPU work in 2s means the process is computing, not waiting for input.
+   * private[tools]（#391 机制 D）：BashTool 活动桥接的 hasProgress 与 no-progress
+   * ceiling 同标准——cpu > lastCpu 无阈值会让卡死进程的 CPU 微消耗（<10ms/30s）
+   * 持续 touch lastActivityMs → TaskStuckWatcher 永远判不了（B9 盲区 3）。
    */
-  private val CpuActiveThresholdNanos: Long = 10_000_000L
+  private[tools] val CpuActiveThresholdNanos: Long = 10_000_000L
 
   /** Sum total CPU duration (nanos) of a process and all its descendants. */
   private[tools] def sampleProcessCpuTime(proc: Process): Long =
@@ -463,6 +531,9 @@ final class ShellSession private (
     }.bracket { proc =>
       val h = health.getOrElse(new JobHealth())
       val storeProc = IO(h.processRef.set(proc))
+      // #391 机制 E：进程启动即注册进 session 活动表（前台 + 后台），bracket
+      // release 注销——restart/Stop 时 killSessionProcesses 靠它杀进程树。
+      val registerActive = activeProcesses.update(_ + proc)
       // On Windows, write the command to bash's stdin (bash -s mode), then
       // close stdin to signal EOF. This avoids Java ProcessBuilder's Windows
       // argument quoting which mangles double quotes and special characters.
@@ -567,6 +638,7 @@ final class ShellSession private (
 
       for
         _ <- storeProc
+        _ <- registerActive
         _ <- writeStdin
 
         // Stuck detector fiber: after the grace period, if the process is
@@ -636,7 +708,9 @@ final class ShellSession private (
       yield finalResult
       end for
     } { proc =>
-      ProcessTree.killProcessTree(proc)
+      // 先注销再 killProcessTree（进程已退出时是幂等 no-op）——避免
+      // killSessionProcesses 在 release 中途并发读到已收尾的进程。
+      activeProcesses.update(_ - proc) *> ProcessTree.killProcessTree(proc)
     }
 
   private def backgroundExecute(
@@ -729,23 +803,50 @@ final class ShellSession private (
    * notifies the agent, which can retry or continue — this is the primary
    * recovery path for delegate/subtask agents that would otherwise be blocked
    * forever by a stuck background command.
+   *
+   * #391 机制 B（2026-08-25 用户裁定「输出零增长且 CPU 零消耗才杀」）：
+   * - B1 idle CPU 豁免：idle 判定期间 CPU 有消耗（≥ CpuActiveThresholdNanos /
+   *   采样窗口）→ 不算 idle，不杀（避免误杀 CPU 忙的合法任务，如无输出编译）。
+   * - B2 硬超时兜底：运行 > hardTimeoutMs（默认 30min）后进入停滞观察——输出
+   *   零增长且 CPU 增量 < 阈值 连续 ≥ stuckWindowSec（默认 120s）→ killProcessTree
+   *   + TimeoutException。总时长不重置：硬超时后必须持续证明活着（有进展才重置
+   *   停滞计数）。持续吐日志/烧 CPU 的卡死任务（盲区 5）由此兜底。
    */
   private def startJobHealthCheck(
     jobId: String,
     deferred: Deferred[IO, Either[Throwable, ProcessResult]],
     health: JobHealth,
     isRegisteredJob: Boolean = false,
-    command: String = ""
+    command: String = "",
+    hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
+    stuckWindowSec: Int = Defaults.BashStuckWindowSec,
+    checkIntervalSec: Int = Defaults.BgHealthCheckIntervalSec
   ): IO[Option[Fiber[IO, Throwable, Unit]]] =
-    val intervalSec = Defaults.BgHealthCheckIntervalSec
+    val intervalSec = checkIntervalSec
     val idleTimeoutMs = Defaults.BgIdleTimeoutSec.toLong * 1000L
-    def loop: IO[Unit] =
+    val stuckWindowMs = stuckWindowSec.toLong * 1000L
+
+    /** 停滞（统一口径，对齐前台 no-progress ceiling）：输出零增长且 CPU 增量
+      * < CpuActiveThresholdNanos（10ms/采样窗口）——双条件（#391 用户裁定）。 */
+    def isStalled(lines: Int, cpu: Long, lastLines: Int, lastCpu: Long): Boolean =
+      lines <= lastLines && (cpu - lastCpu) < CpuActiveThresholdNanos
+
+    def killWith(message: String, loggerMsg: String): IO[Unit] =
+      val logger = NebflowLogger.forName("nebflow.shell")
+      logger.warn(loggerMsg) *>
+        ProcessTree.killProcessTree(health.processRef.get()) *>
+        deferred
+          .complete(Left(new TimeoutException(message)))
+          .attempt
+          .void
+
+    def loop(lastLines: Int, lastCpu: Long, stuckStartMs: Long): IO[Unit] =
       IO.sleep(intervalSec.seconds) *>
         deferred.tryGet.flatMap {
           case Some(_) => IO.unit // job already finished — stop checking
           case None =>
             val proc = health.processRef.get()
-            if proc == null then loop // process not yet started
+            if proc == null then loop(lastLines, lastCpu, stuckStartMs) // process not yet started
             else if !proc.isAlive() then
               if isRegisteredJob && health.deadNotified.compareAndSet(false, true) then
                 // Only complete deferred for registered (auto-backgrounded) jobs,
@@ -763,36 +864,46 @@ final class ShellSession private (
                 // Normal job: backgroundExecute will handle completion via waitFor()
                 IO.unit
             else
-              // Process still alive — check idle timeout
+              // Process still alive — B1/B2 checks
               val isSleepLike = SleepCommandRe.findFirstIn(command).isDefined
-              val idleMs = System.currentTimeMillis() - health.lastActivityMs.get()
-              if !isSleepLike && idleMs > idleTimeoutMs && health.deadNotified.compareAndSet(false, true) then
-                // Idle timeout: kill the process and complete deferred with error.
-                // The on_complete callback (in backgroundExecute) will notify the
-                // agent with the timeout message, unblocking delegate/subtask agents.
-                val logger = NebflowLogger.forName("nebflow.shell")
-                logger.warn(
-                  s"Background job $jobId idle for ${idleMs / 1000}s (timeout ${Defaults.BgIdleTimeoutSec}s) — auto-cancelling"
-                ) *>
-                  ProcessTree.killProcessTree(proc) *>
-                  deferred
-                    .complete(
-                      Left(
-                        new TimeoutException(
-                          s"Background command was idle (no output) for ${idleMs / 1000}s " +
-                            s"and was automatically cancelled. The command may be stuck " +
-                            s"or waiting for interactive input. Consider using a non-interactive " +
-                            s"alternative or running it manually."
-                        )
-                      )
+              val now = System.currentTimeMillis()
+              val idleMs = now - health.lastActivityMs.get()
+              val runningMs = now - health.startedAtMs.get()
+              val lines = health.outputLineCount.get()
+              val cpu = sampleProcessCpuTime(proc)
+              val progress = !isStalled(lines, cpu, lastLines, lastCpu)
+              val hardTimeoutHit = runningMs > hardTimeoutMs
+
+              if !isSleepLike && idleMs > idleTimeoutMs && !progress then
+                // B1：idle timeout（300s 无输出）——CPU 豁免已并入 progress 判断
+                //（CPU 忙 → progress=true → 不进入此分支，不杀）。
+                if health.deadNotified.compareAndSet(false, true) then
+                  killWith(
+                    s"Background command was idle (no output) for ${idleMs / 1000}s " +
+                      s"and was automatically cancelled. The command may be stuck " +
+                      s"or waiting for interactive input. Consider using a non-interactive " +
+                      s"alternative or running it manually.",
+                    s"Background job $jobId idle for ${idleMs / 1000}s (timeout ${Defaults.BgIdleTimeoutSec}s) — auto-cancelling"
+                  )
+                else IO.unit
+              else if hardTimeoutHit && !progress then
+                // B2：硬超时后停滞观察——零输出零 CPU 连续 ≥ stuckWindowSec 才杀
+                if stuckStartMs == 0L then loop(lines, cpu, now)
+                else if now - stuckStartMs >= stuckWindowMs then
+                  if health.deadNotified.compareAndSet(false, true) then
+                    killWith(
+                      s"Background command ran for ${runningMs / 1000}s (hard timeout ${hardTimeoutMs / 1000}s) " +
+                        s"with no output and no CPU activity for ${(now - stuckStartMs) / 1000}s — killed by stuck guard.",
+                      s"Background job $jobId stalled ${(now - stuckStartMs) / 1000}s after ${runningMs / 1000}s (no output, no CPU) — killing"
                     )
-                    .attempt
-                    .void
-              else loop
-              end if
+                  else IO.unit
+                else loop(lines, cpu, stuckStartMs)
+              else
+                // 有进展 → 重置停滞观察（总时长不重置，硬超时仍是允许运行总时间）
+                loop(lines, cpu, 0L)
             end if
         }
-    loop.start.map(Some(_))
+    loop(0, 0L, 0L).start.map(Some(_))
 
   end startJobHealthCheck
 
@@ -952,6 +1063,18 @@ object ShellSession:
         case None => (m, IO.unit)
     }.flatten
 
+  /**
+   * #391 机制 E：restart/Stop 联动——杀该 session 全部 OS 进程树（前台进程 +
+   * 后台任务进程）并取消后台任务 fiber。session 已销毁/不存在时幂等 no-op。
+   * AgentControl restart 在 cancelCurrentTurn（只取消 fiber）之后调用本方法，
+   * 修复 IO.blocking 取消不中断线程导致的 OS 进程树残留（B9 残留根因）。
+   * 不碰：其他 session 的进程、JVM 自身（ProcessTree 只操作注册的 ProcessHandle）。
+   */
+  def killSessionProcesses(sessionId: Option[String]): IO[Unit] =
+    sessionId.fold(IO.unit) { sid =>
+      sessions.get.flatMap(_.get(sid).fold(IO.unit)(s => s.killActiveProcesses() *> s.kill()))
+    }
+
   private[tools] def create(sessionId: String, initialDir: Option[String] = None): IO[ShellSession] =
     for
       dirRef <- Ref.of[IO, String](
@@ -964,11 +1087,12 @@ object ShellSession:
         }
       )
       jobsRef <- Ref.of[IO, Map[String, BackgroundJob]](Map.empty)
+      procsRef <- Ref.of[IO, Set[Process]](Set.empty)
       fiber <- startCleanupFiber(jobsRef)
       accessRef <- Clock[IO].realTime.map(_.toMillis).flatMap(Ref.of[IO, Long])
       aliveRef <- Ref.of[IO, Boolean](true)
       mutex <- Mutex[IO]
-    yield new ShellSession(sessionId, dirRef, jobsRef, fiber, accessRef, aliveRef, mutex)
+    yield new ShellSession(sessionId, dirRef, jobsRef, procsRef, fiber, accessRef, aliveRef, mutex)
 
   private def startCleanupFiber(jobsRef: Ref[IO, Map[String, BackgroundJob]]): IO[Fiber[IO, Throwable, Unit]] =
     def loop: IO[Unit] =

@@ -40,7 +40,10 @@ case class ToolContext(
    * True when this call originates from another Nebflow instance via remote-exec.
    * Disables BashTool's auto-background mechanism — the caller manages lifecycle.
    */
-  isRemoteExec: Boolean = false
+  isRemoteExec: Boolean = false,
+  /** Bash 卡死防护阈值（#391）：默认 Defaults 值，测试可注入小阈值验证
+    * 自动转后台/硬超时/停滞窗口；GatewayMain 从 nebflow.json 顶层键覆写。 */
+  bashConfig: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig()
 )
 
 case class ToolError(message: String)
