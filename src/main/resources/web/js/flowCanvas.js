@@ -24,7 +24,29 @@ let runningFlows = [];
 // flow v4 (20260825_flow-redesign-research.md §4.10): flow-run is the sole flow
 // UI. Once the user closes a flow-run tab (running or terminal) don't auto-reopen
 // it on later progress — 「被关闭后不复活」. Track dismissed instanceIds.
+// 2026-08-26 (flow-complement §5.3): the set is persisted to sessionStorage so a
+// page refresh doesn't auto-reopen a tab the user explicitly closed, while the
+// running-flows indicator still offers a manual re-open path.
 const dismissedFlowRuns = new Set();
+const FLOWS_DISMISS_KEY = 'nebflow.dismissedFlowRuns';
+
+/** Snapshot the dismissed set to sessionStorage. */
+function persistDismissedFlowRuns() {
+  try {
+    sessionStorage.setItem(FLOWS_DISMISS_KEY, JSON.stringify([...dismissedFlowRuns]));
+  } catch (e) { /* non-critical */ }
+}
+
+/** Restore the dismissed set from sessionStorage (page reload). */
+function loadDismissedFlowRuns() {
+  try {
+    const raw = sessionStorage.getItem(FLOWS_DISMISS_KEY);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) for (const id of arr) if (typeof id === 'string') dismissedFlowRuns.add(id);
+  } catch (e) { /* non-critical */ }
+}
+
 let flowsTabAutoOpened = false;  // prevent repeated auto-open
 let flowDefs = [];
 
@@ -35,6 +57,7 @@ document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) =>
   const id = e.detail && e.detail.id;
   if (typeof id === 'string' && id.startsWith('flow-run-')) {
     dismissedFlowRuns.add(id.slice('flow-run-'.length));
+    persistDismissedFlowRuns();
   }
 });
 
@@ -245,6 +268,158 @@ function maybeAutoOpenFlowsTab() {
   }
 }
 
+// ── Running flows indicator (2026-08-26 flow-complement-design §5.3) ──
+// Once a user closes a flow-run tab there is no way to re-open the running
+// flow's progress (the core 「进展重入」 gap). This indicator — badge count +
+// dropdown list in the chat header, mirroring the Sub-Agents pattern — is the
+// re-entry affordance. Badge count = running flows; clicking a row re-opens
+// the flow-run tab and clears its dismiss mark so live progress renders.
+
+function flowsIndicatorEl() { return document.getElementById('flows-indicator'); }
+function flowsDropdownEl() { return document.getElementById('flows-dropdown'); }
+function flowsDropdownListEl() {
+  const dd = flowsDropdownEl();
+  return /** @type {HTMLElement|null} */ (dd ? dd.querySelector('.flows-dropdown-list') : null);
+}
+
+function fmtDuration(ms) {
+  if (ms == null || ms < 0) return '';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60);
+  return h + 'h ' + (m % 60) + 'm';
+}
+
+/** Badge count = running flows; hide (and collapse dropdown) when zero. */
+export function updateFlowsIndicator() {
+  const el = flowsIndicatorEl();
+  if (!el) return;
+  const count = runningFlows.filter(f => f.status === 'running').length;
+  if (count > 0) {
+    el.classList.remove('hidden');
+    const c = el.querySelector('.flows-count');
+    if (c) c.textContent = String(count);
+  } else {
+    el.classList.add('hidden');
+    el.setAttribute('aria-expanded', 'false');
+    const dd = flowsDropdownEl();
+    if (dd) dd.classList.add('hidden');
+  }
+}
+
+function setFlowsDropdownOpen(open) {
+  const dd = flowsDropdownEl();
+  const ind = flowsIndicatorEl();
+  if (!dd) return;
+  if (open) {
+    renderFlowsDropdown();
+    dd.classList.remove('hidden');
+    if (ind) ind.setAttribute('aria-expanded', 'true');
+  } else {
+    dd.classList.add('hidden');
+    if (ind) ind.setAttribute('aria-expanded', 'false');
+  }
+}
+
+/** Render the flows dropdown rows (running flows only) + wire row/cancel. */
+export function renderFlowsDropdown() {
+  const listEl = flowsDropdownListEl();
+  if (!listEl) return;
+  const running = runningFlows.filter(f => f.status === 'running');
+  const headerEl = flowsDropdownEl()?.querySelector('.bg-dropdown-header');
+  if (headerEl) headerEl.textContent = t('flows.running', { count: running.length });
+  if (running.length === 0) {
+    listEl.innerHTML = '<div class="bg-dropdown-empty">' + esc(t('flows.none')) + '</div>';
+    return;
+  }
+  listEl.innerHTML = running.map(f => {
+    const nodes = f.nodes || [];
+    const done = nodes.filter(n => n.status === 'done').length;
+    const total = nodes.length;
+    const elapsed = f.startedAt ? fmtDuration(Date.now() - f.startedAt) : '';
+    const statusCls = f.status === 'failed' ? 'failed' : 'running';
+    return '<div class="flows-row" role="listitem" tabindex="0" data-flow-instance="' + esc(f.instanceId || '') + '">' +
+      '<span class="flows-status ' + statusCls + '" aria-hidden="true"></span>' +
+      '<div class="flows-info">' +
+        '<div class="flows-line">' +
+          '<span class="flows-name" title="' + esc(f.flowName || '') + '">' + esc(f.flowName || '') + '</span>' +
+          '<span class="flows-progress">' + esc(t('flows.progress', { done, total })) + '</span>' +
+        '</div>' +
+        '<div class="flows-meta">' +
+          '<span class="flows-elapsed">' + esc(elapsed) + '</span>' +
+          '<button class="flows-cancel" data-instance-id="' + esc(f.instanceId || '') + '">' + esc(t('flows.cancel')) + '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  // Row click → re-open the flow-run tab and clear its dismiss mark (manual
+  // re-open = explicit intent — later flowProgress must render the tab again).
+  listEl.querySelectorAll('[data-flow-instance]').forEach(row => {
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (/** @type {Element|null} */(e.target) && /** @type {Element} */(e.target).closest && /** @type {Element} */(e.target).closest('.flows-cancel')) return;
+      const id = row.getAttribute('data-flow-instance');
+      if (!id) return;
+      const rf = runningFlows.find(f => f.instanceId === id);
+      openFlowRunTab(id, rf ? rf.flowName : 'Flow run');
+      dismissedFlowRuns.delete(id);
+      persistDismissedFlowRuns();
+      setFlowsDropdownOpen(false);
+    });
+  });
+  listEl.querySelectorAll('.flows-cancel').forEach(btn => {
+    const cancelBtn = /** @type {HTMLButtonElement} */(btn);
+    cancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = cancelBtn.getAttribute('data-instance-id') || '';
+      if (!id) return;
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = '...';
+      import('./ws.js').then(({ sendWs }) => { sendWs({ type: 'cancelFlow', instanceId: id }); });
+    });
+  });
+  // Keyboard (APG listbox-lite): Enter/Space opens the row.
+  listEl.onkeydown = (e) => {
+    const tgt = /** @type {Element} */(e.target);
+    const row = tgt && tgt.closest ? /** @type {HTMLElement} */(tgt.closest('.flows-row')) : null;
+    if (!row) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      row.click();
+    }
+  };
+}
+
+/** Re-render the dropdown only while it's open (live progress on node events). */
+function refreshFlowsDropdownIfOpen() {
+  const dd = flowsDropdownEl();
+  if (dd && !dd.classList.contains('hidden')) renderFlowsDropdown();
+}
+
+/** Wire the flows badge/dropdown toggle + outside-click close (module init). */
+function initFlowsIndicatorBindings() {
+  const ind = flowsIndicatorEl();
+  const dd = flowsDropdownEl();
+  if (!ind || !dd) return;
+  const toggle = (e) => {
+    e.stopPropagation();
+    setFlowsDropdownOpen(dd.classList.contains('hidden'));
+  };
+  ind.addEventListener('click', toggle);
+  ind.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
+  });
+  document.addEventListener('click', (e) => {
+    if (dd.classList.contains('hidden')) return;
+    if (!dd.contains(/** @type {Node} */(e.target)) && !ind.contains(/** @type {Node} */(e.target))) {
+      setFlowsDropdownOpen(false);
+    }
+  });
+}
+
 // ── WS event handlers ──────────────────────────────────────
 
 export function onFlowStarted(msg) {
@@ -263,6 +438,7 @@ export function onFlowStarted(msg) {
     });
   }
   maybeAutoOpenFlowsTab();
+  updateFlowsIndicator();
   if (isCanvasOpen()) renderOpenTabs();
 }
 
@@ -328,12 +504,14 @@ export function onFlowProgress(msg) {
     if (node) { node.status = msg.status || ''; if (msg.output) node.output = msg.output; if (msg.error) node.error = msg.error; }
   }
   maybeAutoOpenFlowsTab();
+  refreshFlowsDropdownIfOpen();
   if (isCanvasOpen()) renderOpenTabs();
 }
 
 export function onFlowCompleted(msg) {
   const rf = runningFlows.find(f => f.instanceId === (msg.instanceId || ''));
   if (rf) rf.status = msg.success ? 'completed' : 'failed';
+  updateFlowsIndicator();
   fetchRunningFlows().then(() => { if (isCanvasOpen()) renderOpenTabs(); });
 }
 
@@ -356,6 +534,8 @@ export async function fetchRunningFlows() {
     if (!resp.ok) return;
     const data = await resp.json();
     runningFlows = data.flows || [];
+    updateFlowsIndicator();
+    refreshFlowsDropdownIfOpen();
   } catch (e) { /* non-critical */ }
 }
 
@@ -461,7 +641,14 @@ export async function openFlows() {
 
 // Test hook
 if (typeof window !== 'undefined') {
-  window.__testFlow = { openMailbox, openDefinition, openTeams, openFlowRunTab, _teams: () => teams };
+  window.__testFlow = {
+    openMailbox, openDefinition, openTeams, openFlowRunTab, _teams: () => teams,
+    // flows indicator (flow-complement §5.3) — exposed for harness assertions.
+    updateFlowsIndicator, renderFlowsDropdown,
+    _runningFlows: () => runningFlows,
+    _dismissed: () => [...dismissedFlowRuns],
+    _persistDismissed: persistDismissedFlowRuns,
+  };
 }
 
 document.addEventListener('canvas-tab-closed', (e) => {
@@ -497,3 +684,11 @@ onReconnect(() => { autoRestore(); });
 // Mailbox viewer's Cancel action updates pending counts directly — re-render
 // the team cards so the badge stays in sync.
 document.addEventListener('mail-pending-changed', () => { if (isCanvasOpen()) renderOpenTabs(); });
+
+// ── Running flows indicator init (2026-08-26 flow-complement §5.3) ──
+// Restore the persisted dismiss set, wire the badge/dropdown, then populate the
+// indicator from the backend snapshot so a running flow is visible on page load
+// even before the Teams/Flows panel is opened.
+loadDismissedFlowRuns();
+initFlowsIndicatorBindings();
+fetchRunningFlows();

@@ -2743,6 +2743,15 @@ onMessage('forkComplete', (msg, view) => {
       return;
     }
 
+    const flowsDropdown = document.getElementById('flows-dropdown');
+    if (flowsDropdown && !flowsDropdown.classList.contains('hidden')) {
+      flowsDropdown.classList.add('hidden');
+      const flowsIndicator = document.getElementById('flows-indicator');
+      if (flowsIndicator) flowsIndicator.setAttribute('aria-expanded', 'false');
+      e.preventDefault();
+      return;
+    }
+
     const bg = document.getElementById('bg-dropdown');
     if (bg && !bg.classList.contains('hidden')) {
       bg.classList.add('hidden');
@@ -2850,7 +2859,7 @@ onMessage('forkComplete', (msg, view) => {
   // that overlaps (§8 A2). These elements are never toggled by layout() so
   // observing them cannot cause a feedback loop.
   ['sidebar-toggle', 'header-model-info', 'memory-btn',
-    'bg-indicator', 'bgagent-indicator', 'canvas-toggle-btn']
+    'bg-indicator', 'bgagent-indicator', 'flows-indicator', 'canvas-toggle-btn']
     .forEach(id => { const el = document.getElementById(id); if (el) ro.observe(el); });
   layout();
 })();
