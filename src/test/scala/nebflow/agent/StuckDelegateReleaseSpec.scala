@@ -337,9 +337,15 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
         Stream.eval(counters.get.map(_.getOrElse(req.sessionId, 0))).flatMap { n =>
           if req.sessionId == rootSid then rootTurn(n)
           else if req.sessionId.startsWith("delegate-TwinA") then
-            Stream(StreamChunk.TextDelta(s"report A $AMarker"), StreamChunk.Done(None, None))
+            // Delay completion past turn 1 ending — the #418 scenario needs the
+            // parent IDLE when the first result arrives (a result racing ahead
+            // of turn 1 ending is queued by the processing path and batched at
+            // drain — correct but not the #418 idle-wake shape under test).
+            Stream.sleep[IO](800.millis) >>
+              Stream(StreamChunk.TextDelta(s"report A $AMarker"), StreamChunk.Done(None, None))
           else if req.sessionId.startsWith("delegate-TwinB") then
-            Stream(StreamChunk.TextDelta(s"report B $BMarker"), StreamChunk.Done(None, None))
+            Stream.sleep[IO](800.millis) >>
+              Stream(StreamChunk.TextDelta(s"report B $BMarker"), StreamChunk.Done(None, None))
           else Stream(StreamChunk.TextDelta("unexpected session"), StreamChunk.Done(None, None))
         }
 
