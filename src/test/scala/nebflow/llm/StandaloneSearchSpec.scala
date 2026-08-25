@@ -205,6 +205,14 @@ class StandaloneSearchSpec extends CatsEffectSuite:
     val quotaBody = """{"error":{"code":"1113","message":"余额不足或无可用资源包,请充值。"}}"""
     val llm = new ScriptedLlm(List(LlmResponse("ans", Nil, None, meta("zhipu"), Some(zhipuInfo))))
     val monitor = ProviderHealthMonitor(null)
+    // Regression lock (2026-08-25, E2E-caught): the degrade WARN must actually
+    // fire — a bare `logger.warn(...)` in the flatMap body is built-not-run
+    // (dead-logging), silently swallowing the 429 diagnostic.
+    val lbLogger =
+      org.slf4j.LoggerFactory.getLogger("nebflow.llm.search").asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+    appender.start()
+    lbLogger.addAppender(appender)
     mockServer(429, quotaBody, reqBodies).bracket { case (port, _) =>
       val cfg = StandaloneSearchConfig("zhipu", "sk-test", s"http://127.0.0.1:$port/search", "search_std")
       for
@@ -225,7 +233,18 @@ class StandaloneSearchSpec extends CatsEffectSuite:
           },
           s"health must record the classified 2a failure, got: $health"
         )
-    } { case (_, server) => IO.blocking(server.stop(0)) }
+    } { case (_, server) => IO.blocking(server.stop(0)) }.flatMap { _ =>
+      IO {
+        import scala.jdk.CollectionConverters.*
+        val fired = appender.list.asScala.toList
+          .filter(_.getLevel == ch.qos.logback.classic.Level.WARN)
+          .map(_.getFormattedMessage)
+        lbLogger.detachAppender(appender)
+        assert(fired.nonEmpty, "degrade WARN must be emitted (dead-logging regression lock)")
+        assert(fired.head.contains("quota/rate limited"), s"WARN must carry the classified reason: ${fired.headOption}")
+        assert(fired.head.contains("Tier 2a standalone search failed"), s"WARN must name the failure: ${fired.headOption}")
+      }
+    }
   }
 
   test("P2-5: standalone API failure AND 2b incapable (deepseek chain) → None, not a crash") {

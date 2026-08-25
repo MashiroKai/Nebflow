@@ -384,8 +384,9 @@ object SearchProviderResolver:
         executeStandaloneFor(query, c, health).flatMap {
           case Right(result) => IO.pure(Some(result))
           case Left(err) =>
-            logger.warn(s"Tier 2a standalone search failed (${c.provider}): $err — degrading to Tier 2b (provider builtin)")
-            tier2b(query, llm, sessionId, agentId, agentModel)
+            logger
+              .warn(s"Tier 2a standalone search failed (${c.provider}): $err — degrading to Tier 2b (provider builtin)")
+              *> tier2b(query, llm, sessionId, agentId, agentModel)
         }
       case None => tier2b(query, llm, sessionId, agentId, agentModel)
 
