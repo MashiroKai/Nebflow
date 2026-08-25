@@ -160,9 +160,49 @@ jobs:
           path: build/dist/*.msi
           if-no-files-found: error
 
+  package-linux:
+    name: Package Linux (deb + app-image)
+    needs: build-jar
+    if: needs.build-jar.outputs.skipped == 'false'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # jpackage's LinuxDebBundler hard-depends on dpkg/dpkg-deb/fakeroot
+      # (research §5). dpkg ships with Ubuntu; fakeroot is explicit for safety.
+      - name: Install deb toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fakeroot
+
+      - name: Download jar
+        uses: actions/download-artifact@v4
+        with:
+          name: jar
+          path: target/scala-3.5.2
+
+      - name: Build deb + app-image (jlink + jpackage)
+        run: |
+          chmod +x packaging/*.sh
+          ./packaging/build-linux.sh --jar-dir target/scala-3.5.2
+
+      - name: Upload deb + app-image artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: |
+            build/dist/*.deb
+            build/dist/*-app-image.tar.gz
+          if-no-files-found: error
+
   release:
     name: Tag, Release & Mirror
-    needs: [build-jar, package-macos, package-windows]
+    needs: [build-jar, package-macos, package-windows, package-linux]
     if: needs.build-jar.outputs.skipped == 'false'
     runs-on: ubuntu-latest
     steps:
@@ -188,6 +228,8 @@ jobs:
           find dist -name '${LOWER_NAME}-assembly-*.jar' -exec cp {} release-assets/ \;
           find dist -name '${PRODUCT_NAME}-*.dmg' -exec cp {} release-assets/ \;
           find dist -name '${PRODUCT_NAME}-*.msi' -exec cp {} release-assets/ \;
+          find dist -name '${PRODUCT_NAME}-*.deb' -exec cp {} release-assets/ \;
+          find dist -name '${PRODUCT_NAME}-*-app-image.tar.gz' -exec cp {} release-assets/ \;
           ls -lh release-assets/
 
       - name: Create tag

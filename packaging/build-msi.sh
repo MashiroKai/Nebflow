@@ -20,7 +20,7 @@ set -euo pipefail
 # `key = value`, full-line '#' comments, ` # ` starts an inline comment.
 BRAND_CONF="$(cd "$(dirname "$0")/.." && pwd)/brand.conf"
 brand_value() {
-  sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" "$BRAND_CONF" | sed 's/[[:space:]]#.*$//' | head -1
+  sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" "$BRAND_CONF" | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1
 }
 PRODUCT_NAME="$(brand_value productName)"
 LOWER_NAME="$(brand_value lowerName)"
