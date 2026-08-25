@@ -2832,31 +2832,36 @@ object AgentActor extends AgentCore with AgentSession:
       // 持有完整 state（工具结果已在冻结前持久化，F1）。
       // #337：黑名单语义——segments 是冻结时间，段内 window.frozen=true。
       resources.freezeScheduleRef.get.flatMap { cfg =>
-        // #337 黑名单语义：segments = 冻结时段（非工作时间），段内 frozen=true。
-        val window = nebflow.core.schedule.FreezeSchedule.eval(cfg, System.currentTimeMillis())
-        // D11 交互豁免：ask 轮（用户在场等回答）与 freezeExempt 会话（plan
-        // agent 等交互场景）不冻结——冻结它们省的 token 远低于浪费的用户等待。
-        val interactive = state.askMode.isDefined || state.session.freezeExempt
-        if window.frozen && cause == DispatchCause.Gated && !interactive then
-          logAgentEvent(
-            agentDef,
-            depth,
-            state.sessionId,
-            state.sessionName,
-            "freeze-enter",
-            s"resumeAt=${window.nextChangeAt.map(_.toString).getOrElse("none")}"
-          )
-          enterFrozen(agentDef, resources, depth, parentRef, state, replyTo, window.nextChangeAt)
-        else
-          super.pipeLlmCall(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state,
-            replyTo,
-            (ad, r, d, p, s) => processing(ad, r, d, p, s)
-          )
+        resources.freezeSkipUntilRef.get.flatMap { skipUntil =>
+          // #337 黑名单语义：segments = 冻结时段（非工作时间），段内 frozen=true。
+          // 2026-08-25 裁定：用户消息全局跳过——skipUntil 未到期（用户消息作废了
+          // 本次冻结窗口）→ evalWithSkip 返回 frozen=false，所有 agent 恢复工作。
+          val now = System.currentTimeMillis()
+          val window = nebflow.core.schedule.FreezeSchedule.evalWithSkip(cfg, skipUntil, now)
+          // D11 交互豁免：ask 轮（用户在场等回答）与 freezeExempt 会话（plan
+          // agent 等交互场景）不冻结——冻结它们省的 token 远低于浪费的用户等待。
+          val interactive = state.askMode.isDefined || state.session.freezeExempt
+          if window.frozen && cause == DispatchCause.Gated && !interactive then
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "freeze-enter",
+              s"resumeAt=${window.nextChangeAt.map(_.toString).getOrElse("none")}"
+            )
+            enterFrozen(agentDef, resources, depth, parentRef, state, replyTo, window.nextChangeAt)
+          else
+            super.pipeLlmCall(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state,
+              replyTo,
+              (ad, r, d, p, s) => processing(ad, r, d, p, s)
+            )
+        }
       }
 
   private def pipeToolExecutions(
@@ -3104,10 +3109,12 @@ object AgentActor extends AgentCore with AgentSession:
         val now = System.currentTimeMillis()
         reason match
           case FreezeReason.Schedule =>
-            // 时间表冻结：现有 eval 语义（#337 黑名单——段外=工作时段）
+            // 时间表冻结：现有 eval 语义（#337 黑名单——段外=工作时段）+ 2026-08-25
+            // 用户消息全局跳过（skipUntil 未到期 → 视为段外，立即恢复）。
             for
               cfg <- resources.freezeScheduleRef.get
-              window = nebflow.core.schedule.FreezeSchedule.eval(cfg, now)
+              skipUntil <- resources.freezeSkipUntilRef.get
+              window = nebflow.core.schedule.FreezeSchedule.evalWithSkip(cfg, skipUntil, now)
               result <-
                 if !window.frozen then
                   logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-resume", "reason=outside-freeze-segment")

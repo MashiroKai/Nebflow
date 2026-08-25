@@ -160,4 +160,52 @@ object FreezeSchedule:
       case Some(obj) => Json.fromJsonObject(obj.add("workSchedule", cfg.asJson))
       case None => Json.obj("workSchedule" -> cfg.asJson)
 
+  /**
+   * 用户消息全局跳过当前冻结窗口（2026-08-25 用户裁定）：窗口内任何用户消息
+   * 到达 → 本次冻结整体作废（所有 agent 恢复正常工作），**不存在部分唤醒**；
+   * 跳过非永久——skipUntil 到期（= 当前冻结窗口结束时刻）后下一冻结段照常冻结。
+   * 纯函数：window.frozen 且 skipUntil 未到期 → 视为不冻结（其余字段原样）。
+   */
+  def applySkip(window: FreezeWindow, skipUntil: Option[Long], now: Long): FreezeWindow =
+    if window.frozen && skipUntil.exists(_ > now) then window.copy(frozen = false) else window
+
+  /** eval + applySkip 的组合入口（gate / CheckFreezeGate / 用户消息钩子共用）。 */
+  def evalWithSkip(cfg: FreezeScheduleConfig, skipUntil: Option[Long], now: Long): FreezeWindow =
+    applySkip(eval(cfg, now), skipUntil, now)
+
+  /** 用户消息到达时计算 skipUntil：当前冻结窗口的结束时刻（eval 的 nextChangeAt，
+    * 即下一次真实翻转点）；全天冻结无翻转点（None）时兜底为下一个午夜——跳过
+    * 今天剩余时段，明天照常冻结。 */
+  def skipUntilFor(window: FreezeWindow, now: Long): Option[Long] =
+    window.nextChangeAt.orElse {
+      val zone = java.time.ZoneId.systemDefault()
+      Some(
+        java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate.plusDays(1).atStartOfDay(zone).toInstant.toEpochMilli
+      )
+    }
+
+  /**
+   * setWorkSchedule 部分更新合并（2026-08-25 裁定：设置关闭保留配置）：payload
+   * 缺 enabled / segments 键时从现有配置继承——toggle off 只置 disabled、segments
+   * 不清空不重置；显式传 segments=[] 仍可清空。解析错误 → Left（拒绝保存，与
+   * 全量 payload 的错误语义一致）。
+   */
+  def mergeConfig(existing: FreezeScheduleConfig, patch: Json): Either[String, Json] =
+    patch.asObject match
+      case Some(obj) =>
+        for
+          enabled <- obj("enabled") match
+            case None => Right(existing.enabled)
+            case Some(e) => e.asBoolean.toRight("enabled 必须是布尔值")
+          segments <- obj("segments") match
+            case None => Right(existing.segments)
+            case Some(s) =>
+              s.as[List[FreezeSegment]].toOption.toRight("segments 格式错误：[{start,end}]")
+        yield FreezeScheduleConfig(enabled, segments).asJson
+      case None => Left("冻结时间配置格式错误：需要 {enabled, segments:[{start,end}]}")
+
+  /** mergeConfig + validate 的组合入口（setWorkSchedule WS 命令用）。 */
+  def mergeValidate(existing: FreezeScheduleConfig, patch: Json): Either[String, FreezeScheduleConfig] =
+    mergeConfig(existing, patch).flatMap(validate)
+
 end FreezeSchedule
