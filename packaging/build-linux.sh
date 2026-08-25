@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# Build a macOS .dmg of Nebflow from the sbt-assembly fat jar via jpackage.
+# Build the Linux .deb + app-image tar.gz of Nebflow from the sbt-assembly
+# fat jar via jpackage.
 #
-# Usage: packaging/build-dmg.sh [--jar-dir DIR] [--out DIR]
+# Usage: packaging/build-linux.sh [--jar-dir DIR] [--out DIR]
 #   --jar-dir  directory containing ${LOWER_NAME}-assembly-*.jar (default target/scala-3.5.2)
-#   --out      output directory for the .dmg (default build/dist)
+#   --out      output directory (default build/dist)
 #
-# Requirements: JDK 17+ with jpackage on PATH (or JAVA_HOME set), fat jar built
-# (sbt assembly). No signing — jpackage ad-hoc signs automatically. First launch
-# on macOS 15+ requires System Settings > Privacy & Security approval.
+# Requirements:
+#   - JDK 17+ with jpackage on PATH (or JAVA_HOME set), fat jar built (sbt assembly)
+#   - dpkg / dpkg-deb / fakeroot for the .deb target (Debian/Ubuntu:
+#     apt-get install dpkg fakeroot) — jpackage's LinuxDebBundler hard-depends on them
+#   - MUST run on Linux: jpackage has no cross-platform compilation
 #
-# Version derivation (jpackage --app-version must be numeric dotted):
-#   date scheme  2026.08.15[-beta.N] → 2026.8.15   (leading zeros stripped)
-#   semver       1.4.1[-beta.N]      → 1.4.1       (suffix dropped)
+# Outputs (fixed naming spec, shared with build-dmg.sh / build-msi.sh):
+#   build/dist/${PRODUCT_NAME}-${RAW_VERSION}-${ARCH}.deb
+#   build/dist/${PRODUCT_NAME}-${RAW_VERSION}-${ARCH}-app-image.tar.gz
 set -euo pipefail
 
 # ── Brand values (L2 rebrand): repo-root brand.conf is the only edit point ──
@@ -43,13 +46,15 @@ if ! command -v jpackage >/dev/null 2>&1; then
   echo "ERROR: jpackage not on PATH — install JDK 17+ or set JAVA_HOME." >&2
   exit 1
 fi
+if ! command -v fakeroot >/dev/null 2>&1; then
+  echo "ERROR: fakeroot not on PATH — jpackage .deb hard-depends on it." >&2
+  echo "       apt-get install -y dpkg fakeroot" >&2
+  exit 1
+fi
 
 RAW_VERSION=$(cat VERSION)
-# Numeric app-version for the bundle (shared with build-msi.sh).
 APP_VERSION=$(packaging/app-version.sh)
 
-# jpackage copies the ENTIRE --input dir into the app bundle — stage a clean
-# dir with only the fat jar so target/classes etc. never leak in.
 STAGE="build/jpackage-input"
 RUNTIME="build/runtime"
 rm -rf "$STAGE" "$OUT" "$RUNTIME"
@@ -59,18 +64,19 @@ cp "$JAR" "$STAGE/"
 echo "  jar:        $JAR"
 echo "  VERSION:    $RAW_VERSION (app-version $APP_VERSION)"
 
-# Trimmed runtime: explicit module list (see jlink-modules.txt) keeps the dmg
-# ~40MB under the full default java.se set. --runtime-image gives full control
-# (no union with jpackage defaults).
+# Trimmed runtime: same explicit module list as build-dmg.sh / build-msi.sh
+# (see packaging/jlink-modules.txt). Shared across the deb and app-image
+# invocations via --runtime-image.
 MODULES=$(grep -v '^#' packaging/jlink-modules.txt | tr -d '[:space:]' | tr -d '\n')
 jlink \
   --add-modules "$MODULES" \
   --strip-debug --no-man-pages --no-header-files --compress zip-6 \
   --output "$RUNTIME"
 
+# ── .deb ──
 jpackage \
   --name "$PRODUCT_NAME" \
-  --type dmg \
+  --type deb \
   --input "$STAGE" \
   --main-jar "$(basename "$JAR")" \
   --main-class nebflow.Main \
@@ -79,11 +85,29 @@ jpackage \
   --java-options "-Xmx1g" \
   --runtime-image "$RUNTIME" \
   --app-version "$APP_VERSION" \
-  --mac-package-name "$PRODUCT_NAME" \
   --dest "$OUT"
 
-# Normalize arch label for asset naming (uname -m gives x86_64 on Intel macs).
+# ── app-image tar.gz (distribution-agnostic fallback) ──
+APP_IMAGE_ROOT="build/app-image-root"
+rm -rf "$APP_IMAGE_ROOT"
+mkdir -p "$APP_IMAGE_ROOT"
+jpackage \
+  --name "$PRODUCT_NAME" \
+  --type app-image \
+  --input "$STAGE" \
+  --main-jar "$(basename "$JAR")" \
+  --main-class nebflow.Main \
+  --arguments --server \
+  --java-options "--add-opens=java.base/java.lang=ALL-UNNAMED" \
+  --java-options "-Xmx1g" \
+  --runtime-image "$RUNTIME" \
+  --dest "$APP_IMAGE_ROOT"
+
+# Normalize arch label for asset naming (uname -m gives x86_64 on Intel).
 ARCH=$(uname -m | sed 's/x86_64/x64/')
-FINAL="$OUT/${PRODUCT_NAME}-${RAW_VERSION}-${ARCH}.dmg"
-mv "$OUT"/${PRODUCT_NAME}-*.dmg "$FINAL"
-echo "OK: $FINAL ($(du -h "$FINAL" | cut -f1))"
+FINAL_DEB="$OUT/${PRODUCT_NAME}-${RAW_VERSION}-${ARCH}.deb"
+FINAL_TGZ="$OUT/${PRODUCT_NAME}-${RAW_VERSION}-${ARCH}-app-image.tar.gz"
+mv "$OUT"/*.deb "$FINAL_DEB"
+tar -C "$APP_IMAGE_ROOT" -czf "$FINAL_TGZ" "$PRODUCT_NAME"
+echo "OK: $FINAL_DEB ($(du -h "$FINAL_DEB" | cut -f1))"
+echo "OK: $FINAL_TGZ ($(du -h "$FINAL_TGZ" | cut -f1))"
