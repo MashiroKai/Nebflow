@@ -37,7 +37,7 @@ object TaskQueryTool extends Tool:
 ## Parameters
 - scope: "session" (default) | "recent" | "project"
 - since: only for recent/project — "today" | "yesterday" | "7d" | "30d" | ISO date (2026-08-15)
-- status: filter by exact status: completed | failed | in_progress | pending | dismissed
+- status: filter by exact status: completed | failed | in_progress | pending | dismissed | cancelled
 - keyword: case-insensitive substring match against subject (+ description in session scope)
 - project: folder name (or folderId) — required for scope=project
 - limit: max results, default 30
@@ -63,7 +63,7 @@ Find by keyword:              {"keyword": "registry", "scope": "session"}"""
         ),
         "status" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> Json.arr("pending".asJson, "in_progress".asJson, "completed".asJson, "failed".asJson, "dismissed".asJson),
+          "enum" -> Json.arr("pending".asJson, "in_progress".asJson, "completed".asJson, "failed".asJson, "dismissed".asJson, "cancelled".asJson),
           "description" -> "Exact status filter".asJson
         ),
         "keyword" -> Json.obj(
@@ -169,7 +169,8 @@ Find by keyword:              {"keyword": "registry", "scope": "session"}"""
       updatedAt = t.updatedAt,
       completedAt = t.completedAt,
       noteCount = t.notes.size,
-      hasLinks = t.notes.exists(_.links.nonEmpty)
+      hasLinks = t.notes.exists(_.links.nonEmpty),
+      cancelReason = t.cancelReason
     ))
 
   /** since matches completedAt OR createdAt (whichever exists). */

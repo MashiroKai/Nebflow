@@ -549,7 +549,8 @@ class WebSocketRoutes(
               "updatedAt" -> e.updatedAt.asJson,
               "completedAt" -> e.completedAt.asJson,
               "noteCount" -> e.noteCount.asJson,
-              "hasLinks" -> e.hasLinks.asJson
+              "hasLinks" -> e.hasLinks.asJson,
+              "cancelReason" -> e.cancelReason.asJson
             )
           }
           Ok(io.circe.Json.arr(arr*).noSpaces, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
@@ -1897,6 +1898,50 @@ class WebSocketRoutes(
                       "type" -> "taskError".asJson,
                       "error" -> s"Cannot complete: ${err.getMessage}".asJson,
                       "taskId" -> ctTaskId.asJson
+                    )
+                  )
+              }
+            else IO.unit
+            end if
+
+          // ===== Cancel Task (user cancels an active agent task, task-cancel #35) =====
+          // Contract (frontend taskList.js requestCancel): frame shape
+          // {type:"cancelTask", sessionId, taskId, reason} — reason is always
+          // sent (default "Cancelled by user"/"用户主动取消"). Success →
+          // authoritative taskListUpdate (cancelled rows are filtered by
+          // listVisible AND by the frontend isVisible — double convergence);
+          // the owning session's agent is notified with a [任务取消] injection
+          // block (stop in-flight work). Failure → taskError frame
+          // {"type":"taskError","error","taskId"} — the frontend rolls the
+          // optimistically-removed row back (pendingCancel map, 契约#1).
+
+          case "cancelTask" =>
+            val ckJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val ckSessionId = ckJson.hcursor.downField("sessionId").as[String].getOrElse("")
+            val ckTaskId = ckJson.hcursor.downField("taskId").as[String].getOrElse("")
+            val ckReason = ckJson.hcursor.downField("reason").as[String].getOrElse("")
+            if ckSessionId.nonEmpty && ckTaskId.nonEmpty then
+              sharedResources.taskStore.cancel(ckSessionId, ckTaskId, ckReason).attempt.flatMap {
+                case Right(Some(task)) =>
+                  // Authoritative list push — cancelled tasks vanish from the panel.
+                  sharedResources.taskStore.listVisible(ckSessionId).flatMap { tasks =>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "taskListUpdate".asJson,
+                        "sessionId" -> ckSessionId.asJson,
+                        "tasks" -> tasks.asJson
+                      )
+                    ) *> refreshTaskArchive(ckSessionId) *> notifyTaskCancelled(ckSessionId, task, ckReason)
+                  }
+                case Right(None) =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Task not found: $ckTaskId".asJson))
+                case Left(err) =>
+                  // IllegalStateException — human todo / terminal source state
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "taskError".asJson,
+                      "error" -> s"Cannot cancel: ${err.getMessage}".asJson,
+                      "taskId" -> ckTaskId.asJson
                     )
                   )
               }
@@ -3588,6 +3633,58 @@ class WebSocketRoutes(
         ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
     else IO.unit
   end handleUserText
+
+  /**
+    * task-cancel #35: keep the task archive index in sync after a WS-path
+    * task mutation — the tools refresh it via TaskToolHelper.emitTaskListUpdate,
+    * but WS handlers (cancelTask/completeTask/dismissTask) send their own
+    * taskListUpdate and must refresh here. Best-effort: index staleness is
+    * logged, never fails the already-successful cancel frame.
+    */
+  private def refreshTaskArchive(sessionId: String): IO[Unit] =
+    sessionStore
+      .getSessionMeta(sessionId)
+      .map {
+        case Some(meta) =>
+          val j = nebflow.core.task.TaskArchive.SessionJoin(
+            meta.folderId,
+            meta.folderId.flatMap(sessionStore.getFolderName),
+            Some(meta.name)
+          )
+          (_: String) => j
+        case None => (_: String) => nebflow.core.task.TaskArchive.Unclassified
+      }
+      .flatMap(join => nebflow.core.task.TaskArchive.refreshSession(sessionId, join))
+      .handleErrorWith(e =>
+        logger.warn(s"Task archive refresh failed for $sessionId: ${e.getMessage}") *> IO.unit
+      )
+  end refreshTaskArchive
+
+  /**
+    * task-cancel #35: notify the owning session's agent that one of its tasks
+    * was cancelled by the user — an injection block mirroring the [打回任务]
+    * return block (source="task-cancel" so the UI labels it as a system
+    * injection). The agent is expected to stop in-flight work related to the
+    * task (it is terminal now). ensureAgent spawns the root agent when the
+    * session exists but has no live agent — the same routing used for user
+    * messages. Best-effort: routing failures are logged, never fail the
+    * cancelTask frame that already succeeded.
+    */
+  private def notifyTaskCancelled(
+    sessionId: String,
+    task: nebflow.core.task.Task,
+    reason: String
+  ): IO[Unit] =
+    val reasonStr = if reason.trim.nonEmpty then reason.trim else "（未附原因）"
+    val text =
+      s"[任务取消 #${task.id}: ${task.subject}]\n" +
+        s"任务描述: ${task.description}\n" +
+        s"取消原因: $reasonStr\n" +
+        "（该任务已由用户取消，处于终态。请停止与该任务相关的工作，不要继续推进；如需后续处理请另行创建任务）"
+    ensureAgent(sessionId)(ref =>
+      ref ! AgentCommand.ImmediateInput(text, source = Some("task-cancel"))
+    )
+  end notifyTaskCancelled
 
   /**
     * 用户消息 → 全局跳过当前冻结窗口（2026-08-25 裁定）：当前处于冻结窗口时，

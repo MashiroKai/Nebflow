@@ -41,7 +41,11 @@ object TaskArchive:
     updatedAt: Option[String],
     completedAt: Option[String],
     noteCount: Int,
-    hasLinks: Boolean
+    hasLinks: Boolean,
+    /** task-cancel #35: why the task was cancelled (user path). The archive
+      * view renders it as the dedicated cancel-reason slot; absent for
+      * non-cancelled tasks and for agent-path cancels (reason lives in notes). */
+    cancelReason: Option[String] = None
   )
 
   object IndexEntry:
@@ -95,7 +99,8 @@ object TaskArchive:
               updatedAt = t.updatedAt,
               completedAt = t.completedAt,
               noteCount = t.notes.size,
-              hasLinks = t.notes.exists(_.links.nonEmpty)
+              hasLinks = t.notes.exists(_.links.nonEmpty),
+              cancelReason = t.cancelReason
             )
           }
         }
