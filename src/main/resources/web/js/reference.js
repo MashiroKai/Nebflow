@@ -332,8 +332,12 @@ function jumpRef(ref) {
   if (rt === 'file' || rt === 'document') {
     if (!path) return;
     const title = ref.display?.label || src.title || path.split('/').pop();
+    // #303 C3: carry the page anchor through to the pdf viewer (canvas.js
+    // stashes it across the readFile round trip; pdf.js scrolls after render).
+    const pg = ref.anchor && ref.anchor.pageStart;
+    const anchor = Number.isFinite(pg) ? { pageStart: pg } : undefined;
     window.dispatchEvent(new CustomEvent('workspace-open-item', {
-      detail: { id: `file:${path}`, title, itemType: '', content: '', absPath: path, path, pinned: false },
+      detail: { id: `file:${path}`, title, itemType: '', content: '', absPath: path, path, pinned: false, anchor },
     }));
     return;
   }

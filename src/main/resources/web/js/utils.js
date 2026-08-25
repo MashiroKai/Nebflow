@@ -14,6 +14,7 @@ import { t, getLocale } from './i18n.js';
  * @property {number} [size] - bytes
  * @property {string} [path] - path relative to the workspace root
  * @property {string} [rootPath] - workspace root
+ * @property {{pageStart?: number}} [anchor] - #303 C3: document-reference jump target (pdf page)
  */
 
 /**

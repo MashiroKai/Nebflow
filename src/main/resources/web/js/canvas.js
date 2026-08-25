@@ -38,6 +38,11 @@ let activeTabId = null;
 const previewTabs = new Map();  // previewKey -> tabId
 const previewKeyOf = (type, absPath) => absPath ? 'file' : (type || 'generic');
 
+// #303 C3: page anchors from document-reference jumps, keyed by absPath. A
+// ref click opens with empty content (readFile round trip) and the response
+// item carries no anchor — stash it here and consume at render time.
+const pendingRefAnchors = new Map();
+
 // ── #303 global-reference: build a Reference from a tab's current state ──
 // Best-effort anchor extraction per viewer type (PDF page range, Monaco text
 // selection). Tabs without absPath (panel tabs) produce no ref. The reference
@@ -712,7 +717,7 @@ export async function openWorkspaceItem(item) {
   // id is let (not const): the absPath dedupe below may rewrite it to the
   // existing tab's id for the same file.
   let { id } = item;
-  const { itemType, title, content, absPath, size, pinned } = item;
+  const { itemType, title, content, absPath, size, pinned, anchor } = item;
   if (!id) return;
 
   // URL type — render the page in a sandboxed iframe. Handled before all
@@ -780,6 +785,10 @@ export async function openWorkspaceItem(item) {
     // Background refresh responses must not steal activation — the user may
     // have clicked another tab while the request was in flight.
     if (!item.background) setActiveTab(id);
+    // #303 C3: reference jump to an already-open tab — scroll the live viewer
+    // (pdf.js exposes pane._scrollToPage) instead of re-rendering.
+    const pgExisting = anchor && anchor.pageStart;
+    if (Number.isFinite(pgExisting)) /** @type {any} */ (entry.paneEl)._scrollToPage?.(pgExisting);
     return;
   }
 
@@ -788,6 +797,11 @@ export async function openWorkspaceItem(item) {
   // showing a blank tab. The fileContent handler will dispatch a new
   // workspace-open-item with full content and correct itemType.
   if (content === '' && itemType === '' && absPath) {
+    // #303 C3: a document-reference jump carries a page anchor — stash it so
+    // it survives the readFile round trip (the response item has no anchor)
+    // and is consumed at render time below.
+    const pgStash = anchor && anchor.pageStart;
+    if (Number.isFinite(pgStash)) pendingRefAnchors.set(absPath, { pageStart: pgStash });
     Promise.all([
       import('./ws.js'),
       import('./state.js')
@@ -844,7 +858,12 @@ export async function openWorkspaceItem(item) {
   });
 
   const { renderFile } = await import('./fileViewers.js');
-  await renderFile(pane, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
+  // #303 C3: consume a stashed reference-jump anchor (empty-content open) or
+  // one carried directly on the item, and hand it to the viewer.
+  const stashAnchor = absPath ? pendingRefAnchors.get(absPath) : undefined;
+  if (absPath) pendingRefAnchors.delete(absPath);
+  const renderAnchor = anchor || stashAnchor;
+  await renderFile(pane, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor });
   entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
 }
 
