@@ -3627,8 +3627,11 @@ class WebSocketRoutes(
     * The headless turn endpoint (POST /api/sessions/:id/turn) mirrors this
     * same sequence via [dispatchUserText] — keep the two in sync.
     *
-    * 2026-08-25 裁定：用户消息到达 → 整个系统解除冻结（本次冻结窗口整体作废，
-    * 所有 agent 恢复工作；下一冻结段照常冻结）——dispatch 前先 skipCurrentFreezeWindow。
+    * 2026-08-25 22:28 裁定（覆盖同日 14:40 的「用户消息=全局跳过」）：发送
+    * 文字消息**不再**触发全局解冻——冻结态下解冻的唯一入口 = skipFreeze 命令
+    * （前端「跳过本次」按钮）或冻结段自然结束。消息到达 Frozen agent 后由
+    * dispatch gate 拦截排队（B5 系统输入排队语义），不唤醒不解冻。前端在
+    * 冻结态禁用输入栏，此处不再调 skipCurrentFreezeWindow 保持语义干净。
     */
   private def handleUserText(sessionId: String, content: String, source: String): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
@@ -3637,7 +3640,6 @@ class WebSocketRoutes(
           sessionId,
           List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
         ) *>
-        skipCurrentFreezeWindow *>
         ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
     else IO.unit
   end handleUserText
@@ -3695,11 +3697,13 @@ class WebSocketRoutes(
   end notifyTaskCancelled
 
   /**
-    * 用户消息 → 全局跳过当前冻结窗口（2026-08-25 裁定）：当前处于冻结窗口时，
-    * 置 freezeSkipUntilRef = 窗口结束时刻（eval 的 nextChangeAt；全天冻结兜底
-    * 下一午夜）并立即 FreezeScheduler.scan——所有 Frozen agent 收到
-    * CheckFreezeGate 重评估 → evalWithSkip 视为段外 → 恢复工作。窗口结束后
-    * skip 自然过期，下一冻结段照常冻结（跳过非永久）。
+    * 冻结「跳过本次」唯一入口（2026-08-25 22:28 裁定）：前端冻结按钮发
+    * skipFreeze 命令 → 置 freezeSkipUntilRef = 窗口结束时刻（eval 的
+    * nextChangeAt；全天冻结兜底下一午夜）并立即 FreezeScheduler.scan——所有
+    * Frozen agent 收到 CheckFreezeGate 重评估 → evalWithSkip 视为段外 →
+    * 恢复工作（drain 冻结期间排队的消息）。窗口结束后 skip 自然过期，下一
+    * 冻结段照常冻结（跳过非永久）。用户文字消息**不再**触发本函数（22:28
+    * 裁定，见 handleUserText）。
     */
   private def skipCurrentFreezeWindow: IO[Unit] =
     for
@@ -3711,7 +3715,7 @@ class WebSocketRoutes(
         if window.frozen then
           val until = nebflow.core.schedule.FreezeSchedule.skipUntilFor(window, now)
           logger.info(
-            s"User message voids current freeze window (skipUntil=${until.map(u => new java.util.Date(u).toString).getOrElse("none")})"
+            s"Freeze window skipped (skipFreeze; skipUntil=${until.map(u => new java.util.Date(u).toString).getOrElse("none")})"
           ) *>
             sharedResources.freezeSkipUntilRef.set(until) *>
             nebflow.core.processor.FreezeScheduler.scan(sharedResources)
