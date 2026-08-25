@@ -776,6 +776,15 @@ case class SessionContext(
    */
   isSubTaskWorker: Boolean = false,
   /**
+   * #406: true when this agent is a one-shot FlowExecute node (spawned by
+   * FlowDagExecutor.executeAgent with isFlowNode=true). Flow nodes are leaf
+   * agents: FlowExecute/FlowTrigger/SubTask/Delegate are stripped to prevent
+   * recursive flow-in-flow explosions — the same leaf rule SubTask workers
+   * get. Differs from isSubTaskWorker in that Mail stays available for
+   * team-category node agents (flow nodes may Mail the caller's team).
+   */
+  isFlowNode: Boolean = false,
+  /**
    * #30: true when this agent is a Mail ask fork (forkToSession). Ask forks
    * only answer a question — side-effect tools (Mail/Write/Edit/Bash/…) are
    * stripped from the allowed set so the fork can never dispatch work or
@@ -1033,7 +1042,8 @@ object AgentState:
     rootSessionId: String = "",
     isSubTaskWorker: Boolean = false,
     forkContext: Boolean = false,
-    freezeExempt: Boolean = false
+    freezeExempt: Boolean = false,
+    isFlowNode: Boolean = false
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -1057,7 +1067,8 @@ object AgentState:
         rootSessionId = rootSessionId,
         isSubTaskWorker = isSubTaskWorker,
         forkContext = forkContext,
-        freezeExempt = freezeExempt
+        freezeExempt = freezeExempt,
+        isFlowNode = isFlowNode
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
@@ -1104,6 +1115,7 @@ extension (s: AgentState)
   def rootSessionId: String = s.session.rootSessionId
   def expectsMail: Boolean = s.session.expectsMail
   def isSubTaskWorker: Boolean = s.session.isSubTaskWorker
+  def isFlowNode: Boolean = s.session.isFlowNode
   def forkContext: Boolean = s.session.forkContext
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)

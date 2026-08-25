@@ -128,7 +128,13 @@ object FlowDagExecutor:
     // Structured trigger parameters (validated by FlowTriggerTool against
     // flow.params schema). Resolved into node inputs via $params.<name>;
     // a missing key (no default, not provided) inserts a visible placeholder.
-    params: Map[String, Json] = Map.empty
+    params: Map[String, Json] = Map.empty,
+    // #406: true when this flow was defined inline by FlowExecute (one-shot,
+    // no flows/ directory). Dynamic flows resolve node agents from the GLOBAL
+    // library only — never from flows/<name>/agents/ (a dynamic flow named
+    // "research" must not accidentally pick up the predefined research flow's
+    // specialized agents). FlowReport is injected by execution context.
+    dynamic: Boolean = false
   ): IO[Either[String, String]] =
 
     val emitWs = wsSend.getOrElse((_: Json) => IO.unit)
@@ -267,14 +273,30 @@ object FlowDagExecutor:
         case Some(node) =>
           for
             inputText <- resolveInput(node.input)
-            agentEntryOpt <- nebflow.core.entity.EntityLoader.loadFlowAgent(flow.name, node.agent)
+            // #406: dynamic flows resolve node agents from the global library
+            // only (no flows/<name>/agents/ shadowing — see execute docstring).
+            agentEntryOpt <-
+              if dynamic then nebflow.core.entity.EntityLoader.loadAgent(node.agent)
+              else nebflow.core.entity.EntityLoader.loadFlowAgent(flow.name, node.agent)
             result <- agentEntryOpt match
               case None =>
                 IO.pure(
                   NodeResult(nodeId, "", false, Some(s"Agent '${node.agent}' not found in flow or global library"))
                 )
               case Some(entry) =>
-                val agentDef = entry.toAgentDef.copy(flowContract = nodeContract(node))
+                // #406: FlowReport is injected by EXECUTION CONTEXT — every
+                // flow node (predefined OR dynamic) gets the verdict tool
+                // regardless of the agent's category. Predefined flow agents
+                // (category=flow) already receive it via fixedToolsFor; dynamic
+                // flows reuse standalone/team agents which would otherwise lack
+                // it. The tools list is appended (survives "*" — FlowReport is
+                // already in ALL_TOOLS there; survives explicit lists — appended
+                // after the agent's own names).
+                val baseDef = entry.toAgentDef
+                val agentDef = baseDef.copy(
+                  flowContract = nodeContract(node),
+                  tools = if baseDef.tools.contains("FlowReport") then baseDef.tools else baseDef.tools :+ "FlowReport"
+                )
                 executeAgent(
                   nodeId,
                   node.agent,
@@ -975,7 +997,10 @@ object FlowDagExecutor:
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
           expectsMail = false,
-          rootSessionId = effectiveRootSessionId
+          rootSessionId = effectiveRootSessionId,
+          // #406: one-shot flow nodes are leaves — FlowExecute/FlowTrigger/
+          // SubTask/Delegate stripped by buildAllowedToolSet (isFlowNode rule).
+          isFlowNode = true
         ),
         s"dagnode-${nodeId.take(10)}-${sessionId.take(8)}"
       )

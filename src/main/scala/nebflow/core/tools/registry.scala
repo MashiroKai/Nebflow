@@ -44,6 +44,9 @@ object ToolRegistry:
       // Flow DAG pipeline triggering — whitelist-driven via agent.json flows
       // (injected by buildAllowedToolSet for agents declaring flows)
       "FlowTrigger" -> FlowTriggerTool,
+      // One-shot dynamic flow execution (#406) — inline DAG, no persistence.
+      // Mechanism-layer injected for Team members + Nebula (fixedToolsFor).
+      "FlowExecute" -> FlowExecuteTool,
       // Team-member task delegation (self-clone + ephemeral worker, no Mail identity)
       "SubTask" -> SubTaskTool,
       // Cross-device file transfer

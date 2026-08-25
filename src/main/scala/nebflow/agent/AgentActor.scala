@@ -319,7 +319,9 @@ object AgentActor extends AgentCore with AgentSession:
     /** #30: Mail ask fork — side-effect tools stripped (see SessionContext.forkContext). */
     forkContext: Boolean = false,
     /** D11 交互豁免：freezeExempt 会话不参与冻结（PlanAgent.spawn 传 true）。 */
-    freezeExempt: Boolean = false
+    freezeExempt: Boolean = false,
+    /** #406: one-shot FlowExecute node — leaf tools stripped (see SessionContext.isFlowNode). */
+    isFlowNode: Boolean = false
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -361,7 +363,8 @@ object AgentActor extends AgentCore with AgentSession:
             rootSessionId = effectiveRootSessionId,
             isSubTaskWorker = isSubTaskWorker,
             forkContext = forkContext,
-            freezeExempt = freezeExempt
+            freezeExempt = freezeExempt,
+            isFlowNode = isFlowNode
           )
         )(using ctx)
       )
