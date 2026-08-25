@@ -2658,39 +2658,100 @@ onMessage('forkComplete', (msg, view) => {
   }, true); // capture phase — intercept before other handlers
 })();
 
+// #396 Header adaptive layout (spec 52b19a64, frozen): measurement-driven
+// priority hiding + center clamp — ANY width zero icon overlap; no flex-wrap;
+// no "⋯" overflow menu (user 2026-08-25 裁定: 仅自动隐藏). The fixed set
+// (sidebar-toggle / header-model-info / memory-btn / bg-indicator / bgagent-
+// indicator / canvas-toggle-btn) is never hidden; non-fixed right buttons hide
+// by priority P1→P5 (bypass > voice > search > reminder > daemon), session-name
+// truncates first (ellipsis) then hides (P5).
 (function initHeaderResizeObserver() {
   const header = document.getElementById('header');
   if (!header || !window.ResizeObserver) return;
-  let compactMode = false;
-  let rafId = null;
-  let suppressUntil = 0;
-  const check = () => {
-    if (rafId) cancelAnimationFrame(rafId);
-    rafId = requestAnimationFrame(() => {
-      rafId = null;
-      if (performance.now() < suppressUntil) return;
-      const center = header.querySelector('.header-center');
-      if (!center) return;
-      const cw = center.clientWidth;
-      if (!compactMode && cw < 140) {
-        compactMode = true;
-        header.classList.add('header-compact');
-        // Suppress callbacks for 300ms — the class toggle changes center
-        // width, which would re-trigger ResizeObserver and bounce back.
-        suppressUntil = performance.now() + 300;
-      } else if (compactMode && cw > 300) {
-        compactMode = false;
-        header.classList.remove('header-compact');
-        suppressUntil = performance.now() + 300;
+  const HIDE = 'nb-header-hide';
+  // Non-fixed right-cluster controls in hide-priority order (lowest first).
+  const rightPrio = [
+    () => document.getElementById('bypass-dropdown'),
+    () => document.getElementById('voice-toggle-btn'),
+    () => document.getElementById('search-btn'),
+    () => document.getElementById('reminder-btn'),
+    () => document.getElementById('daemon-btn'),
+  ];
+  const centerEl = () => /** @type {HTMLElement|null} */ (header.querySelector('.header-center'));
+  const leftEl = () => /** @type {HTMLElement|null} */ (header.querySelector('.header-left'));
+  const rightEl = () => /** @type {HTMLElement|null} */ (header.querySelector('.header-right'));
+  let raf = null;
+
+  function layout() {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      raf = null;
+      const center = centerEl();
+      const session = document.getElementById('session-name');
+      const mem = document.getElementById('memory-btn');
+      if (!center || !session || !mem) return;
+      // Reset to the widest reasonable state each pass, then hide by priority.
+      rightPrio.forEach(fn => { const el = fn(); if (el) el.classList.remove(HIDE); });
+      session.classList.remove(HIDE);
+      const headerW = header.clientWidth;
+      const memW = mem.offsetWidth || 28;
+      const CS_GAP = 8;         // .header-center flex gap (session ↔ memory)
+      const MIN_SESSION = 28;   // §6: session hides if it can't seat a meaningful chunk
+      // Zero-overlap clamp for the absolute-centered .header-center (left:50%,
+      // translateX(-50%)). A centered box of width c clears the left cluster iff
+      // c ≤ 2·(centerX - leftCluster.right), and the right cluster iff
+      // c ≤ 2·(rightCluster.left - centerX). We measure the real pixel rects so
+      // header border+padding are accounted for (§8 A2 zero-overlap guarantee).
+      const measure = () => {
+        const hr = header.getBoundingClientRect();
+        const cx = hr.left + hr.width / 2;            // center of the sticky box
+        const leftR = leftEl() ? leftEl().getBoundingClientRect() : { right: cx };
+        const rightR = rightEl() ? rightEl().getBoundingClientRect() : { left: cx };
+        const leftRoom = Math.max(0, 2 * (cx - leftR.right));
+        const rightRoom = Math.max(0, 2 * (rightR.left - cx));
+        const safe = Math.min(leftRoom, rightRoom);
+        const leftW = leftEl() ? leftEl().offsetWidth : 0;
+        const rightW = rightEl() ? rightEl().offsetWidth : 0;
+        return { safe, leftW, rightW };
+      };
+      // Greedy: hide non-fixed right buttons P1→P5 (bypass first) until the
+      // centered center box can seat the memory button plus a meaningful
+      // MIN_SESSION chunk without overlap AND the right cluster no longer
+      // collides with the left. §4.3 right-cluster fill; session hides last.
+      for (let i = 0; i <= rightPrio.length; i++) {
+        const { safe, leftW, rightW } = measure();
+        const need = memW + CS_GAP + MIN_SESSION;
+        if (safe >= need && leftW + rightW <= headerW) break;
+        if (i < rightPrio.length) {
+          const el = rightPrio[i]();
+          if (el) { el.classList.add(HIDE); continue; }       // hide this priority
+        }
+        session.classList.add(HIDE);                          // P5: hide session
+        break;
       }
+      // Apply the clamp after the final visibility state. session-name ellipsizes
+      // inside the center; if safe < memW (pathological <240px) we keep the mem
+      // button floor and accept the §8 A10 theoretical clip rather than overlap.
+      const { safe } = measure();
+      center.style.maxWidth = Math.max(memW, safe) + 'px';
+      center.style.minWidth = memW + 'px';
     });
-  };
-  const center = header.querySelector('.header-center');
-  if (center) {
-    const ro = new ResizeObserver(check);
-    ro.observe(center);
   }
-  check();
+
+  const ro = new ResizeObserver(layout);
+  if (header) ro.observe(header);
+  const mainEl = document.getElementById('main');
+  if (mainEl) ro.observe(mainEl);
+  // Observe the fixed-set, content-driven elements too. When a dynamic fixed
+  // element appears (context-ring / memory / bg-indicator / bgagent-indicator)
+  // it grows its cluster WITHOUT resizing #header, so ResizeObserver on the
+  // header alone would miss the reflow and leave a stale (too-loose) clamp
+  // that overlaps (§8 A2). These elements are never toggled by layout() so
+  // observing them cannot cause a feedback loop.
+  ['sidebar-toggle', 'header-model-info', 'memory-btn',
+    'bg-indicator', 'bgagent-indicator', 'canvas-toggle-btn']
+    .forEach(id => { const el = document.getElementById(id); if (el) ro.observe(el); });
+  layout();
 })();
 
 // ---------- 5. Initialize UI modules ----------
