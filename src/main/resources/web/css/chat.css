@@ -347,9 +347,77 @@
 }
 #bgagent-dropdown.hidden { display: none; }
 
-.bgagent-running { color: rgb(var(--sapphire)); font-size: 11px; }
-.bgagent-done { color: var(--color-success); font-size: 11px; }
 .bgagent-tool { font-size: 10px; color: var(--color-text-muted); display: block; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Sub-agents panel rows (2026-08-25 spec, frozen @142535e9) ──────────
+   State ladder: active=green+pulse, idle=amber, stuck=red+blink,
+   error=red solid, frozen=sapphire, done=neutral muted. Color is ALWAYS
+   paired with a text label (Carbon status-indicator / spec §7). */
+.bg-dropdown-list { max-height: 60vh; overflow-y: auto; }
+.bg-dropdown-empty {
+  padding: 14px 12px;
+  font-size: 12px;
+  color: var(--color-frame-text-muted);
+  text-align: center;
+}
+.bg-task-row { cursor: pointer; }
+.bg-task-row.done { opacity: 0.6; }
+.bg-task-row:focus-visible {
+  outline: none;
+  background: var(--color-frame-hover);
+  box-shadow: inset 2px 0 0 rgb(var(--sapphire) / 0.8);
+}
+.bg-task-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap; /* narrow viewport: meta wraps to a second line, never overflows */
+  min-width: 0;
+}
+.bg-task-state {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-frame-text-muted);
+  flex-shrink: 0;
+}
+.bg-task-state.bg-state-stuck,
+.bg-task-state.bg-state-error { color: var(--color-error); }
+.bg-task-state.bg-state-frozen { color: rgb(var(--sapphire)); }
+.bg-task-state.bg-state-done { color: var(--color-frame-text-dim); }
+.bg-task-kind {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  color: var(--color-frame-text-muted);
+  flex-shrink: 0;
+}
+.bg-task-uptime {
+  font-size: 10px;
+  color: var(--color-frame-text-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.bg-task-retries {
+  font-size: 11px;
+  color: var(--color-frame-text-dim);
+  flex-shrink: 0;
+}
+.bg-task-stuck {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-error);
+  margin-top: 2px;
+}
+.bg-task-status.bg-status-error { background: var(--color-error); box-shadow: 0 0 4px rgba(244,67,54,0.5); }
+.bg-task-status.bg-status-frozen { background: rgb(var(--sapphire)); box-shadow: 0 0 4px rgb(var(--sapphire) / 0.4); }
+.bg-task-status.bg-status-done { background: var(--color-frame-text-muted); box-shadow: none; }
+@media (prefers-reduced-motion: reduce) {
+  .bg-task-status { animation: none !important; }
+}
 
 /* Background tasks dropdown — sapphire glass.
    Positioned relative to #main (not .header-right) so backdrop-filter works. */
@@ -443,7 +511,7 @@
   border-radius: 50%;
   flex-shrink: 0;
 }
-.bg-task-status.bg-status-active { background: var(--color-success); box-shadow: 0 0 4px rgba(76,175,80,0.5); }
+.bg-task-status.bg-status-active { background: var(--color-success); box-shadow: 0 0 4px rgba(76,175,80,0.5); animation: bg-pulse 1.5s ease-in-out infinite; }
 .bg-task-status.bg-status-idle { background: #d4a030; box-shadow: 0 0 4px rgba(212,160,48,0.4); }
 .bg-task-status.bg-status-stuck { background: var(--color-error); box-shadow: 0 0 4px rgba(244,67,54,0.5); animation: bg-status-blink 1s ease-in-out infinite; }
 @keyframes bg-status-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }

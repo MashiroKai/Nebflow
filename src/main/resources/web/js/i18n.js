@@ -86,6 +86,7 @@ export function applyLocaleToHtml() {
     'memory-modal-save': ['text', 'memory.save'],
     'memory-content-input': ['placeholder', 'memory.placeholder'],
     'daemon-btn': ['title', 'daemons.title'],
+    'bgagent-indicator': ['title', 'subagents.indicatorTitle'],
   };
 
   // Static elements with IDs
