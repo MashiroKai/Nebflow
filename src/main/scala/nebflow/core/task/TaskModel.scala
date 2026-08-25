@@ -5,7 +5,7 @@ import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.generic.semiauto.deriveCodec
 
 enum TaskStatus:
-  case Pending, InProgress, NeedsConfirmation, Completed, Failed, Dismissed
+  case Pending, InProgress, NeedsConfirmation, Completed, Failed, Dismissed, Cancelled
 
 object TaskStatus:
 
@@ -22,6 +22,7 @@ object TaskStatus:
     case TaskStatus.Completed => "completed"
     case TaskStatus.Failed => "failed"
     case TaskStatus.Dismissed => "dismissed"
+    case TaskStatus.Cancelled => "cancelled"
 
   given Codec[TaskStatus] = io.circe.Codec.from(
     io.circe.Decoder.decodeString.emap {
@@ -31,6 +32,7 @@ object TaskStatus:
       case "completed" => Right(TaskStatus.Completed)
       case "failed" => Right(TaskStatus.Failed)
       case "dismissed" => Right(TaskStatus.Dismissed)
+      case "cancelled" => Right(TaskStatus.Cancelled)
       case other => Left(s"Unknown task status: $other")
     },
     io.circe.Encoder.encodeString.contramap {
@@ -40,6 +42,7 @@ object TaskStatus:
       case TaskStatus.Completed => "completed"
       case TaskStatus.Failed => "failed"
       case TaskStatus.Dismissed => "dismissed"
+      case TaskStatus.Cancelled => "cancelled"
     }
   )
 
@@ -55,7 +58,13 @@ end TaskStatus
 case class TaskNote(
   content: String,
   links: List[String] = Nil,
-  at: Option[String] = None
+  at: Option[String] = None,
+  /** Structured note kind (task-cancel #35): "cancel" marks a user-cancel
+    * reason note — the archive view renders it in the dedicated cancel-reason
+    * slot (when cancelReason is absent) and excludes it from the generic
+    * notes list (avoid rendering the same reason twice). Absent for legacy
+    * notes (withDefaults → None). */
+  kind: Option[String] = None
 )
 
 object TaskNote:
@@ -89,7 +98,8 @@ case class Task(
   blockedBy: List[String] = Nil,
   createdAt: Option[String] = None,
   updatedAt: Option[String] = None,
-  /** When the task entered completed/failed (terminal). None while active. */
+  /** When the task entered a terminal state (completed/failed/cancelled).
+    * None while active. */
   completedAt: Option[String] = None,
   notes: List[TaskNote] = Nil,
   events: List[TaskEvent] = Nil,
@@ -103,7 +113,12 @@ case class Task(
   /** todo-panel v2 §2.4 (C17): times the user has returned this task from
     * needs_confirmation back to in_progress. withDefaults keeps 535+ legacy
     * JSON files zero-migration (absent key decodes to 0). */
-  returnCount: Int = 0
+  returnCount: Int = 0,
+  /** task-cancel #35: why the task was cancelled. Set by the user-facing
+    * cancel() path (WS cancelTask reason) — the agent path (TaskUpdate
+    * status=cancelled) records the reason as a note instead. Absent = never
+    * cancelled (withDefaults keeps legacy files zero-migration). */
+  cancelReason: Option[String] = None
 )
 
 object Task:

@@ -24,6 +24,12 @@ trait TaskStore:
     * in_progress with feedback. Raises IllegalStateException when the task is
     * not awaiting confirmation or is a human todo. */
   def `return`(sessionId: String, taskId: String, feedback: String): IO[Option[Task]]
+  /** task-cancel #35: user cancels an active agent task (pending /
+    * in_progress / needs_confirmation) → terminal `cancelled` with a durable
+    * reason. Raises IllegalStateException on human todos and on terminal
+    * sources (completed/failed/dismissed/cancelled — cancelled is idempotent
+    * no-op). Caller turns the exception into a taskError frame. */
+  def cancel(sessionId: String, taskId: String, reason: String): IO[Option[Task]]
   def delete(sessionId: String, taskId: String): IO[Boolean]
   def deleteAll(sessionId: String): IO[Unit]
 
@@ -163,26 +169,32 @@ object FileTaskStore extends TaskStore:
   // user revises a task via DIALOGUE (no panel click) the agent must be able to
   // take it back itself — update() additionally requires a note describing the
   // user feedback (anti-abuse: no silent self-return without a recorded reason).
+  // task-cancel #35: cancelled is a terminal state reachable from the three
+  // active sources (pending/in_progress/needs_confirmation) — no out-edges.
   private def isValidTransition(from: TaskStatus, to: TaskStatus): Boolean =
     (from, to) match
       case (TaskStatus.Pending, TaskStatus.InProgress) => true
       case (TaskStatus.Pending, TaskStatus.NeedsConfirmation) => true // fast-complete path
       case (TaskStatus.Pending, TaskStatus.Completed) => true
       case (TaskStatus.Pending, TaskStatus.Failed) => true
+      case (TaskStatus.Pending, TaskStatus.Cancelled) => true // #35 user/agent cancel
       case (TaskStatus.Pending, TaskStatus.Pending) => true // no-op
       case (TaskStatus.InProgress, TaskStatus.NeedsConfirmation) => true // C15: the ONLY completion lane
       case (TaskStatus.InProgress, TaskStatus.Completed) => true
       case (TaskStatus.InProgress, TaskStatus.Failed) => true
+      case (TaskStatus.InProgress, TaskStatus.Cancelled) => true // #35
       case (TaskStatus.InProgress, TaskStatus.InProgress) => true // no-op
       case (TaskStatus.NeedsConfirmation, TaskStatus.InProgress) => true // 2026-08-24: agent return on dialogue feedback (note required in update())
       case (TaskStatus.NeedsConfirmation, TaskStatus.NeedsConfirmation) => true // no-op
       case (TaskStatus.NeedsConfirmation, TaskStatus.Completed) => true // user confirm (complete())
       case (TaskStatus.NeedsConfirmation, TaskStatus.Dismissed) => true // user dismiss
+      case (TaskStatus.NeedsConfirmation, TaskStatus.Cancelled) => true // #35
       case (TaskStatus.Completed, TaskStatus.Completed) => true // no-op
       case (TaskStatus.Completed, TaskStatus.Dismissed) => true
       case (TaskStatus.Failed, TaskStatus.Failed) => true // no-op
       case (TaskStatus.Failed, TaskStatus.Dismissed) => true
       case (TaskStatus.Dismissed, TaskStatus.Dismissed) => true // no-op
+      case (TaskStatus.Cancelled, TaskStatus.Cancelled) => true // no-op (idempotent re-cancel)
       case _ => false
 
   /** todo-panel §2.2: human tasks have no in-progress state — the user either
@@ -259,6 +271,19 @@ object FileTaskStore extends TaskStore:
                 s"Task #$taskId is awaiting user confirmation: returning it to in_progress requires a note describing the user feedback (TaskUpdate note field)"
               )
             )
+          else if
+            // task-cancel #35: the agent may cancel a task (pending /
+            // in_progress / needs_confirmation) but must record the reason — a
+            // note is mandatory (anti-abuse, mirrors the return path above).
+            newStatus == TaskStatus.Cancelled &&
+            existing.status != TaskStatus.Cancelled &&
+            !updates.note.exists(_.trim.nonEmpty)
+          then
+            IO.raiseError(
+              new IllegalStateException(
+                s"Task #$taskId: cancelling a task requires a note describing the cancel reason (TaskUpdate note field)"
+              )
+            )
           else
             val newBlocks = (existing.blocks ++ updates.addBlocks.getOrElse(Nil)).distinct
               .filterNot(updates.removeBlocks.getOrElse(Nil).contains)
@@ -268,11 +293,12 @@ object FileTaskStore extends TaskStore:
             val now = Instant.now().toString
 
             // C2: completedAt = the moment the task enters a terminal state
-            // (completed or failed). Preserved once set (dismiss keeps it).
+            // (completed, failed or cancelled — #35). Preserved once set
+            // (dismiss keeps it).
             val newStatus2 = newStatus
             val entersTerminal =
-              (newStatus2 == TaskStatus.Completed || newStatus2 == TaskStatus.Failed) &&
-                existing.status != TaskStatus.Completed && existing.status != TaskStatus.Failed
+              (newStatus2 == TaskStatus.Completed || newStatus2 == TaskStatus.Failed || newStatus2 == TaskStatus.Cancelled) &&
+                existing.status != TaskStatus.Completed && existing.status != TaskStatus.Failed && existing.status != TaskStatus.Cancelled
             val newCompletedAt =
               if entersTerminal then Some(now) else existing.completedAt
 
@@ -334,7 +360,10 @@ object FileTaskStore extends TaskStore:
     ))
 
   def listVisible(sessionId: String): IO[List[Task]] =
-    list(sessionId).map(_.filter(_.status != TaskStatus.Dismissed))
+    // #35: cancelled is terminal-invisible (panel hides it; it surfaces only in
+    // the archive) — same treatment as dismissed, so the authoritative
+    // taskListUpdate push converges every client's panel to an empty row.
+    list(sessionId).map(_.filter(t => t.status != TaskStatus.Dismissed && t.status != TaskStatus.Cancelled))
 
   def dismiss(sessionId: String, taskId: String): IO[Option[Task]] =
     update(sessionId, taskId, TaskUpdateInput(status = Some(TaskStatus.Dismissed)))
@@ -492,6 +521,53 @@ object FileTaskStore extends TaskStore:
             updatedAt = Some(now),
             notes = if feedback.nonEmpty then existing.notes :+ TaskNote(feedback, Nil, Some(now)) else existing.notes,
             events = (existing.events ++ evBase).takeRight(MaxEvents)
+          )
+          writeTask(sessionId, updated).as(Some(updated))
+    }
+
+  /** task-cancel #35: user cancels an active agent task. Mirrors complete()'s
+    * structure: validates against the authoritative state, raises
+    * IllegalStateException (caller turns it into a taskError frame) when the
+    * task is a human todo or not in a cancellable source state. Human todos
+    * are the user's own reminders — they carry the complete circle only, no
+    * cancel semantics (frontend isCancellable is agent-only, symmetric guard
+    * here). On success: status=cancelled (terminal), cancelReason persisted,
+    * completedAt stamped, a kind="cancel" note + status event recorded.
+    * Re-cancelling an already-cancelled task is an idempotent no-op (raced
+    * double-send, mirrors complete()'s re-complete path). */
+  def cancel(sessionId: String, taskId: String, reason: String): IO[Option[Task]] =
+    get(sessionId, taskId).flatMap {
+      case None => IO.pure(None)
+      case Some(existing) =>
+        if existing.taskKind == "human" then
+          IO.raiseError(
+            new IllegalStateException(s"Task #$taskId is a human todo — human todos have no cancel")
+          )
+        else if !isValidTransition(existing.status, TaskStatus.Cancelled) then
+          IO.raiseError(
+            new IllegalStateException(
+              s"Invalid cancel: task #$taskId is ${TaskStatus.wireName(existing.status)}, " +
+                s"not a cancellable active state (only pending/in_progress/needs_confirmation can be cancelled)"
+            )
+          )
+        else if existing.status == TaskStatus.Cancelled then
+          // Idempotent re-cancel (user double-send raced a list refresh):
+          // keep the original cancelReason, just return the task.
+          IO.pure(Some(existing))
+        else
+          val now = Instant.now().toString
+          val reasonStr = if reason.trim.nonEmpty then reason.trim else "cancelled by user"
+          val updated = existing.copy(
+            status = TaskStatus.Cancelled,
+            updatedAt = Some(now),
+            completedAt = Some(now),
+            cancelReason = Some(reasonStr),
+            notes = existing.notes :+ TaskNote(reasonStr, Nil, Some(now), kind = Some("cancel")),
+            events = (existing.events :+ TaskEvent(
+              "status",
+              Some(s"${TaskStatus.wireName(existing.status)}→cancelled"),
+              Some(now)
+            )).takeRight(MaxEvents)
           )
           writeTask(sessionId, updated).as(Some(updated))
     }
