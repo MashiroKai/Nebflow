@@ -17,6 +17,7 @@ import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
+import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
 
 // ── Per-agent state ───────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -174,11 +175,24 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   border-top-color: rgb(var(--sapphire) / 0.30);
   box-shadow: 0 0 12px rgb(var(--sapphire-glow) / 0.18);
 }
+/* Error-recovery frozen tile (frozen-error-recovery plan UI-7): amber tint +
+   amber dot — distinct from the sapphire schedule park. Applied as a modifier
+   alongside .frozen when the agentFrozen reason is error-family. */
+.flow-agent-footer.frozen.error {
+  background: rgb(var(--amber) / 0.09);
+  border-top-color: rgb(var(--amber) / 0.34);
+  box-shadow: 0 0 12px rgb(var(--amber-glow) / 0.18);
+}
 @media (prefers-color-scheme: dark) {
   .flow-agent-footer.frozen {
     background: rgb(var(--sapphire) / 0.12);
     border-top-color: rgb(var(--sapphire) / 0.35);
     box-shadow: 0 0 12px rgb(var(--sapphire-glow) / 0.24);
+  }
+  .flow-agent-footer.frozen.error {
+    background: rgb(var(--amber) / 0.14);
+    border-top-color: rgb(var(--amber) / 0.40);
+    box-shadow: 0 0 12px rgb(var(--amber-glow) / 0.24);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -191,6 +205,29 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 .flow-agent-footer.frozen .fa-task {
   color: rgb(var(--sapphire));
+}
+.flow-agent-footer.frozen.error .fa-status-dot {
+  background: rgb(var(--amber)); opacity: 1;
+  box-shadow: 0 0 0 3px rgb(var(--amber) / 0.18);
+}
+.flow-agent-footer.frozen.error .fa-task {
+  color: rgb(var(--amber));
+}
+.flow-agent-footer .fa-task .error-icon {
+  width: 13px;
+  height: 13px;
+  color: rgb(var(--amber));
+  vertical-align: -2px;
+  margin-right: 4px;
+  animation: error-pulse 1.6s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.flow-agent-footer .fa-task .fa-task-text {
+  font-weight: 500;
+  vertical-align: middle;
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-agent-footer .fa-task .error-icon { animation: none; }
 }
 /* #343 phase granularity: thinking = sapphire pulse, tool = amber pulse */
 .flow-agent-footer.thinking .fa-status-dot {
@@ -691,9 +728,13 @@ export function applyAgentMeta(msg) {
   } else if (msg.type === 'agentFrozen') {
     entry.meta.status = 'frozen';
     entry.meta.frozenResumeAt = msg.resumeAt || null;
+    entry.meta.freezeReason = msg.reason; // UI-7: error-family → amber tile
+    entry.meta.escalation = msg.escalation ? msg.escalation.level : null;
   } else if (msg.type === 'agentResumed') {
     entry.meta.status = 'running';
     entry.meta.frozenResumeAt = null;
+    entry.meta.freezeReason = null;
+    entry.meta.escalation = null;
   } else if (msg.type === 'agentThinking') {
     // Granular phase (#343): LLM reasoning in progress — set once, subsequent
     // delta chunks no-op so the footer doesn't churn on every token.
@@ -789,19 +830,29 @@ export function handleFlowAgentHistory(msg) {
 function updateFooterStatus(entry) {
   if (!entry.footerEl) return;
   const status = entry.meta.status || '';
-  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding', 'stuck', 'stopped');
+  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding', 'stuck', 'stopped', 'error');
   if (status) entry.footerEl.classList.add(status);
   const taskEl = entry.footerEl.querySelector('.fa-task');
+  const isErrorFrozen = status === 'frozen' && isErrorReason(entry.meta.freezeReason);
+  // UI-7: error-recovery frozen → amber tile (add .error modifier for the dot/text).
+  if (isErrorFrozen) entry.footerEl.classList.add('error');
   if (taskEl) {
     if (status === 'frozen') {
-      // Frozen tile: "已冻结 · HH:mm 恢复" — resumeAt epoch → local HH:mm
-      const at = entry.meta.frozenResumeAt;
-      const clock = at ? (() => {
-        const d = new Date(at);
-        if (Number.isNaN(d.getTime())) return '';
-        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-      })() : '';
-      taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
+      if (isErrorFrozen) {
+        // Error family: reason short text (重试中 / 等恢复 / 等待上级决策).
+        const escTxt = errorTileText(entry.meta);
+        // Show the title icon + short reason (no HH:mm — it's not a schedule wait).
+        taskEl.innerHTML = `${errorIcon(entry.meta.freezeReason, 'error-icon')}<span class="fa-task-text">${escTxt}</span>`;
+      } else {
+        // Frozen tile: "已冻结 · HH:mm 恢复" — resumeAt epoch → local HH:mm
+        const at = entry.meta.frozenResumeAt;
+        const clock = at ? (() => {
+          const d = new Date(at);
+          if (Number.isNaN(d.getTime())) return '';
+          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        })() : '';
+        taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
+      }
     } else if (status === 'stuck' && entry.meta.stuck) {
       taskEl.textContent = entry.meta.stuck.action === 'restart'
         ? t('manage.stuckAutoRestart')
