@@ -93,7 +93,7 @@ export default {
   'settings.thinkingMode': 'Thinking Mode',
   'settings.llmLog': 'LLM Logging',
   'settings.workSchedule': 'Freeze time (non-work hours)',
-  'settings.workScheduleOnHint': 'During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. Sending a message wakes it anytime.',
+  'settings.workScheduleOnHint': 'During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. The input bar and mic are disabled during a freeze; click "Skip this freeze" to unfreeze immediately.',
   'settings.workScheduleOffHint': 'Off by default. When off, all agents work around the clock exactly as today.',
   'settings.addSegment': 'Add freeze segment',
   'settings.removeSegment': 'Remove segment',
@@ -407,8 +407,8 @@ export default {
   'chat.other': 'Other...',
   'chat.frozenNoTime': 'Frozen · waiting to resume',
   'chat.frozenShort': 'Frozen · {time} resume',
-  'chat.frozenPlaceholder': 'Frozen · resumes {time} · send to wake…',
-  'chat.frozenPlaceholderNoTime': 'Frozen · send to wake…',
+  'chat.frozenPlaceholder': 'Frozen · resumes {time}',
+  'chat.frozenPlaceholderNoTime': 'Frozen · waiting to resume',
   'chat.skipFreeze': 'Skip this freeze',
   /* Error-recovery family (frozen-error-recovery plan §4.3/§4.4) — amber
      "recovering" language, never "frozen". Reason keys map to FreezeReason
