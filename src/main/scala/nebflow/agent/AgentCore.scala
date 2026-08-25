@@ -420,7 +420,7 @@ private[agent] trait AgentCore:
         val isCompactTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Compact)
         val isSaveTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Save)
         val isAskTurn = state.askMode.isDefined
-        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker, state.forkContext)
+        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker, state.forkContext, state.isFlowNode)
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
         // Track the first model that failed (for modelChanged notification)
@@ -457,7 +457,7 @@ private[agent] trait AgentCore:
           freshDef = turnCtx.agentDef
           voiceMuted <- resources.voiceMutedRef.get
           voiceEnabled = freshDef.voiceEnabled && !voiceMuted
-          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext)
+          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, isFlowNode = stateForLlm.isFlowNode)
           // #16 observability: one log line per LLM call when MCP tools are
           // injected — names the servers explicitly so phantom-tool suspicion
           // can be settled by grepping the log instead of reconstructing
@@ -607,8 +607,8 @@ private[agent] trait AgentCore:
             else Nil
           freshTools =
             if isCompactTurn then Some(Nil)
-            else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext)
-            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext)
+            else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, stateForLlm.isFlowNode)
+            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, stateForLlm.isFlowNode)
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
           // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
@@ -820,7 +820,7 @@ private[agent] trait AgentCore:
         case None => IO.pure(None)
       currentDefOpt <- ContextRefresher.loadCurrentDef(teamNameOpt, resources, agentDef)
       effectiveDef = currentDefOpt.getOrElse(agentDef)
-      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker, state.forkContext)
+      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker, state.forkContext, state.isFlowNode)
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
         // agent-tool whitelist — it is provider-injected (not an agent tool)
@@ -1271,7 +1271,8 @@ private[agent] trait AgentCore:
     agentDef: AgentDef,
     depth: Int = 0,
     isSubTaskWorker: Boolean = false,
-    forkContext: Boolean = false
+    forkContext: Boolean = false,
+    isFlowNode: Boolean = false
   ): Set[String] =
     val base = agentDef.tools match
       case Nil => Set.empty[String]
@@ -1309,12 +1310,18 @@ private[agent] trait AgentCore:
         taskFiltered.filter(t =>
           !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith)
         )
-    // SubTask workers are leaf agents: no Mail / no further delegation, and
-    // no FlowTrigger (workers don't trigger pipelines). Delegate is
-    // Nebula-exclusive (filtered above for everyone else); these strips also
-    // defend against a worker whose agent.json explicitly lists the tools.
+    // SubTask workers are leaf agents: no Mail / no further delegation, no
+    // FlowTrigger and no FlowExecute (workers don't trigger pipelines nor
+    // open flows — a self-cloned team member would otherwise inherit both
+    // via fixedToolsFor). Delegate is Nebula-exclusive (filtered above for
+    // everyone else); these strips also defend against a worker whose
+    // agent.json explicitly lists the tools.
+    // #406: one-shot FlowExecute nodes are leaves too — FlowExecute/
+    // FlowTrigger/SubTask/Delegate stripped (recursive flow-in-flow guard).
+    // Mail stays for team-category nodes (they may Mail the caller's team).
     val categoryFiltered =
-      if isSubTaskWorker then mcpFiltered -- Set("Mail", "SubTask", "Delegate", "FlowTrigger")
+      if isSubTaskWorker then mcpFiltered -- Set("Mail", "SubTask", "Delegate", "FlowTrigger", "FlowExecute")
+      else if isFlowNode then mcpFiltered -- Set("FlowExecute", "FlowTrigger", "SubTask", "Delegate")
       // Flow agents have no Mail — flow nodes report via FlowReport, not Mail.
       // Structurally defends against the 08-14 P0 root cause: a flow agent
       // whose agent.json lists Mail (or uses "*") could block forever on a
@@ -1334,9 +1341,10 @@ private[agent] trait AgentCore:
     agentDef: AgentDef,
     depth: Int = 0,
     isSubTaskWorker: Boolean = false,
-    forkContext: Boolean = false
+    forkContext: Boolean = false,
+    isFlowNode: Boolean = false
   ): Option[List[ToolDefinition]] =
-    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, forkContext)
+    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, forkContext, isFlowNode)
     Some(ToolRegistry.ALL_TOOLS.flatMap { td =>
       if !allowedSet.contains(td.name) then None
       // R8-P1: flow node agents get their per-node contract (verdict enum +
@@ -1365,9 +1373,10 @@ private[agent] trait AgentCore:
     agentDef: AgentDef,
     depth: Int = 0,
     isSubTaskWorker: Boolean = false,
-    forkContext: Boolean = false
+    forkContext: Boolean = false,
+    isFlowNode: Boolean = false
   ): Option[List[ToolDefinition]] =
-    buildToolList(agentDef, depth, isSubTaskWorker, forkContext).map(_.filter(td => SaveTurnToolWhitelist.contains(td.name)))
+    buildToolList(agentDef, depth, isSubTaskWorker, forkContext, isFlowNode).map(_.filter(td => SaveTurnToolWhitelist.contains(td.name)))
 
   private val SaveTurnToolWhitelist: Set[String] = Set("Write", "Edit", "Read")
 
@@ -1723,19 +1732,26 @@ object AgentCore:
    * Fixed tools for a given agent: base tools plus category-specific tools.
    * These are auto-injected and should NOT be stored in agent.json.
    *
-   * - Team agents: BaseTools + Mail + SubTask (user ruling 2026-08-24:
-   *   team members get SubTask at the mechanism layer — relying on manual
-   *   agent.json declarations is error-prone; html-deck-studio missed it for
-   *   all four members). SubTask workers are still stripped of it downstream
-   *   (isSubTaskWorker leaf rule in buildAllowedToolSet).
+   * - Team agents: BaseTools + Mail + SubTask + FlowExecute (user ruling
+   *   2026-08-24: team members get SubTask at the mechanism layer — relying
+   *   on manual agent.json declarations is error-prone; html-deck-studio
+   *   missed it for all four members. #406 extends the same mechanism-layer
+   *   injection to FlowExecute: one-shot dynamic flows are a default team
+   *   capability, no agent.json declaration needed). SubTask workers and
+   *   FlowExecute nodes are still stripped of it downstream (isSubTaskWorker
+   *   / isFlowNode leaf rules in buildAllowedToolSet).
+   * - Nebula (root orchestrator): BaseTools + FlowExecute — the root agent
+   *   dynamically creates flows too.
    * - Flow agents: BaseTools + FlowReport (no Mail, no SubTask — flow nodes
-   *   are leaves)
+   *   are leaves; FlowReport is injected by execution context for dynamic
+   *   flows, see FlowDagExecutor.executeNode)
    * - Standalone agents: BaseTools only (no Mail, no SubTask)
    */
   def fixedToolsFor(agentDef: AgentDef): Set[String] =
     agentDef.category match
-      case "team" => BaseTools + "Mail" + "SubTask"
+      case "team" => BaseTools + "Mail" + "SubTask" + "FlowExecute"
       case "flow" => BaseTools + "FlowReport"
+      case _ if agentDef.name == "Nebula" => BaseTools + "FlowExecute"
       case _ => BaseTools
 
 end AgentCore

@@ -30,16 +30,22 @@ object FlowDagRunner:
     rootSessionId: String = "",
     // Structured trigger parameters (validated against flow.params schema by
     // the caller); node inputs reference them via $params.<name>.
-    params: Map[String, Json] = Map.empty
+    params: Map[String, Json] = Map.empty,
+    // #406: true for one-shot FlowExecute flows (inline DAG, no flows/ dir).
+    // Instance id uses the "inline-" prefix (frontend distinguishes dynamic
+    // runs) and node agents resolve from the global library only.
+    dynamic: Boolean = false
   )
 
   def apply(resources: SharedResources, wsSend: Option[Json => IO[Unit]]): Behavior[RunFlow] =
     Behaviors.receiveMessage:
-      case RunFlow(flowDef, taskInput, replyTo, rootSessionId, params) =>
-        val instanceId = s"flow-${flowDef.name.take(15)}-${java.util.UUID.randomUUID().toString.take(8)}"
+      case RunFlow(flowDef, taskInput, replyTo, rootSessionId, params, dynamic) =>
+        val instanceId =
+          if dynamic then s"inline-${java.util.UUID.randomUUID().toString.take(8)}"
+          else s"flow-${flowDef.name.take(15)}-${java.util.UUID.randomUUID().toString.take(8)}"
         val parentAgentRef = Some(replyTo) // replyTo is the AgentRef of the agent that triggered the flow
         for
-          _ <- logger.info(s"Starting DAG execution for flow '${flowDef.name}' (instance: $instanceId)")
+          _ <- logger.info(s"Starting DAG execution for flow '${flowDef.name}' (instance: $instanceId${if dynamic then ", dynamic" else ""})")
           result <- FlowDagExecutor
             .execute(
               flowDef,
@@ -50,7 +56,8 @@ object FlowDagRunner:
               instanceId,
               parentAgentRef,
               rootSessionId,
-              params
+              params,
+              dynamic
             )
             .handleErrorWith(e => logger.warn(s"FlowDagExecutor failed: ${e.getMessage}").as(Left(e.getMessage)))
           _ <- result match

@@ -30,19 +30,20 @@ class AllowedToolSetSpec extends FunSuite:
         defn: AgentDef,
         depth: Int = 0,
         isSubTaskWorker: Boolean = false,
-        forkContext: Boolean = false
+        forkContext: Boolean = false,
+        isFlowNode: Boolean = false
     ): Set[String] =
-      buildAllowedToolSet(defn, depth, isSubTaskWorker, forkContext)
+      buildAllowedToolSet(defn, depth, isSubTaskWorker, forkContext, isFlowNode)
 
   private def mkDef(name: String, tools: List[String], mcpServers: List[String] = Nil): AgentDef =
     AgentDef(name = name, description = "", tools = tools, systemPrompt = "", mcpServers = mcpServers)
 
-  test("team agent concrete tools list yields those tools + base + Mail + SubTask"):
+  test("team agent concrete tools list yields those tools + base + Mail + SubTask + FlowExecute"):
     val defn = mkDef("researcher", List("Read", "Glob", "Grep")).copy(category = "team")
     val allowed = CoreProbe.allowed(defn)
     assertEquals(
       allowed,
-      Set("Read", "Glob", "Grep", "Write", "Edit", "Bash", "Issue", "Mail", "SubTask")
+      Set("Read", "Glob", "Grep", "Write", "Edit", "Bash", "Issue", "Mail", "SubTask", "FlowExecute")
     )
 
   test("standalone agent gets base fixed tools but NOT Mail"):
@@ -346,4 +347,72 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!f.contains("Mail"), "flow agents never get Mail, fork or not")
     assert(!f.contains("FlowReport"), "fork strips FlowReport too")
     assert(f.contains("Read"), "flow fork keeps retrieval")
+
+  // ===== #406 FlowExecute mechanism-layer injection + flow-node leaf rule =====
+
+  test("team member WITHOUT explicit FlowExecute gets it auto-injected"):
+    val defn = mkDef("backend", List("Read", "Grep", "Bash")).copy(category = "team")
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("FlowExecute"), "team member gets FlowExecute without declaring it")
+    assert(allowed.contains("SubTask"), "team member keeps SubTask")
+    assert(allowed.contains("Mail"), "team member keeps Mail")
+
+  test("team member with '*' wildcard keeps FlowExecute"):
+    val defn = mkDef("omni-team", List("*")).copy(category = "team")
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("FlowExecute"), "wildcard team member keeps FlowExecute")
+
+  test("Nebula (root) gets FlowExecute without declaration"):
+    val nebula = mkDef("Nebula", List("Read", "Delegate"))
+    val allowed = CoreProbe.allowed(nebula)
+    assert(allowed.contains("FlowExecute"), "Nebula gets FlowExecute at the mechanism layer")
+    assert(allowed.contains("Delegate"), "Nebula keeps Delegate")
+
+  test("standalone agents do NOT get FlowExecute auto-injected"):
+    val solo = mkDef("solo", List("Read", "Grep"))
+    assert(!CoreProbe.allowed(solo).contains("FlowExecute"), "standalone agent has no FlowExecute by default")
+    // Explicit listing still works (opt-in) — fixedToolsFor only ADDS the
+    // mechanism-layer default; an explicit list survives.
+    val explicit = mkDef("solo-flow", List("Read", "FlowExecute"))
+    assert(CoreProbe.allowed(explicit).contains("FlowExecute"), "standalone explicitly listing FlowExecute keeps it")
+
+  test("flow-category agents do NOT get FlowExecute (predefined flow nodes are leaves too)"):
+    val flow = mkDef("scanner", List("Read", "Grep")).copy(category = "flow")
+    val allowed = CoreProbe.allowed(flow)
+    assert(!allowed.contains("FlowExecute"), "predefined flow node is a leaf — no nested flow execution")
+
+  test("isFlowNode leaf rule strips FlowExecute/FlowTrigger/SubTask/Delegate even when auto-injected"):
+    // A dynamic flow node reusing a team-category agent (FlowExecute auto-
+    // injected via fixedToolsFor) must still be stripped — flow nodes cannot
+    // open nested flows (recursive explosion guard, #406).
+    val teamNode = mkDef("backend", List("Read", "Grep")).copy(category = "team")
+    val allowed = CoreProbe.allowed(teamNode, isFlowNode = true)
+    assert(!allowed.contains("FlowExecute"), "flow node: FlowExecute stripped despite team category")
+    assert(!allowed.contains("FlowTrigger"), "flow node: FlowTrigger stripped")
+    assert(!allowed.contains("SubTask"), "flow node: SubTask stripped")
+    assert(!allowed.contains("Delegate"), "flow node: Delegate stripped")
+    assert(allowed.contains("Mail"), "flow node: team-category keeps Mail (may Mail the caller's team)")
+    assert(allowed.contains("Read"), "flow node: domain tools kept")
+
+  test("isFlowNode on a standalone-category agent keeps FlowReport when listed (verdict channel)"):
+    val node = mkDef("worker", List("Read", "Grep", "FlowReport"))
+    val allowed = CoreProbe.allowed(node, isFlowNode = true)
+    assert(!allowed.contains("FlowExecute"), "flow node: no nested flow")
+    assert(allowed.contains("FlowReport"), "flow node: FlowReport survives the leaf strip (verdict channel)")
+    assert(allowed.contains("Read"), "flow node: domain tools kept")
+
+  test("isFlowNode leaf rule also strips explicitly listed FlowExecute"):
+    val sneaky = mkDef("sneaky", List("Read", "FlowExecute", "SubTask")).copy(category = "team")
+    val allowed = CoreProbe.allowed(sneaky, isFlowNode = true)
+    assert(!allowed.contains("FlowExecute"), "explicitly listed FlowExecute stripped for flow nodes")
+    assert(!allowed.contains("SubTask"), "explicitly listed SubTask stripped for flow nodes")
+
+  test("SubTask workers also stripped of FlowExecute (leaf symmetry)"):
+    // A SubTask worker self-clones a team-member def (category=team →
+    // FlowExecute auto-injected); the worker leaf rule must strip it too.
+    val worker = mkDef("backend", List("Read", "Grep")).copy(category = "team")
+    val allowed = CoreProbe.allowed(worker, isSubTaskWorker = true)
+    assert(!allowed.contains("FlowExecute"), "worker: FlowExecute stripped despite team category")
+    assert(!allowed.contains("SubTask"), "worker: SubTask stripped")
+    assert(!allowed.contains("Mail"), "worker: Mail stripped")
 end AllowedToolSetSpec
