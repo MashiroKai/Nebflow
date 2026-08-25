@@ -14,6 +14,7 @@ import { openTaskArchive } from './taskArchive.js';
 import { sendWs, onMessage } from './ws.js';
 import state from './state.js';
 import { showToast } from './modal.js';
+import { makeReference } from './reference.js';
 import { activeView, chatViews } from './chatView.js';
 
 /** Local-calendar check (device timezone). */
@@ -431,29 +432,40 @@ function requestReturn(task, row) {
   if (!state.connected) return;                    // WS down → disabled (§4)
   const sessionId = row.dataset.sessionId || state.activeSessionId;
   if (!sessionId || !activeView || !Array.isArray(activeView.pendingAttachments)) return;
-  activeView.pendingAttachments.push({
-    type: 'taskRef',
-    taskId: task.id,
-    sessionId,
-    subject: task.subject || ''
+  // #303 B5 (v1.1 引用=打回): produce a unified type:'ref', refType:'task'
+  // Reference (renders as an @#<id> <subject> mention block, §3.3/§3.5) instead
+  // of the legacy taskRef chip. 引用即打回 — the backend routes refs[refType
+  // == 'task'] to the return flow (spec §5.4); the legacy taskRef shape stays
+  // supported for old history/refresh (persistence). Click drafts only; send
+  // performs the return (C16).
+  const ref = makeReference({
+    refType: 'task',
+    source: { kind: 'task', taskId: task.id, sessionId, title: task.subject || '' },
   });
+  if (!ref) return;                                 // unknown shape → bail (no ref dropped)
+  activeView.pendingAttachments.push(ref);
   import('./chat.js').then(({ renderAttachmentPreview }) => {
     renderAttachmentPreview(activeView);
     if (activeView.dom && activeView.dom.input) activeView.dom.input.focus();
   });
 }
 
-/** Remove taskRef chips with the given taskId from every view's pending
+/** Remove task attachments with the given taskId from every view's pending
  *  attachments (taskError carries no sessionId — sweep is idempotent).
+ *  #303 B5: matches both the legacy taskRef chip and the unified
+ *  type:'ref', refType:'task' reference (source.taskId).
  *  Returns true if anything was removed. */
 function removeTaskRefsByTaskId(taskId) {
   let removed = false;
   const seen = new Set();
+  const isOurTaskRef = (a) =>
+    (a.type === 'taskRef' && a.taskId === taskId) ||
+    (a.type === 'ref' && a.refType === 'task' && a.source && a.source.taskId === taskId);
   const sweep = (v) => {
     if (!v || seen.has(v) || !Array.isArray(v.pendingAttachments)) return;
     seen.add(v);
     const before = v.pendingAttachments.length;
-    v.pendingAttachments = v.pendingAttachments.filter(a => !(a.type === 'taskRef' && a.taskId === taskId));
+    v.pendingAttachments = v.pendingAttachments.filter(a => !isOurTaskRef(a));
     if (v.pendingAttachments.length !== before) {
       removed = true;
       import('./chat.js').then(({ renderAttachmentPreview }) => {
