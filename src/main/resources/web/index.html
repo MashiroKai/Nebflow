@@ -243,7 +243,13 @@
       <div id="slash-dropdown"></div>
       <div id="queue-bar"></div>
       <div id="input-bar">
-        <button class="icon-btn" id="voice-btn" title="Voice input"><i data-lucide="mic"></i></button>
+        <div class="mic-orb-wrap" id="mic-orb-wrap">
+          <button class="micbubble" id="voice-btn" type="button" title="Voice input" aria-label="Voice input">
+            <canvas class="orb-canvas" id="mic-canvas" aria-hidden="true"></canvas>
+            <div class="css-orb orb" id="mic-css-orb" aria-hidden="true"></div>
+          </button>
+          <div class="mic-orb-label" id="mic-orb-label"><i></i><span></span></div>
+        </div>
       <div id="input-wrap" style="position:relative;">
         <div id="attachment-preview"></div>
         <div id="ask-indicator"><span id="ask-indicator-label">ASK</span><span id="ask-indicator-cancel">&times;</span></div>

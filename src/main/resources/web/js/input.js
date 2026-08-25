@@ -15,6 +15,7 @@ import { getLocale } from './i18n.js';
 import { renderQueueBar } from './chatQueue.js';
 import { makeReference } from './reference.js';
 import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
+import { notifyVoiceState } from './micOrb.js';
 import { showToast } from './modal.js';
 
 // ---------- Large text auto-attachment (paste detection) ----------
@@ -1364,8 +1365,11 @@ export function initInput(view) {
     };
   }
 
-  // Update voice UI — only the button recording state, no overlay.
+  // Update voice UI — the orb reflects the state via notifyVoiceState; the
+  // legacy .recording class is kept for any external consumers (no visual
+  // styling on the orb button itself).
   function updateVoiceUI(state, data) {
+    notifyVoiceState(state);
     switch (state) {
       case 'listening':
       case 'speaking':
@@ -1413,26 +1417,25 @@ export function initInput(view) {
       input.value = before + after;
       voiceInterimLen = 0;
     }
+    // Show the "processing" orb state while the captured audio transcribes
+    // (spec §9 pure-front-end addition — voiceEngine emits no processing state
+    // after stop; the follow-up onState('idle') from the engine clears it).
+    notifyVoiceState('processing');
     stopDictation();
     voiceBtn.classList.remove('recording');
     input.classList.remove('voice-dictating');
     input.focus();
   }
 
-  // Push-and-hold voice: mousedown/touchstart to start, mouseup/mouseleave/touchend to stop
-  function onVoiceStart(e) {
-    if (e.type === 'touchstart') e.preventDefault();
-    startVoice();
-  }
-  function onVoiceEnd(e) {
+  // Click-toggle voice (user ruling 2026-08-25 21:34: tap once to start, tap
+  // again to stop — replaces the old push-and-hold). Also spec §3.3.
+  function onVoiceToggle(e) {
+    if (e) e.preventDefault();
+    setActiveView(view);
     if (voiceActive) stopVoice();
+    else startVoice();
   }
-  voiceBtn.addEventListener('mousedown', onVoiceStart);
-  voiceBtn.addEventListener('touchstart', onVoiceStart, { passive: false });
-  voiceBtn.addEventListener('mouseup', onVoiceEnd);
-  voiceBtn.addEventListener('mouseleave', onVoiceEnd);
-  voiceBtn.addEventListener('touchend', onVoiceEnd);
-  voiceBtn.addEventListener('touchcancel', onVoiceEnd);
+  voiceBtn.addEventListener('click', onVoiceToggle);
 
   // Escape key stops voice recording (only register once)
   if (view.id === 'primary') {

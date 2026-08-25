@@ -50,6 +50,7 @@ import {
   showAgentModal, hideAgentModal, initModals
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup } from './persistence.js';
+import { initMicOrb } from './micOrb.js';
 import { renderTaskList } from './taskList.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
@@ -2871,6 +2872,7 @@ initModals();
 initRulesModal();
 initPathPicker();
 initInput(chatViews.primary);
+initMicOrb(); // Mic bubble orb v8 (#419) — binds #voice-btn canvas/css-orb/label
 initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
 
 // Keep the last chat message visible above the floating #input-area.

@@ -415,6 +415,18 @@ export default {
   'chat.frozenPlaceholder': '已冻结 · {time} 恢复',
   'chat.frozenPlaceholderNoTime': '已冻结 · 等待恢复',
   'chat.skipFreeze': '跳过本次',
+  /* Mic bubble orb v8 state labels (#419, spec §10.2): 11.5px / weight 500 /
+     semantic color >= 4.5:1 / 6px color dot. Frozen states stay terse per the
+     08-25 "跳过本次" simplicity ruling — no periods. */
+  'chat.micOrb.idle': '空闲',
+  'chat.micOrb.listening': '听写中…',
+  'chat.micOrb.processing': '识别中…',
+  'chat.micOrb.nebulaBusy': 'Nebula 工作中',
+  'chat.micOrb.bgAgents': '后台 Agent 运行中',
+  'chat.micOrb.frozen': '冻结中',
+  'chat.micOrb.frozenError': '冻结异常',
+  'chat.micOrb.micError': '麦克风错误',
+  'chat.micOrb.offline': '离线',
   /* Error-recovery family (frozen-error-recovery plan §4.3/§4.4) — amber
      "错误恢复中" language, never "已冻结". Reason keys map to FreezeReason
      wire names (llm-transient / network / provider-down / restart-recovery). */
