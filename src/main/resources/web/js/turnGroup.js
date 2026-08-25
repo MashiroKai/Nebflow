@@ -21,7 +21,9 @@ let _turnGroupSeq = 0;
 
 /** Rows that are user-participation nodes or non-process artifacts — never
  *  gathered (E7/E8): option boxes, permission prompts, ask answers, injected
- *  bubbles, agent rows. */
+ *  bubbles, agent rows. Injected bubbles are handled separately (isInjectedRow)
+ *  — they ARE gathered as part of the turn's process (2026-08-25 ruling) but
+ *  are excluded from the final-reply / done-badge detection. */
 function isExcludedRow(row) {
   if (row.querySelector('.option-box') || row.querySelector('.permission-prompt')) return true;
   if (row.querySelector('.ask-label')) return true;            // ask answer / injected label
@@ -30,13 +32,40 @@ function isExcludedRow(row) {
   return false;
 }
 
-/** True for rows that belong to the agent's intermediate process. */
-function isProcessRow(row) {
+/** An injected (external Mail / Team / event) message row. Rendered as
+ *  `.row.user` with a `.bubble.injected` (chat.js buildInjectedRow) — so it
+ *  would be mistaken for a user turn-boundary by lastUserIdx. 2026-08-25
+ *  ruling: injected messages are part of the turn's intermediate process and
+ *  are carried INTO the collapse; they never split a turn. */
+function isInjectedRow(row) {
+  return row.classList.contains('row') && row.querySelector('.bubble.injected');
+}
+
+/** True for agent-produced process rows (tool card, thinking row, AI text
+ *  segment). The E7/E8 excluded artifacts (injected/option/ask/agent-row)
+ *  never count as agent work. */
+function isAgentRow(row) {
   if (!row.classList.contains('row') || isExcludedRow(row)) return false;
   if (row.classList.contains('tool') || row.classList.contains('card-content')) return true;
   if (row.classList.contains('thinking-row')) return true;
   // intermediate AI text segments (roundComplete finalize products)
   return row.classList.contains('ai') && !!row.querySelector('.bubble.ai');
+}
+
+/** True for rows that belong to the agent's intermediate process — agent work
+ *  PLUS injected messages (ruling 2026-08-25). */
+function isProcessRow(row) {
+  if (!row.classList.contains('row')) return false;
+  if (isInjectedRow(row)) return true;
+  return isAgentRow(row);
+}
+
+/** True when the scope contains at least one agent-produced row (tool /
+ *  thinking / AI text). A lone injected message (no agent work) is not a turn
+ *  worth collapsing — hide nothing (preserves the E7 intent for isolated
+ *  injections: an unworked injected bubble stays visible). */
+function hasAgentWork(scope) {
+  return scope.some(isAgentRow);
 }
 
 /** The turn's final reply row: last `.row.ai` in scope with non-empty text
@@ -114,9 +143,13 @@ export function collapseTurn(view, meta = {}) {
   const chat = view.dom.chat;
   ungroupTail(chat); // boundary heal: see ungroupTail below
   const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
+  // Turn boundary = the last NON-injected user row. Injected messages are part
+  // of the turn's process (2026-08-25 ruling) — they must NOT truncate scope
+  // (that was the "result between user & injected not closed" bug).
   let lastUserIdx = -1;
-  rows.forEach((r, i) => { if (r.classList.contains('user')) lastUserIdx = i; });
+  rows.forEach((r, i) => { if (r.classList.contains('user') && !isInjectedRow(r)) lastUserIdx = i; });
   const scope = rows.slice(lastUserIdx + 1);
+  if (!hasAgentWork(scope)) return null; // lone injection / no agent work → nothing to collapse
   const processRows = scope.filter(isProcessRow);
   if (processRows.length === 0) return null; // E5
   const built = buildGroup(chat, processRows, findFinalRow(scope), meta);
@@ -140,9 +173,11 @@ export function failTurn(view) {
   const chat = view.dom.chat;
   ungroupTail(chat); // boundary heal: see ungroupTail below
   const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
+  // Same as collapseTurn: injected messages are turn-process, not boundaries.
   let lastUserIdx = -1;
-  rows.forEach((r, i) => { if (r.classList.contains('user')) lastUserIdx = i; });
+  rows.forEach((r, i) => { if (r.classList.contains('user') && !isInjectedRow(r)) lastUserIdx = i; });
   const scope = rows.slice(lastUserIdx + 1);
+  if (!hasAgentWork(scope)) return null;
   const processRows = scope.filter(isProcessRow);
   if (processRows.length === 0) return null;
   // A5: failed groups carry NO summary element (not merely hidden).
@@ -177,7 +212,7 @@ export function expandGroupContaining(el) {
 function ungroupTail(chat) {
   const kids = Array.from(chat.children);
   let lastUserIdx = -1;
-  kids.forEach((r, i) => { if (r.classList && r.classList.contains('row') && r.classList.contains('user')) lastUserIdx = i; });
+  kids.forEach((r, i) => { if (r.classList && r.classList.contains('row') && r.classList.contains('user') && !isInjectedRow(r)) lastUserIdx = i; });
   for (let i = lastUserIdx + 1; i < kids.length; i++) {
     const g = kids[i];
     if (!g.classList || !g.classList.contains('turn-group')) continue;
@@ -209,12 +244,14 @@ export function buildTurnGroupsForHistory(chat, opts = {}) {
     if (end > segStart) groupSegment(chat, rows.slice(segStart, end));
   };
   rows.forEach((r, i) => {
-    if (r.classList.contains('user')) { flush(i); segStart = i + 1; }
+    // Turn boundary = non-injected user row (injected messages are process).
+    if (r.classList.contains('user') && !isInjectedRow(r)) { flush(i); segStart = i + 1; }
   });
   if (!busyTail || findDoneBadge(rows.slice(segStart))) flush(rows.length);
 }
 
 function groupSegment(chat, seg) {
+  if (!hasAgentWork(seg)) return; // lone injection / no agent work — leave flat
   const processRows = seg.filter(isProcessRow);
   if (processRows.length === 0) return;
   const finalRow = findFinalRow(seg);
