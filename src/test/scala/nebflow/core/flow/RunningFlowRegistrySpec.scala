@@ -3,6 +3,7 @@ package nebflow.core.flow
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
+import io.circe.Json
 import munit.FunSuite
 
 import java.util.UUID
@@ -142,5 +143,46 @@ class RunningFlowRegistrySpec extends FunSuite:
       assertEquals(afterNode, NodeStatus.Running, "node failure alone must not mark the flow failed")
       assertEquals(flow.status, NodeStatus.Completed)
       assertEquals(flow.completedAt, Some(42L))
+    prog.unsafeRunSync()
+
+  // ---------- #412：toJson 序列化 sessionId / rootSessionId（badge 归属 / 窗口路由）----------
+
+  test("#412 toJson serializes sessionId + rootSessionId"):
+    val id = s"tj-${UUID.randomUUID().toString.take(8)}"
+    val prog = for
+      _ <- RunningFlowRegistry.register(
+        mkFlow(id).copy(sessionId = Some("caller-1"), rootSessionId = Some("root-1"))
+      )
+      json <- RunningFlowRegistry.listJson.map { j =>
+        j.hcursor
+          .downField("flows")
+          .as[List[Json]]
+          .toOption
+          .get
+          .find(_.hcursor.downField("instanceId").as[String].contains(id))
+          .get
+      }
+    yield
+      assertEquals(json.hcursor.downField("sessionId").as[Option[String]], Right(Some("caller-1")))
+      assertEquals(json.hcursor.downField("rootSessionId").as[Option[String]], Right(Some("root-1")))
+    prog.unsafeRunSync()
+
+  test("#412 toJson serializes None ownership as null (backward compat)"):
+    val id = s"tj2-${UUID.randomUUID().toString.take(8)}"
+    val prog = for
+      _ <- RunningFlowRegistry.register(mkFlow(id)) // no session fields
+      json <- RunningFlowRegistry.listJson.map { j =>
+        j.hcursor
+          .downField("flows")
+          .as[List[Json]]
+          .toOption
+          .get
+          .find(_.hcursor.downField("instanceId").as[String].contains(id))
+          .get
+      }
+    yield
+      // None ownership serializes as JSON null → decodes back to None
+      assertEquals(json.hcursor.downField("sessionId").as[Option[String]], Right(None))
+      assertEquals(json.hcursor.downField("rootSessionId").as[Option[String]], Right(None))
     prog.unsafeRunSync()
 end RunningFlowRegistrySpec
