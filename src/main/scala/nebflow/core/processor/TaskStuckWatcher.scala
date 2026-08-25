@@ -181,7 +181,7 @@ object TaskStuckWatcher:
             // gate-wedge P1-1: count ineffective Stops. A suspended agent never
             // consumes mailbox messages, so resending forever is useless (the
             // incident: thousands of resends over 6.5h). At the Nth attempt we
-            // ALSO hard-cancel the in-flight LLM fiber — queued, rpm-waiting
+            // ALSO hard-cancel the in-flight LLM fiber — queued
             // or streaming — so the turn fails and the mailbox finally turns.
             stopCounts.modify { m =>
               val n = m.getOrElse(rec.sessionId, 0) + 1
