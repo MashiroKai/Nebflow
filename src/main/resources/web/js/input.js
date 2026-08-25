@@ -13,6 +13,7 @@ import { renderTaskList } from './taskList.js';
 import { t } from './i18n.js';
 import { getLocale } from './i18n.js';
 import { renderQueueBar } from './chatQueue.js';
+import { makeReference } from './reference.js';
 import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
 import { showToast } from './modal.js';
 
@@ -651,7 +652,9 @@ export function send() {
   renderUserBubble(text, v.pendingAttachments);
   saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a => a.type === 'taskRef'
     ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
-    : { type: a.type, name: a.name, preview: a.preview })});
+    : a.type === 'ref'
+      ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
+      : { type: a.type, name: a.name, preview: a.preview })});
   // Save to input history
   if (text && text !== '/clear') {
     state.inputHistory.push(text);
@@ -675,11 +678,18 @@ export function send() {
     const taskRefs = (v.pendingAttachments || [])
       .filter(a => a.type === 'taskRef')
       .map(a => ({ taskId: a.taskId, sessionId: a.sessionId || v.sessionId, ...(a.subject ? { subject: a.subject } : {}) }));
+    // Global Reference (2026-08-25 #303): carry unified refs on the wire. Backend's
+    // processTaskReturns reads taskRefs via circe cursor downField(...).getOrElse(Nil)
+    // — unknown fields (refs) are tolerated, so this is forward-compatible.
+    const refs = (v.pendingAttachments || [])
+      .filter(a => a.type === 'ref')
+      .map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }));
     sendWs({
       content: text,
       ...(taskRefs.length > 0 ? { taskRefs } : {}),
+      ...(refs.length > 0 ? { refs } : {}),
       attachments: (v.pendingAttachments || [])
-        .filter(a => a.type !== 'taskRef')
+        .filter(a => a.type !== 'taskRef' && a.type !== 'ref')
         .map(a => ({
           mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
         })),
@@ -753,10 +763,13 @@ function persistQueue() {
         skillName: it.skillName || null,
         mode: it.mode || null,
         // v2 B15: taskRef chips must survive refresh — keep taskId/sessionId
-        // (+ subject as the display name); file/image keep type+name only.
+        // (+ subject as the display name); #303: ref blocks keep their full
+        // Reference shape; file/image keep type+name only.
         attachments: (it.attachments || []).map(a => a.type === 'taskRef'
           ? { type: 'taskRef', taskId: a.taskId, sessionId: a.sessionId, subject: a.subject, name: a.subject }
-          : { type: a.type, name: a.name })
+          : a.type === 'ref'
+            ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
+            : { type: a.type, name: a.name })
       }));
     }
     localStorage.setItem(LS_QUEUE_KEY, JSON.stringify(serializable));
@@ -815,19 +828,21 @@ function queueMessage(view, text, attachments, skillName, mode) {
 function sendImmediate(sessionId, item) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
   const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
+  const refs = (item.attachments || []).filter(a => a.type === 'ref');
   if (item.mode === 'compact') {
     sendWs({ type: 'command', command: 'compact', sessionId, instruction: item.text || undefined });
   } else if (item.skillName) {
     sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
-  } else if (taskRefs.length > 0) {
-    // v2: a return message must ride the default user-message branch — the
-    // backend only parses taskRefs there (WebSocketRoutes.scala §6.2);
-    // immediateInput goes through handleUserText and would drop them.
+  } else if (taskRefs.length > 0 || refs.length > 0) {
+    // v2 + #303: a return/reference message must ride the default user-message
+    // branch — the backend parses taskRefs/refs only there (WebSocketRoutes
+    // §6.2); immediateInput goes through handleUserText and would drop them.
     const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     sendWs({
       content: item.text,
-      taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })),
-      attachments: (item.attachments || []).filter(a => a.type !== 'taskRef').map(a => ({
+      ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
+      ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display })) } : {}),
+      attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
         mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
       })),
       clientMessageId,
@@ -849,7 +864,9 @@ function sendImmediate(sessionId, item) {
   }
   saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
     ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
-    : { type: a.type, name: a.name, preview: a.preview }) }, sessionId);
+    : a.type === 'ref'
+      ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
+      : { type: a.type, name: a.name, preview: a.preview }) }, sessionId);
   // Save to input history (same as normal send and drainMessageQueue)
   if (item.text) {
     state.inputHistory.push(item.text);
@@ -934,7 +951,9 @@ export function drainMessageQueue(sessionId) {
   }
   saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
     ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
-    : { type: a.type, name: a.name, preview: a.preview }) }, sessionId);
+    : a.type === 'ref'
+      ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
+      : { type: a.type, name: a.name, preview: a.preview }) }, sessionId);
 
   // Send as normal UserInput
   if (sessionId) state.turnExpecting[sessionId] = true;
@@ -951,11 +970,15 @@ export function drainMessageQueue(sessionId) {
   } else {
     const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     // v2 B15: queued return messages keep their taskRefs when drained.
+    // #303: unified refs ride the same default user-message frame (backend
+    // parses refs via circe cursor — tolerated for forward-compat).
     const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
+    const refs = (item.attachments || []).filter(a => a.type === 'ref');
     sendWs({
       content: item.text,
       ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
-      attachments: (item.attachments || []).filter(a => a.type !== 'taskRef').map(a => ({
+      ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display })) } : {}),
+      attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
         mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
       })),
       clientMessageId,
@@ -1475,6 +1498,30 @@ const INPUT_BAR_SELECTOR = '#input-bar, .fa-input-bar';
 // #303 internal drag: explorer file rows carry this custom MIME in addition to
 // (or instead of) native 'Files' — both count as attach payloads.
 const INTERNAL_DRAG_MIME = 'application/x-nebflow-file';
+// #303 global-reference: canvas tab rows carry this MIME to produce a Reference
+// (document/file/html-element) on drop into an input bar.
+const CANVAS_DRAG_MIME = 'application/x-nebflow-ref';
+
+/**
+ * #303/global-reference: append a unified Reference to a view's
+ * pendingAttachments and re-render the attachment preview strip. Used by the
+ * explorer/canvas entry points (right-click & drag). Returns true on success.
+ * @param {Object} ref  Reference produced by makeReference()
+ * @param {{attPreviewEl?:HTMLElement, attachments?:Array, focus?:boolean}} [target]
+ */
+export function appendRefToActiveView(ref, target) {
+  const view = activeView || state.getActiveView?.();
+  if (!view || !ref) return false;
+  if (!Array.isArray(view.pendingAttachments)) view.pendingAttachments = [];
+  view.pendingAttachments.push(ref);
+  if (target && target.attPreviewEl) {
+    renderAttachmentPreview({ attPreviewEl: target.attPreviewEl, attachments: view.pendingAttachments });
+  } else if (view.dom && view.dom.attPreview) {
+    renderAttachmentPreview({ attPreviewEl: view.dom.attPreview, attachments: view.pendingAttachments });
+  }
+  if (target?.focus !== false) view.dom?.input?.focus?.();
+  return true;
+}
 
 export function initGlobalFileDrop() {
   let dragDepth = 0;    // child-element nesting depth inside the bar
@@ -1483,7 +1530,7 @@ export function initGlobalFileDrop() {
   const hasAttach = (e) => {
     if (!e.dataTransfer) return false;
     const types = Array.from(e.dataTransfer.types || []);
-    return types.includes('Files') || types.includes(INTERNAL_DRAG_MIME);
+    return types.includes('Files') || types.includes(INTERNAL_DRAG_MIME) || types.includes(CANVAS_DRAG_MIME);
   };
   const barOf = (e) =>
     e.target instanceof Element ? e.target.closest(INPUT_BAR_SELECTOR) : null;
@@ -1528,16 +1575,34 @@ export function initGlobalFileDrop() {
     setActiveView(view);
     const target = { attPreviewEl: view.dom.attPreview,
                      attachments: view.pendingAttachments };
-    // #303 internal drag: explorer file rows carry a custom MIME payload —
-    // attach by path through the same pipeline as the attach button.
+    // #303 global-reference drag routing (v1.1):
+    //   internal explorer file row (application/x-nebflow-file with path+rootPath)
+    //     → Reference @path (not an attachment upload)
+    //   canvas tab row (application/x-nebflow-ref) → Reference w/ current anchor
+    //   anything else (OS/Finder files) → attachment upload (#303 regression)
     const internal = e.dataTransfer.getData(INTERNAL_DRAG_MIME);
+    const canvasRef = e.dataTransfer.getData(CANVAS_DRAG_MIME);
     if (internal) {
       try {
         const { path, rootPath } = JSON.parse(internal);
-        if (path) addPathAttachment({ path, rootPath }, view, target);
-        else console.warn('[drop] internal drag payload missing path');
+        if (path) {
+          const absPath = joinAbsPath(rootPath, path);
+          const name = path.split('/').pop() || path;
+          appendRefToActiveView(makeReference({
+            refType: 'file',
+            source: { kind: 'workspace', path: absPath, fileName: name, title: name },
+          }), { focus: false });
+        } else console.warn('[drop] internal drag payload missing path');
       } catch (err) {
         console.warn('[drop] bad internal drag payload:', err);
+      }
+    } else if (canvasRef) {
+      try {
+        const input = JSON.parse(canvasRef);
+        if (input && input.refType) appendRefToActiveView(makeReference(input), { focus: false });
+        else console.warn('[drop] canvas ref payload missing refType');
+      } catch (err) {
+        console.warn('[drop] bad canvas ref payload:', err);
       }
     } else {
       // External drag (desktop files) — unchanged.

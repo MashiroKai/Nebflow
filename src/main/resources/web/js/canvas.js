@@ -15,6 +15,8 @@
 // CSS handles all transitions via flex-basis.
 
 import { key } from './branding.js';
+import { t } from './i18n.js';
+import { makeReference } from './reference.js';
 
 const MIN_CANVAS_WIDTH = 320;
 const MAX_CANVAS_WIDTH = 1200;
@@ -36,6 +38,109 @@ let activeTabId = null;
 const previewTabs = new Map();  // previewKey -> tabId
 const previewKeyOf = (type, absPath) => absPath ? 'file' : (type || 'generic');
 
+// ── #303 global-reference: build a Reference from a tab's current state ──
+// Best-effort anchor extraction per viewer type (PDF page range, Monaco text
+// selection). Tabs without absPath (panel tabs) produce no ref. The reference
+// is a pointer — source.path + optional anchor; the agent reads on demand.
+
+/** @param {string} s */
+function _trunc(s, n) {
+  const str = String(s || '');
+  return str.length > n ? str.slice(0, n) + '…' : str;
+}
+
+/** Best-effort anchor for a tab pane: PDF visible page range / Monaco selection. */
+function tabAnchor(pane) {
+  if (!pane) return { kind: 'none' };
+  // PDF — canvases stacked in .pdf-pages; compute the visible range from scroll.
+  const pdfPages = pane.querySelector('.pdf-pages');
+  if (pdfPages) {
+    const pages = Array.from(pdfPages.querySelectorAll('.pdf-page')).map((c, i) => ({
+      n: i + 1, top: c.offsetTop, h: c.offsetHeight,
+    })).filter(p => p.h > 0);
+    if (pages.length) {
+      const top = pdfPages.scrollTop, bottom = top + (pdfPages.clientHeight || 0);
+      const vis = pages.filter(p => p.top < bottom && (p.top + p.h) > top);
+      if (vis.length) {
+        const first = Math.min(...vis.map(p => p.n), pages[0].n);
+        const last = Math.max(...vis.map(p => p.n), first);
+        return { kind: 'page', pageStart: first, pageEnd: last };
+      }
+    }
+  }
+  // Monaco text — selection line range (fall back to cursor line).
+  const h = pane._editorHandle;
+  if (h && h.editor && typeof h.editor.getSelection === 'function') {
+    const sel = h.editor.getSelection();
+    if (sel) {
+      const start = sel.getStartPosition()?.lineNumber;
+      const end = sel.getEndPosition()?.lineNumber;
+      if (start != null) {
+        const lineStart = Math.min(start, end ?? start);
+        const lineEnd = Math.max(start, end ?? start);
+        const text = (h.editor.getModel?.()?.getValueInRange?.(sel)) || '';
+        return { kind: 'range', lineStart, lineEnd, text: _trunc(text, 160) };
+      }
+    }
+  }
+  return { kind: 'none' };
+}
+
+/** Build a makeReference input from a tab (returns null for non-file tabs). */
+function refInputForTab(tab) {
+  if (!tab || !tab.absPath || !tab.type) return null;
+  const name = (tab.title || tab.absPath.split('/').pop() || '');
+  // document vs file: keep the tab's itemType as refType hint, but normalize to
+  // the two pointer types we render (document for MIME docs, file otherwise).
+  const isDoc = /pdf|epub|xlsx|xl|docx|pptx/.test(tab.type) || /\.(pdf|epub|xlsx|xls|docx|pptx)$/i.test(tab.absPath);
+  const anchor = tabAnchor(tab.paneEl);
+  return {
+    refType: isDoc ? 'document' : 'file',
+    source: { kind: 'canvas', path: tab.absPath, fileName: name, title: name },
+    anchor,
+  };
+}
+
+/** Build a fully-formed Reference from a tab (makeReference over refInputForTab). */
+function refForTab(tab) {
+  const input = refInputForTab(tab);
+  return input ? makeReference(input) : null;
+}
+
+// ── Canvas tab context menu (「引用当前页/选区」) ──
+let _canvasCtxMenu = null;
+let _ctxMenuBound = false;
+function hideCanvasRefMenu() {
+  if (_canvasCtxMenu) { _canvasCtxMenu.remove(); _canvasCtxMenu = null; }
+}
+function showCanvasRefMenu(x, y, entry) {
+  hideCanvasRefMenu();
+  const ref = refForTab(entry);
+  if (!ref) {
+    window.__showToast?.(t('canvas.noRef'), 'info');
+    return;
+  }
+  const menu = document.createElement('div');
+  menu.className = 'canvas-tab-context-menu';
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  const btn = document.createElement('button');
+  btn.textContent = t('canvas.referenceCurrent');
+  btn.addEventListener('click', () => {
+    hideCanvasRefMenu();
+    // Dynamic import to avoid a static edge back into input.js (which would
+    // close the modal→taskList→taskArchive→canvas→input cycle).
+    import('./input.js').then(({ appendRefToActiveView }) => appendRefToActiveView(ref));
+  });
+  menu.appendChild(btn);
+  document.body.appendChild(menu);
+  _canvasCtxMenu = menu;
+  // Adjust if off-screen
+  const rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + 'px';
+  if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
+}
+
 // ── Drag-to-reorder ────────────────────────────────────────
 let draggedTabId = null;
 
@@ -45,6 +150,15 @@ function attachDragHandlers(tabEl, id) {
     tabEl.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', id);
+    // #303 B6b: a canvas tab dragged to an input bar carries a Reference
+    // payload (current page/selection anchor). Dragging onto another tab for
+    // reorder ignores this MIME (drop reorders via draggedTabId).
+    const tab = tabs.get(id);
+    const ref = refForTab(tab);
+    if (ref) {
+      e.dataTransfer.setData('application/x-nebflow-ref',
+        JSON.stringify({ refType: ref.refType, source: ref.source, anchor: ref.anchor }));
+    }
   });
 
   tabEl.addEventListener('dragend', () => {
@@ -774,12 +888,34 @@ export function initCanvas() {
       e.stopPropagation();
       pinTab(id);
     });
+
+    // #303 B2-B4: right-click a file/document tab → 「引用当前页/选区」.
+    tabBar.addEventListener('contextmenu', (e) => {
+      const tgt = /** @type {Element} */ (e.target);
+      const tabEl = tgt.closest('.canvas-tab');
+      if (!tabEl || !tabBar.contains(tabEl)) return;
+      const id = /** @type {HTMLElement} */ (tabEl).dataset.tabId;
+      const entry = id ? tabs.get(id) : null;
+      if (!entry) return;
+      e.preventDefault();
+      e.stopPropagation();
+      showCanvasRefMenu(e.clientX, e.clientY, entry);
+    });
   }
 
   // Listen for workspace-open-item events (dispatched on window by explorer.js).
   window.addEventListener('workspace-open-item', (e) => {
     if (e.detail) openWorkspaceItem(e.detail);
   });
+
+  // Close the canvas tab context menu on any outside interaction (capture).
+  if (!_ctxMenuBound) {
+    _ctxMenuBound = true;
+    document.addEventListener('mousedown', (e) => {
+      if (_canvasCtxMenu && !_canvasCtxMenu.contains(e.target)) hideCanvasRefMenu();
+    }, true);
+    document.addEventListener('contextmenu', () => hideCanvasRefMenu(), true);
+  }
 
   // Window-focus refresh (dispatched by explorer.js after reloading the tree):
   // re-check the active file tab for external edits. Dirty-guarded, debounced,

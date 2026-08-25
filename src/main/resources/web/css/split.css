@@ -83,7 +83,8 @@
 }
 
 /* ── Context Menu ── */
-.explorer-context-menu {
+.explorer-context-menu,
+.canvas-tab-context-menu {
   position: fixed;
   z-index: 5000;
   background: var(--glass-bg, rgba(255,255,255,0.92));
@@ -95,7 +96,8 @@
   padding: 4px;
   min-width: 120px;
 }
-.explorer-context-menu button {
+.explorer-context-menu button,
+.canvas-tab-context-menu button {
   display: block;
   width: 100%;
   text-align: left;
@@ -109,7 +111,8 @@
   border-radius: 4px;
   transition: background 0.1s;
 }
-.explorer-context-menu button:hover {
+.explorer-context-menu button:hover,
+.canvas-tab-context-menu button:hover {
   background: var(--color-hover, rgba(128,128,128,0.1));
 }
 .explorer-context-menu button.danger {
@@ -133,6 +136,15 @@
 #explorer-tree::-webkit-scrollbar-thumb {
   background: rgba(128, 128, 128, 0.15);
   border-radius: 2px;
+}
+/* #303 E3: constant blank bottom drop area inside .explorer-root — guarantees a
+   visible "drop to move to root" landing zone even when the root list is full. */
+.explorer-root-drop-margin {
+  min-height: 24px;
+  flex-grow: 1;
+}
+.explorer-root-drop-margin.drop-target {
+  background: rgb(var(--sapphire) / 0.1);
 }
 
 /* ── Tree items ── */

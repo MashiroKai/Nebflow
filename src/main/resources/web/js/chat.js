@@ -8,6 +8,7 @@ import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromp
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
+import { renderRefBlock, normalizeTaskRef } from './reference.js';
 
 // ---------- Time format preference (12h / 24h toggle) ----------
 // Legacy spelling 'nebflow:timeFormat' is normalized into this key by
@@ -301,7 +302,14 @@ export function renderUserBubble(text, attachments, timestamp) {
   (attachments || []).forEach(att => {
     const bubble = document.createElement('div');
     bubble.className = 'bubble user att-bubble';
-    if (att.type === 'taskRef') {
+    if (att.type === 'ref') {
+      // #303 v1.1: unified Reference in the message stream — render the message
+      // card. Ref cards need more width than compact file tags (max-width 160px),
+      // so the bubble is widened via .att-ref-bubble.
+      bubble.classList.add('att-ref-bubble');
+      const ref = att.type === 'ref' ? att : normalizeTaskRef(att);
+      if (ref) bubble.appendChild(renderRefBlock(ref, { mode: 'message' }));
+    } else if (att.type === 'taskRef') {
       // v2 §5.3: return reference — clipboard icon + "Returned: {subject}".
       // No preview image; name may be undefined pre-restore (subject used).
       const tag = document.createElement('span');
@@ -2012,61 +2020,17 @@ export function renderAttachmentPreview(target) {
   if (!attPreview) return;
   attPreview.innerHTML = '';
   attachments.forEach((att, idx) => {
-    if (att.type === 'taskRef') {
-      // B (用户 2026-08-20 打回): 引用块精简——紧凑 chip = 任务号 + 标题 +
-      // 实时意见首行（微信式：被引任务 + 正在输入的意见），单行上限，不显示
-      // 描述/产出全文。Remove is local-only (C16: draft, task untouched until
-      // the message is sent).
-      const wrap = document.createElement('div');
-      wrap.className = 'att-taskref';
-      wrap.dataset.taskRef = att.taskId || '';
-      wrap.dataset.taskSession = att.sessionId || '';
-      wrap.title = `${att.taskId ? '#' + att.taskId : ''} ${att.subject || ''}`.trim();
-      const icon = '<svg class="att-taskref-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><path d="M12 11h4"></path><path d="M12 16h4"></path><path d="M8 11h.01"></path><path d="M8 16h.01"></path></svg>';
-      const num = document.createElement('span');
-      num.className = 'att-taskref-num';
-      num.textContent = att.taskId ? '#' + att.taskId : '';
-      const subject = document.createElement('span');
-      subject.className = 'att-taskref-subject';
-      subject.textContent = att.subject || '';
-      const opinion = document.createElement('span');
-      opinion.className = 'att-taskref-opinion';
-      opinion.hidden = true; // shown once the user types a message below
-      const rm = document.createElement('div');
-      rm.className = 'att-remove';
-      rm.textContent = 'x';
-      rm.setAttribute('role', 'button');
-      rm.setAttribute('tabindex', '0');
-      rm.setAttribute('aria-label', t('task.removeTaskRef'));
+    // ── 全局引用（#303 v1.1）：type='ref'（新统一模型）与旧 type='taskRef'
+    // 都走 renderRefBlock —— 输入框引用块定高/截断/可展开（A1-A6）。旧 taskRef
+    // 经 normalizeTaskRef 归一为 refRefType='task' 渲染（§2.4 渐进收敛）。──
+    if (att.type === 'ref' || att.type === 'taskRef') {
+      const ref = att.type === 'ref' ? att : normalizeTaskRef(att);
       const remove = () => {
         attachments.splice(idx, 1);
         renderAttachmentPreview(target);
       };
-      rm.onclick = remove;
-      rm.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); remove(); }
-      });
-      wrap.innerHTML = icon;
-      wrap.append(num, subject, opinion, rm);
-      attPreview.appendChild(wrap);
-
-      // Live opinion preview — the first line of the input box content, so the
-      // chip shows "task # + title + what you are about to say" on one line.
-      // Listener self-removes once the chip is gone (send / ×).
-      const inputEl = attPreview.parentElement?.querySelector('textarea');
-      const syncOpinion = () => {
-        if (!wrap.isConnected) { inputEl?.removeEventListener('input', syncOpinion); return; }
-        const firstLine = (inputEl?.value || '').split('\n')[0].trim();
-        if (firstLine) {
-          opinion.textContent = firstLine;
-          opinion.hidden = false;
-        } else {
-          opinion.textContent = '';
-          opinion.hidden = true;
-        }
-      };
-      syncOpinion();
-      inputEl?.addEventListener('input', syncOpinion);
+      const card = renderRefBlock(ref, { mode: 'input' }, remove);
+      attPreview.appendChild(card);
     } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
       const wrap = document.createElement('div');
       wrap.style.position = 'relative';
