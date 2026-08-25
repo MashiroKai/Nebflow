@@ -88,7 +88,7 @@ function fmtDayTime(iso) {
   return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`;
 }
 
-const statusIcon = { completed: 'check', failed: 'x', in_progress: 'loader-2', pending: 'square' };
+const statusIcon = { completed: 'check', failed: 'x', in_progress: 'loader-2', pending: 'square', cancelled: 'ban' };
 
 function entryHtml(e) {
   const status = e.status || 'completed';
@@ -97,10 +97,22 @@ function entryHtml(e) {
   const notes = Array.isArray(e.notes) ? e.notes : [];
   const events = Array.isArray(e.events) ? e.events : [];
   const noteCount = e.noteCount ?? notes.length;
+  // 契约#4: cancelled 终端态 — 灰态展示 + 取消原因 note。reason 可能来自
+  // e.cancelReason 字段 (panel cancelTask payload 的默认原因) 或 notes 里
+  // kind==='cancel' 的条目；取其一，并从通用 notes 块排除 kind==='cancel'
+  // 条目（避免同一原因渲染两次）。
+  const cancelReason = typeof e.cancelReason === 'string' && e.cancelReason.trim()
+    ? e.cancelReason.trim()
+    : (notes.find(n => n && n.kind === 'cancel' && n.content)?.content || '');
+  const visibleNotes = notes.filter(n => !(n && n.kind === 'cancel'));
 
   let detail = '';
-  if (notes.length > 0) {
-    detail += `<div class="ta-notes">` + notes.map(n => {
+  if (status === 'cancelled' && cancelReason) {
+    detail += `<div class="ta-notes"><div class="ta-note"><div class="ta-note-content">` +
+      `${escapeHtml(t('task.cancelReason'))}: ${escapeHtml(cancelReason)}</div></div></div>`;
+  }
+  if (visibleNotes.length > 0) {
+    detail += `<div class="ta-notes">` + visibleNotes.map(n => {
       const links = Array.isArray(n.links) ? n.links : [];
       const linksHtml = links.map(l => {
         const isUrl = /^https?:\/\//.test(l);
@@ -120,6 +132,7 @@ function entryHtml(e) {
   return `<div class="ta-entry ta-${escapeHtml(status)}" data-task="${escapeHtml(e.sessionId || '')}/${escapeHtml(String(e.taskId ?? e.id ?? ''))}">` +
     `<div class="ta-entry-main" role="button" tabindex="0">` +
       `<span class="ta-status"><i data-lucide="${icon}"></i></span>` +
+      (status === 'cancelled' ? `<span class="ta-status-word">${escapeHtml(t('task.cancelled'))}</span>` : '') +
       `<span class="ta-subject">${escapeHtml(e.subject || '')}</span>` +
       (noteCount > 0 && notes.length === 0 ? `<span class="ta-note-count">${noteCount} ${escapeHtml(t('task.notes'))}</span>` : '') +
       `<span class="ta-time">${escapeHtml(time)}</span>` +
