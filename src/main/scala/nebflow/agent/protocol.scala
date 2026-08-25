@@ -208,6 +208,11 @@ object AgentCommand:
     item: nebflow.core.flow.MailQueueStore.MailQueueItem,
     fromSessionId: String
   ) extends AgentCommand
+
+  /** v2 冻结式错误恢复升级链（§5.2）：FreezeScheduler.scan 发现 escalation 超时
+    * 后发送——frozen behavior 中执行 escalate 动作（level+1，通知上一级/用户终态）。
+    * 消息幂等：非 frozen/无 escalation 时 no-op。 */
+  case object Escalate extends AgentCommand
 end AgentCommand
 
 /**
@@ -273,7 +278,21 @@ case class AgentRecord(
    * issue #31 Fix D — 同上：该 agent pendingEvents（被 HOLD 的子代理结果
    * 队列）长度的最近快照。outstanding>0 时 pending>0 = 有结果被扣留等批。
    */
-  pendingEventCount: Int = 0
+  pendingEventCount: Int = 0,
+  /**
+   * v2 冻结式错误恢复升级链（§5.2）：升级链状态快照（P0 内存态）——
+   * enterErrorFrozen 第 3 次进入时设置、FreezeScheduler.scan 读它检查
+   * escalateAt 到期（升级/跳级/到达用户）。与 AgentState.execution.escalation
+   * 同步维护（registry 层供扫描器只读，actor 层为权威）。
+   */
+  escalation: Option[EscalationInfo] = None,
+  /**
+   * v2 冻结式错误恢复：当前冻结的 reason 字符串快照（"schedule"/"llm-transient"/
+   * "network"/"provider-down"/"restart-recovery"）。WS parentRestart 用它区分
+   * 时间表冻结（正常调度，不可父重启）与错误族冻结（可重启）。与
+   * AgentState 的 lastErrorFreezeReason 同步维护；恢复/解除冻结时清 None。
+   */
+  frozenReason: Option[String] = None
 )
 
 // ============================================================
@@ -370,6 +389,42 @@ object AgentEvent:
    */
   case class Cancelled(sessionId: String, reason: String) extends AgentEvent
 
+/** 冻结原因（v2 冻结式错误恢复，§3.1）：统一「暂停在 dispatch 边界」的语义，
+  * reason 决定恢复条件与前端两族视觉（schedule=sapphire 冷色 / 错误族=amber 暖色）。
+  * 缺省 Schedule 保证旧调用点零改动（时间表冻结=特例）。 */
+enum FreezeReason:
+  case Schedule        // 时间表冻结（#337 黑名单），恢复条件=出冻结段
+  case LlmTransient    // LLM transient 错误预算耗尽（429/529 overload），恢复条件=退避到期+provider 恢复
+  case Network         // 连接重置/超时/未知瞬态，恢复条件=短退避到期
+  case ProviderDown    // 全候选 provider Down，恢复条件=HealthMonitor 探测恢复（P0 用 R1 轮询兜底）
+  case RestartRecovery // 崩溃/进程重启后重建，恢复条件=条件检查通过后立即续跑
+
+/** 升级链状态（v2 §5.2）：同 reason 连续冻结 ≥3 次进入——挂 AgentRecord（P0 内存态）。
+  * level=当前升级层级（1 起）；escalateAt=本层等待父决策的截止时间；awaitedParentSessionId=等待的父会话。 */
+case class EscalationInfo(
+  level: Int,
+  escalateAt: Long,
+  awaitedParentSessionId: String
+)
+
+/** v2 升级链判定（§5.1 规则，纯函数——可单测）：升级只沿 parentSessionId 静态链
+  * 向上、每级一次（通知按 level 去重）、无环（单父树）；父记录不存在 → 跳级；
+  * 最终到达用户（root/无父）即终态，无再升级对象。 */
+object Escalation:
+  enum Target:
+    /** 父存活：通知父（ExternalEvent 注入其上下文，排队不唤醒）。 */
+    case Parent
+    /** 父缺失：跳级（P0 无父链信息，视同到达用户终态，detail 标注）。 */
+    case Grandparent
+    /** 无父（root/standalone）：用户终态——WS errorEscalated，不设超时。 */
+    case User
+
+  def nextTarget(level: Int, hasParent: Boolean, parentAlive: Boolean): Target =
+    if !hasParent then Target.User
+    else if parentAlive then Target.Parent
+    else Target.Grandparent
+end Escalation
+
 enum AgentStreamEvent:
   case TextDelta(text: String)
   case ToolStart(label: String)
@@ -403,8 +458,17 @@ enum AgentStreamEvent:
   case ExternalEventReceived(source: String, eventType: String, correlationId: Option[String])
   case Interrupted
 
-  /** 冻结调度：agent 在 dispatch 边界被冻结（处于冻结时段内，#337 黑名单语义）。resumeAtMillis 供前端展示。 */
-  case Frozen(resumeAtMillis: Option[Long])
+  /** 冻结调度：agent 在 dispatch 边界被冻结（处于冻结时段内，#337 黑名单语义）。resumeAtMillis 供前端展示。
+    * v2（冻结式错误恢复）：reason 泛化——Schedule=时间表冻结（默认，缺省兼容旧前端）；
+    * LlmTransient/Network/ProviderDown/RestartRecovery=错误恢复族（§3.1）；detail/retryCount/
+    * escalation 为错误族附加信息（可选，缺省无）。 */
+  case Frozen(
+      resumeAtMillis: Option[Long],
+      reason: FreezeReason = FreezeReason.Schedule,
+      detail: Option[String] = None,
+      retryCount: Int = 0,
+      escalation: Option[EscalationInfo] = None
+  )
 
   /** 冻结调度：恢复（出冻结段自动恢复 / 用户输入唤醒 / 交互豁免路径不会发出本事件）。 */
   case Resumed
@@ -573,11 +637,32 @@ enum AgentStreamEvent:
         val base = Json.obj("type" -> "interrupted".asJson)
         if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
         else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
-      case Frozen(resumeAtMillis) =>
+      case Frozen(resumeAtMillis, reason, detail, retryCount, escalation) =>
         val base =
           if isSubagent then Json.obj("type" -> "agentFrozen".asJson, "agentId" -> agentId.asJson)
           else Json.obj("type" -> "frozen".asJson, "sessionId" -> sessionId.asJson)
-        resumeAtMillis.fold(base)(t => base.deepMerge(Json.obj("resumeAt" -> t.asJson)))
+        val withResume = resumeAtMillis.fold(base)(t => base.deepMerge(Json.obj("resumeAt" -> t.asJson)))
+        // reason 缺省='schedule'（默认参数），旧前端/旧后端双向兼容；错误族前端按 reason 区分两族视觉
+        val reasonStr = reason match
+          case FreezeReason.Schedule        => "schedule"
+          case FreezeReason.LlmTransient    => "llm-transient"
+          case FreezeReason.Network         => "network"
+          case FreezeReason.ProviderDown    => "provider-down"
+          case FreezeReason.RestartRecovery => "restart-recovery"
+        val withReason = withResume.deepMerge(Json.obj("reason" -> reasonStr.asJson))
+        val withDetail = detail.fold(withReason)(d => withReason.deepMerge(Json.obj("detail" -> d.asJson)))
+        val withRetry = if retryCount > 0 then withDetail.deepMerge(Json.obj("retryCount" -> retryCount.asJson)) else withDetail
+        escalation.fold(withRetry)(e =>
+          withRetry.deepMerge(
+            Json.obj(
+              "escalation" -> Json.obj(
+                "level" -> e.level.asJson,
+                "escalateAt" -> e.escalateAt.asJson,
+                "awaitedParentSessionId" -> e.awaitedParentSessionId.asJson
+              )
+            )
+          )
+        )
       case Resumed =>
         if isSubagent then Json.obj("type" -> "agentResumed".asJson, "agentId" -> agentId.asJson)
         else Json.obj("type" -> "resumed".asJson, "sessionId" -> sessionId.asJson))
@@ -804,7 +889,18 @@ case class ExecutionContext(
    * 字段（registry 层权威源见 AgentRecord.lastActivityMs，TaskStuckWatcher
    * 读它；本字段供 AgentState 使用与二期前端展示）。touch 点见 touchActivity。
    */
-  lastActivityMs: Long = 0L
+  lastActivityMs: Long = 0L,
+  /**
+   * v2 冻结式错误恢复（§3.3）：同 reason 连续 ErrorFrozen 进入次数（跨恢复
+   * 累计——resumed 续跑失败仍算连续，直至 turn 成功完成回 idle 清零）。
+   * Schedule 时间表冻结不参与计数。≥3 触发升级链（不再直接 fatal）。
+   * 内存态：ExecutionContext.idle 重建即清零（续跑成功=问题缓解）。
+   */
+  errorFreezeCount: Int = 0,
+  /** v2：上次错误冻结的 reason——判定「同 reason 连续」；reason 变化重置计数。 */
+  lastErrorFreezeReason: Option[FreezeReason] = None,
+  /** v2 升级链状态（§5.2，P0 内存态）：进入升级链后挂起，父决策/超时升级时更新。 */
+  escalation: Option[EscalationInfo] = None
 )
 
 /** P0 阶段 3：touch turn 活动戳（幂等——仅更新时间戳，不改变其他状态）。 */
@@ -1078,6 +1174,19 @@ extension (s: AgentState)
 
   def withLlmCallsThisTurn(count: Int): AgentState =
     s.copy(execution = s.execution.copy(llmCallsThisTurn = count))
+
+  def errorFreezeCount: Int = s.execution.errorFreezeCount
+
+  def lastErrorFreezeReason: Option[FreezeReason] = s.execution.lastErrorFreezeReason
+
+  def escalation: Option[EscalationInfo] = s.execution.escalation
+
+  /** v2 冻结式错误恢复：计数 + reason 记录（内存态，turn 完成回 idle 自动清零）。 */
+  def withErrorFreezeCount(count: Int, reason: FreezeReason): AgentState =
+    s.copy(execution = s.execution.copy(errorFreezeCount = count, lastErrorFreezeReason = Some(reason)))
+
+  def withEscalation(esc: Option[EscalationInfo]): AgentState =
+    s.copy(execution = s.execution.copy(escalation = esc))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
 
   def withSafetyMode(mode: String): AgentState =

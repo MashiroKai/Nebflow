@@ -813,4 +813,344 @@ class FreezeGateSpec extends CatsEffectSuite:
       os.remove.all(tmp)
   }
 
+  // ── v2 冻结式错误恢复（20260824_frozen-error-recovery-plan §7 P0 后端验收）──
+
+  /** 前 failCount 次 sendStream 抛 429（RateLimit → Transient），之后 TextDelta+Done。 */
+  private class TransientFailNThenOkLlm(
+    counter: cats.effect.Ref[IO, Int],
+    failCount: Int
+  ) extends LlmHandle[IO]:
+    def send(req: LlmRequest): IO[LlmResponse] =
+      IO.raiseError(new RuntimeException("send not expected in this test"))
+    def sendStream(
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+    ): Stream[IO, StreamChunk] =
+      Stream.eval(counter.update(_ + 1)) >> Stream.eval(counter.get).flatMap { n =>
+        if n <= failCount then
+          Stream.raiseError[IO](new RuntimeException("HTTP 429 rate limit exceeded"))
+        else Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+      }
+
+  /** 恒抛 Timeout（classifyError → Permanent）——不冻结直接 fatal 的对照 mock。 */
+  private class PermanentFailLlm(counter: cats.effect.Ref[IO, Int]) extends LlmHandle[IO]:
+    def send(req: LlmRequest): IO[LlmResponse] =
+      IO.raiseError(new RuntimeException("send not expected in this test"))
+    def sendStream(
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+    ): Stream[IO, StreamChunk] =
+      Stream.eval(counter.update(_ + 1)) >>
+        Stream.raiseError[IO](new RuntimeException("connection timeout after 30s"))
+
+  private def frozenEventOf(events: List[Json]): Option[Json] =
+    events.find(_.hcursor.downField("type").as[String].contains("frozen"))
+
+  test("ER-1: transient budget exhausted → ErrorFrozen (llm-transient, resumeAt set, zero further LLM calls)") {
+    val system = ActorSystem("freeze-er1")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        counter <- IO.ref(0)
+        requests <- IO.ref(List.empty[LlmRequest])
+        events <- IO.ref(List.empty[Json])
+        schedRef <- IO.ref(openConfig)
+        resources <- mkResources(system, tmp, TransientFailNThenOkLlm(counter, failCount = 99), schedRef)
+        sid = "freeze-er1-agent"
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = rootDef(),
+            resources = resources,
+            wsSend = json => events.update(_ :+ json),
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("er1")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
+        _ <- ref ! AgentCommand.UserInput("trigger transient failure")
+        // 失败1 → retry（5s backoff）→ 失败2（预算耗尽）→ ErrorFrozen
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 2))
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(
+          resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
+        )
+        reg <- resources.agentRegistry.get.map(_.get(sid))
+        _ = assertEquals(reg.flatMap(_.frozenReason), Some("llm-transient"), "frozenReason must be llm-transient")
+        _ = assert(reg.exists(_.escalation.isEmpty), "first error-freeze must NOT enter escalation chain")
+        evs <- events.get
+        fz = frozenEventOf(evs)
+        _ = assert(fz.isDefined, "must emit frozen WS event")
+        _ = assert(
+          fz.exists(_.hcursor.downField("reason").as[String].toOption.contains("llm-transient")),
+          s"frozen event must carry reason=llm-transient, got ${fz.flatMap(_.hcursor.downField("reason").as[String].toOption)}"
+        )
+        _ = assert(
+          fz.exists(_.hcursor.downField("resumeAt").as[Long].isRight),
+          "frozen event must carry resumeAt for the backoff window"
+        )
+        countAtFreeze <- counter.get
+        _ <- IO.sleep(800.millis)
+        countAfter <- counter.get
+        _ = assert(
+          countAtFreeze == countAfter,
+          s"ErrorFrozen must be zero-token: no LLM calls while frozen ($countAtFreeze vs $countAfter)"
+        )
+      yield ()
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  test("ER-2: backoff elapsed + CheckFreezeGate → resumed, dispatch continues from checkpoint") {
+    val system = ActorSystem("freeze-er2")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        counter <- IO.ref(0)
+        requests <- IO.ref(List.empty[LlmRequest])
+        events <- IO.ref(List.empty[Json])
+        schedRef <- IO.ref(openConfig)
+        resources <- mkResources(system, tmp, TransientFailNThenOkLlm(counter, failCount = 2), schedRef)
+        sid = "freeze-er2-agent"
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = rootDef(),
+            resources = resources,
+            wsSend = json => events.update(_ :+ json),
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("er2")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
+        _ <- ref ! AgentCommand.UserInput("transient then ok")
+        // 失败1(retry) → 失败2 → ErrorFrozen
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(
+          resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
+        )
+        // 退避（~5s）到期后 CheckFreezeGate → resumed → 第 3 次调用成功 → turn 完成
+        _ <- IO.sleep(6500.millis)
+        _ <- ref ! AgentCommand.CheckFreezeGate
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 3))
+        resumedSeen <- hasEvent(events, "resumed")
+        _ = assert(resumedSeen, "must emit resumed WS event when backoff elapsed")
+        _ <- waitUntil(System.currentTimeMillis() + 10000)(
+          resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Idle))
+        )
+      yield ()
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  test("ER-3: same-reason consecutive freezes ≥3 → escalate to parent, NOT fatal") {
+    val system = ActorSystem("freeze-er3")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        counter <- IO.ref(0)
+        requests <- IO.ref(List.empty[LlmRequest])
+        events <- IO.ref(List.empty[Json])
+        parentEvents <- IO.ref(List.empty[AgentCommand])
+        schedRef <- IO.ref(openConfig)
+        resources <- mkResources(system, tmp, TransientFailNThenOkLlm(counter, failCount = 99), schedRef)
+        // 父 probe：记录收到的所有命令（ExternalEvent 升级通知）
+        parentRef <- system.spawn(
+          {
+            def loop: Behavior[AgentCommand] =
+              Behaviors.receiveMessage[AgentCommand](cmd => parentEvents.update(_ :+ cmd).as(loop))
+            loop
+          },
+          "freeze-er3-parent"
+        )
+        sid = "freeze-er3-agent"
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = rootDef("Backend", category = "team"),
+            resources = resources,
+            wsSend = json => events.update(_ :+ json),
+            depth = 1,
+            parentRef = Some(parentRef),
+            sessionId = Some(sid),
+            sessionName = Some("er3")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Team, sid, Some(parentRef))))
+        _ <- ref ! AgentCommand.UserInput("keep failing")
+        // 轮1：失败1(retry) → 失败2 → ErrorFrozen#1
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(
+          resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
+        )
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 2))
+        // 轮2/轮3：退避到期 CheckFreezeGate → 续跑失败 → 再冻结（count 2→3→4）
+        _ <- IO.sleep(6500.millis)
+        _ <- ref ! AgentCommand.CheckFreezeGate
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 3))
+        _ <- IO.sleep(6500.millis)
+        _ <- ref ! AgentCommand.CheckFreezeGate
+        // 轮3 冻结完成 → 升级链：父收到 error-escalated，agent 仍 Frozen（非 fatal）
+        // 注意：waitUntil Frozen 在 CheckFreezeGate 前已满足（本就 Frozen），必须等
+        // escalation 落盘（enterFrozen 的 updateRegistryEscalation 在 touch 之后）
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 4))
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(
+          resources.agentRegistry.get.map(_.get(sid).exists(_.escalation.isDefined))
+        )
+        reg <- resources.agentRegistry.get.map(_.get(sid))
+        _ = assert(reg.exists(_.escalation.isDefined), "3rd consecutive freeze must set escalation info")
+        _ = assert(
+          reg.flatMap(_.escalation).exists(_.level == 1),
+          "escalation level must start at 1"
+        )
+        _ = assert(
+          reg.exists(r => r.status == AgentStatus.Frozen),
+          "3rd consecutive freeze must still be Frozen (not fatal)"
+        )
+        _ <- waitUntil(System.currentTimeMillis() + 5000)(
+          parentEvents.get.map(_.exists {
+            case AgentCommand.ExternalEvent(_, eventType, _, _, _) => eventType == "error-escalated"
+            case _ => false
+          })
+        )
+        parentGot <- parentEvents.get.map(_.collectFirst {
+          case AgentCommand.ExternalEvent(_, eventType, _, metadata, _) if eventType == "error-escalated" =>
+            metadata("reason").flatMap(_.as[String].toOption).getOrElse("")
+        })
+        _ = assertEquals(parentGot, Some("llm-transient"), "escalation event must carry the freeze reason")
+        statusAfter <- resources.agentRegistry.get.map(_.get(sid).map(_.status))
+        _ = assert(
+          statusAfter.contains(AgentStatus.Frozen),
+          s"3rd consecutive freeze must NOT be fatal — still Frozen, got $statusAfter"
+        )
+      yield ()
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  test("ER-4: Permanent failure does NOT freeze — fatal path (error event, no frozen event)") {
+    val system = ActorSystem("freeze-er4")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        counter <- IO.ref(0)
+        requests <- IO.ref(List.empty[LlmRequest])
+        events <- IO.ref(List.empty[Json])
+        schedRef <- IO.ref(openConfig)
+        resources <- mkResources(system, tmp, PermanentFailLlm(counter), schedRef)
+        sid = "freeze-er4-agent"
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = rootDef(),
+            resources = resources,
+            wsSend = json => events.update(_ :+ json),
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("er4")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
+        _ <- ref ! AgentCommand.UserInput("permanent failure")
+        _ <- IO.sleep(800.millis)
+        evs <- events.get
+        _ = assert(!frozenEventOf(evs).isDefined, "Permanent failure must NOT emit frozen")
+        _ = assert(
+          evs.exists(_.hcursor.downField("type").as[String].contains("error")),
+          "Permanent failure must emit error (fatal path)"
+        )
+      yield ()
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  test("ER-5: Schedule freeze regression — reason defaults to 'schedule', behavior unchanged") {
+    val system = ActorSystem("freeze-er5")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        counter <- IO.ref(0)
+        requests <- IO.ref(List.empty[LlmRequest])
+        events <- IO.ref(List.empty[Json])
+        schedRef <- IO.ref(frozenConfig())
+        resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
+        sid = "freeze-er5-agent"
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = rootDef(),
+            resources = resources,
+            wsSend = json => events.update(_ :+ json),
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("er5")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
+        _ <- ref ! AgentCommand.UserInput("schedule freeze")
+        _ <- waitUntil(System.currentTimeMillis() + 5000)(
+          resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
+        )
+        evs <- events.get
+        _ = assertEquals(
+          frozenEventOf(evs).flatMap(_.hcursor.downField("reason").as[String].toOption),
+          Some("schedule"),
+          "time-schedule freeze must carry reason=schedule (default, backward compatible)"
+        )
+        _ = assert(counter.get.unsafeRunSync() == 0, "schedule freeze must keep zero LLM calls")
+        // 段外 CheckFreezeGate 恢复（现状语义回归）
+        _ <- schedRef.set(openConfig)
+        _ <- ref ! AgentCommand.CheckFreezeGate
+        _ <- waitUntil(System.currentTimeMillis() + 8000)(counter.get.map(_ >= 1))
+      yield ()
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  test("ER-6: escalation target pure function — parent alive → Parent, parent missing → skip, no parent → User") {
+    assertEquals(Escalation.nextTarget(1, hasParent = true, parentAlive = true), Escalation.Target.Parent)
+    assertEquals(Escalation.nextTarget(1, hasParent = true, parentAlive = false), Escalation.Target.Grandparent)
+    assertEquals(Escalation.nextTarget(1, hasParent = false, parentAlive = false), Escalation.Target.User)
+    assertEquals(Escalation.nextTarget(3, hasParent = false, parentAlive = true), Escalation.Target.User)
+  }
+
 end FreezeGateSpec
