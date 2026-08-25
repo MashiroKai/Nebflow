@@ -1,0 +1,25 @@
+<configuration>
+
+  <!-- #36: Test configuration — console only, never the host nebflow.log.
+       logback loads logback-test.xml in preference to logback.xml whenever
+       it is on the classpath, so sbt test runs (which put src/test/resources
+       first) write no FILE appender at all. -->
+
+  <turboFilter class="nebflow.core.WsTimeoutFilter"/>
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %msg%n</pattern>
+    </encoder>
+    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+      <level>INFO</level>
+    </filter>
+  </appender>
+
+  <logger name="org.http4s" level="WARN"/>
+  <logger name="org.eclipse.jetty" level="WARN"/>
+  <logger name="io.netty" level="WARN"/>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+  </root>
+</configuration>
