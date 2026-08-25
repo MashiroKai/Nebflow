@@ -409,6 +409,7 @@ export default {
   'chat.frozenShort': 'Frozen · {time} resume',
   'chat.frozenPlaceholder': 'Frozen · resumes {time} · send to wake…',
   'chat.frozenPlaceholderNoTime': 'Frozen · send to wake…',
+  'chat.skipFreeze': 'Skip this freeze',
   /* Error-recovery family (frozen-error-recovery plan §4.3/§4.4) — amber
      "recovering" language, never "frozen". Reason keys map to FreezeReason
      wire names. */

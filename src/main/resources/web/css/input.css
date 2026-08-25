@@ -172,6 +172,51 @@
   color: rgb(var(--sapphire) / 0.9);
   text-shadow: 0 0 8px rgb(var(--sapphire-glow) / 0.35);
 }
+/* Skip-current-freeze button (08-25 ruling: "跳过本次" voids the current
+   freeze window). Shown ONLY while the input bar is schedule-frozen (.frozen,
+   never the amber error family — the two are mutually exclusive classes).
+   Sapphire glass — same material family as the send button, calmed to a tint
+   so it reads as the frozen-mode CTA. Moderate weight, no icon-only, no emoji. */
+.skip-freeze-btn {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.14);
+  -webkit-backdrop-filter: blur(8px) saturate(1.15);
+  backdrop-filter: blur(8px) saturate(1.15);
+  border: 1px solid rgb(var(--sapphire) / 0.30);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.skip-freeze-btn svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2.2;
+}
+.skip-freeze-btn:hover {
+  background: rgb(var(--sapphire) / 0.22);
+  border-color: rgb(var(--sapphire) / 0.45);
+}
+.skip-freeze-btn:active {
+  background: rgb(var(--sapphire) / 0.28);
+}
+.skip-freeze-btn:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
+}
+#input-bar.frozen:not(.frozen-error) #skip-freeze-btn,
+.fa-input-bar.frozen:not(.frozen-error) #skip-freeze-btn {
+  display: inline-flex;
+}
 /* Error-recovery input bar (frozen-error-recovery plan §4.3 dim 1) — amber
    family. Mirrors the .frozen structure EXACTLY (border/bg/ring/glow/edge/
    transition) and swaps only the hue — the "同族" skeleton with an importable

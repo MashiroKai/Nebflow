@@ -414,6 +414,7 @@ export default {
   'chat.frozenShort': '已冻结 · {time} 恢复',
   'chat.frozenPlaceholder': '已冻结 · {time} 恢复 · 发送消息立即唤醒…',
   'chat.frozenPlaceholderNoTime': '已冻结 · 发送消息立即唤醒…',
+  'chat.skipFreeze': '跳过本次',
   /* Error-recovery family (frozen-error-recovery plan §4.3/§4.4) — amber
      "错误恢复中" language, never "已冻结". Reason keys map to FreezeReason
      wire names (llm-transient / network / provider-down / restart-recovery). */
