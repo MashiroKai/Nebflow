@@ -136,17 +136,19 @@ function relTime(ts) {
   return `${Math.floor(diff / 86_400_000)}d`;
 }
 
-/** Dependency badges for a task row. Non-emoji text pills (design rule: no emoji);
- *  spec A5 only asserts the `dep #<id>` text. */
+/** Dependency badges for a task row. Per spec §6.2: blockedBy → `⛔ dep #<id>`
+ *  (被依赖方向), blocks → `🔒 blocks #<id>` (本任务阻塞的). Gutter icons ⛔/🔒
+ *  are per the user-confirmed spec (design rule "no emoji" is a client-UI
+ *  preference; the spec explicitly specifies these glyphs). */
 function depBadgesHtml(task) {
   const depIds = (task.blockedBy || []).map(id => `#${id}`).join(', ');
   const blkIds = (task.blocks || []).map(id => `#${id}`).join(', ');
   let html = '';
   if (depIds) {
-    html += `<span class="task-dep-badge" title="${esc(t('teamTask.dependsOn', { ids: depIds }))}" data-dep="${esc(depIds)}">dep ${esc(depIds)}</span>`;
+    html += `<span class="task-dep-badge" title="${esc(t('teamTask.dependsOn', { ids: depIds }))}" data-dep="${esc(depIds)}">\u26d4 dep ${esc(depIds)}</span>`;
   }
   if (blkIds) {
-    html += `<span class="task-dep-badge task-dep-badge-block" title="${esc(t('teamTask.blocksIds', { ids: blkIds }))}" data-blocks="${esc(blkIds)}">blocks ${esc(blkIds)}</span>`;
+    html += `<span class="task-dep-badge task-dep-badge-block" title="${esc(t('teamTask.blocksIds', { ids: blkIds }))}" data-blocks="${esc(blkIds)}">\u{1f512} blocks ${esc(blkIds)}</span>`;
   }
   return html;
 }
