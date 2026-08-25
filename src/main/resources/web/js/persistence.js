@@ -10,6 +10,7 @@ import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, build
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow, bindCollapsibleToggle } from './chat.js';
 import { buildTurnGroupsForHistory } from './turnGroup.js';
+import { renderRefBlock } from './reference.js';
 
 // ---------- AI message badge (no duration) ----------
 // Builds a duration-badge pill with timestamp + copy button, matching
@@ -131,7 +132,11 @@ function sanitizeForCache(entry) {
       type: a.type, name: a.name, path: a.path,
       // v2: taskRef chips keep their identity (tiny fields) so a restored
       // history renders the return reference, not a bare [file] tag.
-      ...(a.type === 'taskRef' ? { taskId: a.taskId, sessionId: a.sessionId, subject: a.subject } : {})
+      ...(a.type === 'taskRef' ? { taskId: a.taskId, sessionId: a.sessionId, subject: a.subject } : {}),
+      // #303 D4: preserve the Reference mini fields (source/anchor/meta/display)
+      // so a refreshed history re-renders the reference card instead of a bare
+      // [file] tag. Deep fields are small — no base64, safe for the cache.
+      ...(a.type === 'ref' ? { refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display } : {})
     }));
   }
   return e;
@@ -164,6 +169,16 @@ export function attachmentImageUrl(path) {
 function appendAttachmentBubble(row, att) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble user att-bubble';
+  if (att.type === 'ref') {
+    // #303 D4: restore a unified Reference as a message card (matches the live
+    // renderUserBubble path, chat.js:305-311). att IS the Reference after
+    // sanitizeForCache preserves its mini fields (source/anchor/meta/display).
+    bubble.classList.add('att-ref-bubble');
+    const ref = renderRefBlock(att, { mode: 'message' });
+    if (ref) bubble.appendChild(ref);
+    row.appendChild(bubble);
+    return;
+  }
   if (att.type === 'taskRef') {
     // v2 §5.3 restore path — same tag shape as renderUserBubble's live path.
     const tag = document.createElement('span');
