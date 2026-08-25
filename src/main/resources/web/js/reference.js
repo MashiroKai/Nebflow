@@ -310,5 +310,38 @@ function renderMessageRef(ref) {
   card.appendChild(body);
   card.dataset.refType = ref.refType || '';
   card.dataset.refPath = ref.source?.path || '';
+  // #303 C2/C3: click the message card to jump to the referenced content
+  // (open the file/URL, or reveal the task). Canvas is loaded lazily via a
+  // dynamic import() — canvas.js statically imports reference.js, so a static
+  // import here would create a reference→canvas→reference cycle.
+  card.addEventListener('click', () => jumpRef(ref));
   return card;
+}
+
+// ── C2/C3 reference jump ─────────────────────────────────────────────────────
+// Route by refType. File/document: open in Canvas (empty content + absPath →
+// canvas fetches via readFile and picks the right viewer). html-element: open
+// the source URL. task: referral records are back-references — no silent
+// navigation, but let the task panel reveal it if it owns the id (future); for
+// now this is a non-navigating record (the return already happened).
+function jumpRef(ref) {
+  if (!ref) return;
+  const rt = ref.refType;
+  const src = ref.source || {};
+  const path = src.path || '';
+  if (rt === 'file' || rt === 'document') {
+    if (!path) return;
+    const title = ref.display?.label || src.title || path.split('/').pop();
+    window.dispatchEvent(new CustomEvent('workspace-open-item', {
+      detail: { id: `file:${path}`, title, itemType: '', content: '', absPath: path, path, pinned: false },
+    }));
+    return;
+  }
+  if (rt === 'html-element' && src.url) {
+    window.dispatchEvent(new CustomEvent('workspace-open-item', {
+      detail: { id: `url:${src.url}`, itemType: 'url', title: ref.display?.label || src.url, url: src.url, pinned: false },
+    }));
+    return;
+  }
+  // task / unknown → non-navigating record.
 }
