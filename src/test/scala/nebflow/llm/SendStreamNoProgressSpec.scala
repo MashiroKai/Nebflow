@@ -93,8 +93,7 @@ class SendStreamNoProgressSpec extends CatsEffectSuite:
             baseUrl = s"http://127.0.0.1:$port",
             apiKey = "test",
             protocol = LlmProtocol.Anthropic,
-            models = List(ModelConfig("m1", maxTokens = 1024, vision = Some(false))),
-            queuePersist = Some(false)
+            models = List(ModelConfig("m1", maxTokens = 1024, vision = Some(false)))
           )
         )
       )

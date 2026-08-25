@@ -42,14 +42,14 @@ object Defaults:
    * window BEFORE the per-provider inactivityTimeout arms. The per-provider
    * watchdog (LlmFirstTokenTimeoutSec / LlmStreamInactivitySec) only covers a
    * provider stream once it starts producing — the intake→first-chunk
-   * evaluation chain (candidates resolve / health check / gate queue / adapter
+   * evaluation chain (candidates resolve / health check / adapter
    * fetch / HTTP setup / consumer-side processing) has NO coverage: a fiber
    * parked there hangs forever (incident: intake logged at 22:48:41, then 40min
    * of zero traces; Stop and hard-cancel both ineffective because the fiber was
    * suspended on a non-cancellable wait). This outer guard fails the whole
    * sendStream when NO chunk appears within this window (and likewise between
-   * chunks — legal fallback silences are bounded well below it: queue 120s +
-   * overload backoff 60s + first-token 90s per hop). Aligned with LlmTimeoutMs
+   * chunks — legal fallback silences are bounded well below it: overload
+   * backoff 60s + first-token 90s per hop). Aligned with LlmTimeoutMs
    * (the non-streaming per-request timeout) as the "10min total" mental model.
    */
   val LlmStreamNoProgressTimeoutSec: Int = 600
@@ -130,30 +130,6 @@ object Defaults:
 
   /** Preview size in characters for persisted tool results. */
   val ToolResultPreviewSize: Int = 2048
-
-  // ---- Concurrency gate (P0 API 并发管理) ----
-
-  /**
-   * Default per-provider LLM concurrency limit (requests in flight at once).
-   * Mainstream API free/common tiers allow >= 3 concurrent requests; 3 is a
-   * safe floor that keeps 7-parallel-Delegate bursts from slamming the API.
-   * `maxConcurrency: 0` in config means unlimited.
-   */
-  val LlmMaxConcurrencyDefault: Int = 3
-
-  /**
-   * Queue timeout for a concurrency-gated LLM request. Currently unused —
-   * gate.acquire waits indefinitely (user #296 追加, 2026-08-19): 排队等待
-   * 正常，不 fallback。Provider 真故障时 LLM 请求本身的超时（首 token 90s /
-   * 空闲 60s）会触发 fallback，排队层不需要超时兜底。保留值供未来可选启用。
-   */
-  val LlmQueueTimeoutMs: Long = 120_000L
-
-  /** RPM sliding-window width (seconds) for the per-provider rate limiter. */
-  val LlmRpmWindowSec: Int = 60
-
-  /** Persist queued LLM requests to disk so they survive a restart. */
-  val LlmQueuePersistDefault: Boolean = true
 
   // ---- Mail queue delivery dedup (P0 投递层指纹去重) ----
 

@@ -43,7 +43,7 @@ object LlmInterface:
   // hook (Main.startGateway) and the GatewayMain graceful-cleanup guarantee
   // complete all signals so in-flight FS2/sttp HTTP requests abort instead of
   // burning tokens while the JVM drains after Ctrl+C. Registry is a global
-  // singleton (same pattern as LlmQueueStore) because the hook has no handle
+  // singleton because the hook has no handle
   // reference — it must reach every stream regardless of which LlmHandle ran
   // it. Completing a Deferred from another runtime (IORuntime.global in the
   // hook thread) is safe: it only wakes the waiters, which continue on their
@@ -69,7 +69,7 @@ object LlmInterface:
     inflight.update(_ - key)
 
   /** gate-wedge P1-1: hard-cancel every in-flight LLM request belonging to a
-    * session — wakes queued (pre-gate), rpm-waiting and streaming requests
+    * session — wakes queued and streaming requests
     * alike (the interrupt wraps the whole candidate stream, not just the HTTP
     * layer). Returns how many requests were aborted. Used by TaskStuckWatcher
     * after repeated Stop mailbox messages went unconsumed. */
@@ -112,42 +112,6 @@ object LlmInterface:
       case e: java.lang.reflect.InvocationTargetException =>
         // shutdownNow exists but threw — still try close()
         try client.close() catch case _: Throwable => ()
-
-  /**
-   * Acquire a gate permit, persisting the request if it has to queue
-   * (P0 并发管理阶段 2, design §4.5).
-   *
-   * - Gate free (tryAcquire true): acquire immediately — no persistence.
-   *   In-flight requests are deliberately not covered by queue persistence.
-   * - Gate busy: write the full LlmRequest to LlmQueueStore (so a restart
-   *   doesn't lose it), then queue. On grant, removeHead — FIFO guarantees
-   *   our item is at the head. Queueing is bounded by the gate's queueTimeout
-   *   (gate-wedge P0-1, 2026-08-20 — reverts #296's infinite wait): a wedged
-   *   gate surfaces as QueueTimeout → Transient fallback, not silent death.
-   * - queuePersist=false: skip persistence entirely (in-memory only).
-   */
-  private def acquireWithPersistence(
-    gate: ConcurrencyGate,
-    providerId: String,
-    persist: Boolean,
-    request: LlmRequest
-  ): IO[ConcurrencyPermit] =
-    gate.tryAcquire.flatMap {
-      case true => gate.acquire
-      case false =>
-        val item =
-          LlmQueueStore.QueueItem(java.util.UUID.randomUUID().toString, providerId, request, System.currentTimeMillis())
-        val write = if persist then LlmQueueStore.append(providerId, item) else IO.unit
-        write *>
-          gate.acquire
-            .flatTap { _ =>
-              // Permit granted — everyone ahead of us either got granted and
-              // removed, or timed out and removed, so our item is at the head.
-              // Remove it so a restart doesn't re-fire this request.
-              if persist then LlmQueueStore.removeHead(providerId).void else IO.unit
-            }
-    }
-
 
   // ── Vision PreCheck helpers ────────────────────────────
 
@@ -333,18 +297,6 @@ object LlmInterface:
                         if !effectiveVision && hasImage(req.messages) then stripImages(req.messages)
                         else req.messages
                       adapter <- registry.getAdapter(candidate.providerId)
-                      // P0 concurrency gate: queue for a permit before firing
-                      // (Transient on timeout — falls back to next provider).
-                      // Queued requests are persisted (stage 2) so a restart
-                      // doesn't lose them.
-                      permit <- registry.getGate(candidate.providerId).flatMap { gate =>
-                        acquireWithPersistence(
-                          gate,
-                          candidate.providerId,
-                          candidate.provider.queuePersist.getOrElse(Defaults.LlmQueuePersistDefault),
-                          req
-                        )
-                      }
                       resp <- adapter.sendMessage(
                         SendMessageParams(
                           effectiveMessages,
@@ -358,7 +310,7 @@ object LlmInterface:
                           Some(req.agentId),
                           searchInjectionFor(req, candidate)
                         )
-                      ).guarantee(permit.release)
+                      )
                       // On success, clear the empty-completion counter.
                       // Oscillation fix: only an image-bearing success lifts
                       // a vision=false override; after stripImages the
@@ -416,8 +368,8 @@ object LlmInterface:
               // finalize whether the stream completes, fails or is aborted.
               fs2.Stream.eval(
                 registerInflight(Some(req.sessionId)).flatTap { case (key, _) =>
-                  // gate-wedge P2: pre-gate intake trace — makes "request
-                  // accepted but never fired" visible in the sse logs.
+                  // Intake trace — makes "request accepted but never fired"
+                  // visible in the sse logs.
                   nebflow.core.LlmLogWriter.logIntake(key, req.sessionId, req.agentId)
                 }
               ).flatMap { case (key, halt) =>
@@ -540,17 +492,6 @@ object LlmInterface:
                                       effectiveMessages =
                                         if !effectiveVision && hasImage(msgs) then stripImages(msgs) else msgs
                                       adapter <- registry.getAdapter(candidate.providerId)
-                                      // P0 concurrency gate: queue for a permit before
-                                      // opening the stream; released when the stream ends.
-                                      // Queued requests are persisted (stage 2).
-                                      permit <- registry.getGate(candidate.providerId).flatMap { gate =>
-                                        acquireWithPersistence(
-                                          gate,
-                                          candidate.providerId,
-                                          candidate.provider.queuePersist.getOrElse(Defaults.LlmQueuePersistDefault),
-                                          req
-                                        )
-                                      }
                                     yield adapter.sendMessageStream(
                                       SendMessageParams(
                                         effectiveMessages,
@@ -564,7 +505,7 @@ object LlmInterface:
                                         Some(req.agentId),
                                         searchInjectionFor(req, candidate)
                                       )
-                                    ).onFinalize(permit.release)
+                                    )
                                     )
                                   )
                                   (stream
@@ -639,11 +580,6 @@ object LlmInterface:
                                         }
                                       )
                                       .drain)
-                                    // gate-wedge P0-1 (2026-08-20): acquire 有界——排队
-                                    // 与 RPM 等待合计超 queueTimeout（默认 120s）即抛
-                                    // QueueTimeout（Transient → fallback 下一个 provider）。
-                                    // #296 的「排队不该立即失败」保留；无限等待被推翻：
-                                    // gate 楔死时表现为 120s 内 WARN+fallback，而非静默死亡。
                                     // PostEmptyRecovery: if empty completion with images on non-vision model,
                                     // strip images and retry same candidate before falling through to normal error handling.
                                     .handleErrorWith { err =>
@@ -777,12 +713,6 @@ object LlmInterface:
                                               .orElse(Option(err.getMessage))
                                               .getOrElse(classification.reason.toString)
 
-                                            // gate-wedge P0-1: QueueTimeout = the gate is busy,
-                                            // NOT a provider fault — skip the same-provider retry
-                                            // (it would re-queue, wait queueTimeout again, and now
-                                            // also pay the 60s overload backoff) and skip markDown
-                                            // (mirrors the non-stream path, fallback.scala isQueueTimeout).
-                                            val isQueueTimeout = err.isInstanceOf[QueueTimeout]
                                             classification.permanence match
                                               case ErrorPermanence.Fatal =>
                                                 // Error affects all providers — abort entire stream
@@ -806,7 +736,7 @@ object LlmInterface:
                                                       .markDown(candidate.providerId, candidate.model, downReason)
                                                 ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                                               case ErrorPermanence.Transient =>
-                                                if retriesLeft > 0 && !isTimeout && !isQueueTimeout then
+                                                if retriesLeft > 0 && !isTimeout then
                                                   // Only retry same provider for non-timeout errors.
                                                   // Timeout means the provider is unresponsive — skip to next.
                                                   val jitter =
@@ -823,10 +753,9 @@ object LlmInterface:
                                                     ) *> IO.sleep(delay.millis)
                                                   ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
                                                 else
-                                                  // Timeout / queue timeout / retries exhausted — try next provider
+                                                  // Timeout / retries exhausted — try next provider
                                                   val skipMsg =
-                                                    if isQueueTimeout then "queue timeout, skipping to next provider"
-                                                    else if isTimeout then "inactivity timeout, skipping to next provider"
+                                                    if isTimeout then "inactivity timeout, skipping to next provider"
                                                     else "retries exhausted"
                                                   // Align with the Rust handle.rs fallback branch: timeout is
                                                   // classified Permanent, so the stream ALWAYS markDowns here
@@ -842,10 +771,8 @@ object LlmInterface:
                                                     )
                                                       *> failureRef.update(_ :+ attempt)
                                                       *> notify
-                                                      *> IO.whenA(!isQueueTimeout)(
-                                                        healthMonitor
-                                                          .markDown(candidate.providerId, candidate.model, downReason)
-                                                      )
+                                                      *> healthMonitor
+                                                        .markDown(candidate.providerId, candidate.model, downReason)
                                                   ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                                                 end if
                                             end match
@@ -865,7 +792,7 @@ object LlmInterface:
                 // The per-provider inactivityTimeout (inside tryCandidate) only
                 // arms AFTER sendMessageStream starts producing — the
                 // intake→first-chunk evaluation chain (candidates resolve /
-                // health check / gate queue / adapter fetch / HTTP setup /
+                // health check / adapter fetch / HTTP setup /
                 // consumer-side processing) had NO coverage: a fiber parked
                 // there hangs forever with the barrier slot held (incident:
                 // intake at 22:48:41, then 40min zero traces, Stop + hard-cancel
@@ -875,7 +802,7 @@ object LlmInterface:
                 // per-provider handleErrorWith (those wrap the inner stream
                 // only) — the whole sendStream fails, the agent's llm-fail
                 // path takes over. Reuses the same two-phase pipe with equal
-                // windows: legal fallback silences (queue + backoff +
+                // windows: legal fallback silences (backoff +
                 // first-token per hop) are bounded well below 600s.
                 .through(
                   inactivityTimeout(
@@ -890,31 +817,7 @@ object LlmInterface:
 
           (handle, registry, healthMonitor, release)
         end result
-        // Stage 2 (design §4.5): replay persisted LLM queues on startup.
-        // Requests that were waiting for a gate permit when the previous
-        // process died are re-drained in order — each re-acquires a permit
-        // through the gate. Fire-and-forget: startup must not block on slow
-        // providers; results are dropped (the originating turn is gone — the
-        // point is preserving the provider-side request, not the response).
-        IO(result).onError(_ => release).flatTap { case (handle, _, _, _) =>
-          LlmQueueStore.providersWithQueues.flatMap { providers =>
-            providers.traverse_ { providerId =>
-              LlmQueueStore.load(providerId).flatMap { items =>
-                if items.nonEmpty then
-                  logger.info(
-                    s"LLM queue replay: $providerId has ${items.length} persisted request(s) from previous run — re-draining"
-                  ) *>
-                    // Claim all items first: the file is the queue of record, and a
-                    // re-queued item is re-persisted by acquireWithPersistence.
-                    // Clearing avoids stale entries (granted items that didn't
-                    // persist have no removal to perform).
-                    LlmQueueStore.clear(providerId) *>
-                    items.traverse_ { item => handle.send(item.request).attempt.void }
-                else IO.unit
-              }
-            }
-          }.start.void
-        }
+        IO(result).onError(_ => release)
       }
     }
   end createLlm

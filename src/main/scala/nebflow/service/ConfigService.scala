@@ -51,16 +51,6 @@ object ConfigService:
           val baseUrl = pc.downField("baseUrl").as[Option[String]].toOption.flatten.getOrElse("")
           val protocol = pc.downField("protocol").as[Option[String]].toOption.flatten.getOrElse("")
           val models = pc.downField("models").as[Option[List[Json]]].toOption.flatten.getOrElse(Nil)
-          // P0 concurrency gate fields (all optional; validate when present).
-          pc.downField("maxConcurrency").as[Option[Int]].toOption.flatten.foreach { v =>
-            if v < 0 then errors += s"Provider '$name': maxConcurrency must be >= 0 (0 = unlimited)"
-          }
-          pc.downField("rpm").as[Option[Int]].toOption.flatten.foreach { v =>
-            if v <= 0 then errors += s"Provider '$name': rpm must be > 0"
-          }
-          pc.downField("queueTimeoutMs").as[Option[Int]].toOption.flatten.foreach { v =>
-            if v <= 0 then errors += s"Provider '$name': queueTimeoutMs must be > 0"
-          }
           if baseUrl.trim.isEmpty then errors += s"Provider '$name': Base URL is required"
           if protocol.isEmpty then errors += s"Provider '$name': Protocol is required"
           else if protocol != "anthropic" && protocol != "openai" then

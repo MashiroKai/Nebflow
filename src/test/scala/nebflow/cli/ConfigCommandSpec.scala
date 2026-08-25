@@ -12,13 +12,13 @@ class ConfigCommandSpec extends FunSuite:
   private def parse(s: String): Json = io.circe.parser.parse(s).fold(e => throw e, identity)
 
   test("三段路径：全深度嵌套，末段是键名") {
-    val got = ConfigCommand.buildNestedJson(List("llm", "providers", "queuePersist"), "true")
-    assertEquals(got, parse("""{"llm":{"providers":{"queuePersist":true}}}"""))
+    val got = ConfigCommand.buildNestedJson(List("llm", "providers", "baseUrl"), "http://x")
+    assertEquals(got, parse("""{"llm":{"providers":{"baseUrl":"http://x"}}}"""))
   }
 
   test("四段路径（真实 provider 字段形状）：无丢层") {
-    val got = ConfigCommand.buildNestedJson(List("llm", "providers", "openai", "queuePersist"), "true")
-    assertEquals(got, parse("""{"llm":{"providers":{"openai":{"queuePersist":true}}}}"""))
+    val got = ConfigCommand.buildNestedJson(List("llm", "providers", "openai", "baseUrl"), "http://x")
+    assertEquals(got, parse("""{"llm":{"providers":{"openai":{"baseUrl":"http://x"}}}}"""))
   }
 
   test("单段路径：包成对象（防服务端整文件替换）") {
