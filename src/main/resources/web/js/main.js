@@ -11,9 +11,9 @@ initBranding();
 // file's body), so throwing here stops the boot before anything opens WS
 // connections or restores canvas tabs — which is what recursed.
 if (document.documentElement.dataset.nfEmbedded === '1') {
-  document.title = 'Nebflow (embedded)';
+  document.title = 'nebflow (embedded)';
   document.addEventListener('DOMContentLoaded', () => {
-    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:24px;text-align:center">Nebflow 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:24px;text-align:center">nebflow 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
   });
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }
