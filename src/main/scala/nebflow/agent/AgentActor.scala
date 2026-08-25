@@ -711,24 +711,31 @@ object AgentActor extends AgentCore with AgentSession:
         val newOutstanding = if isSubagentResult then math.max(0, outstanding - 1) else outstanding
         val held = state.execution.pendingEvents
         if isSubagentResult && newOutstanding > 0 then
-          // Hold: wait for the rest of the batch, stay idle. No sessionBusy —
-          // no turn starts until the batch completes (the completing branch
-          // below marks busy).
+          // #418: an idle parent must NEVER hold a sub-agent result back —
+          // there is no in-flight turn to batch into, and holding it here
+          // parks the parent asleep until user input (delegate COMPLETED
+          // never wakes the parent — the reported bug). Inject THIS result
+          // immediately to wake the parent; the rest of the batch stays HELD
+          // in pendingEvents (injected together by the batch-complete branch
+          // when they arrive), and the counter keeps the decremented
+          // newOutstanding so the #25 nested-debt semantics hold.
           for
-            _ <- receiveVisibility(waiting = true)
-            _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, held.size + 1)
-          yield idle(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.copy(execution =
-              state.execution.copy(
-                outstandingSubagentResults = newOutstanding,
-                pendingEvents = held :+ event
-              )
+            _ <- sessionBusyIO
+            _ <- receiveVisibility(waiting = false)
+            _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, held.size)
+            result <- pipeLlmCall(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state
+                .withMessages(
+                  state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource.orElse(Some("external")))
+                )
+                .withOutstandingSubagentResults(newOutstanding),
+              None
             )
-          )
+          yield result
           end for
         else if isSubagentResult && held.nonEmpty then
           // Batch complete: inject ALL held results (plus this one) together.

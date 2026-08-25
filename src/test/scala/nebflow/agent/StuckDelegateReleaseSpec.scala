@@ -30,18 +30,22 @@ import scala.concurrent.duration.*
  *                            (LLM stream NEVER produces — the incident shape:
  *                            fiber parked before any watchdog could arm)
  *
- *   Fast completes while Stall is outstanding → HOLD branch (outstanding 2→1,
- *   result parked in pendingEvents, NO turn starts — UI shows COMPLETED).
+ *   Fast completes while Stall is outstanding. Pre-#418 the idle parent HELD
+ *   the result (outstanding 2→1, result parked in pendingEvents, NO turn
+ *   starts — UI shows COMPLETED but the parent sleeps). #418 (2026-08-26): an
+ *   idle parent NEVER holds — the Fast result wakes the root immediately as
+ *   its own injection turn; only the stall remains outstanding.
  *
  *   Stall never terminates on its own: Stop (mailbox, never consumed while
  *   suspended on the LLM fiber) and hard-cancel (StuckAbort on a fiber parked
  *   in a non-cancellable wait) were BOTH ineffective in the incident. Fix A:
  *   after escalate, the next scans give up via the supervisor's Cancelled
  *   branch (same path as AgentControl cancel) — the parent's barrier slot is
- *   returned, ALL held results inject, and the root turn fires.
+ *   returned, the stall cancellation reaches the root, and the barrier hits 0.
  *
- * Assertions (report §4.2):
- *   (a) held Fast result + stall cancellation reach the ROOT turn
+ * Assertions (report §4.2, updated for #418):
+ *   (a) the Fast result wakes the idle root IMMEDIATELY (#418, own turn);
+ *       the stall give-up cancellation reaches the ROOT as its own turn
  *   (b) root barrier returns to 0 (registry snapshot, Fix D)
  *   (c) no phantom residue: a later single delegate completes → immediate turn
  */
@@ -51,8 +55,11 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
 
   private val FastMarker = "FAST-RESULT-MARKER-31a"
   private val Fast2Marker = "FAST2-RESULT-MARKER-31b"
-  private val RootBatchMarker = "ROOT-BATCH-TURN-31"
+  private val RootFastWakeMarker = "ROOT-FAST-WAKE-418"
+  private val RootCancelMarker = "ROOT-CANCEL-TURN-31"
   private val RootFinalMarker = "ROOT-FINAL-TURN-31"
+  private val AMarker = "TWIN-A-MARKER-418"
+  private val BMarker = "TWIN-B-MARKER-418"
 
   /** Session-routed mock LLM. delegate-Stall-* NEVER produces a chunk — the
     * turn fiber parks on Stream.never, exactly the incident's parked fiber. */
@@ -72,7 +79,7 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
           requests.update(_ :+ req)
       ) >>
         Stream.eval(counters.get.map(_.getOrElse(req.sessionId, 0))).flatMap { n =>
-          if req.sessionId == rootSid then rootTurn(n)
+          if req.sessionId == rootSid then rootTurn(req)
           else if req.sessionId.startsWith("delegate-Stall") then Stream.never[IO]
           else if req.sessionId.startsWith("delegate-Fast2") then
             Stream(StreamChunk.TextDelta(s"second report $Fast2Marker"), StreamChunk.Done(None, None))
@@ -83,60 +90,57 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
 
     // Turn shape note: a tool-calling turn makes MULTIPLE LLM requests (one
     // per loop round). Round 1 emits the toolcalls, round 2 receives the tool
-    // results and ends the turn — so the request counter advances twice per
-    // tool turn. Injection turns (batch/single external-event wake) are
-    // single-round. The script below numbers REQUESTS, not turns.
-    private def rootTurn(n: Int): Stream[IO, StreamChunk] =
-      n match
-        case 1 =>
-          // Two parallel delegates in ONE turn: barrier +2 (spawn counting).
-          Stream(
-            StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-              id = "tc-del-fast",
-              name = "Delegate",
-              input = JsonObject(
-                "prompt" -> "finish quickly and report".asJson,
-                "description" -> "fast worker".asJson,
-                "agent" -> "Fast".asJson
-              )
-            )),
-            StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-              id = "tc-del-stall",
-              name = "Delegate",
-              input = JsonObject(
-                "prompt" -> "hang forever on your LLM call".asJson,
-                "description" -> "stalled worker".asJson,
-                "agent" -> "Stall".asJson
-              )
-            )),
-            StreamChunk.Done(None, None)
-          )
-        case 2 =>
-          // Round 2 of turn 1: both spawns reported as tool results; the turn
-          // ends and the root goes idle with the batch in flight.
-          Stream(StreamChunk.TextDelta("batch launched, standing by"), StreamChunk.Done(None, None))
-        case 3 =>
-          // Woken by the batch injection: held Fast result + stall cancellation.
-          Stream(StreamChunk.TextDelta(s"$RootBatchMarker: saw the batch"), StreamChunk.Done(None, None))
-        case 4 =>
-          // User-driven single delegate (phantom probe), round 1.
-          Stream(
-            StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-              id = "tc-del-fast2",
-              name = "Delegate",
-              input = JsonObject(
-                "prompt" -> "single follow-up, report immediately".asJson,
-                "description" -> "phantom probe".asJson,
-                "agent" -> "Fast2".asJson
-              )
-            )),
-            StreamChunk.Done(None, None)
-          )
-        case 5 =>
-          // Round 2 of the phantom-probe turn.
-          Stream(StreamChunk.TextDelta("fast2 launched, standing by"), StreamChunk.Done(None, None))
-        case _ =>
-          Stream(StreamChunk.TextDelta(s"$RootFinalMarker: saw the single result"), StreamChunk.Done(None, None))
+    // results and ends the turn. Injection turns (batch/single external-event
+    // wake) are single-round. Content-driven routing (NOT request-count
+    // matching): which path Fast's completion takes (immediate #418 idle wake
+    // vs held to the cancellation batch) is a timing race, so the request
+    // numbering is path-dependent — route on the request's message content.
+    private def rootTurn(req: LlmRequest): Stream[IO, StreamChunk] =
+      val texts = req.messages.map(_.textContent).mkString(" ")
+      if req.messages.size <= 2 then
+        // Turn 1 round 1: spawn the two-worker batch (Fast + Stall).
+        Stream(
+          StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
+            id = "tc-del-fast",
+            name = "Delegate",
+            input = JsonObject(
+              "prompt" -> "finish quickly and report".asJson,
+              "description" -> "fast worker".asJson,
+              "agent" -> "Fast".asJson
+            )
+          )),
+          StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
+            id = "tc-del-stall",
+            name = "Delegate",
+            input = JsonObject(
+              "prompt" -> "hang forever on your LLM call".asJson,
+              "description" -> "stalled worker".asJson,
+              "agent" -> "Stall".asJson
+            )
+          )),
+          StreamChunk.Done(None, None)
+        )
+      else if texts.contains("now a single one") then
+        // Phantom probe: spawn a single follow-up delegate (Fast2).
+        Stream(
+          StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
+            id = "tc-del-fast2",
+            name = "Delegate",
+            input = JsonObject(
+              "prompt" -> "single follow-up, report immediately".asJson,
+              "description" -> "phantom probe".asJson,
+              "agent" -> "Fast2".asJson
+            )
+          )),
+          StreamChunk.Done(None, None)
+        )
+      else if texts.contains(FastMarker) || texts.contains("cancelled") then
+        // Injection turn: Fast result (immediate #418 wake) and/or the stall
+        // cancellation — reply and end the turn.
+        Stream(StreamChunk.TextDelta(s"$RootFastWakeMarker: saw an injection"), StreamChunk.Done(None, None))
+      else
+        // Round 2 of a tool turn (tool results) — end the turn.
+        Stream(StreamChunk.TextDelta("batch launched, standing by"), StreamChunk.Done(None, None))
   end StuckLlm
 
   private def mkResources(
@@ -188,7 +192,7 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
     os.write.over(nebulaDir / "agent.json",
       """{"name":"Nebula","displayName":"Nebula","description":"e2e root","tools":["Read","Delegate"]}"""
     )
-    for name <- List("Fast", "Stall", "Fast2") do
+    for name <- List("Fast", "Stall", "Fast2", "TwinA", "TwinB") do
       val dir = tmp / "agents" / name
       os.makeDir.all(dir)
       os.write.over(dir / "agent.json",
@@ -249,13 +253,12 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
         // Grab the stall sid NOW — the supervisor removes it on give-up below.
         registry0 <- resources.agentRegistry.get
         stallSid = registry0.keys.find(_.startsWith("delegate-Stall")).get
-        // (a)-precondition proven: Fast completed but the root has NOT been
-        // woken (the HOLD — no batch injection while Stall is stuck). Turn 1
-        // makes exactly TWO requests (toolcall round + results round); a third
-        // request means an injection turn fired, which must not happen yet.
-        _ <- IO.sleep(300.millis)
-        rootTurnsEarly <- counters.get.map(_.getOrElse(rootSid, 0))
-        _ = assertEquals(rootTurnsEarly, 2, s"root must stay at turn 1 (2 requests) while the batch is held, got $rootTurnsEarly")
+        // (a) Fast's result eventually reaches the ROOT — either injected
+        // immediately by the #418 idle-wake path, or held to the batch turn
+        // when its completion raced ahead of turn 1 ending (processing path).
+        // Which path is a timing race — assert both markers AFTER the watcher
+        // give-up below (a held Fast only appears with the cancellation). The
+        // deterministic idle-wake assertion lives in the twin-delegate test.
         // Fix A: drive the watcher. Scan #1-2 send Stop (ignored — suspended),
         // #3 escalates (cancelInflight misses: fixture LLM is not in the
         // registry — mirrors the incident where hard-cancel was ineffective),
@@ -265,19 +268,18 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
         _ <- TaskStuckWatcher.scan(resources, new WsHub(), 1L, stopCounts)
         _ <- TaskStuckWatcher.scan(resources, new WsHub(), 1L, stopCounts)
         _ <- TaskStuckWatcher.scan(resources, new WsHub(), 1L, stopCounts)
-        // (a) held Fast result + stall cancellation reach the ROOT turn.
+        // (a) Fast's result reaches the ROOT turn (immediate #418 wake or held
+        // batch — path-dependent, both valid).
         _ <- waitUntil(15.seconds)(
           requests.get.map(reqs =>
             reqs.exists(r => r.sessionId == rootSid && r.messages.exists(_.textContent.contains(FastMarker)))
           )
         )
-        requestsAfterBatch <- requests.get
-        batchTurn = requestsAfterBatch
-          .find(r => r.sessionId == rootSid && r.messages.exists(_.textContent.contains(FastMarker)))
-          .get
-        _ = assert(
-          batchTurn.messages.exists(_.textContent.contains("cancelled")),
-          s"the batch injection must carry the stall cancellation payload, got: ${batchTurn.messages.map(_.textContent).mkString(" | ").take(500)}"
+        // The stall give-up cancellation reaches the ROOT as its own turn.
+        _ <- waitUntil(15.seconds)(
+          requests.get.map(reqs =>
+            reqs.exists(r => r.sessionId == rootSid && r.messages.exists(_.textContent.contains("cancelled")))
+          )
         )
         // (b) barrier returned to 0 and nothing is held (Fix D registry snapshot).
         _ <- waitUntil(10.seconds)(
@@ -291,19 +293,164 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
           case Some(t) => assertEquals(t.status, "cancelled", s"stall task must be cancelled, got ${t.status}")
           case None    => () // task file already pruned — fine
         }
-        // (c) no phantom: a later SINGLE delegate completes → immediate turn.
+        // (c) no phantom: a later SINGLE delegate completes → its result
+        // reaches the root (immediate injection turn; no held residue from the
+        // earlier batch). Counting absolute request numbers would be
+        // path-dependent (the held path batches Fast+cancel into one turn, the
+        // #418 idle path injects them separately) — the Fast2Marker appearing
+        // in a root request is the evidence.
         _ <- rootRef ! AgentCommand.UserInput("now a single one", None, Some("cid-2"))
-        _ <- waitUntil(15.seconds)(
-          counters.get.map(m => m.getOrElse(rootSid, 0) >= 4)
-        )
         _ <- waitUntil(15.seconds)(
           requests.get.map(reqs =>
             reqs.exists(r => r.sessionId == rootSid && r.messages.exists(_.textContent.contains(Fast2Marker)))
           )
         )
-        // Root's final injection turn fired with the single result (request #6+).
+      yield ()
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  /** #418 regression: BOTH delegates complete normally, but only after turn 1
+    * ends (root back to idle). The FIRST completion must wake the idle root
+    * immediately — pre-fix the idle HOLD branch parked the parent asleep until
+    * user input ("delegate COMPLETED but the parent never turns").
+    */
+  private class TwinWakeLlm(
+    rootSid: String,
+    counters: Ref[IO, Map[String, Int]],
+    requests: Ref[IO, List[LlmRequest]]
+  ) extends LlmHandle[IO]:
+    def send(req: LlmRequest): IO[LlmResponse] =
+      IO.raiseError(new RuntimeException("send not expected in this test"))
+    def sendStream(
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+    ): Stream[IO, StreamChunk] =
+      Stream.eval(
+        counters.update(m => m.updated(req.sessionId, m.getOrElse(req.sessionId, 0) + 1)) *>
+          requests.update(_ :+ req)
+      ) >>
+        Stream.eval(counters.get.map(_.getOrElse(req.sessionId, 0))).flatMap { n =>
+          if req.sessionId == rootSid then rootTurn(n)
+          else if req.sessionId.startsWith("delegate-TwinA") then
+            Stream(StreamChunk.TextDelta(s"report A $AMarker"), StreamChunk.Done(None, None))
+          else if req.sessionId.startsWith("delegate-TwinB") then
+            Stream(StreamChunk.TextDelta(s"report B $BMarker"), StreamChunk.Done(None, None))
+          else Stream(StreamChunk.TextDelta("unexpected session"), StreamChunk.Done(None, None))
+        }
+
+    private def rootTurn(n: Int): Stream[IO, StreamChunk] =
+      n match
+        case 1 =>
+          // Two parallel delegates in ONE turn: barrier +2 (spawn counting).
+          Stream(
+            StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
+              id = "tc-twin-a",
+              name = "Delegate",
+              input = JsonObject(
+                "prompt" -> "first worker, report immediately".asJson,
+                "description" -> "twin A".asJson,
+                "agent" -> "TwinA".asJson
+              )
+            )),
+            StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
+              id = "tc-twin-b",
+              name = "Delegate",
+              input = JsonObject(
+                "prompt" -> "second worker, report immediately".asJson,
+                "description" -> "twin B".asJson,
+                "agent" -> "TwinB".asJson
+              )
+            )),
+            StreamChunk.Done(None, None)
+          )
+        case 2 =>
+          // Round 2 of turn 1: both spawns reported as tool results; the root
+          // goes idle with the batch in flight (outstanding = 2).
+          Stream(StreamChunk.TextDelta("twin batch launched, standing by"), StreamChunk.Done(None, None))
+        case 3 =>
+          // #418: woken by the FIRST completion (A) while idle — own turn, no
+          // user input, no batch wait. The A result is in this turn's messages.
+          Stream(StreamChunk.TextDelta("saw A immediately"), StreamChunk.Done(None, None))
+        case 4 =>
+          // B completes → outstanding 0 → immediate injection turn.
+          Stream(StreamChunk.TextDelta("saw B"), StreamChunk.Done(None, None))
+        case _ =>
+          Stream(StreamChunk.TextDelta("unexpected root request"), StreamChunk.Done(None, None))
+  end TwinWakeLlm
+
+  test("#418: idle parent + cross-turn twin delegates — first completion wakes the parent immediately") {
+    val system = ActorSystem("delegate-wake")
+    val tmp = os.temp.dir()
+    seedAgents(tmp)
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val rootSid = "e2e-delegate-wake-root"
+      val program = for
+        counters <- IO.ref(Map.empty[String, Int])
+        requests <- IO.ref(List.empty[LlmRequest])
+        resources <- mkResources(system, tmp, TwinWakeLlm(rootSid, counters, requests))
+        rootRef <- system.spawn(
+          AgentActor(
+            agentDef = nebulaDef,
+            resources = resources,
+            wsSend = _ => IO.unit,
+            depth = 0,
+            sessionId = Some(rootSid),
+            sessionName = Some("e2e-delegate-wake")
+          ),
+          rootSid
+        )
+        _ <- resources.agentRegistry.update(
+          _ + (rootSid -> AgentRecord(rootSid, rootRef, AgentKind.Root, rootSid, None))
+        )
+        _ <- rootRef ! AgentCommand.UserInput("run the twin batch", None, Some("cid-twin"))
+        // Turn 1 (requests 1-2) ends and the root is back to idle with the
+        // batch in flight. NO further user input below — every later root
+        // request is an injection wake. (Registry-key checks are racy here:
+        // Twin delegates complete immediately and deregister before the check
+        // could see both keys — count root requests instead.)
         _ <- waitUntil(15.seconds)(
-          counters.get.map(m => m.getOrElse(rootSid, 0) >= 6)
+          counters.get.map(m => m.getOrElse(rootSid, 0) >= 2)
+        )
+        // #418: the FIRST completion (A) wakes the idle root with NO user
+        // input — the A result arrives as its own injection turn (request #3).
+        _ <- waitUntil(15.seconds)(
+          requests.get.map(reqs =>
+            reqs.exists(r => r.sessionId == rootSid && r.messages.exists(_.textContent.contains(AMarker)))
+          )
+        )
+        aTurn <- requests.get.map(
+          _.find(r => r.sessionId == rootSid && r.messages.exists(_.textContent.contains(AMarker))).get
+        )
+        _ = assert(
+          aTurn.messages.exists(_.textContent.contains("report A")),
+          s"the wake turn must carry the A delegate result, got: ${aTurn.messages.map(_.textContent).mkString(" | ").take(500)}"
+        )
+        // B completes → outstanding 0 → its own injection turn (request #4).
+        // (The drain that releases B only fires when the barrier hits 0, so a
+        // root request carrying BMarker is behavioral proof the barrier fully
+        // released. Registry-snapshot counts are NOT updated on the queued /
+        // turn-end-drain paths — only on the tools-complete / immediate-inject
+        // paths — so a snapshot assertion would be flaky by design.)
+        _ <- waitUntil(15.seconds)(
+          requests.get.map(reqs =>
+            reqs.exists(r => r.sessionId == rootSid && r.messages.exists(_.textContent.contains(BMarker)))
+          )
+        )
+        bTurn <- requests.get.map(
+          _.find(r => r.sessionId == rootSid && r.messages.exists(_.textContent.contains(BMarker))).get
+        )
+        _ = assert(
+          bTurn.messages.exists(_.textContent.contains("report B")),
+          s"the B turn must carry the B delegate result, got: ${bTurn.messages.map(_.textContent).mkString(" | ").take(500)}"
         )
       yield ()
       program.unsafeRunSync()
