@@ -2116,3 +2116,114 @@
   font-style: italic;
 }
 
+/* ── Error-recovery escalation card (frozen-error-recovery plan §5.3.2) ──
+   Amber decision card rendered at the top of a session view when auto-recovery
+   has been exhausted and a parent/user decision is needed. Uses the same
+   glass+frost language as the frozen family but the amber hue ("error family"),
+   no overlay dimming (per the standing no-overlay ruling). */
+.error-escalation-card {
+  margin: 10px 14px 4px 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgb(var(--amber) / 0.07);
+  border: 1px solid rgb(var(--amber) / 0.32);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.20),
+    0 0 16px rgb(var(--amber-glow) / 0.10);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--color-text);
+}
+.error-escalation-card .error-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: rgb(var(--amber));
+  animation: error-pulse 1.6s ease-in-out infinite;
+}
+.error-escalation-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+.error-escalation-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.error-escalation-meta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+.error-escalation-wait {
+  font-size: 12px;
+  color: rgb(var(--amber));
+  font-weight: 500;
+  line-height: 1.4;
+}
+.error-escalation-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.error-escalation-actions button {
+  pointer-events: auto;
+  font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  border-radius: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* 重启并续跑 → parentRestart */
+.error-restart-btn {
+  background: rgb(var(--amber) / 0.18);
+  border: 1px solid rgb(var(--amber) / 0.50);
+  color: rgb(var(--amber));
+}
+.error-restart-btn:hover {
+  background: rgb(var(--amber) / 0.28);
+}
+/* 取消任务 → cancelAgent */
+.error-abandon-btn {
+  background: transparent;
+  border: 1px solid rgb(var(--color-error, 244 67 54) / 0.40);
+  color: var(--color-error, #f44336);
+}
+.error-abandon-btn:hover {
+  background: rgb(var(--color-error, 244 67 54) / 0.10);
+}
+/* 继续等待 → close card */
+.error-wait-btn {
+  background: transparent;
+  border: 1px solid var(--glass-etched-border);
+  color: var(--color-text-muted);
+}
+.error-wait-btn:hover {
+  background: var(--glass-etched-bg);
+}
+@media (prefers-color-scheme: dark) {
+  .error-escalation-card {
+    background: rgb(var(--amber) / 0.10);
+    border-color: rgb(var(--amber) / 0.38);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0 0 16px rgb(var(--amber-glow) / 0.14);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .error-escalation-card .error-icon,
+  .error-recovery-strip .error-icon {
+    animation: none;
+  }
+}
+

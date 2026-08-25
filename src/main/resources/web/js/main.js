@@ -63,6 +63,7 @@ import { initChatSearch } from './chatSearch.js';
 import { initUsageDashboard } from './usageDashboard.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
+import { isErrorReason, normalizeReason, applyErrorFrozen, clearErrorFrozen, renderEscalationCard } from './errorRecovery.js';
 import { handleFlowAgentHistory, openStepPopup as openFlowStepPopup } from './flowAgentPopup.js';
 import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
 import { initNeblink } from './neblink.js';
@@ -297,10 +298,14 @@ function clearBusyFor(msg) {
   // resumed event would otherwise leave a stale frozen bar over a dead turn.
   if (sid && state.frozenSessions.has(sid)) {
     state.frozenSessions.delete(sid);
+    delete state.errorRecovery[sid];
     const fv = findViewBySessionId(sid);
     if (fv && fv.dom && fv.dom.inputBar) {
-      fv.dom.inputBar.classList.remove('frozen');
+      fv.dom.inputBar.classList.remove('frozen', 'frozen-error');
       delete fv.dom.inputBar.dataset.frozen;
+      delete fv.dom.inputBar.dataset.errorFrozen;
+      // Error-recovery family: also drop the amber reason strip (UI-7 cleanup).
+      clearErrorFrozen(sid);
       // Restore the mode-appropriate placeholder when the frozen session is
       // the one on screen (otherwise it self-heals on next view activation).
       if (fv === activeView && fv.dom.input) {
@@ -342,6 +347,21 @@ onMessage('frozen', (msg) => {
   const sid = msg.sessionId;
   if (!sid) return;
   state.frozenSessions.add(sid);
+  // Error-recovery family (frozen-error-recovery plan §4): reason≠schedule →
+  // amber UI (input-bar tint + reason strip + retry/abandon buttons). The
+  // park semantics (frozenSessions) are the same; only the presentation and the
+  // actionable buttons differ.
+  const reason = normalizeReason(msg.reason);
+  const isError = isErrorReason(reason);
+  if (isError) {
+    state.errorRecovery[sid] = {
+      reason,
+      retryCount: msg.retryCount,
+      detail: msg.detail,
+      resumeAt: msg.resumeAt,
+      escalation: msg.escalation,
+    };
+  }
   // F8/F4: a freeze can last hours — kill the activity stream timeout so it
   // cannot false-fire at streamTimeoutMs+30s and clear the busy state (which
   // would also drain the queue) mid-freeze. resumed re-arms it via activity.
@@ -355,10 +375,22 @@ onMessage('frozen', (msg) => {
     // 2026-08-24 ruling: no standalone status bar — the input bar itself
     // carries the frozen state (ice-blue material + placeholder).
     if (v.dom && v.dom.inputBar) {
-      v.dom.inputBar.classList.add('frozen');
-      v.dom.inputBar.dataset.frozen = 'true';
+      if (isError) {
+        // Amber family: .frozen-error (never .frozen — UI-1 mutex).
+        applyErrorFrozen(v, { sessionId: sid, reason, retryCount: msg.retryCount, escalation: msg.escalation });
+      } else {
+        v.dom.inputBar.classList.add('frozen');
+        v.dom.inputBar.dataset.frozen = 'true';
+        // Clear any stale error-family state (reason may change across events —
+        // UI-1 mutex must hold in both directions).
+        v.dom.inputBar.classList.remove('frozen-error');
+        delete v.dom.inputBar.dataset.errorFrozen;
+        const host = v.dom.inputBar.querySelector('#input-wrap');
+        const strip = host && host.querySelector('.error-recovery-strip');
+        if (strip) strip.remove();
+      }
     }
-    if (v.dom && v.dom.input) {
+    if (v.dom && v.dom.input && !isError) {
       const clock = formatResumeClock(msg.resumeAt || null);
       v.dom.input.placeholder = clock
         ? t('chat.frozenPlaceholder', { time: clock })
@@ -372,6 +404,9 @@ onMessage('resumed', (msg) => {
   if (!sid) return;
   if (!state.frozenSessions.has(sid)) return;   // stale/dup — no-op
   state.frozenSessions.delete(sid);
+  delete state.errorRecovery[sid];
+  // Error-recovery family: remove the amber tint + strip (if present).
+  clearErrorFrozen(sid);
   const v = findViewBySessionId(sid);
   if (v) {
     setActiveView(v);
@@ -444,6 +479,8 @@ onMessage('agentFrozen', (msg, view) => {
   if (aid && state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
     state.sessionBgAgents[sid][aid].frozen = true;
     state.sessionBgAgents[sid][aid].frozenResumeAt = msg.resumeAt || null;
+    // Error-recovery family: pass the reason (UI-7 amber dot vs sapphire).
+    state.sessionBgAgents[sid][aid].freezeReason = normalizeReason(msg.reason);
     if (view) renderBgAgentDropdown();
   }
 });
@@ -455,8 +492,16 @@ onMessage('agentResumed', (msg, view) => {
   if (aid && state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
     state.sessionBgAgents[sid][aid].frozen = false;
     state.sessionBgAgents[sid][aid].frozenResumeAt = null;
+    state.sessionBgAgents[sid][aid].freezeReason = null;
     if (view) renderBgAgentDropdown();
   }
+});
+
+// Error-recovery escalation (frozen-error-recovery plan §5.3.2): auto-recovery
+// exhausted → parent/user decision is required. Render the amber decision card
+// at the top of the session view. Not auto-dismissed (user = final arbiter).
+onMessage('errorEscalated', (msg) => {
+  renderEscalationCard(msg);
 });
 
 // --- Chat streaming ---

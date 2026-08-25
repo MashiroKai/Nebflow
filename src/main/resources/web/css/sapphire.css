@@ -10,6 +10,15 @@
   --sapphire-edge-strong: rgba(91, 127, 191, 0.25);
   --sapphire-refraction: rgba(255, 255, 255, 0.45);
 
+  /* Amber — error-recovery family (frozen-error-recovery plan §4.3). The RGB
+     triplet form feeds rgb(var(--amber) / α) exactly like --sapphire, so the
+     same tint composition works with a swapped hue. (--color-warning in
+     base.css is the same hue but a non-triplet color; triplet is required by
+     the alpha-tint syntax.) */
+  --amber: 255 152 0;
+  --amber-glow: 255 180 90;
+  --amber-dark: 255 168 60;
+
   /* Glass surface — light: transparent, deep frost */
   --glass-bg: rgba(255, 255, 255, 0.55);
   --glass-blur: 24px;
@@ -36,6 +45,10 @@
     --sapphire-edge: rgba(91, 127, 191, 0.06);
     --sapphire-edge-strong: rgba(91, 127, 191, 0.18);
     --sapphire-refraction: rgba(91, 127, 191, 0.06);
+
+    --amber: 255 168 60;
+    --amber-glow: 255 190 120;
+    --amber-dark: 255 168 60;
 
     --glass-bg: rgba(24, 28, 38, 0.68);
     --glass-border: rgba(255, 255, 255, 0.06);
