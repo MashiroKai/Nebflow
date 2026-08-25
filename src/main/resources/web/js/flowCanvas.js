@@ -337,6 +337,17 @@ export function onFlowCompleted(msg) {
   fetchRunningFlows().then(() => { if (isCanvasOpen()) renderOpenTabs(); });
 }
 
+/** Team Manager task list live update (teamTaskListUpdate, 2026-08-25).
+ *  Carries { team, tasks: [...] } with no sessionId; mutates the in-memory
+ *  teams state and re-renders the panel (debounced, no re-fetch — the WS
+ *  event IS the fresh data, so it satisfies "无全量刷新"). */
+export function onTeamTaskListUpdate(msg) {
+  const teamName = msg.team || '';
+  const team = teams.find(f => f.name === teamName);
+  if (team) team.tasks = msg.tasks || [];
+  if (isCanvasOpen()) renderOpenTabs();
+}
+
 // ── Data fetch ─────────────────────────────────────────────
 
 export async function fetchRunningFlows() {

@@ -1924,6 +1924,12 @@ onMessage('flowCompleted', (msg) => {
   flowCanvas.onFlowCompleted(msg);
 });
 
+// Team Manager task list live refresh (2026-08-25 team-manager-task-tool).
+// no sessionId — the teams panel owns the rendered state via flowCanvas.
+onMessage('teamTaskListUpdate', (msg) => {
+  flowCanvas.onTeamTaskListUpdate(msg);
+});
+
 // --- Compaction events (per-session) ---
 // These events include sessionId from the backend for root agents.
 // We track compacting sessions globally so the sidebar shows an indicator
