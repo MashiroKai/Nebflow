@@ -433,7 +433,7 @@ export default {
   'chat.errorTileWaiting': 'Waiting',
   'chat.typeAnswer': 'Type your answer...',
   'chat.failedRender': 'Failed to render options. Please try again.',
-  'askUser.viewCompare': 'View comparison',
+  'askUser.viewCompare': 'View in Canvas',
   'chat.waitingQuestion': 'Waiting for question...',
   'chat.askFailed': 'Ask failed',
   'chat.askLabel': 'Ask',

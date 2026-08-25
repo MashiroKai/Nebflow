@@ -50,6 +50,13 @@
 }
 #input-wrap {
   flex: 1;
+  /* A flex item's default min-width:auto keeps its content's min-content
+     width. A reference block (.att-ref) inside #attachment-preview sets a
+     wide min-content, so #input-wrap refuses to shrink and the flex row
+     overflows — pushing #send-btn (flex-shrink:0) past the input-bar's
+     rounded right edge. min-width:0 lets the wrap shrink and the ref block
+     (max-width:100% + ellipsis) clip instead of overflowing. */
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }

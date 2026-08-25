@@ -438,7 +438,7 @@ export default {
   'chat.errorTileWaiting': '等恢复',
   'chat.typeAnswer': '输入你的回答...',
   'chat.failedRender': '选项渲染失败，请重试。',
-  'askUser.viewCompare': '查看对比图',
+  'askUser.viewCompare': '在 Canvas 查看',
   'chat.waitingQuestion': '等待问题...',
   'chat.askFailed': '询问失败',
   'chat.askLabel': '询问',
