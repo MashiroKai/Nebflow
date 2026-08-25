@@ -350,7 +350,15 @@ object GatewayMain extends IOApp.Simple:
                                   hookEngine = hookEngine,
                                   voiceMutedRef = voiceMutedRef,
                                   freezeScheduleRef = freezeScheduleRef,
-                                  toolResultTtlRef = toolResultTtlRef
+                                  toolResultTtlRef = toolResultTtlRef,
+                                  bashResilience = nebflow.shared.BashResilienceConfig(
+                                    autoBackgroundMs = config.bashAutoBackgroundMs
+                                      .getOrElse(nebflow.shared.Defaults.BashAutoBackgroundMs),
+                                    hardTimeoutMs = config.bashBackgroundHardTimeoutMs
+                                      .getOrElse(nebflow.shared.Defaults.BashBackgroundHardTimeoutMs),
+                                    stuckWindowSec =
+                                      config.bashStuckWindowSec.getOrElse(nebflow.shared.Defaults.BashStuckWindowSec)
+                                  )
                                 )
                                 // Initialize telemetry (opt-out aware, fire-and-forget on failure)
                                 val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>

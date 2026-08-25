@@ -104,5 +104,9 @@ case class SharedResources(
     * 写盘成功后 set，下个 LLM 请求即生效，无需重启。
     * 带默认值 → 既有测试的 SharedResources 构造零改动。 */
   toolResultTtlRef: Ref[IO, nebflow.core.compact.ToolResultTtlConfig] =
-    Ref.unsafe[IO, nebflow.core.compact.ToolResultTtlConfig](nebflow.core.compact.ToolResultTtlConfig())
+    Ref.unsafe[IO, nebflow.core.compact.ToolResultTtlConfig](nebflow.core.compact.ToolResultTtlConfig()),
+  /** Bash 卡死防护阈值（#391）：GatewayMain 从 nebflow.json 顶层键 fail-safe
+    * 读取（bashAutoBackgroundMs/bashBackgroundHardTimeoutMs/bashStuckWindowSec），
+    * 经 AgentCore 注入 ToolContext → BashTool。带默认值 → 既有测试构造零改动。 */
+  bashResilience: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig()
 )

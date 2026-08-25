@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import cats.effect.{Fiber, IO}
+import cats.effect.{Deferred, Fiber, IO}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
@@ -26,7 +26,7 @@ object BashTool extends Tool:
 Usage:
 - The working directory persists between commands, but shell state does not persist across Nebflow restarts.
 - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of cd.
-- You may specify an optional timeout in milliseconds (max 3600000) to set a hard deadline. If not specified, the command runs to completion in the foreground — no automatic timeout or backgrounding. Long-running commands: use run_in_background: true so you can continue other work while it runs.
+- You may specify an optional timeout in milliseconds (max 3600000) to set a hard deadline. If not specified, the command runs in the foreground and is automatically moved to the background after 5 minutes (300s) — the turn is released and you are notified when it finishes. Long-running commands: use run_in_background: true so you can continue other work while it runs.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
@@ -36,7 +36,7 @@ Background execution (run_in_background):
 - **Use `run_in_background: true`, never `&` or `nohup`.** Shell backgrounding (`&`) bypasses Nebflow's task tracking — you won't be notified when it finishes, and the frontend won't show the background indicator.
 - You will be automatically notified when the job finishes. DO NOT poll or use sleep loops.
 - After starting a background job, continue with other work or finish your turn.
-- Foreground commands run to completion (no automatic backgrounding). If a command is running long, you may either wait for it or cancel the tool call — use run_in_background: true for commands you don't want to block on.
+- Foreground commands are automatically moved to the background after 300s (5min) — the process keeps running, the turn is released, and you are notified on completion. Use run_in_background: true for commands you know will take long.
 
 Querying background jobs (background_job_id):
 - Only query when you receive a "stuck" notification or the user asks about a job's status.
@@ -272,7 +272,7 @@ Git safety:
     if result.contains("[Command timed out") then "Timed out"
     else if result.startsWith("[Interactive command]") then "Interactive blocked"
     else if result.startsWith("[Background job") then "Background"
-    else if result.startsWith("[moved to background]") then "Auto-background"
+    else if result.startsWith("[Command moved to background]") then "Auto-background"
     else if result.startsWith("[Command executed successfully with no output]") then "No output"
     else
       val lines = result.split('\n').filter(_.trim.nonEmpty)
@@ -390,7 +390,15 @@ Git safety:
                   for
                     jobId <- IO.randomUUID.map(_.toString.take(8))
                     onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN)
-                    _ <- shell.executeBackground(actualCommand, desc, onComplete, onHeartbeat, Some(jobId))
+                    _ <- shell.executeBackground(
+                      actualCommand,
+                      desc,
+                      onComplete,
+                      onHeartbeat,
+                      Some(jobId),
+                      hardTimeoutMs = ctx.bashConfig.hardTimeoutMs,
+                      stuckWindowSec = ctx.bashConfig.stuckWindowSec
+                    )
                     _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
                   yield Right(
                     s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
@@ -426,18 +434,24 @@ Git safety:
   end call
 
   /**
-   * Execute a command in the foreground until it completes or fails (or until
-   * the explicit timeout, if provided). No auto-backgrounding (#319,
-   * 2026-08-19): foreground commands run to completion — the agent waits.
+   * Execute a command in the foreground until it completes, fails, or the
+   * auto-background threshold expires.
    *
-   * While the command runs, an activity bridge keeps the agent registry's
-   * lastActivityMs fresh whenever the process shows progress (output lines,
-   * CPU time, sleep-like commands). TaskStuckWatcher judges "Processing with
-   * lastActivityMs older than threshold" as stuck — without the bridge, a
-   * legitimately long foreground command (build, test, migration) would be
-   * killed after the stuck threshold despite making progress. A process that
-   * shows NO progress is intentionally left untouched — TaskStuckWatcher
-   * remains the safety net for genuinely stuck processes.
+   * #391 机制 A（2026-08-25 用户裁定「5 分钟自动转后台」，恢复 #319 前骨架）：
+   * 前台命令运行超过 BashAutoBackgroundMs（默认 300s）→ 自动转后台——不杀进程、
+   * turn 释放（返回占位消息 + jobId）、完成时 makeNotifyCallback 异步通知
+   * （ExternalEvent + WS + BgTaskRegistry 注销）。转后台后与显式
+   * run_in_background 完全同构：background_job_id 查询/取消、health check、
+   * 硬超时/停滞兜底（机制 B）全覆盖。
+   * - 显式 timeout < 阈值 → 显式 timeout 先到（不转后台，watchdog 杀树）
+   * - timeout ≥ 阈值或 None → 300s 转后台（显式 timeout 仍生效：转后台后
+   *   其 watchdog 照常杀树）
+   * - sleep 类命令同样转后台（sleep-like 豁免仅保留在 no-progress/idle 语义）
+   *
+   * 活动桥接（#319）保持：有进展（输出/CPU≥阈值/sleep-like）刷新
+   * lastActivityMs——TaskStuckWatcher「有进展不判卡死」语义；#391 机制 D
+   * 让 CPU 判断对齐 CpuActiveThresholdNanos（10ms/30s 采样），卡死进程的
+   * CPU 微消耗不再无脑刷新。
    */
   private def executeForeground(
     shell: ShellSession,
@@ -447,6 +461,9 @@ Git safety:
     ctx: ToolContext,
     tailN: Option[Int] = None
   ): IO[Either[ToolError, String]] =
+    val autoBackgroundMs = ctx.bashConfig.autoBackgroundMs
+    // 显式 timeout < 自动转后台阈值 → 纯显式 timeout 路径（不转后台）。
+    val enableAutoBg = explicitTimeoutMs.forall(_ >= autoBackgroundMs)
     val processTimeout = explicitTimeoutMs.map(_.millis).getOrElse(365.days)
     val health = new JobHealth()
     // #22 (2026-08-19): a running Bash is INVISIBLE — the completion log only
@@ -466,14 +483,50 @@ Git safety:
       // Activity bridge: while the command runs, mirror process progress into
       // the agent registry so TaskStuckWatcher never kills a busy command.
       bridgeFiber <- startActivityBridge(shell, health, command, ctx)
-      result <- shell.execute(command, processTimeout, Some(health)).attempt
-      _ <- bridgeFiber.cancel
-    yield
-      result match
-        case Right(pr) => formatResult(pr, desc, tailN)
-        case Left(e: TimeoutException) =>
-          Left(ToolError(s"[Command timed out after ${processTimeout.toMillis}ms]"))
-        case Left(e) => Left(ToolError(s"Error: ${e.getMessage}"))
+      jobId <- IO.randomUUID.map(_.toString.take(8))
+      resultRef <- Deferred[IO, Either[Throwable, ProcessResult]]
+      // Command fiber: run to completion, carrying the REAL result. On the
+      // auto-background path registerBackgroundJob's watcher takes it via
+      // joinWithNever, so background_job_id queries see the full output.
+      execFiber <- shell
+        .execute(command, processTimeout, Some(health))
+        .attempt
+        .flatTap(resultRef.complete)
+        .start
+      outcome <- IO.race(
+        resultRef.get,
+        if enableAutoBg then IO.sleep(autoBackgroundMs.millis) else IO.never[Unit]
+      )
+      _ <- bridgeFiber.cancel // 活动桥接只保前台窗口；转后台后由心跳/health check 接管
+      result <- outcome match
+        case Left(res) =>
+          // Command finished first (or explicit timeout watchdog killed the tree)
+          res match
+            case Right(pr) => IO.pure(formatResult(pr, desc, tailN))
+            case Left(e: TimeoutException) =>
+              IO.pure(Left(ToolError(s"[Command timed out after ${processTimeout.toMillis}ms]")))
+            case Left(e) => IO.pure(Left(ToolError(s"Error: ${e.getMessage}")))
+        case Right(_) =>
+          // Auto-background threshold reached: keep the process running, release
+          // the turn, and deliver the result asynchronously when it finishes.
+          val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
+          val bgDescription = desc.getOrElse(firstLine)
+          val onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN)
+          for
+            _ <- shell.registerBackgroundJob(
+              jobId,
+              execFiber,
+              command,
+              health,
+              onComplete,
+              hardTimeoutMs = ctx.bashConfig.hardTimeoutMs,
+              stuckWindowSec = ctx.bashConfig.stuckWindowSec
+            )
+            _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
+          yield Right(
+            s"[Command moved to background] Job ID: $jobId\n已运行超过 ${autoBackgroundMs / 1000}s，已转后台，完成时通知"
+          )
+    yield result
     end for
 
   end executeForeground
@@ -491,13 +544,13 @@ Git safety:
    * log artifacts between START and completion, which is exactly how the
    * 20:35 "silent turn death" hid a 37-minute zombie timeout.
    */
-  private def startActivityBridge(
+  private[tools] def startActivityBridge(
     shell: ShellSession,
     health: JobHealth,
     command: String,
-    ctx: ToolContext
+    ctx: ToolContext,
+    checkInterval: FiniteDuration = 30.seconds
   ): IO[Fiber[IO, Throwable, Unit]] =
-    val checkInterval = 30.seconds
     val handlersLogger = NebflowLogger.forName("nebflow.handlers")
     val agentName = ctx.agentDef.map(_.name).getOrElse("-")
     val sessionLabel = ctx.sessionName.getOrElse("-")
@@ -513,19 +566,23 @@ Git safety:
         }.flatMap { case (alive, lines, cpu) =>
           // Running visibility: log every 60s (every 2nd tick) while alive.
           val tick = ticks + 1
+          // #391 机制 D：CPU 判断对齐 CpuActiveThresholdNanos（10ms/30s 采样，
+          // 与 shell.scala 前台 no-progress ceiling 同标准）——卡死进程的 CPU
+          // 微消耗（Chrome 挂起 <10ms/30s）不再算「有进展」。
+          val cpuActive = (cpu - lastCpu) >= shell.CpuActiveThresholdNanos
           val visible =
             alive && tick >= 2 && tick % 2 == 0 &&
-              (lines > lastLines || cpu > lastCpu || tick >= 20)
+              (lines > lastLines || cpuActive || tick >= 20)
           // Commands with progress always log; silent ones log from 10min on.
           val runningLog =
             if visible then
-              val elapsed = tick * 30
+              val elapsed = (tick * checkInterval.toSeconds).toInt
               val msg =
                 s"$logCtx Tool Bash RUNNING ${elapsed}s: output=${lines} lines cpu=${cpu / 1_000_000}ms cmd=${command.take(60)}"
               IO(if elapsed >= 600 then handlersLogger.warnSync(msg) else handlersLogger.infoSync(msg))
             else IO.unit
           val sleepLike = shell.SleepCommandRe.findFirstIn(command).isDefined
-          val hasProgress = alive && (lines > lastLines || cpu > lastCpu || sleepLike)
+          val hasProgress = alive && (lines > lastLines || cpuActive || sleepLike)
           runningLog *> (if hasProgress then touchAgentActivity(ctx) *> loop(lines, cpu, tick) else loop(lastLines, lastCpu, tick))
         }
     loop(health.outputLineCount.get(), 0L, 0).start
