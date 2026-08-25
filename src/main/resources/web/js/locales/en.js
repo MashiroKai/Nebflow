@@ -410,6 +410,16 @@ export default {
   'chat.frozenPlaceholder': 'Frozen · resumes {time}',
   'chat.frozenPlaceholderNoTime': 'Frozen · waiting to resume',
   'chat.skipFreeze': 'Skip this freeze',
+  /* Mic bubble orb v8 state labels (#419, spec §10.2). */
+  'chat.micOrb.idle': 'Idle',
+  'chat.micOrb.listening': 'Dictating…',
+  'chat.micOrb.processing': 'Transcribing…',
+  'chat.micOrb.nebulaBusy': 'Nebula working',
+  'chat.micOrb.bgAgents': 'Background agents running',
+  'chat.micOrb.frozen': 'Frozen',
+  'chat.micOrb.frozenError': 'Freeze error',
+  'chat.micOrb.micError': 'Microphone error',
+  'chat.micOrb.offline': 'Offline',
   /* Error-recovery family (frozen-error-recovery plan §4.3/§4.4) — amber
      "recovering" language, never "frozen". Reason keys map to FreezeReason
      wire names. */
