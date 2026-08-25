@@ -108,10 +108,6 @@ object Fallback:
         // Turn LLM budget exhausted — the llm-fail retry loop must NOT fire
         // again (it would re-send the same full context and defeat the budget).
         ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Permanent, message = Some(e.getMessage))
-      case e: QueueTimeout =>
-        // Provider is BUSY, not down: classify Transient so the chain moves to
-        // the next provider, and let the call sites skip retry/markDown for it.
-        ErrorClassification(FailoverReason.RateLimit, ErrorPermanence.Transient, message = Some(e.getMessage))
       case e: StuckAbort =>
         // gate-wedge P1-1: the WATCHER killed this request on purpose (agent
         // unresponsive to Stop). The provider is innocent — no markDown, no
@@ -228,14 +224,7 @@ object Fallback:
           onAttempt.traverse_(_.apply(failAttempt))
           val allFailures = priorFailures :+ failAttempt
 
-          // QueueTimeout = provider busy, not down: skip markDown (it would
-          // freeze the provider out for a probe cycle for no fault of its own)
-          // and skip the same-provider retry (re-queueing would just wait
-          // again) — fall straight through to the next provider.
-          val isQueueTimeout = error.isInstanceOf[QueueTimeout]
-          val notifyExhausted =
-            if isQueueTimeout then IO.unit
-            else onProviderExhausted.traverse_(_.apply(candidate))
+          val notifyExhausted = onProviderExhausted.traverse_(_.apply(candidate))
 
           classification.permanence match
             case ErrorPermanence.Fatal =>
@@ -244,7 +233,7 @@ object Fallback:
             case ErrorPermanence.Permanent =>
               notifyExhausted *> fallback(allFailures)
             case ErrorPermanence.Transient =>
-              if retriesLeft > 0 && !isQueueTimeout then
+              if retriesLeft > 0 then
                 val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
                 // Overload-class (429/529): provider is saturated — back off
                 // ≥5s before retrying, never hammer it (token incident lesson).

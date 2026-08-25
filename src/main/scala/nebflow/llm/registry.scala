@@ -23,31 +23,6 @@ class ProviderRegistry(
   backend: StreamBackend[IO, Fs2Streams[IO]]
 ):
   private val adaptersRef: Ref[IO, Map[String, ProviderAdapter[IO]]] = Ref.unsafe(Map.empty)
-  // P0 API 并发管理: per-provider concurrency gates. Built lazily on first
-  // use; cleared on reloadConfig() so config changes take effect immediately.
-  private val gatesRef: Ref[IO, Map[String, ConcurrencyGate]] = Ref.unsafe(Map.empty)
-
-  def getGate(providerId: String): IO[ConcurrencyGate] =
-    gatesRef.get.map(_.get(providerId).map(IO.pure).getOrElse {
-      configRef.get.flatMap { config =>
-        config.llm.providers.get(providerId) match
-          case Some(provider) =>
-            val gate = ConcurrencyGate.fromProvider(providerId, provider)
-            // gate-wedge: atomic get-or-create — the old get-then-update let
-            // concurrent first-use callers each build their OWN gate (one
-            // permit set each), so the concurrency limit was not enforced at
-            // all during the race window (three concurrent requests → three
-            // gates → zero queueing). Publish via modify; racing losers adopt
-            // the winner instead of keeping their private instance.
-            gatesRef.modify { m =>
-              m.get(providerId) match
-                case Some(existing) => (m, existing)
-                case None           => (m + (providerId -> gate), gate)
-            }
-          case None =>
-            IO.raiseError(new RuntimeException(s"Unknown provider: $providerId"))
-        }
-    }).flatten
 
   private def createAdapter(providerId: String, provider: ProviderConfig): ProviderAdapter[IO] =
     provider.protocol match
@@ -204,12 +179,12 @@ class ProviderRegistry(
   end resolveCapabilities
 
   /**
-   * Reload: re-read config from disk, clear adapter/gate caches and drop
+   * Reload: re-read config from disk, clear adapter caches and drop
    * per-session model overrides whose provider no longer exists (#33).
    *
    * The in-memory session overrides are `ModelCandidate` snapshots built from
    * the OLD config — after a hot-reload removes a provider, a stale override
-   * would raise "Unknown provider" at the adapter/gate on the next request.
+   * would raise "Unknown provider" at the adapter on the next request.
    * Dropping it here makes the session follow the new global chain (same
    * semantics as `clearAllSessionModels` at startup — a reload is a soft
    * restart of the model config). Returns the dropped session ids so callers
@@ -232,9 +207,6 @@ class ProviderRegistry(
       }
       _ <- configRef.set(newConfig)
       _ <- adaptersRef.set(Map.empty)
-      // Gates derive their params from ProviderConfig — rebuild on reload so
-      // maxConcurrency/rpm changes apply without restart (design §4.3).
-      _ <- gatesRef.set(Map.empty)
       staleIds <- overridesRef match
         case Some(ref) =>
           ref.modify { overrides =>
@@ -248,7 +220,7 @@ class ProviderRegistry(
    * Graceful skip for candidates whose provider is not present in the current
    * config (#33). A stale session-model override (set before a hot-reload
    * removed the provider) would otherwise surface "Unknown provider" at the
-   * adapter/gate. The request chain simply continues with the remaining
+   * adapter. The request chain simply continues with the remaining
    * candidates — reload-time invalidation ([[reloadConfig]]) is the primary
    * fix; this is the request-time safety net for any stale entry that slips
    * through (e.g. a race between setSessionModel and a concurrent reload).
