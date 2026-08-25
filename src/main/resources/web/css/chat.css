@@ -71,7 +71,13 @@
   font-weight: 600;
   white-space: nowrap;
   user-select: none;
+  /* #396 spec §8 A8: session name degrades — truncate first, hide last (P5) */
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
+/* #396 adaptive header: non-fixed right buttons hide by priority (display:none,
+   no overflow "⋯" menu — user 2026-08-25 裁定 仅自动隐藏). */
+#header .nb-header-hide { display: none !important; }
 #header .memory-btn {
   background: none;
   border: 1px solid transparent; /* reserves edge space for glass hover */
@@ -235,7 +241,8 @@
   line-height: 1;
 }
 
-/* Compact ring is always shown — no header-compact toggle needed */
+/* Context-ring (header-model-info) is always shown once data arrives; the
+   adaptive header (#396) never toggles it — it's part of the fixed set. */
 /* (header-right rules consolidated above) */
 /* conn-pulse keyframe — reused by the activity-bar avatar pairing animation. */
 @keyframes conn-pulse {
