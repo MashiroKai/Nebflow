@@ -90,6 +90,14 @@ case class SharedResources(
    */
   freezeScheduleRef: Ref[IO, nebflow.core.schedule.FreezeScheduleConfig] =
     Ref.unsafe[IO, nebflow.core.schedule.FreezeScheduleConfig](nebflow.core.schedule.FreezeScheduleConfig()),
+  /**
+   * 用户消息全局跳过当前冻结窗口（2026-08-25 裁定）：skipUntil epoch millis——
+   * 该时刻之前 evalWithSkip 视为不冻结（本次冻结整体作废），到期自动过期
+   * （下一冻结段照常冻结）。运行时态，不持久化（跳过非永久）；handleUserText
+   * 在用户消息到达时 set + FreezeScheduler.scan 即时唤醒所有 Frozen agent。
+   * 带默认值 → 既有测试的 SharedResources 构造零改动。
+   */
+  freezeSkipUntilRef: Ref[IO, Option[Long]] = Ref.unsafe[IO, Option[Long]](None),
   /** 工具结果 TTL 清理（#341）：request-only 清理配置。GatewayMain 启动时从
     * nebflow.json toolResultTtl 节 fail-safe 加载覆写；默认关（disabled）。
     * #341 WS 尾巴：Ref 化热更（镜像 freezeScheduleRef）——setToolResultTtl

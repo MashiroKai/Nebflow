@@ -1242,10 +1242,12 @@ class WebSocketRoutes(
               broadcastServerConfig
 
           case "setWorkSchedule" =>
-            // 冻结调度（freeze-schedule spec ⑦）：payload {type, workSchedule:{enabled,
-            // segments:[{start,end}]}}。校验失败拒绝保存（配置不变）并回
-            // configUpdateFailed；成功 → ref 热更 + targeted write + 广播 + 立即让
-            // 所有 Frozen agent 重评估（不用等 30s 轮询——改配置关功能即恢复）。
+            // 冻结调度（freeze-schedule spec ⑦ + 2026-08-25 裁定「设置关闭保留
+            // 配置」）：payload {type, workSchedule:{enabled?, segments?}}——
+            // 缺键从现有配置继承（toggle off 只置 disabled、segments 不清空不
+            // 重置；显式 segments:[] 仍可清空）。校验失败拒绝保存（配置不变）
+            // 并回 configUpdateFailed；成功 → ref 热更 + targeted write + 广播 +
+            // 立即让所有 Frozen agent 重评估（不用等 30s 轮询——改配置关功能即恢复）。
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val payload = json.hcursor
               .downField("workSchedule")
@@ -1253,16 +1255,20 @@ class WebSocketRoutes(
               .toOption
               .flatten
               .getOrElse(json)
-            nebflow.core.schedule.FreezeSchedule.validate(payload) match
-              case Right(cfg) =>
-                logger.info(s"Freeze schedule set: enabled=${cfg.enabled} segments=${cfg.segments.size}") *>
-                  sharedResources.freezeScheduleRef.set(cfg) *>
-                  persistWorkSchedule(cfg) *>
-                  broadcastServerConfig *>
-                  nebflow.core.processor.FreezeScheduler.scan(sharedResources)
-              case Left(err) =>
-                logger.warn(s"Invalid workSchedule payload rejected: $err") *>
-                  wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
+            for
+              current <- sharedResources.freezeScheduleRef.get
+              merged <- IO.pure(nebflow.core.schedule.FreezeSchedule.mergeValidate(current, payload))
+              _ <- merged match
+                case Right(cfg) =>
+                  logger.info(s"Freeze schedule set: enabled=${cfg.enabled} segments=${cfg.segments.size}") *>
+                    sharedResources.freezeScheduleRef.set(cfg) *>
+                    persistWorkSchedule(cfg) *>
+                    broadcastServerConfig *>
+                    nebflow.core.processor.FreezeScheduler.scan(sharedResources)
+                case Left(err) =>
+                  logger.warn(s"Invalid workSchedule payload rejected: $err") *>
+                    wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
+            yield ()
 
           case "setSttConfig" =>
             // #295 STT 可配置（用户 2026-08-18 拍板）→ A2 部分更新语义
@@ -3567,6 +3573,9 @@ class WebSocketRoutes(
     * UiMessage bubble, then dispatches ImmediateInput to the session's agent.
     * The headless turn endpoint (POST /api/sessions/:id/turn) mirrors this
     * same sequence via [dispatchUserText] — keep the two in sync.
+    *
+    * 2026-08-25 裁定：用户消息到达 → 整个系统解除冻结（本次冻结窗口整体作废，
+    * 所有 agent 恢复工作；下一冻结段照常冻结）——dispatch 前先 skipCurrentFreezeWindow。
     */
   private def handleUserText(sessionId: String, content: String, source: String): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
@@ -3575,9 +3584,35 @@ class WebSocketRoutes(
           sessionId,
           List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
         ) *>
+        skipCurrentFreezeWindow *>
         ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
     else IO.unit
   end handleUserText
+
+  /**
+    * 用户消息 → 全局跳过当前冻结窗口（2026-08-25 裁定）：当前处于冻结窗口时，
+    * 置 freezeSkipUntilRef = 窗口结束时刻（eval 的 nextChangeAt；全天冻结兜底
+    * 下一午夜）并立即 FreezeScheduler.scan——所有 Frozen agent 收到
+    * CheckFreezeGate 重评估 → evalWithSkip 视为段外 → 恢复工作。窗口结束后
+    * skip 自然过期，下一冻结段照常冻结（跳过非永久）。
+    */
+  private def skipCurrentFreezeWindow: IO[Unit] =
+    for
+      cfg <- sharedResources.freezeScheduleRef.get
+      existingSkip <- sharedResources.freezeSkipUntilRef.get
+      now = System.currentTimeMillis()
+      window = nebflow.core.schedule.FreezeSchedule.evalWithSkip(cfg, existingSkip, now)
+      _ <-
+        if window.frozen then
+          val until = nebflow.core.schedule.FreezeSchedule.skipUntilFor(window, now)
+          logger.info(
+            s"User message voids current freeze window (skipUntil=${until.map(u => new java.util.Date(u).toString).getOrElse("none")})"
+          ) *>
+            sharedResources.freezeSkipUntilRef.set(until) *>
+            nebflow.core.processor.FreezeScheduler.scan(sharedResources)
+        else IO.unit
+    yield ()
+  end skipCurrentFreezeWindow
 
   /**
     * Headless turn entry (P0 benchmark): dispatch a user text into a session

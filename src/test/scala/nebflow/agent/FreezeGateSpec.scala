@@ -73,7 +73,8 @@ class FreezeGateSpec extends CatsEffectSuite:
     system: ActorSystem,
     tmp: os.Path,
     llm: LlmHandle[IO],
-    scheduleRef: cats.effect.Ref[IO, FreezeScheduleConfig]
+    scheduleRef: cats.effect.Ref[IO, FreezeScheduleConfig],
+    skipUntilRef: cats.effect.Ref[IO, Option[Long]] = IO.ref(None).unsafeRunSync()
   ): IO[SharedResources] =
     for
       dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
@@ -102,7 +103,8 @@ class FreezeGateSpec extends CatsEffectSuite:
       actorSystem = system,
       subAgentTaskStore = new SubAgentTaskStore(tmp / "subagent-tasks"),
       voiceMutedRef = voiceMuted,
-      freezeScheduleRef = scheduleRef
+      freezeScheduleRef = scheduleRef,
+      freezeSkipUntilRef = skipUntilRef
     )
 
   /**
@@ -181,8 +183,98 @@ class FreezeGateSpec extends CatsEffectSuite:
       os.remove.all(tmp)
   }
 
-  test("B4: idle ExternalEvent dispatch path is gated (frozen, zero calls)") {
-    val system = ActorSystem("freeze-b4-evt")
+  // ── B13: 2026-08-25 用户消息全局跳过——skipUntil 未到期 → gate 放行 ──
+
+  test("B13: skipUntil unexpired → freeze gate passes (LLM called, no Frozen event)") {
+    val system = ActorSystem("freeze-b13")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        counter <- IO.ref(0)
+        requests <- IO.ref(List.empty[LlmRequest])
+        events <- IO.ref(List.empty[Json])
+        schedRef <- IO.ref(frozenConfig())
+        skipRef <- IO.ref[Option[Long]](Some(System.currentTimeMillis() + 3_600_000L)) // 未来 1h = 当前窗口已作废
+        resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef, skipRef)
+        sid = "freeze-b13-agent"
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = rootDef(),
+            resources = resources,
+            wsSend = json => events.update(_ :+ json),
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("b13")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
+        // 冻结时段内系统注入：skip 生效 → 直接 dispatch（LLM 调用 1 次），不冻结
+        _ <- ref ! AgentCommand.UserInput("system-injected task")
+        _ <- IO.sleep(600.millis)
+        count <- counter.get
+        _ = assert(count == 1, s"sendStream must be called once when window is skipped, got $count")
+        regStatus <- resources.agentRegistry.get.map(_.get(sid).map(_.status))
+        _ = assert(regStatus != Some(AgentStatus.Frozen), s"must NOT be Frozen when skipped, got $regStatus")
+        frozenSeen <- hasEvent(events, "frozen")
+        _ = assert(!frozenSeen, "must NOT emit frozen event when window is skipped")
+      yield ()
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  test("B13: skipUntil expired → freeze gate blocks again (next segment freezes normally)") {
+    val system = ActorSystem("freeze-b13-exp")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        counter <- IO.ref(0)
+        requests <- IO.ref(List.empty[LlmRequest])
+        events <- IO.ref(List.empty[Json])
+        schedRef <- IO.ref(frozenConfig())
+        skipRef <- IO.ref[Option[Long]](Some(System.currentTimeMillis() - 1L)) // 已过期 → 本次窗口照常冻结
+        resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef, skipRef)
+        sid = "freeze-b13-exp-agent"
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = rootDef(),
+            resources = resources,
+            wsSend = json => events.update(_ :+ json),
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("b13-exp")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
+        _ <- ref ! AgentCommand.UserInput("system-injected task")
+        _ <- IO.sleep(600.millis)
+        count <- counter.get
+        _ = assert(count == 0, s"sendStream must NOT be called when skip expired, got $count")
+        regStatus <- resources.agentRegistry.get.map(_.get(sid).map(_.status))
+        _ = assertEquals(regStatus, Some(AgentStatus.Frozen))
+      yield ()
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  test("B4: idle ExternalEvent dispatch path is gated (frozen, zero calls)") {    val system = ActorSystem("freeze-b4-evt")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
     val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
