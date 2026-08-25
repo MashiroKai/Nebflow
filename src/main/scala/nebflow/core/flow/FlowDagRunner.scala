@@ -34,12 +34,17 @@ object FlowDagRunner:
     // #406: true for one-shot FlowExecute flows (inline DAG, no flows/ dir).
     // Instance id uses the "inline-" prefix (frontend distinguishes dynamic
     // runs) and node agents resolve from the global library only.
-    dynamic: Boolean = false
+    dynamic: Boolean = false,
+    // #407 (Q3): the sessionId of the agent that triggered the flow (not the
+    // root). RunningFlowRegistry.sessionId uses it to associate a running flow
+    // with its owner, so the Mail idle gate can detect "target has a flow in
+    // flight" across node gaps (serial node A done → B not yet started).
+    callerSessionId: String = ""
   )
 
   def apply(resources: SharedResources, wsSend: Option[Json => IO[Unit]]): Behavior[RunFlow] =
     Behaviors.receiveMessage:
-      case RunFlow(flowDef, taskInput, replyTo, rootSessionId, params, dynamic) =>
+      case RunFlow(flowDef, taskInput, replyTo, rootSessionId, params, dynamic, callerSessionId) =>
         val instanceId =
           if dynamic then s"inline-${java.util.UUID.randomUUID().toString.take(8)}"
           else s"flow-${flowDef.name.take(15)}-${java.util.UUID.randomUUID().toString.take(8)}"
@@ -57,7 +62,8 @@ object FlowDagRunner:
               parentAgentRef,
               rootSessionId,
               params,
-              dynamic
+              dynamic,
+              callerSessionId
             )
             .handleErrorWith(e => logger.warn(s"FlowDagExecutor failed: ${e.getMessage}").as(Left(e.getMessage)))
           _ <- result match
