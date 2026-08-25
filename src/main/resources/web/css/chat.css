@@ -1478,6 +1478,14 @@
   height: 100%;
   object-fit: cover;
   display: block;
+  opacity: 0;                     /* §6: fade in on load (see .nf-loaded) */
+  transition: opacity 0.2s ease-out;
+}
+.option-preview .preview-img.nf-loaded {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .option-preview .preview-img { transition: none; }
 }
 /* Selected ring: outline offset outside the filled .picked background so it
    stays visible on the primary-colored button (spec §7.1/§7.3). */
