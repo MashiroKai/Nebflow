@@ -16,6 +16,7 @@ import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
 import nebflow.core.skill.SkillService
+import nebflow.core.task.{FileTaskStore, TaskStore}
 import cats.effect.unsafe.implicits.global
 import nebflow.llm.{HealthState, NebflowServiceConfig, SearchApiHealth}
 import nebflow.neblink.*
@@ -2248,25 +2249,31 @@ class RestApiRoutes(
         // remains as defense-in-depth. Fall back to all agents when the team
         // definition is missing (legacy behavior).
         val memberNames = teamDefOpt.map(td => (td.lead :: td.members).toSet)
-        agents
-          .filter((name, _) => memberNames.forall(_.contains(name)))
-          .traverse { (agentName, sid) =>
-            nebflow.core.flow.TeamSessionRegistry.isBusy(sid).map { busy =>
-              Json.obj(
-                "name" -> agentName.asJson,
-                "sessionId" -> sid.asJson,
-                "status" -> (if busy then "running" else "idle").asJson,
-                "manager" -> teamDefOpt.exists(_.lead == agentName).asJson
-              )
+        for
+          agentsJson <- agents
+            .filter((name, _) => memberNames.forall(_.contains(name)))
+            .traverse { (agentName, sid) =>
+              nebflow.core.flow.TeamSessionRegistry.isBusy(sid).map { busy =>
+                Json.obj(
+                  "name" -> agentName.asJson,
+                  "sessionId" -> sid.asJson,
+                  "status" -> (if busy then "running" else "idle").asJson,
+                  "manager" -> teamDefOpt.exists(_.lead == agentName).asJson
+                )
+              }
             }
-          }
-          .map { agentsJson =>
-            Json.obj(
-              "name" -> instanceName.asJson,
-              "type" -> "team".asJson,
-              "agents" -> agentsJson.asJson
-            )
-          }
+          // Team Manager task tool (#D 2026-08-25): the team panel renders a
+          // Tasks section from this array (flowTeams.js buildTasksSection,
+          // frontend phase-2 contract A1: id/subject/status/blockedBy/blocks).
+          // Read straight from the team task store directory (scope key
+          // "team:<name>") — empty array for teams with no tasks yet.
+          tasks <- FileTaskStore.list(TaskStore.teamScopeKey(instanceName))
+        yield Json.obj(
+          "name" -> instanceName.asJson,
+          "type" -> "team".asJson,
+          "agents" -> agentsJson.asJson,
+          "tasks" -> tasks.asJson
+        )
       }
     yield teamsList.asJson
 

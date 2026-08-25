@@ -268,6 +268,19 @@ private[agent] trait AgentCore:
         }
       case None => nameIsLead
 
+  /** Team Manager task tool gating (2026-08-25): is this session the lead
+    * (Manager) of its team? Strict registry lookup only — TeamSessionRegistry
+    * .managerMap is populated at mount by FlowTreeActor.createSingleTeamSession
+    * (agentName == teamDef.lead). NO nameIsLead fallback (unlike
+    * isTeamLeadForCompaction): a team MEMBER whose agent name happens to match
+    * some other team's lead must not receive the owner toolset (U2). No
+    * separate spawn-time flag needed — the registry is the single source of
+    * truth and survives Mail activation / respawn. */
+  protected def isTeamLeadStatus(agentDef: AgentDef, sessionId: Option[String]): IO[Boolean] =
+    sessionId match
+      case Some(sid) => nebflow.core.flow.TeamSessionRegistry.isManager(sid)
+      case None => IO.pure(false)
+
   protected def startDirectCompaction(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -457,7 +470,11 @@ private[agent] trait AgentCore:
           freshDef = turnCtx.agentDef
           voiceMuted <- resources.voiceMutedRef.get
           voiceEnabled = freshDef.voiceEnabled && !voiceMuted
-          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, isFlowNode = stateForLlm.isFlowNode)
+          // Team Manager task tools (#D 2026-08-25): the team lead (Manager)
+          // gets the owner toolset; derived from the registry at turn time so
+          // mount/unmount/hot-reload always reflects reality.
+          isTeamLead <- isTeamLeadStatus(freshDef, stateForLlm.sessionId)
+          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, isFlowNode = stateForLlm.isFlowNode, isTeamLead = isTeamLead)
           // #16 observability: one log line per LLM call when MCP tools are
           // injected — names the servers explicitly so phantom-tool suspicion
           // can be settled by grepping the log instead of reconstructing
@@ -607,8 +624,8 @@ private[agent] trait AgentCore:
             else Nil
           freshTools =
             if isCompactTurn then Some(Nil)
-            else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, stateForLlm.isFlowNode)
-            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, stateForLlm.isFlowNode)
+            else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, stateForLlm.isFlowNode, isTeamLead)
+            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, stateForLlm.isFlowNode, isTeamLead)
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
           // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
@@ -820,7 +837,8 @@ private[agent] trait AgentCore:
         case None => IO.pure(None)
       currentDefOpt <- ContextRefresher.loadCurrentDef(teamNameOpt, resources, agentDef)
       effectiveDef = currentDefOpt.getOrElse(agentDef)
-      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker, state.forkContext, state.isFlowNode)
+      isTeamLead <- isTeamLeadStatus(effectiveDef, state.sessionId)
+      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker, state.forkContext, state.isFlowNode, isTeamLead)
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
         // agent-tool whitelist — it is provider-injected (not an agent tool)
@@ -864,7 +882,8 @@ private[agent] trait AgentCore:
         sharedResources = Some(resources),
         actorSystem = Some(ctx.system),
         messages = state.messages,
-        bashConfig = resources.bashResilience
+        bashConfig = resources.bashResilience,
+        teamName = teamNameOpt
       )
       freshResults <- filteredCalls.parTraverse { call =>
         val skipStreaming = call.name == "AskUserQuestion"
@@ -1272,7 +1291,8 @@ private[agent] trait AgentCore:
     depth: Int = 0,
     isSubTaskWorker: Boolean = false,
     forkContext: Boolean = false,
-    isFlowNode: Boolean = false
+    isFlowNode: Boolean = false,
+    isTeamLead: Boolean = false
   ): Set[String] =
     val base = agentDef.tools match
       case Nil => Set.empty[String]
@@ -1290,13 +1310,26 @@ private[agent] trait AgentCore:
       if agentDef.flows.nonEmpty then withBuiltin + "FlowTrigger" else withBuiltin - "FlowTrigger"
     val isNebula = agentDef.name == "Nebula"
     val nebulaFiltered = if isNebula then withFlowTrigger else withFlowTrigger -- NebulaExclusiveTools
+    // Team Manager task tools (2026-08-25): mechanism-layer grants — a team
+    // lead (Manager) gets the full owner set (create/update/list); Nebula
+    // gets the read-only list for oversight (no mutation tools); everyone
+    // else gets none (U2: members are not injected at all — the panel is the
+    // member-visible surface). The grant is the ONLY source: explicitly
+    // listing TeamTask* in agent.json grants nothing (the tool name IS the
+    // permission boundary, spec §2.1 — a member sneaking TeamTaskCreate into
+    // its tools list must not get it).
+    val teamTaskGrant =
+      if isTeamLead then AgentCore.TeamTaskTools
+      else if isNebula then Set("TeamTaskList")
+      else Set.empty[String]
+    val withTeamTask = (nebulaFiltered -- AgentCore.TeamTaskTools) ++ teamTaskGrant
     // Task tools: available to Nebula and Team Lead, NOT workers
     val taskFiltered = agentDef.tools match
       case List("*") =>
-        if depth >= 2 then nebulaFiltered -- LeadLevelTools
-        else nebulaFiltered
+        if depth >= 2 then withTeamTask -- (LeadLevelTools ++ AgentCore.TeamTaskTools)
+        else withTeamTask
       case _ =>
-        nebulaFiltered
+        withTeamTask
     // MCP tools: agents may use MCP tools from explicitly granted servers
     // (mcpServers) plus their own dedicated agent-scoped servers, which are
     // always auto-allowed. Tool names are mcp__<serverId>__<tool>; dedicated
@@ -1319,9 +1352,16 @@ private[agent] trait AgentCore:
     // #406: one-shot FlowExecute nodes are leaves too — FlowExecute/
     // FlowTrigger/SubTask/Delegate stripped (recursive flow-in-flow guard).
     // Mail stays for team-category nodes (they may Mail the caller's team).
+    // Team Manager task tools (#D, 2026-08-25): workers/flow nodes never
+    // mutate or even read the team task board — a SubTask worker self-cloned
+    // from a Manager would otherwise inherit TeamTask* via the isTeamLead
+    // grant. Flow-node stripping is generic leaf isolation (U5 裁定: 安全
+    // 隔离, not a flow↔task coupling design).
     val categoryFiltered =
-      if isSubTaskWorker then mcpFiltered -- Set("Mail", "SubTask", "Delegate", "FlowTrigger", "FlowExecute")
-      else if isFlowNode then mcpFiltered -- Set("FlowExecute", "FlowTrigger", "SubTask", "Delegate")
+      if isSubTaskWorker then
+        mcpFiltered -- (Set("Mail", "SubTask", "Delegate", "FlowTrigger", "FlowExecute") ++ AgentCore.TeamTaskTools)
+      else if isFlowNode then
+        mcpFiltered -- (Set("FlowExecute", "FlowTrigger", "SubTask", "Delegate") ++ AgentCore.TeamTaskTools)
       // Flow agents have no Mail — flow nodes report via FlowReport, not Mail.
       // Structurally defends against the 08-14 P0 root cause: a flow agent
       // whose agent.json lists Mail (or uses "*") could block forever on a
@@ -1342,9 +1382,10 @@ private[agent] trait AgentCore:
     depth: Int = 0,
     isSubTaskWorker: Boolean = false,
     forkContext: Boolean = false,
-    isFlowNode: Boolean = false
+    isFlowNode: Boolean = false,
+    isTeamLead: Boolean = false
   ): Option[List[ToolDefinition]] =
-    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, forkContext, isFlowNode)
+    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, forkContext, isFlowNode, isTeamLead)
     Some(ToolRegistry.ALL_TOOLS.flatMap { td =>
       if !allowedSet.contains(td.name) then None
       // R8-P1: flow node agents get their per-node contract (verdict enum +
@@ -1374,9 +1415,10 @@ private[agent] trait AgentCore:
     depth: Int = 0,
     isSubTaskWorker: Boolean = false,
     forkContext: Boolean = false,
-    isFlowNode: Boolean = false
+    isFlowNode: Boolean = false,
+    isTeamLead: Boolean = false
   ): Option[List[ToolDefinition]] =
-    buildToolList(agentDef, depth, isSubTaskWorker, forkContext, isFlowNode).map(_.filter(td => SaveTurnToolWhitelist.contains(td.name)))
+    buildToolList(agentDef, depth, isSubTaskWorker, forkContext, isFlowNode, isTeamLead).map(_.filter(td => SaveTurnToolWhitelist.contains(td.name)))
 
   private val SaveTurnToolWhitelist: Set[String] = Set("Write", "Edit", "Read")
 
@@ -1681,6 +1723,12 @@ object AgentCore:
     "AgentControl"
   )
 
+  /** Team Manager task tools (2026-08-25 team-manager-task-tool): granted to
+    * team leads (Manager owner — all three) and Nebula (TeamTaskList only,
+    * read-only oversight); stripped from SubTask workers / flow nodes / Mail
+    * ask forks / depth≥2 "*" agents (same LeadLevelTools treatment). */
+  val TeamTaskTools = Set("TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList")
+
   /** Tools available to Nebula and Team Leads, but NOT workers. */
   val LeadLevelTools = Set("TaskCreate", "TaskUpdate")
 
@@ -1712,7 +1760,7 @@ object AgentCore:
     "AskUserQuestion",
     "TaskCreate",
     "TaskUpdate"
-  )
+  ) ++ TeamTaskTools
 
   /**
    * Base tools always available to ALL agents regardless of category.
