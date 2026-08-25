@@ -278,6 +278,111 @@ class FreezeScheduleSpec extends FunSuite:
     assertEquals(merged.hcursor.downField("x").as[Int], Right(1))
   }
 
+  // ── 2026-08-25 用户消息全局跳过：applySkip / evalWithSkip / skipUntilFor ─
+
+  test("applySkip: frozen + unexpired skipUntil → NOT frozen (window voided)") {
+    val window = FreezeSchedule.eval(twoSegment, at(10, 30)) // frozen, nextChangeAt 12:00
+    val skipped = FreezeSchedule.applySkip(window, Some(at(12, 0)), at(10, 30))
+    assert(!skipped.frozen)
+  }
+
+  test("applySkip: frozen + expired skipUntil → still frozen (next segment normal)") {
+    val now = at(10, 30)
+    // skip 来自昨天 12:00（上一窗口结束）——已过期 → 本次窗口照常冻结
+    val window = FreezeSchedule.eval(twoSegment, now)
+    val skipped = FreezeSchedule.applySkip(window, Some(at(12, 0) - 24 * 3600_000L), now)
+    assert(skipped.frozen)
+  }
+
+  test("applySkip: not frozen → unchanged (nextChangeAt preserved)") {
+    val window = FreezeSchedule.eval(twoSegment, at(13, 0)) // 13:00 段外
+    val skipped = FreezeSchedule.applySkip(window, Some(at(18, 0)), at(13, 0))
+    assert(!skipped.frozen)
+    assertEquals(skipped.nextChangeAt, Some(at(14, 0)))
+  }
+
+  test("evalWithSkip: skip applies through the combined entry") {
+    val w = FreezeSchedule.evalWithSkip(twoSegment, Some(at(12, 0)), at(10, 30))
+    assert(!w.frozen)
+    assertEquals(w.nextChangeAt, Some(at(12, 0)))
+  }
+
+  test("evalWithSkip: skip expired → frozen again (skip is not permanent)") {
+    val w = FreezeSchedule.evalWithSkip(twoSegment, Some(at(12, 0)), at(12, 1))
+    assert(!w.frozen) // 12:01 本就段外（[09:00,12:00) 含头不含尾）
+    // 下一冻结段 14:00 起照常冻结
+    val w2 = FreezeSchedule.evalWithSkip(twoSegment, Some(at(12, 0)), at(14, 0))
+    assert(w2.frozen)
+  }
+
+  test("skipUntilFor: returns the window end (nextChangeAt)") {
+    val window = FreezeSchedule.eval(twoSegment, at(10, 30))
+    assertEquals(FreezeSchedule.skipUntilFor(window, at(10, 30)), Some(at(12, 0)))
+    val overnightWindow = FreezeSchedule.eval(overnight, at(23, 30))
+    assertEquals(FreezeSchedule.skipUntilFor(overnightWindow, at(23, 30)), Some(atTomorrow(8, 0)))
+  }
+
+  test("skipUntilFor: all-day coverage (no flip) falls back to next midnight") {
+    val allDay = FreezeScheduleConfig(
+      enabled = true,
+      segments = List(FreezeSegment("00:00", "12:00"), FreezeSegment("12:00", "00:00"))
+    )
+    val window = FreezeSchedule.eval(allDay, at(3, 0))
+    assertEquals(window.nextChangeAt, None)
+    val until = FreezeSchedule.skipUntilFor(window, at(3, 0))
+    assertEquals(until, Some(atTomorrow(0, 0)))
+  }
+
+  // ── 2026-08-25 设置关闭保留配置：mergeConfig / mergeValidate ─
+
+  test("mergeValidate: toggle-off (enabled only) keeps existing segments") {
+    val existing = FreezeScheduleConfig(enabled = true, segments = List(FreezeSegment("14:00", "18:00")))
+    val patch = parse("""{"enabled":false}""").toOption.get
+    val merged = FreezeSchedule.mergeValidate(existing, patch)
+    assertEquals(merged, Right(FreezeScheduleConfig(enabled = false, segments = List(FreezeSegment("14:00", "18:00")))))
+  }
+
+  test("mergeValidate: re-enable (enabled only) keeps existing segments") {
+    val existing = FreezeScheduleConfig(enabled = false, segments = List(FreezeSegment("14:00", "18:00")))
+    val patch = parse("""{"enabled":true}""").toOption.get
+    val merged = FreezeSchedule.mergeValidate(existing, patch)
+    assertEquals(merged, Right(FreezeScheduleConfig(enabled = true, segments = List(FreezeSegment("14:00", "18:00")))))
+  }
+
+  test("mergeValidate: segments-only patch keeps existing enabled") {
+    val existing = FreezeScheduleConfig(enabled = true, segments = List(FreezeSegment("09:00", "12:00")))
+    val patch = parse("""{"segments":[{"start":"23:00","end":"08:00"}]}""").toOption.get
+    val merged = FreezeSchedule.mergeValidate(existing, patch)
+    assertEquals(merged, Right(FreezeScheduleConfig(enabled = true, segments = List(FreezeSegment("23:00", "08:00")))))
+  }
+
+  test("mergeValidate: explicit segments=[] still clears (user intent)") {
+    val existing = FreezeScheduleConfig(enabled = false, segments = List(FreezeSegment("14:00", "18:00")))
+    val patch = parse("""{"enabled":false,"segments":[]}""").toOption.get
+    val merged = FreezeSchedule.mergeValidate(existing, patch)
+    assertEquals(merged, Right(FreezeScheduleConfig(enabled = false, segments = Nil)))
+  }
+
+  test("mergeValidate: full payload replaces both (no inheritance needed)") {
+    val existing = FreezeScheduleConfig(enabled = false, segments = List(FreezeSegment("14:00", "18:00")))
+    val patch = parse("""{"enabled":true,"segments":[{"start":"23:00","end":"08:00"}]}""").toOption.get
+    val merged = FreezeSchedule.mergeValidate(existing, patch)
+    assertEquals(merged, Right(FreezeScheduleConfig(enabled = true, segments = List(FreezeSegment("23:00", "08:00")))))
+  }
+
+  test("mergeValidate: re-enable with no segments → rejected (needs at least one)") {
+    val existing = FreezeScheduleConfig(enabled = false, segments = Nil)
+    val patch = parse("""{"enabled":true}""").toOption.get
+    assert(FreezeSchedule.mergeValidate(existing, patch).isLeft)
+  }
+
+  test("mergeValidate: malformed payload rejected (bad enabled type / bad segments)") {
+    val existing = FreezeScheduleConfig(enabled = true, segments = List(FreezeSegment("14:00", "18:00")))
+    assert(FreezeSchedule.mergeValidate(existing, parse("""{"enabled":"yes"}""").toOption.get).isLeft)
+    assert(FreezeSchedule.mergeValidate(existing, parse("""{"segments":"nope"}""").toOption.get).isLeft)
+    assert(FreezeSchedule.mergeValidate(existing, parse("""not-json""").toOption.getOrElse(io.circe.Json.Null)).isLeft)
+  }
+
   // ── codec round-trip ──────────────────────────────────────
 
   test("codec round-trip (incl. overnight segment)") {
