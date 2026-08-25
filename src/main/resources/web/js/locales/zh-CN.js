@@ -93,7 +93,7 @@ export default {
   'settings.thinkingMode': '思考模式',
   'settings.llmLog': 'LLM 日志记录',
   'settings.workSchedule': '冻结时间（非工作时间）',
-  'settings.workScheduleOnHint': '在冻结时段内，agent 在工具执行完成后自动冻结，不调用 LLM（零 token 消耗），到点自动恢复继续。发送消息可随时唤醒。',
+  'settings.workScheduleOnHint': '在冻结时段内，agent 在工具执行完成后自动冻结，不调用 LLM（零 token 消耗），到点自动恢复继续。期间输入栏与麦克风禁用，点击「跳过本次」即可立即解冻。',
   'settings.workScheduleOffHint': '默认关闭。关闭时所有 agent 全天候工作，行为与现状完全一致。',
   'settings.addSegment': '添加冻结时段',
   'settings.removeSegment': '删除该时段',
@@ -412,8 +412,8 @@ export default {
   'chat.other': '其他...',
   'chat.frozenNoTime': '已冻结 · 等待恢复',
   'chat.frozenShort': '已冻结 · {time} 恢复',
-  'chat.frozenPlaceholder': '已冻结 · {time} 恢复 · 发送消息立即唤醒…',
-  'chat.frozenPlaceholderNoTime': '已冻结 · 发送消息立即唤醒…',
+  'chat.frozenPlaceholder': '已冻结 · {time} 恢复',
+  'chat.frozenPlaceholderNoTime': '已冻结 · 等待恢复',
   'chat.skipFreeze': '跳过本次',
   /* Error-recovery family (frozen-error-recovery plan §4.3/§4.4) — amber
      "错误恢复中" language, never "已冻结". Reason keys map to FreezeReason

@@ -173,49 +173,61 @@
   text-shadow: 0 0 8px rgb(var(--sapphire-glow) / 0.35);
 }
 /* Skip-current-freeze button (08-25 ruling: "跳过本次" voids the current
-   freeze window). Shown ONLY while the input bar is schedule-frozen (.frozen,
-   never the amber error family — the two are mutually exclusive classes).
-   Sapphire glass — same material family as the send button, calmed to a tint
-   so it reads as the frozen-mode CTA. Moderate weight, no icon-only, no emoji. */
+   freeze window; 22:28 amendment — minimal text button, lowest visual weight).
+   Shown ONLY while the input bar is schedule-frozen (.frozen, never the amber
+   error family). Restraint: a small sapphire text chip, no glass panel — the
+   whole bar is otherwise inert, so the one interactive control stays quiet. */
 .skip-freeze-btn {
   display: none;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
-  padding: 7px 14px;
-  font-size: 13px;
+  padding: 3px 8px;
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
   color: rgb(var(--sapphire));
-  background: rgb(var(--sapphire) / 0.14);
-  -webkit-backdrop-filter: blur(8px) saturate(1.15);
-  backdrop-filter: blur(8px) saturate(1.15);
-  border: 1px solid rgb(var(--sapphire) / 0.30);
-  border-radius: 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-    border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
     color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .skip-freeze-btn svg {
-  width: 15px;
-  height: 15px;
-  stroke-width: 2.2;
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
 }
 .skip-freeze-btn:hover {
-  background: rgb(var(--sapphire) / 0.22);
-  border-color: rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.12);
 }
 .skip-freeze-btn:active {
-  background: rgb(var(--sapphire) / 0.28);
+  background: rgb(var(--sapphire) / 0.2);
 }
 .skip-freeze-btn:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
   outline-offset: 2px;
 }
 #input-bar.frozen:not(.frozen-error) #skip-freeze-btn,
 .fa-input-bar.frozen:not(.frozen-error) #skip-freeze-btn {
   display: inline-flex;
+}
+/* Frozen bar is fully inert (08-25 22:28): the textarea + mic/attach/send/stop
+   are disabled and dimmed, keeping the sapphire ice material readable. */
+#input-bar.frozen #input[disabled] {
+  color: rgb(var(--sapphire) / 0.6);
+}
+#input-bar.frozen #voice-btn[disabled],
+#input-bar.frozen #attach-btn[disabled],
+#input-bar.frozen #stop-btn[disabled] {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+#input-bar.frozen #send-btn[disabled] {
+  cursor: default;
+  pointer-events: none;
 }
 /* Error-recovery input bar (frozen-error-recovery plan §4.3 dim 1) — amber
    family. Mirrors the .frozen structure EXACTLY (border/bg/ring/glow/edge/
