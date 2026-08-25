@@ -1912,12 +1912,12 @@ onMessage('flowStarted', (msg) => {
   flowCanvas.onFlowStarted(msg);
 });
 
-onMessage('flowProgress', (msg) => {
-  flowCanvas.onFlowProgress(msg);
+onMessage('flowNodesAdded', (msg) => {
+  flowCanvas.onFlowNodesAdded(msg);
 });
 
-onMessage('flowStarted', (msg) => {
-  flowCanvas.onFlowStarted(msg);
+onMessage('flowProgress', (msg) => {
+  flowCanvas.onFlowProgress(msg);
 });
 
 onMessage('flowCompleted', (msg) => {

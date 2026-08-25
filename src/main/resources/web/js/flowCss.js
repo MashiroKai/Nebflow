@@ -131,6 +131,14 @@ export const FLOW_CSS = `
 }
 .dag-card-cancel:hover { background: rgba(244,67,54,0.08); }
 .dag-card-cancel:disabled { opacity: 0.5; cursor: default; }
+.dag-card-close {
+  margin: 0 14px 14px; align-self: flex-start;
+  font: 600 11px -apple-system, sans-serif; color: var(--color-text);
+  background: transparent; border: 1px solid var(--glass-border);
+  border-radius: 8px; padding: 5px 14px; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.dag-card-close:hover { background: var(--glass-control-bg-hover); border-color: var(--color-primary, #07c160); }
 .dag-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: 10px 14px 0; }
 .dag-nodes { padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 0; }
 .dag-node { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 12px; border: 1.5px solid var(--glass-border); background: var(--color-surface); cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; min-width: 180px; position: relative; }
@@ -379,6 +387,16 @@ export const FLOW_CSS = `
 .solar-card-status.failed .dot { background: #f44336; opacity: 1; }
 .solar-card-status.cancelled .dot { background: #ff9800; opacity: 1; }
 .solar-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: 10px 14px 0; flex-shrink: 0; }
+.solar-terminal-banner {
+  display: flex; align-items: center; gap: 8px;
+  margin: 10px 14px 0; padding: 8px 12px;
+  border-radius: 10px; flex-shrink: 0;
+  font: 600 12px -apple-system, sans-serif;
+}
+.solar-terminal-banner.ok { color: #2e7d32; background: rgba(76,175,80,0.12); border: 1px solid rgba(76,175,80,0.35); }
+.solar-terminal-banner.failed { color: #c62828; background: rgba(244,67,54,0.12); border: 1px solid rgba(244,67,54,0.35); }
+.solar-terminal-icon { font-weight: 700; }
+.solar-terminal-text { color: var(--color-text); }
 .solar-card-footer { display: flex; align-items: center; padding: 0 14px 14px; flex-shrink: 0; }
 .solar-card-footer:empty { display: none; }
 
