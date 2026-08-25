@@ -22,6 +22,16 @@
 }
 #nav-agent-list::-webkit-scrollbar { display: none; }
 
+/* ⑧ Orchestrator separator — 1px hairline below Nebula in the nav agent list
+ * (entity-icons-visual-spec §3.3). Reuses --glass-border-dark token. */
+.nav-agent-separator {
+  width: 24px;
+  height: 1px;
+  background: var(--glass-border-dark);
+  margin: 4px 0;
+  flex-shrink: 0;
+}
+
 /* Agent icon in nav bar */
 .nav-agent {
   width: 44px;

@@ -78,6 +78,10 @@ export default {
   'agent.toolsFixedLabel': '系统固定',
   'agent.toolsConfigLabel': '可配置',
   'agent.toolsFixedTip': '由系统固定注入，不可移除',
+  // === 实体图标语义化 + Nebula 独立分区（20260824_entity-icons-visual-spec §6）===
+  'agents.group.orchestrator': '编排者',
+  'agents.group.standalone': 'Standalone Agents',
+  'agents.badge.orchestrator': '编排者',
   'memory.title': '记忆',
   'memory.agent': '智能体',
   'memory.user': '用户',

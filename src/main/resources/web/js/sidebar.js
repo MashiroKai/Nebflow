@@ -147,17 +147,25 @@ export function renderAgentList() {
   const list = document.getElementById('nav-agent-list');
   if (!list) return;
   list.innerHTML = '';
-  state.agentsData.forEach(a => {
+  // ⑧ Nebula (orchestrator) pinned first with a separator before the rest
+  // (entity-icons-visual-spec §3.3). Nebula always renders the orbit icon —
+  // its identity marker must stay stable, so custom avatars are ignored.
+  const ordered = [...state.agentsData].sort((a, b) =>
+    (b.name === 'Nebula' ? 1 : 0) - (a.name === 'Nebula' ? 1 : 0));
+  ordered.forEach((a, idx) => {
+    const isNebula = a.name === 'Nebula';
     const el = document.createElement('div');
     const isActive = state.selectedAgent === a.name;
-    el.className = 'nav-agent' + (isActive ? ' active' : '');
+    el.className = 'nav-agent' + (isActive ? ' active' : '') + (isNebula ? ' nav-agent-orchestrator' : '');
     const avatar = a.avatar || '';
     const displayName = a.displayName || a.name;
     el.dataset.name = a.name;
     el.title = displayName;
-    const iconHtml = avatar
-      ? `<span class="nav-agent-icon">${avatar}</span>`
-      : `<span class="nav-agent-icon agent-letter-icon">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>`;
+    const iconHtml = isNebula
+      ? `<span class="nav-agent-icon"><i data-lucide="orbit"></i></span>`
+      : avatar
+        ? `<span class="nav-agent-icon">${avatar}</span>`
+        : `<span class="nav-agent-icon agent-letter-icon">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>`;
     el.innerHTML = `${iconHtml}<span class="nav-agent-label">${escapeHtml(displayName.slice(0, 6))}</span>`;
     el.addEventListener('click', () => selectAgent(a.name));
     el.addEventListener('contextmenu', (e) => {
@@ -165,6 +173,12 @@ export function renderAgentList() {
       sendWs({type: 'getAgentSystemPrompt', name: a.name});
     });
     list.appendChild(el);
+    // Separator right after the orchestrator (only when agents follow)
+    if (isNebula && ordered.length > 1) {
+      const sep = document.createElement('div');
+      sep.className = 'nav-agent-separator';
+      list.appendChild(sep);
+    }
   });
   createIconsIn(list);
   computeAgentStates();
