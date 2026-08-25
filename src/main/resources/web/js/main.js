@@ -1518,6 +1518,26 @@ function bgAgentKindFromSession(sessionId) {
   return '';
 }
 
+/** Resolve which session bucket a background task belongs to for the UI.
+ *  A task executed by a background (sub)agent carries the agent's OWN
+ *  sessionId (delegate-/subtask- prefix), not the top-level session the user
+ *  is viewing — so without this the task lands in a bucket updateBgTasksUI
+ *  never reads and is neither counted nor shown. sessionBgAgents is keyed by
+ *  the root session (agentStart carries rootSessionId) and each entry holds
+ *  info.sessionId = the agent's node session, so reverse-look-up that mapping
+ *  to route a sub-agent's background task into the owning root bucket.
+ *  Backend-provided msg.rootSessionId wins when present. */
+function bgTaskRootFor(sessionId) {
+  if (!sessionId) return '';
+  for (const [root, agents] of Object.entries(state.sessionBgAgents || {})) {
+    if (!agents) continue;
+    for (const entry of Object.values(agents)) {
+      if ((entry.sessionId || '') === sessionId) return root;
+    }
+  }
+  return sessionId;
+}
+
 /** Row state machine (spec §3): done > stuck > frozen > error > idle > active. */
 function bgRowState(info) {
   if (info.done) return 'done';
@@ -2441,7 +2461,11 @@ document.addEventListener('click', (e) => {
 });
 
 onMessage('backgroundTaskUpdate', (msg, view) => {
-  const sid = msg.sessionId;
+  // A background-task event emitted by a background (sub)agent carries the
+  // agent's OWN sessionId (delegate-/subtask- prefix) in msg.sessionId, not
+  // the top-level session the user is viewing — route it to the owning root
+  // bucket so it's counted and shown in that window (bug fix 2026-08-25).
+  const sid = msg.rootSessionId || bgTaskRootFor(msg.sessionId) || msg.sessionId;
   if (!sid) return;
   if (!state.sessionBgTasks[sid]) state.sessionBgTasks[sid] = [];
   const tasks = state.sessionBgTasks[sid];
@@ -2995,9 +3019,20 @@ onReconnect(() => {
 // (they completed during the disconnect), and keep tasks the backend confirms.
 onMessage('activeBgTasks', (msg) => {
   const backendTasks = msg.tasks || {};
+  // Backend groups background tasks by the executing agent's sessionId, which
+  // for a background (sub)agent is a delegate-/subtask- session, not the
+  // root session the user is viewing. Remap to root buckets before
+  // reconciling so sub-agent background tasks are counted under the owning
+  // window (mirrors bgTaskRootFor on the live backgroundTaskUpdate path).
+  const byRoot = {};
+  for (const [sid, tasks] of Object.entries(backendTasks)) {
+    const root = bgTaskRootFor(sid);
+    if (!byRoot[root]) byRoot[root] = [];
+    byRoot[root].push(...tasks);
+  }
   // Remove locally-tracked tasks that the backend no longer knows about
   for (const sid of Object.keys(state.sessionBgTasks)) {
-    const backendSessionTasks = backendTasks[sid] || [];
+    const backendSessionTasks = byRoot[sid] || [];
     const backendIds = new Set(backendSessionTasks.map(t => t.taskId));
     const before = state.sessionBgTasks[sid].length;
     state.sessionBgTasks[sid] = state.sessionBgTasks[sid].filter(t => backendIds.has(t.taskId));
