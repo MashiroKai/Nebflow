@@ -223,9 +223,8 @@ body.sidebar-collapsed #activity-bar {
   width: 22px;
   height: 22px;
   object-fit: contain;
-  /* Disable the pixel-art crispEdges from favicon.svg so it scales smoothly. */
-  shape-rendering: geometricPrecision;
-  image-rendering: auto;
+  /* Pixel-art logo (224x224 source): keep crisp nearest-neighbor edges. */
+  image-rendering: pixelated;
   pointer-events: none;
 }
 /* Account avatar photo (shown after login, when an avatarUrl is available). */
@@ -318,6 +317,8 @@ body.sidebar-collapsed #activity-bar {
 }
 .neblink-logged-out-logo {
   width: 36px; height: 30px; opacity: 0.7;
+  object-fit: contain;
+  image-rendering: pixelated;
 }
 .neblink-logged-out-text {
   font-size: 13px; color: var(--color-text); font-weight: 500;

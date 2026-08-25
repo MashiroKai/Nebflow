@@ -14,7 +14,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <!-- Neutral initial title: js/brand.js sets the real one from window.__BRAND__. -->
   <title></title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <!-- Favicon: pixel logo (bright variant), fixed regardless of theme.
+       PNG/ICO derived from css/logo-bright.png via nearest-neighbor resample. -->
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
   <link rel="shortcut icon" href="favicon.ico">
@@ -52,7 +53,10 @@
        Device management lives in the Settings panel (NebLink section). -->
   <div id="activity-bar">
     <button id="activity-avatar" class="activity-avatar" title="Login">
-      <img class="activity-avatar-logo" src="logo.svg" alt="">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark.png">
+        <img class="activity-avatar-logo" src="css/logo-bright.png" alt="">
+      </picture>
       <img class="activity-avatar-photo" alt="" hidden>
       <span class="activity-avatar-letter" hidden>N</span>
     </button>
