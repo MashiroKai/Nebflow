@@ -33,7 +33,8 @@ object RunningFlowRegistry:
     status: NodeStatus, // running | completed | failed | cancelled
     startedAt: Long,
     completedAt: Option[Long] = None,
-    sessionId: Option[String] = None // parent session for WS routing
+    sessionId: Option[String] = None, // #407: triggering agent's OWN session — Mail idle gate associates in-flight flows via f.sessionId.contains(sid); do NOT repurpose to root
+    rootSessionId: Option[String] = None // #412: outermost root session — badge ownership / window routing (distinct from sessionId)
   )
 
   private val flows: Ref[IO, Map[String, RunningFlow]] = Ref.unsafe(Map.empty)
@@ -178,6 +179,8 @@ object RunningFlowRegistry:
       "status" -> flow.status.wire.asJson,
       "startedAt" -> flow.startedAt.asJson,
       "completedAt" -> flow.completedAt.asJson,
+      "sessionId" -> flow.sessionId.asJson, // #412: serialized so API/UI can associate a flow with its triggering session
+      "rootSessionId" -> flow.rootSessionId.asJson,
       "nodes" -> flow.nodes.values.toList.map { ns =>
         JsonObject
           .fromIterable(

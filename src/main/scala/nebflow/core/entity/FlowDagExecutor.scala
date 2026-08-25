@@ -858,13 +858,18 @@ object FlowDagExecutor:
 
     // Register the running flow, execute, then clean up
     for
-      _ <- registerFlow(instanceId, flow, callerSessionId)
+      _ <- registerFlow(instanceId, flow, callerSessionId, rootSessionId)
       // Emit flowStarted so the frontend can render the full DAG immediately
       _ <- emitWs(
         Json.obj(
           "type" -> "flowStarted".asJson,
           "instanceId" -> instanceId.asJson,
           "flowName" -> flow.name.asJson,
+          // #412: badge ownership — sessionId = triggering agent's own session
+          // (consistent with RunningFlow.sessionId), rootSessionId = outermost
+          // root (window routing). Empty string = unknown/unset.
+          "sessionId" -> callerSessionId.asJson,
+          "rootSessionId" -> rootSessionId.asJson,
           "description" -> flow.description.asJson,
           "entry" -> flow.entry.asJson,
           "nodes" -> flow.nodes.toList
@@ -913,6 +918,9 @@ object FlowDagExecutor:
           "type" -> "flowCompleted".asJson,
           "instanceId" -> instanceId.asJson,
           "flowName" -> flow.name.asJson,
+          // #412: same ownership fields as flowStarted (see above).
+          "sessionId" -> callerSessionId.asJson,
+          "rootSessionId" -> rootSessionId.asJson,
           "success" -> finalResult.isRight.asJson
         )
       )
@@ -922,7 +930,12 @@ object FlowDagExecutor:
   end execute
 
   /** Register a running flow instance from its DAG definition. */
-  private def registerFlow(instanceId: String, flow: FlowDagDef, callerSessionId: String = ""): IO[Unit] =
+  private def registerFlow(
+    instanceId: String,
+    flow: FlowDagDef,
+    callerSessionId: String = "",
+    rootSessionId: String = ""
+  ): IO[Unit] =
     val nodes = flow.nodes.map { (nodeId, node) =>
       nodeId -> nebflow.core.flow.RunningFlowRegistry.NodeState(
         nodeId = nodeId,
@@ -946,7 +959,11 @@ object FlowDagExecutor:
         startedAt = System.currentTimeMillis(),
         // #407 (Q3): associate the running flow with its triggering agent so
         // the Mail idle gate can detect "flow in flight" (node-gap coverage).
-        sessionId = Option(callerSessionId).filter(_.nonEmpty)
+        sessionId = Option(callerSessionId).filter(_.nonEmpty),
+        // #412: outermost root session — distinct from sessionId (which stays
+        // the triggering agent for #407 gate semantics). Populated from the
+        // execute parameter; root ownership survives team/flow-node triggers.
+        rootSessionId = Option(rootSessionId).filter(_.nonEmpty)
       )
     )
 
