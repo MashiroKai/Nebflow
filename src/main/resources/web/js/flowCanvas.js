@@ -3,7 +3,7 @@
 // TEAMS tab: Glass cards with agent tiles. Always accessible via toggle button.
 // FLOWS tab: DAG node graph with real-time progress. Auto-opens when flows run.
 
-import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab } from './canvas.js';
+import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab, closeTab } from './canvas.js';
 import { FLOW_CSS } from './flowCss.js';
 import { esc, authHeaders, overlayRoot, setMailPending } from './flowHelpers.js';
 import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf, populateTileModels } from './flowTeams.js';
@@ -21,8 +21,22 @@ const agentStatus = new Map();
 const mailFlash = new Map();
 let autoRestoreRetryCount = 0;
 let runningFlows = [];
+// flow v4 (20260825_flow-redesign-research.md §4.10): flow-run is the sole flow
+// UI. Once the user closes a flow-run tab (running or terminal) don't auto-reopen
+// it on later progress — 「被关闭后不复活」. Track dismissed instanceIds.
+const dismissedFlowRuns = new Set();
 let flowsTabAutoOpened = false;  // prevent repeated auto-open
 let flowDefs = [];
+
+// Record a dismissed flow-run tab when its canvas tab closes (Canvas dispatches
+// 'canvas-tab-closed' with { id }). The tab's own Close button routes through
+// closeTab, so both the X and the terminal Close button land here.
+document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) => {
+  const id = e.detail && e.detail.id;
+  if (typeof id === 'string' && id.startsWith('flow-run-')) {
+    dismissedFlowRuns.add(id.slice('flow-run-'.length));
+  }
+});
 
 async function fetchFlowDefs() {
   try {
@@ -210,7 +224,11 @@ function renderFlowRunTab(instanceId) {
     pane.appendChild(scroll);
   }
   const flow = runningFlows.find(f => f.instanceId === instanceId);
-  renderFlowRunInto(scroll, flow);
+  renderFlowRunInto(scroll, flow, { onClose: () => closeTab(`flow-run-${instanceId}`) });
+  // Terminal state Close button (see dagCardHtml §4.10 "停留结束态可手动关闭").
+  pane.querySelectorAll('.dag-card-close').forEach(btn => {
+    btn.addEventListener('click', () => closeTab(`flow-run-${instanceId}`));
+  });
   overlayRoot();
   bindDagNodeClicks();
   if (typeof lucide !== 'undefined') createIconsIn(scroll);
@@ -221,7 +239,7 @@ function renderFlowRunTab(instanceId) {
 function maybeAutoOpenFlowsTab() {
   if (runningFlows.length === 0) return;
   for (const f of runningFlows) {
-    if (f.status === 'running' && !hasTab(`flow-run-${f.instanceId}`)) {
+    if (f.status === 'running' && !dismissedFlowRuns.has(f.instanceId) && !hasTab(`flow-run-${f.instanceId}`)) {
       openFlowRunTab(f.instanceId, f.flowName);
     }
   }
@@ -245,6 +263,23 @@ export function onFlowStarted(msg) {
     });
   }
   maybeAutoOpenFlowsTab();
+  if (isCanvasOpen()) renderOpenTabs();
+}
+
+/** Dynamically-expanded nodes from a flow's fan-out (FlowExecute ParallelDynamic).
+ *  flowNodesAdded carries the new runtime node instances + their downstream
+ *  join edges; append them to the running flow so the flow-run DAG grows live. */
+export function onFlowNodesAdded(msg) {
+  const rf = runningFlows.find(f => f.instanceId === (msg.instanceId || ''));
+  if (!rf) return;
+  for (const n of (msg.nodes || [])) {
+    const existing = rf.nodes.find(x => x.nodeId === n.nodeId);
+    if (!existing) rf.nodes.push({ ...n, status: n.status || 'pending' });
+  }
+  const edges = rf.edges || (rf.edges = []);
+  for (const e of (msg.edges || [])) {
+    if (!edges.some(x => x.from === e.from && x.to === e.to)) edges.push(e);
+  }
   if (isCanvasOpen()) renderOpenTabs();
 }
 

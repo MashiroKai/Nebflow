@@ -202,7 +202,22 @@ export function dagCardHtml(rf, opts = {}) {
   }).join('');
 
   const isActive = statusCls === 'running';
-  const cancelBtn = isActive ? `<button class="dag-card-cancel" data-instance-id="${esc(rf.instanceId || '')}">Cancel Flow</button>` : '';
+  // flow v4 (20260825_flow-redesign-research.md §4.10): flow-run is the sole flow
+  // UI. When the run reaches a terminal state and a close affordance is wired
+  // (opts.onClose supplied by the flow-run tab), show a terminal banner + a manual
+  // Close button so the user can review the result and close at their own pace
+  // (§4.10 "关闭或停留结束态"). Non-flow-run callers (flows panel, flow-def) pass no
+  // onClose, so they render exactly as before.
+  const terminal = opts.onClose && (statusCls === 'completed' || statusCls === 'failed');
+  const footerBtn = terminal
+    ? `<button class="dag-card-close" data-close-instance="${esc(rf.instanceId || '')}">Close</button>`
+    : (isActive ? `<button class="dag-card-cancel" data-instance-id="${esc(rf.instanceId || '')}">Cancel Flow</button>` : '');
+  const terminalBanner = terminal
+    ? `<div class="solar-terminal-banner ${statusCls === 'failed' ? 'failed' : 'ok'}">
+        <span class="solar-terminal-icon">${statusCls === 'failed' ? '\u2717' : '\u2713'}</span>
+        <span class="solar-terminal-text">${statusCls === 'failed' ? 'Flow failed' : 'Flow completed'}</span>
+      </div>`
+    : '';
 
   return `
     <div class="solar-card ${statusCls}">
@@ -211,13 +226,14 @@ export function dagCardHtml(rf, opts = {}) {
         <div class="solar-card-status ${statusCls}"><span class="dot"></span>${statusText}</div>
       </div>
       ${rf.description ? `<div class="solar-card-desc">${esc(rf.description)}</div>` : ''}
+      ${terminalBanner}
       <div class="solar-scroll">
         <div class="solar-canvas" style="width:${width}px;height:${height}px">
           ${solarEdgesSvg(rf, edgePositions, statusOf)}
           ${nodesHtml}
         </div>
       </div>
-      <div class="solar-card-footer">${cancelBtn}</div>
+      <div class="solar-card-footer">${footerBtn}</div>
     </div>`;
 }
 
@@ -231,9 +247,11 @@ export function renderFlowsPanel(scroll, runningFlows) {
   scroll.innerHTML = runningFlows.map(rf => dagCardHtml(rf)).join('');
 }
 
-/** Render a single flow instance into an existing container (flow-run tab). */
-export function renderFlowRunInto(container, rf) {
-  container.innerHTML = rf ? dagCardHtml(rf) : `<div class="dag-empty"><div class="hint">Flow instance not found</div></div>`;
+/** Render a single flow instance into an existing container (flow-run tab).
+ *  @param {object} [opts] - passed to dagCardHtml (e.g. { onClose }) for the
+ *    terminal close affordance. */
+export function renderFlowRunInto(container, rf, opts) {
+  container.innerHTML = rf ? dagCardHtml(rf, opts) : `<div class="dag-empty"><div class="hint">Flow instance not found</div></div>`;
 }
 
 /** Render a static flow definition preview (all nodes pending) — P6. */
