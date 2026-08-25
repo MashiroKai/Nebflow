@@ -89,6 +89,7 @@ export function applyLocaleToHtml() {
     'memory-content-input': ['placeholder', 'memory.placeholder'],
     'daemon-btn': ['title', 'daemons.title'],
     'bgagent-indicator': ['title', 'subagents.indicatorTitle'],
+    'flows-indicator': ['title', 'flows.indicatorTitle'],
   };
 
   // Static elements with IDs
