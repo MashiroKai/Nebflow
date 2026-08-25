@@ -175,4 +175,11 @@ object Defaults:
    * setWorkSchedule 配置热更走即时 scan，不受此间隔约束。
    */
   val FreezeCheckIntervalSec: Int = 30
+
+  /**
+   * v2 冻结式错误恢复升级链（§5.1-5.2）：进入升级链后等待父决策的窗口。
+   * 每级窗口相同（从升级链启动算起逐级顺延）；用户级不设超时（最终仲裁，
+   * 卡片持久化等待）。与 TaskStuckWatcher 卡死阈值同量级（用户有合理决策窗口）。
+   */
+  val ErrorEscalateAfterMs: Long = 10 * 60 * 1000L
 end Defaults

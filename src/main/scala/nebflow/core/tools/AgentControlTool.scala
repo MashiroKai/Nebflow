@@ -7,6 +7,8 @@ import io.circe.JsonObject
 import nebflow.agent.*
 import nebflow.shared.Defaults
 
+import scala.concurrent.duration.*
+
 /**
  * AgentControl — Nebula 专用后台 agent 管控（spec v1.1，2026-08-19）。
  *
@@ -88,7 +90,7 @@ When to use:
   val CancelableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Ephemeral)
   private val RestartableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask)
 
-  private def kindRejection(kind: AgentKind, action: String): Option[String] =
+  private def kindRejection(kind: AgentKind, action: String, callerIsDirectParent: Boolean = false): Option[String] =
     kind match
       case AgentKind.Flow =>
         Some(
@@ -96,10 +98,14 @@ When to use:
             "Use flow-level cancellation instead (cancelFlow(instanceId) / RunningFlowRegistry)."
         )
       case AgentKind.Team =>
-        Some(
-          "Team members are read-only for AgentControl in this version — killing one mid-collaboration breaks the team state machine. " +
-            "If a team agent is stuck, Mail its Manager or wait for the stuck watcher."
-        )
+        // v2 升级链父重启（§5.3.3）：直接父（Manager/owner）对自有 Team 成员
+        // restart/cancel 放行——升级链的决策载体；其他调用者保持只读。
+        if callerIsDirectParent then None
+        else
+          Some(
+            "Team members are read-only for AgentControl in this version — killing one mid-collaboration breaks the team state machine. " +
+              "If a team agent is stuck, Mail its Manager or wait for the stuck watcher."
+          )
       case AgentKind.Root | AgentKind.Plan =>
         Some("Root/plan sessions cannot be managed with this tool (self-preservation guard).")
       case k =>
@@ -152,7 +158,7 @@ When to use:
             else withGuardedRecord(resources, ctx, sessionId, "cancel")((rec, _) => doCancel(resources, rec, reason))
           case "restart" =>
             if sessionId.isEmpty then IO.pure(Left(ToolError("restart requires sessionId (run list first to get one)")))
-            else withGuardedRecord(resources, ctx, sessionId, "restart")((rec, _) => doRestart(resources, rec, reason))
+            else withGuardedRecord(resources, ctx, sessionId, "restart")((rec, _) => doRestart(resources, ctx, rec, reason))
           case other =>
             IO.pure(
               Left(ToolError(s"Unknown action '$other'. Supported: list, status, cancel, restart."))
@@ -194,7 +200,10 @@ When to use:
               )
             )
           else
-            kindRejection(rec.kind, action) match
+            // v2 升级链父重启（§5.3.3）：直接父 = 调用者会话 == 目标记录的 parentSessionId
+            // （Manager/owner 管理自有 Team 成员；Delegate/SubTask 的父同理）。
+            val callerIsDirectParent = rec.parentSessionId.nonEmpty && rec.parentSessionId == callerSessionId
+            kindRejection(rec.kind, action, callerIsDirectParent) match
               case Some(msg) => IO.pure(Left(ToolError(msg)))
               case None => body(rec, callerRoot)
     yield result
@@ -363,8 +372,58 @@ When to use:
             )
           )
 
-  private def doRestart(resources: SharedResources, rec: AgentRecord, reason: String): IO[Either[ToolError, String]] =
-    if rec.supervisorRef.isEmpty then
+  def doRestart(
+    resources: SharedResources,
+    ctx: ToolContext,
+    rec: AgentRecord,
+    reason: String
+  ): IO[Either[ToolError, String]] =
+    if rec.kind == AgentKind.Team then
+      // v2 升级链父重启（§5.3.3 Team 成员分支）：Stop 旧 actor → 等死（防同名
+      // 双活）→ 复用 MailTool.activateAgent 以 history 重建（断点续跑，turn 从
+      // lastDispatch checkpoint 继续）。Team 成员无 supervisor——父就是恢复载体。
+      (ctx.actorSystem, ctx.sharedResources) match
+        case (Some(system), Some(_)) =>
+          val deadline = System.currentTimeMillis() + 5000L
+          def waitDead: IO[Boolean] =
+            system.isAlive(rec.ref.path).flatMap {
+              case false => IO.pure(true)
+              case true if System.currentTimeMillis() >= deadline => IO.pure(false)
+              case true => IO.sleep(200.millis) *> waitDead
+            }
+          for
+            _ <- rec.ref ! AgentCommand.Stop(
+              s"parent-restart${if reason.nonEmpty then s": $reason" else ""}"
+            )
+            dead <- waitDead
+            refOpt <- if dead then MailTool.activateAgent(rec.sessionId, resources, system, ctx) else IO.pure(None)
+          yield
+            if !dead then
+              Left(
+                ToolError(
+                  s"Team member '${rec.sessionId}' did not stop within 5s — restart aborted (no respawn to avoid double-activation)."
+                )
+              )
+            else if refOpt.isDefined then
+              Right(
+                s"Restart sent for Team member '${rec.sessionId}': stopped and re-activated from history " +
+                  "(parent-restart). Turn resumes from the last persisted checkpoint."
+              )
+            else
+              Left(
+                ToolError(
+                  s"Team member '${rec.sessionId}' stopped but re-activation failed (session or agent def not found)."
+                )
+              )
+        case _ =>
+          IO.pure(
+            Left(
+              ToolError(
+                s"Team member restart requires a live actor system (missing in this tool context)."
+              )
+            )
+          )
+    else if rec.supervisorRef.isEmpty then
       // registry 是内存态、与代码同版本——Delegate/SubTask 记录恒有 supervisor；
       // 走到这里说明内部不一致，拒绝而非盲杀。
       IO.pure(
