@@ -397,7 +397,8 @@ Git safety:
                       onHeartbeat,
                       Some(jobId),
                       hardTimeoutMs = ctx.bashConfig.hardTimeoutMs,
-                      stuckWindowSec = ctx.bashConfig.stuckWindowSec
+                      stuckWindowSec = ctx.bashConfig.stuckWindowSec,
+                      healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec
                     )
                     _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
                   yield Right(
@@ -520,7 +521,8 @@ Git safety:
               health,
               onComplete,
               hardTimeoutMs = ctx.bashConfig.hardTimeoutMs,
-              stuckWindowSec = ctx.bashConfig.stuckWindowSec
+              stuckWindowSec = ctx.bashConfig.stuckWindowSec,
+              healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec
             )
             _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
           yield Right(

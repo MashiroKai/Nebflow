@@ -357,7 +357,9 @@ object GatewayMain extends IOApp.Simple:
                                     hardTimeoutMs = config.bashBackgroundHardTimeoutMs
                                       .getOrElse(nebflow.shared.Defaults.BashBackgroundHardTimeoutMs),
                                     stuckWindowSec =
-                                      config.bashStuckWindowSec.getOrElse(nebflow.shared.Defaults.BashStuckWindowSec)
+                                      config.bashStuckWindowSec.getOrElse(nebflow.shared.Defaults.BashStuckWindowSec),
+                                    healthCheckIntervalSec = config.bashHealthCheckIntervalSec
+                                      .getOrElse(nebflow.shared.Defaults.BgHealthCheckIntervalSec)
                                   )
                                 )
                                 // Initialize telemetry (opt-out aware, fire-and-forget on failure)
