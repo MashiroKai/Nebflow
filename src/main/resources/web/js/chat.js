@@ -7,7 +7,7 @@ import { activeView, setActiveView, findViewBySessionId } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
-import { sendWs } from './ws.js';
+import { sendWs, onMessage } from './ws.js';
 
 // ---------- Time format preference (12h / 24h toggle) ----------
 // Legacy spelling 'nebflow:timeFormat' is normalized into this key by
@@ -1423,8 +1423,9 @@ function buildOptionPreview(pv) {
     return `<span class="option-preview" aria-hidden="true">${inner}</span>`;
   }
   if (pv.type === 'image' && pv.src) {
-    // E2: on error the slot hides itself; label/desc stay clickable.
-    return `<span class="option-preview" aria-hidden="true"><img class="preview-img" src="${escapeHtml(pv.src)}" alt="" loading="lazy" onerror="this.closest('.option-preview').style.display='none'"></span>`;
+    // §6 preview fades in on load (200ms ease-out); on error the slot hides
+    // itself (E2) — label/desc stay clickable either way.
+    return `<span class="option-preview" aria-hidden="true"><img class="preview-img" src="${escapeHtml(pv.src)}" alt="" loading="lazy" onload="this.classList.add('nf-loaded')" onerror="this.closest('.option-preview').style.display='none'"></span>`;
   }
   return '';
 }
@@ -1791,6 +1792,34 @@ function openAskCanvas(tabId, absPath) {
   }).catch(() => {});
 }
 
+/** Probe that a canvas comparison file is readable before we surface the
+ *  "view comparison" button (E8). The backend pop.readFile responds with a
+ *  `fileContent` frame — success carries content/size, failure carries error.
+ *  Resolves true only on a positive read; a missing/broken file resolves
+ *  false (the button is suppressed, question card still renders). */
+function probeCanvasFile(path) {
+  return new Promise(resolve => {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) { resolve(false); return; }
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (unsub) unsub();
+      resolve(ok);
+    };
+    let unsub = null;
+    unsub = onMessage('fileContent', (msg) => {
+      if (msg.path !== path) return;
+      // success = no error AND real content/binary presence; empty text files
+      // legitimately arrive with content:"" so error is the reliable signal.
+      finish(!msg.error && (typeof msg.content === 'string' || msg.size != null));
+    });
+    const timer = setTimeout(() => finish(false), 1500);
+    sendWs({ type: 'pop.readFile', path, sessionId: undefined });
+  });
+}
+
 export function renderAskUser(items, askSessionId, agentName, requestId) {
   if (!Array.isArray(items) || items.length === 0) {
     renderError(t('chat.waitingQuestion'));
@@ -1813,17 +1842,28 @@ export function renderAskUser(items, askSessionId, agentName, requestId) {
     bubble.appendChild(badge);
   }
   chat.appendChild(row);
-  // canvas field (direction C §2.1): auto-open the comparison page in Canvas
-  // and offer a glass "view comparison" button beside the question.
+  // canvas field (direction C §2.1): probe readability, then offer a glass
+  // "view comparison" button beside the question and auto-open it in Canvas.
+  // E8: a missing/broken canvas file does not render the button and does not
+  // block the question card — the probe decides, so we never show a dead path.
   const canvasPath = items.map(i => i && i.canvas).find(Boolean) || null;
   if (canvasPath) {
     const tabId = 'askcanvas:' + canvasPath;
     const viewBtn = document.createElement('button');
     viewBtn.className = 'glass-control ob-compare-btn';
+    viewBtn.style.display = 'none'; // shown only after a successful probe (E8)
     viewBtn.textContent = t('askUser.viewCompare');
     viewBtn.onclick = () => openAskCanvas(tabId, canvasPath);
     bubble.appendChild(viewBtn);
-    openAskCanvas(tabId, canvasPath);
+    probeCanvasFile(canvasPath).then(ok => {
+      if (ok) {
+        viewBtn.style.display = '';
+        openAskCanvas(tabId, canvasPath);
+      } else {
+        console.warn('[askUser] canvas file missing or unreadable:', canvasPath);
+        viewBtn.remove();
+      }
+    });
   }
   // Use the sessionId from the askUser message, not the currently active session
   const targetSid = askSessionId || activeView.sessionId;
