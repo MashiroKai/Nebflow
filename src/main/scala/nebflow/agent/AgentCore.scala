@@ -1258,7 +1258,8 @@ private[agent] trait AgentCore:
           ctx.llm,
           ctx.sessionId.getOrElse(""),
           ctx.agentDef.map(_.name).getOrElse("-"),
-          ctx.agentDef.flatMap(_.model)
+          ctx.agentDef.flatMap(_.model),
+          health = ctx.sharedResources.map(_.healthMonitor)
         )
         .flatMap {
           case Some(result) => IO.pure(Right(result))

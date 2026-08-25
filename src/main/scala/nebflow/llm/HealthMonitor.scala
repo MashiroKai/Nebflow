@@ -13,6 +13,14 @@ enum HealthState:
   case Up
   case Down(reason: String, since: Long)
 
+/** Health of the Tier 2a standalone search API (P2, 2026-08-25) — tracked
+  * INDEPENDENTLY of model-provider health so layered health output can show
+  * the decoupling the user asked for ("模型配额 DOWN ≠ 搜索 DOWN"). */
+enum SearchApiHealth:
+  case Unconfigured
+  case Up
+  case Down(reason: String, since: Long)
+
 object ProviderHealthMonitor:
   /** Interval between background probe cycles for Down providers (2 minutes). */
   val ProbeIntervalSec = 120
@@ -56,6 +64,24 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
   /** Deferred that completes when any provider transitions Down→Up. */
   private val signalRef: Ref[IO, Deferred[IO, Unit]] =
     Ref.unsafe(Deferred.unsafe[IO, Unit])
+
+  /** Tier 2a standalone search API health (P2, 2026-08-25). Starts
+    * Unconfigured; the first standalone search call records Up/Down. */
+  private val searchHealthRef: Ref[IO, SearchApiHealth] =
+    Ref.unsafe(SearchApiHealth.Unconfigured)
+
+  /** Record a successful Tier 2a standalone search call. */
+  def recordSearchSuccess(): IO[Unit] =
+    searchHealthRef.set(SearchApiHealth.Up)
+
+  /** Record a failed Tier 2a standalone search call (reason = the classified
+    * diagnostic, e.g. quota/rate limited / auth failed / timeout). */
+  def recordSearchFailure(reason: String): IO[Unit] =
+    searchHealthRef.set(SearchApiHealth.Down(reason, System.currentTimeMillis()))
+
+  /** Current Tier 2a search API health (P2-6 layered /api/health). */
+  def getSearchHealth: IO[SearchApiHealth] =
+    searchHealthRef.get
 
   private def key(providerId: String, model: String): String =
     s"$providerId/$model"
