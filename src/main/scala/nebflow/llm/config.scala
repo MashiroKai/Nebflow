@@ -99,11 +99,28 @@ object McpServerConfig:
 
   extension (cfg: McpServerConfig) def isEnabled: Boolean = cfg.enabled.getOrElse(true)
 
+/** Standalone search API config — the top-level `search` block of
+  * nebflow.json (Tier 2a, P2 2026-08-25). The schema existed but was unwired
+  * until P2: a paid search API is billed per call, SEPARATE from model token
+  * quotas, so a model-quota DOWN must not take search down with it.
+  *
+  *   "search": { "provider": "zhipu", "apiKey": "<existing zhipu key>",
+  *               "engine": "search_std", "baseUrl": "<optional override>",
+  *               "enabled": true }
+  *
+  * `provider` selects the adapter (zhipu / bocha); `apiKey` reuses the
+  * provider's existing key (zhipu: zero new key); `engine` picks the search
+  * tier (search_std ¥0.01/call / search_pro …); `baseUrl` overrides the
+  * endpoint (smoke tests point it at a local mock — the reason it exists);
+  * `enabled=false` or a missing/empty apiKey skips Tier 2a entirely (graceful
+  * degrade, existing users need zero migration). */
 case class SearchConfig(
   provider: String,
   apiKey: String,
   engine: Option[String] = None,
-  model: Option[String] = None
+  model: Option[String] = None,
+  baseUrl: Option[String] = None,
+  enabled: Option[Boolean] = None
 )
 
 object SearchConfig:
