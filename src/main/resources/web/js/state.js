@@ -94,6 +94,12 @@ export default {
   frozenSessions: new Set(),
   // serverConfig echo of the workSchedule node: { enabled, segments:[{start,end}] }
   workSchedule: null,
+  // Error recovery (frozen-error-recovery plan §4): per-session state for the
+  // amber "error family". sessionId -> { reason, retryCount, detail, resumeAt,
+  // escalation? }. Distinct from frozenSessions (which is the park set for both
+  // schedule and error — error entries ALSO set frozenSessions so the exempt
+  // F5/watcher semantics hold). reason is one of the FreezeReason wire names.
+  errorRecovery: {},
   // serverConfig echo of the stt node: { sttConfigured, endpoint?, model? } — the
   // apiKey is NEVER echoed (server-side only). null/absent = free browser path.
   stt: null,

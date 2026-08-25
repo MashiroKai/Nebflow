@@ -15,6 +15,7 @@ import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls, onCancelResult, isFailedSnapshotStatus } from './managePanel.js';
+import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
 
 // ── Per-sub-agent state ────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -307,9 +308,13 @@ export function interceptBgAgentStep(msg) {
   } else if (msg.type === 'agentFrozen') {
     entry.meta.status = 'frozen';
     entry.meta.frozenResumeAt = msg.resumeAt || null;
+    entry.meta.freezeReason = msg.reason; // UI-7: error-family → amber tile
+    entry.meta.escalation = msg.escalation ? msg.escalation.level : null;
   } else if (msg.type === 'agentResumed') {
     entry.meta.status = 'running';
     entry.meta.frozenResumeAt = null;
+    entry.meta.freezeReason = null;
+    entry.meta.escalation = null;
   } else if (msg.type === 'agentThinking') {
     // Granular phase (#343): LLM reasoning in progress — set once, subsequent
     // delta chunks no-op so the footer doesn't churn on every token.
@@ -379,19 +384,28 @@ export function handleBgAgentHistory(msg) {
 function updateFooterStatus(entry) {
   if (!entry.footerEl) return;
   const status = entry.meta.status || '';
-  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding', 'stuck', 'stopped');
+  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding', 'stuck', 'stopped', 'error');
   if (status) entry.footerEl.classList.add(status);
   const taskEl = entry.footerEl.querySelector('.fa-task');
+  const isErrorFrozen = status === 'frozen' && isErrorReason(entry.meta.freezeReason);
+  // UI-7: error-recovery frozen → amber tile (add .error modifier).
+  if (isErrorFrozen) entry.footerEl.classList.add('error');
   if (taskEl) {
     if (status === 'frozen') {
-      // Frozen tile: "已冻结 · HH:mm 恢复" — resumeAt epoch → local HH:mm
-      const at = entry.meta.frozenResumeAt;
-      const clock = at ? (() => {
-        const d = new Date(at);
-        if (Number.isNaN(d.getTime())) return '';
-        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-      })() : '';
-      taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
+      if (isErrorFrozen) {
+        // Error family: reason short text (重试中 / 等恢复 / 等待上级决策).
+        const escTxt = errorTileText(entry.meta);
+        taskEl.innerHTML = `${errorIcon(entry.meta.freezeReason, 'error-icon')}<span class="fa-task-text">${escTxt}</span>`;
+      } else {
+        // Frozen tile: "已冻结 · HH:mm 恢复" — resumeAt epoch → local HH:mm
+        const at = entry.meta.frozenResumeAt;
+        const clock = at ? (() => {
+          const d = new Date(at);
+          if (Number.isNaN(d.getTime())) return '';
+          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        })() : '';
+        taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
+      }
     } else if (status === 'stuck' && entry.meta.stuck) {
       // Restrained red stuck label (manage-panel, 2026-08-22).
       taskEl.textContent = entry.meta.stuck.action === 'restart'

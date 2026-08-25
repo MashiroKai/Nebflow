@@ -53,6 +53,77 @@
   display: flex;
   flex-direction: column;
 }
+/* Error-recovery strip (frozen-error-recovery plan §4.3 dims 2-5): icon +
+   reason + retry count + retry/abandon buttons, rendered inside the input
+   wrap above the textarea — the "input bar carries the state" carrier. Amber
+   glass, distinct from the quiet sapphire schedule tint. Shared by the main
+   input bar (#input-bar) and the popup input bar (.fa-input-bar). */
+.error-recovery-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 6px 6px;
+  font-size: 12px;
+  color: rgb(var(--amber) / 1);
+  user-select: none;
+}
+.error-recovery-strip .error-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: rgb(var(--amber));
+  animation: error-pulse 1.6s ease-in-out infinite;
+}
+.error-recovery-strip .error-recovery-text {
+  min-width: 0;
+  flex: 1;
+  color: var(--color-text);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.error-retry-btn,
+.error-abandon-btn {
+  pointer-events: auto;
+  font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  border-radius: 8px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.error-retry-btn {
+  background: rgb(var(--amber) / 0.16);
+  border: 1px solid rgb(var(--amber) / 0.45);
+  color: rgb(var(--amber));
+}
+.error-retry-btn:hover {
+  background: rgb(var(--amber) / 0.26);
+}
+.error-abandon-btn {
+  background: transparent;
+  border: 1px solid rgb(var(--color-error, 244 67 54) / 0.40);
+  color: var(--color-error, #f44336);
+}
+.error-abandon-btn:hover {
+  background: rgb(var(--color-error, 244 67 54) / 0.10);
+}
+@keyframes error-pulse {
+  0%, 100% { opacity: 0.75; transform: scale(1.0); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .error-recovery-strip .error-icon {
+    animation: none;
+  }
+  .error-retry-btn, .error-abandon-btn {
+    transition: none;
+  }
+}
 /* Drag-over highlight — the input bar being dragged over (#303).
    Element-scoped: primary #input-bar + popup .fa-input-bar share the same
    visual. (Formerly body.drag-over — the stuck-highlight bug came from a
@@ -93,6 +164,35 @@
 .fa-input-bar.frozen .fa-input::placeholder {
   color: rgb(var(--sapphire) / 0.9);
   text-shadow: 0 0 8px rgb(var(--sapphire-glow) / 0.35);
+}
+/* Error-recovery input bar (frozen-error-recovery plan §4.3 dim 1) — amber
+   family. Mirrors the .frozen structure EXACTLY (border/bg/ring/glow/edge/
+   transition) and swaps only the hue — the "同族" skeleton with an importable
+   hue difference. Applied alongside the error strip; the strip is the added
+   differentiation (icon + reason + retry/abandon buttons). */
+#input-bar.frozen-error,
+.fa-input-bar.frozen-error {
+  border-color: rgb(var(--amber) / 0.45);
+  background: rgb(var(--amber) / 0.10);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0 0 0 3px rgb(var(--amber) / 0.10),
+    0 0 18px rgb(var(--amber-glow) / 0.22),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+}
+#input-bar.frozen-error::before,
+.fa-input-bar.frozen-error::before {
+  background: linear-gradient(90deg,
+    transparent 10%,
+    rgb(var(--amber-glow) / 0.55) 50%,
+    transparent 90%
+  );
+}
+#input-bar.frozen-error #input::placeholder,
+.fa-input-bar.frozen-error .fa-input::placeholder {
+  color: rgb(var(--amber) / 0.95);
+  text-shadow: 0 0 8px rgb(var(--amber-glow) / 0.30);
 }
 #attachment-preview {
   display: flex;
@@ -753,6 +853,31 @@
   .fa-input-bar.frozen .fa-input::placeholder {
     color: rgb(var(--sapphire-glow) / 0.9);
     text-shadow: 0 0 8px rgb(var(--sapphire-glow) / 0.45);
+  }
+  /* Error-recovery amber material — dark values (frozen-error-recovery §4.3) */
+  #input-bar.frozen-error,
+  .fa-input-bar.frozen-error {
+    border-color: rgb(var(--amber) / 0.52);
+    background: rgb(var(--amber) / 0.16);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0 0 0 3px rgb(var(--amber) / 0.16),
+      0 0 18px rgb(var(--amber-glow) / 0.30),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  #input-bar.frozen-error::before,
+  .fa-input-bar.frozen-error::before {
+    background: linear-gradient(90deg,
+      transparent 10%,
+      rgb(var(--amber-glow) / 0.42) 50%,
+      transparent 90%
+    );
+  }
+  #input-bar.frozen-error #input::placeholder,
+  .fa-input-bar.frozen-error .fa-input::placeholder {
+    color: rgb(var(--amber-glow) / 0.95);
+    text-shadow: 0 0 8px rgb(var(--amber-glow) / 0.40);
   }
   #input {
     color: #e0e2e5;
