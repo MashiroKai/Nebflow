@@ -347,11 +347,16 @@ function renderWorkScheduleSection() {
       <div class="segment-list" id="segment-list">${segRows}</div>
       <button class="cfg-btn cfg-btn-add" id="btn-add-segment">${t('settings.addSegment')}</button>
       <div class="cfg-hint">${t('settings.workScheduleOnHint')}</div>
-      <div class="cfg-hint" id="schedule-dirty-hint" style="display:${scheduleDraft !== null ? 'block' : 'none'};margin-top:6px;color:var(--color-text-muted)">${t('settings.scheduleDirtyHint')}</div>
-      <div style="display:${scheduleDraft !== null ? 'flex' : 'none'};gap:8px;margin-top:8px" id="schedule-actions">
-        <button class="cfg-btn cfg-btn-primary" id="btn-save-schedule">${t('settings.scheduleSave')}</button>
-        <button class="cfg-btn" id="btn-reset-schedule">${t('settings.scheduleReset')}</button>
-      </div>
+    </div>
+    <!-- Dirty hint + action row live OUTSIDE #schedule-editor so they stay
+         visible even when the editor is display:none — a toggled-OFF draft
+         must remain committable (Save) / abandonable (Reset). The segments
+         themselves stay in the DOM (renderScheduleEditorRows rebuilds from
+         the draft on re-enable), so nothing is cleared on toggle-off. -->
+    <div class="cfg-hint" id="schedule-dirty-hint" style="display:${scheduleDraft !== null ? 'block' : 'none'};margin-top:6px;color:var(--color-text-muted)">${t('settings.scheduleDirtyHint')}</div>
+    <div style="display:${scheduleDraft !== null ? 'flex' : 'none'};gap:8px;margin-top:8px" id="schedule-actions">
+      <button class="cfg-btn cfg-btn-primary" id="btn-save-schedule">${t('settings.scheduleSave')}</button>
+      <button class="cfg-btn" id="btn-reset-schedule">${t('settings.scheduleReset')}</button>
     </div>
     <div class="cfg-hint" id="schedule-off-hint" style="display:${enabled ? 'none' : 'block'};margin-top:-2px">${t('settings.workScheduleOffHint')}</div>`;
 }
