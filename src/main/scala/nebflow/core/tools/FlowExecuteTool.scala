@@ -201,7 +201,8 @@ Without a verdict a switch node FAILS the flow (strictVerdict).
                         callerRef,
                         callerRoot,
                         Map.empty,
-                        dynamic = true
+                        dynamic = true,
+                        callerSessionId = ctx.sessionId.getOrElse("")
                       )).void
                     yield Right(s"Flow '${flowDef.name}' started (dynamic). Result will be delivered when complete.")
                   case _ =>
