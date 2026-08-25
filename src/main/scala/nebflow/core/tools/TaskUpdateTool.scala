@@ -48,7 +48,13 @@ Single-task calls {"taskId": "1", "status": "needs_confirmation"} work exactly a
 
 - The user confirms needs_confirmation tasks themselves (todos panel circle) — that moves them to `completed`
 - The user may return a needs_confirmation task to you with feedback — panel return goes straight back to `in_progress` (with a [打回任务] block); dialogue feedback you take back yourself via `in_progress` + a note describing the feedback
-- Terminal states: `completed` and `failed` cannot transition to any other state.
+- **Cancelling a task**: set status to `cancelled` (from `pending`, `in_progress` or
+  `needs_confirmation`) when the task is no longer wanted — the backend REQUIRES
+  a `note` stating the cancel reason (anti-abuse, mirrored from the return path).
+  `cancelled` is a terminal state: it cannot transition to any other state, and
+  cancelled tasks vanish from the panel (they surface in the task archive).
+  The USER may also cancel tasks from the panel (their reason lands in the archive).
+- Terminal states: `completed`, `failed` and `cancelled` cannot transition to any other state.
 
 ## Dependency Management
 
@@ -62,6 +68,7 @@ Single-task calls {"taskId": "1", "status": "needs_confirmation"} work exactly a
 Mark as in progress:   {"taskId": "1", "status": "in_progress"}
 Finished, awaiting user: {"taskId": "1", "status": "needs_confirmation", "note": "Implemented X, tests green, commit abc1234", "noteLinks": ["/tmp/report.md"]}
 Mark as failed:        {"taskId": "1", "status": "failed", "note": "blocked by upstream API outage"}
+Cancel a task:         {"taskId": "1", "status": "cancelled", "note": "user no longer needs this"}
 Batch finish:          {"taskId": "1,2,3", "status": "needs_confirmation"}
 Set dependency:        {"taskId": "2", "addBlockedBy": ["1"]}
 Remove dependency:     {"taskId": "2", "removeBlockedBy": ["1"]}"""
@@ -93,7 +100,8 @@ Remove dependency:     {"taskId": "2", "removeBlockedBy": ["1"]}"""
             "in_progress".asJson,
             "needs_confirmation".asJson,
             "completed".asJson,
-            "failed".asJson
+            "failed".asJson,
+            "cancelled".asJson
           ),
           "description" -> "New status".asJson
         ),
@@ -150,6 +158,7 @@ Remove dependency:     {"taskId": "2", "removeBlockedBy": ["1"]}"""
           case "needs_confirmation" => Some(TaskStatus.NeedsConfirmation)
           case "completed" => Some(TaskStatus.Completed)
           case "failed" => Some(TaskStatus.Failed)
+          case "cancelled" => Some(TaskStatus.Cancelled)
           case _ => None
         }
         val updates = TaskUpdateInput(
