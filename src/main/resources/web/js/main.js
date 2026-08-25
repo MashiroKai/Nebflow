@@ -382,6 +382,7 @@ onMessage('frozen', (msg) => {
       } else {
         v.dom.inputBar.classList.add('frozen');
         v.dom.inputBar.dataset.frozen = 'true';
+        setFrozenBarState(v, true);
         // Clear any stale error-family state (reason may change across events —
         // UI-1 mutex must hold in both directions).
         v.dom.inputBar.classList.remove('frozen-error');
@@ -415,6 +416,7 @@ onMessage('resumed', (msg) => {
       v.dom.inputBar.classList.remove('frozen');
       delete v.dom.inputBar.dataset.frozen;
     }
+    setFrozenBarState(v, false);
     // Restore the mode-appropriate placeholder (default / skill / ask / plan)
     import('./input.js').then(({ applyInputModes }) => applyInputModes());
   }
@@ -448,6 +450,28 @@ function freezeWindowState() {
   return null;
 }
 
+// Frozen state makes the whole input bar inert EXCEPT the "跳过本次" button
+// (08-25 22:28 user ruling: no more "send a message to wake" — the freeze window
+// blocks input + mic until the user explicitly skips). The textarea and the
+// mic/attach/send/stop controls all get disabled; only the skip control stays
+// interactive. `disabled` (not readonly) so the inert textarea fires no keydown
+// and can never send. Un-frees by removing the attributes.
+function setFrozenBarState(v, frozen) {
+  const bar = v && v.dom && v.dom.inputBar;
+  if (!bar) return;
+  const input = v.dom.input;
+  if (input) {
+    if (frozen) { input.setAttribute('disabled', ''); input.setAttribute('aria-disabled', 'true'); }
+    else { input.removeAttribute('disabled'); input.setAttribute('aria-disabled', 'false'); }
+  }
+  for (const sel of ['#voice-btn', '#attach-btn', '#send-btn', '#stop-btn']) {
+    const el = bar.querySelector(sel);
+    if (!el) continue;
+    if (frozen) el.setAttribute('disabled', '');
+    else el.removeAttribute('disabled');
+  }
+}
+
 function applyLocalFreeze() {
   const v = activeView;
   const bar = v && v.dom && v.dom.inputBar;
@@ -463,11 +487,13 @@ function applyLocalFreeze() {
     if (!bar.classList.contains('frozen')) {
       bar.classList.add('frozen');
       bar.dataset.frozen = 'true';
+      setFrozenBarState(v, true);
       if (v.dom.input) v.dom.input.placeholder = t('chat.frozenPlaceholder', { time: formatResumeClock(win.resumeAt) });
     }
   } else if ((!win || busy || skipped) && !parked && bar.classList.contains('frozen')) {
     bar.classList.remove('frozen');
     delete bar.dataset.frozen;
+    setFrozenBarState(v, false);
     import('./input.js').then(({ applyInputModes }) => applyInputModes());
   }
 }
@@ -503,6 +529,7 @@ function skipCurrentFreeze() {
     if (!bar.classList.contains('frozen-error')) {
       bar.classList.remove('frozen');
       delete bar.dataset.frozen;
+      setFrozenBarState(v, false);
     }
   }
   if (v && v.dom && v.dom.input) {
