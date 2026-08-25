@@ -134,7 +134,10 @@ object FlowDagExecutor:
     // library only — never from flows/<name>/agents/ (a dynamic flow named
     // "research" must not accidentally pick up the predefined research flow's
     // specialized agents). FlowReport is injected by execution context.
-    dynamic: Boolean = false
+    dynamic: Boolean = false,
+    // #407 (Q3): triggering agent's own sessionId — recorded on the RunningFlow
+    // so the Mail idle gate can associate a running flow with its owner.
+    callerSessionId: String = ""
   ): IO[Either[String, String]] =
 
     val emitWs = wsSend.getOrElse((_: Json) => IO.unit)
@@ -855,7 +858,7 @@ object FlowDagExecutor:
 
     // Register the running flow, execute, then clean up
     for
-      _ <- registerFlow(instanceId, flow)
+      _ <- registerFlow(instanceId, flow, callerSessionId)
       // Emit flowStarted so the frontend can render the full DAG immediately
       _ <- emitWs(
         Json.obj(
@@ -919,7 +922,7 @@ object FlowDagExecutor:
   end execute
 
   /** Register a running flow instance from its DAG definition. */
-  private def registerFlow(instanceId: String, flow: FlowDagDef): IO[Unit] =
+  private def registerFlow(instanceId: String, flow: FlowDagDef, callerSessionId: String = ""): IO[Unit] =
     val nodes = flow.nodes.map { (nodeId, node) =>
       nodeId -> nebflow.core.flow.RunningFlowRegistry.NodeState(
         nodeId = nodeId,
@@ -940,7 +943,10 @@ object FlowDagExecutor:
         nodes = nodes,
         edges = edges,
         status = NodeStatus.Running,
-        startedAt = System.currentTimeMillis()
+        startedAt = System.currentTimeMillis(),
+        // #407 (Q3): associate the running flow with its triggering agent so
+        // the Mail idle gate can detect "flow in flight" (node-gap coverage).
+        sessionId = Option(callerSessionId).filter(_.nonEmpty)
       )
     )
 

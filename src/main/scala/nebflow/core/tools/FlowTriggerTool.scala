@@ -173,7 +173,8 @@ Complementary to FlowExecute (not a transition): this tool runs FIXED predefined
                             prompt,
                             callerRef,
                             callerRoot,
-                            effectiveParams
+                            effectiveParams,
+                            callerSessionId = ctx.sessionId.getOrElse("")
                           )).void
                         yield Right(s"Flow '${flowName.get}' started. Result will be delivered when complete.")
                   case None =>
