@@ -17,7 +17,7 @@ import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
 import nebflow.core.skill.SkillService
 import cats.effect.unsafe.implicits.global
-import nebflow.llm.NebflowServiceConfig
+import nebflow.llm.{HealthState, NebflowServiceConfig, SearchApiHealth}
 import nebflow.neblink.*
 import nebflow.neblink.FriendCodecs.given
 import nebflow.service.ConfigService
@@ -50,9 +50,34 @@ class RestApiRoutes(
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.rest-api")
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
-    // Health check
+    // Health check (P2-6 layered, 2026-08-25): `providers` = per-model health
+    // (up / down:<reason>), `search` = Tier 2a standalone search API health
+    // (unconfigured/up/down) — INDEPENDENT of model health, so "模型配额 DOWN
+    // 但搜索 API 正常" is visible at a glance. `status` stays "ok" while the
+    // gateway serves (the watchdog keys on HTTP 200).
     case GET -> Root / "health" =>
-      Ok(Json.obj("status" -> "ok".asJson, "version" -> nebflow.Version.string.asJson))
+      for
+        modelStates <- sharedResources.healthMonitor.getStates
+        searchHealth <- sharedResources.healthMonitor.getSearchHealth
+        providers = modelStates.map { case (k, st) =>
+          k -> (st match
+            case HealthState.Up              => "up"
+            case HealthState.Down(reason, _) => s"down: $reason")
+        }
+        search = searchHealth match
+          case SearchApiHealth.Unconfigured => Json.obj("status" -> "unconfigured".asJson)
+          case SearchApiHealth.Up           => Json.obj("status" -> "up".asJson)
+          case SearchApiHealth.Down(reason, since) =>
+            Json.obj("status" -> "down".asJson, "reason" -> reason.asJson, "since" -> since.asJson)
+        resp <- Ok(
+          Json.obj(
+            "status" -> "ok".asJson,
+            "version" -> nebflow.Version.string.asJson,
+            "providers" -> providers.asJson,
+            "search" -> search
+          )
+        )
+      yield resp
 
     // Token consumption dashboard aggregate (2026-08-18): structured LLM usage
     // telemetry with dimension slicing.

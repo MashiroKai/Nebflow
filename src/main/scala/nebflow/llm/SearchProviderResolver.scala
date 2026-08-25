@@ -6,6 +6,9 @@ import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.*
+import sttp.client4.*
+
+import scala.concurrent.duration.*
 
 /** How a capable provider wants search armed in an OpenAI-compatible request. */
 sealed trait ProviderSearchKind extends Product with Serializable
@@ -27,9 +30,32 @@ object ProviderSearchKind:
   case object KimiBuiltinWebSearch extends ProviderSearchKind
 end ProviderSearchKind
 
+/** Which standalone search API adapter to use (Tier 2a, P2 2026-08-25). */
+enum StandaloneSearchKind:
+  /** zhipu web_search API: POST https://open.bigmodel.cn/api/paas/v4/web_search
+    * with the EXISTING zhipu key (Bearer), billed per call (search_std
+    * ¥0.01/call) SEPARATELY from model token quotas — a model-quota DOWN
+    * (zhipu 1310 / qwen insufficient_quota) no longer takes search down. */
+  case ZhipuWebSearch
+
+/** Resolved, ready-to-call standalone search configuration (Tier 2a). */
+case class StandaloneSearchConfig(
+  provider: String,
+  apiKey: String,
+  baseUrl: String,
+  engine: String
+)
+
+object StandaloneSearchConfig:
+  val DefaultZhipuBaseUrl = "https://open.bigmodel.cn/api/paas/v4/web_search"
+  val DefaultEngine = "search_std"
+  val TimeoutMs = 15_000
+  val Count = 8
+
 sealed trait SearchRoute extends Product with Serializable
 object SearchRoute:
   case class ProviderSearch(providerId: String, kind: ProviderSearchKind) extends SearchRoute
+  case class StandaloneApi(providerId: String, kind: StandaloneSearchKind) extends SearchRoute
   case object BuiltinAggregated extends SearchRoute
 end SearchRoute
 
@@ -101,11 +127,59 @@ object SearchProviderResolver:
     else None
 
   /** Tier resolution for a provider (P0: Tier 1 MCP is a future stub — resolve
-    * goes straight to Tier 2 or Tier 3). deepseek / 107 / unknown → Tier 3. */
+    * goes straight to Tier 2 or Tier 3). deepseek / 107 / unknown → Tier 3.
+    *
+    * P2 (2026-08-25): Tier 2a — a STANDALONE search API (zhipu web_search,
+    * per-call billing, independent of model quotas) is resolved separately
+    * via resolveStandalone/loadStandaloneSearchConfig and tried BEFORE the
+    * model-builtin path. */
   def resolve(providerId: String, baseUrl: String = ""): SearchRoute =
     capabilityFor(providerId, baseUrl) match
       case Some(kind) => SearchRoute.ProviderSearch(providerId, kind)
       case None       => SearchRoute.BuiltinAggregated
+
+  /** Tier 2a route for a standalone search provider name (the nebflow.json
+    * `search.provider` value). zhipu → StandaloneApi; anything else → None
+    * (unknown providers are ignored, not fatal). */
+  def resolveStandalone(provider: String): Option[SearchRoute] =
+    provider.trim.toLowerCase match
+      case "zhipu" => Some(SearchRoute.StandaloneApi("zhipu", StandaloneSearchKind.ZhipuWebSearch))
+      case _       => None
+
+  /** Pure mapping from the configured `search` block to a ready-to-call
+    * standalone config (P2-4). None when disabled / empty key / unknown
+    * provider — the caller then gracefully skips Tier 2a (existing users with
+    * no `search` block are zero-migration: loadStandaloneSearchConfig returns
+    * None and the old Tier 2b/3 chain runs unchanged). */
+  private[llm] def standaloneConfigFrom(c: SearchConfig): Option[StandaloneSearchConfig] =
+    if !c.enabled.getOrElse(true) || c.apiKey.trim.isEmpty then None
+    else
+      c.provider.trim.toLowerCase match
+        case "zhipu" =>
+          Some(
+            StandaloneSearchConfig(
+              provider = "zhipu",
+              apiKey = c.apiKey.trim,
+              baseUrl = c.baseUrl.getOrElse(StandaloneSearchConfig.DefaultZhipuBaseUrl).replaceAll("/+$", ""),
+              engine = c.engine.getOrElse(StandaloneSearchConfig.DefaultEngine)
+            )
+          )
+        case other =>
+          logger.warnSync(
+            s"search config references unsupported standalone provider '$other' — Tier 2a skipped"
+          )
+          None
+
+  /** Read the standalone search config from nebflow.json on every call (the
+    * config file is the single source of truth; a hot edit is picked up
+    * without restart). Any load/parse failure degrades to None — Tier 2a is
+    * an enhancement, never a crash path. */
+  def loadStandaloneSearchConfig(): Option[StandaloneSearchConfig] =
+    try Config.loadServiceConfig().search.flatMap(standaloneConfigFrom)
+    catch
+      case e: Exception =>
+        logger.warnSync(s"search config load failed (${e.getMessage.take(120)}) — Tier 2a skipped")
+        None
 
   /** Full model-ref chain for a WebSearch decision: agent's preferred ++
     * fallbacks, else the global default preset chain (mirrors
@@ -201,16 +275,124 @@ object SearchProviderResolver:
        |
        |搜索内容：$query""".stripMargin
 
-  /** Tier 2 WebSearch execution. Returns Some(formatted result) on success
-    * (with provider provenance), None when Tier 2 is unavailable or produced
-    * no search evidence — the caller then falls back to the builtin
-    * aggregation (Tier 3).
-    *
-    * The sub-request goes through the FULL LlmHandle pipeline (candidates,
-    * health, gate, fallback), so it lands on the session's real provider.
-    * `tools = Some(Nil)` arms the search injection (interface injects only
-    * for tool-bearing requests) without exposing any agent tools. */
+  // ── Tier 2a: standalone search API (P2, 2026-08-25) ──────────────────
+
+  /** Standalone search request body (P2-4 contract): search_query /
+    * search_engine / count. Verified against the real zhipu endpoint
+    * 2026-08-25 (the shape is accepted — the account returned 429 quota
+    * error, not 400 schema error). Exposed private[llm] so the wire contract
+    * is pinned by a unit test. */
+  private[llm] def standaloneRequestBody(query: String, engine: String): Json =
+    Json.obj(
+      "search_query" -> query.asJson,
+      "search_engine" -> engine.asJson,
+      "search_intent" -> true.asJson,
+      "count" -> StandaloneSearchConfig.Count.asJson
+    )
+
+  /** HTTP-status error classification for the standalone API (P2-5):
+    * 401/403 → auth, 429 → quota/rate (zhipu code 1113 "余额不足或无可用资源包"
+    * when the account has no search balance), 5xx → server, timeout → explicit,
+    * else generic — the provider's message is never swallowed. */
+  private[llm] def classifyStandaloneError(code: Int, body: String, timeout: Boolean): String =
+    if timeout then "standalone search API timeout"
+    else if code == 401 || code == 403 then s"standalone search API auth failed (HTTP $code)"
+    else if code == 429 then s"standalone search API quota/rate limited (HTTP 429): ${body.take(200)}"
+    else if code >= 500 then s"standalone search API server error (HTTP $code)"
+    else s"standalone search API error (HTTP $code): ${body.take(200)}"
+
+  /** Parse the standalone API's structured `search_result[]` envelope (zhipu
+    * web_search: title/content/link/media/icon/refer/publish_date). URL-less
+    * entries are dropped — a source-less entry cannot be cited. */
+  private[llm] def parseStandaloneResults(body: String): Option[List[(String, String, String)]] =
+    io.circe.parser
+      .parse(body)
+      .toOption
+      .flatMap(_.hcursor.downField("search_result").as[List[Json]].toOption)
+      .map(
+        _.flatMap { entry =>
+          val h = entry.hcursor
+          val url = h.downField("link").as[String].toOption.orElse(h.downField("url").as[String].toOption)
+          url.filter(_.startsWith("http")).map { u =>
+            val title = h.downField("title").as[String].toOption.getOrElse("")
+            val snippet = h.downField("content").as[String].toOption.getOrElse("")
+            (title, u, snippet)
+          }
+        }
+      )
+
+  /** Synchronous standalone search call (sttp over SharedBackend — no
+    * LlmHandle, zero model tokens, no model health/quota gating). Returns
+    * Right(formatted result with `search-api:<provider>` provenance) or
+    * Left(diagnostic). */
+  def executeStandaloneSearch(query: String, cfg: StandaloneSearchConfig): Either[String, String] =
+    try
+      val backend = SharedBackend.instance
+      val request = basicRequest
+        .post(uri"${cfg.baseUrl}")
+        .header("Authorization", s"Bearer ${cfg.apiKey}")
+        .header("Content-Type", "application/json")
+        .body(standaloneRequestBody(query, cfg.engine).noSpaces)
+        .readTimeout(StandaloneSearchConfig.TimeoutMs.millis)
+        .response(asStringAlways)
+      val resp = request.send(backend)
+      if !resp.code.isSuccess then Left(classifyStandaloneError(resp.code.code, resp.body, timeout = false))
+      else
+        parseStandaloneResults(resp.body) match
+          case Some(entries) if entries.nonEmpty =>
+            Right(formatStandaloneResult(cfg.provider, formatEntries(entries)))
+          case _ => Left(s"standalone search API returned no parseable results (${cfg.provider})")
+    catch
+      case e: Exception =>
+        val raw = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+        val isTimeout = raw.toLowerCase.contains("timed out") || raw.toLowerCase.contains("timeout")
+        Left(classifyStandaloneError(0, raw.take(120), timeout = isTimeout))
+
+  private def formatStandaloneResult(providerId: String, content: String): String =
+    s"Search source: search-api:$providerId (standalone search API, per-call SLA)\n\n$content"
+
+  /** Tier 2a call + health recording (P2-6: the search API health channel
+    * lives in ProviderHealthMonitor, independent of model-provider health). */
+  private def executeStandaloneFor(
+      query: String,
+      cfg: StandaloneSearchConfig,
+      health: Option[ProviderHealthMonitor]
+  ): IO[Either[String, String]] =
+    IO.blocking(executeStandaloneSearch(query, cfg)).flatTap {
+      case Right(_)     => health.traverse_(_.recordSearchSuccess())
+      case Left(err)    => health.traverse_(_.recordSearchFailure(err))
+    }
+
+  /** WebSearch Tier resolution (P2, 2026-08-25): Tier 2a standalone search
+    * API FIRST (configured `search` block — per-call billing, independent of
+    * model quotas), then Tier 2b (provider builtin via the model pipeline),
+    * then the caller falls back to Tier 3 (builtin aggregation). A 2a failure
+    * degrades to 2b with a diagnostic; no `search` config → 2a skipped
+    * silently (zero-migration for existing users). */
   def executeProviderSearchFor(
+      query: String,
+      llm: Option[LlmHandle[IO]],
+      sessionId: String,
+      agentId: String,
+      agentModel: Option[AgentModelConfig],
+      standalone: Option[StandaloneSearchConfig] = None,
+      health: Option[ProviderHealthMonitor] = None
+  ): IO[Option[String]] =
+    val cfg = standalone.orElse(loadStandaloneSearchConfig())
+    cfg match
+      case Some(c) =>
+        executeStandaloneFor(query, c, health).flatMap {
+          case Right(result) => IO.pure(Some(result))
+          case Left(err) =>
+            logger.warn(s"Tier 2a standalone search failed (${c.provider}): $err — degrading to Tier 2b (provider builtin)")
+            tier2b(query, llm, sessionId, agentId, agentModel)
+        }
+      case None => tier2b(query, llm, sessionId, agentId, agentModel)
+
+  /** Tier 2b: the model-builtin search path (unchanged from P0/#356 — chain-
+    * wide reorder so a deepseek-headed chain routes to a search-capable
+    * fallback). Runs through the FULL LlmHandle pipeline. */
+  private def tier2b(
       query: String,
       llm: Option[LlmHandle[IO]],
       sessionId: String,
