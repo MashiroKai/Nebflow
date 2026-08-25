@@ -208,5 +208,6 @@ end Defaults
 case class BashResilienceConfig(
   autoBackgroundMs: Long = Defaults.BashAutoBackgroundMs,
   hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
-  stuckWindowSec: Int = Defaults.BashStuckWindowSec
+  stuckWindowSec: Int = Defaults.BashStuckWindowSec,
+  healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec
 )

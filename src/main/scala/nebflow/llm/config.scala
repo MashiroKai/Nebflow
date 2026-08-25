@@ -176,10 +176,12 @@ case class NebflowServiceConfig(
   workSchedule: Option[io.circe.Json] = None,
   /** Bash 卡死防护阈值（#391）：bashAutoBackgroundMs（默认 300s 转后台）、
     * bashBackgroundHardTimeoutMs（默认 30min 硬超时起点）、bashStuckWindowSec
-    * （默认 120s 停滞窗口）。None → Defaults 值。 */
+    * （默认 120s 停滞窗口）、bashHealthCheckIntervalSec（默认 30s 健康检查间隔，
+    * 测试/冒烟可注入小值加速验证）。None → Defaults 值。 */
   bashAutoBackgroundMs: Option[Long] = None,
   bashBackgroundHardTimeoutMs: Option[Long] = None,
   bashStuckWindowSec: Option[Int] = None,
+  bashHealthCheckIntervalSec: Option[Int] = None,
   /** 工具结果 TTL 清理（#341，docs/Nebflow/20260820_tool-result-ttl.md）：顶层
     * toolResultTtl 节原样 JSON——ToolResultTtlConfig.load fail-safe 解析（非法
     * 配置视为关闭）。默认关（enabled=false）。request-only 清理，会话文件不动。 */
