@@ -36,6 +36,10 @@ function kindOf(tk) {
  *  failed same-day. Completed and dismissed rows never render in the panel. */
 function isVisible(tk) {
   if (!tk || !tk.status) return false;
+  // cancelled is a terminal state (契约#2) — not in the active panel; it
+  // surfaces in the archive. Excluding it here is what moves a cancelled
+  // task out of the active list on the authoritative taskListUpdate push.
+  if (tk.status === 'cancelled') return false;
   if (tk.status === 'pending' || tk.status === 'in_progress' || tk.status === 'needs_confirmation') return true;
   if (tk.status === 'failed') return isTodayLocal(tk.createdAt);
   return false;
@@ -115,6 +119,11 @@ const REDUCED_MOTION = typeof matchMedia === 'function' &&
 /** taskId → task snapshot, for taskError rollback (§7.2). */
 const pendingComplete = new Map();
 
+/** taskId → task snapshot, for cancelTask rollback (契约#1/#3). Symmetric
+ *  to pendingComplete: a taskError for an id we sent a cancel for is OURS —
+ *  roll the row back (it was optimistically removed) and toast. */
+const pendingCancel = new Map();
+
 // ── Completion flow (§7.1/§7.2) ─────────────────────────────────────────
 
 function requestComplete(row, task) {
@@ -163,6 +172,57 @@ function requestComplete(row, task) {
   }, 180);
 }
 
+// ── Cancel flow (契约#1/#2/#4: user-cancels a task) ───────────────────────
+// The TaskUpdate state machine has no cancel; the backend adds 'cancelled'
+// (terminal). The user cancels from the panel; we send a cancelTask frame
+// (#3: the backend notifies the owning agent — frontend only consumes the
+// feedback). Optimistic removal mirrors the complete flow; a taskError for
+// an id in pendingCancel rolls the row back. The cancel reason note is
+// recorded server-side and shown in the archive (taskArchive.js).
+
+/** Only agent tasks in a cancellable active state gain the cancel control.
+ *  failed is terminal-not-cancellable (state machine: cancel sources are
+ *  pending/in_progress/needs_confirmation); human to-do rows keep only the
+ *  complete circle — cancelling a personal to-do isn't marked "cancelled". */
+function isCancellable(task) {
+  return kindOf(task) === 'agent' &&
+    (task.status === 'pending' || task.status === 'in_progress' || task.status === 'needs_confirmation');
+}
+
+function requestCancel(row, task) {
+  if (!state.connected) return;                    // WS down → disabled (§4)
+  if (pendingCancel.has(task.id)) return;          // debounce double-click
+  pendingCancel.set(task.id, task);
+
+  sendWs({
+    type: 'cancelTask',
+    sessionId: state.activeSessionId,
+    taskId: task.id,
+    reason: t('task.cancelDefaultReason'),
+  });
+
+  const finish = () => {
+    const sid = row.dataset.sessionId || state.activeSessionId;
+    const arr = sid && state.sessionTasks ? state.sessionTasks[sid] : null;
+    const i = Array.isArray(arr) ? arr.indexOf(task) : -1;
+    if (i >= 0) arr.splice(i, 1);
+    row.remove();
+    const container = document.getElementById('task-list');
+    if (container && !container.querySelector('.task-item')) {
+      container.classList.remove('has-tasks');
+      container.innerHTML = '';
+    }
+  };
+
+  if (REDUCED_MOTION) { finish(); return; }
+
+  row.classList.add('task-cancelling');            // dim + lock the row
+  setTimeout(() => {
+    row.classList.add('task-collapsing');
+    setTimeout(finish, 230);
+  }, 180);
+}
+
 // Server-side rejection of a complete → roll back: re-insert at the sorted
 // position (render derives it), replay the entering animation, toast (§7.2).
 // The backend taskError frame is {"type":"taskError","error","taskId"} — no
@@ -186,6 +246,18 @@ onMessage('taskError', (msg) => {
     // DOM (the rolled-back task was removed optimistically) — no manual class.
     renderTaskList(arr || [], container, sid);
     showToast(t('task.completeError'), 'error');
+    return;
+  }
+  // 契约#1: cancel rejection — roll the optimistically-removed row back, toast.
+  if (pendingCancel.has(msg.taskId)) {
+    const task = pendingCancel.get(msg.taskId);
+    pendingCancel.delete(msg.taskId);
+    const sid = msg.sessionId || state.activeSessionId;
+    const arr = sid && state.sessionTasks ? state.sessionTasks[sid] : null;
+    if (Array.isArray(arr) && !arr.includes(task)) arr.push(task);
+    const container = document.getElementById('task-list');
+    renderTaskList(arr || [], container, sid);
+    showToast(t('task.cancelError'), 'error');
     return;
   }
   // v2 §6.3: return rejection — drop the taskRef chip (local only), toast.
@@ -248,6 +320,29 @@ function buildCheck(task, row) {
       `${task.subject || ''} — ${t('task.pendingShort')}`.trim());
   }
   return check;
+}
+
+/** 契约#1: user-cancel control — visually distinct from the completed CIRCLE.
+ *  A compact glass button (mirrors .task-return-btn) with a ban (circle-slash)
+ *  icon + label, at the row's right end. The user-action-zone shape family is
+ *  kept (interactive glass button, not a read-only square); the LEADING zone
+ *  glyph stays square/read-only so the panel's observe-vs-act split holds.
+ *  aria-hidden is NOT set (it is a real, focusable control). */
+function buildCancelBtn(task, row) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'task-cancel-btn';
+  const cancelLabel = t('task.cancelAria', { subject: task.subject || '' });
+  btn.setAttribute('aria-label', cancelLabel);
+  btn.title = cancelLabel;
+  const icon = document.createElement('i');
+  icon.dataset.lucide = 'ban';
+  const span = document.createElement('span');
+  span.textContent = t('task.cancel');
+  btn.appendChild(icon);
+  btn.appendChild(span);
+  btn.addEventListener('click', (e) => { e.stopPropagation(); requestCancel(row, task); });
+  return btn;
 }
 
 function buildRow(task, sessionId) {
@@ -317,6 +412,10 @@ function buildRow(task, sessionId) {
     row.appendChild(word);
     if (ts) row.appendChild(time);
   }
+  // 契约#1: cancellable agent rows get an explicit cancel affordance at the
+  // right end (distinct from the completed circle). Applies in BOTH zones
+  // (needs_confirmation in 待办区, pending/in_progress in 任务区).
+  if (isCancellable(task)) row.appendChild(buildCancelBtn(task, row));
   return row;
 }
 
