@@ -317,16 +317,6 @@ export default {
   'provider.noSpaces': '服务商 ID 不能包含空格',
   'provider.baseUrlRequired': '请填写 Base URL',
   'provider.modelRequired': '至少需要一个模型',
-  'provider.maxConcurrency': '最大并发',
-  'provider.maxConcurrencyHint': '默认 3 · 0 = 不限',
-  'provider.rpm': 'RPM 限制',
-  'provider.rpmHint': '留空 = 不限 · 每 60 秒最多请求数',
-  'provider.queueTimeoutMs': '排队超时',
-  'provider.queueTimeoutMsHint': '默认 60000 毫秒',
-  'provider.advancedTitle': '高级选项（并发与限流）',
-  'provider.invalidMaxConcurrency': '最大并发：非负整数（0 = 不限）',
-  'provider.invalidRpm': 'RPM 限制：正整数（留空 = 不限）',
-  'provider.invalidQueueTimeoutMs': '排队超时：正整数（毫秒）',
 
   // Model fields in modal
   'model.idPlaceholder': '模型 ID',

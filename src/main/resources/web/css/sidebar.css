@@ -1230,14 +1230,6 @@
 .cfg-modal-body { padding: 12px 16px; }
 .cfg-modal-body .cfg-form-group { margin-bottom: 12px; }
 .cfg-modal-body .cfg-label { margin-bottom: 5px; }
-/* Provider modal advanced (concurrency) fold — reuses the STT advance collapse
-   classes; a hairline separates optional config from the main form. */
-.cfg-adv-toggle-row {
-  margin-top: 2px;
-  padding-top: 10px;
-  border-top: 1px solid var(--color-frame-border-light);
-}
-.cfg-adv-body { padding-top: 2px; }
 .cfg-input {
   width: 100%;
   background: var(--glass-etched-bg);
