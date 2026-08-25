@@ -4,7 +4,7 @@ import io.circe.Json
 import io.circe.parser.*
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.{AskItem, AskOption}
+import nebflow.core.{AskItem, AskOption, AskPreview}
 
 /**
  * AskUserQuestion `multiple` support (question-level multi-select):
@@ -92,6 +92,111 @@ class AskUserQuestionToolSpec extends FunSuite:
     assertEquals(items.size, 1)
     assertEquals(items.head.options.map(_.label), List("ok"))
     assertEquals(items.head.multiple, true)
+  }
+
+  // ============================================================
+  // parseItems — canvas (question-level) + preview (option-level)
+  // (#380 backend passthrough, direction C)
+  // ============================================================
+
+  test("parseItems: canvas absent defaults to None") {
+    val input = List(questionJson("question" -> "Which stack?".asJson))
+    assertEquals(AskUserQuestionTool.parseItems(input).head.canvas, None)
+  }
+
+  test("parseItems: canvas string is decoded") {
+    val input = List(questionJson(
+      "question" -> "Pick a scheme".asJson,
+      "canvas" -> "/abs/path/compare.html".asJson
+    ))
+    assertEquals(AskUserQuestionTool.parseItems(input).head.canvas, Some("/abs/path/compare.html"))
+  }
+
+  test("parseItems: preview absent defaults to None") {
+    val input = List(questionJson(
+      "question" -> "Pick".asJson,
+      "options" -> Json.arr(Json.obj("label" -> "A".asJson))
+    ))
+    assertEquals(AskUserQuestionTool.parseItems(input).head.options.head.preview, None)
+  }
+
+  test("parseItems: swatch preview is decoded (type + colors)") {
+    val input = List(questionJson(
+      "question" -> "Color scheme?".asJson,
+      "options" -> Json.arr(Json.obj(
+        "label" -> "Morning mist".asJson,
+        "preview" -> Json.obj(
+          "type" -> "swatch".asJson,
+          "colors" -> Json.arr("#6b9c8a".asJson, "#a8c3b5".asJson)
+        )
+      ))
+    ))
+    val pv = AskUserQuestionTool.parseItems(input).head.options.head.preview
+    assertEquals(pv.map(_.`type`), Some("swatch"))
+    assertEquals(pv.flatMap(_.colors), Some(List("#6b9c8a", "#a8c3b5")))
+    assertEquals(pv.flatMap(_.src), None)
+  }
+
+  test("parseItems: image preview is decoded (type + src)") {
+    val input = List(questionJson(
+      "question" -> "Which mockup?".asJson,
+      "options" -> Json.arr(Json.obj(
+        "label" -> "A".asJson,
+        "preview" -> Json.obj("type" -> "image".asJson, "src" -> "https://example.com/a.png".asJson)
+      ))
+    ))
+    val pv = AskUserQuestionTool.parseItems(input).head.options.head.preview
+    assertEquals(pv.map(_.`type`), Some("image"))
+    assertEquals(pv.flatMap(_.src), Some("https://example.com/a.png"))
+    assertEquals(pv.flatMap(_.colors), None)
+  }
+
+  test("parseItems: malformed preview (no type) falls back to None — option kept") {
+    val input = List(questionJson(
+      "question" -> "Pick".asJson,
+      "options" -> Json.arr(Json.obj(
+        "label" -> "A".asJson,
+        "preview" -> Json.obj("src" -> "https://example.com/x.png".asJson) // missing type
+      ))
+    ))
+    val opt = AskUserQuestionTool.parseItems(input).head.options.head
+    assertEquals(opt.label, "A")
+    assertEquals(opt.preview, None)
+  }
+
+  test("inputSchema: canvas documented on question items") {
+    val schema = AskUserQuestionTool.inputSchema
+    val items = schema("properties")
+      .flatMap(_.asObject)
+      .flatMap(_("questions"))
+      .flatMap(_.asObject)
+      .flatMap(_("items"))
+      .flatMap(_.asObject)
+    val props = items.flatMap(_("properties")).flatMap(_.asObject)
+    val canvas = props.flatMap(_("canvas")).flatMap(_.asObject)
+    assert(canvas.isDefined, "question items schema must document `canvas`")
+    assertEquals(canvas.flatMap(_("type")).flatMap(_.asString), Some("string"))
+  }
+
+  test("inputSchema: preview documented on option items") {
+    val schema = AskUserQuestionTool.inputSchema
+    val items = schema("properties")
+      .flatMap(_.asObject)
+      .flatMap(_("questions"))
+      .flatMap(_.asObject)
+      .flatMap(_("items"))
+      .flatMap(_.asObject)
+    val optItems = items
+      .flatMap(_("properties"))
+      .flatMap(_.asObject)
+      .flatMap(_("options"))
+      .flatMap(_.asObject)
+      .flatMap(_("items"))
+      .flatMap(_.asObject)
+    val optProps = optItems.flatMap(_("properties")).flatMap(_.asObject)
+    val preview = optProps.flatMap(_("preview")).flatMap(_.asObject)
+    assert(preview.isDefined, "option items schema must document `preview`")
+    assertEquals(preview.flatMap(_("type")).flatMap(_.asString), Some("object"))
   }
 
   // ============================================================

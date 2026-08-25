@@ -381,12 +381,13 @@ object AgentActor extends AgentCore with AgentSession:
       ctx.forkTurn(resources.hookEngine.onStop(hookCtx) *> resources.hookEngine.onSessionEnd(hookCtx))
     else IO.unit
 
-  /**
-   * Build the "askUser" WS payload for the frontend. When the question comes
-   * from a sub-agent (ForwardAskUser), agentName is set to the source agent
-   * for attribution and sourceAgent/sourceSession carry the origin info.
-   */
-  private def buildAskUserJson(
+  /** Build the "askUser" WS payload for the frontend. When the question comes
+    * from a sub-agent (ForwardAskUser), agentName is set to the source agent
+    * for attribution and sourceAgent/sourceSession carry the origin info.
+    * Pure — `private[agent]` so the #380 passthrough contract (canvas/preview
+    * emitted only when present, byte-identical otherwise) is unit-covered.
+    */
+  private[agent] def buildAskUserJson(
     sessionId: Option[String],
     agentName: String,
     items: List[AskItem],
@@ -406,6 +407,13 @@ object AgentActor extends AgentCore with AgentSession:
         "options" -> Json.fromValues(item.options.map { opt =>
           val optFields = scala.collection.mutable.ListBuffer("label" -> opt.label.asJson)
           opt.description.foreach(d => optFields += "description" -> d.asJson)
+          // preview emitted only when present — pre-#380 option payloads stay byte-identical
+          opt.preview.foreach { pv =>
+            val pvFields = scala.collection.mutable.ListBuffer("type" -> pv.`type`.asJson)
+            pv.colors.foreach(cs => pvFields += "colors" -> cs.asJson)
+            pv.src.foreach(s => pvFields += "src" -> s.asJson)
+            optFields += "preview" -> Json.obj(pvFields.toList*)
+          }
           Json.obj(optFields.toList*)
         }),
         "allowOther" -> item.allowOther.asJson
@@ -416,6 +424,8 @@ object AgentActor extends AgentCore with AgentSession:
       }
       // multiple is emitted only when true — every pre-multiple payload stays byte-identical
       if item.multiple then base += "multiple" -> true.asJson
+      // canvas emitted only when present — pre-#380 question payloads stay byte-identical
+      item.canvas.foreach(c => base += "canvas" -> c.asJson)
       Json.obj(base.toList*)
     })
     Json.obj(fields.toList*)
