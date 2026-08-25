@@ -18,8 +18,22 @@ import nebflow.core.PathUtil
   * - §4 archive index carries cancelReason (taskArchive.js 契约#4)
   */
 class TaskCancelSpec extends CatsEffectSuite:
-  private val tempRoot: os.Path = os.pwd / "target" / "test-task-cancel"
-  PathUtil.setDataRoot(tempRoot)
+  private var tempRoot: os.Path = null
+  private var savedRoot: os.Path = null
+
+  // beforeEach/afterEach (not class-init redirect): a class-init
+  // PathUtil.setDataRoot without restore pollutes later suites in the same
+  // JVM — e.g. FlowExecuteToolSpec resolves the live agent library from
+  // PathUtil.dataRoot; a stale temp root (no agents dir) makes it report
+  // "agent 'Nebula' not found" instead of reaching its spawn gate.
+  override def beforeEach(context: munit.BeforeEach): Unit =
+    savedRoot = PathUtil.dataRoot
+    tempRoot = os.Path(java.nio.file.Files.createTempDirectory("nb-task-cancel").toString)
+    PathUtil.setDataRoot(tempRoot)
+
+  override def afterEach(context: munit.AfterEach): Unit =
+    PathUtil.setDataRoot(savedRoot)
+    if os.exists(tempRoot) then os.remove.all(tempRoot)
 
   private val store: TaskStore = FileTaskStore
 

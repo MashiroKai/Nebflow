@@ -33,6 +33,12 @@ object ToolRegistry:
       "TaskCreate" -> TaskCreateTool,
       "TaskUpdate" -> TaskUpdateTool,
       "TaskQuery" -> TaskQueryTool,
+      // Team Manager task tools (2026-08-25 team-manager-task-tool): Manager
+      // owner (Create/Update/List) + Nebula read-only (List). Injected at the
+      // mechanism layer via buildAllowedToolSet isTeamLead / Nebula grants.
+      "TeamTaskCreate" -> TeamTaskCreateTool,
+      "TeamTaskUpdate" -> TeamTaskUpdateTool,
+      "TeamTaskList" -> TeamTaskListTool,
       // Scheduled tasks
       "Schedule" -> ScheduleTool,
       // Unified agent communication (message + ask modes)
