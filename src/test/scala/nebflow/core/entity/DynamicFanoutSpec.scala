@@ -446,8 +446,10 @@ class DynamicFanoutSpec extends CatsEffectSuite:
     }
   }
 
-  test("D8 missing slot: abort fails, collect continues") {
-    // planner declares NO outputs → FlowReport carries no slots → slot missing
+  test("D8 missing slot: abort AND collect both fail clearly (#414 fix 4a — no silent empty aggregate)"):
+    // planner declares NO outputs → FlowReport carries no slots → slot missing.
+    // 引用未命中是 DAG/契约错误：无论 onFail=collect 都明确报错（区别于
+    // D5「key 存在但数组为空」的正常降级语义——那是 planner 合法产出 0 项）。
     def run(onFail: NodeRoute.OnFailMode): IO[Either[String, String]] =
       val capture: Ref[IO, Map[String, List[Message]]] = Ref.unsafe(Map.empty)
       val answered: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
@@ -464,8 +466,8 @@ class DynamicFanoutSpec extends CatsEffectSuite:
     yield
       assert(abortResult.isLeft, s"missing slot + abort must fail, got: $abortResult")
       assert(abortResult.swap.toOption.get.contains("not found"), s"clear missing-slot reason: $abortResult")
-      assert(collectResult.isRight, s"missing slot + collect must carry through, got: $collectResult")
-  }
+      assert(collectResult.isLeft, s"missing slot + collect must ALSO fail clearly (no silent empty aggregate), got: $collectResult")
+      assert(collectResult.swap.toOption.get.contains("not found"), s"clear missing-slot reason: $collectResult")
 
   test("D9 slot value not an array → fails with clear reason") {
     val capture: Ref[IO, Map[String, List[Message]]] = Ref.unsafe(Map.empty)
@@ -648,5 +650,172 @@ class DynamicFanoutSpec extends CatsEffectSuite:
       assert(missing.contains("fanout=[param fanout not provided]"), s"missing param placeholder, got: $missing")
       assert(missing.contains("mode=[param mode not provided]"), s"missing param placeholder, got: $missing")
   }
+
+  // ---------- #414 fixes ----------
+
+  test("D13 {{len}} substitutes the total instance count (#414 fix 1)"):
+    val flow = FlowDagDef(
+      name = "tflow",
+      description = "len test",
+      nodes = Map(
+        "p" -> FlowNode(
+          "worker",
+          "$task",
+          NodeRoute.ParallelDynamic("topics", "researcher", NodeRoute.OnFailMode.Abort),
+          outputs = Map("topics" -> "array")
+        ),
+        "researcher" -> FlowNode("worker", "item={{item}} idx={{index}} total={{len}}", NodeRoute.Goto("j")),
+        "j" -> FlowNode("worker", "$researcher.all.output", NodeRoute.Return)
+      ),
+      entry = "p"
+    )
+    val capture: Ref[IO, Map[String, List[Message]]] = Ref.unsafe(Map.empty)
+    val answered: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
+    val llm = new PlannerLlm(
+      topics = List(Json.fromString("A"), Json.fromString("B"), Json.fromString("C")),
+      instanceBehavior = { case _ => answerAfter(20.millis, "OUT") },
+      capture = capture,
+      answered = answered
+    )
+    withFlowEnv(llm) { (resources, system) =>
+      val instId = s"dyn13-${UUID.randomUUID().toString.take(6)}"
+      FlowDagExecutor
+        .execute(flow, "work", resources, system, None, instId)
+        .timeout(30.seconds)
+        .flatMap { result =>
+          capture.get.map { captured =>
+            assert(result.isRight, s"{{len}} flow must complete, got: $result")
+            val instUserTexts = captured.toList
+              .filter { (sid, _) => nodeIdOf(sid).startsWith("researcher#") }
+              .map { (sid, msgs) => nodeIdOf(sid) -> userTextOf(msgs) }
+              .toMap
+            (1 to 3).foreach { i =>
+              val t = instUserTexts(s"researcher#$i")
+              assert(t.contains(s"idx=$i"), s"#$i carries its index: $t")
+              assert(t.contains("total=3"), s"#$i carries the total count ({{len}}=3): $t")
+            }
+          }
+        }
+    }
+
+  test("D14 slotField accepts $node.slots.field full-reference syntax (#414 fix 4a)"):
+    // Manager 曾写 "slots": "$planner.slots.blocks"（全引用）被当字面量 key 查不到
+    // → 0 实例静默空聚合。现在解析为 (p, topics) → 正常 fanout。
+    val flow = FlowDagDef(
+      name = "tflow",
+      description = "ref-slot test",
+      nodes = Map(
+        "p" -> FlowNode(
+          "worker",
+          "$task",
+          NodeRoute.ParallelDynamic("$p.slots.topics", "researcher", NodeRoute.OnFailMode.Abort),
+          outputs = Map("topics" -> "array")
+        ),
+        "researcher" -> FlowNode("worker", "Track {{index}}: {{item}}", NodeRoute.Goto("j")),
+        "j" -> FlowNode("worker", "$researcher.all.output", NodeRoute.Return)
+      ),
+      entry = "p"
+    )
+    val capture: Ref[IO, Map[String, List[Message]]] = Ref.unsafe(Map.empty)
+    val answered: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
+    val llm = new PlannerLlm(
+      topics = List(Json.fromString("A"), Json.fromString("B")),
+      instanceBehavior = { case _ => answerAfter(20.millis, "OUT") },
+      capture = capture,
+      answered = answered
+    )
+    withFlowEnv(llm) { (resources, system) =>
+      val instId = s"dyn14-${UUID.randomUUID().toString.take(6)}"
+      FlowDagExecutor
+        .execute(flow, "work", resources, system, None, instId)
+        .timeout(30.seconds)
+        .flatMap { result =>
+          RunningFlowRegistry.list.map(_.find(_.instanceId == instId)).map { rfOpt =>
+            assert(result.isRight, s"full-reference slot must fan out, got: $result")
+            val nodes = rfOpt.map(_.nodes).getOrElse(Map.empty)
+            assertEquals(
+              nodes.keys.filter(_.startsWith("researcher#")).toSet,
+              Set("researcher#1", "researcher#2"),
+              "full-reference slot fans out to the referenced node's array"
+            )
+          }
+        }
+    }
+
+  test("D15 full-reference slot miss fails clearly regardless of onFail (#414 fix 4a)"):
+    // 引用语法未命中（field 不存在 / 源节点无 slots）→ 明确报错，不静默 collect
+    def run(slotField: String, onFail: NodeRoute.OnFailMode, emitTopics: Boolean): IO[Either[String, String]] =
+      val flow = FlowDagDef(
+        name = "tflow",
+        description = "ref-miss test",
+        nodes = Map(
+          "p" -> FlowNode(
+            "worker",
+            "$task",
+            NodeRoute.ParallelDynamic(slotField, "researcher", onFail),
+            outputs = Map("topics" -> "array")
+          ),
+          "researcher" -> FlowNode("worker", "Track {{index}}: {{item}}", NodeRoute.Goto("j")),
+          "j" -> FlowNode("worker", "$researcher.all.output", NodeRoute.Return)
+        ),
+        entry = "p"
+      )
+      val capture: Ref[IO, Map[String, List[Message]]] = Ref.unsafe(Map.empty)
+      val answered: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
+      val llm = new PlannerLlm(
+        topics = Nil,
+        instanceBehavior = PartialFunction.empty,
+        emitTopics = emitTopics,
+        capture = capture,
+        answered = answered
+      )
+      withFlowEnv(llm) { (resources, system) =>
+        val instId = s"dyn15-${UUID.randomUUID().toString.take(6)}"
+        FlowDagExecutor
+          .execute(flow, "work", resources, system, None, instId)
+          .timeout(30.seconds)
+      }
+    for
+      // 引用不存在的 field：无论 abort/collect 都报错
+      missAbort <- run("$p.slots.ghost", NodeRoute.OnFailMode.Abort, emitTopics = true)
+      missCollect <- run("$p.slots.ghost", NodeRoute.OnFailMode.Collect, emitTopics = true)
+      // 源节点没有 slots（planner 未产出）→ 引用解析失败同样报错
+      noSlots <- run("$p.slots.topics", NodeRoute.OnFailMode.Collect, emitTopics = false)
+    yield
+      assert(missAbort.isLeft && missAbort.swap.toOption.get.contains("no slots field 'ghost'"), s"got: $missAbort")
+      assert(missCollect.isLeft, s"reference miss + collect must NOT silently aggregate empty, got: $missCollect")
+      assert(noSlots.isLeft && noSlots.swap.toOption.get.contains("no slots field"), s"got: $noSlots")
+
+  test("D16 unresolved {{...}} placeholder rejected before agent spawn (#414 fix 4b)"):
+    // 模板变量替换后仍残留 {{...}}（引擎不认识的占位符）→ 节点明确失败，
+    // 不再把坏模板静默喂给 agent（实测 redo-qa 带未替换 {{}} 运行）
+    val flow = FlowDagDef(
+      name = "tflow",
+      description = "placeholder test",
+      nodes = Map(
+        "p" -> FlowNode("worker", "legit={{index}} bogus={{bogus}} $task", NodeRoute.Return)
+      ),
+      entry = "p"
+    )
+    val llm = new LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] =
+        IO.raiseError(new RuntimeException("send not expected in this test"))
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      ): Stream[IO, StreamChunk] =
+        Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
+    withFlowEnv(llm) { (resources, system) =>
+      val instId = s"dyn16-${UUID.randomUUID().toString.take(6)}"
+      FlowDagExecutor
+        .execute(flow, "work", resources, system, None, instId)
+        .timeout(30.seconds)
+        .map { result =>
+          assert(result.isLeft, s"unknown placeholder must fail the node, got: $result")
+          val err = result.swap.toOption.get
+          assert(err.contains("Unknown template placeholder"), s"clear placeholder reason, got: $err")
+          assert(err.contains("{{bogus}}"), s"mentions the offending placeholder, got: $err")
+        }
+    }
 
 end DynamicFanoutSpec

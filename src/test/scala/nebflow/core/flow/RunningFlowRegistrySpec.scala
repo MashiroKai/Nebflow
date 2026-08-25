@@ -107,4 +107,40 @@ class RunningFlowRegistrySpec extends FunSuite:
       assert(!gone, "stale completed flow evicted")
       assert(pending.isLeft, "its signal was evicted too")
     prog.unsafeRunSync()
+
+  // ---------- #414 fix 2：setNodeStatus 只更新节点状态，不动 flow 整体 status ----------
+
+  test("#414 node status updates never touch the flow-level status (entry completed ≠ flow completed)"):
+    val id = s"st-${UUID.randomUUID().toString.take(8)}"
+    val prog = for
+      _ <- RunningFlowRegistry.register(
+        mkFlow(id).copy(nodes = Map("n1" -> RunningFlowRegistry.NodeState("n1", "a", NodeStatus.Pending)))
+      )
+      // entry 节点（n1）完成——修复前 flow 被误标 completed 且刷新 completedAt
+      _ <- RunningFlowRegistry.setNodeStatus(id, "n1", NodeStatus.Completed, "out")
+      _ <- RunningFlowRegistry.setNodeStatus(id, "n2", NodeStatus.Running)
+      flow <- RunningFlowRegistry.list.map(_.find(_.instanceId == id).get)
+    yield
+      assertEquals(flow.status, NodeStatus.Running, "flow must stay running while the DAG continues")
+      assertEquals(flow.completedAt, None, "completedAt must not be set by node-level updates")
+      assertEquals(flow.nodes("n1").status, NodeStatus.Completed, "node status still recorded")
+    prog.unsafeRunSync()
+
+  test("#414 terminal flow status only via terminate paths (execute-finalize / cancel)"):
+    val id = s"tm-${UUID.randomUUID().toString.take(8)}"
+    val prog = for
+      _ <- RunningFlowRegistry.register(mkFlow(id))
+      // 节点 Failed 也不改 flow 整体 status（walk 失败由 execute 末尾统一置 Failed）
+      _ <- RunningFlowRegistry.setNodeStatus(id, "n1", NodeStatus.Failed, "", "boom")
+      afterNode <- RunningFlowRegistry.list.map(_.find(_.instanceId == id).get.status)
+      // execute 末尾模拟：update(copy(status=Completed)) → 终态 + completedAt
+      _ <- RunningFlowRegistry.update(id)(rf =>
+        rf.copy(status = NodeStatus.Completed, completedAt = Some(42L))
+      )
+      flow <- RunningFlowRegistry.list.map(_.find(_.instanceId == id).get)
+    yield
+      assertEquals(afterNode, NodeStatus.Running, "node failure alone must not mark the flow failed")
+      assertEquals(flow.status, NodeStatus.Completed)
+      assertEquals(flow.completedAt, Some(42L))
+    prog.unsafeRunSync()
 end RunningFlowRegistrySpec
