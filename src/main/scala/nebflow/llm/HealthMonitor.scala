@@ -175,18 +175,26 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
   def getStates: IO[Map[String, HealthState]] =
     statesRef.get
 
+  /**
+   * Candidates currently marked Down — across ALL chains, not just the default
+   * preset chain. 2026-08-25 kimi incident: the probe set was previously
+   * derived from `registry.getCandidates()` (default preset chain only); a
+   * candidate that appears in another preset/agent chain (e.g. Vision preset's
+   * kimi/k3-256k) was never probed once Down, leaving it DOWN forever (until
+   * restart). Refs whose provider/model was removed from config are skipped.
+   */
+  private[llm] def downCandidates(): IO[List[ModelCandidate]] =
+    statesRef.get.flatMap { states =>
+      states.collect { case (k, HealthState.Down(_, _)) => k }.toList.flatTraverse { k =>
+        registry.getCandidateForRef(k).map(_.toList)
+      }
+    }
+
   /** Start the background probing loop. Runs forever. */
   def start(): IO[Unit] =
     def loop: IO[Unit] =
       for
-        candidates <- registry.getCandidates()
-        states <- statesRef.get
-        downCandidates = candidates.filter(c =>
-          states.get(key(c.providerId, c.model)).exists {
-            case HealthState.Down(_, _) => true
-            case HealthState.Up => false
-          }
-        )
+        downCandidates <- downCandidates()
         _ <-
           if downCandidates.nonEmpty then downCandidates.traverse_(probe)
           else IO.unit

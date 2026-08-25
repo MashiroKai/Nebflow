@@ -240,6 +240,19 @@ class HealthMonitorSpec extends CatsEffectSuite:
   private class FakeRegistry(adapter: ProviderAdapter[IO]) extends ProviderRegistry(null, null):
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
 
+  /** Registry that resolves a whitelist of model refs (simulates a config with
+    * a default chain that does NOT include the Down candidate — the 2026-08-25
+    * kimi scenario where kimi/k3-256k lives only in the Vision preset). */
+  private class FakeRegistry2(adapter: ProviderAdapter[IO], known: Set[String])
+      extends ProviderRegistry(null, null):
+    override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
+    override def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
+      if known.contains(ref) then
+        ref.split("/").toList match
+          case pid :: m :: Nil => IO.pure(Some(candidate(pid, m)))
+          case _               => IO.pure(None)
+      else IO.pure(None)
+
   test("probe marks Up on a successful response (empty reply OK — thinking-only)") {
     // A thinking model (GLM-5.2) can return content="" when all tokens went to
     // reasoning — with F3 the adapter treats that as success, so probe must markUp.
@@ -268,5 +281,39 @@ class HealthMonitorSpec extends CatsEffectSuite:
     yield states.get("glm/glm-5-107") match
       case Some(HealthState.Down(_, _)) => ()
       case other => fail(s"expected Down after failed probe, got $other")
+  }
+
+  // ============================================================
+  // downCandidates — probe set covers ALL Down candidates
+  // (2026-08-25 kimi incident: Vision-preset candidate was never
+  // probed because the probe set was the default chain only)
+  // ============================================================
+
+  test("downCandidates includes Down candidates outside the default chain (kimi fix)") {
+    val adapter = FakeAdapter(IO.pure(AdapterResponse("", Nil, None)))
+    // kimi/k3-256k is NOT in the default (general) chain — only in Vision preset
+    val monitor = ProviderHealthMonitor(FakeRegistry2(adapter, Set("kimi/k3-256k")))
+
+    for
+      _ <- monitor.markDown("kimi", "k3-256k", "timeout")
+      dc <- monitor.downCandidates()
+      _ <- monitor.probe(dc.head)
+      states <- monitor.getStates
+    yield
+      assertEquals(dc.map(c => s"${c.providerId}/${c.model}"), List("kimi/k3-256k"))
+      states.get("kimi/k3-256k") match
+        case Some(HealthState.Up) => ()
+        case other => fail(s"kimi/k3-256k must recover via downCandidates probe, got $other")
+  }
+
+  test("downCandidates skips refs whose provider was removed from config") {
+    val monitor = ProviderHealthMonitor(
+      FakeRegistry2(FakeAdapter(IO.pure(AdapterResponse("", Nil, None))), Set.empty)
+    )
+
+    for
+      _ <- monitor.markDown("ghost", "gone", "error")
+      dc <- monitor.downCandidates()
+    yield assertEquals(dc, List.empty[ModelCandidate])
   }
 end HealthMonitorSpec
