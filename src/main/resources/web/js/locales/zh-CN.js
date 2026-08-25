@@ -727,6 +727,12 @@ export default {
   'explorer.moved': '已移动 {name}',
   'flow.noSession': '该节点还没有会话记录',
   'flow.runningInTab': '正在运行的流程已在其标签页中展示',
+  // Running flows indicator (2026-08-26 flow-complement-design §5.3)
+  'flows.indicatorTitle': '运行中的流程',
+  'flows.running': '运行中的流程 · {count}',
+  'flows.none': '当前无运行中的流程',
+  'flows.cancel': '取消',
+  'flows.progress': '{done}/{total} 节点',
   // === Canvas 保存反馈 ===
   'canvas.saved': '已保存 {name}',
   'canvas.saveFailed': '保存 {name} 失败：{error}',

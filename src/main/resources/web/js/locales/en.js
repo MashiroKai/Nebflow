@@ -722,6 +722,12 @@ export default {
   'explorer.moved': 'Moved {name}',
   'flow.noSession': 'No session recorded for this node yet',
   'flow.runningInTab': 'Running flows are shown in their own tab',
+  // Running flows indicator (2026-08-26 flow-complement-design §5.3)
+  'flows.indicatorTitle': 'Running flows',
+  'flows.running': 'Running flows · {count}',
+  'flows.none': 'No running flows',
+  'flows.cancel': 'Cancel',
+  'flows.progress': '{done}/{total} nodes',
   // === Canvas save feedback ===
   'canvas.saved': 'Saved {name}',
   'canvas.saveFailed': 'Failed to save {name}: {error}',
