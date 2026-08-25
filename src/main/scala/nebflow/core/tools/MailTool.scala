@@ -937,7 +937,21 @@ Message type (optional, default "INFO"):
               s"[mail] stale actor ref for session=${sessionId.take(8)} — actor dead but actorMap kept it; reactivating (issue #22)"
             ) *> activateAgent(sessionId, resources, system, ctx)
         }
-      case None => activateAgent(sessionId, resources, system, ctx)
+      case None =>
+        // #407 fix（E2E 实证）：用户消息触发的 team 成员 spawn（ensureRootAgent）
+        // 只写统一 agentRegistry、不写 TeamSessionRegistry.actorMap——只查 actorMap
+        // 会误判「无 live actor」→ activateAgent 重复 spawn（双活：旧 actor 在途
+        // turn 与恢复 actor 并存，queue Mail 的 gate 投递错位、turn 完成不 drain）。
+        // 回退统一注册表找 live record（ref 非 null 且 actor 存活），命中则复用。
+        resources.agentRegistry.get.flatMap { reg =>
+          reg.get(sessionId).filter(_.ref != null) match
+            case Some(rec) =>
+              system.isAlive(rec.ref.path).flatMap {
+                case true  => IO.pure(Some(rec.ref))
+                case false => activateAgent(sessionId, resources, system, ctx)
+              }
+            case None => activateAgent(sessionId, resources, system, ctx)
+        }
     }
 
   /** Activate a team agent session by spawning an AgentActor (replaces FlowAgentActivator).
