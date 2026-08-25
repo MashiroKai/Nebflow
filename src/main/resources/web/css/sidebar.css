@@ -1444,6 +1444,25 @@
   white-space: nowrap;
 }
 
+/* ⑧ Orchestrator (Nebula) — group header + badge reuse the existing sapphire
+ * recipe (agent-mgr-avatar bg/color below), zero new color tokens.
+ * Spec: 20260824_entity-icons-visual-spec §5. */
+.agent-mgr-group-header.orchestrator {
+  display: flex; align-items: center; gap: 5px;
+  color: rgb(var(--sapphire));
+}
+.agent-mgr-group-header.orchestrator svg { flex-shrink: 0; }
+.agent-mgr-orchestrator-badge {
+  font: 500 9px -apple-system, sans-serif;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(91,127,191,0.10);
+  color: rgb(91,127,191);
+  margin-left: 4px;
+  white-space: nowrap;
+}
+.agent-mgr-avatar svg { display: block; }
+
 /* Compact sidebar cards (VSCode Extensions style) */
 .agent-mgr-card {
   display: flex;

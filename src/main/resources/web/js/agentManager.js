@@ -6,6 +6,7 @@ import { key } from './branding.js';
 import { sendWs } from './ws.js';
 import { openTab, getTabPane, hasTab, setActiveTab } from './canvas.js';
 import { t } from './i18n.js';
+import { createIconsIn } from './utils.js';
 import * as presets from './presets.js';
 
 // ── Helpers ────────────────────────────────────────────────
@@ -101,15 +102,25 @@ function renderAgentCard(a) {
   const display = esc(a.displayName || a.name);
   const desc = esc(a.description || '');
   const initial = esc((a.displayName || a.name || '?').charAt(0).toUpperCase());
+  const isNebula = a.name === 'Nebula';
   const isGlobalStandalone = (a.layer === 'global' || !a.layer) && (a.category || 'standalone') === 'standalone';
-  const showBadge = isGlobalStandalone && a.name !== 'Nebula';
+  // Nebula is the orchestrator, not a delegatable standalone — never shows the badge.
+  const showBadge = isGlobalStandalone && !isNebula;
   const badge = showBadge
     ? '<span class="agent-mgr-standalone-badge">可直接委派</span>'
     : '';
+  // ⑧ Nebula: orbit icon avatar (identity must be stable — custom avatar not accepted)
+  // + orchestrator badge pill. All other cards keep letter/custom-avatar logic.
+  const avatar = isNebula
+    ? '<span class="agent-mgr-avatar"><i data-lucide="orbit" style="width:16px;height:16px"></i></span>'
+    : `<span class="agent-mgr-avatar">${initial}</span>`;
+  const orchBadge = isNebula
+    ? `<span class="agent-mgr-orchestrator-badge">${esc(t('agents.badge.orchestrator'))}</span>`
+    : '';
   return `<div class="agent-mgr-card" data-agent="${name}">
-    <span class="agent-mgr-avatar">${initial}</span>
+    ${avatar}
     <div class="agent-mgr-info">
-      <div class="agent-mgr-name">${display}${badge}</div>
+      <div class="agent-mgr-name">${display}${badge}${orchBadge}</div>
       <div class="agent-mgr-desc">${desc}</div>
     </div>
     <span class="agent-mgr-model-tag" data-agent="${name}"></span>
@@ -170,11 +181,26 @@ export function renderAgentManager() {
 
     let html = '';
 
-    // Global section
-    if (global.length > 0) {
+    // ⑧ Orchestrator section — Nebula pinned at top in its own group
+    // (entity-icons-visual-spec §3.2). Nebula is extracted from the global
+    // standalone list: it understands intent / dispatches / accepts, it is
+    // not a delegatable executor like the standalone agents below.
+    const nebula = global.find(a => a.name === 'Nebula');
+    const standalone = global.filter(a => a.name !== 'Nebula');
+
+    if (nebula) {
+      html += `<div class="agent-mgr-group agent-mgr-group-orchestrator">`;
+      html += `<div class="agent-mgr-group-header orchestrator"><i data-lucide="orbit" style="width:14px;height:14px"></i>${esc(t('agents.group.orchestrator'))}</div>`;
+      html += renderAgentCard(nebula);
+      html += `</div>`;
+    }
+
+    // Standalone section (was "Global Agents" — Nebula moved out above).
+    // Empty group is not rendered (existing convention).
+    if (standalone.length > 0) {
       html += `<div class="agent-mgr-group">`;
-      html += `<div class="agent-mgr-group-header">Global Agents</div>`;
-      html += global.map(renderAgentCard).join('');
+      html += `<div class="agent-mgr-group-header">${esc(t('agents.group.standalone'))}</div>`;
+      html += standalone.map(renderAgentCard).join('');
       html += `</div>`;
     }
 
@@ -195,6 +221,8 @@ export function renderAgentManager() {
     }
 
     content.innerHTML = html;
+    // Replace <i data-lucide> placeholders (orchestrator group header + Nebula avatar)
+    createIconsIn(content);
 
     // Bind card clicks (single = preview, double = pinned — VS Code style)
     content.querySelectorAll('.agent-mgr-card').forEach(card => {

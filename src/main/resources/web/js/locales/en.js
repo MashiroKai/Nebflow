@@ -78,6 +78,10 @@ export default {
   'agent.toolsFixedLabel': 'System (fixed)',
   'agent.toolsConfigLabel': 'Configurable',
   'agent.toolsFixedTip': 'Always injected by the system — cannot be removed',
+  // === Entity icon semantics + Nebula orchestrator section (20260824_entity-icons-visual-spec §6) ===
+  'agents.group.orchestrator': 'Orchestrator',
+  'agents.group.standalone': 'Standalone Agents',
+  'agents.badge.orchestrator': 'Orchestrator',
   'memory.title': 'Memory',
   'memory.agent': 'Agent',
   'memory.user': 'User',
