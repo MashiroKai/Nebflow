@@ -41,6 +41,12 @@ case class ToolContext(
    * Disables BashTool's auto-background mechanism — the caller manages lifecycle.
    */
   isRemoteExec: Boolean = false,
+  /** Team Manager task tools (2026-08-25): the team name of a team-agent
+    * session, injected at spawn (AgentActor derives it from
+    * TeamSessionRegistry). None for non-team contexts — TeamTaskCreate/Update
+    * hard-reject (no cross-team write surface); TeamTaskList falls back to the
+    * `team` parameter for Nebula's read-only oversight. */
+  teamName: Option[String] = None,
   /** Bash 卡死防护阈值（#391）：默认 Defaults 值，测试可注入小阈值验证
     * 自动转后台/硬超时/停滞窗口；GatewayMain 从 nebflow.json 顶层键覆写。 */
   bashConfig: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig()

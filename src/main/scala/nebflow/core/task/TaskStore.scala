@@ -33,6 +33,25 @@ trait TaskStore:
   def delete(sessionId: String, taskId: String): IO[Boolean]
   def deleteAll(sessionId: String): IO[Unit]
 
+/** Scope-key helpers for the team-domain task tools (spec
+  * 20260825_team-manager-task-tool-spec.md §4.2 方案 A): the store API stays
+  * keyed by a single string; team tasks pass `team:<name>` as the scope key
+  * and FileTaskStore maps it to `tasks/teams/<name>/` (per-team directory +
+  * independent high-water mark). Session keys pass through unchanged. */
+object TaskStore:
+  /** Build the team scope key for a team name (validated by the caller). */
+  def teamScopeKey(teamName: String): String = s"team:$teamName"
+
+  def isTeamScopeKey(key: String): Boolean = key.startsWith("team:")
+
+  /** Path-safety guard for team names (defense-in-depth — production team
+    * names come from validated team.json mounts, but the store must never
+    * interpret a malicious key as a path traversal). */
+  def isSafeTeamName(name: String): Boolean =
+    name.nonEmpty && !name.contains("/") && !name.contains("\\") &&
+      !name.contains("..") && !name.startsWith(".")
+end TaskStore
+
 object FileTaskStore extends TaskStore:
   private val logger = NebflowLogger.forName("nebflow.taskstore")
 
@@ -45,10 +64,26 @@ object FileTaskStore extends TaskStore:
   /** Cap on per-task event history — oldest entries are dropped beyond this. */
   private val MaxEvents = 50
 
-  // Atomic high-water mark per session (Issue #1)
+  // Atomic high-water mark per scope (Issue #1) — keyed by scope key
+  // (sessionId or "team:<name>"), so every team gets an independent id
+  // sequence (spec §4.2: per-directory hwm).
   private val hwmRef: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
 
-  private def sessionDir(sessionId: String): os.Path = root / sessionId
+  /** Map a scope key to its task directory:
+    *   - "team:<name>"  → tasks/teams/<name>/   (team domain)
+    *   - anything else  → tasks/<sessionId>/    (session domain, legacy path)
+    * Throws IllegalArgumentException on an unsafe team name (defense against
+    * path traversal — callers validate first and surface a ToolError).
+    */
+  private def scopePath(scopeKey: String): os.Path =
+    if TaskStore.isTeamScopeKey(scopeKey) then
+      val name = scopeKey.stripPrefix("team:")
+      if !TaskStore.isSafeTeamName(name) then
+        throw new IllegalArgumentException(s"Unsafe team name in task scope key: $name")
+      root / "teams" / name
+    else root / scopeKey
+
+  private def sessionDir(sessionId: String): os.Path = scopePath(sessionId)
 
   private def taskFile(sessionId: String, taskId: String): os.Path =
     sessionDir(sessionId) / s"$taskId.json"
@@ -111,6 +146,12 @@ object FileTaskStore extends TaskStore:
 
   def create(sessionId: String, input: TaskCreateInput): IO[String] =
     val now = Instant.now().toString
+    // Team-domain tasks stamp scope/teamId from the scope key (方案 A — the
+    // scope key IS the source of truth; the store API stays unchanged).
+    val (scope, teamId) =
+      if TaskStore.isTeamScopeKey(sessionId) then
+        ("team", Some(sessionId.stripPrefix("team:")))
+      else ("session", None)
     for
       _ <- ensureDir(sessionId)
       newId <- nextId(sessionId)
@@ -124,7 +165,9 @@ object FileTaskStore extends TaskStore:
         createdAt = Some(now),
         updatedAt = Some(now),
         events = List(TaskEvent("created", None, Some(now))),
-        taskKind = Task.normalizeTaskKind(input.taskKind)
+        taskKind = Task.normalizeTaskKind(input.taskKind),
+        scope = scope,
+        teamId = teamId
       )
       _ <- writeTask(sessionId, task)
     yield newId
@@ -216,6 +259,26 @@ object FileTaskStore extends TaskStore:
       false // C15: agent path may not complete directly (needs_confirmation only)
     else isValidTransition(task.status, to)
 
+  /** Team-domain four-state matrix (spec §2.3, U1) — independent of the
+    * session five-state matrix: pending → {pending no-op, in_progress,
+    * completed, failed}; in_progress → {in_progress no-op, completed,
+    * failed}; completed/failed are terminal (no-op only). No
+    * needs_confirmation / dismissed / cancelled in the team domain; the
+    * Manager (owner) sets completed directly (no user-confirmation lane —
+    * C15 constrains only the session domain). */
+  private def isValidTeamTransition(from: TaskStatus, to: TaskStatus): Boolean =
+    (from, to) match
+      case (TaskStatus.Pending, TaskStatus.InProgress) => true
+      case (TaskStatus.Pending, TaskStatus.Completed) => true
+      case (TaskStatus.Pending, TaskStatus.Failed) => true
+      case (TaskStatus.Pending, TaskStatus.Pending) => true // no-op
+      case (TaskStatus.InProgress, TaskStatus.Completed) => true
+      case (TaskStatus.InProgress, TaskStatus.Failed) => true
+      case (TaskStatus.InProgress, TaskStatus.InProgress) => true // no-op
+      case (TaskStatus.Completed, TaskStatus.Completed) => true // no-op
+      case (TaskStatus.Failed, TaskStatus.Failed) => true // no-op
+      case _ => false
+
   // Issue #3: DFS cycle detection in dependency graph
   private def hasCycle(tasks: List[Task]): Boolean =
     val adj = tasks.map(t => t.id -> t.blockedBy.filter(_.nonEmpty)).toMap
@@ -247,9 +310,14 @@ object FileTaskStore extends TaskStore:
         // otherwise) are silently accepted as no-ops so agents don't error.
         if existing.status == TaskStatus.Dismissed then IO.pure(Some(existing))
         else
-          // Issue #2: Validate status transition
+          // Issue #2: Validate status transition — team scope uses the
+          // four-state matrix, session scope keeps the five-state matrix
+          // (C15/C22/return/cancel rules untouched).
+          val isTeamScope = TaskStore.isTeamScopeKey(sessionId)
           val newStatus = updates.status.getOrElse(existing.status)
-          val statusValid = updates.status.isEmpty || isValidTransitionFor(existing, newStatus)
+          val statusValid = updates.status.isEmpty ||
+            (if isTeamScope then isValidTeamTransition(existing.status, newStatus)
+             else isValidTransitionFor(existing, newStatus))
 
           if !statusValid then
             IO.raiseError(

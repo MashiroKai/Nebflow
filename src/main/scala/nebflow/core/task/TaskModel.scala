@@ -118,7 +118,18 @@ case class Task(
     * cancel() path (WS cancelTask reason) — the agent path (TaskUpdate
     * status=cancelled) records the reason as a note instead. Absent = never
     * cancelled (withDefaults keeps legacy files zero-migration). */
-  cancelReason: Option[String] = None
+  cancelReason: Option[String] = None,
+  /** Team Manager task tool (2026-08-25, spec
+    * 20260825_team-manager-task-tool-spec.md §4.1): "session" = Nebula/user
+    * domain (legacy behavior); "team" = Manager task domain. Absent key on
+    * legacy JSON decodes to "session" (withDefaults — 535+ session tasks
+    * zero-migration, same red line as completedAt/notes/events). */
+  scope: String = "session",
+  /** Team-domain tasks: the owning team name (scope=="team"). None for
+    * session-domain tasks. Directory isolation is the authoritative boundary
+    * (~/.nebflow/tasks/teams/<teamName>/); this field is metadata for
+    * display/archive/retrieval. */
+  teamId: Option[String] = None
 )
 
 object Task:
