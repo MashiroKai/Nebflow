@@ -553,7 +553,7 @@ class WebSocketRoutes(
               "cancelReason" -> e.cancelReason.asJson
             )
           }
-          Ok(io.circe.Json.arr(arr*).noSpaces, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
+          Ok(io.circe.Json.arr(arr*), org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
         }
 
     // --- Local file serving for card iframes ---
