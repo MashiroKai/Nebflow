@@ -15,10 +15,10 @@ import nebflow.core.entity.{FlowDagDef, FlowStructure}
  * FlowDagRunner, and the whole thing is gone when it finishes — no flows/
  * directory write, no MountedFlowStore entry, no file-watcher event.
  *
- * This replaces the "predefined flow + FlowTrigger whitelist" model as the
- * primary flow capability (user ruling 2026-08-25: dynamic flows are the new
- * flow architecture). Predefined flows stay working during the transition
- * (FlowTrigger unchanged); they retire in later phases.
+ * Complements the "predefined flow + FlowTrigger whitelist" model (user
+ * ruling 2026-08-26: the two are complementary, not replacement) — FlowExecute
+ * for one-shot ad-hoc orchestration, FlowTrigger for fixed pipelines.
+ * Predefined flows stay as a first-class capability; nothing retires.
  *
  * Availability: mechanism-layer injected — Team members and Nebula get it
  * without any agent.json declaration (AgentCore.fixedToolsFor, same pattern
@@ -85,8 +85,13 @@ Without a verdict a switch node FAILS the flow (strictVerdict).
   (leaf rule) — put the whole structure in one DAG instead.
 - Do NOT duplicate the flow's work while it runs; the result is delivered
   to you as a system message when it completes ("[Flow '<name>' completed]").
-- Transition: predefined flows (FlowTrigger) still exist for fixed pipelines
-  during migration — prefer FlowExecute for task-bound one-shot parallelism."""
+- FlowTrigger vs FlowExecute (complementary, not transition): FlowTrigger
+  runs FIXED predefined pipelines (flows/ definitions, whitelist-triggered,
+  repeated same-shape use, discipline gates); FlowExecute runs ONE-SHOT
+  ad-hoc orchestration (inline DAG, shape follows the task, parallelism
+  scales with the task). Check for a matching predefined flow first — if
+  one exists use FlowTrigger; only when none matches and the task needs
+  multi-agent orchestration use FlowExecute."""
 
   val inputSchema = JsonObject.fromIterable(
     List(

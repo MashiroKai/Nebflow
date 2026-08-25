@@ -29,6 +29,8 @@ object FlowTriggerTool extends Tool:
   val description =
     """Trigger a flow DAG pipeline (e.g. "code-review", "release-stable"). The pipeline drives a sequence of agents defined in its flow.json — you do not pick the agents, the flow routes itself.
 
+Complementary to FlowExecute (not a transition): this tool runs FIXED predefined pipelines (flows/ definitions, whitelist-triggered, repeated same-shape use, discipline gates); FlowExecute runs one-shot ad-hoc orchestration (inline DAG, shape follows the task, parallelism scales with the task). Check for a matching predefined flow in flows/ first — if one exists use this tool; only when none matches and the task needs multi-agent orchestration use FlowExecute.
+
 **Parameters:**
 - flow (required): flow name. Must be declared in your agent's flows whitelist — calling with an undeclared flow is rejected.
 - prompt (required): self-contained task input for the flow's entry node.
