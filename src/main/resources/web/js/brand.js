@@ -8,7 +8,7 @@
 
 /**
  * @typedef {Object} Brand
- * @property {string} productName  Display name, e.g. "nebflow"
+ * @property {string} productName  Display name, e.g. "Nebflow"
  * @property {string} lowerName    Lowercase identifier, e.g. "nebflow"
  * @property {string} domain       Primary web domain, e.g. "nebflow.space"
  * @property {string} [homeDirName] User home directory name, e.g. ".nebflow".
@@ -18,32 +18,23 @@
  */
 
 /** @type {Brand} */
-const fallback = { productName: 'nebflow', lowerName: 'nebflow', domain: 'nebflow.space' };
+const fallback = { productName: 'Nebflow', lowerName: 'nebflow', domain: 'nebflow.space' };
 
 const injected = /** @type {Window & { __BRAND__?: Brand }} */ (window).__BRAND__;
 
-const raw = injected || fallback;
-
-/**
- * Display name is all-lowercase "nebflow" everywhere in the UI (user ruling
- * 2026-08-25 19:18: tab title and brand-name display copy are lowercase;
- * code identifiers/package names are unaffected). Normalize at this single
- * read point so an injected legacy "Nebflow" cannot leak into any display
- * consumer (document.title, {brand} i18n interpolation, sidebar version
- * line, daemon/neblink copy).
- * @type {Brand}
- */
-export const brand = Object.freeze({
-  ...raw,
-  productName: (raw.productName || 'nebflow').toLowerCase(),
-});
+/** @type {Brand} */
+export const brand = Object.freeze(injected || fallback);
 
 /**
  * Apply branding to document chrome (the tab title). index.html ships a
  * neutral empty <title>; this sets the real one. There are no brand-bearing
  * meta tags (description/og:title) in index.html at this time.
  * Called at the earliest point in main.js so the title is correct ASAP.
+ *
+ * The tab title uses lowerName (all-lowercase "nebflow") per user ruling
+ * 2026-08-25 19:18; productName keeps the brand.conf display spelling for
+ * other UI copy (sidebar version line, daemon hints) until the rename.
  */
 export function initBranding() {
-  document.title = brand.productName;
+  document.title = brand.lowerName;
 }
