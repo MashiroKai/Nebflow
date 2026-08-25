@@ -1623,12 +1623,6 @@ function showProviderModal(existingName, existingData, onSave) {
       {key: 'apiKey', label: 'API Key', type: 'text', password: true, value: p.apiKey && p.apiKey !== '***' ? p.apiKey : '', placeholder: isEdit ? t('provider.keyPlaceholder') : t('provider.required')},
       {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: ['anthropic', 'openai']},
       {key: 'models', label: t('provider.models'), type: 'models', value: initialModels},
-      // P0 API 并发管理：per-provider concurrency gate. None = use server
-      // defaults (maxConcurrency 3, queueTimeoutMs 60000ms). Advanced option —
-      // collapsed by default (user ruling 2026-08-20 advanced-fold pattern).
-      {key: 'maxConcurrency', label: t('provider.maxConcurrency'), type: 'number', value: p.maxConcurrency != null ? String(p.maxConcurrency) : '', placeholder: t('provider.maxConcurrencyHint'), min: 0, advanced: true},
-      {key: 'rpm', label: t('provider.rpm'), type: 'number', value: p.rpm != null ? String(p.rpm) : '', placeholder: t('provider.rpmHint'), min: 1, advanced: true},
-      {key: 'queueTimeoutMs', label: t('provider.queueTimeoutMs'), type: 'number', value: p.queueTimeoutMs != null ? String(p.queueTimeoutMs) : '', placeholder: t('provider.queueTimeoutMsHint'), min: 1, advanced: true},
     ],
     onConfirm(values) {
       const name = values.name.trim();
@@ -1642,31 +1636,6 @@ function showProviderModal(existingName, existingData, onSave) {
       if (!isEdit && apiKey === '***') { window.__showToast?.(t('provider.keyRequired'), 'error'); return; }
       const validModels = values.models.filter(m => m.id && m.id.trim());
       if (validModels.length === 0) { window.__showToast?.(t('provider.modelRequired'), 'error'); return; }
-      // Parse + validate the concurrency-gate fields. Empty = unset (None →
-      // server default); invalid = block save with a clear message. The
-      // backend re-validates on config load, but catching it here avoids a
-      // jarring failed-save for a typo.
-      const parseOptInt = (v) => {
-        if (v == null || v === '') return undefined;
-        const n = Number.parseInt(v, 10);
-        if (!Number.isFinite(n) || String(n) !== String(v).trim()) return NaN;
-        return n;
-      };
-      const maxConcurrency = parseOptInt(values.maxConcurrency);
-      if (Number.isNaN(maxConcurrency) || (maxConcurrency != null && maxConcurrency < 0)) {
-        window.__showToast?.(t('provider.invalidMaxConcurrency'), 'error');
-        return;
-      }
-      const rpm = parseOptInt(values.rpm);
-      if (Number.isNaN(rpm) || (rpm != null && rpm <= 0)) {
-        window.__showToast?.(t('provider.invalidRpm'), 'error');
-        return;
-      }
-      const queueTimeoutMs = parseOptInt(values.queueTimeoutMs);
-      if (Number.isNaN(queueTimeoutMs) || (queueTimeoutMs != null && queueTimeoutMs <= 0)) {
-        window.__showToast?.(t('provider.invalidQueueTimeoutMs'), 'error');
-        return;
-      }
       // Vision is never written from this form (B1 裁定 2026-08-25): the
       // edit-modal checkbox snapshot polluted nebflow.json ModelConfig.vision
       // (inline outranks models.json runtime annotations). An explicit inline
@@ -1680,11 +1649,6 @@ function showProviderModal(existingName, existingData, onSave) {
         apiKey,
         protocol: values.protocol,
         models: modelsOut,
-        // undefined = key omitted so existing config keys are preserved
-        // (deriveDecoder defaults both to None = server default).
-        ...(maxConcurrency !== undefined ? { maxConcurrency } : {}),
-        ...(rpm !== undefined ? { rpm } : {}),
-        ...(queueTimeoutMs !== undefined ? { queueTimeoutMs } : {}),
       });
     }
   });
@@ -1694,16 +1658,10 @@ function showProviderModal(existingName, existingData, onSave) {
 }
 
 // --- Generic modal ---
-function showModal({title, fields, onConfirm, advancedTitle = ''}) {
+function showModal({title, fields, onConfirm}) {
   // Remove existing modal
   document.getElementById('cfg-modal')?.remove();
 
-  // Advanced fields (optional config — user ruling 2026-08-20: advanced
-  // options default collapsed, same pattern as the STT advance panel) render
-  // inside a collapsed section at the end of the form; the save collector
-  // queries the whole overlay, so collapse state never affects saving.
-  const mainFields = fields.filter(f => !f.advanced);
-  const advFields = fields.filter(f => f.advanced);
   const renderField = (f) => `
           <div class="cfg-form-group">
             <label class="cfg-label">${escapeHtml(f.label)}</label>
@@ -1726,18 +1684,7 @@ function showModal({title, fields, onConfirm, advancedTitle = ''}) {
     <div class="cfg-modal">
       <div class="cfg-modal-title">${escapeHtml(title)}</div>
       <div class="cfg-modal-body">
-        ${mainFields.map(renderField).join('')}
-        ${advFields.length ? `
-          <div class="cfg-form-group cfg-adv-toggle-row">
-            <button type="button" class="settings-collapse-toggle" id="cfg-adv-toggle"
-                    aria-expanded="false" aria-controls="cfg-adv-body">
-              <span class="settings-label">${escapeHtml(advancedTitle || t('provider.advancedTitle'))}</span>
-              <span class="settings-collapse-chevron" aria-hidden="true"></span>
-            </button>
-          </div>
-          <div class="settings-collapse-body cfg-adv-body" id="cfg-adv-body" hidden>
-            ${advFields.map(renderField).join('')}
-          </div>` : ''}
+        ${fields.map(renderField).join('')}
       </div>
       <div class="cfg-modal-actions">
         <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">${t('modal.cancel')}</button>
@@ -1746,17 +1693,6 @@ function showModal({title, fields, onConfirm, advancedTitle = ''}) {
     </div>`;
 
   document.body.appendChild(overlay);
-
-  // Advanced collapse toggle (fresh elements per open — no accumulation).
-  const advToggle = overlay.querySelector('#cfg-adv-toggle');
-  const advBody = overlay.querySelector('#cfg-adv-body');
-  if (advToggle && advBody) {
-    advToggle.addEventListener('click', () => {
-      const expanded = advBody.hidden;
-      advBody.hidden = !expanded;
-      advToggle.setAttribute('aria-expanded', String(expanded));
-    });
-  }
 
   // Wire up models add/remove
   overlay.querySelectorAll('.cfg-model-add').forEach(btn => {
