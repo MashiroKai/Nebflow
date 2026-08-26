@@ -578,10 +578,17 @@ object FlowTreeActor:
           _ <- unmounted.traverse_ { teamDef =>
             (for
               _ <- createTeamAgentSessions(teamDef.name, teamDef, cfg)
-              _ <- TeamSessionRegistry.registerParentSession(teamDef.name, sid)
+              // F2-1 (#433): auto-mount does NOT registerParentSession — the
+              // parentSessionMap is a global single-writer registry and any
+              // short-lived session (e2e, tests, an accidentally opened empty
+              // session) running restoreTeams would otherwise hijack the
+              // team's root-session ownership (last-writer-wins), rerouting
+              // permission buckets, InteractionHub cards and mailbox Mail into
+              // a zombie session (incident 2026-08-26). Only EXPLICIT mounts
+              // (flows.json entries, branch above) claim parentship.
               _ <- TeamSessionRegistry.registerParentActor(sid, cfg.parentAgentRef)
               _ <- flowNamesRef.update(_ + (teamDef.name -> teamDef.name))
-              _ <- logger.info(s"Auto-mounted team '${teamDef.name}'")
+              _ <- logger.info(s"Auto-mounted team '${teamDef.name}' (no parent registration, F2-1)")
             yield ()).handleErrorWith(e =>
               logger.error(s"Failed to auto-mount team '${teamDef.name}': ${e.getMessage}").void
             )
