@@ -62,6 +62,14 @@ echo "  VERSION:    $RAW_VERSION (app-version $APP_VERSION)"
 # Trimmed runtime: explicit module list (see jlink-modules.txt) keeps the dmg
 # ~40MB under the full default java.se set. --runtime-image gives full control
 # (no union with jpackage defaults).
+# App icon (2026-08-27 desktop-form task): committed under packaging/icons/.
+# Regenerate: python3 packaging/gen-icons.py <logo.png> --out packaging/icons
+ICON_FILE="packaging/icons/nebflow.icns"
+if [ ! -f "$ICON_FILE" ]; then
+  echo "ERROR: $ICON_FILE missing — regen via packaging/gen-icons.py" >&2
+  exit 1
+fi
+
 MODULES=$(grep -v '^#' packaging/jlink-modules.txt | tr -d '[:space:]' | tr -d '\n')
 jlink \
   --add-modules "$MODULES" \
@@ -79,6 +87,7 @@ jpackage \
   --java-options "-Xmx1g" \
   --runtime-image "$RUNTIME" \
   --app-version "$APP_VERSION" \
+  --icon "$ICON_FILE" \
   --mac-package-name "$PRODUCT_NAME" \
   --dest "$OUT"
 

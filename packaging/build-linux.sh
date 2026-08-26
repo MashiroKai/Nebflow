@@ -67,6 +67,14 @@ echo "  VERSION:    $RAW_VERSION (app-version $APP_VERSION)"
 # Trimmed runtime: same explicit module list as build-dmg.sh / build-msi.sh
 # (see packaging/jlink-modules.txt). Shared across the deb and app-image
 # invocations via --runtime-image.
+# App icon (2026-08-27 desktop-form task): committed under packaging/icons/.
+# Regenerate: python3 packaging/gen-icons.py <logo.png> --out packaging/icons
+ICON_FILE="packaging/icons/nebflow.png"
+if [ ! -f "$ICON_FILE" ]; then
+  echo "ERROR: $ICON_FILE missing — regen via packaging/gen-icons.py" >&2
+  exit 1
+fi
+
 MODULES=$(grep -v '^#' packaging/jlink-modules.txt | tr -d '[:space:]' | tr -d '\n')
 jlink \
   --add-modules "$MODULES" \
@@ -84,6 +92,7 @@ jpackage \
   --java-options "--add-opens=java.base/java.lang=ALL-UNNAMED" \
   --java-options "-Xmx1g" \
   --runtime-image "$RUNTIME" \
+  --icon "$ICON_FILE" \
   --app-version "$APP_VERSION" \
   --dest "$OUT"
 
@@ -101,6 +110,7 @@ jpackage \
   --java-options "--add-opens=java.base/java.lang=ALL-UNNAMED" \
   --java-options "-Xmx1g" \
   --runtime-image "$RUNTIME" \
+  --icon "$ICON_FILE" \
   --dest "$APP_IMAGE_ROOT"
 
 # Normalize arch label for asset naming (uname -m gives x86_64 on Intel).
