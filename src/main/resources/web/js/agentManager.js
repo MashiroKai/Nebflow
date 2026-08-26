@@ -26,10 +26,15 @@ const EYE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none
 // Lock icon for system-fixed tool chips (inline SVG, no emoji per design rules)
 const LOCK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
 // Tools always injected by the system — fallback until the API ships fixedTools
-const FIXED_BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'Issue'];
+// (Issue removed 2026-08-25 ruling: orchestrator-only, ships via API fixedTools for Nebula)
+const FIXED_BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'];
+const NEBULA_FIXED_TOOLS = [...FIXED_BASE_TOOLS, 'Issue', 'FlowExecute',
+  'AgentControl', 'TaskUpdate', 'Delegate', 'Pop', 'AskUserQuestion',
+  'TaskCreate', 'Mail', 'Schedule', 'TransferFile'];
 function resolveFixedTools(detail) {
   if (Array.isArray(detail?.fixedTools)) return detail.fixedTools;
-  if (detail?.category === 'team') return [...FIXED_BASE_TOOLS, 'Mail'];
+  if (detail?.name === 'Nebula') return NEBULA_FIXED_TOOLS;
+  if (detail?.category === 'team') return [...FIXED_BASE_TOOLS, 'Mail', 'SubTask', 'FlowExecute'];
   if (detail?.category === 'flow') return [...FIXED_BASE_TOOLS, 'FlowReport'];
   return FIXED_BASE_TOOLS;
 }

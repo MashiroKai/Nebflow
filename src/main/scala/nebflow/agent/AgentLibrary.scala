@@ -105,10 +105,14 @@ class AgentLibrary(
       val json = os.read(jsonPath)
       io.circe.parser.parse(json).toOption match
         case Some(parsed) =>
-          // Filter out fixed tools and wildcard — they're auto-injected
+          // Filter out fixed tools and wildcard — they're auto-injected.
+          // Nebula-exclusive tools (#404, ruling 2026-08-25) are also dropped
+          // for non-Nebula agents: buildAllowedToolSet strips them at runtime,
+          // so persisting the declaration would only confuse the panel.
           val defn = loadFromDir(agentsDir / name).getOrElse(AgentDef(name = name, description = ""))
           val fixed = AgentCore.fixedToolsFor(defn)
-          val configurable = tools.filterNot(t => t == "*" || fixed.contains(t))
+          val nebulaExclusive = if defn.name == "Nebula" then Set.empty[String] else AgentCore.NebulaExclusiveTools
+          val configurable = tools.filterNot(t => t == "*" || fixed.contains(t) || nebulaExclusive.contains(t))
           val updated = parsed.deepMerge(io.circe.Json.obj("tools" -> configurable.asJson))
           os.write.over(jsonPath, updated.noSpaces)
         case None => () // skip if unparseable
