@@ -26,9 +26,12 @@ function createAiCopyBadge(timestamp, text) {
     timeSpan.title = '点击切换 12/24 小时制';
     timeSpan.addEventListener('click', toggleTimeFormat);
     badge.appendChild(timeSpan);
-    const div = document.createElement('span');
-    div.className = 'duration-badge-divider';
-    badge.appendChild(div);
+    // Divider is a separator — only between time and copy, never trailing.
+    if (text) {
+      const div = document.createElement('span');
+      div.className = 'duration-badge-divider';
+      badge.appendChild(div);
+    }
   }
   if (text) badge.appendChild(createMsgCopyButton(text));
   return badge;
