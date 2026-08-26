@@ -8,6 +8,18 @@ import { esc, authHeaders, fmtTime, fmtRelTime, overlayRoot, setMailPending } fr
 import { t } from './i18n.js';
 import { fetchPresets, setAgentPreset, resolvedChainHtml } from './presets.js';
 
+/** Render a mail body into safe HTML. The detail area must NEVER be silently
+ *  blank (2026-08-26 bug: a record with an empty/undefined `message` rendered
+ *  `renderMarkdownWithMath('')` → `''` → the row's detail pane looked empty
+ *  while its from/to meta stayed visible — "列表可见，详情区空白"). Also guards
+ *  per-row so a single bad render cannot throw and wipe the whole History list
+ *  into the outer catch. */
+function mailBodyHtml(msg) {
+  if (msg == null || !String(msg).trim()) return `<span class="flow-mail-no-body">${esc(t('mailFlow.noBody'))}</span>`;
+  try { return renderMarkdownWithMath(msg); }
+  catch (e) { return `<span class="flow-mail-no-body">${esc(t('mailFlow.renderFailed', { msg: e.message }))}</span>`; }
+}
+
 /** Fetch and render per-agent model config into a placeholder element.
  *  Called after agent blocks are rendered in openDefinition. */
 async function populateAgentModel(el, agentName) {
@@ -137,7 +149,7 @@ function pendingRowHtml(it) {
         <span class="flow-mail-expand">展开 ▾</span>
         <button class="flow-mail-cancel" title="Remove from queue">Cancel</button>
       </div>
-      <div class="flow-mail-content">${renderMarkdownWithMath(it.message || '')}</div>
+      <div class="flow-mail-content">${mailBodyHtml(it.message)}</div>
     </div>`;
 }
 
@@ -252,7 +264,7 @@ export async function openMailbox(flowName, team = null) {
           <span class="flow-mail-time">${esc(fmtTime(r.timestamp))}</span>
           <span class="flow-mail-expand">展开 ▾</span>
         </div>
-        <div class="flow-mail-content">${renderMarkdownWithMath(r.message || '')}</div>
+        <div class="flow-mail-content">${mailBodyHtml(r.message)}</div>
       </div>`).join('');
     historyList.querySelectorAll('.flow-mail-row').forEach(row => {
       row.addEventListener('click', () => {

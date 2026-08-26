@@ -350,6 +350,8 @@ export default {
   'mailDelivery.askTitle': 'Ask：发送方同步等待回复',
   'mailDelivery.queueTitle': 'Queue：排队，当前任务完成后逐条处理',
   'mailDelivery.immediateTitle': 'Immediate：即时注入到对话',
+  'mailFlow.noBody': '（无正文）',
+  'mailFlow.renderFailed': '（正文渲染失败：{msg}）',
 
   // === Session context menu (already Chinese) ===
   'ctx.markUnread': '标记为未读',
