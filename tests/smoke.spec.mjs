@@ -341,7 +341,7 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
     expect(page._pageErrors, `Page errors:\n${page._pageErrors.join('\n')}`).toEqual([]);
   });
 
-  test('task list collapse bar → 查看全部 → archive tab (real /api/nf-tasks)', async ({ page }) => {
+  test('task panel archive button → archive tab (real /api/nf-tasks)', async ({ page }) => {
     const nfTaskReqs = [];
     page.on('response', (r) => {
       if (r.url().includes('/api/nf-tasks')) nfTaskReqs.push(r.status());
@@ -359,22 +359,29 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
     // the workspace-open-item contract).
     test.skip(await isBundled(page), 'task seeding needs source-mode module access; bundle lazy coverage via canvas test');
 
-    // A fresh instance has no tasks, so the collapse bar never appears on its
-    // own. Feed the same entry point the WS taskListUpdate handler uses
-    // (renderTaskList) with one completed-today task, then click through the
-    // real UI: bar → expand → 查看全部 → archive Canvas tab.
+    // A fresh instance has no tasks, so the panel header (and its archive
+    // button) never appears on its own. Feed the same entry point the WS
+    // taskListUpdate handler uses (renderTaskList) with one in_progress
+    // agent task, then click through the real UI: panel header archive
+    // button → archive Canvas tab.
+    // NOTE (rotted-test fix 2026-08-26): this case seeded a `completed` task
+    // and clicked `.task-today-bar`/`.task-today-all` — that collapse-bar UI
+    // was removed by the two-section panel redesign (8f082213, 2026-08-18)
+    // and completed tasks no longer render in the active panel at all
+    // (taskList.js isVisible: completed → archive-only). The four
+    // deterministic smoke failures across QA rounds (#419/#420①/#37/B6-C5,
+    // ports 8312/8314/8315/8316) all traced to this dead-element wait.
     await page.evaluate(async () => {
       const { renderTaskList } = await import('/js/taskList.js');
       renderTaskList([{
         id: 'smoke-task-1',
-        subject: 'Smoke completed task',
-        status: 'completed',
-        completedAt: new Date().toISOString(),
+        subject: 'Smoke agent task',
+        status: 'in_progress',
+        createdAt: new Date().toISOString(),
         notes: [],
       }], null, 'smoke');
     });
-    await page.locator('.task-today-bar').click();
-    await page.locator('.task-today-all').click();
+    await page.locator('.task-archive-btn').click();
 
     // Archive opens as a Canvas tab and fetches the real /api/nf-tasks.
     await page.locator('.canvas-tab', { hasText: /任务档案|Task Archive/ }).waitFor({ timeout: 8000 });
