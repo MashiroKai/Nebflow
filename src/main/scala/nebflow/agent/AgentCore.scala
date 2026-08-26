@@ -1428,19 +1428,30 @@ private[agent] trait AgentCore:
    * default model turns into open-ended exploration (5min+
    * without compactComplete; qa-mini with NO tools finished in 110s). Restrict
    * to the memory-maintenance essentials: nothing that can branch outward
-   * (no Bash/Grep/Glob/WebSearch). Write/Edit/Read are all present in the
-   * Nebula + team agent toolsets that receive save turns, so the whitelist
-   * never empties them out.
+   * (no Bash/Grep/Glob/WebSearch). #438 note: the whitelist tools are
+   * mechanism-guaranteed (see impl) — they no longer rely on the six being
+   * present in the agent's own toolset.
    */
   protected def saveTurnTools(
-    agentDef: AgentDef,
-    depth: Int = 0,
-    isSubTaskWorker: Boolean = false,
-    forkContext: Boolean = false,
-    isFlowNode: Boolean = false,
-    isTeamLead: Boolean = false
+      agentDef: AgentDef,
+      depth: Int = 0,
+      isSubTaskWorker: Boolean = false,
+      forkContext: Boolean = false,
+      isFlowNode: Boolean = false,
+      isTeamLead: Boolean = false
   ): Option[List[ToolDefinition]] =
-    buildToolList(agentDef, depth, isSubTaskWorker, forkContext, isFlowNode, isTeamLead).map(_.filter(td => SaveTurnToolWhitelist.contains(td.name)))
+    // #438: the save phase is system machinery (memory maintenance), not an
+    // agent-capability turn — its [Write, Edit, Read] whitelist is guaranteed
+    // at the mechanism layer, independent of the agent's configured tools.
+    // The old premise ("the six are always in the toolset, the whitelist
+    // never empties them out") broke when the six became Nebula's
+    // configurable region: a bare Nebula def would run save turns with ZERO
+    // file tools and silently stop persisting memory.
+    val allowed = buildToolList(agentDef, depth, isSubTaskWorker, forkContext, isFlowNode, isTeamLead)
+      .getOrElse(Nil)
+      .filter(td => SaveTurnToolWhitelist.contains(td.name))
+    val guaranteed = ToolRegistry.ALL_TOOLS.filter(td => SaveTurnToolWhitelist.contains(td.name))
+    Some((allowed ++ guaranteed).distinctBy(_.name))
 
   private val SaveTurnToolWhitelist: Set[String] = Set("Write", "Edit", "Read")
 
