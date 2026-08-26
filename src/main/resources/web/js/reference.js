@@ -74,7 +74,7 @@ function pageBadge(anchor) {
   if (anchor.kind === 'cell' && anchor.sheet) {
     return `${anchor.sheet}!${anchor.cellRange || ''}`;
   }
-  if (anchor.kind === 'element') return '<p>';
+  if (anchor.kind === 'element') return anchor.tag ? `<${anchor.tag}>` : '';
   return '';
 }
 
@@ -128,7 +128,7 @@ export function makeReference(input) {
   if (rt === 'html-element') {
     return {
       type: 'ref', refType: 'html-element', id: nextRefId('html-element'),
-      source: { kind: src.kind || 'web', url: src.url || '', title: src.title || '' },
+      source: { kind: src.kind || 'web', url: src.url || '', title: src.title || '', path: src.path || '' },
       anchor,
       meta: { icon: 'code', typeLabel: t('ref.typeElement') },
       display: { label: src.title || '', preview: previewOf(name, anchor.text || src.preview, 160), pageBadge: pageBadge(anchor) },
@@ -341,10 +341,21 @@ function jumpRef(ref) {
     }));
     return;
   }
-  if (rt === 'html-element' && src.url) {
-    window.dispatchEvent(new CustomEvent('workspace-open-item', {
-      detail: { id: `url:${src.url}`, itemType: 'url', title: ref.display?.label || src.url, url: src.url, pinned: false },
-    }));
+  if (rt === 'html-element') {
+    // #303 B6: srcdoc previews have no usable URL (about:srcdoc) — open the
+    // source file path instead; cross-origin URL pages jump by URL (C5).
+    if (path) {
+      const title = ref.display?.label || src.title || path.split('/').pop();
+      window.dispatchEvent(new CustomEvent('workspace-open-item', {
+        detail: { id: `file:${path}`, title, itemType: '', content: '', absPath: path, path, pinned: false },
+      }));
+      return;
+    }
+    if (src.url) {
+      window.dispatchEvent(new CustomEvent('workspace-open-item', {
+        detail: { id: `url:${src.url}`, itemType: 'url', title: ref.display?.label || src.url, url: src.url, pinned: false },
+      }));
+    }
     return;
   }
   // task / unknown → non-navigating record.

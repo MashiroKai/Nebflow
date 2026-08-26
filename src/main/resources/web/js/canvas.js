@@ -17,6 +17,7 @@
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
+import { addElementRefToggle } from './viewers/shared.js';
 
 const MIN_CANVAS_WIDTH = 320;
 const MAX_CANVAS_WIDTH = 1200;
@@ -57,6 +58,12 @@ function _trunc(s, n) {
 /** Best-effort anchor for a tab pane: PDF visible page range / Monaco selection. */
 function tabAnchor(pane) {
   if (!pane) return { kind: 'none' };
+  // XLSX — active sheet + its full range (no cell selection in the viewer, so
+  // the whole active sheet is the anchor; C5-A4).
+  const xr = pane._xlsxRef;
+  if (xr && xr.active) {
+    return { kind: 'cell', sheet: xr.active, cellRange: (xr.dims && xr.dims[xr.active]) || '' };
+  }
   // PDF — canvases stacked in .pdf-pages; compute the visible range from scroll.
   const pdfPages = pane.querySelector('.pdf-pages');
   if (pdfPages) {
@@ -93,6 +100,16 @@ function tabAnchor(pane) {
 
 /** Build a makeReference input from a tab (returns null for non-file tabs). */
 function refInputForTab(tab) {
+  // #303 C5-A2: cross-origin URL tabs can't select an element (crossorigin
+  // mode) — degrade to a whole-page reference (anchor.kind='none').
+  if (tab && tab.type === 'url' && tab.id && tab.id.startsWith('url:')) {
+    const url = tab.id.slice(4);
+    return {
+      refType: 'html-element',
+      source: { kind: 'web', url, title: tab.title || url },
+      anchor: { kind: 'none' },
+    };
+  }
   if (!tab || !tab.absPath || !tab.type) return null;
   const name = (tab.title || tab.absPath.split('/').pop() || '');
   // document vs file: keep the tab's itemType as refType hint, but normalize to
@@ -706,6 +723,10 @@ function renderUrlPane(pane, url) {
   });
 
   pane.append(bar, iframe, hint);
+
+  // #303 C5-A1: cross-origin URL page — element selection is unavailable;
+  // the toggle stays clickable and explains via toast (S4) instead of acting.
+  addElementRefToggle(pane, { mode: 'crossorigin' });
 }
 
 /** Open a file or workspace item in a Canvas tab.
