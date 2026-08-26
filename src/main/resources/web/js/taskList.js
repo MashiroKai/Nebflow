@@ -363,6 +363,18 @@ function buildRow(task, sessionId) {
   label.className = 'task-label';
   label.textContent = task.subject || '';
   text.appendChild(label);
+  // #37: render the description under the subject. The panel previously only
+  // rendered subject, so tasks with similar subjects were indistinguishable
+  // (the user cancelled 5 by mistake). Truncated to 2 lines; full text in title.
+  const descText = (task.description || '').trim();
+  if (descText) {
+    row.classList.add('task-has-desc');
+    const desc = document.createElement('span');
+    desc.className = 'task-desc';
+    desc.textContent = descText;
+    desc.title = descText;
+    text.appendChild(desc);
+  }
   row.appendChild(text);
 
   if (inTodoZone(task)) {
