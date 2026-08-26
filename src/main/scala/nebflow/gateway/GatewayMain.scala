@@ -254,7 +254,12 @@ object GatewayMain extends IOApp.Simple:
                 sessionStore.ensureActiveAgentSession("Nebula").void
               }
               .flatMap { _ =>
-                LlmInterface.createLlm(sessionModelOverrides, configRef = Some(configRef)).flatMap {
+                // Flow-node supervision P3: llm.streamTimeouts watchdog overrides
+                // (boot-time; config changes take effect on restart).
+                configRef.get.flatMap { bootCfg =>
+                  val st = bootCfg.llm.streamTimeouts.getOrElse(nebflow.llm.StreamTimeoutsConfig())
+                  IO(LlmInterface.applyStreamTimeouts(st.firstTokenSec, st.inactivitySec, st.noProgressSec))
+                } *> LlmInterface.createLlm(sessionModelOverrides, configRef = Some(configRef)).flatMap {
                   case (handle, registry, healthMonitor, releaseBackend) =>
                     // Clear per-session model overrides on restart so all sessions
                     // follow the global fallback order from config.
