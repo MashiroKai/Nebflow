@@ -3595,18 +3595,24 @@ class WebSocketRoutes(
                               // feedback note + returnCount) and appends a
                               // [打回任务] injection block so the session agent
                               // (= task owner, C21) sees the revision context.
+                              // #303 D2: also routes refs[refType='task'] here
+                              // (引用=打回 v1.1).
                               processTaskReturns(msgSessionId, content, json, blocks, wsSend).flatMap { _ =>
-                                val blocksList = blocks.toList
-                                ensureAgent(msgSessionId)(ref =>
-                                  ref ! AgentCommand
-                                    .UserInput(
-                                      content,
-                                      None,
-                                      clientMessageId,
-                                      Some(blocksList).filter(_.nonEmpty),
-                                      chatWidth
-                                    )
-                                )
+                                // #303 D1: resolve non-task refs (file/document/
+                                // html-element) into [引用: …] injection blocks.
+                                processRefs(json, blocks).flatMap { _ =>
+                                  val blocksList = blocks.toList
+                                  ensureAgent(msgSessionId)(ref =>
+                                    ref ! AgentCommand
+                                      .UserInput(
+                                        content,
+                                        None,
+                                        clientMessageId,
+                                        Some(blocksList).filter(_.nonEmpty),
+                                        chatWidth
+                                      )
+                                  )
+                                }
                               }
                             }
                           }
@@ -3774,6 +3780,11 @@ class WebSocketRoutes(
     "Movies"
   )
 
+  /** #303 D1/D2 (v1.1 引用=打回): taskId extraction tolerant of both string
+    * and number encodings (legacy taskRefs carry string; defensive for number). */
+  private def taskIdOf(c: io.circe.ACursor): String =
+    c.downField("taskId").as[String].getOrElse(c.downField("taskId").as[Long].map(_.toString).getOrElse(""))
+
   /** todo-panel v2 §6.2 (C16/C17/C21): process the optional `taskRefs` array
     * on a default-branch user message — the user RETURN flow. For each ref:
     * validate the session, return the needs_confirmation task to in_progress
@@ -3781,7 +3792,13 @@ class WebSocketRoutes(
     * a [打回任务] injection block built from the PRE-return snapshot (the
     * agent's latest outcome note). Per-ref failures emit taskError frames and
     * never block the message itself or the other refs. After processing, the
-    * authoritative task list is pushed so every panel converges. */
+    * authoritative task list is pushed so every panel converges.
+    *
+    * #303 D2 (v1.1 引用=打回): reads BOTH the legacy `taskRefs` shape
+    * ({taskId, sessionId} — old history/refresh path, D3 regression) AND the
+    * unified `refs` shape (refType='task' with source.taskId/source.sessionId
+    * — taskList.js requestReturn now produces this, spec §5.4). Both route to
+    * the same return flow; refType ≠ task is handled by processRefs instead. */
   private def processTaskReturns(
     msgSessionId: String,
     content: String,
@@ -3789,7 +3806,17 @@ class WebSocketRoutes(
     blocks: scala.collection.mutable.ListBuffer[ContentBlock],
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
-    val taskRefs = frame.hcursor.downField("taskRefs").as[List[io.circe.Json]].getOrElse(Nil)
+    val legacyTaskRefs: List[(String, String)] =
+      frame.hcursor.downField("taskRefs").as[List[io.circe.Json]].getOrElse(Nil)
+        .map(j => (taskIdOf(j.hcursor), j.hcursor.downField("sessionId").as[String].getOrElse(msgSessionId)))
+    val refTaskRefs: List[(String, String)] =
+      frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
+        .filter(j => j.hcursor.downField("refType").as[String].getOrElse("") == "task")
+        .map { j =>
+          val src = j.hcursor.downField("source")
+          (taskIdOf(src), src.downField("sessionId").as[String].getOrElse(msgSessionId))
+        }
+    val taskRefs = legacyTaskRefs ++ refTaskRefs
     if taskRefs.isEmpty then IO.unit // absent/empty — zero behavior change (v1 path)
     else
       def taskError(taskId: String, msg: String): IO[Unit] =
@@ -3799,9 +3826,7 @@ class WebSocketRoutes(
           "taskId" -> taskId.asJson
         ))
 
-      taskRefs.traverse_ { ref =>
-        val taskId = ref.hcursor.downField("taskId").as[String].getOrElse("")
-        val refSession = ref.hcursor.downField("sessionId").as[String].getOrElse(msgSessionId)
+      taskRefs.traverse_ { (taskId, refSession) =>
         if taskId.isEmpty then IO.unit
         else if refSession != msgSessionId then
           // §6.2a: cross-session injection guard
@@ -3832,6 +3857,23 @@ class WebSocketRoutes(
           "tasks" -> tasks.asJson
         ))
       }
+
+  /** #303 D1/D5: resolve unified refs (refType ≠ task) into [引用: …]
+    * injection blocks appended to the user message (spec §2.3 ③). Pointer
+    * semantics — source + anchor only, never content (D5, ≤ ~100 token).
+    * Task refs route to processTaskReturns (引用=打回, D2); unknown refTypes
+    * are skipped fail-open (never block the message or the other refs). */
+  private def processRefs(
+    frame: io.circe.Json,
+    blocks: scala.collection.mutable.ListBuffer[ContentBlock]
+  ): IO[Unit] =
+    val refs = frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
+    refs.foreach { ref =>
+      val refType = ref.hcursor.downField("refType").as[String].getOrElse("")
+      if refType != "task" then
+        RefResolver.resolve(ref).foreach(block => blocks += ContentBlock.Text(block))
+    }
+    IO.unit
 
   /**
    * Search for a file by name and verify its SHA-256 hash matches.
