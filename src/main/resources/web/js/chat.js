@@ -730,10 +730,18 @@ export function createDurationBadgeElement(durationMs, model, seed, timestamp, c
   badge.dataset.nfPhrase = pickThinkingPhrase(durationMs, seed);
   if (model) badge.dataset.nfModel = model;
 
-  if (timestamp) {
+  // Divider is a SEPARATOR: insert only between two existing/forthcoming
+  // elements — never as a leading or trailing orphan (v1.2 footer = time +
+  // copy only; the old leading divider was a leftover of "phrase | time").
+  const appendDivider = () => {
+    if (badge.childElementCount === 0) return;
     const div = document.createElement('span');
     div.className = 'duration-badge-divider';
     badge.appendChild(div);
+  };
+
+  if (timestamp) {
+    appendDivider();
     const timeSpan = document.createElement('span');
     timeSpan.className = 'duration-badge-time';
     timeSpan.setAttribute('data-ts', timestamp);
@@ -744,9 +752,7 @@ export function createDurationBadgeElement(durationMs, model, seed, timestamp, c
   }
 
   if (copyText) {
-    const div = document.createElement('span');
-    div.className = 'duration-badge-divider';
-    badge.appendChild(div);
+    appendDivider();
     const copyBtn = createMsgCopyButton(copyText);
     badge.appendChild(copyBtn);
   }
