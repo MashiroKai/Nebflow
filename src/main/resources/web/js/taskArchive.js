@@ -129,6 +129,14 @@ function entryHtml(e) {
       `</details>`;
   }
 
+  // #37: surface the description (IndexEntry/「/api/nf-tasks」carry it once the
+  // backend serializes the field; absent on older backends = nothing renders).
+  // Shown as a clamped line under the main row, matching the todos panel.
+  const descText = (typeof e.description === 'string' ? e.description : '').trim();
+  const descHtml = descText
+    ? `<div class="ta-desc" title="${escapeHtml(descText)}">${escapeHtml(descText)}</div>`
+    : '';
+
   return `<div class="ta-entry ta-${escapeHtml(status)}" data-task="${escapeHtml(e.sessionId || '')}/${escapeHtml(String(e.taskId ?? e.id ?? ''))}">` +
     `<div class="ta-entry-main" role="button" tabindex="0">` +
       `<span class="ta-status"><i data-lucide="${icon}"></i></span>` +
@@ -137,6 +145,7 @@ function entryHtml(e) {
       (noteCount > 0 && notes.length === 0 ? `<span class="ta-note-count">${noteCount} ${escapeHtml(t('task.notes'))}</span>` : '') +
       `<span class="ta-time">${escapeHtml(time)}</span>` +
     `</div>` +
+    descHtml +
     (detail ? `<div class="ta-detail">${detail}</div>` : '') +
     `</div>`;
 }
