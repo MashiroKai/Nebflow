@@ -1,0 +1,96 @@
+package nebflow.gateway
+
+import io.circe.Json
+
+/**
+ * #303 D1/D5 — resolve a unified Reference (spec 20260825_global-reference-spec
+ * v1.1 §2.3 ③) into a backend injection block appended to the user message.
+ *
+ * Pointer semantics (D5): the block carries source + anchor ONLY — never the
+ * referenced content (token budget ≤ ~100). The agent reads content on demand
+ * with its tools, same as the existing [用户附加文件: path] pointer pattern.
+ *
+ * refType = "task" routes to the return flow (WebSocketRoutes.processTaskReturns,
+ * 引用=打回 v1.1) and reuses Task.returnInjectionBlock — NOT resolved here.
+ * Unknown refTypes / unresolvable refs yield None (fail-open: the message and
+ * the other refs are never blocked).
+ *
+ * Block format (spec §2.3 ③):
+ *   [引用: {类型} · {title}{anchor 摘要} · {来源}]
+ *   e.g. [引用: 文档 · paper.pdf · p.3–4 · /abs/paper.pdf]
+ */
+object RefResolver:
+
+  /** Build the [引用: …] injection block, or None when the ref cannot be
+    * resolved (unknown refType / missing identity). Pure — no IO, no state. */
+  def resolve(ref: Json): Option[String] =
+    val c = ref.hcursor
+    val refType = c.downField("refType").as[String].getOrElse("")
+    val src = c.downField("source")
+    val anchor = c.downField("anchor")
+    refType match
+      case "file" =>
+        val path = src.downField("path").as[String].getOrElse("")
+        if path.isEmpty then None
+        else
+          val title = src.downField("title").as[String]
+            .orElse(src.downField("fileName").as[String])
+            .getOrElse(fileNameOf(path))
+          Some(s"[引用: 文件 · $title${anchorText(anchor)} · $path]")
+      case "document" =>
+        val path = src.downField("path").as[String].getOrElse("")
+        if path.isEmpty then None
+        else
+          val title = src.downField("title").as[String]
+            .orElse(src.downField("fileName").as[String])
+            .getOrElse(fileNameOf(path))
+          Some(s"[引用: 文档 · $title${anchorText(anchor)} · $path]")
+      case "html-element" =>
+        val url = src.downField("url").as[String].getOrElse("")
+        if url.isEmpty then None
+        else
+          val title = src.downField("title").as[String].getOrElse(url)
+          Some(s"[引用: 页面元素 · $title${anchorText(anchor)} · $url]")
+      case _ => None // "task" → return flow (processTaskReturns); unknown → skip
+
+  /** Anchor summary " · p.3–4" / " · L12–45" / " · Sheet1!A1:D10" / " · <p>"
+    * — empty for kind=none. Mirrors the frontend pageBadge rules (reference.js)
+    * so both layers render the same badge. En dash (U+2013) matches the spec. */
+  def anchorText(anchor: io.circe.ACursor): String =
+    val kind = anchor.downField("kind").as[String].getOrElse("none")
+    kind match
+      case "page" =>
+        anchor.downField("pageStart").as[Long].toOption match
+          case Some(s) =>
+            val end = anchor.downField("pageEnd").as[Long].toOption
+            val suffix = end.filter(_ != s).map(e => s"–$e").getOrElse("")
+            s" · p.$s$suffix"
+          case None => ""
+      case "range" =>
+        anchor.downField("lineStart").as[Long].toOption match
+          case Some(s) =>
+            val end = anchor.downField("lineEnd").as[Long].toOption
+            val suffix = end.filter(_ != s).map(e => s"–$e").getOrElse("")
+            s" · L$s$suffix"
+          case None => ""
+      case "cell" =>
+        val sheet = anchor.downField("sheet").as[String].getOrElse("")
+        val rng = anchor.downField("cellRange").as[String].getOrElse("")
+        if sheet.nonEmpty then s" · $sheet!$rng" else ""
+      case "element" =>
+        anchor.downField("selector").as[String].toOption
+          .flatMap(tagOf)
+          .map(t => s" · <$t>").getOrElse("")
+      case _ => ""
+
+  /** First tag of a CSS selector path: "html>body>div.c>p:nth-of-type(2)" → "p". */
+  def tagOf(selector: String): Option[String] =
+    val last = selector.split('>').lastOption.getOrElse(selector).trim
+    val tag = last.takeWhile(ch => ch.isLetterOrDigit || ch == '-')
+    Option(tag).filter(_.nonEmpty)
+
+  private def fileNameOf(path: String): String =
+    val clean = path.replace('\\', '/')
+    clean.split('/').lastOption.getOrElse(path)
+
+end RefResolver
