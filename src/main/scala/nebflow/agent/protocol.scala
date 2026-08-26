@@ -710,7 +710,13 @@ case class AgentError(
   depth: Int,
   errorType: AgentErrorType,
   message: String,
-  cause: Option[AgentError] = None
+  cause: Option[AgentError] = None,
+  /** Flow-node supervision P2 (2026-08-26): agent-turn-level retryability of
+    * the failure (single source AgentActor.llmFailureRetryable). None =
+    * legacy/unset (treated as not retryable by consumers). Lets the flow
+    * executor distinguish "LLM stall, checkpoint-restart may heal it" from
+    * hard failures without string-matching error messages. */
+  retryable: Option[Boolean] = None
 )
 
 enum AgentStatus:

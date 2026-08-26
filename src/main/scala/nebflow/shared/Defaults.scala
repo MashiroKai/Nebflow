@@ -34,8 +34,14 @@ object Defaults:
    * recovery mechanism for hung connections (e.g. after Mac sleep/wake).
    * Applies AFTER the first token. Shorter than StreamTimeoutSec because LLM providers
    * should always produce chunks within a few seconds, even during extended thinking.
+   *
+   * Flow-node supervision P3 (2026-08-26): 60 → 120s. Phase-2 stalls on thinking
+   * models without SSE keep-alive can legally exceed 60s (production incident:
+   * kimi k3 mid-stream stall at 60s with sibling requests healthy). Aligned with
+   * the firstToken 90s thinking-margin logic; phase-1 and the 600s whole-stream
+   * guard are unchanged. Override via llm.streamTimeouts.inactivitySec.
    */
-  val LlmStreamInactivitySec: Int = 60
+  val LlmStreamInactivitySec: Int = 120
 
   /**
    * Whole-stream no-progress watchdog (issue #31, 2026-08-20): bounds the blind

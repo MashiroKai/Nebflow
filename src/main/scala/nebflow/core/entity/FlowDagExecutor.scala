@@ -105,6 +105,12 @@ object FlowDagExecutor:
     val instances: Ref[IO, Map[String, List[String]]] = Ref.unsafe(Map.empty)
     /** Instantiated node definitions (input substituted): instance id → FlowNode. */
     val instanceNodes: Ref[IO, Map[String, FlowNode]] = Ref.unsafe(Map.empty)
+    /** Flow-node supervision P2 (2026-08-26): nodeId → stable dag session id.
+      * Owned here (not inside executeAgent) so a Restart retries the SAME
+      * session — checkpoint recovery loads the persisted messages instead of
+      * re-running the node from scratch (20min of planner context survives a
+      * 60s upstream stall). */
+    val nodeSessions: Ref[IO, Map[String, String]] = Ref.unsafe(Map.empty)
 
   /**
    * Execute a flow DAG.
@@ -268,8 +274,25 @@ object FlowDagExecutor:
         case Some(node) => IO.pure(Some(node))
         case None       => st.instanceNodes.get.map(_.get(nodeId))
 
-    /** Execute a single DAG node: spawn agent, send input, collect output. */
-    def executeNode(nodeId: String): IO[NodeResult] =
+    /** P2 supervision: the node's dag session id. Only a checkpoint-resume
+      * re-entry (handleResult Restart after a retryable failure) reuses the
+      * preserved session; every other dispatch (first attempt, loop re-entry
+      * via a revise back-edge, non-retryable Restart) gets a FRESH session —
+      * a revise round is a new review, not a crash recovery. */
+    def nodeSession(nodeId: String, resumeCheckpoint: Boolean): IO[(Boolean, String)] =
+      st.nodeSessions.get.flatMap { m =>
+        m.get(nodeId) match
+          case Some(existing) if resumeCheckpoint => IO.pure((true, existing))
+          case _ =>
+            val fresh = s"dag-${flow.name.take(10)}-$nodeId-${System.currentTimeMillis().toString.takeRight(6)}"
+            st.nodeSessions.update(mm => mm + (nodeId -> fresh)).as((false, fresh))
+      }
+
+    /** Execute a single DAG node: spawn agent, send input, collect output.
+      * P2 supervision: resumeCheckpoint=true (Restart after a retryable LLM
+      * failure) resumes the node's preserved session from its persisted
+      * checkpoint; every other dispatch runs fresh. */
+    def executeNode(nodeId: String, resumeCheckpoint: Boolean = false): IO[NodeResult] =
       nodeDefOf(nodeId).flatMap {
         case None =>
           IO.pure(NodeResult(nodeId, "", false, Some(s"Unknown node: $nodeId")))
@@ -300,32 +323,73 @@ object FlowDagExecutor:
                         NodeResult(nodeId, "", false, Some(s"Agent '${node.agent}' not found in flow or global library"))
                       )
                     case Some(entry) =>
-                      // #406: FlowReport is injected by EXECUTION CONTEXT — every
-                      // flow node (predefined OR dynamic) gets the verdict tool
-                      // regardless of the agent's category. Predefined flow agents
-                      // (category=flow) already receive it via fixedToolsFor; dynamic
-                      // flows reuse standalone/team agents which would otherwise lack
-                      // it. The tools list is appended (survives "*" — FlowReport is
-                      // already in ALL_TOOLS there; survives explicit lists — appended
-                      // after the agent's own names).
-                      val baseDef = entry.toAgentDef
-                      val agentDef = baseDef.copy(
-                        flowContract = nodeContract(node),
-                        tools = if baseDef.tools.contains("FlowReport") then baseDef.tools else baseDef.tools :+ "FlowReport"
-                      )
-                      executeAgent(
-                        nodeId,
-                        node.agent,
-                        agentDef,
-                        inputText0,
-                        resources,
-                        actorSystem,
-                        wsSend,
-                        flow.name,
-                        instanceId,
-                        parentAgentRef,
-                        rootSessionId
-                      )
+                      // ── P2 supervision: stable session + checkpoint resume ──
+                      // (get-then-put is safe: the same nodeId re-enters
+                      // executeNode only serially via handleResult's Restart
+                      // recursion; dynamic fan instances use distinct node ids)
+                      nodeSession(nodeId, resumeCheckpoint).flatMap { (isRetry, sid) =>
+                        val recoveredIO =
+                          if isRetry then
+                            resources.sessionStore
+                              .loadMessagesForSession(sid)
+                              .handleErrorWith(e =>
+                                logger.warn(s"Flow '$flow.name' node '$nodeId': checkpoint load failed: ${e.getMessage}")
+                                  .as(Nil)
+                              )
+                          else IO.pure(Nil: List[Message])
+                        recoveredIO.flatMap { recoveredMsgs =>
+                          // #406: FlowReport is injected by EXECUTION CONTEXT — every
+                          // flow node (predefined OR dynamic) gets the verdict tool
+                          // regardless of the agent's category. Predefined flow agents
+                          // (category=flow) already receive it via fixedToolsFor; dynamic
+                          // flows reuse standalone/team agents which would otherwise lack
+                          // it. The tools list is appended (survives "*" — FlowReport is
+                          // already in ALL_TOOLS there; survives explicit lists — appended
+                          // after the agent's own names).
+                          val baseDef = entry.toAgentDef
+                          val agentDef = baseDef.copy(
+                            flowContract = nodeContract(node),
+                            tools = if baseDef.tools.contains("FlowReport") then baseDef.tools else baseDef.tools :+ "FlowReport"
+                          )
+                          // Resume semantics (BackoffSupervisor :267-274 pattern, prod-
+                          // verified): recovered messages already contain the original
+                          // instruction — inject a continue prompt, not the original
+                          // input. No checkpoint (fresh attempt OR empty session) →
+                          // original input, initialMessages=Nil.
+                          val resuming = recoveredMsgs.nonEmpty
+                          val effectiveInput =
+                            if resuming then
+                              "[system] Your previous turn was interrupted by an upstream failure. " +
+                                "Please continue your task from where you left off."
+                            else inputText0
+                          val resumeLog =
+                            if resuming then
+                              logger.info(
+                                s"Flow '$flow.name' node '$nodeId': checkpoint restart — resuming session $sid " +
+                                  s"with ${recoveredMsgs.size} recovered messages"
+                              )
+                            else IO.unit
+                          // Session preserved on retryable failure only when the node
+                          // actually allows a Restart that could use the checkpoint.
+                          val restartAllowed = node.onError.contains(OnError.Restart) && node.maxRetries > 0
+                          resumeLog *> executeAgent(
+                            nodeId,
+                            node.agent,
+                            agentDef,
+                            effectiveInput,
+                            resources,
+                            actorSystem,
+                            wsSend,
+                            flow.name,
+                            instanceId,
+                            parentAgentRef,
+                            rootSessionId,
+                            sessionId = sid,
+                            initialMessages = recoveredMsgs,
+                            keepSessionOnFailure = restartAllowed
+                          )
+                        }
+                      }
                   _ <- st.outputs.update(_ + (nodeId -> result.output))
                   _ <- st.slots.update(_ + (nodeId -> result.slots))
                 yield result
@@ -333,26 +397,56 @@ object FlowDagExecutor:
           end for
       }
 
-    /** Error handling + retry logic. */
+    /** Terminal cleanup of a node's dag session (P2 supervision): success,
+      * explicit Stop/Resume, or exhausted Restart retries all delete the
+      * session. A preserved checkpoint only lives between a retryable failure
+      * and its Restart. */
+    def cleanupNodeSession(nodeId: String): IO[Unit] =
+      st.nodeSessions.get.flatMap(_.get(nodeId).traverse_ { sid =>
+        FlowReportStore.remove(sid) *>
+          resources.sessionStore.deleteSession(sid).handleErrorWith(_ => IO.unit)
+      }) *> st.nodeSessions.update(m => m - nodeId)
+
+    /** Error handling + retry logic.
+      * P2 supervision: the Restart branch retries the SAME node session with
+      * checkpoint recovery (executeNode loads persisted messages + continue
+      * instruction) — not a fresh re-run. attemptCount accounting unchanged
+      * (node.maxRetries remains the single budget). */
     def handleResult(nodeId: String, result: NodeResult): IO[Either[WalkEnd.Failed, NodeResult]] =
-      if result.success then IO.pure(Right(result))
+      if result.success then cleanupNodeSession(nodeId).map(_ => Right(result))
       else
         nodeDefOf(nodeId).flatMap {
           case None => IO.pure(Left(WalkEnd.Failed(nodeId, s"Unknown node '$nodeId' in error handler")))
           case Some(node) =>
             node.onError.getOrElse(OnError.Stop) match
               case OnError.Resume =>
-                logger.warn(s"Node '$nodeId' failed, resuming").map(_ => Right(result))
+                cleanupNodeSession(nodeId) *> logger.warn(s"Node '$nodeId' failed, resuming").map(_ => Right(result))
               case OnError.Restart =>
                 val retryCount = result.attemptCount
                 if retryCount <= node.maxRetries then
                   for
-                    _ <- logger.info(s"Node '$nodeId' retry ${retryCount}/${node.maxRetries}")
-                    newResult <- executeNode(nodeId)
+                    _ <- logger.info(
+                      s"Node '$nodeId' retry ${retryCount}/${node.maxRetries}" +
+                        (if result.retryable then " (checkpoint resume — retryable LLM failure)"
+                         else " (fresh re-run)")
+                    )
+                    _ <- st.nodeSessions.get.flatMap { m =>
+                      val retryEvent = Json.obj(
+                        "type" -> "subagentRetry".asJson,
+                        "agentName" -> node.agent.asJson,
+                        "childSessionId" -> m.getOrElse(nodeId, "").asJson,
+                        "restartCount" -> retryCount.asJson,
+                        "maxRestarts" -> node.maxRetries.asJson,
+                        "backoffMs" -> 0.asJson,
+                        "description" -> s"flow node '$nodeId'".asJson
+                      )
+                      emitWs(retryEvent).handleErrorWith(_ => IO.unit)
+                    }
+                    newResult <- executeNode(nodeId, resumeCheckpoint = result.retryable)
                     handled <- handleResult(nodeId, newResult.copy(attemptCount = retryCount + 1))
                   yield handled
                 else
-                  IO.pure(
+                  cleanupNodeSession(nodeId) *> IO.pure(
                     Left(
                       WalkEnd.Failed(
                         nodeId,
@@ -361,7 +455,9 @@ object FlowDagExecutor:
                     )
                   )
               case OnError.Stop =>
-                IO.pure(Left(WalkEnd.Failed(nodeId, s"Node '$nodeId' failed: ${result.error.getOrElse("unknown")}")))
+                cleanupNodeSession(nodeId) *> IO.pure(
+                  Left(WalkEnd.Failed(nodeId, s"Node '$nodeId' failed: ${result.error.getOrElse("unknown")}"))
+                )
         }
 
     /**
@@ -996,10 +1092,23 @@ object FlowDagExecutor:
     flowName: String,
     instanceId: String,
     parentAgentRef: Option[ActorRef[AgentCommand]] = None,
-    rootSessionId: String = ""
+    rootSessionId: String = "",
+    // ── Flow-node supervision P2 (2026-08-26) ──────────────────────────
+    // Stable per-node session id, owned by executeNode — retries reuse the
+    // SAME session so checkpoint recovery can load the persisted messages.
+    sessionId: String,
+    // Checkpoint recovery: previously persisted messages for this node's
+    // session (Nil on a fresh first attempt).
+    initialMessages: List[Message] = Nil,
+    // Preserve the failed node's session (AgentActor already persisted its
+    // history before failing) so a Restart resumes from the checkpoint
+    // instead of a fresh re-run. Terminal outcomes always clean up.
+    keepSessionOnFailure: Boolean = false
   ): IO[NodeResult] =
     val rawWsSend = wsSend.getOrElse((_: Json) => IO.unit)
-    val sessionId = s"dag-${flowName.take(10)}-$nodeId-${System.currentTimeMillis().toString.takeRight(6)}"
+    // Failure outcome carried through the deferred: message + retryable flag
+    // (AgentError.retryable — LLM stall / overload class).
+    final case class FailOutcome(message: String, retryable: Boolean)
     // P2: flow nodes inherit the triggering agent's root session so their
     // InteractionRequests render in the Nebula window and share its policy.
     val effectiveRootSessionId = if rootSessionId.nonEmpty then rootSessionId else sessionId
@@ -1017,7 +1126,7 @@ object FlowDagExecutor:
     for
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
-      resultDeferred <- Deferred[IO, Either[String, List[Message]]]
+      resultDeferred <- Deferred[IO, Either[FailOutcome, List[Message]]]
       // Bridge actor: receives AgentEvent, completes the Deferred, self-stops.
       // The deferred MUST be completed synchronously inside the receive action:
       // forkTurn here races with returning Behaviors.stopped — the actor loop
@@ -1032,9 +1141,15 @@ object FlowDagExecutor:
             case AgentEvent.Completed(_, messages) =>
               resultDeferred.complete(Right(messages)).void.as(Behaviors.stopped)
             case AgentEvent.Failed(_, err) =>
-              resultDeferred.complete(Left(err.message)).void.as(Behaviors.stopped)
+              // P2: surface the retryable flag (single source
+              // AgentActor.llmFailureRetryable) so the executor's Restart
+              // path can pick checkpoint recovery over a fresh re-run.
+              resultDeferred
+                .complete(Left(FailOutcome(err.message, err.retryable.getOrElse(false))))
+                .void
+                .as(Behaviors.stopped)
             case AgentEvent.Cancelled(_, reason) =>
-              resultDeferred.complete(Left(s"cancelled: $reason")).void.as(Behaviors.stopped)
+              resultDeferred.complete(Left(FailOutcome(s"cancelled: $reason", retryable = false))).void.as(Behaviors.stopped)
         },
         s"bridge-${nodeId.take(10)}-${sessionId.take(8)}"
       )
@@ -1047,7 +1162,7 @@ object FlowDagExecutor:
           parentRef = parentAgentRef,
           sessionId = Some(sessionId),
           sessionName = Some(s"$flowName/$nodeId"),
-          initialMessages = Nil,
+          initialMessages = initialMessages,
           readTracker = Some(readTracker),
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
@@ -1093,15 +1208,31 @@ object FlowDagExecutor:
         case Left(_) => IO.unit
       eventResult = raceResult match
         case Left(r)         => r
-        case Right(Left(_))  => Left("Flow cancelled by user")
-        case Right(Right(_)) => Left(AbortSentinel)
+        case Right(Left(_))  => Left(FailOutcome("Flow cancelled by user", retryable = false))
+        case Right(Right(_)) => Left(FailOutcome(AbortSentinel, retryable = false))
       _ <- resources.agentRegistry.update(_ - sessionId)
       _ <- actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
       _ <- actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
-      // Read FlowReport if the agent called FlowReport, then clean up
+      // ── Session cleanup timing (supervision P2) ─────────────────────
+      // Success / cancel / abort: terminal — delete now (pre-P2 behavior).
+      // Failure: keepSessionOnFailure && retryable → PRESERVE the session —
+      // AgentActor already persisted the conversation before failing; the
+      // executor's Restart path resumes from this checkpoint instead of a
+      // fresh re-run (the incident lost 20min/86k-token context here).
+      // Non-retryable failures and exhausted retries are cleaned up by
+      // handleResult's terminal branches (cleanupNodeSession).
       reportOpt <- FlowReportStore.get(sessionId)
-      _ <- FlowReportStore.remove(sessionId)
-      _ <- resources.sessionStore.deleteSession(sessionId).handleErrorWith(_ => IO.unit)
+      sessionCleanup <- eventResult match
+        case Right(_) =>
+          FlowReportStore.remove(sessionId) *>
+            resources.sessionStore.deleteSession(sessionId).handleErrorWith(_ => IO.unit)
+        case Left(fo) if fo.retryable && keepSessionOnFailure =>
+          logger.info(
+            s"Flow '$flowName' node '$nodeId' failed retryable — preserving session $sessionId for checkpoint restart"
+          )
+        case Left(_) =>
+          FlowReportStore.remove(sessionId) *>
+            resources.sessionStore.deleteSession(sessionId).handleErrorWith(_ => IO.unit)
       nodeResult <- eventResult match
         case Right(messages) =>
           val textOutput = extractLastAssistantOutput(messages)
@@ -1126,13 +1257,14 @@ object FlowDagExecutor:
                 )
               )
           end match
-        case Left(errMsg) =>
+        case Left(fo) =>
           IO.pure(
             NodeResult(
               nodeId = nodeId,
               output = "",
               success = false,
-              error = Some(s"Agent '$agentName' failed: $errMsg")
+              error = Some(s"Agent '$agentName' failed: ${fo.message}"),
+              retryable = fo.retryable
             )
           )
     yield nodeResult
