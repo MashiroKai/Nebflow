@@ -1481,7 +1481,13 @@ object AgentActor extends AgentCore with AgentSession:
             )
             // The failed LLM call produced no content — re-dispatch with the
             // same messages from the last checkpoint, after a backoff delay.
-            ctx.forkTurn(IO.sleep(delayMs.millis)) *>
+            // The sleep must be INLINE: ctx.forkTurn is fire-and-forget
+            // (ActorContext.forkTurn .start), so wrapping the sleep there made
+            // `*>` re-dispatch IMMEDIATELY — the backoff was fake (both the
+            // 08-18 overload retry and the P1 inactivity retry re-sent into a
+            // still-stalled upstream). Inline sleep is consistent with how
+            // pipeLlmCall itself runs (whole turns block the actor loop).
+            IO.sleep(delayMs.millis) *>
               pipeLlmCall(agentDef, resources, depth, parentRef, retryState, replyTo)
           else
             // ── v2 冻结式错误恢复（§3.3/§6.1 步骤 3）────────────────────────
