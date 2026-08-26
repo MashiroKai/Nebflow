@@ -528,7 +528,33 @@ class AllowedToolSetSpec extends FunSuite:
     )
     assert(allowed.contains("FlowExecute"), "Nebula keeps FlowExecute (#406)")
     assert(allowed.contains("Issue"), "Nebula keeps Issue (feedback collector)")
-    assert(allowed.contains("Read") && allowed.contains("Bash"), "base tools still present")
+    // #438 semantics correction (user ruling 2026-08-27): the six are NOT
+    // mechanism-fixed for Nebula — bare def (no declaration) must NOT have
+    // them; they live in the agent.json configurable region.
+    assert(!allowed.contains("Read"), "bare Nebula must not get Read (configurable region)")
+    assert(!allowed.contains("Bash"), "bare Nebula must not get Bash (configurable region)")
+    assert(!allowed.contains("Write") && !allowed.contains("Edit") &&
+      !allowed.contains("Glob") && !allowed.contains("Grep"),
+      "bare Nebula must not get any of the six")
+
+  test("#438: Nebula CAN declare the six in agent.json — declaration restores them"):
+    val defn = mkDef("Nebula", List("Read", "Grep", "Bash"))
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("Read") && allowed.contains("Grep") && allowed.contains("Bash"),
+      "declared six must be present for Nebula")
+    assert(allowed.contains("Delegate"), "orchestration fixed set unaffected by the declaration")
+
+  test("#438: the six stay mechanism-fixed for NON-Nebula agents — cannot be configured away"):
+    val solo = mkDef("someone", Nil)
+    val soloAllowed = CoreProbe.allowed(solo)
+    val six = Set("Read", "Write", "Edit", "Glob", "Grep", "Bash")
+    six.foreach(t => assert(soloAllowed.contains(t), s"mechanism-fixed six missing for standalone: $t"))
+    val team = mkDef("backend", Nil).copy(category = "team")
+    val teamAllowed = CoreProbe.allowed(team)
+    six.foreach(t => assert(teamAllowed.contains(t), s"mechanism-fixed six missing for team: $t"))
+    val flow = mkDef("node", Nil).copy(category = "flow")
+    val flowAllowed = CoreProbe.allowed(flow)
+    six.foreach(t => assert(flowAllowed.contains(t), s"mechanism-fixed six missing for flow: $t"))
 
   test("the 9 orchestration tools are NOT granted to ordinary standalone agents"):
     // Mechanism-fixed for Nebula ≠ auto-granted to everyone: a standalone agent
