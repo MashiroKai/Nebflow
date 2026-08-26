@@ -178,14 +178,19 @@ Use this after writing or editing team.json / flow.json files. Always loads the 
   private def validateFlowDag(flow: FlowDagDef): IO[Either[ToolError, String]] =
     for
       agents <- EntityLoader.listAgents()
-      agentNames = agents.keySet
-      errors = EntityLoader.validateFlow(flow, agentNames)
+      flowAgents <- EntityLoader.listFlowAgentNames(flow.name)
+      // #424: compile the DAG with the shared compiler frontend (E-0xx..E-3xx
+      // + agent existence). Predefined flows resolve node agents via
+      // loadFlowAgent = flow-local agents first, global fallback — the
+      // compiler's agentNames must cover both.
+      agentNames = agents.keySet ++ flowAgents
+      compileResult = nebflow.core.entity.FlowDagCompiler.validate(flow, agentNames)
     yield
-      if errors.nonEmpty then
+      if compileResult.rejected then
         Left(
           ToolError(
             s"""Flow '${flow.name}' validation failed:
-             |${errors.map("  - " + _).mkString("\n")}
+             |${compileResult.renderAll.split("\n").map("  - " + _).mkString("\n")}
              |
              |Fix the issues in flows/${flow.name}.json and Load again.""".stripMargin
           )

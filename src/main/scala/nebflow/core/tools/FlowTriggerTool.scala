@@ -159,24 +159,39 @@ Complementary to FlowExecute (not a transition): this tool runs FIXED predefined
                 flowOpt <- nebflow.core.entity.EntityLoader.loadFlow(flowName.get)
                 r <- flowOpt match
                   case Some(flowDef) =>
-                    validateFlowParams(flowDef.params, paramsInput) match
-                      case Left(err) =>
-                        IO.pure(Left(ToolError(s"Flow '${flowName.get}' params rejected: $err")))
-                      case Right(effectiveParams) =>
-                        for
-                          runnerRef <- sys.spawn(
-                            nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
-                            s"dag-runner-${flowName.get.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
-                          )
-                          _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(
-                            flowDef,
-                            prompt,
-                            callerRef,
-                            callerRoot,
-                            effectiveParams,
-                            callerSessionId = ctx.sessionId.getOrElse("")
-                          )).void
-                        yield Right(s"Flow '${flowName.get}' started. Result will be delivered when complete.")
+                    // #424: re-compile on trigger (flow.json may have been
+                    // edited externally) — same compiler frontend as
+                    // FlowExecuteTool; a broken DAG is rejected before any
+                    // node spawns. Predefined-flow nodes resolve via
+                    // loadFlowAgent (flow-local first, global fallback) —
+                    // agentNames covers both.
+                    for
+                      agents <- nebflow.core.entity.EntityLoader.listAgents()
+                      flowAgents <- nebflow.core.entity.EntityLoader.listFlowAgentNames(flowDef.name)
+                      compileResult = nebflow.core.entity.FlowDagCompiler.validate(flowDef, agents.keySet ++ flowAgents)
+                      r2 <-
+                        if compileResult.rejected then
+                          IO.pure(Left(ToolError(s"Flow '${flowName.get}' rejected:\n" + compileResult.renderAll)))
+                        else
+                          validateFlowParams(flowDef.params, paramsInput) match
+                            case Left(err) =>
+                              IO.pure(Left(ToolError(s"Flow '${flowName.get}' params rejected: $err")))
+                            case Right(effectiveParams) =>
+                              for
+                                runnerRef <- sys.spawn(
+                                  nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
+                                  s"dag-runner-${flowName.get.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
+                                )
+                                _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(
+                                  flowDef,
+                                  prompt,
+                                  callerRef,
+                                  callerRoot,
+                                  effectiveParams,
+                                  callerSessionId = ctx.sessionId.getOrElse("")
+                                )).void
+                              yield Right(s"Flow '${flowName.get}' started. Result will be delivered when complete.")
+                    yield r2
                   case None =>
                     IO.pure(Left(ToolError(s"Flow '${flowName.get}' not found")))
               yield r
