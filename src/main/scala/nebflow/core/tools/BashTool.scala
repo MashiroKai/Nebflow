@@ -571,7 +571,11 @@ Git safety:
           // #391 机制 D：CPU 判断对齐 CpuActiveThresholdNanos（10ms/30s 采样，
           // 与 shell.scala 前台 no-progress ceiling 同标准）——卡死进程的 CPU
           // 微消耗（Chrome 挂起 <10ms/30s）不再算「有进展」。
-          val cpuActive = (cpu - lastCpu) >= shell.CpuActiveThresholdNanos
+          // Strictly-greater (D-1 flake fix): macOS `ps` time quantizes to
+          // centiseconds — one quantum (10ms) EQUALS the threshold, so `>=`
+          // let a sleep process's startup quantum count as activity and touch
+          // lastActivityMs under load.
+          val cpuActive = (cpu - lastCpu) > shell.CpuActiveThresholdNanos
           val visible =
             alive && tick >= 2 && tick % 2 == 0 &&
               (lines > lastLines || cpuActive || tick >= 20)
