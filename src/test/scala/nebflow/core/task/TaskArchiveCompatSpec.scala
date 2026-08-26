@@ -256,8 +256,14 @@ class TaskArchiveCompatSpec extends FunSuite:
     assert(known.completedAt.isDefined)
     assertEquals(known.noteCount, 1)
     assert(known.hasLinks)
+    // #37: description/notes/events ride on the index entry
+    assertEquals(known.description, "d")
+    assertEquals(known.notes.map(_.content), List("done"))
+    assertEquals(known.notes.head.links, List("/x.md"))
+    assert(known.events.map(_.kind).contains("created"))
     val orphanEntry = entries.find(_.sessionId == orphan).get
     assertEquals(orphanEntry.folderId, None)
+    assertEquals(orphanEntry.description.nonEmpty, true) // legacy fixture S1 carries one
     // index file landed at the exact agreed path, and ONLY there
     assert(os.exists(tempRoot / "tasks" / "_index.json"))
   }
@@ -282,6 +288,54 @@ class TaskArchiveCompatSpec extends FunSuite:
     val v3 = TaskArchive.loadIndex().unsafeRunSync()
     assertEquals(v3.filter(_.sessionId == sid).length, 2)
     assertEquals(v3.filter(_.sessionId == "sess-other").length, 1)
+  }
+
+  // ===== R10 (#37): schema upgrade — description/notes/events backfill =====
+
+  test("R10: pre-#37 index (no description key) is rebuilt once with new fields backfilled") {
+    val sid = "sess-upg"
+    val id1 = FileTaskStore.create(sid, TaskCreateInput("t", "the description")).unsafeRunSync()
+    FileTaskStore.update(sid, id1, TaskUpdateInput(note = Some("note one"))).unsafeRunSync()
+    // hand-write a pre-#37 index: old 13-field shape, no description/notes/events keys
+    val stale = s"""[{"sessionId":"$sid","folderId":null,"folderName":null,"sessionName":null,"taskId":"$id1","subject":"WRONG SUBJECT","status":"pending","createdAt":null,"updatedAt":null,"completedAt":null,"noteCount":0,"hasLinks":false}]"""
+    os.makeDir.all(tempRoot / "tasks")
+    os.write(tempRoot / "tasks" / "_index.json", stale)
+
+    val upgraded = TaskArchive.ensureUpgraded(_ => IO.pure(TaskArchive.SessionJoin(Some("f"), Some("proj"), Some("s-name")))).unsafeRunSync()
+    assertEquals(upgraded.length, 1)
+    val e = upgraded.head
+    // backfilled from the task JSON on disk, not the stale index
+    assertEquals(e.subject, "t")
+    assertEquals(e.description, "the description")
+    assertEquals(e.notes.map(_.content), List("note one"))
+    assertEquals(e.folderName, Some("proj"))
+    // disk index rewritten in the new schema (key present for future guards)
+    val onDisk = io.circe.parser.decode[List[io.circe.Json]](os.read(tempRoot / "tasks" / "_index.json")).toOption.get
+    assert(onDisk.head.asObject.get.contains("description"))
+  }
+
+  test("R10: post-#37 index is left as-is (guard is a no-op, join not consulted)") {
+    val sid = "sess-fresh"
+    val id1 = FileTaskStore.create(sid, TaskCreateInput("t", "d")).unsafeRunSync()
+    TaskArchive.refreshSession(sid, _ => TaskArchive.Unclassified).unsafeRunSync()
+    val before = os.read(tempRoot / "tasks" / "_index.json")
+    val out = TaskArchive.ensureUpgraded(_ => IO.pure(TaskArchive.Unclassified)).unsafeRunSync()
+    assertEquals(out.length, 1)
+    assertEquals(os.read(tempRoot / "tasks" / "_index.json"), before) // byte-identical, no rewrite
+  }
+
+  test("R10: legitimately empty description (key present) does not retrigger rebuild") {
+    val sid = "sess-emptydesc"
+    val id1 = FileTaskStore.create(sid, TaskCreateInput("t", "")).unsafeRunSync()
+    // build the index in the NEW schema first — refreshSession emits description:"" (key present)
+    TaskArchive.refreshSession(sid, _ => TaskArchive.Unclassified).unsafeRunSync()
+    val first = TaskArchive.loadIndex().unsafeRunSync()
+    assertEquals(first.head.description, "")
+    // key-based guard: empty VALUE must not retrigger — no rebuild, no drift
+    val before = os.read(tempRoot / "tasks" / "_index.json")
+    val second = TaskArchive.ensureUpgraded(_ => IO.pure(TaskArchive.Unclassified)).unsafeRunSync()
+    assertEquals(second.head.description, "")
+    assertEquals(os.read(tempRoot / "tasks" / "_index.json"), before)
   }
 
   // ===== R9: wire format only grows =====

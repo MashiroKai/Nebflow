@@ -522,7 +522,23 @@ class WebSocketRoutes(
         val status = req.params.get("status").getOrElse("")
         val keyword = req.params.get("keyword").getOrElse("").toLowerCase
         val limit = req.params.get("limit").flatMap(_.toIntOption).getOrElse(100).max(1).min(500)
-        nebflow.core.task.TaskArchive.loadIndex().flatMap { entries =>
+        // #37 archive gap: description/notes/events now travel on index entries.
+        // ensureUpgraded backfills a pre-#37 index once (full rebuild, real
+        // session joins); afterwards it's a cheap no-op guard.
+        val joinFor: String => IO[nebflow.core.task.TaskArchive.SessionJoin] = sid =>
+          sessionStore
+            .getSessionMeta(sid)
+            .map {
+              case Some(meta) =>
+                nebflow.core.task.TaskArchive.SessionJoin(
+                  meta.folderId,
+                  meta.folderId.flatMap(sessionStore.getFolderName),
+                  Some(meta.name)
+                )
+              case None => nebflow.core.task.TaskArchive.Unclassified
+            }
+            .handleErrorWith(_ => IO.pure(nebflow.core.task.TaskArchive.Unclassified))
+        nebflow.core.task.TaskArchive.ensureUpgraded(joinFor).flatMap { entries =>
           val filtered = entries
             .filter(e => folderId.isEmpty || e.folderId.contains(folderId))
             .filter(e => status.isEmpty || e.status == status)
@@ -550,7 +566,10 @@ class WebSocketRoutes(
               "completedAt" -> e.completedAt.asJson,
               "noteCount" -> e.noteCount.asJson,
               "hasLinks" -> e.hasLinks.asJson,
-              "cancelReason" -> e.cancelReason.asJson
+              "cancelReason" -> e.cancelReason.asJson,
+              "description" -> e.description.asJson,
+              "notes" -> e.notes.asJson,
+              "events" -> e.events.asJson
             )
           }
           Ok(io.circe.Json.arr(arr*), org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))

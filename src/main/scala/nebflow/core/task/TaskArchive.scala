@@ -45,7 +45,14 @@ object TaskArchive:
     /** task-cancel #35: why the task was cancelled (user path). The archive
       * view renders it as the dedicated cancel-reason slot; absent for
       * non-cancelled tasks and for agent-path cancels (reason lives in notes). */
-    cancelReason: Option[String] = None
+    cancelReason: Option[String] = None,
+    /** #37 archive gap: the archive view renders the task description and the
+      * notes/events streams directly from index entries. Defaulted so
+      * pre-#37 index files decode with zero migration (empty until the
+      * one-time ensureUpgraded rebuild backfills them). */
+    description: String = "",
+    notes: List[TaskNote] = Nil,
+    events: List[TaskEvent] = Nil
   )
 
   object IndexEntry:
@@ -100,7 +107,10 @@ object TaskArchive:
               completedAt = t.completedAt,
               noteCount = t.notes.size,
               hasLinks = t.notes.exists(_.links.nonEmpty),
-              cancelReason = t.cancelReason
+              cancelReason = t.cancelReason,
+              description = t.description,
+              notes = t.notes,
+              events = t.events
             )
           }
         }
@@ -115,6 +125,39 @@ object TaskArchive:
     sessionIds.traverse(entriesForSession(_, join)).map(_.flatten)
   }.flatMap { entries =>
     writeIndex(entries).as(entries)
+  }
+
+  /**
+   * One-time schema upgrade for pre-#37 index files (no description/notes/
+   * events keys): detect via KEY presence — value-independent, because a
+   * legitimately empty description must not retrigger rebuilds. When stale,
+   * rebuild the whole index from task JSONs so historical archives get the
+   * new fields backfilled immediately (incremental refreshSession would only
+   * backfill sessions that happen to mutate). Cheap guard afterwards: the
+   * key exists, so this is a single file read that returns false.
+   */
+  def ensureUpgraded(joinFor: String => IO[SessionJoin]): IO[List[IndexEntry]] =
+    indexNeedsUpgrade.flatMap {
+      case false => loadIndex()
+      case true =>
+        loadIndex().flatMap { stale =>
+          val sids = stale.map(_.sessionId).distinct
+          sids.traverse(sid => joinFor(sid).map(sid -> _)).map(_.toMap).flatMap { joins =>
+            val join: String => SessionJoin = sid => joins.getOrElse(sid, Unclassified)
+            rebuildIndex(join).flatMap(_ => loadIndex())
+          }
+        }.flatTap { fresh =>
+          logger.info(s"Task index upgraded to #37 schema: ${fresh.length} entries rebuilt")
+        }
+    }
+
+  private def indexNeedsUpgrade: IO[Boolean] = IO.blocking {
+    if !os.exists(indexPath) then false
+    else
+      decode[List[io.circe.Json]](os.read(indexPath)).toOption.exists { list =>
+        // first entry-shaped object missing the new key ⇒ pre-#37 schema
+        list.find(_.asObject.exists(_.contains("taskId"))).exists(!_.asObject.exists(_.contains("description")))
+      }
   }
 
   /**
