@@ -998,14 +998,33 @@ private[agent] trait AgentCore:
     state: AgentState,
     call: ToolCall
   ): IO[PermissionDecision] =
-    resources.permissionPolicies.get.map { policies =>
+    resources.permissionPolicies.get.flatMap { policies =>
       val rootSid = Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
-      val policy = policies.getOrElse(rootSid, PermissionPolicy.default)
-      if policy.deny.contains(call.name) then PermissionDecision.Deny
-      else if policy.allow.contains(call.name) then PermissionDecision.Allow
-      else if ToolReversibility.isReversible(call.name, call.input, policy.safetyMode) then PermissionDecision.Allow
-      else PermissionDecision.Ask
+      // F1 (#433): a bucket miss no longer silently falls back to the
+      // hardcoded ConfirmEdits default — background agents (Mail-activated
+      // team members, flow nodes, restored zombies) resolve the GLOBAL
+      // safety mode from nebflow.json `safety.defaultMode` instead, so a
+      // user-set global auto-all reaches every session source (I1/I2).
+      policies.get(rootSid) match
+        case Some(policy) =>
+          IO.pure(decide(policy, call))
+        case None =>
+          val permLogger = nebflow.core.NebflowLogger.forName("nebflow.agent.permissions")
+          nebflow.core.GlobalSafety.defaultMode.flatMap { mode =>
+            permLogger
+              .warn(
+                s"permission bucket miss for rootSid=${rootSid.take(8)} — falling back to global safety mode " +
+                  s"${nebflow.core.SafetyMode.toString(mode)} (#433 F1)"
+              )
+              .as(decide(nebflow.agent.PermissionPolicy(safetyMode = mode), call))
+          }
     }
+
+  private def decide(policy: PermissionPolicy, call: ToolCall): PermissionDecision =
+    if policy.deny.contains(call.name) then PermissionDecision.Deny
+    else if policy.allow.contains(call.name) then PermissionDecision.Allow
+    else if ToolReversibility.isReversible(call.name, call.input, policy.safetyMode) then PermissionDecision.Allow
+    else PermissionDecision.Ask
 
   private def askUserPermission(
     call: ToolCall,

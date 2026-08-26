@@ -835,4 +835,7 @@ export default {
   'usage.legend.hitRate': '— · 25% · 50% · 75% · 100%',
   'usage.weekLabel': '较上周 {dir}{pct}%',
   'usage.noData': '—',
+  'perm.fallbackTitle': '{agent} 请求权限（目标会话不可达）',
+  'perm.fallbackApprove': '允许',
+  'perm.fallbackDeny': '拒绝',
 };

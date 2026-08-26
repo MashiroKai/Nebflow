@@ -190,8 +190,17 @@ class RestApiRoutes(
           val name = body.hcursor.downField("name").as[String].getOrElse("New Session")
           val agentName = body.hcursor.downField("agentName").as[Option[String]].getOrElse(None)
           val folderId = body.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
-          sessionStore.createSession(name, agentName = agentName, folderId = folderId).flatMap { meta =>
-            Ok(meta.asJson)
+          // F1 (#433): new sessions inherit the GLOBAL safety mode instead of
+          // the hardcoded confirm-edits — a global auto-all must reach e2e/
+          // temp/secondary sessions too, otherwise their permission buckets
+          // seed restrictive and background agents hit invisible walls.
+          nebflow.core.GlobalSafety.defaultMode.flatMap { mode =>
+            sessionStore
+              .createSession(name, agentName = agentName, folderId = folderId,
+                safetyMode = nebflow.core.SafetyMode.toString(mode))
+              .flatMap { meta =>
+                Ok(meta.asJson)
+              }
           }
         }
       }
