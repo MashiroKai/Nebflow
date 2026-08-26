@@ -72,6 +72,7 @@ class RestApiRoutes(
             Json.obj("status" -> "down".asJson, "reason" -> reason.asJson, "since" -> since.asJson)
         resp <- Ok(
           Json.obj(
+            "product" -> "nebflow".asJson, // single-instance guard identification
             "status" -> "ok".asJson,
             "version" -> nebflow.Version.string.asJson,
             "providers" -> providers.asJson,
