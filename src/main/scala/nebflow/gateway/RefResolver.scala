@@ -21,6 +21,27 @@ import io.circe.Json
  */
 object RefResolver:
 
+  /** QC follow-up (#303): every client-provided string interpolated into the
+    * block passes through sanitize — strip control chars (\n \r \t, C0/C1,
+    * U+2028/U+2029) so a crafted title from an external source (web page
+    * title, canvas doc) cannot forge extra injection lines such as a fake
+    * [打回任务…] block. Spaces are preserved (legitimate in paths/titles). */
+  def sanitize(s: String): String =
+    s.filter(ch => ch >= ' ' && ch != '\u007F' && ch != '\u2028' && ch != '\u2029')
+
+  /** Titles are the only free-text field with no length bound of its own —
+    * cap at 80 chars to honor the ≤ ~100 token pointer budget (D5). */
+  def cleanTitle(s: String): String =
+    val t = sanitize(s)
+    if t.length <= 80 then t else t.take(80)
+
+  /** QC follow-up (#303): the same task referenced twice (double-pushed refs
+    * or legacy+unified duplicate) must fire the return flow once — the second
+    * `return` would hit IllegalStateException (task already in_progress) and
+    * emit a spurious taskError frame. First occurrence wins, order stable. */
+  def dedupeTaskRefs(refs: List[(String, String)]): List[(String, String)] =
+    refs.distinct
+
   /** Build the [引用: …] injection block, or None when the ref cannot be
     * resolved (unknown refType / missing identity). Pure — no IO, no state. */
   def resolve(ref: Json): Option[String] =
@@ -30,26 +51,30 @@ object RefResolver:
     val anchor = c.downField("anchor")
     refType match
       case "file" =>
-        val path = src.downField("path").as[String].getOrElse("")
+        val path = sanitize(src.downField("path").as[String].getOrElse(""))
         if path.isEmpty then None
         else
-          val title = src.downField("title").as[String]
-            .orElse(src.downField("fileName").as[String])
-            .getOrElse(fileNameOf(path))
+          val title = cleanTitle(
+            src.downField("title").as[String]
+              .orElse(src.downField("fileName").as[String])
+              .getOrElse(fileNameOf(path))
+          )
           Some(s"[引用: 文件 · $title${anchorText(anchor)} · $path]")
       case "document" =>
-        val path = src.downField("path").as[String].getOrElse("")
+        val path = sanitize(src.downField("path").as[String].getOrElse(""))
         if path.isEmpty then None
         else
-          val title = src.downField("title").as[String]
-            .orElse(src.downField("fileName").as[String])
-            .getOrElse(fileNameOf(path))
+          val title = cleanTitle(
+            src.downField("title").as[String]
+              .orElse(src.downField("fileName").as[String])
+              .getOrElse(fileNameOf(path))
+          )
           Some(s"[引用: 文档 · $title${anchorText(anchor)} · $path]")
       case "html-element" =>
-        val url = src.downField("url").as[String].getOrElse("")
+        val url = sanitize(src.downField("url").as[String].getOrElse(""))
         if url.isEmpty then None
         else
-          val title = src.downField("title").as[String].getOrElse(url)
+          val title = cleanTitle(src.downField("title").as[String].getOrElse(url))
           Some(s"[引用: 页面元素 · $title${anchorText(anchor)} · $url]")
       case _ => None // "task" → return flow (processTaskReturns); unknown → skip
 
@@ -74,8 +99,8 @@ object RefResolver:
             s" · L$s$suffix"
           case None => ""
       case "cell" =>
-        val sheet = anchor.downField("sheet").as[String].getOrElse("")
-        val rng = anchor.downField("cellRange").as[String].getOrElse("")
+        val sheet = sanitize(anchor.downField("sheet").as[String].getOrElse(""))
+        val rng = sanitize(anchor.downField("cellRange").as[String].getOrElse(""))
         if sheet.nonEmpty then s" · $sheet!$rng" else ""
       case "element" =>
         anchor.downField("selector").as[String].toOption
