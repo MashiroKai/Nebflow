@@ -71,11 +71,20 @@ object RefResolver:
           )
           Some(s"[引用: 文档 · $title${anchorText(anchor)} · $path]")
       case "html-element" =>
+        // B6-A9 seam fix: local-file canvas pages carry identity in source.path
+        // (url empty) — mirror file/document instead of url-only. URL pages keep
+        // the original behavior; only both-empty is unresolvable (fail-open).
         val url = sanitize(src.downField("url").as[String].getOrElse(""))
-        if url.isEmpty then None
+        val path = sanitize(src.downField("path").as[String].getOrElse(""))
+        val loc = if url.nonEmpty then url else path
+        if loc.isEmpty then None
         else
-          val title = cleanTitle(src.downField("title").as[String].getOrElse(url))
-          Some(s"[引用: 页面元素 · $title${anchorText(anchor)} · $url]")
+          val title = cleanTitle(
+            src.downField("title").as[String]
+              .orElse(src.downField("fileName").as[String])
+              .getOrElse(if url.nonEmpty then url else fileNameOf(path))
+          )
+          Some(s"[引用: 页面元素 · $title${anchorText(anchor)} · $loc]")
       case _ => None // "task" → return flow (processTaskReturns); unknown → skip
 
   /** Anchor summary " · p.3–4" / " · L12–45" / " · Sheet1!A1:D10" / " · <p>"
