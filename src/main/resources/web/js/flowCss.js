@@ -452,7 +452,12 @@ export const FLOW_CSS = `
   scrollbar-color: var(--color-frame-border) transparent;
 }
 .solar-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.solar-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.06); border-radius: 4px; }
 .solar-scroll::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+.solar-scroll::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+@media (prefers-color-scheme: dark) {
+  .solar-scroll::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
+}
 
 /* Canvas: absolute-positioned nodes + SVG edges */
 .solar-canvas { position: relative; margin: 0 auto; }
