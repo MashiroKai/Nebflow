@@ -129,4 +129,48 @@ class FlowExecuteToolSpec extends FunSuite:
     assert(res.isLeft, "no resources in unit context — expected spawn-gate rejection")
     assertEquals(res.swap.toOption.get.message, "Cannot start flow: missing resources")
 
+  // ── #424 compile-time rejection (0 spawn / 0 token) ────────────────────
+  // A rejected DAG returns the [E-<code>] error synchronously from the tool
+  // call — it never reaches the spawn gate ("Cannot start flow") and no
+  // runner/node is created (the E2E smoke asserts 0 spawn / 0 flowStarted).
+
+  test("E-101: static node with {{item}} is rejected at submit time (v4 join accident)"):
+    val bad = Json.obj(
+      "prompt" -> "x".asJson,
+      "name" -> "bad101".asJson,
+      "description" -> "d".asJson,
+      "entry" -> "a".asJson,
+      "nodes" -> Json.obj(
+        "a" -> Json.obj("agent" -> "Nebula".asJson, "input" -> "{{item}}".asJson, "onComplete" -> "$return".asJson)
+      )
+    )
+    val res = call(bad)
+    assert(res.isLeft)
+    assert(res.swap.toOption.get.message.contains("[E-101]"), res.swap.toOption.get.message)
+    assert(!res.swap.toOption.get.message.contains("Cannot start flow"), "must not reach the spawn gate")
+
+  test("E-201: undeclared slots reference is rejected at submit time (redo accident)"):
+    val bad = Json.obj(
+      "prompt" -> "x".asJson,
+      "name" -> "bad201".asJson,
+      "description" -> "d".asJson,
+      "entry" -> "qa".asJson,
+      "nodes" -> Json.obj(
+        "qa" -> Json.obj("agent" -> "Nebula".asJson, "input" -> "$task".asJson, "onComplete" -> "judge".asJson),
+        "judge" -> Json.obj("agent" -> "Nebula".asJson, "input" -> "$task".asJson, "onComplete" -> "redo".asJson),
+        "redo" -> Json.obj("agent" -> "Nebula".asJson, "input" -> "$judge.slots.failBlocks".asJson, "onComplete" -> "$return".asJson)
+      )
+    )
+    val res = call(bad)
+    assert(res.isLeft)
+    assert(res.swap.toOption.get.message.contains("[E-201]"), res.swap.toOption.get.message)
+    assert(!res.swap.toOption.get.message.contains("Cannot start flow"), "must not reach the spawn gate")
+
+  test("E-017: missing name is rejected at submit time (D4 — no silent 'dynamic-flow')"):
+    val noName = Json.fromJsonObject(validDag.asObject.get.remove("name"))
+    val res = call(noName)
+    assert(res.isLeft)
+    assert(res.swap.toOption.get.message.contains("[E-017]"), res.swap.toOption.get.message)
+    assert(!res.swap.toOption.get.message.contains("Cannot start flow"), "must not reach the spawn gate")
+
 end FlowExecuteToolSpec

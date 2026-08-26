@@ -223,6 +223,17 @@ object EntityLoader:
           .foldLeft(Map.empty[String, AgentEntry])(_ ++ _)
     }
 
+  /** Agent names declared under flows/<flowName>/agents/ — flow-local agents
+    * that loadFlowAgent resolves BEFORE falling back to the global library.
+    * #424: predefined-flow compilation (LoadTool/FlowTriggerTool) must accept
+    * these as valid, so callers merge them into the compiler's agentNames. */
+  def listFlowAgentNames(flowName: String): IO[Set[String]] =
+    IO.blocking {
+      val dir = flowsDir / flowName / "agents"
+      if !os.exists(dir) then Set.empty
+      else os.list(dir).filter(os.isDir).map(_.last).toSet
+    }
+
   /** Infer agent category from team/flow membership. */
   def classifyAgent(name: String, teams: Map[String, TeamDef], flows: Map[String, FlowDagDef]): String =
     val inTeam = teams.values.exists(t => t.lead == name || t.members.contains(name))

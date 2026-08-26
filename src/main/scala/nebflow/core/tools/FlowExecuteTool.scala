@@ -146,8 +146,10 @@ Without a verdict a switch node FAILS the flow (strictVerdict).
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val prompt = input("prompt").flatMap(_.asString).getOrElse("")
+    // E-017 (D4): a non-empty display name is required — pass "" so the
+    // compiler rejects a missing name instead of silently defaulting it.
     val flowJson = Json.obj(
-      "name" -> input("name").getOrElse(Json.fromString("dynamic-flow")),
+      "name" -> input("name").getOrElse(Json.fromString("")),
       "description" -> input("description").getOrElse(Json.fromString("")),
       "nodes" -> input("nodes").getOrElse(Json.fromJsonObject(JsonObject.empty)),
       "entry" -> input("entry").getOrElse(Json.Null),
@@ -166,48 +168,45 @@ Without a verdict a switch node FAILS the flow (strictVerdict).
         case Left(err) =>
           IO.pure(Left(ToolError(s"Invalid flow definition: ${err.getMessage}")))
         case Right(flowDef) =>
-          // 1. Structural validation — identical rules to predefined flows.
-          val structureErrors = FlowStructure.validate(flowDef)
-          if structureErrors.nonEmpty then
-            IO.pure(Left(ToolError(s"Flow '${flowDef.name}' rejected:\n" + structureErrors.mkString("\n"))))
-          else
-            // 2. Agent-existence validation — dynamic flows resolve node agents
-            // from the GLOBAL library only (never flows/<name>/agents/).
-            nebflow.core.entity.EntityLoader.listAgents().flatMap { agents =>
-              val agentErrors =
-                nebflow.core.entity.EntityLoader.validateFlow(flowDef, agents.keySet)
-              if agentErrors.nonEmpty then
-                IO.pure(Left(ToolError(s"Flow '${flowDef.name}' rejected:\n" + agentErrors.mkString("\n"))))
-              else
-                // 3. Spawn the one-shot runner (dynamic=true: inline instance id,
-                // global-only agent resolution, no flows/ dir write).
-                (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
-                  case (Some(resources), Some(sys), Some(callerRef)) =>
-                    for
-                      // Resolve the caller's root session so flow nodes inherit
-                      // the same permission policy and render interactions in
-                      // the caller's window (mirrors FlowTriggerTool).
-                      callerRoot <- ctx.sessionId match
-                        case Some(sid) =>
-                          resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
-                        case None => IO.pure("")
-                      runnerRef <- sys.spawn(
-                        nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
-                        s"dag-inline-${java.util.UUID.randomUUID().toString.take(8)}"
-                      )
-                      _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(
-                        flowDef,
-                        prompt,
-                        callerRef,
-                        callerRoot,
-                        Map.empty,
-                        dynamic = true,
-                        callerSessionId = ctx.sessionId.getOrElse("")
-                      )).void
-                    yield Right(s"Flow '${flowDef.name}' started (dynamic). Result will be delivered when complete.")
-                  case _ =>
-                    IO.pure(Left(ToolError("Cannot start flow: missing resources")))
-            }
+          // 1. Compile-time validation (#424) — the compiler frontend: syntax
+          // (E-0xx) → placeholders (E-1xx) → references (E-2xx) → types (E-3xx)
+          // → agents, all statically-detectable errors caught HERE, 0 spawn /
+          // 0 token. Combines FlowStructure.validate (E-208..E-212) and the
+          // agent-existence check (E-401); a rejected DAG never spawns a node.
+          nebflow.core.entity.EntityLoader.listAgents().flatMap { agents =>
+            val compileResult = nebflow.core.entity.FlowDagCompiler.validate(flowDef, agents.keySet)
+            if compileResult.rejected then
+              IO.pure(Left(ToolError(s"Flow '${flowDef.name}' rejected:\n" + compileResult.renderAll)))
+            else
+              // 2. Spawn the one-shot runner (dynamic=true: inline instance id,
+              // global-only agent resolution, no flows/ dir write).
+              (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
+                case (Some(resources), Some(sys), Some(callerRef)) =>
+                  for
+                    // Resolve the caller's root session so flow nodes inherit
+                    // the same permission policy and render interactions in
+                    // the caller's window (mirrors FlowTriggerTool).
+                    callerRoot <- ctx.sessionId match
+                      case Some(sid) =>
+                        resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+                      case None => IO.pure("")
+                    runnerRef <- sys.spawn(
+                      nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
+                      s"dag-inline-${java.util.UUID.randomUUID().toString.take(8)}"
+                    )
+                    _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(
+                      flowDef,
+                      prompt,
+                      callerRef,
+                      callerRoot,
+                      Map.empty,
+                      dynamic = true,
+                      callerSessionId = ctx.sessionId.getOrElse("")
+                    )).void
+                  yield Right(s"Flow '${flowDef.name}' started (dynamic). Result will be delivered when complete.")
+                case _ =>
+                  IO.pure(Left(ToolError("Cannot start flow: missing resources")))
+          }
     end if
   end call
 
