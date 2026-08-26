@@ -38,6 +38,22 @@ object LlmInterface:
     * MUST reset it to None in a finally. */
   private[llm] var streamInactivityOverride: Option[(FiniteDuration, FiniteDuration)] = None
 
+  /** Flow-node supervision P3 (2026-08-26): apply llm.streamTimeouts config
+    * overrides (boot-time, from GatewayMain). Each window is independently
+    * optional — unspecified windows keep the Defaults value. Not a test hook:
+    * this is the production config entry point (tests keep using the raw vars). */
+  def applyStreamTimeouts(
+    firstTokenSec: Option[Int],
+    inactivitySec: Option[Int],
+    noProgressSec: Option[Int]
+  ): Unit =
+    if firstTokenSec.isDefined || inactivitySec.isDefined then
+      streamInactivityOverride = Some((
+        firstTokenSec.map(_.seconds).getOrElse(Defaults.LlmFirstTokenTimeoutSec.seconds),
+        inactivitySec.map(_.seconds).getOrElse(Defaults.LlmStreamInactivitySec.seconds)
+      ))
+    noProgressTimeoutOverride = noProgressSec.map(_.seconds)
+
   // ── In-flight LLM request registry (shutdown abort, Task 2 2026-08-19) ──
   // Every active sendStream registers an abort signal here; a JVM shutdown
   // hook (Main.startGateway) and the GatewayMain graceful-cleanup guarantee
@@ -147,14 +163,24 @@ object LlmInterface:
    */
   private[llm] def inactivityTimeout[O](
     firstToken: FiniteDuration,
-    subsequent: FiniteDuration
+    subsequent: FiniteDuration,
+    transientPhase2: Boolean = false
   ): fs2.Pipe[IO, O, O] =
     val firstEx = new java.util.concurrent.TimeoutException(
       s"LLM stream: no response within ${firstToken.toSeconds}s"
     )
-    val inactEx = new java.util.concurrent.TimeoutException(
-      s"LLM stream inactive for ${subsequent.toSeconds}s"
-    )
+    // Phase-2 exception shape depends on the caller (flow-node supervision P1):
+    //  - per-provider stream watchdog (transientPhase2=true): StreamInactivityTimeout
+    //    → Transient. A mid-stream stall is upstream jitter, not a dead provider.
+    //  - whole-stream 600s no-progress guard (default): plain TimeoutException
+    //    → Permanent. A system-level hang must keep the strict fail-fast path.
+    val phase2Ex: Long => Throwable =
+      if transientPhase2 then { age =>
+        StreamInactivityTimeout(age, s"LLM stream inactive for ${subsequent.toSeconds}s")
+      }
+      else { _ =>
+        new java.util.concurrent.TimeoutException(s"LLM stream inactive for ${subsequent.toSeconds}s")
+      }
     in =>
       fs2.Stream.eval(IO.ref(System.currentTimeMillis())).flatMap { lastActivity =>
         fs2.Stream.eval(IO.ref(false)).flatMap { gotFirst =>
@@ -166,15 +192,17 @@ object LlmInterface:
             .awakeEvery[IO](checkInterval)
             .evalMap { _ =>
               IO(System.currentTimeMillis()).flatMap { now =>
-                lastActivity.get.flatMap { last =>
-                  gotFirst.get.flatMap { first =>
-                    val (limit, ex) =
-                      if first then (subsequent.toMillis, inactEx)
-                      else (firstToken.toMillis, firstEx)
-                    if now - last > limit then IO.raiseError(ex)
-                    else IO.unit
-                  }
-                }
+                    lastActivity.get.flatMap { last =>
+                      gotFirst.get.flatMap { first =>
+                        val now2 = now
+                        if first then
+                          val age = now2 - last
+                          if age > subsequent.toMillis then IO.raiseError(phase2Ex(age))
+                          else IO.unit
+                        else if now2 - last > firstToken.toMillis then IO.raiseError(firstEx)
+                        else IO.unit
+                      }
+                    }
               }
             }
             .drain
@@ -507,11 +535,14 @@ object LlmInterface:
                                       )
                                     )
                                     )
-                                  )
+                                   )
                                   (stream
                                     // Per-provider two-phase watchdog: detects both
                                     // dead connections (no first token) and mid-stream stalls.
                                     // Applied per-provider so a timeout on one allows fallback.
+                                    // transientPhase2=true: a mid-stream stall (phase 2) raises
+                                    // StreamInactivityTimeout → Transient (upstream jitter, the
+                                    // turn can be retried from a clean checkpoint).
                                     .through(
                                       inactivityTimeout(
                                         streamInactivityOverride
@@ -519,7 +550,8 @@ object LlmInterface:
                                           .getOrElse(Defaults.LlmFirstTokenTimeoutSec.seconds),
                                         streamInactivityOverride
                                           .map(_._2)
-                                          .getOrElse(Defaults.LlmStreamInactivitySec.seconds)
+                                          .getOrElse(Defaults.LlmStreamInactivitySec.seconds),
+                                        transientPhase2 = true
                                       )
                                     )
                                     .evalTap { chunk =>

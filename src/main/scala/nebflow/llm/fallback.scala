@@ -115,6 +115,14 @@ object Fallback:
         // the full context the watcher just tried to stop burning). Abort the
         // whole stream; the agent's bounded turn-retry loop takes over.
         ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Fatal, message = Some(e.getMessage))
+      case e: StreamInactivityTimeout =>
+        // Flow-node supervision P1 (2026-08-26): a phase-2 mid-stream stall is
+        // upstream jitter, not a dead provider — Transient so the agent layer
+        // can retry the turn from a clean checkpoint (within MaxTurnLlmCalls).
+        // firstToken timeouts and the 600s whole-stream no-progress guard stay
+        // Permanent (typed TimeoutException below) — those mean dead provider /
+        // system-level hang, the strict fail-fast path is correct for them.
+        ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(e.getMessage))
       case _: java.util.concurrent.TimeoutException =>
         ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Permanent, message = Some("timeout"))
       case _ =>
