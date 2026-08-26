@@ -3,12 +3,22 @@ name: Auto Release
 on:
   push:
     branches: [release]
+  workflow_dispatch:
+    # #437: pollution-free E2E verification of the packaging matrix — dry_run
+    # (default) runs build+test+all three packagers but SKIPS tag/release/
+    # COS/version-sync. Set dry_run=false only for a real release-equivalent
+    # run on a repo where that is intended.
+    inputs:
+      dry_run:
+        description: 'Skip tag/release/COS/version-sync (verification only)'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
 env:
-  SBT_OPTS: "-Xms512m -Xmx2g"
+  SBT_OPTS: "-Xms512m -Xmx3g"
   COURSIER_REPOSITORIES: "ivy2Local|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2"
 
 jobs:
@@ -205,7 +215,7 @@ jobs:
   release:
     name: Tag, Release & Mirror
     needs: [build-jar, package-macos, package-windows, package-linux]
-    if: needs.build-jar.outputs.skipped == 'false'
+    if: needs.build-jar.outputs.skipped == 'false' && inputs.dry_run != true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -258,6 +268,10 @@ jobs:
           COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
           COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
         run: |
+          if [ -z "$COS_SECRET_ID" ] || [ -z "$COS_SECRET_KEY" ]; then
+            echo "::warning::COS secrets absent — China mirror NOT updated (GitHub Release is the primary source)"
+            exit 0
+          fi
           pip install coscmd 2>/dev/null
           coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b "$COS_BUCKET" -e cos.accelerate.myqcloud.com
           for f in release-assets/*; do

@@ -54,6 +54,19 @@ irm https://nebflow.space/install.ps1 | iex
 
 The installer automatically detects and installs Java 17+, Git for Windows (on Windows), and ripgrep if they are not already available.
 
+### Desktop App
+
+Prebuilt desktop installers (bundled JRE, self-contained — no Java install needed) are published on the [GitHub Releases](https://github.com/MashiroKai/Nebflow/releases) page for every release:
+
+- `Nebflow-<version>-arm64.dmg` — macOS Apple Silicon
+- `Nebflow-<version>-x64.dmg` — macOS Intel
+- `Nebflow-<version>-x64.msi` — Windows
+- `Nebflow-<version>-x64.deb` — Linux (Debian/Ubuntu)
+
+> **Unsigned binaries (zero-budget signing policy):** the installers are not code-signed and not notarized.
+> - **macOS Gatekeeper** will block the first launch — right-click the app → *Open* → *Open* in the dialog (or System Settings → Privacy & Security → *Open Anyway*).
+> - **Windows SmartScreen** may show "Windows protected your PC" — click *More info* → *Run anyway*.
+
 ### Uninstall
 
 ```bash
