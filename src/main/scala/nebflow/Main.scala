@@ -87,23 +87,72 @@ object Main extends IOApp:
 
     ProcessManager.readPid() match
       case Some(pid) if ProcessManager.isRunning(pid) =>
-        IO.println(s"nebflow is already running (pid: $pid)") *>
-          IO.println("Run 'nebflow stop' to stop it.") *>
-          IO.pure(ExitCode.Error)
+        // PID fast path (same home). Port-level URL is probed best-effort so
+        // the focus action opens the live instance even when the pid file's
+        // port assumption differs (--port override on the running instance).
+        for
+          cfg <- nebflow.gateway.GatewayConfig.load
+          state = pidFocusState(cfg)
+          _ <- state match
+            case Some(url) =>
+              nebflow.cli.SingleInstanceGuard.focusExisting(
+                url,
+                s"pid $pid",
+                openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
+              )
+            case None =>
+              IO.println(s"nebflow is already running (pid: $pid)") *>
+                IO.println("Run 'nebflow stop' to stop it.")
+          // Focusing an existing instance is a success exit — the desktop
+          // .app relaunch must not look like a crash (stdout is discarded
+          // there; the browser focus is the visible action).
+        yield ExitCode.Success
       case _ =>
-        val pid = java.lang.ProcessHandle.current().pid()
-        ProcessManager.writePid(pid)
-        // JVM shutdown hook as backup — ensures PID file cleanup even on SIGINT/SIGTERM
-        Runtime.getRuntime.addShutdownHook(new Thread(() => ProcessManager.removePid()))
-        // P0 (2026-08-19): Ctrl+C left in-flight LLM HTTP requests running while
-        // the JVM drained — a token-burn path (2亿 token 事故潜在路径). Abort
-        // every active FS2/sttp stream on shutdown so no request continues past
-        // the hook. Idempotent + exception-safe (runs on IORuntime.global).
-        Runtime.getRuntime.addShutdownHook(
-          new Thread(() => nebflow.llm.LlmInterface.cancelAllInflightSync())
-        )
-        nebflow.gateway.GatewayMain.run
-          .guarantee(IO.blocking(ProcessManager.removePid()))
-          .as(ExitCode.Success)
-  end startGateway
+        // Port-level guard (2026-08-27 hard requirement): the pid file is
+        // per-home and misses cross-home collisions, stale files, and older
+        // builds — the port is the actual contended resource.
+        nebflow.gateway.GatewayConfig.load.flatMap { cfg =>
+          nebflow.cli.SingleInstanceGuard
+            .checkPort(cfg.host.toString, cfg.port.value)
+            .flatMap {
+              case nebflow.cli.SingleInstanceGuard.PortFree =>
+                bootGateway()
+              case nebflow.cli.SingleInstanceGuard.NebflowInstance(url) =>
+                nebflow.cli.SingleInstanceGuard
+                  .focusExisting(
+                    url,
+                    "same port",
+                    openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
+                  )
+                  .as(ExitCode.Success)
+              case nebflow.cli.SingleInstanceGuard.ForeignOccupant(detail) =>
+                IO.println(s"ERROR: $detail — nebflow cannot start.") *>
+                  IO.println(
+                    "Stop it, or pick another port (--port / GATEWAY_PORT)."
+                  ) *> IO.pure(ExitCode.Error)
+            }
+        }
+
+  /** For the pid-file hit: probe whether our port serves a nebflow health
+    * endpoint (best-effort, reused from the guard). Some -> focus URL.
+    */
+  private def pidFocusState(cfg: nebflow.gateway.GatewayConfig): Option[String] =
+    nebflow.cli.SingleInstanceGuard.checkPortBlocking(cfg.host.toString, cfg.port.value)
+
+  private def bootGateway(): IO[ExitCode] =
+    val pid = java.lang.ProcessHandle.current().pid()
+    ProcessManager.writePid(pid)
+    // JVM shutdown hook as backup — ensures PID file cleanup even on SIGINT/SIGTERM
+    Runtime.getRuntime.addShutdownHook(new Thread(() => ProcessManager.removePid()))
+    // P0 (2026-08-19): Ctrl+C left in-flight LLM HTTP requests running while
+    // the JVM drained — a token-burn path (2亿 token 事故潜在路径). Abort
+    // every active FS2/sttp stream on shutdown so no request continues past
+    // the hook. Idempotent + exception-safe (runs on IORuntime.global).
+    Runtime.getRuntime.addShutdownHook(
+      new Thread(() => nebflow.llm.LlmInterface.cancelAllInflightSync())
+    )
+    nebflow.gateway.GatewayMain.run
+      .guarantee(IO.blocking(ProcessManager.removePid()))
+      .as(ExitCode.Success)
+  end bootGateway
 end Main
