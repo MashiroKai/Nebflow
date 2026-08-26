@@ -174,7 +174,11 @@ Without a verdict a switch node FAILS the flow (strictVerdict).
           // 0 token. Combines FlowStructure.validate (E-208..E-212) and the
           // agent-existence check (E-401); a rejected DAG never spawns a node.
           nebflow.core.entity.EntityLoader.listAgents().flatMap { agents =>
-            val compileResult = nebflow.core.entity.FlowDagCompiler.validate(flowDef, agents.keySet)
+            // P2 supervision: apply dynamic-defaults AFTER validation (validate
+            // sees the user's raw JSON; the compiled output carries the
+            // supervision defaults — onError=Restart/maxRetries=1 — explicitly).
+            val compiled = nebflow.core.entity.FlowDagCompiler.applyDynamicDefaults(flowDef)
+            val compileResult = nebflow.core.entity.FlowDagCompiler.validate(compiled, agents.keySet)
             if compileResult.rejected then
               IO.pure(Left(ToolError(s"Flow '${flowDef.name}' rejected:\n" + compileResult.renderAll)))
             else
@@ -195,7 +199,7 @@ Without a verdict a switch node FAILS the flow (strictVerdict).
                       s"dag-inline-${java.util.UUID.randomUUID().toString.take(8)}"
                     )
                     _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(
-                      flowDef,
+                      compiled,
                       prompt,
                       callerRef,
                       callerRoot,

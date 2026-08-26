@@ -463,7 +463,12 @@ case class NodeResult(
   verdict: Option[String] = None,
   // R8-P1: structured slot values reported via FlowReport (per the node's
   // `outputs` declaration). Referenced downstream via $<nodeId>.slots.<field>.
-  slots: Map[String, Json] = Map.empty
+  slots: Map[String, Json] = Map.empty,
+  /** Flow-node supervision P2 (2026-08-26): the failed agent reported its
+    * failure as agent-turn-retryable (AgentError.retryable — LLM stall /
+    * overload). The executor's Restart path uses checkpoint recovery
+    * (loadMessagesForSession) instead of a fresh re-run when this is set. */
+  retryable: Boolean = false
 )
 
 /** Runtime context for a flow execution. */
