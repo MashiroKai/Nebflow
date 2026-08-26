@@ -11,11 +11,17 @@ import nebflow.core.tools.ToolRegistry
  * LLM-request schema and runtime tool-call execution. The contract:
  *   - a concrete tools list → those tools + fixed tools (base + category-specific)
  *   - "*" → all registered tools
+ *   - Issue is Nebula-only (user ruling 2026-08-25: system feedback
+ *     collection is orchestrator-only; stripped from non-Nebula even when
+ *     explicitly listed or via wildcard)
+ *   - Nebula's 9 orchestration tools are mechanism-fixed (no declaration
+ *     needed): AgentControl/TaskUpdate/Delegate/Pop/AskUserQuestion/
+ *     TaskCreate/Mail/Schedule/TransferFile (+ Issue + FlowExecute)
  *   - Mail is team-only (auto-injected for team agents, never for flow/standalone)
  *   - SubTask is team-only (user ruling 2026-08-24: auto-injected at the
  *     mechanism layer — manual agent.json declarations are error-prone)
  *   - FlowReport is flow-only
- *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate)
+ *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate, Issue)
  *   - FlowTrigger is whitelist-driven: present iff agentDef.flows is non-empty
  *     (not Nebula-exclusive); SubTask workers never get it
  *   - SubTask workers (isSubTaskWorker=true) are leaf agents: no Mail /
@@ -44,7 +50,7 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(defn)
     assertEquals(
       allowed,
-      Set("Read", "Glob", "Grep", "Write", "Edit", "Bash", "Issue", "Mail", "SubTask", "FlowExecute")
+      Set("Read", "Glob", "Grep", "Write", "Edit", "Bash", "Mail", "SubTask", "FlowExecute")
     )
 
   test("standalone agent gets base fixed tools but NOT Mail"):
@@ -52,7 +58,7 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Read"))
     assert(allowed.contains("Pop"))
-    assert(allowed.contains("Issue"))
+    assert(!allowed.contains("Issue"), "Issue is Nebula-only (2026-08-25 ruling)")
     assert(allowed.contains("Write"))
     assert(!allowed.contains("Mail"), "standalone agent does not get Mail")
 
@@ -78,13 +84,13 @@ class AllowedToolSetSpec extends FunSuite:
     val standaloneDefn = mkDef("minimal", List("Read"))
     val standaloneAllowed = CoreProbe.allowed(standaloneDefn)
     assert(!standaloneAllowed.contains("Mail"), "standalone does not get Mail")
-    assert(standaloneAllowed.contains("Issue"), "Issue is a base tool")
+    assert(!standaloneAllowed.contains("Issue"), "Issue is Nebula-only — not a base tool anymore")
     assert(standaloneAllowed.contains("Write"), "Write is a base tool")
 
     val teamDefn = mkDef("teammate", List("Read")).copy(category = "team")
     val teamAllowed = CoreProbe.allowed(teamDefn)
     assert(teamAllowed.contains("Mail"), "team agent gets Mail")
-    assert(teamAllowed.contains("Issue"), "team agent also gets base tools")
+    assert(!teamAllowed.contains("Issue"), "team agent also loses Issue (orchestrator-only)")
 
   test("FlowReport is available only to flow-category agents"):
     val flowDefn = mkDef("reviewer", List("Read")).copy(category = "flow")
@@ -166,7 +172,7 @@ class AllowedToolSetSpec extends FunSuite:
     val worker = mkDef("backend", List("Read", "Mail", "SubTask", "Delegate", "Issue"))
     val allowed = CoreProbe.allowed(worker, isSubTaskWorker = true)
     assert(allowed.contains("Read"), "domain tools kept")
-    assert(allowed.contains("Issue"), "Issue kept — system problem reporting, not team communication")
+    assert(!allowed.contains("Issue"), "Issue stripped — orchestrator-only (2026-08-25 ruling), even when listed")
     assert(!allowed.contains("Mail"), "Mail stripped for workers")
     assert(!allowed.contains("SubTask"), "SubTask stripped for workers (no further delegation)")
     assert(!allowed.contains("Delegate"), "Delegate stripped for workers")
@@ -488,4 +494,49 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(sneaky)
     assert(!allowed.contains("TeamTaskCreate"), "explicit listing without isTeamLead grant is inert")
     assert(!allowed.contains("TeamTaskUpdate"), "explicit listing without isTeamLead grant is inert")
+
+  // ===== #404 工具体系精简 (user ruling 2026-08-25 17:49) =====
+
+  test("Issue is Nebula-only — stripped from non-Nebula even when explicitly listed"):
+    val soloExplicit = mkDef("solo", List("Read", "Issue"))
+    assert(!CoreProbe.allowed(soloExplicit).contains("Issue"), "standalone listing Issue gets nothing")
+    val teamExplicit = mkDef("backend", List("Read", "Issue")).copy(category = "team")
+    assert(!CoreProbe.allowed(teamExplicit).contains("Issue"), "team member listing Issue gets nothing")
+    val flowExplicit = mkDef("node", List("Read", "Issue")).copy(category = "flow")
+    assert(!CoreProbe.allowed(flowExplicit).contains("Issue"), "flow node listing Issue gets nothing")
+
+  test("Issue stripped from non-Nebula via wildcard too"):
+    val omni = mkDef("omni", List("*"))
+    assert(!CoreProbe.allowed(omni).contains("Issue"), "wildcard does not resurrect Issue for non-Nebula")
+
+  test("Nebula keeps Issue"):
+    val nebula = mkDef("Nebula", List("Read"))
+    assert(CoreProbe.allowed(nebula).contains("Issue"), "Issue survives only for the orchestrator")
+
+  test("Nebula gets the 9 orchestration tools mechanism-fixed — no declaration needed"):
+    // The ruling: Nebula 系统固定改为 9 个编排工具. A stripped-down Nebula def
+    // (empty tools list) must still carry the full orchestration surface —
+    // panel edits / definition mistakes cannot disarm the scheduler.
+    val orchestration = Set(
+      "AgentControl", "TaskUpdate", "Delegate", "Pop", "AskUserQuestion",
+      "TaskCreate", "Mail", "Schedule", "TransferFile"
+    )
+    val bare = mkDef("Nebula", Nil)
+    val allowed = CoreProbe.allowed(bare)
+    orchestration.foreach(t =>
+      assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
+    )
+    assert(allowed.contains("FlowExecute"), "Nebula keeps FlowExecute (#406)")
+    assert(allowed.contains("Issue"), "Nebula keeps Issue (feedback collector)")
+    assert(allowed.contains("Read") && allowed.contains("Bash"), "base tools still present")
+
+  test("the 9 orchestration tools are NOT granted to ordinary standalone agents"):
+    // Mechanism-fixed for Nebula ≠ auto-granted to everyone: a standalone agent
+    // with an empty tools list gets base tools only.
+    val solo = mkDef("someone", Nil)
+    val allowed = CoreProbe.allowed(solo)
+    assert(!allowed.contains("AgentControl"), "no AgentControl for standalone")
+    assert(!allowed.contains("Delegate"), "no Delegate for standalone")
+    assert(!allowed.contains("Schedule"), "no Schedule for standalone")
+    assert(allowed.contains("Read"), "base tools intact")
 end AllowedToolSetSpec
