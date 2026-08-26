@@ -2872,7 +2872,7 @@ initModals();
 initRulesModal();
 initPathPicker();
 initInput(chatViews.primary);
-initMicOrb(); // Mic bubble orb v8 (#419) — binds #voice-btn canvas/css-orb/label
+initMicOrb(); // Mic bubble orb v8.2.2 (#419) — binds #voice-btn canvas/css-orb
 initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
 
 // Keep the last chat message visible above the floating #input-area.

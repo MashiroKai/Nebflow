@@ -536,13 +536,15 @@
 }
 
 /* ============================================================================
-   Mic bubble (liquid orb) v8.0 — pure Orb, state = color + text label, zero
-   overlay layers (user ruling 2026-08-26 01:11; spec mic-bubble-spec.md §10).
-   Orb body = v7 transparent liquid material; the 9-state colors are sapphire/
-   violet family derived via hue/sat/lum (WebGL shader) or filter (CSS orb),
-   with independent red/amber palettes for the two error states (hue rotation
-   cannot reach them). State class lives on .mic-orb-wrap; the orb + label
-   consume --orb-filter / --orb-glow / --orb-dot / --orb-label.
+   Mic bubble (liquid orb) v8.2.2 — pure Orb, state = color + motion layering,
+   zero overlay layers, no text label (user rulings 2026-08-26 01:11 + 07:31;
+   spec mic-bubble-spec.md §10). Orb body = v7 transparent liquid material;
+   the 9-state colors are sapphire/violet family derived via hue/sat/lum
+   (WebGL shader) or filter (CSS orb). v8.2.2: the two error states
+   (mic-error red / frozen-error amber) go through the SAME WebGL crystalline
+   structure via palette uniforms; the CSS orb below is only the
+   WebGL-unavailable fallback. State class lives on .mic-orb-wrap; the orb +
+   ripple consume --orb-filter / --orb-glow / --orb-dot / --orb-inset.
    ============================================================================ */
 .mic-orb-wrap {
   display: flex;
@@ -577,23 +579,36 @@
   height: 48px;
   display: block;
   border-radius: 50%;
-  transition: width 0.25s ease, height 0.25s ease;
 }
-.mic-orb-wrap.s-listening .orb-canvas,
-.mic-orb-wrap.s-listening .css-orb { width: 54px; height: 54px; }
 
-/* CSS liquid orb (WebGL-unavailable fallback + the two css:true error states).
-   Base gradient + top highlight + thin filaments, same family as v7 css-orb. */
+/* Click ripple (v8.1, jarvis orb-ripple paradigm): 2px ring in the current
+   state's semantic color, scale 0.8->1.5 + opacity 0.6->0 over 0.8s. */
+.orb-ripple {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 2px solid var(--ripple, #78A0DC);
+  opacity: 0; pointer-events: none; z-index: 5;
+}
+.orb-ripple.go { animation: orb-ripple-anim 0.8s ease-out; }
+@keyframes orb-ripple-anim {
+  0% { transform: scale(0.8); opacity: 0.6; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+
+/* CSS liquid orb (WebGL-unavailable fallback only — v8.2.2: error states use
+   the WebGL palette path too). Base gradient + top highlight + thin
+   filaments, same family as v7 css-orb; v8.2.2 error-state crystallization:
+   --orb-bg uses the --orb-base structure and --orb-inset takes a same-family
+   shadow color (red/amber instead of the old blue-black shadow). */
 .css-orb.orb {
   position: relative;
   background: var(--orb-bg, var(--orb-base));
   box-shadow:
     inset 0 0 8px rgba(255,255,255,0.10),
-    inset -3px -5px 14px rgba(20,26,60,0.42),
+    inset -3px -5px 14px var(--orb-inset, rgba(20,26,60,0.30)),
     0 0 16px var(--orb-glow, rgba(120,160,220,0.28)),
     0 2px 8px rgba(0,0,0,0.22);
   filter: var(--orb-filter, none);
-  transition: filter 0.3s ease, box-shadow 0.3s ease, background 0.3s ease;
+  transition: filter 0.7s ease, box-shadow 0.7s ease, background 0.7s ease;
 }
 .css-orb.orb::before {
   content: "";
@@ -619,45 +634,50 @@
   66% { transform: translate(-5%,6%) scale(0.97); opacity: 0.8; }
 }
 
-/* Text label (spec §10.2): 11.5px / weight 500 / semantic color >= 4.5:1 /
-   6px color dot. Centered under the orb, always visible while a state holds. */
-.mic-orb-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11.5px;
-  font-weight: 500;
-  line-height: 1.2;
-  white-space: nowrap;
-  user-select: none;
-}
-.mic-orb-label i {
-  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
-  background: var(--orb-dot);
-  box-shadow: 0 0 6px var(--orb-dot);
-  transition: background 0.3s ease, box-shadow 0.3s ease;
-}
-.mic-orb-label span {
-  color: var(--orb-label);
-  transition: color 0.3s ease;
-}
+/* v8.1 (user ruling 08-26 07:31 "orb 下方不要文字了"): the 11.5px text label
+   is removed entirely — state = pure color + motion layering; screen readers
+   get the state from the button/css-orb aria-label (runtime t() text). */
 
-/* 9 states (dark default) — set the shared CSS vars on the wrap. */
-.mic-orb-wrap.s-idle      { --orb-filter:none; --orb-glow:rgba(120,160,220,.30); --orb-dot:#78A0DC; --orb-label:#A9C4F2; }
-.mic-orb-wrap.s-listening { --orb-filter:hue-rotate(-18deg) saturate(1.08) brightness(1.07); --orb-glow:rgba(126,178,236,.34); --orb-dot:#7FB3EA; --orb-label:#AFD2F5; }
-.mic-orb-wrap.s-processing{ --orb-filter:hue-rotate(22deg) saturate(1.06) brightness(0.96); --orb-glow:rgba(139,134,216,.32); --orb-dot:#8B86D8; --orb-label:#ACA6EC; }
-.mic-orb-wrap.s-nebula    { --orb-filter:hue-rotate(34deg) saturate(1.16) brightness(1.06); --orb-glow:rgba(169,139,232,.36); --orb-dot:#A98BE8; --orb-label:#C4ADF4; }
-.mic-orb-wrap.s-bg        { --orb-filter:hue-rotate(8deg) saturate(0.80) brightness(0.94); --orb-glow:rgba(144,153,203,.28); --orb-dot:#9099CB; --orb-label:#AAAEE0; }
-.mic-orb-wrap.s-frozen    { --orb-filter:saturate(0.40) brightness(0.75); --orb-glow:rgba(126,136,162,.16); --orb-dot:#7E88A2; --orb-label:#AAB3C8; }
-.mic-orb-wrap.s-frozenerr { --orb-bg:radial-gradient(120% 120% at 32% 28%, #D8B29A 0%, #B08468 48%, #4E3A33 100%); --orb-filter:none; --orb-glow:rgba(214,150,110,.30); --orb-dot:#B08468; --orb-label:#D9AD93; }
-.mic-orb-wrap.s-micerr    { --orb-bg:radial-gradient(120% 120% at 32% 28%, #F1B3AD 0%, #E5484D 50%, #7A1E20 100%); --orb-filter:none; --orb-glow:rgba(229,72,77,.40); --orb-dot:#E5484D; --orb-label:#F2A7A9; }
-.mic-orb-wrap.s-offline   { --orb-filter:saturate(0) brightness(0.88); --orb-glow:rgba(150,155,165,.14); --orb-dot:#8A8F98; --orb-label:#ADB2BB; }
+/* 9 states (dark default) — set the shared CSS vars on the wrap.
+   (--orb-dot doubles as the click-ripple color; v8.1 removed the text label,
+   so --orb-label is gone.) */
+.mic-orb-wrap.s-idle      { --orb-filter:none; --orb-glow:rgba(120,160,220,.30); --orb-dot:#78A0DC; }
+.mic-orb-wrap.s-listening { --orb-filter:hue-rotate(-18deg) saturate(1.08) brightness(1.07); --orb-glow:rgba(126,178,236,.34); --orb-dot:#7FB3EA; }
+.mic-orb-wrap.s-processing{ --orb-filter:hue-rotate(22deg) saturate(1.06) brightness(0.96); --orb-glow:rgba(139,134,216,.32); --orb-dot:#8B86D8; }
+.mic-orb-wrap.s-nebula    { --orb-filter:hue-rotate(34deg) saturate(1.16) brightness(1.06); --orb-glow:rgba(169,139,232,.36); --orb-dot:#A98BE8; }
+.mic-orb-wrap.s-bg        { --orb-filter:hue-rotate(8deg) saturate(0.80) brightness(0.94); --orb-glow:rgba(144,153,203,.28); --orb-dot:#9099CB; }
+.mic-orb-wrap.s-frozen    { --orb-filter:saturate(0.40) brightness(0.75); --orb-glow:rgba(126,136,162,.16); --orb-dot:#7E88A2; }
+.mic-orb-wrap.s-frozenerr { --orb-bg:radial-gradient(120% 120% at 32% 28%, #F0D9C0 0%, #C99A6E 48%, #5E4130 100%); --orb-inset:rgba(58,38,22,0.32); --orb-filter:none; --orb-glow:rgba(214,150,110,.30); --orb-dot:#B08468; }
+.mic-orb-wrap.s-micerr    { --orb-bg:radial-gradient(120% 120% at 32% 28%, #FADBD4 0%, #DE575C 48%, #7E262C 100%); --orb-inset:rgba(64,16,20,0.34); --orb-filter:none; --orb-glow:rgba(229,72,77,.40); --orb-dot:#E5484D; }
+.mic-orb-wrap.s-offline   { --orb-filter:saturate(0) brightness(0.88); --orb-glow:rgba(150,155,165,.14); --orb-dot:#8A8F98; }
 
-/* Listening: restrained brightness pulse (replaces the ruled-out shake), +-6%. */
+/* Action layering (v8.1 §10.3③ / v8.2 §10.5, CSS fallback family):
+   working states move, non-working states stay still. */
+/* L0 still: internal filaments frozen */
+.mic-orb-wrap.s-frozen .css-orb.orb::after,
+.mic-orb-wrap.s-frozenerr .css-orb.orb::after,
+.mic-orb-wrap.s-micerr .css-orb.orb::after,
+.mic-orb-wrap.s-offline .css-orb.orb::after { animation: none; }
+/* L2/L3 working: filament flow speed tiers */
+.mic-orb-wrap.s-listening .css-orb.orb::after { animation-duration: 4s; }
+.mic-orb-wrap.s-processing .css-orb.orb::after { animation-duration: 4.5s; }
+.mic-orb-wrap.s-nebula .css-orb.orb::after { animation-duration: 5s; }
+.mic-orb-wrap.s-bg .css-orb.orb::after { animation-duration: 7s; }
+
+/* Listening L3: restrained brightness pulse (replaces the ruled-out shake), ±6%. */
 .mic-orb-wrap.s-listening .css-orb.orb { animation: listen-pulse 1.6s ease-in-out infinite; }
 @keyframes listen-pulse {
   0%,100% { filter: hue-rotate(-18deg) saturate(1.05) brightness(1.00); }
   50% { filter: hue-rotate(-18deg) saturate(1.14) brightness(1.11); }
+}
+
+/* nebula-busy L3: glow rhythm pulse (halo radius 12->26px, 2.2s). */
+.mic-orb-wrap.s-nebula .css-orb.orb { animation: nebula-glow 2.2s ease-in-out infinite; }
+@keyframes nebula-glow {
+  0%,100% { box-shadow: inset 0 0 8px rgba(255,255,255,0.10), inset -3px -5px 14px var(--orb-inset, rgba(20,26,60,0.30)),
+    0 0 12px var(--orb-glow), 0 2px 8px rgba(0,0,0,0.22); }
+  50% { box-shadow: inset 0 0 10px rgba(255,255,255,0.14), inset -3px -5px 14px var(--orb-inset, rgba(20,26,60,0.30)),
+    0 0 26px var(--orb-glow), 0 2px 8px rgba(0,0,0,0.22); }
 }
 
 /* Frozen orb keeps its own cold color — do NOT apply the generic 0.4 disabled
@@ -666,15 +686,15 @@
 
 @media (prefers-color-scheme: light) {
   .mic-orb-wrap { --orb-base: radial-gradient(120% 120% at 32% 28%, #a6c0f0 0%, #8C7DD6 48%, #2a3766 100%); }
-  .mic-orb-wrap.s-idle      { --orb-glow:rgba(91,132,216,.16); --orb-dot:#5B84D8; --orb-label:#3B5E9C; }
-  .mic-orb-wrap.s-listening { --orb-glow:rgba(78,134,220,.18); --orb-dot:#4E86DC; --orb-label:#2F6AA8; }
-  .mic-orb-wrap.s-processing{ --orb-glow:rgba(106,104,200,.16); --orb-dot:#6A68C8; --orb-label:#4A44A4; }
-  .mic-orb-wrap.s-nebula    { --orb-glow:rgba(143,106,214,.18); --orb-dot:#8F6AD6; --orb-label:#5C3FA6; }
-  .mic-orb-wrap.s-bg        { --orb-glow:rgba(96,106,168,.14); --orb-dot:#606AA8; --orb-label:#485294; }
-  .mic-orb-wrap.s-frozen    { --orb-glow:rgba(110,122,143,.12); --orb-dot:#6E7A8F; --orb-label:#4A5568; }
-  .mic-orb-wrap.s-frozenerr { --orb-glow:rgba(190,130,95,.22); --orb-dot:#A8765A; --orb-label:#7C4A30; }
-  .mic-orb-wrap.s-micerr    { --orb-bg:radial-gradient(120% 120% at 32% 28%, #EF8A85 0%, #D03434 55%, #6E1B1D 100%); --orb-glow:rgba(201,54,58,.30); --orb-dot:#C9363A; --orb-label:#B3261E; }
-  .mic-orb-wrap.s-offline   { --orb-glow:rgba(128,133,142,.12); --orb-dot:#80858E; --orb-label:#5A5F68; }
+  .mic-orb-wrap.s-idle      { --orb-glow:rgba(91,132,216,.16); --orb-dot:#5B84D8; }
+  .mic-orb-wrap.s-listening { --orb-glow:rgba(78,134,220,.18); --orb-dot:#4E86DC; }
+  .mic-orb-wrap.s-processing{ --orb-glow:rgba(106,104,200,.16); --orb-dot:#6A68C8; }
+  .mic-orb-wrap.s-nebula    { --orb-glow:rgba(143,106,214,.18); --orb-dot:#8F6AD6; }
+  .mic-orb-wrap.s-bg        { --orb-glow:rgba(96,106,168,.14); --orb-dot:#606AA8; }
+  .mic-orb-wrap.s-frozen    { --orb-glow:rgba(110,122,143,.12); --orb-dot:#6E7A8F; }
+  .mic-orb-wrap.s-frozenerr { --orb-inset:rgba(66,44,26,0.26); --orb-glow:rgba(190,130,95,.22); --orb-dot:#A8765A; }
+  .mic-orb-wrap.s-micerr    { --orb-bg:radial-gradient(120% 120% at 32% 28%, #F6CCC6 0%, #CE4448 52%, #762226 100%); --orb-inset:rgba(72,18,22,0.28); --orb-glow:rgba(201,54,58,.30); --orb-dot:#C9363A; }
+  .mic-orb-wrap.s-offline   { --orb-glow:rgba(128,133,142,.12); --orb-dot:#80858E; }
   .mic-orb-wrap.s-listening .css-orb.orb { animation: listen-pulse-l 1.6s ease-in-out infinite; }
   @keyframes listen-pulse-l {
     0%,100% { filter: hue-rotate(-18deg) saturate(1.04) brightness(1.00); }
@@ -685,8 +705,10 @@
 @media (prefers-reduced-motion: reduce) {
   .css-orb.orb, .css-orb.orb::after { animation-duration: 0.01s; animation-iteration-count: 1; }
   .micbubble .orb-canvas, .micbubble .css-orb,
-  .css-orb.orb, .mic-orb-label i, .mic-orb-label span { transition-duration: 0.01s; }
-  .mic-orb-wrap.s-listening .css-orb.orb { animation: none; }
+  .css-orb.orb { transition-duration: 0.01s; }
+  .mic-orb-wrap.s-listening .css-orb.orb,
+  .mic-orb-wrap.s-nebula .css-orb.orb { animation: none; }
+  .orb-ripple { display: none; }
 }
 #send-btn {
   /* Light-green glass: semi-transparent tint over frosted backdrop */
