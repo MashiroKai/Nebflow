@@ -251,7 +251,27 @@ export function renderFlowsPanel(scroll, runningFlows) {
  *  @param {object} [opts] - passed to dagCardHtml (e.g. { onClose }) for the
  *    terminal close affordance. */
 export function renderFlowRunInto(container, rf, opts) {
+  // flowProgress / agentStart / agentDone debounce into renderOpenTabsNow, which
+  // rebuilds this card via innerHTML on every update. That destroys .solar-scroll
+  // and resets its scrollLeft/scrollTop to 0 - so during a running WIDE fan-out
+  // (e.g. 16 parallel nodes -> ~2800px canvas) the horizontal scrollbar snaps back
+  // on every progress tick and the off-screen nodes are effectively unreachable.
+  // Capture the scroll position here and restore it after the rebuild; only a
+  // brand-new render (no prior .solar-scroll) centers horizontally on the canvas
+  // middle, where the entry / join nodes sit, instead of the leftmost leaf slice.
+  const prev = container.querySelector('.solar-scroll');
+  const prevLeft = prev ? prev.scrollLeft : null;
+  const prevTop = prev ? prev.scrollTop : null;
   container.innerHTML = rf ? dagCardHtml(rf, opts) : `<div class="dag-empty"><div class="hint">Flow instance not found</div></div>`;
+  const next = container.querySelector('.solar-scroll');
+  if (next && next.clientWidth > 0) {
+    if (prevLeft == null) {
+      next.scrollLeft = Math.max(0, (next.scrollWidth - next.clientWidth) / 2);
+    } else {
+      next.scrollLeft = prevLeft;
+      next.scrollTop = prevTop;
+    }
+  }
 }
 
 /** Render a static flow definition preview (all nodes pending) — P6. */
