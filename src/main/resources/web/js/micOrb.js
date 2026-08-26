@@ -1,42 +1,68 @@
-// micOrb.js — Mic bubble (liquid orb) v8.0: pure Orb, state expressed via
-// color + text label, zero overlay layers (user ruling 2026-08-26 01:11:
-// "还是用纯Orb吧，然后Orb用颜色和文字来显示状态" — v1-v7's 9-state complex
-// overlay animations, listening shake / bg-agent orbit dots / frost ring /
-// busy glow are all dropped). The orb body keeps the v7 transparent liquid
-// material (extractAlpha / background blending / isLight branch); state is
-// expressed via the 9-state color map (spec §10.1) + a text label (§10.2).
+// micOrb.js — Mic bubble (liquid orb) v8.2.2: pure Orb, state expressed via
+// color + motion layering, zero overlay layers (user ruling 2026-08-26 01:11:
+// "还是用纯Orb吧" — v1-v7's 9-state overlay animations are all dropped).
+// v8.2.2 (spec §10.7): error states (mic-error red / frozen-error amber) go
+// through the SAME WebGL crystalline structure via palette uniforms
+// (palA/palB/palC) — the css:true bypass that produced flat matte balloons is
+// removed; CSS fallback only when WebGL is unavailable.
+// v8.2 (spec §10.5): jarvis motion paradigm — listening shakes with mic
+// volume (hover='volume'), processing/nebula-busy rotate (rotSpeed tiers),
+// stateScales, transitionPulse on state switch.
+// v8.2.1 (spec §10.6): no-flicker — phaseTime accumulates dt·timeScale
+// continuously (no iTime·ts phase jump), pulse soft-start, pulseAmp lerp,
+// hoverIntensity lerp, theme switch never re-triggers the pulse.
+// v8.1: text label removed (user ruling 08-26 07:31 "orb 下方不要文字了") —
+// state = pure color + motion; a11y via aria-label (runtime t() text).
 // Spec: mic-bubble-spec.md §10. Reference render: mic-bubble-visual-v8.html.
 //
-// Self-contained: imports state.js + i18n.js only (no cycles). One orb lives
-// on the primary input bar (popup views have voiceBtn:null — no orb there).
+// Imports state.js + i18n.js only (voiceEngine is reached via dynamic import
+// to keep this module cycle-free and bare-page importable for harnesses).
 
 import state from './state.js';
 import { t } from './i18n.js';
 
 /* ========================================================================
-   9-state definition (spec §10.1). hue/sat/lum feed the v7 shader's
-   adjustHue + sat + lum mechanism; css:true states (frozen-error amber /
-   mic-error red) are unreachable by hue rotation and use an independent
-   palette that overrides the CSS orb background.
+   9-state definition (spec §10.1 + §10.5). hue/sat/lum feed the shader's
+   adjustHue + sat + lum mechanism; rot = rotSpeed (rad/s); ts = timeScale
+   (internal fluid flow rate); scale = stateScale (canvas transform);
+   vol:true = hover driven by mic RMS (listening); pal = palette uniform
+   override for the two error states (hue rotation cannot reach red/amber).
    ======================================================================== */
 const STATES = [
-  { k: 'idle',         cls: 's-idle',      i18n: 'chat.micOrb.idle',       hue: 0,   sat: 1.00, lum: 1.00, rot: 0.05, ts: 1 },
-  { k: 'listening',    cls: 's-listening', i18n: 'chat.micOrb.listening',  hue: -18, sat: 1.08, lum: 1.05, rot: 0.18, ts: 1 },
-  { k: 'processing',   cls: 's-processing',i18n: 'chat.micOrb.processing', hue: 22,  sat: 1.06, lum: 0.94, rot: 0.12, ts: 1 },
-  { k: 'nebula-busy',  cls: 's-nebula',    i18n: 'chat.micOrb.nebulaBusy', hue: 34,  sat: 1.16, lum: 1.06, rot: 0.10, ts: 1 },
-  { k: 'bg-agents',    cls: 's-bg',        i18n: 'chat.micOrb.bgAgents',   hue: 8,   sat: 0.80, lum: 0.92, rot: 0.06, ts: 1 },
-  { k: 'frozen',       cls: 's-frozen',    i18n: 'chat.micOrb.frozen',     hue: 0,   sat: 0.40, lum: 0.74, rot: 0,    ts: 0 },
-  { k: 'frozen-error', cls: 's-frozenerr', i18n: 'chat.micOrb.frozenError', css: true },
-  { k: 'mic-error',    cls: 's-micerr',    i18n: 'chat.micOrb.micError',   css: true },
-  { k: 'offline',      cls: 's-offline',   i18n: 'chat.micOrb.offline',    hue: 0,   sat: 0.00, lum: 0.85, rot: 0,    ts: 0.2 },
+  { k: 'idle',         cls: 's-idle',      i18n: 'chat.micOrb.idle',       hue: 0,   sat: 1.00, lum: 1.00, rot: 0.05, ts: 0.5, scale: 1.00 },
+  { k: 'listening',    cls: 's-listening', i18n: 'chat.micOrb.listening',  hue: -18, sat: 1.08, lum: 1.05, rot: 0.3,  ts: 1.6, scale: 1.08, vol: true },
+  { k: 'processing',   cls: 's-processing',i18n: 'chat.micOrb.processing', hue: 22,  sat: 1.06, lum: 0.94, rot: 1.0,  ts: 1.3, scale: 1.05 },
+  { k: 'nebula-busy',  cls: 's-nebula',    i18n: 'chat.micOrb.nebulaBusy', hue: 34,  sat: 1.16, lum: 1.06, rot: 0.6,  ts: 1.2, scale: 1.03 },
+  { k: 'bg-agents',    cls: 's-bg',        i18n: 'chat.micOrb.bgAgents',   hue: 8,   sat: 0.80, lum: 0.92, rot: 0.15, ts: 0.8, scale: 1.00 },
+  { k: 'frozen',       cls: 's-frozen',    i18n: 'chat.micOrb.frozen',     hue: 0,   sat: 0.40, lum: 0.74, rot: 0,    ts: 0,   scale: 1.00 },
+  { k: 'frozen-error', cls: 's-frozenerr', i18n: 'chat.micOrb.frozenError', hue: 0,  sat: 0.92, lum: 0.95, rot: 0,    ts: 0,   scale: 1.00, pal: { a: [0.878, 0.663, 0.482], b: [0.812, 0.580, 0.396], c: [0.427, 0.286, 0.184] } },
+  { k: 'mic-error',    cls: 's-micerr',    i18n: 'chat.micOrb.micError',   hue: 0,   sat: 1.02, lum: 1.00, rot: 0,    ts: 0,   scale: 1.00, pal: { a: [0.929, 0.451, 0.427], b: [0.910, 0.353, 0.388], c: [0.541, 0.180, 0.200] } },
+  { k: 'offline',      cls: 's-offline',   i18n: 'chat.micOrb.offline',    hue: 0,   sat: 0.00, lum: 0.85, rot: 0,    ts: 0,   scale: 1.00 },
 ];
 
 const STATE_BY_KEY = {};
 for (const s of STATES) STATE_BY_KEY[s.k] = s;
 
+/* v8.2.2 palette table (spec §10.7 E1): the default blue/violet palette
+   matches the former C_BLUE/C_VIOLET/C_DEEP constants component-wise (the 7
+   normal states keep the same base look; the shader's clarity params were
+   retuned slightly in v8.2.2 — alpha pow/shade/brightness — so the output is
+   close to, not literally pixel-identical with, pre-v8.2.2). Error states
+   pass red/amber boards. */
+const PAL_DEFAULT = { a: [0.471, 0.627, 0.863], b: [0.549, 0.490, 0.839], c: [0.200, 0.251, 0.502] };
+
+/** @param {{a:number[], b:number[], c:number[]}} p */
+function clonePal(p) { return { a: p.a.slice(), b: p.b.slice(), c: p.c.slice() }; }
+
+/* v8.2.1: lum pulse table (amplitude / period s) — render lerps the amplitude
+   in/out and accumulates the phase continuously (no hard brightness jumps). */
+/** @type {Object<string, number[]>} */
+const PULSE_TABLE = { 'listening': [0.06, 1.6], 'nebula-busy': [0.05, 2.2], 'bg-agents': [0.03, 3.0] };
+
 /* ========================================================================
-   WebGL OrbRenderer — v7 transparent liquid material shader, ported verbatim
-   from mic-bubble-visual-v8.html (stateCfg already extended to 9 states).
+   WebGL OrbRenderer — v7 transparent liquid material shader, v8.2.2 full
+   port from mic-bubble-visual-v8.html (palette uniforms + phaseTime + pulse
+   soft-start + volume-driven hover + rotSpeed tiers + stateScales).
    ======================================================================== */
 const VS = [
   'precision highp float;',
@@ -51,6 +77,9 @@ const FS = [
   'uniform float hue; uniform float hover; uniform float rot;',
   'uniform float hoverIntensity; uniform float isLight;',
   'uniform float sat; uniform float lum; uniform float timeScale;',
+  '/* v8.2.2: palette as uniforms — error states (red/amber) share the same',
+  '   crystalline structure (fluid/refraction/highlight/rim all preserved) */',
+  'uniform vec3 palA; uniform vec3 palB; uniform vec3 palC;',
   'varying vec2 vUv;',
   'vec3 rgb2yiq(vec3 c){',
   '  float y=dot(c,vec3(0.299,0.587,0.114));',
@@ -65,8 +94,10 @@ const FS = [
   '  float hueRad=hueDeg*3.14159265/180.0;',
   '  vec3 yiq=rgb2yiq(color);',
   '  float cosA=cos(hueRad), sinA=sin(hueRad);',
-  '  float i=yiq.y*cosA-yiq.z*sinA;',
-  '  float q=yiq.y*sinA+yiq.z*cosA;',
+  '  /* v8.1 fix: rotation direction aligned with CSS hue-rotate (YIQ positive',
+  '     = blue->cyan; negated, +34 = warm violet, semantics per §10.1) */',
+  '  float i=yiq.y*cosA+yiq.z*sinA;',
+  '  float q=-yiq.y*sinA+yiq.z*cosA;',
   '  yiq.y=i; yiq.z=q;',
   '  return yiq2rgb(yiq);',
   '}',
@@ -89,15 +120,14 @@ const FS = [
   '  vec4 n=h*h*h*h*vec4(dot(d0,hash33(i)),dot(d1,hash33(i+i1)),dot(d2,hash33(i+i2)),dot(d3,hash33(i+1.0)));',
   '  return dot(vec4(31.316),n);',
   '}',
-  'const vec3 C_BLUE  =vec3(0.471,0.627,0.863);',
-  'const vec3 C_VIOLET=vec3(0.549,0.490,0.839);',
-  'const vec3 C_DEEP  =vec3(0.200,0.251,0.502);',
   'const vec3 C_ICE   =vec3(0.845,0.905,0.985);',
   'vec4 draw(vec2 uv){',
   '  float t=iTime*timeScale;',
-  '  vec3 c1=adjustHue(C_BLUE,hue);',
-  '  vec3 c2=adjustHue(C_VIOLET,hue);',
-  '  vec3 c3=adjustHue(C_DEEP,hue);',
+  '  /* v8.2.2: c1/c2/c3 from palA/palB/palC uniforms (default blue-violet',
+  '     board; error states = red/amber boards), adjustHue unchanged */',
+  '  vec3 c1=adjustHue(palA,hue);',
+  '  vec3 c2=adjustHue(palB,hue);',
+  '  vec3 c3=adjustHue(palC,hue);',
   '  float len=length(uv);',
   '  float nEdge=snoise3(vec3(uv*0.9,t*0.4))*0.5+0.5;',
   '  float r0=mix(0.80,0.94,nEdge);',
@@ -115,7 +145,7 @@ const FS = [
   '  vec3 N=normalize(vec3(uv,z));',
   '  vec3 Ld=normalize(vec3(-0.42,0.50,0.66));',
   '  float diff=clamp(dot(N,Ld),0.0,1.0);',
-  '  float shade=mix(mix(0.62,0.62,isLight),1.12,pow(diff,0.9));',
+  '  float shade=mix(mix(0.65,0.65,isLight),1.12,pow(diff,0.9));',
   '  col*=shade;',
   '  float core=1.0-smoothstep(0.0,r0*0.58,len);',
   '  float pulse=0.88+0.12*snoise3(vec3(uv*2.2,t*0.8));',
@@ -131,7 +161,7 @@ const FS = [
   '  col+=C_ICE*pow(ndh,8.0)*0.10;',
   '  float ca=1.0-smoothstep(0.0,r0*0.30,distance(uv,vec2(0.10,-0.42)*r0));',
   '  col+=mix(c1,C_ICE,0.3)*ca*ca*mix(0.20,0.14,isLight);',
-  '  col*=mix(1.0,1.10,isLight);',
+  '  col*=mix(1.03,1.12,isLight);',
   '  float g0=dot(col,vec3(0.299,0.587,0.114));',
   '  col=mix(col,mix(vec3(g0),col,1.42),isLight);',
   '  col=clamp(col,0.0,1.0);',
@@ -142,10 +172,10 @@ const FS = [
   '  float gg=dot(outCol,vec3(0.299,0.587,0.114));',
   '  outCol=mix(vec3(gg),outCol,sat)*lum;',
   '  outCol=clamp(outCol,0.0,1.0);',
-  '  float glassA=pow(clamp(max(outCol.r,max(outCol.g,outCol.b))*1.10,0.0,1.0),1.45);',
+  '  float glassA=pow(clamp(max(outCol.r,max(outCol.g,outCol.b))*1.06,0.0,1.0),1.58);',
   '  float shape=1.0-smoothstep(r0*0.98,r0*1.14,len);',
   '  float a=clamp(glassA*shape,0.0,1.0);',
-  '  a=mix(a,a*0.96,isLight);',
+  '  a=mix(a,a*0.94,isLight);',
   '  a=clamp(a+smoothstep(r0*0.80,r0*1.00,len)*isLight*0.12,0.0,1.0);',
   '  return vec4(outCol,clamp(a,0.0,1.0));',
   '}',
@@ -168,7 +198,7 @@ const FS = [
   '}'
 ].join('\n');
 
-/** WebGL liquid orb renderer (v7 transparent material). */
+/** WebGL liquid orb renderer (v8.2.2: palette uniforms + jarvis motion). */
 class OrbRenderer {
   /**
    * @param {HTMLCanvasElement} canvas
@@ -192,7 +222,20 @@ class OrbRenderer {
     this.startTime = performance.now();
     this.lastTime = 0;
     this.params = { hue: 0, hover: 0.08, rot: 0, sat: 1, lum: 1, timeScale: 1 };
-    this.target = { hue: 0, hover: 0.08, rotSpeed: 0.05, sat: 1, lum: 1, timeScale: 1 };
+    this.target = { hue: 0, hover: 0.08, rotSpeed: 0.05, sat: 1, lum: 1, timeScale: 0.5, scale: 1.0, pal: PAL_DEFAULT };
+    /* v8.2 jarvis port: volume-driven hover / state scale / switch pulse */
+    this.volume = 0;           // mic RMS normalized to [0,1]
+    this.volDriven = false;    // whether the current state's hover follows volume
+    this.scale = 1.0;
+    this.transitionPulse = 0;
+    /* v8.2.1 no-flicker: */
+    this.pulseTarget = 0;      // pulse soft-start target (rise then decay)
+    this.phaseTime = 0;        // shading phase time = integral of timeScale*dt
+    this.pulsePhase = 0;       // lum pulse phase (accumulates continuously)
+    this.pulseAmp = 0;         // lum pulse amplitude (lerped in/out)
+    this.pulsePeriod = 1.6;
+    this.hoverIntensity = 1.0; // lerped 1.0<->1.4
+    this.pal = clonePal(PAL_DEFAULT); // current palette (0.04/frame lerp)
     this.state = 'idle';
     this.initShaders();
     this.initBuffers();
@@ -223,7 +266,7 @@ class OrbRenderer {
     this.program = prog;
     gl.useProgram(prog);
     this.u = {};
-    ['iTime', 'iResolution', 'hue', 'hover', 'rot', 'hoverIntensity', 'isLight', 'sat', 'lum', 'timeScale']
+    ['iTime', 'iResolution', 'hue', 'hover', 'rot', 'hoverIntensity', 'isLight', 'sat', 'lum', 'timeScale', 'palA', 'palB', 'palC']
       .forEach((n) => { this.u[n] = gl.getUniformLocation(prog, n); });
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -243,7 +286,9 @@ class OrbRenderer {
     gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 16, 8);
   }
 
-  /** @param {{k:string,hue?:number,rot?:number,sat?:number,lum?:number,ts?:number}} s */
+  /**
+   * @param {{k:string,hue?:number,rot?:number,sat?:number,lum?:number,ts?:number,scale?:number,vol?:boolean,pal?:{a:number[],b:number[],c:number[]}}} s
+   */
   setStateCfg(s) {
     this.state = s.k;
     this.target.hue = s.hue || 0;
@@ -251,20 +296,38 @@ class OrbRenderer {
     this.target.sat = (s.sat === undefined ? 1 : s.sat);
     this.target.lum = (s.lum === undefined ? 1 : s.lum);
     this.target.timeScale = (s.ts === undefined ? 1 : s.ts);
-    this.target.hover = 0.08;
+    this.target.scale = (s.scale === undefined ? 1 : s.scale);
+    /* v8.2.2: error-state palettes (red/amber) lerp in over ~0.7s — no hard cut */
+    this.target.pal = s.pal || PAL_DEFAULT;
+    /* v8.2: hover='volume' states (listening) keep hover under setVolume
+       control; other states fall back to the 0.08 base perturbation */
+    this.volDriven = !!s.vol;
+    if (!this.volDriven) this.target.hover = 0.08;
     if (this.reducedMotion) {
-      // Reduced motion (spec §10.3): snap to the target color and freeze time
-      // (no lerp, no breathing, no flow) — draw a single still frame.
+      // Reduced motion (spec §10.3): snap to the target (color, palette,
+      // scale) and freeze time — no lerp, no pulse, no flow; one still frame.
       this.params.hue = this.target.hue;
       this.params.sat = this.target.sat;
       this.params.lum = this.target.lum;
       this.params.hover = this.target.hover;
       this.params.timeScale = 0;
       this.target.timeScale = 0;
+      this.scale = this.target.scale;
+      this.pal = clonePal(this.target.pal);
+      this.pulseTarget = 0;
+      this.transitionPulse = 0;
+      this.pulseAmp = 0;
       this.drawFrame();
       return;
     }
+    /* v8.2.1: transitionPulse soft start (render rises then decays) */
+    this.pulseTarget = 1.0;
     this.resume();
+  }
+
+  /** v8.2: volume-driven listening shake (production feeds voiceEngine RMS). */
+  setVolume(v) {
+    this.volume = Math.max(0, Math.min(1, v));
   }
 
   /** @param {boolean} isLight */
@@ -287,34 +350,74 @@ class OrbRenderer {
     const gl = this.gl;
     const now = performance.now();
     const time = (now - this.startTime) / 1000;
-    const dt = this.lastTime ? (time - this.lastTime) : 0.016;
+    let dt = this.lastTime ? (time - this.lastTime) : 0.016;
+    dt = Math.min(dt, 0.05); // clamp: tab-switch/dropped frames must not jump phase
     this.lastTime = time;
+    /* v8.2.1 main fix: shading phase time accumulates (phaseTime += dt·ts).
+       Absolute iTime·ts made state switches jump the whole noise field. */
+    this.phaseTime += dt * this.params.timeScale;
     if (!this.reducedMotion) {
-      this.params.hue += (this.target.hue - this.params.hue) * 0.06;
+      this.params.hue += (this.target.hue - this.params.hue) * 0.035;
+      /* v8.2: hover='volume' — listening hover follows mic volume
+         (target = 0.10 + volume·0.90), lerp 0.1 */
+      if (this.volDriven) this.target.hover = 0.10 + this.volume * 0.90;
       this.params.hover += (this.target.hover - this.params.hover) * 0.1;
       this.params.rot += dt * this.target.rotSpeed;
-      this.params.sat += (this.target.sat - this.params.sat) * 0.08;
-      this.params.lum += (this.target.lum - this.params.lum) * 0.08;
-      this.params.timeScale += (this.target.timeScale - this.params.timeScale) * 0.08;
+      this.params.sat += (this.target.sat - this.params.sat) * 0.04;
+      this.params.lum += (this.target.lum - this.params.lum) * 0.04;
+      this.params.timeScale += (this.target.timeScale - this.params.timeScale) * 0.04;
+      /* v8.2.1: transitionPulse soft start — rise (lerp 0.3, ~0.25s to peak)
+         then decay ×0.92; no first-frame effHover step */
+      if (this.pulseTarget > 0) {
+        this.transitionPulse += (this.pulseTarget - this.transitionPulse) * 0.3;
+        if (this.pulseTarget - this.transitionPulse < 0.03) this.pulseTarget = 0;
+      } else if (this.transitionPulse > 0) {
+        this.transitionPulse *= 0.92;
+        if (this.transitionPulse < 0.01) this.transitionPulse = 0;
+      }
+      /* v8.2: stateScale lerp 0.08 */
+      this.scale += (this.target.scale - this.scale) * 0.08;
+      /* v8.2.1: hoverIntensity lerped 1.0<->1.4 (no 40% distortion step) */
+      this.hoverIntensity += ((this.volDriven ? 1.4 : 1.0) - this.hoverIntensity) * 0.08;
+      /* v8.2.2: palette lerp 0.04/frame — error-state switches are smooth */
+      const tpal = this.target.pal, cpal = this.pal;
+      for (const k of ['a', 'b', 'c']) {
+        for (let i = 0; i < 3; i++) cpal[k][i] += (tpal[k][i] - cpal[k][i]) * 0.04;
+      }
+      /* v8.2.1: lum pulse — amplitude lerps in/out, phase accumulates */
+      const pc = PULSE_TABLE[this.state];
+      if (pc) this.pulsePeriod = pc[1];
+      this.pulseAmp += ((pc ? pc[0] : 0) - this.pulseAmp) * 0.06;
+      this.pulsePhase += dt * Math.PI * 2 / this.pulsePeriod;
     }
+    const effHover = Math.min(1, this.params.hover + this.transitionPulse * 0.3);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(this.program);
-    gl.uniform1f(this.u.iTime, time);
+    gl.uniform1f(this.u.iTime, this.phaseTime); // phase time, not wall time
     gl.uniform3f(this.u.iResolution, this.canvas.width, this.canvas.height, 1);
     gl.uniform1f(this.u.hue, this.params.hue);
-    gl.uniform1f(this.u.hover, this.params.hover);
+    gl.uniform1f(this.u.hover, effHover);
     gl.uniform1f(this.u.rot, this.params.rot);
-    gl.uniform1f(this.u.hoverIntensity, 1.0);
+    gl.uniform1f(this.u.hoverIntensity, this.hoverIntensity);
     gl.uniform1f(this.u.sat, this.params.sat);
-    let lum = this.params.lum;
-    // Listening: restrained brightness pulse (replaces the ruled-out shake).
-    if (!this.reducedMotion && this.state === 'listening') lum *= (1 + 0.06 * Math.sin((time * Math.PI * 2) / 1.6));
+    gl.uniform3fv(this.u.palA, this.pal.a);
+    gl.uniform3fv(this.u.palB, this.pal.b);
+    gl.uniform3fv(this.u.palC, this.pal.c);
+    const lum = this.params.lum * (1 + this.pulseAmp * Math.sin(this.pulsePhase));
     gl.uniform1f(this.u.lum, lum);
-    gl.uniform1f(this.u.timeScale, this.params.timeScale);
+    /* v8.2.1: timeScale uniform stays 1 — flow rate lives in phaseTime */
+    gl.uniform1f(this.u.timeScale, 1.0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    if (this.params.timeScale > 0.01) {
-      const breath = 1 + Math.sin(time * 0.8) * 0.02;
-      this.canvas.style.transform = 'scale(' + breath.toFixed(4) + ')';
+    /* v8.2: stateScales apply in every state; the L1 breath still only
+       stacks on idle */
+    let sc = this.scale;
+    if (!this.reducedMotion && this.state === 'idle' && this.params.timeScale > 0.01) {
+      sc *= 1 + Math.sin(time * 0.8) * 0.02;
+    }
+    if (Math.abs(sc - 1) > 0.001) {
+      this.canvas.style.transform = 'scale(' + sc.toFixed(4) + ')';
+    } else if (this.canvas.style.transform) {
+      this.canvas.style.transform = '';
     }
   }
 
@@ -325,7 +428,7 @@ class OrbRenderer {
 }
 
 /* ========================================================================
-   MicOrb controller — binds the DOM (button canvas + css-orb + label) and a
+   MicOrb controller — binds the DOM (button canvas + css-orb fallback) and a
    dimensional signal hub. State derivation priority (single orb, single
    state): mic-error > frozen-error > offline > frozen > listening >
    processing > nebula-busy > bg-agents > idle.
@@ -363,7 +466,6 @@ class MicOrb {
     this.canvas = this.btn ? /** @type {HTMLCanvasElement|null} */ (this.btn.querySelector('.orb-canvas')) : null;
     /** @type {HTMLElement|null} */
     this.cssOrb = this.btn ? /** @type {HTMLElement|null} */ (this.btn.querySelector('.css-orb')) : null;
-    /** @type {HTMLElement|null} */ this.labelEl = document.getElementById('mic-orb-label');
     this.state = 'idle';
     this.renderer = null;
     this.webglOk = false;
@@ -381,7 +483,17 @@ class MicOrb {
         if (this.renderer) this.renderer.pause();
         this.apply(this.state);
       });
+      // v8.2: feed mic volume into the renderer (listening shake). Dynamic
+      // import keeps micOrb cycle-free (voiceEngine pulls in ws.js).
+      import('./voiceEngine.js').then((m) => {
+        m.setMicVolumeListener((v) => {
+          if (this.renderer && !this.renderer.failed) this.renderer.setVolume(v);
+        });
+      }).catch(() => {});
     }
+    // v8.1: click ripple (jarvis orb-ripple paradigm) — decorative ring that
+    // expands from the orb edge on every click; disabled under reduced motion.
+    if (this.btn) this.btn.addEventListener('click', () => this.spawnRipple());
     this.applyTheme();
     this.apply('idle');
     this.bindObservers();
@@ -393,14 +505,14 @@ class MicOrb {
   }
 
   /**
-   * Apply a state: pick WebGL canvas or CSS orb, set the renderer stateCfg,
-   * update the label text + state class (colors come from CSS vars).
+   * Apply a state: v8.2.2 — every state goes through the WebGL path (error
+   * states included, via palette uniforms); CSS orb only when WebGL failed.
    * @param {string} key
    */
   apply(key) {
     const s = STATE_BY_KEY[key] || STATE_BY_KEY.idle;
     this.state = s.k;
-    const useCss = s.css || !this.webglOk;
+    const useCss = !this.webglOk;
     if (this.cssOrb) {
       this.cssOrb.className = 'css-orb orb ' + s.cls;
       this.cssOrb.style.display = useCss ? 'block' : 'none';
@@ -410,7 +522,8 @@ class MicOrb {
       this.renderer.setStateCfg(s);
       this.applyTheme();
     }
-    // Wrap carries the state class so the label dot/text colors follow via CSS.
+    // Wrap carries the state class so CSS vars (--orb-glow/--orb-dot/...)
+    // follow for the fallback orb + ripple color.
     if (this.btn) {
       const wrap = this.btn.closest('.mic-orb-wrap');
       if (wrap) {
@@ -418,15 +531,37 @@ class MicOrb {
         wrap.classList.add(s.cls);
       }
     }
-    this.renderLabel();
+    this.updateA11y();
   }
 
-  renderLabel() {
-    if (!this.labelEl) return;
+  /* v8.1: no visual text label — state reaches screen readers via aria-label
+     (runtime t() text; the canvas stays aria-hidden, decorative). The button
+     label keeps the control action ('voice input') alongside the state so the
+     a11y name still describes what the control does. */
+  updateA11y() {
     const s = STATE_BY_KEY[this.state] || STATE_BY_KEY.idle;
-    const span = this.labelEl.querySelector('span');
-    if (span) span.textContent = t(s.i18n);
-    this.labelEl.setAttribute('data-state', this.state);
+    const label = t(s.i18n);
+    const btnLabel = `${label} · ${t('input.voiceBtn')}`;
+    if (this.btn) this.btn.setAttribute('aria-label', btnLabel);
+    if (this.cssOrb) {
+      this.cssOrb.setAttribute('role', 'img');
+      this.cssOrb.setAttribute('aria-label', label);
+    }
+  }
+
+  /* v8.1: click ripple — 2px ring in the current state's semantic color,
+     scale 0.8->1.5 / opacity 0.6->0 over 0.8s, removed on animationend. */
+  spawnRipple() {
+    if (this.reduced || !this.btn) return;
+    const old = this.btn.querySelector('.orb-ripple');
+    if (old) old.remove();
+    const r = document.createElement('span');
+    r.className = 'orb-ripple go';
+    const wrap = this.btn.closest('.mic-orb-wrap');
+    const color = wrap ? getComputedStyle(wrap).getPropertyValue('--orb-dot').trim() : '';
+    r.style.setProperty('--ripple', color || '#78A0DC');
+    this.btn.appendChild(r);
+    r.addEventListener('animationend', () => r.remove());
   }
 
   /* Feed a voice signal from input.js (voiceEngine onState). */
@@ -463,7 +598,7 @@ class MicOrb {
   refresh() {
     const next = deriveState();
     if (next !== this.state) this.apply(next);
-    else this.renderLabel();
+    else this.updateA11y();
   }
 
   /* Test harness helper: clear every signal dimension (and the mic-error
@@ -488,14 +623,16 @@ class MicOrb {
       sync();
     }
     // Theme: shader isLight uniform follows prefers-color-scheme.
+    // v8.2.1 F5: theme switch only updates the uniform — it must NOT re-run
+    // setStateCfg (that would re-trigger the transition pulse = flicker).
     if (window.matchMedia) {
       const mq = window.matchMedia('(prefers-color-scheme: light)');
       const onChange = () => this.applyTheme();
       if (mq.addEventListener) mq.addEventListener('change', onChange);
       else if (mq.addListener) mq.addListener(onChange);
     }
-    // Locale: re-render the label text when the language switches.
-    window.addEventListener('locale-changed', () => this.renderLabel());
+    // Locale: re-render the aria-label text when the language switches.
+    window.addEventListener('locale-changed', () => this.updateA11y());
     // Busy / bg-agents / offline have no push event on state.js — poll 1s.
     setInterval(() => this.pollDerived(), 1000);
   }
