@@ -117,7 +117,7 @@ function entryHtml(e) {
       const linksHtml = links.map(l => {
         const isUrl = /^https?:\/\//.test(l);
         const label = isUrl ? l : (l.split('/').pop() || l);
-        return `<span class="ta-link" role="button" tabindex="0" data-link="${escapeHtml(l)}" data-link-type="${isUrl ? 'url' : 'file'}" title="${escapeHtml(l)}">` +
+        return `<span class="ta-link" role="button" tabindex="0" data-link="${escapeAttr(l)}" data-link-type="${isUrl ? 'url' : 'file'}" title="${escapeAttr(l)}">` +
           `<i data-lucide="${isUrl ? 'globe' : 'file-text'}"></i>${escapeHtml(label)}</span>`;
       }).join('');
       return `<div class="ta-note"><div class="ta-note-content">${escapeHtml(n.content || '')}</div>${linksHtml ? `<div class="ta-links">${linksHtml}</div>` : ''}</div>`;
@@ -134,10 +134,10 @@ function entryHtml(e) {
   // Shown as a clamped line under the main row, matching the todos panel.
   const descText = (typeof e.description === 'string' ? e.description : '').trim();
   const descHtml = descText
-    ? `<div class="ta-desc" title="${escapeHtml(descText)}">${escapeHtml(descText)}</div>`
+    ? `<div class="ta-desc" title="${escapeAttr(descText)}">${escapeHtml(descText)}</div>`
     : '';
 
-  return `<div class="ta-entry ta-${escapeHtml(status)}" data-task="${escapeHtml(e.sessionId || '')}/${escapeHtml(String(e.taskId ?? e.id ?? ''))}">` +
+  return `<div class="ta-entry ta-${escapeAttr(status)}" data-task="${escapeAttr(e.sessionId || '')}/${escapeAttr(String(e.taskId ?? e.id ?? ''))}">` +
     `<div class="ta-entry-main" role="button" tabindex="0">` +
       `<span class="ta-status"><i data-lucide="${icon}"></i></span>` +
       (status === 'cancelled' ? `<span class="ta-status-word">${escapeHtml(t('task.cancelled'))}</span>` : '') +
@@ -166,7 +166,7 @@ function render(pane) {
   let rail = `<div class="ta-rail-item ${selectedFolder === ALL ? 'active' : ''}" data-folder="${ALL}">${escapeHtml(t('task.allProjects'))}<span class="ta-rail-count">${entries.length}</span></div>`;
   for (const name of folderNames) {
     const label = name || t('task.uncategorized');
-    rail += `<div class="ta-rail-item ${selectedFolder === name ? 'active' : ''}" data-folder="${escapeHtml(name)}">${escapeHtml(label)}<span class="ta-rail-count">${groups.get(name).length}</span></div>`;
+    rail += `<div class="ta-rail-item ${selectedFolder === name ? 'active' : ''}" data-folder="${escapeAttr(name)}">${escapeHtml(label)}<span class="ta-rail-count">${groups.get(name).length}</span></div>`;
   }
 
   // Right timeline
@@ -230,4 +230,13 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str == null ? '' : String(str);
   return div.innerHTML;
+}
+
+// Attribute-safe variant: escapeHtml (textContent→innerHTML idiom) escapes
+// & < > but NOT quotes — interpolating it into a double-quoted attribute
+// (title="...", data-link="...") lets a `"` in the value break out of the
+// attribute and inject arbitrary attributes (incl. event handlers).
+// Use this for every attribute interpolation of non-constant data.
+function escapeAttr(str) {
+  return escapeHtml(str).replace(/"/g, '&quot;');
 }
