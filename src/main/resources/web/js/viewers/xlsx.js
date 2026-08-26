@@ -31,6 +31,13 @@ async function viewXlsx(pane, { absPath, fileName }) {
       pane.innerHTML = `<div class="canvas-error">Spreadsheet has no sheets.</div>`;
       return;
     }
+    // #303 C5-A4: record per-sheet dimensions for the reference anchor -
+    // the anchor of an xlsx tab is { sheet, cellRange } (active sheet's full
+    // table when there is no cell selection).
+    /** @type {{active:string, dims:Object<string,string>}} */
+    const xr = { active: sheetName, dims: {} };
+    wb.SheetNames.forEach(n => { xr.dims[n] = (wb.Sheets[n] && wb.Sheets[n]['!ref']) || ''; });
+    pane._xlsxRef = xr;
     const sheet = wb.Sheets[sheetName];
     const html = window.XLSX.utils.sheet_to_html(sheet, { editable: false });
     const sheetTabs = wb.SheetNames.map((name, i) =>
@@ -50,6 +57,7 @@ async function viewXlsx(pane, { absPath, fileName }) {
         const html2 = window.XLSX.utils.sheet_to_html(s2, { editable: false });
         pane.querySelector('.xlsx-sheet-content').innerHTML = html2;
         pane.querySelectorAll('.xlsx-sheet-tab').forEach(b => b.classList.toggle('active', b === btn));
+        xr.active = name;
       });
     });
   } catch (err) {

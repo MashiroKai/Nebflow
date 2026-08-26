@@ -2,6 +2,7 @@
 // Migrated verbatim from fileViewers.js (behavior unchanged).
 
 import { key } from '../branding.js';
+import { t } from '../i18n.js';
 export function getToken() {
   return localStorage.getItem(key('token')) || '';
 }
@@ -77,6 +78,8 @@ export function resolveLocalFiles(html, dir, token) {
 
 const CODE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
 const EYE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+// #303 B6: crosshair icon for the "select element to reference" mode toggle.
+const CROSSHAIR_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="21" y1="12" x2="17" y2="12"/><line x1="7" y1="12" x2="3" y2="12"/><line x1="12" y1="7" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="17"/></svg>';
 
 /** Add a floating rendered↔source toggle button to a viewer pane.
  *  Rendered → source: clear the render, mount a Monaco editor with the source.
@@ -162,6 +165,54 @@ export function addSourceToggle(pane, renderFn, ctx) {
     }
   });
   pane.appendChild(btn);
+}
+
+/** Add a floating "select element to reference" toggle button to a viewer pane
+ *  (#303 B6). Same floating-glass style and same corner as the source toggle
+ *  (`.canvas-source-toggle`), seated to its left. Three availability modes per
+ *  the §5.6 cross-source capability matrix (C5):
+ *    - 'available':   entering/leaving element-select mode (HTML srcdoc/same-origin)
+ *    - 'crossorigin': clickable but activation shows an S4 toast (cross-origin URL page)
+ *    - 'nodom':       disabled with a title hint (PDF/image - no DOM to select)
+ *  @param {HTMLElement} pane — canvas tab pane
+ *  @param {Object} opts — { mode, onToggle } ; onToggle(active) only for 'available'
+ *  @returns {HTMLButtonElement} */
+export function addElementRefToggle(pane, opts) {
+  const { mode, onToggle } = opts || {};
+  pane.querySelector('.canvas-ref-select')?.remove();
+  if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'canvas-ref-select';
+  btn.innerHTML = CROSSHAIR_ICON_SVG;
+
+  if (mode === 'nodom') {
+    btn.disabled = true;
+    btn.title = t('ref.selectElementNoDom');
+    btn.setAttribute('aria-pressed', 'false');
+  } else if (mode === 'crossorigin') {
+    btn.title = t('ref.selectElement');
+    btn.setAttribute('aria-pressed', 'false');
+    btn.addEventListener('click', () => {
+      window.__showToast?.(t('ref.selectElementCrossOrigin'), 'info');
+    });
+  } else {
+    btn.title = t('ref.selectElement');
+    btn.setAttribute('aria-pressed', 'false');
+    // State is DOM-class-driven (not a closure flag) so an external exit
+    // (Esc / tab switch via the viewer's state machine) stays in sync with
+    // the next click.
+    btn.addEventListener('click', () => {
+      const active = !btn.classList.contains('active');
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', String(active));
+      btn.title = active ? t('ref.exitSelect') : t('ref.selectElement');
+      if (typeof onToggle === 'function') onToggle(active);
+    });
+  }
+  pane.appendChild(btn);
+  return btn;
 }
 
 // ── ZIP utilities (EPUB viewer) ────────────────────────────────────────
