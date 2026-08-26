@@ -118,13 +118,55 @@ class RefResolverSpec extends FunSuite:
       "[引用: 页面元素 · Post title · <p> · https://ex.com/post]"
     )
 
-  test("html-element ref with empty url is unresolvable"):
+  // ===== B6-A9 seam fix: html-element mirrors file/document (url → path fallback) =====
+
+  test("html-element ref from a local file page (url empty, path present) resolves"):
     val el = fileRef(
       "refType" -> "html-element".asJson,
-      "source" -> Json.obj("kind" -> "web".asJson, "url" -> "".asJson, "title" -> "x".asJson),
+      "source" -> Json.obj(
+        "kind" -> "local".asJson,
+        "url" -> "".asJson,
+        "path" -> "/Users/kaiyu/decks/report.html".asJson,
+        "title" -> "report.html".asJson
+      ),
+      "anchor" -> Json.obj("kind" -> "element".asJson, "selector" -> "body>div.deck".asJson)
+    )
+    assertEquals(
+      RefResolver.resolve(el).get,
+      "[引用: 页面元素 · report.html · <div> · /Users/kaiyu/decks/report.html]"
+    )
+
+  test("html-element local page without title falls back to the file name from path"):
+    val el = fileRef(
+      "refType" -> "html-element".asJson,
+      "source" -> Json.obj("kind" -> "local".asJson, "url" -> "".asJson, "path" -> "/tmp/x.html".asJson),
+      "anchor" -> Json.obj("kind" -> "none".asJson)
+    )
+    assertEquals(RefResolver.resolve(el).get, "[引用: 页面元素 · x.html · /tmp/x.html]")
+
+  test("html-element ref with BOTH url and path empty is unresolvable"):
+    val el = fileRef(
+      "refType" -> "html-element".asJson,
+      "source" -> Json.obj("kind" -> "web".asJson, "url" -> "".asJson, "path" -> "".asJson, "title" -> "x".asJson),
       "anchor" -> Json.obj("kind" -> "element".asJson, "selector" -> "p".asJson)
     )
     assert(RefResolver.resolve(el).isEmpty)
+
+  test("html-element ref prefers url when both url and path are present (URL pages unaffected)"):
+    val el = fileRef(
+      "refType" -> "html-element".asJson,
+      "source" -> Json.obj(
+        "kind" -> "web".asJson,
+        "url" -> "https://ex.com/post".asJson,
+        "path" -> "/cache/ex-post.html".asJson,
+        "title" -> "Post title".asJson
+      ),
+      "anchor" -> Json.obj("kind" -> "element".asJson, "selector" -> "p".asJson)
+    )
+    assertEquals(
+      RefResolver.resolve(el).get,
+      "[引用: 页面元素 · Post title · <p> · https://ex.com/post]"
+    )
 
   test("task refType is NOT resolved here (routes to the return flow)"):
     val task = fileRef(
