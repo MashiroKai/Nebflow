@@ -62,6 +62,14 @@ cp "$JAR" "$STAGE/"
 echo "  jar:        $JAR"
 echo "  VERSION:    $RAW_VERSION (app-version $APP_VERSION)"
 
+# App icon (2026-08-27 desktop-form task): committed under packaging/icons/.
+# Regenerate: python3 packaging/gen-icons.py <logo.png> --out packaging/icons
+ICON_FILE="packaging/icons/nebflow.ico"
+if [ ! -f "$ICON_FILE" ]; then
+  echo "ERROR: $ICON_FILE missing — regen via packaging/gen-icons.py" >&2
+  exit 1
+fi
+
 MODULES=$(grep -v '^#' packaging/jlink-modules.txt | tr -d '[:space:]' | tr -d '\n')
 jlink \
   --add-modules "$MODULES" \
@@ -80,6 +88,7 @@ jpackage \
   --runtime-image "$RUNTIME" \
   --app-version "$APP_VERSION" \
   --win-menu --win-shortcut --win-dir-chooser \
+  --icon "$ICON_FILE" \
   --dest "$OUT"
 
 FINAL="$OUT/${PRODUCT_NAME}-${RAW_VERSION}-x64.msi"
