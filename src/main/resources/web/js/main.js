@@ -1179,8 +1179,75 @@ onMessage('askUser', (msg, view) => {
   }
 });
 
+// F4 (#433): global actionable toast for permission cards whose target root
+// session is unreachable. Glass panel, no overlay dimming (弹窗禁令). Stack
+// top-right; removed on answer or on permissionExpired for the same root sid.
+let __permToastHost = null;
+function showGlobalPermissionToast(msg) {
+  const sid = msg.sessionId || '';
+  if (!__permToastHost) {
+    __permToastHost = document.createElement('div');
+    __permToastHost.id = 'global-perm-toasts';
+    document.body.appendChild(__permToastHost);
+  }
+  const card = document.createElement('div');
+  card.className = 'global-perm-toast';
+  card.dataset.rootSid = sid;
+  const title = document.createElement('div');
+  title.className = 'global-perm-toast-title';
+  title.textContent = t('perm.fallbackTitle', { agent: msg.sourceAgent || '?' });
+  const body = document.createElement('div');
+  body.className = 'global-perm-toast-body';
+  body.textContent = `${msg.toolName || ''}${msg.summary ? ' · ' + msg.summary : ''}`;
+  const actions = document.createElement('div');
+  actions.className = 'global-perm-toast-actions';
+  const send = (approved) => {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved, ...(msg.requestId && { requestId: msg.requestId }) }));
+    }
+    card.remove();
+  };
+  const denyBtn = document.createElement('button');
+  denyBtn.className = 'global-perm-toast-btn deny';
+  denyBtn.textContent = t('perm.fallbackDeny');
+  denyBtn.addEventListener('click', () => send(false));
+  const okBtn = document.createElement('button');
+  okBtn.className = 'global-perm-toast-btn approve';
+  okBtn.textContent = t('perm.fallbackApprove');
+  okBtn.addEventListener('click', () => send(true));
+  actions.appendChild(denyBtn);
+  actions.appendChild(okBtn);
+  card.appendChild(title);
+  card.appendChild(body);
+  card.appendChild(actions);
+  __permToastHost.appendChild(card);
+  // Safety net: the backend auto-denies after 5 min — retire the card by then.
+  setTimeout(() => card.remove(), 5 * 60 * 1000);
+}
+
+function dismissGlobalPermissionToasts(rootSid) {
+  if (!__permToastHost) return;
+  __permToastHost.querySelectorAll('.global-perm-toast').forEach(el => {
+    if (!rootSid || el.dataset.rootSid === rootSid) el.remove();
+  });
+}
+
 onMessage('askPermission', (msg, view) => {
   const sid = msg.sessionId;
+  // F4 (#433): fallback card — the card's target root session is unreachable
+  // (deleted / zombie / never had a client). The backend fanned it out to all
+  // roots with fallback:true; render a global actionable toast instead of
+  // routing the card into a session that cannot be opened. Also catch the
+  // un-flagged variant whose sessionId is not in the session list (older
+  // backend or non-flagged graveyard route). Answers match by requestId, so
+  // answering from this toast completes the pending request from any window.
+  if (msg.fallback || (sid && !state.sessionAgentMap[sid])) {
+    showGlobalPermissionToast(msg);
+    if (msg.sourceSession && state.sessionAgentMap[msg.sourceSession]) {
+      setSessionAttention(msg.sourceSession, true);
+    }
+    return;
+  }
   // Bypass mode: auto-approve immediately without showing attention indicator.
   // This must run for BOTH active and non-active sessions — previously only
   // active sessions got bypass treatment (inside renderPermissionPrompt),
@@ -1220,6 +1287,7 @@ onMessage('askPermission', (msg, view) => {
 
 onMessage('permissionExpired', (msg, view) => {
   const sid = msg.sessionId;
+  dismissGlobalPermissionToasts(sid); // F4 (#433): retire any fallback toast for this root
   if (!sid) return;
   // Mark as answered so the prompt isn't re-created on session switch
   state.answeredPermissions.add(sid);

@@ -155,6 +155,12 @@ class WebSocketRoutes(
           IO.blocking {
             if !os.exists(projectsDir) then os.makeDir.all(projectsDir)
           }.as(Some(projectsDir.toString))
+      // F1 (#433): global safety mode from nebflow.json `safety.defaultMode`
+      // is the default when session meta carries no explicit value — the
+      // user's global auto-all must reach every seeding site, not just the
+      // session where it was set (hot-read, same source as permissionDecision
+      // bucket-miss fallback).
+      globalMode <- nebflow.core.GlobalSafety.defaultMode
       // Resolve inherited rules from folder chain
       resolvedRules = folderId.map { fid =>
         nebflow.service.RulesStore.resolveInheritedRules(
@@ -178,14 +184,15 @@ class WebSocketRoutes(
           projectRoot = effectiveProjectRoot,
           rulesMd = resolvedRules,
           folderId = folderId,
-          safetyMode = metaOpt.map(_.safetyMode).getOrElse("confirm-edits"),
+          safetyMode = metaOpt.map(_.safetyMode)
+            .getOrElse(nebflow.core.SafetyMode.toString(globalMode)),
           gitBranch = metaOpt.flatMap(_.gitBranch),
           rootSessionId = sessionId
         ),
         s"agent-$sessionId"
       )
       pr = effectiveProjectRoot.getOrElse("")
-      safetyMode = metaOpt.map(_.safetyMode).getOrElse("confirm-edits")
+      safetyMode = metaOpt.map(_.safetyMode).getOrElse(nebflow.core.SafetyMode.toString(globalMode))
     yield (ref, pr, safetyMode)
     agentIo.flatMap { case (ref, pr, safetyMode) =>
       val hookCtx = nebflow.core.hooks.HookContext(

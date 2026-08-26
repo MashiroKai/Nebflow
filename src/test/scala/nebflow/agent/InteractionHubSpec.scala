@@ -228,4 +228,73 @@ class InteractionHubSpec extends CatsEffectSuite:
     end for
   }
 
+  // ===== F4 (#433): unreachable-root fanout =====
+
+  test("F4: unreachable root fans the card out to other registered roots with fallback flag") {
+    val system = nebflow.actor.ActorSystem("hub-test-f4a")
+    for
+      hub <- mkHub(system)
+      sentA <- Ref.of[IO, List[Json]](Nil)
+      sentB <- Ref.of[IO, List[Json]](Nil)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("live-root", (j: Json) => sentA.update(_ :+ j))
+      _ <- hub ! InteractionHubCommand.RegisterRoot("live-root-2", (j: Json) => sentB.update(_ :+ j))
+      deferred <- Deferred[IO, Boolean]
+      // root "zombie" never registered — the incident shape
+      _ <- hub ! InteractionHubCommand.Request(permRequest("f4-1", deferred, rootSid = "zombie"))
+      _ <- IO.sleep(100.millis)
+      eventsA <- sentA.get
+      eventsB <- sentB.get
+      cardA = eventsA.find(_.hcursor.downField("type").as[String].contains("askPermission")).get
+      cardB = eventsB.find(_.hcursor.downField("type").as[String].contains("askPermission")).get
+      _ <- system.stopAll
+    yield
+      // both live roots got the card, flagged fallback with the zombie root id
+      assertEquals(cardA.hcursor.downField("fallback").as[Boolean], Right(true))
+      assertEquals(cardB.hcursor.downField("fallback").as[Boolean], Right(true))
+      assertEquals(cardA.hcursor.downField("fallbackRoot").as[String], Right("zombie"))
+      assertEquals(cardB.hcursor.downField("fallbackRoot").as[String], Right("zombie"))
+      // requestId preserved so an answer from ANY window completes the pending
+      assertEquals(cardA.hcursor.downField("requestId").as[String], Right("f4-1"))
+    end for
+  }
+
+  test("F4: answering a fanned-out card by requestId completes the pending deferred") {
+    val system = nebflow.actor.ActorSystem("hub-test-f4b")
+    for
+      hub <- mkHub(system)
+      sent <- Ref.of[IO, List[Json]](Nil)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("live-root", (j: Json) => sent.update(_ :+ j))
+      deferred <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.Request(permRequest("f4-2", deferred, rootSid = "zombie"))
+      _ <- IO.sleep(100.millis)
+      card = sent.get.map(_.find(_.hcursor.downField("type").as[String].contains("askPermission")).get).unsafeRunSync()
+      // user answers from the LIVE window (sessionId = live-root), card was for zombie —
+      // requestId matching must complete the pending request anyway
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered(
+          requestId = card.hcursor.downField("requestId").as[String].getOrElse(""),
+          rootSessionId = "live-root",
+          payload = Json.obj("approved" -> Json.fromBoolean(true))
+        )
+      )
+      answered <- deferred.get.timeout(2.seconds)
+      _ <- system.stopAll
+    yield assertEquals(answered, true)
+    end for
+  }
+
+  test("F4: no registered roots at all keeps the original WARN-drop behavior") {
+    val system = nebflow.actor.ActorSystem("hub-test-f4c")
+    for
+      hub <- mkHub(system)
+      deferred <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.Request(permRequest("f4-3", deferred, rootSid = "zombie"))
+      _ <- IO.sleep(100.millis)
+      // pending slot still registered — the deferred remains completable
+      completed <- deferred.tryGet
+      _ <- system.stopAll
+    yield assertEquals(completed, None) // timed-out path still owns auto-deny
+    end for
+  }
+
 end InteractionHubSpec

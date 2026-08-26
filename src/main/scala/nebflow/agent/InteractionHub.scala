@@ -92,21 +92,46 @@ object InteractionHub:
             System.currentTimeMillis()
           ))
       )
-      send <- rootWsSend.get.map(_.get(req.rootSessionId))
-      _ <- send.fold(
-        logger.warn(
-          s"InteractionRequest dropped: no root wsSend registered for rootSessionId=${req.rootSessionId}"
-        ) *> IO.unit
-      )(ws =>
-        // roundComplete first: flush any in-flight text buffer into the root
-        // session's ui.json before the interactive card (matches P1 root behavior).
-        (ws(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> req.rootSessionId.asJson)).handleErrorWith(_ =>
-          IO.unit
-        ) *>
-          ws(render).handleErrorWith { e =>
-            logger.warn(s"InteractionRequest render failed for requestId=${req.requestId}: ${e.getMessage}") *> IO.unit
-          }).void
-      )
+      send <- rootWsSend.get
+      _ <- send.get(req.rootSessionId) match
+        case Some(ws) =>
+          // roundComplete first: flush any in-flight text buffer into the root
+          // session's ui.json before the interactive card (matches P1 root behavior).
+          (ws(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> req.rootSessionId.asJson)).handleErrorWith(_ =>
+            IO.unit
+          ) *>
+            ws(render).handleErrorWith { e =>
+              logger.warn(s"InteractionRequest render failed for requestId=${req.requestId}: ${e.getMessage}") *> IO.unit
+            }).void
+        case None =>
+          // F4 (#433): the target root session is unreachable (deleted /
+          // zombie / never had a client). Rendering into it would park the
+          // card in a graveyard no one watches — invisible = unanswerable =
+          // guaranteed 5-minute timeout denial. Fan the card out to ALL other
+          // registered roots instead, flagged `fallback: true` so the frontend
+          // shows a global actionable toast rather than routing the card into
+          // a session it cannot open. Answers still match by requestId, so a
+          // user answering from any window completes the pending deferred.
+          val others = send.toList.filterNot(_._1 == req.rootSessionId)
+          if others.isEmpty then
+            logger.warn(
+              s"InteractionRequest dropped: no root wsSend registered for rootSessionId=${req.rootSessionId}"
+            )
+          else
+            others.traverse_ { case (sid, ws) =>
+              ws(render.deepMerge(Json.obj(
+                "fallback" -> true.asJson,
+                "fallbackRoot" -> req.rootSessionId.asJson
+              ))).handleErrorWith { e =>
+                logger.warn(
+                  s"InteractionRequest fallback render failed for requestId=${req.requestId} root=$sid: ${e.getMessage}"
+                ) *> IO.unit
+              }
+            } *>
+              logger.warn(
+                s"InteractionRequest root=${req.rootSessionId} unreachable — fanned out to ${others.size} " +
+                  s"registered root(s) with fallback flag (requestId=${req.requestId}, #433 F4)"
+              )
     yield ()
 
     end for
