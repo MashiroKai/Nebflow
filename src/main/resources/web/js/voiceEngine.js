@@ -43,6 +43,12 @@ const CLOUD_SAMPLE_RATE = 16000;
 let recognition = null;
 let dictating = false;
 let lastInterim = '';
+// Highest result index already committed as final in the current recognition
+// session. Web Speech's event.results is CUMULATIVE and Chrome may re-report
+// indexes that already fired (resultIndex not advancing), which made us
+// re-commit the same final — the user-visible "为什么为什么…" stutter. We skip
+// any final at an index we already committed, and reset the marker on start.
+let lastFinalIdx = -1;
 const cb = {};
 
 // Cloud recording state — one push-to-talk session at a time.
@@ -403,6 +409,7 @@ export async function startDictation(callbacks = {}) {
 
   recognition.onstart = () => {
     dictating = true;
+    lastFinalIdx = -1; // fresh session — reset the final-commit marker
     cb.onState?.('listening');
   };
 
@@ -415,19 +422,31 @@ export async function startDictation(callbacks = {}) {
   };
 
   recognition.onresult = (event) => {
+    // Ignore stray events after stopDictation() (recognition was aborted).
+    if (!dictating) return;
+    // event.results is a CUMULATIVE list; resultIndex may re-report slots that
+    // already fired (S2: the same final committed repeatedly → "为什么为什么…")
+    // and multiple non-final slots may coexist (S3: stale drafts summed into
+    // "…我输…" fragments). Two mitigations:
+    //   1. Commit a final only once — skip indexes ≤ lastFinalIdx.
+    //   2. Stream only the NEWEST (last) result as interim — never the sum.
     let interim = '';
     for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (i <= lastFinalIdx) continue; // already committed this session
       const result = event.results[i];
       if (result.isFinal) {
         const text = result[0].transcript.trim();
         if (text) {
+          lastFinalIdx = i;
           lastInterim = '';
           cb.onText?.(text);
           if (dictating) cb.onState?.('listening');
         }
-      } else {
-        interim += result[0].transcript;
       }
+    }
+    const lastRes = event.results[event.results.length - 1];
+    if (lastRes && !lastRes.isFinal) {
+      interim = lastRes[0].transcript;
     }
     // Track and stream interim text to UI for real-time display
     if (interim && dictating) {
