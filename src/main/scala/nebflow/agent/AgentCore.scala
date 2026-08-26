@@ -1832,10 +1832,14 @@ object AgentCore:
    *   capability, no agent.json declaration needed). SubTask workers and
    *   FlowExecute nodes are still stripped of it downstream (isSubTaskWorker
    *   / isFlowNode leaf rules in buildAllowedToolSet).
-   * - Nebula (root orchestrator): BaseTools + Issue + FlowExecute +
-   *   NebulaOrchestrationTools (user ruling 2026-08-25 17:49 — the 9
-   *   orchestration tools are mechanism-fixed, no longer agent.json
-   *   declarations; the root agent dynamically creates flows too).
+   * - Nebula (root orchestrator): Issue + FlowExecute +
+    *   NebulaOrchestrationTools — and NOT BaseTools (#438 semantics
+    *   correction, user ruling 2026-08-27): the six (Read/Write/Edit/Glob/
+    *   Grep/Bash) are mechanism-fixed only for NON-Nebula agents; for Nebula
+    *   they belong to the agent.json configurable region (declared =
+    *   present, default absent). The 9 orchestration tools stay
+    *   mechanism-fixed (2026-08-25 17:49, unchanged); the root agent
+    *   dynamically creates flows too.
    * - Flow agents: BaseTools + FlowReport (no Mail, no SubTask — flow nodes
    *   are leaves; FlowReport is injected by execution context for dynamic
    *   flows, see FlowDagExecutor.executeNode)
@@ -1846,7 +1850,9 @@ object AgentCore:
       case "team" => BaseTools + "Mail" + "SubTask" + "FlowExecute"
       case "flow" => BaseTools + "FlowReport"
       case _ if agentDef.name == "Nebula" =>
-        BaseTools + "Issue" + "FlowExecute" ++ NebulaOrchestrationTools
+        // #438: BaseTools (the six) intentionally NOT injected here — they
+        // are Nebula's configurable region (agent.json tools declaration).
+        Set("Issue", "FlowExecute") ++ NebulaOrchestrationTools
       case _ => BaseTools
 
 end AgentCore
