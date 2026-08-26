@@ -34,6 +34,7 @@ private[agent] trait AgentCore:
    * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
    *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
    *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
+   * - Issue: 系统反馈收集仅编排者持有（2026-08-25 17:49 裁定）。
    */
   private val NebulaExclusiveTools = AgentCore.NebulaExclusiveTools
 
@@ -1300,7 +1301,9 @@ private[agent] trait AgentCore:
       case names => names.toSet
     // Fixed tools are auto-injected based on agent category — they don't
     // need to be listed in agent.json. Mail is team-only; FlowReport is
-    // flow-only; all agents get base tools (file ops, search, shell, feedback).
+    // flow-only; all agents get base tools (file ops, search, shell). Issue
+    // is Nebula-only (2026-08-25 17:49 裁定 — stripped below via
+    // NebulaExclusiveTools even when explicitly listed).
     val withBuiltin = base ++ AgentCore.fixedToolsFor(agentDef)
     // FlowTrigger is whitelist-driven (R1 split, NOT Nebula-exclusive): any
     // agent declaring flows in agent.json gets the tool; everyone else is
@@ -1716,11 +1719,31 @@ object AgentCore:
    *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
    * - AgentControl: 后台 agent 管控（list/status/cancel/restart，spec §4 安全
    *   边界矩阵——危险能力只交给根调度者）。
+   * - Issue: 系统反馈收集仅编排者持有（user ruling 2026-08-25 17:49 工具体系
+   *   精简）——非 Nebula agent 声明了也不给（GitHub issue 上报是编排层职责，
+   *   worker 的系统性问题走 Mail 上报 Manager/Nebula 转达）。
    */
   val NebulaExclusiveTools = Set(
     "Schedule",
     "Delegate",
-    "AgentControl"
+    "AgentControl",
+    "Issue"
+  )
+
+  /** Nebula 的 9 个编排工具（user ruling 2026-08-25 17:49：Nebula 系统固定
+    * 改为 9 个编排工具；Read/Grep/Bash 等按需经 BaseTools/agent.json 保留）。
+    * 机制层固定注入——不依赖 agent.json 声明（防面板编辑误删导致调度器失能），
+    * 同时也意味着非 Nebula agent 声明这些工具中的 Nebula 专属项无效。 */
+  val NebulaOrchestrationTools = Set(
+    "AgentControl",
+    "TaskUpdate",
+    "Delegate",
+    "Pop",
+    "AskUserQuestion",
+    "TaskCreate",
+    "Mail",
+    "Schedule",
+    "TransferFile"
   )
 
   /** Team Manager task tools (2026-08-25 team-manager-task-tool): granted to
@@ -1765,6 +1788,9 @@ object AgentCore:
   /**
    * Base tools always available to ALL agents regardless of category.
    * These are injected automatically — agent.json does not need to list them.
+   *
+   * Issue was removed (user ruling 2026-08-25 17:49 工具体系精简): system
+   * feedback collection is orchestrator-only — see NebulaExclusiveTools.
    */
   val BaseTools = Set(
     "Read",
@@ -1772,8 +1798,7 @@ object AgentCore:
     "Edit",
     "Glob",
     "Grep",
-    "Bash",
-    "Issue"
+    "Bash"
   )
 
   /**
@@ -1788,8 +1813,10 @@ object AgentCore:
    *   capability, no agent.json declaration needed). SubTask workers and
    *   FlowExecute nodes are still stripped of it downstream (isSubTaskWorker
    *   / isFlowNode leaf rules in buildAllowedToolSet).
-   * - Nebula (root orchestrator): BaseTools + FlowExecute — the root agent
-   *   dynamically creates flows too.
+   * - Nebula (root orchestrator): BaseTools + Issue + FlowExecute +
+   *   NebulaOrchestrationTools (user ruling 2026-08-25 17:49 — the 9
+   *   orchestration tools are mechanism-fixed, no longer agent.json
+   *   declarations; the root agent dynamically creates flows too).
    * - Flow agents: BaseTools + FlowReport (no Mail, no SubTask — flow nodes
    *   are leaves; FlowReport is injected by execution context for dynamic
    *   flows, see FlowDagExecutor.executeNode)
@@ -1799,7 +1826,8 @@ object AgentCore:
     agentDef.category match
       case "team" => BaseTools + "Mail" + "SubTask" + "FlowExecute"
       case "flow" => BaseTools + "FlowReport"
-      case _ if agentDef.name == "Nebula" => BaseTools + "FlowExecute"
+      case _ if agentDef.name == "Nebula" =>
+        BaseTools + "Issue" + "FlowExecute" ++ NebulaOrchestrationTools
       case _ => BaseTools
 
 end AgentCore
