@@ -53,6 +53,13 @@ const SEG_MIN_MS = 1500;   // never cut a segment shorter than this (time cut)
 const SEG_MAX_MS = 2000;   // hard time-based cut
 const SILENCE_MS = 450;    // sustained silence that triggers an early cut
 const SILENCE_RMS = 0.01;  // chunk RMS below this counts as silence
+
+/* Mic volume hook for the orb (v8.2.2 spec §10.5): the listening state shakes
+   with mic loudness — the orb registers a listener receiving a normalized
+   volume [0,1] per audio chunk (RMS above the silence floor, ×10 gain). */
+let volumeListener = null;
+/** @param {((v: number) => void) | null} fn */
+export function setMicVolumeListener(fn) { volumeListener = typeof fn === 'function' ? fn : null; }
 const NOISE_MIN_MS = 300;  // segments shorter than this AND low-energy = noise
 const NOISE_RMS = 0.012;
 const SEG_TIMEOUT_MS = 20000;
@@ -164,6 +171,7 @@ function onMicChunk(ctx, chunk) {
   let sumSq = 0;
   for (let i = 0; i < chunk.length; i++) sumSq += chunk[i] * chunk[i];
   const rms = Math.sqrt(sumSq / Math.max(1, chunk.length));
+  if (volumeListener) volumeListener(Math.min(1, Math.max(0, (rms - SILENCE_RMS) * 10)));
   segBuf.samples.push(chunk);
   segBuf.len += chunk.length;
   segBuf.sumSq += sumSq;
@@ -466,6 +474,9 @@ export async function startDictation(callbacks = {}) {
 
 export function stopDictation() {
   dictating = false;
+  // Orb volume hook (v8.2.2): zero the shake amplitude on stop so the orb
+  // does not freeze at the last loudness until the next listening session.
+  if (volumeListener) volumeListener(0);
   // Cloud path: stop recording + send the captured WAV for transcription.
   if (cloudRec) {
     cloudStop();
