@@ -166,6 +166,15 @@ object AgentActor extends AgentCore with AgentSession:
     * immediate re-send would hit the same stall. */
   private val InactivityRetryBackoffMinMs = 30_000L
 
+  /** Test hook: override the inactivity retry backoff floor (specs inject
+    * ~100ms so checkpoint-restart integration tests don't wait 30s per retry).
+    * Public for cross-package specs (core.entity supervision spec). Global
+    * var — specs MUST reset to None in a finally. */
+  var testInactivityBackoffMs: Option[Long] = None
+
+  private def effectiveInactivityBackoffMinMs: Long =
+    testInactivityBackoffMs.getOrElse(InactivityRetryBackoffMinMs)
+
   /** Exponential backoff base for LLM fail retries (ms). */
   private val LlmFailBackoffBaseMs = 2000L
 
@@ -1408,13 +1417,24 @@ object AgentActor extends AgentCore with AgentSession:
             }
         else
           val cleanedState = state
+          // P4 (flow-node supervision): provider/attempt/stall-age observability
+          // on llm-fail — the fields needed to tell "upstream jitter" from
+          // "provider dead" in post-mortems without re-reading router logs.
+          val failExtras = error match
+            case e: StreamInactivityTimeout =>
+              s" class=stream-inactivity lastChunkAgeMs=${e.lastChunkAgeMs}"
+            case e: FallbackExhaustedError =>
+              val last = e.attempts.lastOption
+              s" class=exhausted attempts=${e.attempts.size}" +
+                last.map(a => s" last=${a.providerId}/${a.model}:${a.reason.getOrElse("unknown")}").getOrElse("")
+            case _ => ""
           logAgentEvent(
             agentDef,
             depth,
             state.sessionId,
             state.sessionName,
             "llm-fail",
-            s"err=${error.getMessage.take(80)}"
+            s"err=${error.getMessage.take(80)}$failExtras"
           )
           // Auto-retry overload-class LLM failures (429/529) once with a ≥5s
           // backoff: the provider is saturated and may recover. Token incident
@@ -1443,7 +1463,7 @@ object AgentActor extends AgentCore with AgentSession:
             // window — the incident stall was 60s+). Overload retries keep the
             // existing [OverloadBackoffMinMs, LlmFailBackoffMaxMs] pipeline.
             val backoffMs =
-              if isStreamInactivity then math.max(LlmFailBackoffBaseMs * (1L << (retryState.llmFailRetries - 1)), InactivityRetryBackoffMinMs)
+              if isStreamInactivity then math.max(LlmFailBackoffBaseMs * (1L << (retryState.llmFailRetries - 1)), effectiveInactivityBackoffMinMs)
               else
                 math.min(
                   math.max(LlmFailBackoffBaseMs * (1L << (retryState.llmFailRetries - 1)), OverloadBackoffMinMs),
@@ -1471,13 +1491,20 @@ object AgentActor extends AgentCore with AgentSession:
             // 保留 Permanent/Fatal（Timeout/EmptyStream/Auth/Format/ModelNotFound/
             // TurnBudgetExceeded/StuckAbort/context overflow）→ 下方 fatal 路径。
             val errCls = Fallback.classifyError(error)
-            val shouldErrorFreeze = error match
+            // Flow-node supervision P2: flow nodes are exempt from ErrorFrozen —
+            // a DAG is deterministic execution, there is no "wait for the
+            // condition to clear" semantics. A retryable-exhausted stall fails
+            // the turn (AgentError.retryable=true) so the flow executor's
+            // Restart path checkpoint-resumes the node. Root/team agents keep
+            // the v2 freeze-then-resume semantics for the same error class.
+            val shouldErrorFreeze = !state.isFlowNode && (error match
               // retryable 预算耗尽（attempts 全 overload/inactivity）：饱和或上游
               // 抖动可能恢复 → 冻结等待（与 llmFailureRetryable 同判定，单点来源）
               case _: FallbackExhaustedError => AgentActor.llmFailureRetryable(error)
               // 工具管道错误：工具链路问题，不是 provider 条件性错误 → 不冻结（原语义）
               case _: ToolPipelineError => false
               case _ => errCls.permanence == ErrorPermanence.Transient
+            )
             if shouldErrorFreeze then
               val errReason = error match
                 case _: AllProvidersDownTimeout => FreezeReason.ProviderDown
@@ -1499,7 +1526,14 @@ object AgentActor extends AgentCore with AgentSession:
               enterErrorFrozen(agentDef, resources, depth, parentRef, state, replyTo, errReason, resumeInMs, error)
             else
               val agentError =
-                AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
+                AgentError(
+                  ctx.self.path.name,
+                  agentDef.name,
+                  depth,
+                  AgentErrorType.LlmFailed,
+                  error.getMessage,
+                  retryable = Some(AgentActor.llmFailureRetryable(error))
+                )
               val errMsg = error match
                 case e: FallbackExhaustedError =>
                   val attemptSummaries =
