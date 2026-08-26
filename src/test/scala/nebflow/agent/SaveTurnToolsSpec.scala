@@ -29,6 +29,15 @@ class SaveTurnToolsSpec extends FunSuite:
     assert(names.forall(Whitelist.contains), s"unexpected tool in save turn: $names")
     assert(names.contains("Write"), "Write is the core memory-maintenance tool")
 
+  test("#438: save-turn whitelist is mechanism-guaranteed for a bare Nebula def"):
+    // The six are Nebula's configurable region now — an undeclared bare def
+    // has NONE of them in its interactive toolset, yet the save phase
+    // (system machinery) must still carry the full [Write, Edit, Read]
+    // whitelist or memory persistence silently dies (SaveTurnGuardSpec P0-1
+    // regression: seeds-fallback def exposed exactly [Read]).
+    val names = CoreProbe.save(mkDef("Nebula", Nil)).getOrElse(fail("save turn must keep tools"))
+    assertEquals(names.toSet, Whitelist)
+
   test("save turn never includes exploration / branching tools"):
     val names = CoreProbe.save(mkDef("Nebula", List("*"))).getOrElse(Nil)
     val banned = Set("Bash", "Grep", "Glob", "WebSearch", "WebFetch", "Delegate", "Mail", "SubTask", "FlowTrigger")
