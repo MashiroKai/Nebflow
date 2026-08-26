@@ -136,33 +136,87 @@ function fillSummary(built, meta) {
 }
 
 /**
+ * Turn scope for a terminal event (#346 + #403): the rows that belong to the
+ * turn now ending.
+ *
+ * Boundary = the last NON-injected user row — injected messages mid-turn are
+ * process (2026-08-25 ruling) and never split a turn.
+ *
+ * #403 closure ruling (2026-08-26 20:24/20:26): the group CLOSES when the LLM
+ * turn ends. Anything appended AFTER closure — a delegate completion, Team
+ * Mail, Schedule firing, flow notification (each triggers its own new turn) —
+ * must open a NEW group and is forbidden from merging into the closed one.
+ * collapseTurn/failTurn therefore stamp a closure cursor (child count + anchor
+ * element); when fresh content exists past the cursor, the whole closed
+ * prefix (earlier groups AND their trailing flat final reply) is the
+ * boundary. The pre-#403 bug: ungroupTail dissolved the previous turn's
+ * closed group and the new terminal re-gathered it ("fusion").
+ *
+ * The cursor self-invalidates: it is honored only while its anchor element
+ * still sits at the recorded position — an innerHTML rebuild (session switch
+ * / reconnect) disconnects the anchor and the legacy path applies until
+ * buildTurnGroupsForHistory stamps a fresh cursor.
+ *
+ * Same-turn re-terminal (done then a late error — no rows appended between)
+ * keeps the legacy heal: ungroupTail dissolves the just-built group so the
+ * turn is re-gathered exactly once under the new verdict.
+ */
+const closedCursors = new WeakMap();
+
+/** Stamp the closure cursor: every child now in the chat belongs to a closed
+ *  turn (or earlier). Rows appended after this point start a new turn. */
+function markClosed(chat) {
+  closedCursors.set(chat, { len: chat.children.length, anchor: chat.lastElementChild });
+}
+
+/** Stamp the cursor at a specific child index (busyTail rebuild: the flat
+ *  tail rows after idx belong to the OPEN turn). */
+function markClosedAt(chat, idx) {
+  closedCursors.set(chat, { len: idx, anchor: chat.children[idx - 1] || null });
+}
+
+function turnScope(chat) {
+  const cur = closedCursors.get(chat);
+  const valid = !!cur && (cur.len === 0 ||
+    (cur.anchor && cur.anchor.parentNode === chat && chat.children[cur.len - 1] === cur.anchor));
+  const fresh = valid && chat.children.length > cur.len;
+  if (!fresh) ungroupTail(chat); // same-turn re-terminal heal / no valid cursor
+  const kids = Array.from(chat.children);
+  let boundary = -1;
+  kids.forEach((el, i) => {
+    if (el.classList && el.classList.contains('row') && el.classList.contains('user') && !isInjectedRow(el)) boundary = i;
+  });
+  if (fresh) boundary = Math.max(boundary, cur.len - 1);
+  return kids.slice(boundary + 1).filter(el => el.classList && el.classList.contains('row'));
+}
+
+/**
  * Done path: gather this turn's process rows and collapse immediately
  * (synchronous, no linger — v1.1 user ruling). Returns the group or null.
  */
 export function collapseTurn(view, meta = {}) {
   const chat = view.dom.chat;
-  ungroupTail(chat); // boundary heal: see ungroupTail below
-  const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
-  // Turn boundary = the last NON-injected user row. Injected messages are part
-  // of the turn's process (2026-08-25 ruling) — they must NOT truncate scope
-  // (that was the "result between user & injected not closed" bug).
-  let lastUserIdx = -1;
-  rows.forEach((r, i) => { if (r.classList.contains('user') && !isInjectedRow(r)) lastUserIdx = i; });
-  const scope = rows.slice(lastUserIdx + 1);
-  if (!hasAgentWork(scope)) return null; // lone injection / no agent work → nothing to collapse
-  const processRows = scope.filter(isProcessRow);
-  if (processRows.length === 0) return null; // E5
-  const built = buildGroup(chat, processRows, findFinalRow(scope), meta);
-  if (!built) return null;
-  fillSummary(built, meta);
-  built.group.dataset.turnState = 'done';
-  built.steps.style.display = 'none';
-  built.summary.setAttribute('aria-expanded', 'false');
-  // keep the viewport pinned to the bottom when it was pinned (spec §4.2)
-  if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80) {
-    chat.scrollTop = chat.scrollHeight;
+  const scope = turnScope(chat);
+  let built = null;
+  if (hasAgentWork(scope)) { // lone injection / no agent work → nothing to collapse
+    const processRows = scope.filter(isProcessRow);
+    if (processRows.length > 0) { // E5
+      built = buildGroup(chat, processRows, findFinalRow(scope), meta);
+    }
   }
-  return built.group;
+  if (built) {
+    fillSummary(built, meta);
+    built.group.dataset.turnState = 'done';
+    built.steps.style.display = 'none';
+    built.summary.setAttribute('aria-expanded', 'false');
+    // keep the viewport pinned to the bottom when it was pinned (spec §4.2)
+    if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80) {
+      chat.scrollTop = chat.scrollHeight;
+    }
+  }
+  markClosed(chat); // #403: LLM ended — the turn is closed even when there
+                    // was nothing to group (E5/E6); later arrivals are a new turn.
+  return built ? built.group : null;
 }
 
 /**
@@ -171,21 +225,21 @@ export function collapseTurn(view, meta = {}) {
  */
 export function failTurn(view) {
   const chat = view.dom.chat;
-  ungroupTail(chat); // boundary heal: see ungroupTail below
-  const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
-  // Same as collapseTurn: injected messages are turn-process, not boundaries.
-  let lastUserIdx = -1;
-  rows.forEach((r, i) => { if (r.classList.contains('user') && !isInjectedRow(r)) lastUserIdx = i; });
-  const scope = rows.slice(lastUserIdx + 1);
-  if (!hasAgentWork(scope)) return null;
-  const processRows = scope.filter(isProcessRow);
-  if (processRows.length === 0) return null;
-  // A5: failed groups carry NO summary element (not merely hidden).
-  const built = buildGroup(chat, processRows, findFinalRow(scope), {}, false);
-  if (!built) return null;
-  built.group.dataset.turnState = 'failed';
-  built.group.classList.add('turn-failed');
-  return built.group;
+  const scope = turnScope(chat);
+  let built = null;
+  if (hasAgentWork(scope)) {
+    const processRows = scope.filter(isProcessRow);
+    if (processRows.length > 0) {
+      // A5: failed groups carry NO summary element (not merely hidden).
+      built = buildGroup(chat, processRows, findFinalRow(scope), {}, false);
+    }
+  }
+  if (built) {
+    built.group.dataset.turnState = 'failed';
+    built.group.classList.add('turn-failed');
+  }
+  markClosed(chat); // #403: terminal reached — later arrivals are a new turn
+  return built ? built.group : null;
 }
 
 /** E10: message-search hit inside a collapsed group — expand it first so the
@@ -206,9 +260,14 @@ export function expandGroupContaining(el) {
  *  rebuild (refresh / WS reconnect full-reload / popup open) before the turn's
  *  terminal event arrives — stamped 'failed' and stranded expanded forever,
  *  while the live terminal then gathers only the post-rebuild rows into a
- *  second group ("half-expanded dead state"). Terminal events must always
- *  heal the DOM: hoist every turn-group after the last user row back to flat
- *  rows (order preserved) so the whole turn is gathered exactly once. */
+ *  second group ("half-expanded dead state"). A same-turn re-terminal (done
+ *  then a late error, no rows appended between) must heal the DOM: hoist
+ *  every turn-group after the last user row back to flat rows (order
+ *  preserved) so the whole turn is gathered exactly once.
+ *  #403 (2026-08-26): only invoked when NO content was appended since the
+ *  last close — once fresh rows exist past the closure cursor, closed groups
+ *  are immutable boundaries (a new turn is running; dissolving the previous
+ *  group fused the two turns — the bug this fixes). */
 function ungroupTail(chat) {
   const kids = Array.from(chat.children);
   let lastUserIdx = -1;
@@ -245,9 +304,27 @@ export function buildTurnGroupsForHistory(chat, opts = {}) {
   };
   rows.forEach((r, i) => {
     // Turn boundary = non-injected user row (injected messages are process).
-    if (r.classList.contains('user') && !isInjectedRow(r)) { flush(i); segStart = i + 1; }
+    if (r.classList.contains('user') && !isInjectedRow(r)) { flush(i); segStart = i + 1; return; }
+    // #403 history side of the closure ruling: an injected row that arrives
+    // AFTER the current segment already carries a done badge (LLM ended,
+    // group closed) opened its own new turn — split here. Mid-turn injected
+    // rows (no badge yet in this segment) stay inside the turn's process.
+    if (isInjectedRow(r) && findDoneBadge(rows.slice(segStart, i))) { flush(i); segStart = i; }
   });
-  if (!busyTail || findDoneBadge(rows.slice(segStart))) flush(rows.length);
+  const tail = rows.slice(segStart);
+  if (!busyTail || findDoneBadge(tail)) {
+    flush(rows.length);
+    markClosed(chat); // #403: everything rebuilt is a closed turn
+  } else if (tail.length > 0) {
+    // busyTail skipped: the flat tail rows belong to the OPEN turn — the
+    // closure cursor sits at the tail's first row, not at the chat end, or
+    // the live terminal would find "no fresh content" and dissolve the
+    // legitimately closed history groups.
+    const idx = Array.from(chat.children).indexOf(tail[0]);
+    if (idx > 0) markClosedAt(chat, idx);
+  } else {
+    markClosed(chat);
+  }
 }
 
 function groupSegment(chat, seg) {
