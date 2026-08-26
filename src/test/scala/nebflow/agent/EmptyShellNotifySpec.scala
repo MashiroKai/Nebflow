@@ -121,7 +121,11 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
         )
         // Trigger: child gets UserInput with replyTo = supervisor, replies Completed.
         _ <- child ! AgentCommand.UserInput("go", Some(supervisor))
-        _ <- waitUntil(5.seconds)(captured.get.map(_.nonEmpty))
+        // 20s (was 5s): under full-suite parallel load the actor round-trip
+        // (UserInput → Completed → supervisor forward) can exceed 5s of CPU
+        // contention — known flake, green path returns in <1s so the longer
+        // ceiling costs nothing unloaded. Kept below munit's 30s test timeout.
+        _ <- waitUntil(20.seconds)(captured.get.map(_.nonEmpty))
         payloads <- captured.get
       yield payloads.head
 

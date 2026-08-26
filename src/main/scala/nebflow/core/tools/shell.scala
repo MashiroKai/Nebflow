@@ -608,7 +608,12 @@ final class ShellSession private (
             (alive, lines, cpu)
           }.flatMap { (alive, lines, cpu) =>
             if !alive then IO.unit
-            else if lines > lastLines || (cpu - lastCpu) >= CpuActiveThresholdNanos then
+            // Strictly-greater: macOS `ps` time quantizes to centiseconds —
+            // one quantum (10ms) EQUALS CpuActiveThresholdNanos, so `>=` let
+            // a sleep process's single startup quantum count as "active" and
+            // touch the window (D-1 flake under load). A genuinely computing
+            // process accrues orders of magnitude more per sample window.
+            else if lines > lastLines || (cpu - lastCpu) > CpuActiveThresholdNanos then
               watch(lines, cpu, 0L)
             else if idleMs + ForegroundSampleInterval.toMillis >= ForegroundNoProgressTimeout.toMillis then
               IO.delay(
@@ -659,7 +664,9 @@ final class ShellSession private (
                     cpu1 <- IO(sampleProcessCpuTime(proc))
                     _ <- IO.sleep(CpuSampleInterval)
                     cpu2 <- IO(sampleProcessCpuTime(proc))
-                    cpuActive = (cpu2 - cpu1) >= CpuActiveThresholdNanos
+                    // Strictly-greater — same ps-quantum equality rationale as
+                    // the foreground watch above (one 10ms quantum ≠ activity).
+                    cpuActive = (cpu2 - cpu1) > CpuActiveThresholdNanos
                     _ <-
                       if !cpuActive then
                         IO(proc.isAlive()).flatMap { stillAlive =>
