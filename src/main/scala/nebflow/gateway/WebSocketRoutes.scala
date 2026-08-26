@@ -3711,13 +3711,13 @@ class WebSocketRoutes(
     reason: String
   ): IO[Unit] =
     val reasonStr = if reason.trim.nonEmpty then reason.trim else "（未附原因）"
-    val text =
-      s"[任务取消 #${task.id}: ${task.subject}]\n" +
-        s"任务描述: ${task.description}\n" +
-        s"取消原因: $reasonStr\n" +
-        "（该任务已由用户取消，处于终态。请停止与该任务相关的工作，不要继续推进；如需后续处理请另行创建任务）"
+    // Cancel-batch (user ruling 2026-08-26 08:33): the structured notice rides
+    // to the agent — root (Nebula) buffers (idle = zero turns, debounced
+    // while processing); non-root agents get the immediate stop-work
+    // injection (AgentActor converts the notice). Text packaging lives in
+    // AgentActor.packageCancelNotices — single source for both shapes.
     ensureAgent(sessionId)(ref =>
-      ref ! AgentCommand.ImmediateInput(text, source = Some("task-cancel"))
+      ref ! AgentCommand.TaskCancelNotice(task.id, task.subject, task.description, reasonStr, System.currentTimeMillis())
     )
   end notifyTaskCancelled
 

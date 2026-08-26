@@ -53,6 +53,30 @@ object AgentCommand:
     /** Delivery mode marker: "ask" | "queue" | "immediate" for Mail delivery. */
     delivery: Option[String] = None
   ) extends AgentCommand
+
+  /**
+   * Cancel-batch (user ruling 2026-08-26 08:33): the user cancelled a task
+   * owned by this session — replaces the old always-immediate [任务取消]
+   * injection for the root orchestrator. Root (Nebula) BUFFERS these:
+   * idle = no turn at all (flushed as a block on the next activity),
+   * processing = debounced window (AgentActor.CancelBatchDebounceMs) so rapid
+   * cancellations merge into ONE packaged notice. Non-root agents keep the
+   * immediate-injection behavior (converted to ImmediateInput on receipt).
+   * `at` is the cancellation epoch-millis — the package renders in cancel
+   * order (append order == chronological).
+   */
+  case class TaskCancelNotice(
+    taskId: String,
+    subject: String,
+    description: String,
+    reason: String,
+    at: Long
+  ) extends AgentCommand
+
+  /** Cancel-batch internal: debounce window expired — flush the buffered
+    * cancellation notices as ONE packaged ImmediateInput. No-op when the
+    * buffer was already flushed by an activity-driven enrich. */
+  case class FlushCancelNotices() extends AgentCommand
   case class Interrupt() extends AgentCommand
 
   case class AskUser(
@@ -1011,7 +1035,17 @@ case class AgentState(
    */
   cachedSystemStable: Option[String],
   /** Dynamic values at the time systemStable was last built (change detection). */
-  stableSnapshot: Option[SystemStableSnapshot]
+  stableSnapshot: Option[SystemStableSnapshot],
+  /**
+   * Cancel-batch buffer (user ruling 2026-08-26 08:33) — TOP-LEVEL on
+   * purpose: ExecutionContext is rebuilt at every turn boundary
+   * (ExecutionContext.idle), an execution-scoped buffer would be silently
+   * wiped there. In-memory only (same lifecycle as the rest of AgentState):
+   * a restart drops un-flushed notices — acceptable, the panel's
+   * taskListUpdate already converged the visible state. Append order ==
+   * chronological cancel order.
+   */
+  cancelNotices: List[AgentCommand.TaskCancelNotice]
 )
 
 object AgentState:
@@ -1075,7 +1109,8 @@ object AgentState:
       Nil,
       None,
       None,
-      None
+      None,
+      Nil // cancelNotices (cancel-batch)
     )
   end apply
 end AgentState
