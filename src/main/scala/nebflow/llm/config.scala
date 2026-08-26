@@ -116,12 +116,26 @@ case class SearchConfig(
 object SearchConfig:
   given Decoder[SearchConfig] = deriveDecoder[SearchConfig]
 
+/** Stream watchdog thresholds override (flow-node supervision P3, 2026-08-26):
+  * llm.streamTimeouts { firstTokenSec, inactivitySec, noProgressSec } — each
+  * independently optional; None → Defaults. Applied at boot (LlmInterface
+  * .applyStreamTimeouts in GatewayMain); config changes take effect on restart. */
+case class StreamTimeoutsConfig(
+  firstTokenSec: Option[Int] = None,
+  inactivitySec: Option[Int] = None,
+  noProgressSec: Option[Int] = None
+)
+
+object StreamTimeoutsConfig:
+  given Decoder[StreamTimeoutsConfig] = deriveDecoder[StreamTimeoutsConfig]
+
 case class ServiceLlmConfig(
   providers: Map[String, ProviderConfig],
   /** #339 D-b：llm.model 已退役——默认模型唯一来源是 model-presets.json 的
     * defaultPreset。Option 化的 schema 仅容忍存量文件的 llm.model 节（可解析
     * 但被忽略；boot 迁移会播种成 preset 后原子剥离）。 */
-  model: Option[ModelChainConfig] = None
+  model: Option[ModelChainConfig] = None,
+  streamTimeouts: Option[StreamTimeoutsConfig] = None
 )
 
 object ServiceLlmConfig:

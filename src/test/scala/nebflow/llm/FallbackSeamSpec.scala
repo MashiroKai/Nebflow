@@ -153,7 +153,10 @@ class FallbackSeamSpec extends CatsEffectSuite:
       yield (result, elapsed)
       val (result, elapsed) = program.unsafeRunSync()
       result match
-        case Left(e: java.util.concurrent.TimeoutException) =>
+        case Left(e: nebflow.shared.StreamInactivityTimeout) =>
+          // Flow-node supervision P1: phase-2 stalls now raise the dedicated
+          // Transient type (seam guard behavior unchanged — whole stream fails,
+          // no provider switch after emitted content).
           assert(e.getMessage.contains("inactive"), s"inactivity message expected, got: ${e.getMessage}")
         case Right(chunks) =>
           val text = chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
@@ -161,7 +164,7 @@ class FallbackSeamSpec extends CatsEffectSuite:
             s"STREAM STITCHED — fallback ran after emitted content: chunks=$chunks text='$text' " +
               s"(provider b hits=${hitsB.get()})"
           )
-        case other => fail(s"expected Left(TimeoutException), got $other")
+        case other => fail(s"expected Left(StreamInactivityTimeout), got $other")
       // The fallback provider was never contacted — the seam guard suppressed the switch.
       assertEquals(hitsB.get(), 0, "provider b must NOT be tried after partial content was emitted")
       assert(elapsed < 20.seconds, s"stream resolved at ${elapsed.toMillis}ms — watchdog must bound it")
