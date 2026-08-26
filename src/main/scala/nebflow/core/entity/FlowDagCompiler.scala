@@ -360,4 +360,23 @@ object FlowDagCompiler:
       if color(n) == 0 then dfs(n) else None
     }.toList.headOption
 
+  /** Flow-node supervision P2 (2026-08-26 §5.P2): dynamic (inline FlowExecute)
+    * DAG nodes get supervision defaults at COMPILE time — onError=Restart +
+    * maxRetries=1 — so a retryable LLM failure checkpoint-restarts the node
+    * instead of scrapping the whole flow. Explicit user JSON always wins (an
+    * onError=stop or a custom maxRetries is preserved as written). Predefined
+    * flow.json files do NOT pass through this function (compatibility
+    * commitment: their nodes keep onError=None → Stop exactly as before).
+    * The transform is visible in the compiled output (what you compile is
+    * what runs). */
+  def applyDynamicDefaults(flow: FlowDagDef): FlowDagDef =
+    flow.copy(nodes = flow.nodes.map { (id, node) =>
+      if node.onError.isEmpty then
+        id -> node.copy(
+          onError = Some(OnError.Restart),
+          maxRetries = if node.maxRetries == 0 then 1 else node.maxRetries
+        )
+      else id -> node
+    })
+
 end FlowDagCompiler

@@ -101,6 +101,39 @@ object AgentActor extends AgentCore with AgentSession:
 
   private val MaxEmptyResponseRetries = 5
 
+  /** Overload-class reasons: provider saturated, backoff can heal it. */
+  def isOverloadReason(r: FailoverReason): Boolean =
+    r == FailoverReason.Overloaded || r == FailoverReason.RateLimit
+
+  /** Flow-node supervision P1 (2026-08-26): agent-turn-level retryability of an
+    * LLM failure. Retryable = overload-class (saturation may clear during
+    * backoff) OR stream-inactivity stall (phase-2 watchdog — upstream jitter;
+    * a clean-checkpoint re-send within the SAME OverloadRetryMax/MaxTurnLlmCalls
+    * budget, no new quota; NOT a stream-level resume, so the seam guard is never
+    * violated). Everything else fails fast (2026-08-18 token-incident ruling).
+    * Single source: the llm-fail retry branch AND AgentError.retryable (P2). */
+  def llmFailureRetryable(error: Throwable): Boolean = error match
+    case e: FallbackExhaustedError =>
+      e.attempts.forall(a =>
+        a.reason.exists(isOverloadReason)
+          || (a.reason.contains(FailoverReason.Timeout) && a.permanence.contains(ErrorPermanence.Transient))
+      )
+    case _: ToolPipelineError => false
+    case _: StreamInactivityTimeout => true
+    case _ =>
+      val cls = Fallback.classifyError(error)
+      cls.permanence == ErrorPermanence.Transient && isOverloadReason(cls.reason)
+
+  /** Inactivity-class failure (drives the ≥30s retry backoff): a typed stall,
+    * or every attempt in an exhausted chain was a Transient timeout. */
+  def llmFailureInactivityClass(error: Throwable): Boolean = error match
+    case _: StreamInactivityTimeout => true
+    case e: FallbackExhaustedError =>
+      e.attempts.nonEmpty && e.attempts.forall(a =>
+        a.reason.contains(FailoverReason.Timeout) && a.permanence.contains(ErrorPermanence.Transient)
+      )
+    case _ => false
+
   /** Max "you must call Mail" reminder injections before giving up (initial + retries). */
   private val MaxMailReminders = 2
 
@@ -127,6 +160,20 @@ object AgentActor extends AgentCore with AgentSession:
    * mostly amplifies spend without healing anything.
    */
   private val OverloadRetryMax = 1
+
+  /** Flow-node supervision P1: stream-inactivity retries back off at least
+    * this long — the upstream stall lasted 60s+ (watchdog window), an
+    * immediate re-send would hit the same stall. */
+  private val InactivityRetryBackoffMinMs = 30_000L
+
+  /** Test hook: override the inactivity retry backoff floor (specs inject
+    * ~100ms so checkpoint-restart integration tests don't wait 30s per retry).
+    * Public for cross-package specs (core.entity supervision spec). Global
+    * var — specs MUST reset to None in a finally. */
+  var testInactivityBackoffMs: Option[Long] = None
+
+  private def effectiveInactivityBackoffMinMs: Long =
+    testInactivityBackoffMs.getOrElse(InactivityRetryBackoffMinMs)
 
   /** Exponential backoff base for LLM fail retries (ms). */
   private val LlmFailBackoffBaseMs = 2000L
@@ -182,8 +229,7 @@ object AgentActor extends AgentCore with AgentSession:
     case FreezeReason.RestartRecovery => "restart-recovery"
 
   /** Overload-class reasons: provider saturated, backoff can heal it. */
-  private def isOverloadClass(r: FailoverReason): Boolean =
-    r == FailoverReason.Overloaded || r == FailoverReason.RateLimit
+  private def isOverloadClass(r: FailoverReason): Boolean = AgentActor.isOverloadReason(r)
 
   private val logger = NebflowLogger.forName("nebflow.agent")
 
@@ -1371,13 +1417,24 @@ object AgentActor extends AgentCore with AgentSession:
             }
         else
           val cleanedState = state
+          // P4 (flow-node supervision): provider/attempt/stall-age observability
+          // on llm-fail — the fields needed to tell "upstream jitter" from
+          // "provider dead" in post-mortems without re-reading router logs.
+          val failExtras = error match
+            case e: StreamInactivityTimeout =>
+              s" class=stream-inactivity lastChunkAgeMs=${e.lastChunkAgeMs}"
+            case e: FallbackExhaustedError =>
+              val last = e.attempts.lastOption
+              s" class=exhausted attempts=${e.attempts.size}" +
+                last.map(a => s" last=${a.providerId}/${a.model}:${a.reason.getOrElse("unknown")}").getOrElse("")
+            case _ => ""
           logAgentEvent(
             agentDef,
             depth,
             state.sessionId,
             state.sessionName,
             "llm-fail",
-            s"err=${error.getMessage.take(80)}"
+            s"err=${error.getMessage.take(80)}$failExtras"
           )
           // Auto-retry overload-class LLM failures (429/529) once with a ≥5s
           // backoff: the provider is saturated and may recover. Token incident
@@ -1387,15 +1444,14 @@ object AgentActor extends AgentCore with AgentSession:
           // haven't changed, retrying mostly burns tokens without healing.
           // The per-turn budget (Fallback.MaxTurnLlmCalls) is the final
           // backstop: even legitimate retries are capped per turn.
-          val retryable = error match
-            case e: FallbackExhaustedError =>
-              // Retry only if every attempt was overload-class (saturation
-              // may clear during the backoff); any other error → fail fast.
-              e.attempts.forall(a => a.reason.exists(isOverloadClass))
-            case _: ToolPipelineError => false
-            case _ =>
-              val cls = Fallback.classifyError(error)
-              cls.permanence == ErrorPermanence.Transient && isOverloadClass(cls.reason)
+          // Flow-node supervision P1 (2026-08-26): stream-inactivity stalls
+          // (phase-2 watchdog, upstream jitter) join the retryable set — a
+          // clean-checkpoint re-send within the SAME OverloadRetryMax budget,
+          // no new quota. Not a stream-level resume: the full turn re-sends,
+          // so the seam guard (no provider switch after partial content) is
+          // never violated. Single source: AgentActor.llmFailureRetryable.
+          val isStreamInactivity = AgentActor.llmFailureInactivityClass(error)
+          val retryable = AgentActor.llmFailureRetryable(error)
           if retryable && state.llmFailRetries < OverloadRetryMax then
             // 方案 C（2026-08-18 误杀修复）：预算只在重试路径递增——llmCallsThisTurn
             // 与 llmFailRetries 的区别：后者成功即重置（只限连续重试），前者 turn 内
@@ -1403,10 +1459,16 @@ object AgentActor extends AgentCore with AgentSession:
             val retryState = state
               .withLlmFailRetries(state.llmFailRetries + 1)
               .withLlmCallsThisTurn(state.llmCallsThisTurn + 1)
-            val backoffMs = math.min(
-              math.max(LlmFailBackoffBaseMs * (1L << (retryState.llmFailRetries - 1)), OverloadBackoffMinMs),
-              LlmFailBackoffMaxMs
-            )
+            // Inactivity retries back off ≥30s (upstream stall needs a recovery
+            // window — the incident stall was 60s+). Overload retries keep the
+            // existing [OverloadBackoffMinMs, LlmFailBackoffMaxMs] pipeline.
+            val backoffMs =
+              if isStreamInactivity then math.max(LlmFailBackoffBaseMs * (1L << (retryState.llmFailRetries - 1)), effectiveInactivityBackoffMinMs)
+              else
+                math.min(
+                  math.max(LlmFailBackoffBaseMs * (1L << (retryState.llmFailRetries - 1)), OverloadBackoffMinMs),
+                  LlmFailBackoffMaxMs
+                )
             val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 500)
             val delayMs = backoffMs + jitter
             logAgentEvent(
@@ -1419,7 +1481,13 @@ object AgentActor extends AgentCore with AgentSession:
             )
             // The failed LLM call produced no content — re-dispatch with the
             // same messages from the last checkpoint, after a backoff delay.
-            ctx.forkTurn(IO.sleep(delayMs.millis)) *>
+            // The sleep must be INLINE: ctx.forkTurn is fire-and-forget
+            // (ActorContext.forkTurn .start), so wrapping the sleep there made
+            // `*>` re-dispatch IMMEDIATELY — the backoff was fake (both the
+            // 08-18 overload retry and the P1 inactivity retry re-sent into a
+            // still-stalled upstream). Inline sleep is consistent with how
+            // pipeLlmCall itself runs (whole turns block the actor loop).
+            IO.sleep(delayMs.millis) *>
               pipeLlmCall(agentDef, resources, depth, parentRef, retryState, replyTo)
           else
             // ── v2 冻结式错误恢复（§3.3/§6.1 步骤 3）────────────────────────
@@ -1429,13 +1497,20 @@ object AgentActor extends AgentCore with AgentSession:
             // 保留 Permanent/Fatal（Timeout/EmptyStream/Auth/Format/ModelNotFound/
             // TurnBudgetExceeded/StuckAbort/context overflow）→ 下方 fatal 路径。
             val errCls = Fallback.classifyError(error)
-            val shouldErrorFreeze = error match
-              // retryable 预算耗尽（attempts 全 overload）：饱和可能恢复 → 冻结等待
-              case e: FallbackExhaustedError =>
-                e.attempts.forall(a => a.reason.exists(isOverloadClass))
+            // Flow-node supervision P2: flow nodes are exempt from ErrorFrozen —
+            // a DAG is deterministic execution, there is no "wait for the
+            // condition to clear" semantics. A retryable-exhausted stall fails
+            // the turn (AgentError.retryable=true) so the flow executor's
+            // Restart path checkpoint-resumes the node. Root/team agents keep
+            // the v2 freeze-then-resume semantics for the same error class.
+            val shouldErrorFreeze = !state.isFlowNode && (error match
+              // retryable 预算耗尽（attempts 全 overload/inactivity）：饱和或上游
+              // 抖动可能恢复 → 冻结等待（与 llmFailureRetryable 同判定，单点来源）
+              case _: FallbackExhaustedError => AgentActor.llmFailureRetryable(error)
               // 工具管道错误：工具链路问题，不是 provider 条件性错误 → 不冻结（原语义）
               case _: ToolPipelineError => false
               case _ => errCls.permanence == ErrorPermanence.Transient
+            )
             if shouldErrorFreeze then
               val errReason = error match
                 case _: AllProvidersDownTimeout => FreezeReason.ProviderDown
@@ -1457,7 +1532,14 @@ object AgentActor extends AgentCore with AgentSession:
               enterErrorFrozen(agentDef, resources, depth, parentRef, state, replyTo, errReason, resumeInMs, error)
             else
               val agentError =
-                AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
+                AgentError(
+                  ctx.self.path.name,
+                  agentDef.name,
+                  depth,
+                  AgentErrorType.LlmFailed,
+                  error.getMessage,
+                  retryable = Some(AgentActor.llmFailureRetryable(error))
+                )
               val errMsg = error match
                 case e: FallbackExhaustedError =>
                   val attemptSummaries =
