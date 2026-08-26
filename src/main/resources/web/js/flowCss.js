@@ -186,6 +186,7 @@ export const FLOW_CSS = `
 .flow-mail-time { margin-left: auto; font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; flex-shrink: 0; }
 .flow-mail-expand { font: 500 10px -apple-system, sans-serif; color: var(--color-primary, #07c160); opacity: 0.85; flex-shrink: 0; cursor: pointer; user-select: none; }
 .flow-mail-content { font: 400 12.5px -apple-system, sans-serif; color: var(--color-text); line-height: 1.55; word-break: break-word; overflow-wrap: anywhere; overflow-x: auto; max-width: 100%; position: relative; }
+.flow-mail-no-body { font: 400 italic 12px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; }
 .flow-mail-row:not(.expanded) .flow-mail-content { max-height: 3.6em; overflow: hidden; }
 .flow-mail-row:not(.expanded) .flow-mail-content::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 1.4em; background: linear-gradient(to bottom, transparent, rgba(128,128,128,0.06)); pointer-events: none; }
 .flow-mail-content p:first-child { margin-top: 0; } .flow-mail-content p:last-child { margin-bottom: 0; } .flow-mail-content p { margin: 4px 0; }
