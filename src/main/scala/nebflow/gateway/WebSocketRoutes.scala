@@ -3835,7 +3835,10 @@ class WebSocketRoutes(
           val src = j.hcursor.downField("source")
           (taskIdOf(src), src.downField("sessionId").as[String].getOrElse(msgSessionId))
         }
-    val taskRefs = legacyTaskRefs ++ refTaskRefs
+    // QC follow-up (#303): dedupe by (taskId, refSession) — a double-pushed
+    // ref for the same task must fire the return flow once (the second
+    // `return` would IllegalStateException into a spurious taskError frame).
+    val taskRefs = nebflow.gateway.RefResolver.dedupeTaskRefs(legacyTaskRefs ++ refTaskRefs)
     if taskRefs.isEmpty then IO.unit // absent/empty — zero behavior change (v1 path)
     else
       def taskError(taskId: String, msg: String): IO[Unit] =
