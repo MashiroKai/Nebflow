@@ -156,13 +156,16 @@ object Task:
   /** todo-panel v2 §6.2c (B7): the [打回任务] injection block appended to the
     * user message when the user returns a needs_confirmation task. Built from
     * the PRE-return snapshot — notes.last is the agent's outcome summary, not
-    * the feedback. Fixed copy (agent context, not UI — no i18n, spec §11). */
+    * the feedback. Fixed copy (agent context, not UI — no i18n, spec §11).
+    *
+    * Payload-slim ruling (2026-08-27, same family as the 08-20 reference-block
+    * slimming): the block carries taskId + subject + the user's feedback FULL
+    * TEXT only — 任务描述/产出 are dropped (the agent owns the task context
+    * and locates the task by id; the FEEDBACK is the one field that must
+    * always reach the agent verbatim). */
   def returnInjectionBlock(taskId: String, snapshot: Task, feedback: String): String =
-    val output = snapshot.notes.lastOption.map(_.content).getOrElse("（无）")
     val feedbackLine = if feedback.nonEmpty then feedback else "（未附意见）"
     s"[打回任务 #$taskId: ${snapshot.subject}]\n" +
-      s"任务描述: ${snapshot.description}\n" +
-      s"产出: $output\n" +
       s"用户意见: $feedbackLine\n" +
       "（该任务已回到进行中，请按用户意见修改；改完重新置 needs_confirmation 待用户确认）"
 
