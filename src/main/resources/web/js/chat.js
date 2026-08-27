@@ -8,7 +8,7 @@ import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromp
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
-import { renderRefBlock, normalizeTaskRef } from './reference.js';
+import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine } from './reference.js';
 
 // ---------- Time format preference (12h / 24h toggle) ----------
 // Legacy spelling 'nebflow:timeFormat' is normalized into this key by
@@ -302,21 +302,17 @@ export function renderUserBubble(text, attachments, timestamp) {
   (attachments || []).forEach(att => {
     const bubble = document.createElement('div');
     bubble.className = 'bubble user att-bubble';
-    if (att.type === 'ref') {
-      // #303 v1.1: unified Reference in the message stream — render the message
-      // card. Ref cards need more width than compact file tags (max-width 160px),
-      // so the bubble is widened via .att-ref-bubble.
+    if (att.type === 'ref' || att.type === 'taskRef') {
+      // #303 v1.1 + (2026-08-27 打回注入块收敛): ALL task-return references -
+      // unified type:'ref' AND the legacy type:'taskRef' from old
+      // history/queue restores - normalize into the same Reference and render
+      // through renderRefBlock(message), which emits the one-line
+      // `#<任务号> <任务标题>` form for tasks. One renderer, no dual styles.
+      // Ref nodes need more width than compact file tags, so the bubble is
+      // widened via .att-ref-bubble.
       bubble.classList.add('att-ref-bubble');
       const ref = att.type === 'ref' ? att : normalizeTaskRef(att);
       if (ref) bubble.appendChild(renderRefBlock(ref, { mode: 'message' }));
-    } else if (att.type === 'taskRef') {
-      // v2 §5.3: return reference — clipboard icon + "Returned: {subject}".
-      // No preview image; name may be undefined pre-restore (subject used).
-      const tag = document.createElement('span');
-      tag.className = 'att-file-tag att-taskref-tag';
-      const icon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;flex-shrink:0"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><path d="M12 11h4"></path><path d="M12 16h4"></path><path d="M8 11h.01"></path><path d="M8 16h.01"></path></svg>';
-      tag.innerHTML = icon + '<span style="margin-left:2px">' + escapeHtml(t('task.refBubbleLabel', { subject: att.subject || att.name || '' })) + '</span>';
-      bubble.appendChild(tag);
     } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
       const img = document.createElement('img');
       img.className = 'att-img';
@@ -438,8 +434,18 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   label.className = 'ask-label injected-source-label';
   const trimmed = (text || '').trim();
   const content = document.createElement('div');
-  if (deferFn) deferFn(content, trimmed);
-  else content.innerHTML = renderMarkdownWithMath(trimmed, false);
+  // 打回注入块收敛 (2026-08-27 user ruling): the backend [打回任务 #id: title]
+  // injection collapses to the one-line `#<任务号> <任务标题>` form with a
+  // one-line-truncated opinion. 描述/产出 never render. Both the live dispatch
+  // and BOTH history-restore paths funnel through this single builder, so every
+  // entry renders byte-identically (AC d).
+  const retMsg = parseTaskReturnText(trimmed);
+  if (retMsg) {
+    content.appendChild(buildTaskRefLine(retMsg));
+  } else {
+    if (deferFn) deferFn(content, trimmed);
+    else content.innerHTML = renderMarkdownWithMath(trimmed, false);
+  }
 
   // Default-collapsed (2026-08-23 ruling): blue injected bubbles show only the
   // category header (SOURCE · AGENT · EVENT_TYPE); the body expands on click.

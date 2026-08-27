@@ -281,7 +281,72 @@ function normalizeSource(ref) {
   return segs.length > 2 ? '…/' + segs.slice(-2).join('/') : p;
 }
 
+/** Parse the backend return-injection text "[打回任务 #id: title]" (the only
+ *  marker the return flow emits today). Non-matching text returns null and the
+ *  caller falls through to normal markdown - zero behavior change elsewhere.
+ *  NOTE sync point: the wording is owned by Task.returnInjectionBlock; if the
+ *  payload wording changes this recognizer must follow (Manager 2026-08-27:
+ *  frontend/backend changes are independent - worst case here is graceful
+ *  fallback to the old full-text rendering, never broken UI).
+ * @param {string} text
+ * @returns {{taskId: string, title: string, opinion: string}|null}
+ */
+export function parseTaskReturnText(text) {
+  const trimmed = String(text || '').trim();
+  const lines = trimmed.split(/\r?\n/);
+  const head = /^\[打回任务\s*#([^:\]]+):\s*([^\]]*)\]\s*$/.exec(lines[0] || '');
+  if (!head) return null;
+  let opinion = '';
+  for (const l of lines.slice(1)) {
+    if (/^用户意见/.test(l)) { opinion = l.replace(/^用户意见\s*[:：]\s*/, ''); break; }
+  }
+  if (opinion === '（未附意见）') opinion = '';
+  return { taskId: head[1].trim(), title: (head[2] || '').trim(), opinion };
+}
+
+/** The converged one-line task-return node (2026-08-27 user ruling "只显任务名"):
+ *  clipboard glyph + "#<id> <title>" (+ optional one-line-truncated opinion).
+ *  Description/output NEVER render here regardless of what the payload hints.
+ * @param {{taskId?: string|number|null, title?: string, opinion?: string}} p
+ * @returns {HTMLElement}
+ */
+export function buildTaskRefLine(p) {
+  const line = document.createElement('div');
+  line.className = 'att-task-line';
+  line.dataset.refType = 'task';
+  const id = p.taskId != null ? String(p.taskId) : '';
+  const title = String(p.title || '');
+  const ariaLabel = (`#${id} ${title}`).trim();
+  line.setAttribute('role', 'group');
+  line.setAttribute('aria-label', ariaLabel);
+  const icon = document.createElement('span');
+  icon.className = 'att-task-line-icon';
+  icon.innerHTML = ICONS.clipboard;
+  icon.setAttribute('aria-hidden', 'true');
+  const name = document.createElement('span');
+  name.className = 'att-task-line-name';
+  name.textContent = ariaLabel || `#${id}`;
+  line.append(icon, name);
+  const opinion = String(p.opinion || '').split('\n')[0].trim();
+  if (opinion && opinion !== '（未附意见）') {
+    const op = document.createElement('span');
+    op.className = 'att-task-line-opinion';
+    op.textContent = truncate(opinion, 80);
+    line.appendChild(op);
+  }
+  return line;
+}
+
 function renderMessageRef(ref) {
+  // Task references converge to the one-line form above (same shape as the
+  // injected [打回任务] collapse); file/document/html-element keep the card.
+  if (ref.refType === 'task') {
+    return buildTaskRefLine({
+      taskId: ref.source?.taskId ?? '',
+      title: ref.source?.title || '',
+      opinion: '',
+    });
+  }
   const card = document.createElement('div');
   card.className = 'att-ref-card';
   const label = ref.display?.label || ref.source?.title || '';
