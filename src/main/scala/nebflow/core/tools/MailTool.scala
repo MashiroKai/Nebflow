@@ -652,6 +652,9 @@ Message type (optional, default "INFO"):
           // InteractionRequests render in the Nebula window.
           parentSidOpt <- TeamSessionRegistry.parentSessionOf(session.flowName.getOrElse(""))
           rootSid = parentSidOpt.getOrElse(session.id)
+          // Block 0 registration chain: member → its Manager; Manager → mounting
+          // root; unknown → None (registration falls back to the caller sid).
+          parentSid <- TeamSessionRegistry.parentForRecord(session.id)
           policyOpt <- resources.permissionPolicies.get.map(_.get(rootSid))
           safetyMode =
             policyOpt.map(p => nebflow.core.SafetyMode.toString(p.safetyMode)).getOrElse(session.safetyMode)
@@ -761,7 +764,11 @@ Message type (optional, default "INFO"):
                     ref = ref,
                     kind = AgentKind.Team,
                     rootSessionId = rootSid,
-                    parentRef = ctx.agentActorRef
+                    parentRef = ctx.agentActorRef,
+                    // Block 0 registration chain (supervision trio §B2): a
+                    // member's parent is its team Manager; the Manager's parent
+                    // is the mounting root. Fallback = the activating caller.
+                    parentSessionId = parentSid.getOrElse(ctx.sessionId.getOrElse(""))
                   )
                 )
               )

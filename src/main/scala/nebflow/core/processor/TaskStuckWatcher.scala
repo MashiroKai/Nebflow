@@ -140,7 +140,9 @@ object TaskStuckWatcher:
     if rec.kind == AgentKind.Team then
       logger.warn(
         s"TaskStuckWatcher: team agent ${rec.sessionId} stuck in Processing for ${idleSecs}s " +
-          "— read-only notice (Team agents are never auto-stopped); user/Nebula can restart via AgentControl"
+          "— the actor is never auto-stopped (let-it-crash: crash+recover beats chronic hang), " +
+          "but a looping turn may be terminated by loop guard; the team Manager or Nebula can " +
+          "cancel/restart it via AgentControl"
       ) *>
         wsHub
           .broadcast(

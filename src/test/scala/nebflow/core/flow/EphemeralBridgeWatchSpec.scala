@@ -136,4 +136,57 @@ class EphemeralBridgeWatchSpec extends CatsEffectSuite:
       os.remove.all(tmp)
   }
 
+  // ---- Block 0 registration chain (supervision trio §B2) ----
+
+  test("Block 0: RunAgent caller context stamps parentSessionId/rootSessionId in agentRegistry") {
+    val system = ActorSystem("eph-regchain")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        resources <- mkResources(system, tmp)
+        callerEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+        callerRef <- system.spawn(mkRecordingCmd(callerEvents), "eph-caller-rc")
+        probeDef = AgentDef(name = "Probe", description = "eph probe", tools = List("Read"), systemPrompt = "")
+        runner <- system.spawn(EphemeralAgentRunner(resources, None), "eph-runner-rc")
+        _ <- runner ! EphemeralAgentRunner.RunAgent(
+          agentDef = probeDef,
+          taskInput = "hang forever",
+          replyTo = callerRef,
+          depth = 1,
+          projectRoot = os.pwd.toString,
+          callerSessionId = Some("caller-1"),
+          callerRootSessionId = Some("root-9")
+        )
+        // agent spawned + registered (LLM hung on Stream.never)
+        _ <- waitUntil(5.seconds)(
+          resources.agentRegistry.get.map(_.keys.exists(_.startsWith("ephemeral-")))
+        )
+        registry <- resources.agentRegistry.get
+        ephSid = registry.keys.find(_.startsWith("ephemeral-")).get
+        rec = registry(ephSid)
+        // cleanup: settle the runner so the temp session is removed
+        _ <- rec.ref ! AgentCommand.Stop("regchain-test-done")
+        _ <- waitUntil(3.seconds)(resources.agentRegistry.get.map(!_.contains(ephSid)))
+      yield rec
+
+      val rec = program.unsafeRunSync()
+      assertEquals(rec.kind, AgentKind.Ephemeral)
+      assertEquals(
+        rec.parentSessionId,
+        "caller-1",
+        "caller context must stamp parentSessionId (registration chain §B2)"
+      )
+      assertEquals(
+        rec.rootSessionId,
+        "root-9",
+        "caller context must bucket the ephemeral under the caller's root (legacy self-anchor left it unmanageable)"
+      )
+    finally
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
 end EphemeralBridgeWatchSpec

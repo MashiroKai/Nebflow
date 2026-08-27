@@ -23,7 +23,12 @@ object EphemeralAgentRunner:
     taskInput: String,
     replyTo: ActorRef[AgentCommand],
     depth: Int,
-    projectRoot: String
+    projectRoot: String,
+    /** Block 0 registration chain (supervision trio §B2): the caller's
+      * session (parent) and root (permission bucket). Absent → legacy
+      * self-anchored behavior. */
+    callerSessionId: Option[String] = None,
+    callerRootSessionId: Option[String] = None
   )
 
   def apply(resources: SharedResources, wsSend: Option[Json => IO[Unit]]): Behavior[RunAgent] =
@@ -50,9 +55,11 @@ object EphemeralAgentRunner:
             fileHistory = None,
             contextWindow = resources.contextWindow,
             expectsMail = false,
-            // P2: standalone agent buckets its own permission policy (same as
-            // its AgentRecord below).
-            rootSessionId = sessionId
+            // P2 / Block 0: bucket under the CALLER's root when provided
+            // (the legacy self-anchor left ephemerals outside every bucket —
+            // same-bucket guards then rejected the only callers who could
+            // manage them). Self only as fallback.
+            rootSessionId = msg.callerRootSessionId.getOrElse(sessionId)
           ),
           s"ephemeral-agent-${agentDef.name.take(10)}"
         )
@@ -94,7 +101,8 @@ object EphemeralAgentRunner:
             sessionId,
             ref,
             AgentKind.Ephemeral,
-            sessionId,
+            msg.callerRootSessionId.getOrElse(sessionId),
+            parentSessionId = msg.callerSessionId.getOrElse(""),
             startedAt = System.currentTimeMillis(),
             lastActivityMs = System.currentTimeMillis()
           ))
