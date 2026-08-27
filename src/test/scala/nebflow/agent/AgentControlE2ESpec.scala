@@ -379,15 +379,17 @@ class AgentControlE2ESpec extends CatsEffectSuite:
   // 分级：Nebula/root 同桶全权不变 → 直接父（调用者==rec.parentSessionId）对
   // Team 成员 restart/cancel 放行 → 其他调用者 Team 只读拒绝；跨 rootSessionId 拒。
 
-  test("AC-T1: non-parent caller restarting a Team member is rejected (kind read-only)") {
+  test("AC-T1: non-parent caller restarting a Team member is rejected (Block 1 subtree guard)") {
     val system = ActorSystem("ac-t1")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
     PathUtil.setDataRoot(tmp / "data")
     try
       val program = for
+        _ <- nebflow.core.flow.TeamSessionRegistry.clear
         resources <- mkResources(system, tmp, null)
-        // 同 root 桶：caller 不是 target 的直接父 → kindRejection Team read-only
+        // 同 root 桶：caller 不是 target 的直接父，也不是注册 Manager
+        // （Block 1 §B3：非 root 调用者走 managerAnchors 子树门 → 拒绝）
         callerSid = "caller-agent"
         teamSid = "team-member-agent"
         _ <- resources.agentRegistry.update(_ ++ Map(
@@ -401,8 +403,8 @@ class AgentControlE2ESpec extends CatsEffectSuite:
       yield
         assert(res.isLeft, s"non-parent restart of Team member must be rejected, got $res")
         assert(
-          res.left.toOption.exists(_.message.contains("read-only")),
-          s"rejection must cite Team read-only, got ${res.left.toOption.map(_.message)}"
+          res.left.toOption.exists(_.message.contains("Permission denied")),
+          s"rejection must be the subtree denial, got ${res.left.toOption.map(_.message)}"
         )
       program.unsafeRunSync()
     finally
@@ -418,9 +420,15 @@ class AgentControlE2ESpec extends CatsEffectSuite:
     PathUtil.setDataRoot(tmp / "data")
     try
       val program = for
+        _ <- nebflow.core.flow.TeamSessionRegistry.clear
         resources <- mkResources(system, tmp, null)
         managerSid = "manager-agent"
         teamSid = "team-member-agent"
+        // Block 0 注册链（生产形态）：Manager 注册进 TeamSessionRegistry——
+        // Block 1 子树门经 managerAnchors 放行，v2 直接父语义继续成立。
+        _ <- nebflow.core.flow.TeamSessionRegistry.registerSession("inst-t2", "Manager", managerSid)
+        _ <- nebflow.core.flow.TeamSessionRegistry.registerSession("inst-t2", "member", teamSid)
+        _ <- nebflow.core.flow.TeamSessionRegistry.registerManager("inst-t2", managerSid)
         // probe ref 充当 Team 成员 actor（Stop 被记录；isAlive 会超时 → 执行层
         // 报「did not stop」——但权限层必须放行：错误不得含 read-only/denied）
         probeRef <- system.spawn(
@@ -448,6 +456,7 @@ class AgentControlE2ESpec extends CatsEffectSuite:
         )
       program.unsafeRunSync()
     finally
+      nebflow.core.flow.TeamSessionRegistry.clear.void.unsafeRunSync()
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
