@@ -16,6 +16,8 @@ import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
 import nebflow.core.skill.SkillService
+// FreezeScheduleConfig encoder givens (workSchedule runtime-authoritative PATCH)
+import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.task.{FileTaskStore, TaskStore}
 import cats.effect.unsafe.implicits.global
 import nebflow.llm.{HealthState, NebflowServiceConfig, SearchApiHealth}
@@ -227,20 +229,32 @@ class RestApiRoutes(
       withAuth(req) {
         req.as[Json].flatMap { body =>
           val cfgStr = body.hcursor.downField("config").as[String].getOrElse(body.noSpaces)
-          ConfigService.updateConfig(cfgStr).flatMap {
-            case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
-            case Right(_) =>
-              sharedResources.providerRegistry
-                .reloadConfig(Some(sharedResources.sessionModelOverrides))
-                .attempt
-                .flatMap {
-                  case Right(staleIds) =>
-                    // #33: keep the persisted session meta in sync (see
-                    // WebSocketRoutes updateConfig — same cleanup).
-                    staleIds.traverse_(id => sessionStore.updateSessionModel(id, None)) *>
-                      logger.info("Config hot-reloaded via REST")
-                  case Left(e) => logger.warn(s"Config hot-reload failed: ${e.getMessage}")
-                } *> Ok(Json.obj("updated" -> true.asJson))
+          // 冻结修复（2026-08-27）：runtime 热更键以内存 ref 为权威（镜像 WS
+          // updateConfig 分支）——PATCH 快照陈旧时不得回滚这些键。
+          (sharedResources.freezeScheduleRef.get,
+           sharedResources.thinkingConfigRef.get,
+           sharedResources.toolResultTtlRef.get).mapN { (wsCfg, thCfg, ttlCfg) =>
+            Map[String, io.circe.Json](
+              "workSchedule" -> wsCfg.asJson,
+              "thinkingConfig" -> thCfg.asJson,
+              "toolResultTtl" -> ttlCfg.asJson
+            )
+          }.flatMap { runtimeOverrides =>
+            ConfigService.updateConfig(cfgStr, runtimeOverrides).flatMap {
+              case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+              case Right(_) =>
+                sharedResources.providerRegistry
+                  .reloadConfig(Some(sharedResources.sessionModelOverrides))
+                  .attempt
+                  .flatMap {
+                    case Right(staleIds) =>
+                      // #33: keep the persisted session meta in sync (see
+                      // WebSocketRoutes updateConfig — same cleanup).
+                      staleIds.traverse_(id => sessionStore.updateSessionModel(id, None)) *>
+                        logger.info("Config hot-reloaded via REST")
+                    case Left(e) => logger.warn(s"Config hot-reload failed: ${e.getMessage}")
+                  } *> Ok(Json.obj("updated" -> true.asJson))
+            }
           }
         }
       }

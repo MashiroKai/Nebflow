@@ -2231,7 +2231,10 @@ onMessage('serverConfig', (msg, view) => {
   if (msg.mcpServers) {
     state.mcpServers = msg.mcpServers;
   }
-  if (msg.workSchedule) {
+  // !== undefined (not truthiness): the schedule node must sync even when
+  // falsy-but-present ({enabled:false,...}) so the settings panel always
+  // echoes server truth (freeze-consistency fix 2026-08-27).
+  if (msg.workSchedule !== undefined) {
     state.workSchedule = msg.workSchedule;
     // ⑩ schedule change re-evaluates the local freeze display immediately.
     applyLocalFreeze();
