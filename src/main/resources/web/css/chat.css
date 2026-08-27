@@ -842,10 +842,6 @@
   letter-spacing: 0.4px;
   vertical-align: 1px;
 }
-.delivery-ask {
-  color: rgb(var(--sapphire) / 0.95);
-  background: rgb(var(--sapphire) / 0.14);
-}
 .delivery-queue {
   color: var(--color-text-muted);
   background: rgba(128, 128, 128, 0.14);

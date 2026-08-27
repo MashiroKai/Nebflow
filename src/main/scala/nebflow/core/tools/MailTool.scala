@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import cats.effect.{Deferred, IO}
+import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
@@ -11,26 +11,27 @@ import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
-import scala.concurrent.duration.*
 
 /**
  * Agent-to-agent communication tool.
  *
- * Three delivery modes (via `delivery` parameter):
+ * Two delivery modes (via `delivery` parameter):
  * - immediate (default): Async send. Injected at next turn boundary. If recipient
  *   is idle, starts a new turn. If busy, merged into the current turn. The standard
- *   communication method. Backward compatible with `ask: false` (omitted).
+ *   communication method.
  * - queue: Serialized FIFO. Persisted to disk (survives restart). Each queued mail
  *   triggers a full turn — processed one at a time, only after the current task
  *   completes. Use for serial task chains: "do this, then that, then that."
- * - ask: Synchronously fork the target agent's context, block for the answer.
- *   Converts to background after 60s. Backward compatible with `ask: true`.
+ *
+ * The former `ask` mode (synchronous context fork) was removed entirely
+ * (2026-08-27 user ruling) — see git history if that mechanism is ever needed.
  */
 object MailTool extends Tool:
   private val logger = NebflowLogger(getClass)
 
-  /** After this wait, a synchronous ask converts to a background task instead of failing. */
-  private val AskBackgroundThreshold: FiniteDuration = 60.seconds
+  /** Routing rule: senders without a team context mail TEAM names only. */
+  private val TeamOnlyRoutingError =
+    "Agents outside a team mail TEAM names only (e.g. \"nebflow-project\") — the team Manager dispatches to members. \"team/agent\" explicit addresses and bare short names are not routable from outside a team."
 
   val name: String = "Mail"
 
@@ -56,18 +57,13 @@ Images (optional `images` parameter): up to 5 absolute local image paths
 directly (vision models) plus their paths as text. For any other file, reference
 its path in the message text and ask the recipient to Read it.
 
-Default mode (ask omitted or false):
-  Async send. If the recipient is idle, delivered immediately. If busy, queued
-  and injected at the next turn boundary. You don't wait for a response.
-
-Ask mode (ask: true):
-  Synchronous — forks the target agent's context (loads their conversation history
-  into a temporary instance), runs the LLM, and blocks until the answer is returned.
-  The agent's main task is NOT interrupted. If the answer takes longer than ~60s,
-  the ask converts to a background task: you get immediate feedback, the fork keeps
-  running, and the answer is delivered later via a completion notification.
-  Use for progress queries and quick questions when you need an immediate answer
-  without disrupting workflow.
+Delivery modes (via `delivery` parameter):
+  immediate (default): async send — injected at the next turn boundary (idle
+  recipient starts a new turn; busy recipient gets it merged into the current
+  turn). You don't wait for a response.
+  queue: serialized FIFO persisted to disk (survives restart) — processed one
+  at a time, only after the current task completes. Use for serial task
+  chains ("do this, then that").
 
 Message type (optional, default "INFO"):
   Every Mail has a TYPE tag. Check the TYPE before acting — it tells you how to handle the Mail:
@@ -92,11 +88,6 @@ Message type (optional, default "INFO"):
           "type" -> "string".asJson,
           "description" -> "The message or question to send".asJson
         ),
-        "ask" -> Json.obj(
-          "type" -> "boolean".asJson,
-          "description" -> "If true, synchronously fork the target's context and block until the answer is returned (without interrupting their main task). If no answer within ~60s, the ask converts to a background task — you get immediate feedback and the answer arrives later via a completion notification. Default: false.".asJson,
-          "default" -> false.asJson
-        ),
         "type" -> Json.obj(
           "type" -> "string".asJson,
           "enum" -> Json.arr("INFO".asJson, "FOLLOW_UP".asJson, "PARALLEL".asJson, "INTERRUPT".asJson, "RESULT".asJson),
@@ -105,8 +96,8 @@ Message type (optional, default "INFO"):
         ),
         "delivery" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> Json.arr("ask".asJson, "queue".asJson, "immediate".asJson),
-          "description" -> "Delivery mode: 'ask' = sync fork (wait for answer); 'queue' = serialized FIFO (survives restart, processed one at a time after current task completes); 'immediate' = inject like user input (merged into current turn at next boundary). Default: 'immediate'. [INTERRUPT] type must use 'immediate' — queue would delay it past the current task, breaking the interrupt semantics.".asJson,
+          "enum" -> Json.arr("queue".asJson, "immediate".asJson),
+          "description" -> "Delivery mode: 'queue' = serialized FIFO (survives restart, processed one at a time after current task completes); 'immediate' = inject like user input (merged into current turn at next boundary). Default: 'immediate'. [INTERRUPT] type must use 'immediate' — queue would delay it past the current task, breaking the interrupt semantics.".asJson,
           "default" -> "immediate".asJson
         ),
         "images" -> Json.obj(
@@ -123,14 +114,10 @@ Message type (optional, default "INFO"):
 
   def summarize(input: JsonObject): String =
     val addr = input("address").flatMap(_.asString).getOrElse("?")
-    val delivery = input("delivery").flatMap(_.asString).getOrElse {
-      val ask = input("ask").orElse(input("fork")).flatMap(_.asBoolean).getOrElse(false)
-      if ask then "ask" else "immediate"
-    }
+    val delivery = input("delivery").flatMap(_.asString).getOrElse("immediate")
     val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
     val typeStr = if mailType != "INFO" then s" [$mailType]" else ""
     delivery match
-      case "ask"     => s"Mail(→$addr, ask)$typeStr"
       case "queue"   => s"Mail(→$addr, queue)$typeStr"
       case _         => s"Mail(→$addr)$typeStr"
 
@@ -141,13 +128,7 @@ Message type (optional, default "INFO"):
     val message = input("message").flatMap(_.asString).getOrElse("")
     val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
 
-    // Delivery mode: explicit delivery param wins, fall back to ask param for
-    // backward compatibility (ask:true -> "ask", else -> "immediate").
-    val delivery = input("delivery").flatMap(_.asString)
-      .orElse {
-        val ask = input("ask").orElse(input("fork")).flatMap(_.asBoolean).getOrElse(false)
-        if ask then Some("ask") else Some("immediate")
-      }.getOrElse("immediate")
+    val delivery = input("delivery").flatMap(_.asString).getOrElse("immediate")
 
     if address.isEmpty then IO.pure(Left(ToolError("Missing required parameter: address")))
     else if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
@@ -169,7 +150,6 @@ Message type (optional, default "INFO"):
                   IO.pure(Left(ToolError("No actor system available")))
                 case Some(system) =>
                   delivery match
-                    case "ask" => forkAndAsk(address, message, blocks, ctx)
                     case "queue" =>
                       if address.contains("://") then
                         IO.pure(Left(ToolError("Queue mode is only for team agents (short names), not URLs.")))
@@ -179,319 +159,6 @@ Message type (optional, default "INFO"):
                       else deliverToShortName(address, message, blocks, mailType, ctx, system)
           }
   end call
-
-  // ============================================================
-  // Fork mode: load target's history, spawn temp agent, return response
-  // ============================================================
-
-  /** Routing rule: senders without a team context mail TEAM names only. */
-  private val TeamOnlyRoutingError =
-    "Agents outside a team mail TEAM names only (e.g. \"nebflow-project\") — the team Manager dispatches to members. \"team/agent\" explicit addresses and bare short names are not routable from outside a team."
-
-  private[tools] def forkAndAsk(
-      address: String,
-      question: String,
-      blocks: Option[List[ContentBlock]],
-      ctx: ToolContext
-    ): IO[Either[ToolError, String]] =
-    (ctx.actorSystem, ctx.sharedResources, ctx.sessionId) match
-      case (Some(system), Some(resources), Some(senderSid)) =>
-        for
-          teamOpt <- EntityLoader.loadTeam(address)
-          result <- teamOpt match
-            case Some(team) =>
-              // Team name — fork the team's lead (Manager).
-              TeamSessionRegistry.findTeamAgent(address, team.lead).flatMap {
-                case Some(leadSid) => forkToSession(system, resources, leadSid, address, question, blocks, ctx)
-                case None =>
-                  IO.pure(
-                    Left(
-                      ToolError(s"Team '$address' is not mounted. Use Load(type: \"team\", name: \"$address\") first.")
-                    )
-                  )
-              }
-            case None =>
-              // Not a team name — short agent name. Routable only for senders
-              // with a team context (same-team priority); outside a team, only
-              // team names and "Nebula" are valid (user ruling 08-24 — the
-              // team/agent escape hatch is closed for root senders).
-              TeamSessionRegistry.teamOfSession(senderSid).flatMap {
-                case None if address != "Nebula" =>
-                  IO.pure(Left(ToolError(TeamOnlyRoutingError)))
-                case _ =>
-                  for
-                    targetRes <- TeamSessionRegistry.resolveSessionId(senderSid, address, resources.sessionStore)
-                    result <- targetRes match
-                      case Left(ambErr) =>
-                        IO.pure(Left(ToolError(ambErr)))
-                      case Right(None) =>
-                        IO.pure(
-                          Left(
-                            ToolError(
-                              s"Agent '$address' not found. Use the agent names from your Team context."
-                            )
-                          )
-                        )
-                      case Right(Some(targetSid)) =>
-                        forkToSession(system, resources, targetSid, address, question, blocks, ctx)
-                  yield result
-              }
-        yield result
-      case _ =>
-        IO.pure(Left(ToolError("Fork mode requires actor system, shared resources, and session context.")))
-
-  /** Fork an already-resolved session: load its def, spawn a temp agent, ask. */
-  private def forkToSession(
-      system: ActorSystem,
-      resources: SharedResources,
-      targetSid: String,
-      address: String,
-      question: String,
-      blocks: Option[List[ContentBlock]],
-      ctx: ToolContext
-    ): IO[Either[ToolError, String]] =
-    TeamSessionRegistry.instanceAndAgentOfSession(targetSid).flatMap {
-      case Some((instance, agentName)) =>
-        EntityLoader.loadTeamAgent(instance, agentName).flatMap {
-          case Some(entry) =>
-            val agentDef = entry.toAgentDef
-            doFork(system, resources, agentDef, Some(targetSid), question, blocks, address, ctx)
-          case None =>
-            IO.pure(Left(ToolError(s"Agent '$address' definition not found.")))
-        }
-      case None =>
-        IO.pure(Left(ToolError(s"Agent '$address' has no team association.")))
-    }
-
-  private def doFork(
-      system: ActorSystem,
-      resources: SharedResources,
-      agentDef: AgentDef,
-      agentSessionId: Option[String],
-      question: String,
-      blocks: Option[List[ContentBlock]],
-      address: String,
-      ctx: ToolContext
-    ): IO[Either[ToolError, String]] =
-    for
-      history <- agentSessionId match
-        case Some(sid) => resources.sessionStore.loadMessagesForSession(sid)
-        case None => IO.pure(List.empty[Message])
-
-      // Inherit caller's safety mode so permission prompts are consistent
-      callerSafetyMode <- (ctx.sessionStore, ctx.sessionId) match
-        case (Some(store), Some(sid)) => store.getSafetyMode(sid)
-        case _ => IO.pure("confirm-edits")
-
-      // P2: resolve the caller's permission-policy bucket so the fork agent
-      // inherits the same root-session policy and renders interactions in the
-      // same Nebula window as the caller.
-      callerRootSessionId <- ctx.sessionId match
-        case Some(sid) =>
-          resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
-        case None => IO.pure("")
-
-      tempSession <- resources.sessionStore
-        .createSession(s"fork-${java.util.UUID.randomUUID().toString.take(8)}", agentName = Some(agentDef.name))
-        .handleErrorWith(e =>
-          logger.warn(s"Mail fork: createSession failed: ${e.getMessage}") *>
-            resources.sessionStore.createSession(s"fork-fallback", agentName = Some(agentDef.name))
-        )
-
-      responseDeferred <- Deferred[IO, Either[String, String]]
-
-      adapterRef <- system.spawn(
-        forkAdapter(agentDef.name, responseDeferred),
-        s"fork-adapter-${java.util.UUID.randomUUID().toString.take(8)}"
-      )
-
-      readTracker <- ReadTracker.create
-      fileHistory <- FileHistory.create()
-      // Route permission prompts to the caller's WS so they are visible
-      forkWs = ctx.wsSend.getOrElse((_: Json) => IO.unit)
-
-      agentRef <- system.spawn(
-        AgentActor(
-          agentDef = agentDef,
-          resources = resources,
-          wsSend = forkWs,
-          depth = (ctx.depth + 1),
-          parentRef = ctx.agentActorRef,
-          sessionId = Some(tempSession.id),
-          sessionName = Some(s"fork/${agentDef.name}"),
-          initialMessages = history,
-          readTracker = Some(readTracker),
-          fileHistory = Some(fileHistory),
-          contextWindow = resources.contextWindow,
-          projectRoot = Some(ctx.projectRoot),
-          safetyMode = callerSafetyMode,
-          expectsMail = false,
-          rootSessionId = callerRootSessionId,
-          // #30: ask forks only answer — side-effect tools (Mail/Write/Edit/
-          // Bash/…) stripped by buildAllowedToolSet(forkContext=true). The
-          // 2026-08-21 incident: an ask fork dispatched team members and
-          // wrote memory in parallel with the real agent (double-write race).
-          forkContext = true
-        ),
-        s"fork-${agentDef.name}-${java.util.UUID.randomUUID().toString.take(8)}"
-      )
-
-      // blocks carry the attachments with the message text as the first Text
-      // block (UserInput drops `text` when blocks are present).
-      _ <- agentRef ! AgentCommand.UserInput(question, Some(adapterRef), blocks = blocks, delivery = Some("ask"))
-
-      result <- waitForForkAnswer(
-        system,
-        resources,
-        agentRef,
-        adapterRef,
-        tempSession.id,
-        responseDeferred,
-        address,
-        ctx
-      )
-    yield result
-
-  /**
-   * Wait for the fork answer.
-   *
-   * Races the answer against the background threshold: if the answer arrives
-   * first, this is the old synchronous mode. If the threshold wins, the ask
-   * converts to a background task — same pattern as BashTool's
-   * auto-background: immediate feedback to the caller, the fork agent keeps
-   * running, and the answer is later injected into the caller's conversation
-   * via ExternalEvent. No hard timeout — the ask never fails on slowness.
-   *
-   * (Flow agents no longer reach this path at all: buildAllowedToolSet
-   * strips Mail from flow-category agents, so they cannot ask.)
-   */
-  private def waitForForkAnswer(
-    system: ActorSystem,
-    resources: SharedResources,
-    agentRef: ActorRef[AgentCommand],
-    adapterRef: ActorRef[AgentEvent],
-    tempSessionId: String,
-    responseDeferred: Deferred[IO, Either[String, String]],
-    address: String,
-    ctx: ToolContext
-  ): IO[Either[ToolError, String]] =
-    // Stop fork agent + adapter, delete temp session.
-    def cleanupFork: IO[Unit] =
-      system.stop(agentRef).handleErrorWith(_ => IO.unit) *>
-        system.stop(adapterRef).handleErrorWith(_ => IO.unit) *>
-        resources.sessionStore.deleteSession(tempSessionId).handleErrorWith(_ => IO.unit)
-
-    responseDeferred.get.race(IO.sleep(AskBackgroundThreshold)).flatMap {
-      case Left(Right(text)) => cleanupFork *> IO.pure(Right(text))
-      case Left(Left(err)) => cleanupFork *> IO.pure(Left(ToolError(err)))
-      case Right(_) =>
-        val jobId = s"ask-${java.util.UUID.randomUUID().toString.take(8)}"
-        val description = s"ask $address"
-        for
-          _ <- BgTaskRegistry.register(jobId, ctx.sessionId.getOrElse(""), description, "ask")
-          _ <- emitAskStarted(ctx, jobId, description)
-          // Detached fiber: wait for the fork to finish, then cleanup +
-          // notify the caller. Never fails the ask — the fork decides.
-          _ <- (responseDeferred.get
-            .flatMap {
-              case Right(text) =>
-                cleanupFork *>
-                  BgTaskRegistry.unregister(jobId) *>
-                  emitAskFinished(ctx, jobId, description, succeeded = true) *>
-                  notifyAskCompleted(ctx, address, jobId, text, succeeded = true)
-              case Left(err) =>
-                cleanupFork *>
-                  BgTaskRegistry.unregister(jobId) *>
-                  emitAskFinished(ctx, jobId, description, succeeded = false) *>
-                  notifyAskCompleted(ctx, address, jobId, err, succeeded = false)
-            })
-            .start
-            .void
-        yield Right(
-          s"[Ask moved to background] Mail ask to '$address' has been running for over " +
-            s"${AskBackgroundThreshold.toSeconds}s. The fork continues in the background — " +
-            "you will be notified when the answer arrives. Continue with other work or finish your turn."
-        )
-        end for
-    }
-  end waitForForkAnswer
-
-  /** Emit a WS event so the frontend shows the ask as a background task. */
-  private def emitAskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
-    ctx.wsSend.fold(IO.unit) { send =>
-      send(
-        io.circe.Json.obj(
-          "type" -> "backgroundTaskUpdate".asJson,
-          "sessionId" -> ctx.sessionId.asJson,
-          "taskId" -> jobId.asJson,
-          "description" -> description.asJson,
-          "status" -> "running".asJson,
-          "startedAt" -> System.currentTimeMillis().asJson
-        )
-      ).handleErrorWith(e => logger.warn(s"WS send failed for ask job $jobId: ${e.getMessage}"))
-    }
-
-  /** Emit a WS event so the frontend dismisses the ask background indicator. */
-  private def emitAskFinished(ctx: ToolContext, jobId: String, description: String, succeeded: Boolean): IO[Unit] =
-    ctx.wsSend.fold(IO.unit) { send =>
-      send(
-        io.circe.Json.obj(
-          "type" -> "backgroundTaskUpdate".asJson,
-          "sessionId" -> ctx.sessionId.asJson,
-          "taskId" -> jobId.asJson,
-          "description" -> description.asJson,
-          "status" -> (if succeeded then "completed" else "failed").asJson
-        )
-      ).handleErrorWith(e => logger.warn(s"WS send failed for ask job $jobId: ${e.getMessage}"))
-    }
-
-  /** Inject the ask answer into the caller's conversation via ExternalEvent. */
-  private def notifyAskCompleted(
-    ctx: ToolContext,
-    address: String,
-    jobId: String,
-    answer: String,
-    succeeded: Boolean
-  ): IO[Unit] =
-    ctx.agentActorRef.fold(IO.unit) { ref =>
-      val eventType = if succeeded then "completed" else "failed"
-      val payload =
-        if succeeded then s"""[Mail ask completed] "$address" answered:\n$answer"""
-        else s"""[Mail ask failed] "$address" responded with an error:\n$answer"""
-      (ref ! AgentCommand.ExternalEvent(
-        source = "mail-ask",
-        eventType = eventType,
-        payload = payload,
-        metadata = io.circe.JsonObject(
-          "address" -> address.asJson,
-          "jobId" -> jobId.asJson
-        )
-      )).handleErrorWith(e => logger.warn(s"Failed to notify agent for ask job $jobId: ${e.getMessage}"))
-    }
-
-  private def forkAdapter(
-    agentName: String,
-    responseDeferred: Deferred[IO, Either[String, String]]
-  ): Behavior[AgentEvent] =
-    Behaviors.receiveMessage { (event: AgentEvent) =>
-      val result = event match
-        case AgentEvent.Completed(_, messages) =>
-          val text = messages.reverse
-            .collectFirst {
-              case msg if msg.role == MessageRole.Assistant => msg.textContent
-            }
-            .filter(_.nonEmpty)
-            .getOrElse(s"$agentName completed but produced no text output.")
-          Right(text)
-        case AgentEvent.Failed(_, error) =>
-          Left(s"$agentName failed: ${error.message}")
-        case AgentEvent.Cancelled(_, reason) =>
-          Left(s"$agentName cancelled: $reason")
-      (responseDeferred
-        .complete(result)
-        .as(Behaviors.stopped))
-        .handleErrorWith(_ => IO.pure(Behaviors.stopped))
-    }
 
   // ============================================================
   // Queue mode: persisted FIFO, drained one-per-turn
@@ -1026,8 +693,8 @@ Message type (optional, default "INFO"):
             // Session history for the (re)spawn: team agents are LONG-LIVED
             // and their sessions persist across activations — a respawn
             // without the stored messages is an amnesiac agent (turn counts
-            // reset, prior context lost). Same pattern as doFork and the
-            // root-agent restore (WebSocketRoutes.ensureRootAgent).
+            // reset, prior context lost). Same pattern as the root-agent
+            // restore (WebSocketRoutes.ensureRootAgent).
             val historyIo: IO[List[Message]] = resources.sessionStore
               .loadMessagesForSession(session.id)
               .handleError { e =>

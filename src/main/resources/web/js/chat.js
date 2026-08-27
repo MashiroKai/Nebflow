@@ -398,10 +398,12 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam) {
   return parts.join(' · ');
 }
 
-/** Mail delivery modes from the backend contract ('ask'|'queue'|'immediate').
+/** Mail delivery modes from the backend contract ('queue'|'immediate').
  *  Badges are appended to the injected source label when the WS event /
- *  UiMessage carries a `delivery` field; old messages lack it → no badge. */
-const DELIVERY_MODES = new Set(['ask', 'queue', 'immediate']);
+ *  UiMessage carries a `delivery` field; old messages lack it → no badge
+ *  (the former 'ask' mode was removed 2026-08-27 — legacy history rows that
+ *  still carry it render without a badge). */
+const DELIVERY_MODES = new Set(['queue', 'immediate']);
 
 /** Append a delivery-mode badge to the label element (no-op when the field
  *  is absent or not a known mode — backward compatible with old history). */
@@ -422,7 +424,7 @@ function appendDeliveryBadge(label, delivery) {
  *  synchronous markdown storm when restoring long histories (P0-2).
  *  sourceTeam (optional): Team name for Team-agent messages — shown in the
  *  source label as 'team/agent' (see injectedSourceLabel).
- *  delivery (optional): Mail delivery mode 'ask'|'queue'|'immediate' — shown
+ *  delivery (optional): Mail delivery mode 'queue'|'immediate' — shown
  *  as a badge in the label; absent on old messages → hidden. */
 export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery) {
   const row = document.createElement('div');

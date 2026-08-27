@@ -51,11 +51,6 @@ class IdentityClauseSpec extends FunSuite:
     )
     assert(!lead.contains("身份与受众"), "Manager exempt — Lead IS the user interface")
 
-    val forked = PromptSections.buildConditionalBlocks(
-      PromptContext(guardrailsOn = true, agentCategory = "team", forkContext = true)
-    )
-    assert(!forked.contains("身份与受众"), "ask forks excluded")
-
     val whitelisted = PromptSections.buildConditionalBlocks(
       PromptContext(guardrailsOn = true, isFlowNode = true, userFacingNode = true)
     )
