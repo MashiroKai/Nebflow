@@ -69,7 +69,11 @@ When to use:
         ),
         "reason" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Optional for cancel/restart. Recorded into the task file (lastError) and the parent notification for traceability.".asJson
+          "description" -> "Optional for cancel/restart. Recorded into the task file (lastError) and the parent notification for traceability. REQUIRED (non-empty) when cancelling/restarting a team Manager with confirm=true.".asJson
+        ),
+        "confirm" -> io.circe.Json.obj(
+          "type" -> "boolean".asJson,
+          "description" -> "Strong confirmation for killing a team MANAGER (cancel/restart). Must be true AND accompanied by a non-empty reason — a killed Manager leaves its members without a coordinator (members keep running and remain manageable by Nebula). Not needed for regular team members.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("action".asJson)
@@ -91,7 +95,12 @@ When to use:
   val CancelableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Ephemeral)
   private val RestartableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask)
 
-  private def kindRejection(kind: AgentKind, action: String, callerIsDirectParent: Boolean = false): Option[String] =
+  private def kindRejection(
+      kind: AgentKind,
+      action: String,
+      callerIsDirectParent: Boolean = false,
+      callerIsRoot: Boolean = false
+  ): Option[String] =
     kind match
       case AgentKind.Flow =>
         Some(
@@ -100,8 +109,11 @@ When to use:
         )
       case AgentKind.Team =>
         // v2 升级链父重启（§5.3.3）：直接父（Manager/owner）对自有 Team 成员
-        // restart/cancel 放行——升级链的决策载体；其他调用者保持只读。
-        if callerIsDirectParent then None
+        // restart/cancel 放行——升级链的决策载体。
+        // Block 2（supervision trio §C3）：root 桶调用者（Nebula）对 Team 全局
+        // cancel/restart 放行（let-it-crash 裁定第 6 条——杀 Manager 需 confirm，
+        // 在 withGuardedRecord 的强确认门）。其他调用者保持只读。
+        if callerIsDirectParent || callerIsRoot then None
         else
           Some(
             "Team members are read-only for AgentControl in this version — killing one mid-collaboration breaks the team state machine. " +
@@ -199,10 +211,18 @@ When to use:
             else doStatus(resources, ctx, sessionId)
           case "cancel" =>
             if sessionId.isEmpty then IO.pure(Left(ToolError("cancel requires sessionId (run list first to get one)")))
-            else withGuardedRecord(resources, ctx, sessionId, "cancel")((rec, _) => doCancel(resources, rec, reason))
+            else
+              val confirm = input("confirm").flatMap(_.asBoolean).getOrElse(false)
+              withGuardedRecord(resources, ctx, sessionId, "cancel", confirm, reason)((rec, _) =>
+                doCancel(resources, rec, reason, by = callerLabel(ctx))
+              )
           case "restart" =>
             if sessionId.isEmpty then IO.pure(Left(ToolError("restart requires sessionId (run list first to get one)")))
-            else withGuardedRecord(resources, ctx, sessionId, "restart")((rec, _) => doRestart(resources, ctx, rec, reason))
+            else
+              val confirm = input("confirm").flatMap(_.asBoolean).getOrElse(false)
+              withGuardedRecord(resources, ctx, sessionId, "restart", confirm, reason)((rec, _) =>
+                doRestart(resources, ctx, rec, reason)
+              )
           case other =>
             IO.pure(
               Left(ToolError(s"Unknown action '$other'. Supported: list, status, cancel, restart."))
@@ -212,18 +232,54 @@ When to use:
     * Block 1（supervision trio §B3）：root 桶调用者（Nebula，rootSessionId ==
     * 自身 sid）维持同桶=全局；非 root 调用者（team Manager，唯一非 root 被
     * 授权者）从「同桶」收紧为「子树」——同桶会放行它管**别的 team** 的子代
-    * （所有挂载 team 共享挂载 root 的桶）。 */
-  private def withGuardedRecord(resources: SharedResources, ctx: ToolContext, sessionId: String, action: String)(
-    body: (AgentRecord, String) => IO[Either[ToolError, String]]
+    * （所有挂载 team 共享挂载 root 的桶）。
+    * Block 2（§C3）：Team 目标过 kind 门后，强确认门（Manager 目标需
+    * confirm=true + 非空 reason）+ nebflow.audit 审计行（一切 Team
+    * cancel/restart 留痕）。 */
+  private def withGuardedRecord(
+      resources: SharedResources,
+      ctx: ToolContext,
+      sessionId: String,
+      action: String,
+      confirm: Boolean,
+      reason: String
+  )(
+      body: (AgentRecord, String) => IO[Either[ToolError, String]]
   ): IO[Either[ToolError, String]] =
     val callerSessionId = ctx.sessionId.getOrElse("")
-    def proceed(rec: AgentRecord, callerRoot: String): IO[Either[ToolError, String]] =
+    def proceed(rec: AgentRecord, callerRoot: String, rootBucket: Boolean): IO[Either[ToolError, String]] =
       // v2 升级链父重启（§5.3.3）：直接父 = 调用者会话 == 目标记录的 parentSessionId
       // （Manager/owner 管理自有 Team 成员；Delegate/SubTask 的父同理）。
       val callerIsDirectParent = rec.parentSessionId.nonEmpty && rec.parentSessionId == callerSessionId
-      kindRejection(rec.kind, action, callerIsDirectParent) match
+      kindRejection(rec.kind, action, callerIsDirectParent, callerIsRoot = rootBucket) match
         case Some(msg) => IO.pure(Left(ToolError(msg)))
-        case None      => body(rec, callerRoot)
+        case None =>
+          if rec.kind == AgentKind.Team then
+            isManagerSession(rec.sessionId).flatMap {
+              case true if !confirm =>
+                IO.pure(
+                  Left(
+                    ToolError(
+                      s"'${rec.sessionId}' is a team MANAGER. Cancelling/restarting it requires confirm=true " +
+                        "AND a non-empty reason. Consequence: the Manager's members keep running but lose their " +
+                        "coordinator (they remain manageable by Nebula via AgentControl). Re-issue with " +
+                        "confirm=true and reason=\"<why>\" if this is intended."
+                    )
+                  )
+                )
+              case true if reason.isBlank =>
+                IO.pure(
+                  Left(
+                    ToolError(
+                      "confirm=true for killing a team Manager requires a non-empty reason " +
+                        "(audit trail: who killed which Manager and why). Re-issue with reason=\"<why>\"."
+                    )
+                  )
+                )
+              case _ =>
+                auditTeamAction(ctx, action, rec, confirm, reason) *> body(rec, callerRoot)
+            }
+          else body(rec, callerRoot)
     for
       registry <- resources.agentRegistry.get
       callerRoot = registry.get(callerSessionId).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(callerSessionId)
@@ -231,7 +287,7 @@ When to use:
       result <- registry.get(sessionId) match
         case None =>
           val manageable = registry.values
-            .filter(r => CancelableKinds.contains(r.kind) || RestartableKinds.contains(r.kind))
+            .filter(r => CancelableKinds.contains(r.kind) || RestartableKinds.contains(r.kind) || r.kind == AgentKind.Team)
             .map(_.sessionId)
             .toList
           val hint = if manageable.isEmpty then "(none currently)" else manageable.mkString(", ")
@@ -257,12 +313,12 @@ When to use:
                   )
                 )
               )
-            else proceed(rec, callerRoot)
+            else proceed(rec, callerRoot, rootBucket)
           else
             // Block 1：非 root 调用者（Manager）——子树判定取代同桶
             managerAnchors(callerSessionId).flatMap {
               case Some(anchors) if anchors.contains(sessionId) || chainReaches(registry, sessionId, anchors, 8) =>
-                proceed(rec, callerRoot)
+                proceed(rec, callerRoot, rootBucket)
               case _ =>
                 IO.pure(
                   Left(
@@ -274,6 +330,32 @@ When to use:
                 )
             }
     yield result
+
+  /** Block 2（§C3-4）：Team cancel/restart 审计行——logger `nebflow.audit`
+    * （随 nebflow.log 落盘）。 */
+  private val auditLogger = nebflow.core.NebflowLogger.forName("nebflow.audit")
+
+  private def auditTeamAction(ctx: ToolContext, action: String, rec: AgentRecord, confirm: Boolean, reason: String): IO[Unit] =
+    val callerSid = ctx.sessionId.getOrElse("-")
+    val callerAgent = ctx.agentDef.map(_.name).orElse(ctx.sessionName).getOrElse("-")
+    auditLogger.info(
+      s"AUDIT ts=${System.currentTimeMillis()} caller=$callerSid callerAgent=$callerAgent " +
+        s"action=$action target=${rec.sessionId} targetKind=Team targetAgent=${agentNameFromSessionId(rec.sessionId)} " +
+        s"confirm=$confirm reason=\"$reason\""
+    )
+
+  /** 审计/通知里的调用者署名：agent 名优先（Nebula/Manager），回退 session 名。 */
+  private def callerLabel(ctx: ToolContext): String =
+    ctx.agentDef.map(_.name).orElse(ctx.sessionName).getOrElse("AgentControl caller")
+
+  /** 目标会话是其 team 实例的 Manager（TeamSessionRegistry 权威）。 */
+  private def isManagerSession(sid: String): IO[Boolean] =
+    TeamSessionRegistry.teamOfSession(sid).flatMap {
+      case None => IO.pure(false)
+      case Some(inst) =>
+        TeamSessionRegistry.managerOf(inst).map(_ == Some(sid))
+    }
+
 
   /** Block 1（supervision trio §B4）：list 的可见面。root 桶调用者（Nebula）
     * 看全部；非 root 调用者（team Manager）只看自己的子树（本队成员 + 其
@@ -310,7 +392,12 @@ When to use:
           val loop =
             if rec.loopStreak > 0 || rec.loopRounds > 0 then s"${rec.loopStreak}/${rec.loopRounds}"
             else "-"
-          val readOnly = if !CancelableKinds.contains(rec.kind) then " （read-only）" else ""
+          // Block 2（§C1）：root 桶调用者（Nebula）对 Team 全局 cancel/restart——
+          // Team 行不再标 read-only；Manager 子树视图（anchorsOpt 定义）内 Team
+          // 由直接父分支放行，同样不标。其余只读 kind 照标。
+          val teamManageable = rec.kind == AgentKind.Team && anchorsOpt.isEmpty
+          val readOnly =
+            if !CancelableKinds.contains(rec.kind) && !teamManageable then " （read-only）" else ""
           val taskLabel = (task.map(_.description).getOrElse("") + readOnly).trim
           // issue #31 Fix D: barrier snapshot — phantom visibility. outstanding>0
           // on an idle session with no in-flight work = a batch member hung / died
@@ -353,17 +440,19 @@ When to use:
              |       rounds this turn (escalates at 70% turn budget / 8). Non-zero = loop suspicion — check status, consider restart.
              |barrier = outstandingSubagents/heldResults (issue #31): outstanding>0 while idle with no in-flight work = phantom slot
              |          (a batch member hung or died without a terminal event — held results never inject until restart).
-             |Cancelable kinds: Delegate / SubTask / Ephemeral. Restartable: Delegate(ephemeral) / SubTask. Team members: Manager (direct parent) or Nebula. Flow/Root are read-only.$scopeNote""".stripMargin
+             |Cancelable kinds: Delegate / SubTask / Ephemeral. Restartable: Delegate(ephemeral) / SubTask.
+             |Team members: the team's Manager (direct parent) or Nebula (global; killing a team MANAGER requires confirm=true + reason — audited). Flow/Root are read-only.$scopeNote""".stripMargin
       Right(summary)
 
   private def doStatus(resources: SharedResources, ctx: ToolContext, sessionId: String): IO[Either[ToolError, String]] =
     resources.agentRegistry.get.flatMap { registry =>
       // Block 1（§B4）：status 同样受 scope 限制——root 全局，Manager 仅子树
       val callerSid = ctx.sessionId.getOrElse("")
-      if !callerIsRootBucket(registry, callerSid) then
+      val rootBucket = callerIsRootBucket(registry, callerSid)
+      if !rootBucket then
         managerAnchors(callerSid).flatMap {
           case Some(anchors) if anchors.contains(sessionId) || chainReaches(registry, sessionId, anchors, 8) =>
-            doStatusBody(resources, registry, sessionId)
+            doStatusBody(resources, registry, sessionId, rootBucket)
           case _ =>
             IO.pure(
               Left(
@@ -374,13 +463,14 @@ When to use:
               )
             )
         }
-      else doStatusBody(resources, registry, sessionId)
+      else doStatusBody(resources, registry, sessionId, rootBucket)
     }
 
   private def doStatusBody(
-    resources: SharedResources,
-    registry: Map[String, AgentRecord],
-    sessionId: String
+      resources: SharedResources,
+      registry: Map[String, AgentRecord],
+      sessionId: String,
+      callerIsRoot: Boolean = false
   ): IO[Either[ToolError, String]] =
     {
       val now = System.currentTimeMillis()
@@ -439,7 +529,7 @@ When to use:
     * handler（子 agent 管理面板）复用同链路——supervisorRef 优先（Cancelled →
     * notifyParentAndStop，barrier 正确释放），无 supervisor 走降级兜底
     * （Stop + 自补通知 + taskStore cancelled + registry 移除）。 */
-  def doCancel(resources: SharedResources, rec: AgentRecord, reason: String): IO[Either[ToolError, String]] =
+  def doCancel(resources: SharedResources, rec: AgentRecord, reason: String, by: String = "the user panel"): IO[Either[ToolError, String]] =
     val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
     rec.supervisorRef match
       case Some(sup) =>
@@ -473,7 +563,7 @@ When to use:
           p ! AgentCommand.ExternalEvent(
             source = source,
             eventType = "cancelled",
-            payload = s"\"${rec.sessionId}\": cancelled by Nebula via AgentControl$reasonSuffix",
+            payload = s"\"${rec.sessionId}\": cancelled by $by via AgentControl$reasonSuffix",
             metadata = metadata,
             correlationId = Some(rec.sessionId)
           )
@@ -486,7 +576,7 @@ When to use:
                 rec.sessionId,
                 "cancelled",
                 completedAt = Some(System.currentTimeMillis()),
-                lastError = Some(s"cancelled by Nebula via AgentControl$reasonSuffix")
+                lastError = Some(s"cancelled by $by via AgentControl$reasonSuffix")
               )
               .handleErrorWith(e => logger.warn(s"cancel taskStore update failed: ${e.getMessage}"))
           else IO.unit

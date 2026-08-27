@@ -14,6 +14,7 @@ import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 
 import scala.concurrent.duration.*
+import scala.jdk.CollectionConverters.*
 
 /**
  * AgentControl spec §4 / §6 B2：守卫矩阵 + list/status 渲染 + cancel/restart 分支。
@@ -87,11 +88,12 @@ class AgentControlToolSpec extends CatsEffectSuite:
       sharedResources = Some(resources)
     )
 
-  private def call(resources: SharedResources, sessionId: String, action: String, target: String = "", reason: String = ""): Either[ToolError, String] =
+  private def call(resources: SharedResources, sessionId: String, action: String, target: String = "", reason: String = "", confirm: Boolean = false): Either[ToolError, String] =
     val input = io.circe.JsonObject(
       "action" -> action.asJson,
       "sessionId" -> target.asJson,
-      "reason" -> reason.asJson
+      "reason" -> reason.asJson,
+      "confirm" -> confirm.asJson
     )
     AgentControlTool.call(input, ctx(resources, sessionId)).unsafeRunSync()
 
@@ -136,7 +138,9 @@ class AgentControlToolSpec extends CatsEffectSuite:
       assert(out.contains("delegate-Explorer-aaaa1111"), s"row must render sessionId:\n$out")
       assert(out.contains("Delegate"), s"kind column:\n$out")
       assert(out.contains("Team"), s"team row:\n$out")
-      assert(out.contains("read-only"), s"read-only annotation for Team:\n$out")
+      // Block 2（§C1）：root 桶调用者可全局管 Team——Team 行不再标 read-only
+      val teamLine = out.linesIterator.find(_.contains("team-nebflow-project-Backend")).get
+      assert(!teamLine.contains("read-only"), s"Team row must not be read-only for a root caller:\n$teamLine")
       assert(out.contains("Explorer"), s"agent name from task record:\n$out")
       assert(out.contains("guard test task"), s"task description column:\n$out")
       assert(out.contains("2m0s"), s"up column from startedAt (120s → 2m0s):\n$out")
@@ -198,7 +202,7 @@ class AgentControlToolSpec extends CatsEffectSuite:
     program.guarantee(system.stopAll.attempt.void)
   }
 
-  test("cancel self / Root / Team / Flow / cross-root are all rejected with the right guidance") {
+  test("cancel self / Root / Flow / cross-root are rejected; Team by a root-bucket caller now proceeds (Block 2)") {
     val system = ActorSystem("ac-guard-kinds")
     val tmp = os.temp.dir()
     val program = for
@@ -211,6 +215,7 @@ class AgentControlToolSpec extends CatsEffectSuite:
         "self-session" -> AgentRecord("self-session", rootRef, AgentKind.Root, "self-session"),
         // 同桶（root=self-session）但 kind=Root —— 走 kind 拒绝而非权限拒绝
         "another-root" -> AgentRecord("another-root", rootRef, AgentKind.Root, "self-session"),
+        // Block 2：同桶 Team、非注册 Manager（TeamSessionRegistry 空）→ root 桶调用者放行
         "team-nebflow-project-Backend" -> AgentRecord("team-nebflow-project-Backend", teamRef, AgentKind.Team, "self-session"),
         // 同桶 Flow —— cancelFlow 指引
         "dag-step1" -> AgentRecord("dag-step1", flowRef, AgentKind.Flow, "self-session"),
@@ -225,7 +230,8 @@ class AgentControlToolSpec extends CatsEffectSuite:
     yield
       assert(selfRes.left.exists(_.message.contains("Self-guard")), selfRes.toString)
       assert(rootRes.left.exists(_.message.contains("cannot be managed")), rootRes.toString)
-      assert(teamRes.left.exists(_.message.contains("read-only")), teamRes.toString)
+      // Block 2：root 桶调用者对 Team 全局 cancel 放行（v1.0 旧断言「read-only 拒绝」作废）
+      assert(teamRes.isRight, s"root-bucket caller must be able to cancel a Team member (Block 2 §C3), got: $teamRes")
       assert(flowRes.left.exists(_.message.contains("cancelFlow")), flowRes.toString)
       assert(crossRes.left.exists(_.message.contains("Permission denied")), crossRes.toString)
     program.guarantee(system.stopAll.attempt.void)
@@ -294,7 +300,8 @@ class AgentControlToolSpec extends CatsEffectSuite:
       assertEquals(ext.get.metadata("cancelled").flatMap(_.asBoolean), Some(true))
       val task = tasks.find(_.taskId == "subtask-Worker-eeee5555").get
       assertEquals(task.status, "cancelled")
-      assert(task.lastError.exists(_.contains("cancelled by Nebula")), s"${task.lastError}")
+      // Block 2（§C3-4）：取消留痕带调用者署名（ctx 无 agentDef → callerLabel 回退值）
+      assert(task.lastError.exists(_.contains("cancelled by AgentControl caller")), s"${task.lastError}")
       assert(childCmds.exists(_.isInstanceOf[AgentCommand.Stop]), s"child must receive Stop: $childCmds")
     program.guarantee(system.stopAll.attempt.void)
   }
@@ -511,6 +518,92 @@ class AgentControlToolSpec extends CatsEffectSuite:
     assert(out.contains("your team subtree"), s"scope note must be present:\n$out")
     val rootOut = rootRes.toOption.get
     assert(rootOut.contains("mem-b"), s"root-bucket caller still sees everything:\n$rootOut")
+  }
+
+  // ── Block 2（supervision trio §C3-4）：Nebula 全局权 + 杀 Manager 强确认 ──
+
+  test("Block 2: root-bucket caller cancels a regular Team member — proceeds, audit line fired") {
+    val system = ActorSystem("ac-b2-member")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      mgrRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b2-mgr")
+      memReceived <- Ref.of[IO, List[AgentCommand]](Nil)
+      memRef <- system.spawn(mkRecordingCmd(memReceived), "b2-mem")
+      subRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b2-sub")
+      bRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b2-b")
+      _ <- setupDualTeam(resources, mgrRef, memRef, subRef, bRef, System.currentTimeMillis())
+      // audit capture
+      lbLogger = org.slf4j.LoggerFactory.getLogger("nebflow.audit").asInstanceOf[ch.qos.logback.classic.Logger]
+      appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+      _ <- IO { appender.start(); lbLogger.addAppender(appender) }
+      res <- IO(call(resources, "root-mount", "cancel", target = "mem-a", reason = "loop guard"))
+      _ <- waitUntil(3.seconds)(memReceived.get.map(_.exists(_.isInstanceOf[AgentCommand.Stop])))
+      auditLines = appender.list.asScala.map(_.getFormattedMessage).toList
+      _ <- IO { lbLogger.detachAppender(appender); appender.stop() }
+      _ <- IO(nebflow.core.flow.TeamSessionRegistry.clear.void)
+    yield (res, memReceived, auditLines)
+    val (res, memReceived, auditLines) = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
+    assert(res.isRight, s"root-bucket caller must cancel a Team member globally, got: $res")
+    assert(
+      memReceived.get.unsafeRunSync().exists(_.isInstanceOf[AgentCommand.Stop]),
+      "member actor must be stopped"
+    )
+    // §C3-4 audit: built-not-run IO would log nothing — the appender is the proof
+    val audit = auditLines.find(l => l.contains("action=cancel") && l.contains("mem-a"))
+    assert(audit.isDefined, s"nebflow.audit line must exist, got: $auditLines")
+    assert(audit.get.contains("targetKind=Team"), audit.get)
+    assert(audit.get.contains("reason=\"loop guard\""), audit.get)
+  }
+
+  test("Block 2: killing a team MANAGER — double confirm gate (no confirm / no reason) then confirm+reason proceeds with audit") {
+    val system = ActorSystem("ac-b2-mgr")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      mgrReceived <- Ref.of[IO, List[AgentCommand]](Nil)
+      mgrRef <- system.spawn(mkRecordingCmd(mgrReceived), "b2m-mgr")
+      memRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b2m-mem")
+      subRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b2m-sub")
+      bRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b2m-b")
+      _ <- setupDualTeam(resources, mgrRef, memRef, subRef, bRef, System.currentTimeMillis())
+      lbLogger = org.slf4j.LoggerFactory.getLogger("nebflow.audit").asInstanceOf[ch.qos.logback.classic.Logger]
+      appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+      _ <- IO { appender.start(); lbLogger.addAppender(appender) }
+      // 门 1：无 confirm → 拒绝 + 后果说明
+      noConfirm <- IO(call(resources, "root-mount", "cancel", target = "mgr-a"))
+      // 门 2：confirm=true 无 reason → 拒绝
+      noReason <- IO(call(resources, "root-mount", "cancel", target = "mgr-a", confirm = true))
+      auditMidway = appender.list.asScala.map(_.getFormattedMessage).toList
+      // 门 3：confirm=true + reason → 放行 + 审计含 reason
+      okRes <- IO(call(resources, "root-mount", "cancel", target = "mgr-a", reason = "manager wedged, rebuild team", confirm = true))
+      _ <- waitUntil(3.seconds)(mgrReceived.get.map(_.exists(_.isInstanceOf[AgentCommand.Stop])))
+      auditLines = appender.list.asScala.map(_.getFormattedMessage).toList
+      _ <- IO { lbLogger.detachAppender(appender); appender.stop() }
+      _ <- IO(nebflow.core.flow.TeamSessionRegistry.clear.void)
+    yield (noConfirm, noReason, auditMidway, okRes, mgrReceived, auditLines)
+    val (noConfirm, noReason, auditMidway, okRes, mgrReceived, auditLines) =
+      program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
+    // 门 1：拒绝并返回后果说明
+    val m1 = noConfirm.fold(e => e.message, _ => "")
+    assert(m1.contains("confirm=true"), s"gate 1 must demand confirm, got: $m1")
+    assert(m1.contains("MANAGER"), s"gate 1 must name the target role, got: $m1")
+    assert(m1.contains("members keep running"), s"gate 1 must explain the consequence, got: $m1")
+    // 门 2：confirm=true 无 reason → 拒绝
+    val m2 = noReason.fold(e => e.message, _ => "")
+    assert(m2.contains("non-empty reason"), s"gate 2 must demand a reason, got: $m2")
+    // 两次被拒不得产生审计行（审计只在放行时落）
+    assert(auditMidway.isEmpty, s"rejected attempts must not audit, got: $auditMidway")
+    // 门 3：放行
+    assert(okRes.isRight, s"confirm=true + reason must proceed, got: $okRes")
+    assert(
+      mgrReceived.get.unsafeRunSync().exists(_.isInstanceOf[AgentCommand.Stop]),
+      "manager actor must be stopped"
+    )
+    val audit = auditLines.find(l => l.contains("action=cancel") && l.contains("mgr-a"))
+    assert(audit.isDefined, s"audit line must exist after the kill, got: $auditLines")
+    assert(audit.get.contains("confirm=true"), audit.get)
+    assert(audit.get.contains("reason=\"manager wedged, rebuild team\""), audit.get)
   }
 
 end AgentControlToolSpec
