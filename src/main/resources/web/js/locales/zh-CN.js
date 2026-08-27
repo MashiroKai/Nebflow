@@ -347,10 +347,8 @@ export default {
   'provider.keyValid': '密钥有效',
 
   // === Mail delivery mode badges ===
-  'mailDelivery.ask': '同步',
   'mailDelivery.queue': '排队',
   'mailDelivery.immediate': '即时',
-  'mailDelivery.askTitle': 'Ask：发送方同步等待回复',
   'mailDelivery.queueTitle': 'Queue：排队，当前任务完成后逐条处理',
   'mailDelivery.immediateTitle': 'Immediate：即时注入到对话',
   'mailFlow.noBody': '（无正文）',

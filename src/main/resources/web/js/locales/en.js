@@ -342,10 +342,8 @@ export default {
   'provider.keyValid': 'key valid',
 
   // === Mail delivery mode badges ===
-  'mailDelivery.ask': 'Ask',
   'mailDelivery.queue': 'Queue',
   'mailDelivery.immediate': 'Immediate',
-  'mailDelivery.askTitle': 'Ask: the sender waits synchronously for a reply',
   'mailDelivery.queueTitle': 'Queue: processed one by one after the current task finishes',
   'mailDelivery.immediateTitle': 'Immediate: injected into the conversation right away',
   'mailFlow.noBody': '(no body)',

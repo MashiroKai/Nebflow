@@ -434,7 +434,7 @@ private[agent] trait AgentCore:
         val isCompactTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Compact)
         val isSaveTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Save)
         val isAskTurn = state.askMode.isDefined
-        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker, state.forkContext, state.isFlowNode)
+        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker, state.isFlowNode)
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
         // Track the first model that failed (for modelChanged notification)
@@ -478,7 +478,7 @@ private[agent] trait AgentCore:
           // 轨道二 #5: hot-read the dedicatedAgents flag once per turn — flows
           // into tool stripping (T1 leaf display tools) + identity clause.
           guardrailsOn <- nebflow.core.Guardrails.enabled
-          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, isFlowNode = stateForLlm.isFlowNode, isTeamLead = isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn)
+          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker, isFlowNode = stateForLlm.isFlowNode, isTeamLead = isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn)
           // #16 observability: one log line per LLM call when MCP tools are
           // injected — names the servers explicitly so phantom-tool suspicion
           // can be settled by grepping the log instead of reconstructing
@@ -551,7 +551,6 @@ private[agent] trait AgentCore:
             guardrailsOn = guardrailsOn,
             isFlowNode = stateForLlm.isFlowNode,
             userFacingNode = stateForLlm.userFacingNode,
-            forkContext = stateForLlm.forkContext,
             isTeamLead = isTeamLead
           )
           // systemStable: rebuilt only at lifecycle nodes; otherwise reuse the
@@ -633,8 +632,8 @@ private[agent] trait AgentCore:
             else Nil
           freshTools =
             if isCompactTurn then Some(Nil)
-            else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, stateForLlm.isFlowNode, isTeamLead)
-            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, stateForLlm.isFlowNode, isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn)
+            else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.isFlowNode, isTeamLead)
+            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.isFlowNode, isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn)
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
           // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
@@ -848,7 +847,7 @@ private[agent] trait AgentCore:
       effectiveDef = currentDefOpt.getOrElse(agentDef)
       isTeamLead <- isTeamLeadStatus(effectiveDef, state.sessionId)
       guardrailsOn <- nebflow.core.Guardrails.enabled
-      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker, state.forkContext, state.isFlowNode, isTeamLead, userFacingNode = state.userFacingNode, guardrailsOn = guardrailsOn)
+      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker, state.isFlowNode, isTeamLead, userFacingNode = state.userFacingNode, guardrailsOn = guardrailsOn)
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
         // agent-tool whitelist — it is provider-injected (not an agent tool)
@@ -1319,7 +1318,6 @@ private[agent] trait AgentCore:
     agentDef: AgentDef,
     depth: Int = 0,
     isSubTaskWorker: Boolean = false,
-    forkContext: Boolean = false,
     isFlowNode: Boolean = false,
     isTeamLead: Boolean = false,
     userFacingNode: Boolean = false,
@@ -1407,12 +1405,7 @@ private[agent] trait AgentCore:
       // Mail ask (flow callers cannot receive background notifications).
       else if agentDef.category == "flow" then mcpFiltered - "Mail"
       else mcpFiltered
-    // #30: Mail ask forks only answer a question — strip every side-effect
-    // tool so the fork can never dispatch work, write memory/files, or mutate
-    // state while the real agent's own turn is running. Read-only retrieval
-    // (Read/Glob/Grep/WebSearch/WebFetch/Pop/TaskQuery) stays for answers.
-    if forkContext then categoryFiltered -- AgentCore.ForkSideEffectTools
-    else categoryFiltered
+    categoryFiltered
 
   end buildAllowedToolSet
 
@@ -1420,13 +1413,12 @@ private[agent] trait AgentCore:
     agentDef: AgentDef,
     depth: Int = 0,
     isSubTaskWorker: Boolean = false,
-    forkContext: Boolean = false,
     isFlowNode: Boolean = false,
     isTeamLead: Boolean = false,
     userFacingNode: Boolean = false,
     guardrailsOn: Boolean = false
   ): Option[List[ToolDefinition]] =
-    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, forkContext, isFlowNode, isTeamLead, userFacingNode, guardrailsOn)
+    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, isFlowNode, isTeamLead, userFacingNode, guardrailsOn)
     Some(ToolRegistry.ALL_TOOLS.flatMap { td =>
       if !allowedSet.contains(td.name) then None
       // R8-P1: flow node agents get their per-node contract (verdict enum +
@@ -1455,7 +1447,6 @@ private[agent] trait AgentCore:
       agentDef: AgentDef,
       depth: Int = 0,
       isSubTaskWorker: Boolean = false,
-      forkContext: Boolean = false,
       isFlowNode: Boolean = false,
       isTeamLead: Boolean = false
   ): Option[List[ToolDefinition]] =
@@ -1466,7 +1457,7 @@ private[agent] trait AgentCore:
     // never empties them out") broke when the six became Nebula's
     // configurable region: a bare Nebula def would run save turns with ZERO
     // file tools and silently stop persisting memory.
-    val allowed = buildToolList(agentDef, depth, isSubTaskWorker, forkContext, isFlowNode, isTeamLead)
+    val allowed = buildToolList(agentDef, depth, isSubTaskWorker, isFlowNode, isTeamLead)
       .getOrElse(Nil)
       .filter(td => SaveTurnToolWhitelist.contains(td.name))
     val guaranteed = ToolRegistry.ALL_TOOLS.filter(td => SaveTurnToolWhitelist.contains(td.name))
@@ -1797,42 +1788,12 @@ object AgentCore:
 
   /** Team Manager task tools (2026-08-25 team-manager-task-tool): granted to
     * team leads (Manager owner — all three) and Nebula (TeamTaskList only,
-    * read-only oversight); stripped from SubTask workers / flow nodes / Mail
-    * ask forks / depth≥2 "*" agents (same LeadLevelTools treatment). */
+    * read-only oversight); stripped from SubTask workers / flow nodes /
+    * depth≥2 "*" agents (same LeadLevelTools treatment). */
   val TeamTaskTools = Set("TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList")
 
   /** Tools available to Nebula and Team Leads, but NOT workers. */
   val LeadLevelTools = Set("TaskCreate", "TaskUpdate")
-
-  /**
-   * #30: tools stripped in Mail ask/fork contexts (forkContext=true). An ask
-   * fork only answers a question — it must never dispatch work, write
-   * memory/files, execute shell, or mutate other state. The 2026-08-21
-   * incident: an ask fork ran the full toolset in parallel with the real
-   * agent, dispatching team members and writing memory (double-write race).
-   * Read-only retrieval (Read/Glob/Grep/WebSearch/WebFetch/Pop/TaskQuery)
-   * stays available so the fork can still answer from context + research.
-   */
-  val ForkSideEffectTools = Set(
-    "Mail",
-    "Delegate",
-    "SubTask",
-    "FlowTrigger",
-    "AgentControl",
-    "Load",
-    "TransferFile",
-    "FlowReport",
-    "Write",
-    "Edit",
-    "MultiEdit",
-    "Bash",
-    "Curl",
-    "SaveTurn",
-    "Schedule",
-    "AskUserQuestion",
-    "TaskCreate",
-    "TaskUpdate"
-  ) ++ TeamTaskTools
 
   /**
    * Base tools always available to ALL agents regardless of category.

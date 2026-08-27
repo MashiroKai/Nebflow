@@ -78,8 +78,6 @@ object PromptSections:
     isFlowNode: Boolean = false,
     /** 轨道二 #5: this flow node's userFacing whitelist declaration. */
     userFacingNode: Boolean = false,
-    /** #30: Mail ask fork context (forks are excluded from identity clauses). */
-    forkContext: Boolean = false,
     /** Whether this session's agent is the team lead (Manager). */
     isTeamLead: Boolean = false
   )
@@ -323,7 +321,7 @@ object PromptSections:
       condition = ctx => ctx.guardrailsOn && !ctx.isSubTaskWorker,
       renderer = ctx =>
         if ctx.isFlowNode then flowWorkerIdentityBlock(ctx.userFacingNode)
-        else if !ctx.forkContext && !ctx.isTeamLead && ctx.agentCategory == "team" then teamMemberIdentityBlock
+        else if !ctx.isTeamLead && ctx.agentCategory == "team" then teamMemberIdentityBlock
         else ""
     ),
 
