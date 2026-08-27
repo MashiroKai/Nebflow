@@ -38,9 +38,11 @@ class AllowedToolSetSpec extends FunSuite:
         isSubTaskWorker: Boolean = false,
         forkContext: Boolean = false,
         isFlowNode: Boolean = false,
-        isTeamLead: Boolean = false
+        isTeamLead: Boolean = false,
+        userFacingNode: Boolean = false,
+        guardrailsOn: Boolean = false
     ): Set[String] =
-      buildAllowedToolSet(defn, depth, isSubTaskWorker, forkContext, isFlowNode, isTeamLead)
+      buildAllowedToolSet(defn, depth, isSubTaskWorker, forkContext, isFlowNode, isTeamLead, userFacingNode, guardrailsOn)
 
   private def mkDef(name: String, tools: List[String], mcpServers: List[String] = Nil): AgentDef =
     AgentDef(name = name, description = "", tools = tools, systemPrompt = "", mcpServers = mcpServers)
@@ -565,4 +567,41 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("Delegate"), "no Delegate for standalone")
     assert(!allowed.contains("Schedule"), "no Schedule for standalone")
     assert(allowed.contains("Read"), "base tools intact")
+
+  // ===== 轨道二 #5: T1 flow-worker display-tool guardrails (dedicatedAgents) =====
+
+  test("guardrails ON: flow node loses Pop/AskUserQuestion even when explicitly declared"):
+    val defn = mkDef("qa-worker", List("Read", "Grep", "Bash", "Pop", "AskUserQuestion"))
+    val allowed = CoreProbe.allowed(defn, isFlowNode = true, guardrailsOn = true)
+    assert(!allowed.contains("Pop"), "Pop stripped at engine level (deck-v6 lesson)")
+    assert(!allowed.contains("AskUserQuestion"), "AskUserQuestion stripped (nodes have nobody to ask)")
+    assert(allowed.contains("Read"), "domain tools kept")
+
+  test("guardrails OFF (default): declared Pop stays available to a flow node — zero regression"):
+    val defn = mkDef("qa-worker", List("Read", "Grep", "Bash", "Pop", "AskUserQuestion"))
+    val allowed = CoreProbe.allowed(defn, isFlowNode = true, guardrailsOn = false)
+    assert(allowed.contains("Pop"), "flag off = pre-guardrail behavior byte-compatible")
+    assert(allowed.contains("AskUserQuestion"))
+
+  test("guardrails ON + userFacing:true whitelist keeps display tools"):
+    val defn = mkDef("reviewer", List("Read", "Grep", "Pop"))
+    val allowed = CoreProbe.allowed(defn, isFlowNode = true, userFacingNode = true, guardrailsOn = true)
+    assert(allowed.contains("Pop"), "userFacing node is the whitelist escape hatch")
+    val leafStripped = CoreProbe.allowed(defn.copy(tools = List("Read", "Grep")), isFlowNode = true, userFacingNode = true, guardrailsOn = true)
+    assert(!leafStripped.contains("Pop"), "whitelist restores nothing extra — declaration remains the source")
+
+  test("guardrails ON does not touch non-flow agents"):
+    val solo = mkDef("explorer", List("Read", "Pop", "AskUserQuestion"))
+    val allowed = CoreProbe.allowed(solo, guardrailsOn = true)
+    assert(allowed.contains("Pop"), "T0 standalone untouched")
+    assert(allowed.contains("AskUserQuestion"), "T0 standalone untouched")
+    val worker = mkDef("backend", List("Read")).copy(category = "team")
+    val member = CoreProbe.allowed(worker, guardrailsOn = true)
+    assert(member.contains("Mail") && !member.contains("Pop"), "T2 team member unchanged this batch (fixed set never granted Pop)")
+
+  test("SubTask workers keep their own strip list regardless of guardrails flag"):
+    val worker = mkDef("backend", List("Read")).copy(category = "team")
+    val on = CoreProbe.allowed(worker, isSubTaskWorker = true, guardrailsOn = true)
+    val off = CoreProbe.allowed(worker, isSubTaskWorker = true, guardrailsOn = false)
+    assertEquals(on, off, "flag must not alter the SubTask-worker path in any way")
 end AllowedToolSetSpec

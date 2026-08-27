@@ -386,7 +386,8 @@ object FlowDagExecutor:
                             rootSessionId,
                             sessionId = sid,
                             initialMessages = recoveredMsgs,
-                            keepSessionOnFailure = restartAllowed
+                            keepSessionOnFailure = restartAllowed,
+                            userFacing = node.userFacing
                           )
                         }
                       }
@@ -1107,7 +1108,10 @@ object FlowDagExecutor:
     // Preserve the failed node's session (AgentActor already persisted its
     // history before failing) so a Restart resumes from the checkpoint
     // instead of a fresh re-run. Terminal outcomes always clean up.
-    keepSessionOnFailure: Boolean = false
+    keepSessionOnFailure: Boolean = false,
+    // 轨道二 #5: node-level userFacing whitelist declaration — passed raw into
+    // SessionContext; the dedicatedAgents flag gates at consumption points.
+    userFacing: Boolean = false
   ): IO[NodeResult] =
     val rawWsSend = wsSend.getOrElse((_: Json) => IO.unit)
     // Failure outcome carried through the deferred: message + retryable flag
@@ -1174,7 +1178,10 @@ object FlowDagExecutor:
           rootSessionId = effectiveRootSessionId,
           // #406: one-shot flow nodes are leaves — FlowExecute/FlowTrigger/
           // SubTask/Delegate stripped by buildAllowedToolSet (isFlowNode rule).
-          isFlowNode = true
+          isFlowNode = true,
+          // 轨道二 #5: raw declaration; stripping + clause variant gate on the
+          // dedicatedAgents flag at each turn (hot-read, no respawn needed).
+          userFacingNode = userFacing
         ),
         s"dagnode-${nodeId.take(10)}-${sessionId.take(8)}"
       )
