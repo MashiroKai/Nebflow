@@ -27,7 +27,8 @@ import scala.concurrent.duration.*
  *
  * 安全边界（spec §4 矩阵，严格）：
  *  - cancel 白名单：Delegate / SubTask / Ephemeral；Flow 指引 cancelFlow；
- *    Team 一期只读；Root/自身拒绝（自杀守卫）
+ *    Team 条件放行：直接父 Manager / root 全局（supervision trio Block 2 §C3）；
+ *    杀 Manager 需 confirm+reason 双确认门；Root/自身拒绝（自杀守卫）
  *  - restart 白名单：Delegate(ephemeral) / SubTask；persistent Delegate 无 supervisor
  *    拒绝（提示 cancel + 重新 Delegate）；Ephemeral 无恢复载体拒绝
  *  - rootSessionId 必须与调用者同桶（P2 权限原则）
@@ -44,10 +45,10 @@ object AgentControlTool extends Tool:
 Actions:
 - **list**: table of all live background agents (kind, status, stuck?, uptime, idle time, retry count, task). Use this FIRST when a sub-agent is silent or you suspect it is stuck — "stuck?" marks Processing agents with no activity for >10min (same threshold as the automatic watcher).
 - **status**: full detail for one agent (pass sessionId from list): state, timings, task prompt excerpt, retry count, last error. Also detects orphan task files (actor gone but task still marked running).
-- **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral.
-- **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral), SubTask. Consumes the supervisor's restart budget (2 per 5min; exceeding it fails the task).
+- **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral, and Team members (permission-scoped — see Safety rules).
+- **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral) and SubTask (both consume the supervisor's restart budget, 2 per 5min; exceeding it fails the task), and Team members (Stop + re-activation from persisted history — no supervisor budget consumed).
 
-Safety rules: you cannot cancel/restart yourself, Root sessions, Team members (read-only for now — killing them mid-collaboration breaks the team state machine), or Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Only sessions under your own root session are controllable.
+Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Delegate/SubTask/Ephemeral sessions under your own root session are always controllable. Team members are manageable by their team's Manager (subtree scope — own team members and their sub-agents) and by Nebula (global scope); other callers are read-only for Team. Killing a team MANAGER (cancel/restart) additionally requires confirm=true plus a non-empty reason — a killed Manager leaves its members running but coordinator-less (members remain manageable by Nebula); every such kill is recorded in the audit log.
 
 When to use:
 - A delegated task has been silent far longer than expected → list, then status the suspicious session.
@@ -90,8 +91,9 @@ When to use:
 
   // ── kind policy（§4 矩阵）──────────────────────────────────
 
-  /** Cancelable kinds（WS cancelAgent handler 复用同一白名单——子 agent 管理面板
-    * 与工具层一致：Team/Flow/Root 只读）。 */
+  /** 无条件 cancelable kinds。Team 是条件放行（kindRejection Team 分支：直接父/root），
+    * 不进此白名单——WS cancelAgent handler 复用此白名单 → 管理面板对 Team 保持只读，
+    * 权限门只在工具路径。 */
   val CancelableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Ephemeral)
   private val RestartableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask)
 
@@ -504,9 +506,16 @@ When to use:
                 s"task.lastError: ${t.lastError.getOrElse("-")}"
               )
             }.getOrElse(List("task record: (none — not a Delegate/SubTask task, or file pruned)"))
-            val manage = kindRejection(rec.kind, "cancel") match
+            // Block 2 §C3 语义对齐：能到达 status body 的调用者只有两类——root 桶
+            // （callerIsRoot=true）或已过子树门的 Manager（callerIsRoot=false 且
+            // anchors 命中）——对 Team 目标分别对应 callerIsRoot / 直接父放行，
+            // manage 行不得再用无 caller 语境的 kindRejection 恒显 read-only。
+            val teamRestartable = rec.kind == AgentKind.Team
+            val manage = kindRejection(rec.kind, "cancel", callerIsDirectParent = !callerIsRoot, callerIsRoot = callerIsRoot) match
               case Some(_) => "manageable: no (read-only kind)"
-              case None => "manageable: cancel" + (if RestartableKinds.contains(rec.kind) then " / restart" else " only")
+              case None =>
+                "manageable: cancel" +
+                  (if RestartableKinds.contains(rec.kind) || teamRestartable then " / restart" else " only")
             Right((lines :+ manage).mkString("\n"))
           }
         case None =>
