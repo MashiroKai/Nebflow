@@ -1799,6 +1799,12 @@
   margin-bottom: 4px;
 }
 .agent-detail-tools-config-label { margin-top: 8px; }
+/* #438: class-owned specialty group - a whisper of sapphire separates it from
+   the universal base group without adding any new color tokens. */
+.agent-detail-tools-specialty-label {
+  margin-top: 7px;
+  color: rgb(var(--sapphire) / 0.85);
+}
 /* ── Skills / Flows toggle chips (P4) ── */
 .agent-detail-sub-hint {
   font: 400 10px -apple-system, sans-serif;

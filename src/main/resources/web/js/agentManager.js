@@ -38,6 +38,31 @@ function resolveFixedTools(detail) {
   if (detail?.category === 'flow') return [...FIXED_BASE_TOOLS, 'FlowReport'];
   return FIXED_BASE_TOOLS;
 }
+
+// ── #438 固定工具三类锁样式 (2026-08-27 用户裁定) ──────────────────────────
+// 固定集按归属拆两组展示：「系统固定」(six base tools - identical on every
+// card) + 「<类别>专属」(this agent class's own injected tools). The owner
+// class comes from the AGENT itself (category / orchestrator name), so the
+// grouping needs NO new backend metadata and stays correct through the
+// pending six-base-tool semantic rework (the contract only changes what lands
+// in which bucket, never the two-bucket frame). Cross-card comparison makes
+// "哪类固定给谁" readable at a glance.
+const FIXED_CLASS_LABEL_KEYS = {
+  flow: 'agent.toolsFixedSpecialty.flow',
+  team: 'agent.toolsFixedSpecialty.team',
+};
+/** @param {{name?: string, category?: string} | null} detail */
+function fixedClassLabelKey(detail) {
+  if (detail?.name === 'Nebula' || !detail?.category) return 'agent.toolsFixedSpecialty.orchestrator';
+  return FIXED_CLASS_LABEL_KEYS[detail.category] || 'agent.toolsFixedSpecialty.orchestrator';
+}
+/** Split a fixed-tool list into [base, specialty], preserving list order. */
+function splitFixedTools(fixedTools) {
+  const baseSet = new Set(FIXED_BASE_TOOLS);
+  const base = fixedTools.filter(t => baseSet.has(t));
+  const specialty = fixedTools.filter(t => !baseSet.has(t));
+  return { base, specialty };
+}
 function shortModel(ref) {
   if (!ref) return '';
   const idx = ref.lastIndexOf('/');
@@ -326,13 +351,28 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
   const fixedTools = resolveFixedTools(detail);
   const configurableTools = allTools.filter(tname => !fixedTools.includes(tname));
 
-  const fixedToolsHtml = fixedTools.length ? `
-    <div class="agent-detail-tools-fixed-label">${t('agent.toolsFixedLabel')}</div>
-    <div class="agent-detail-tools-grid">
-      ${fixedTools.map(tname =>
-        `<span class="agent-detail-tool-check fixed" title="${esc(t('agent.toolsFixedTip'))}">${LOCK_ICON_SVG}${esc(tname)}</span>`
-      ).join('')}
-    </div>` : '';
+  // #438: two-bucket display - base six (same on every card) + this class's
+  // own specialty tools, labeled by owner class so cards are distinguishable
+  // at a glance. Specialty may be empty -> single base group only.
+  const { base: fixedBase, specialty: fixedSpecialty } = splitFixedTools(fixedTools);
+  const fixedChip = tname =>
+    `<span class="agent-detail-tool-check fixed" title="${esc(t('agent.toolsFixedTip'))}">${LOCK_ICON_SVG}${esc(tname)}</span>`;
+  const specialtyLabelKey = fixedClassLabelKey(detail);
+  const fixedGroupsHtml = [
+    ...(fixedBase.length ? [{
+      key: 'base',
+      label: t('agent.toolsFixedLabel'),
+      chips: fixedBase.map(fixedChip).join(''),
+    }] : []),
+    ...(fixedSpecialty.length ? [{
+      key: 'specialty',
+      label: t(specialtyLabelKey),
+      chips: fixedSpecialty.map(fixedChip).join(''),
+    }] : []),
+  ];
+  const fixedToolsHtml = fixedGroupsHtml.map(g => `
+    <div class="agent-detail-tools-fixed-label${g.key === 'specialty' ? ' agent-detail-tools-specialty-label' : ''}" data-fixed-group="${g.key}">${esc(g.label)}</div>
+    <div class="agent-detail-tools-grid" data-fixed-group-grid="${g.key}">${g.chips}</div>`).join('');
 
   const toolsHtml = `${fixedToolsHtml}
     ${fixedTools.length ? `<div class="agent-detail-tools-config-label">${t('agent.toolsConfigLabel')}</div>` : ''}
