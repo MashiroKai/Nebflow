@@ -57,14 +57,4 @@ object MailIdleGate:
       // 无关联 running flow（Q3：RunningFlow.sessionId 关联触发者，补节点间隙窗口）
       !runningFlows.exists(f => f.status == NodeStatus.Running && f.sessionId.contains(sid))
     }
-  def isTeamTreeIdle(
-    targetSid: String,
-    teamSessionIds: List[String],
-    registry: Map[String, AgentRecord],
-    runningFlows: List[RunningFlow] = Nil,
-    checkSelfStatus: Boolean = true
-  ): Boolean =
-    teamSessionIds.forall(sid =>
-      isAgentTreeIdle(sid, registry, runningFlows, checkStatus = checkSelfStatus || sid != targetSid)
-    )
 end MailIdleGate
