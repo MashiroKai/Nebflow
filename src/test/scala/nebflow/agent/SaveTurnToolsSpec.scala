@@ -30,11 +30,11 @@ class SaveTurnToolsSpec extends FunSuite:
     assert(names.contains("Write"), "Write is the core memory-maintenance tool")
 
   test("#438: save-turn whitelist is mechanism-guaranteed for a bare Nebula def"):
-    // The six are Nebula's configurable region now — an undeclared bare def
-    // has NONE of them in its interactive toolset, yet the save phase
-    // (system machinery) must still carry the full [Write, Edit, Read]
-    // whitelist or memory persistence silently dies (SaveTurnGuardSpec P0-1
-    // regression: seeds-fallback def exposed exactly [Read]).
+    // 2026-08-28: the six are mechanism-fixed for all agents again (reverses
+    // #438), so a bare Nebula's interactive toolset now carries them — the
+    // mechanism guarantee below is idempotent with fixedToolsFor and kept as
+    // belt-and-suspenders (SaveTurnGuardSpec P0-1: seeds-fallback defs once
+    // exposed exactly [Read]).
     val names = CoreProbe.save(mkDef("Nebula", Nil)).getOrElse(fail("save turn must keep tools"))
     assertEquals(names.toSet, Whitelist)
 
