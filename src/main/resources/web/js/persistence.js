@@ -10,7 +10,7 @@ import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, build
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow, bindCollapsibleToggle } from './chat.js';
 import { buildTurnGroupsForHistory } from './turnGroup.js';
-import { renderRefBlock } from './reference.js';
+import { renderRefBlock, normalizeTaskRef } from './reference.js';
 
 // ---------- AI message badge (no duration) ----------
 // Builds a duration-badge pill with timestamp + copy button, matching
@@ -169,26 +169,19 @@ export function attachmentImageUrl(path) {
 /** Append one attachment bubble to a message row. Images render as <img>
  *  from the live preview (dataURL) or, after a refresh, from the uploads
  *  route via att.path (G1). Non-image attachments keep the plain text tag. */
-function appendAttachmentBubble(row, att) {
+export function appendAttachmentBubble(row, att) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble user att-bubble';
-  if (att.type === 'ref') {
-    // #303 D4: restore a unified Reference as a message card (matches the live
-    // renderUserBubble path, chat.js:305-311). att IS the Reference after
-    // sanitizeForCache preserves its mini fields (source/anchor/meta/display).
+  if (att.type === 'ref' || att.type === 'taskRef') {
+    // #303 D4 + (2026-08-27 打回注入块收敛): restore a Reference as the
+    // message card - same renderRefBlock(message) as the live
+    // renderUserBubble path, so restored rows are byte-identical to live ones.
+    // Legacy type:'taskRef' rows from old history normalize into the same
+    // Reference first (one-line `#<任务号> <任务标题>` form for tasks).
     bubble.classList.add('att-ref-bubble');
-    const ref = renderRefBlock(att, { mode: 'message' });
-    if (ref) bubble.appendChild(ref);
-    row.appendChild(bubble);
-    return;
-  }
-  if (att.type === 'taskRef') {
-    // v2 §5.3 restore path — same tag shape as renderUserBubble's live path.
-    const tag = document.createElement('span');
-    tag.className = 'att-file-tag att-taskref-tag';
-    const icon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;flex-shrink:0"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><path d="M12 11h4"></path><path d="M12 16h4"></path><path d="M8 11h.01"></path><path d="M8 16h.01"></path></svg>';
-    tag.innerHTML = icon + '<span style="margin-left:2px">' + escapeHtml(t('task.refBubbleLabel', { subject: att.subject || att.name || '' })) + '</span>';
-    bubble.appendChild(tag);
+    const ref = att.type === 'taskRef' ? normalizeTaskRef(att) : att;
+    const cardNode = ref ? renderRefBlock(ref, { mode: 'message' }) : null;
+    if (cardNode) bubble.appendChild(cardNode);
     row.appendChild(bubble);
     return;
   }
