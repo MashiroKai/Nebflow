@@ -297,33 +297,42 @@ class TodoFiveStateSpec extends CatsEffectSuite:
 
   // ── B7: injection block format (WS layer builds it from this function) ──
 
-  test("B7: returnInjectionBlock carries subject/description/output/feedback lines"):
+  test("B7: returnInjectionBlock carries id/subject/feedback ONLY (payload-slim 2026-08-27)"):
     for
       _ <- reset()
       sid = "b7-inject"
-      tid <- mkAgentTask(sid, "Implement dark mode")
+      // long distinctive description so the 20-char fragment probe is
+      // meaningful (mkAgentTask's default "d" would substring-match anywhere)
+      tid <- store.create(sid, TaskCreateInput(
+        subject = "Implement dark mode",
+        description = "a long task description that must never leak into the return payload"))
       _ <- toNeedsConfirmation(sid, tid, Some("done via CSS variables, commit abc123"))
       snapshot <- store.get(sid, tid)
       _ <- store.`return`(sid, tid, "第 2 条结论不对，重做")
       after <- store.get(sid, tid)
       block = Task.returnInjectionBlock(tid, snapshot.get, "第 2 条结论不对，重做")
+      desc = snapshot.get.description
+      output = "done via CSS variables, commit abc123"
     yield
-      assert(block.contains("[打回任务 #"))
-      assert(block.contains(": Implement dark mode]"))
-      assert(block.contains("任务描述: d"))
-      assert(block.contains("产出: done via CSS variables, commit abc123"), "output = pre-return last note")
-      assert(block.contains("用户意见: 第 2 条结论不对，重做"), "B7 substring assertion")
+      // (a) kept: taskId + subject + feedback FULL TEXT
+      assert(block.contains(s"[打回任务 #$tid: Implement dark mode]"))
+      assert(block.contains("用户意见: 第 2 条结论不对，重做"), "feedback must reach the agent verbatim")
       assert(block.contains("已回到进行中"))
-      // the feedback note itself is NOT the output (snapshot taken pre-return)
-      assert(!block.contains("产出: 第 2 条结论不对"))
+      // (b) dropped: no 20-char consecutive fragment of description/output
+      def frag(s: String, n: Int = 20): String = if s.length <= n then s else s.slice(4, 4 + n)
+      assert(!block.contains(frag(desc)), s"description leaked into payload: ${frag(desc)}")
+      assert(!block.contains(frag(output)), s"output leaked into payload: ${frag(output)}")
+      assert(!block.contains("任务描述:"), "description field line removed")
+      assert(!block.contains("产出:"), "output field line removed")
       // post-return notes DO contain the feedback (C20) — separate concern
       assertEquals(after.get.notes.lastOption.map(_.content), Some("第 2 条结论不对，重做"))
 
   test("B7: injection block with empty feedback says （未附意见）"):
-    val snapshot = Task(id = "7", subject = "s", description = "d", notes = Nil)
+    val snapshot = Task(id = "7", subject = "s", description = "a description that is longer than twenty characters for the fragment probe", notes = Nil)
     val block = Task.returnInjectionBlock("7", snapshot, "")
     assert(block.contains("用户意见: （未附意见）"))
-    assert(block.contains("产出: （无）"), "no notes -> （无）")
+    assert(!block.contains("产出:"), "no output line even with empty notes")
+    assert(!block.contains("twenty characters for"), "description fragment must not leak")
 
   // ── compatibility red line ───────────────────────────────────────────
 
