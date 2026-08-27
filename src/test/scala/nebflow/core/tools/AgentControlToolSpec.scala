@@ -379,4 +379,138 @@ class AgentControlToolSpec extends CatsEffectSuite:
     program.guarantee(system.stopAll.attempt.void)
   }
 
+  // ── Block 1（supervision trio §B3/§C2）：Manager 子树管控 ──
+
+  /** Instance A: Manager(mgr-a) + member(mem-a); instance B: Manager(mgr-b) +
+    * member(mem-b). Both mounted under the SAME root bucket (root-mount) —
+    * the exact shape that made same-bucket too broad for a Manager caller. */
+  private def setupDualTeam(resources: SharedResources, mgrRef: nebflow.actor.ActorRef[AgentCommand], memRef: nebflow.actor.ActorRef[AgentCommand], subRef: nebflow.actor.ActorRef[AgentCommand], bRef: nebflow.actor.ActorRef[AgentCommand], now: Long): IO[Unit] =
+    for
+      _ <- nebflow.core.flow.TeamSessionRegistry.clear
+      _ <- nebflow.core.flow.TeamSessionRegistry.registerSession("inst-a", "Manager", "mgr-a")
+      _ <- nebflow.core.flow.TeamSessionRegistry.registerSession("inst-a", "member", "mem-a")
+      _ <- nebflow.core.flow.TeamSessionRegistry.registerManager("inst-a", "mgr-a")
+      _ <- nebflow.core.flow.TeamSessionRegistry.registerParentSession("inst-a", "root-mount")
+      _ <- nebflow.core.flow.TeamSessionRegistry.registerSession("inst-b", "Manager", "mgr-b")
+      _ <- nebflow.core.flow.TeamSessionRegistry.registerSession("inst-b", "member", "mem-b")
+      _ <- nebflow.core.flow.TeamSessionRegistry.registerManager("inst-b", "mgr-b")
+      _ <- nebflow.core.flow.TeamSessionRegistry.registerParentSession("inst-b", "root-mount")
+      _ <- resources.agentRegistry.set(Map(
+        "mgr-a" -> AgentRecord("mgr-a", mgrRef, AgentKind.Team, "root-mount", parentSessionId = "root-mount",
+          startedAt = now, lastActivityMs = now),
+        "mem-a" -> AgentRecord("mem-a", memRef, AgentKind.Team, "root-mount", parentSessionId = "mgr-a",
+          startedAt = now, lastActivityMs = now),
+        "subtask-1" -> AgentRecord("subtask-1", subRef, AgentKind.SubTask, "root-mount", parentSessionId = "mem-a",
+          startedAt = now, lastActivityMs = now),
+        "mem-b" -> AgentRecord("mem-b", bRef, AgentKind.Team, "root-mount", parentSessionId = "mgr-b",
+          startedAt = now, lastActivityMs = now),
+        "mgr-b" -> AgentRecord("mgr-b", bRef, AgentKind.Team, "root-mount", parentSessionId = "root-mount",
+          startedAt = now, lastActivityMs = now),
+        "root-mount" -> AgentRecord("root-mount", mgrRef, AgentKind.Root, "root-mount",
+          startedAt = now, lastActivityMs = now)
+      ))
+    yield ()
+
+  test("Block 1: Manager cancels own member (direct parent after registration chain) — guard passes, degraded Stop fires") {
+    val system = ActorSystem("ac-b1-member")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      mgrRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1-mgr")
+      memReceived <- Ref.of[IO, List[AgentCommand]](Nil)
+      memRef <- system.spawn(mkRecordingCmd(memReceived), "b1-mem")
+      subRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1-sub")
+      bRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1-b")
+      _ <- setupDualTeam(resources, mgrRef, memRef, subRef, bRef, System.currentTimeMillis())
+      res <- IO(call(resources, "mgr-a", "cancel", target = "mem-a", reason = "loop guard"))
+      _ <- waitUntil(3.seconds)(memReceived.get.map(_.exists(_.isInstanceOf[AgentCommand.Stop])))
+      registryAfter <- resources.agentRegistry.get
+      _ <- IO(nebflow.core.flow.TeamSessionRegistry.clear.void)
+    yield (res, memReceived, registryAfter)
+    val (res, memReceived, registryAfter) = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
+    assert(res.isRight, s"Manager must be able to cancel its own member (direct parent), got: $res")
+    assert(
+      memReceived.get.unsafeRunSync().exists(_.isInstanceOf[AgentCommand.Stop]),
+      "degraded cancel path must Stop the member actor"
+    )
+    assert(!registryAfter.contains("mem-a"), "registry entry must be removed after degraded cancel")
+  }
+
+  test("Block 1: Manager cancels a member's SubTask via the parentSessionId chain (subtree, not just direct children)") {
+    val system = ActorSystem("ac-b1-subtask")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      mgrRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1s-mgr")
+      memRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1s-mem")
+      subReceived <- Ref.of[IO, List[AgentCommand]](Nil)
+      subRef <- system.spawn(mkRecordingCmd(subReceived), "b1s-sub")
+      bRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1s-b")
+      _ <- setupDualTeam(resources, mgrRef, memRef, subRef, bRef, System.currentTimeMillis())
+      res <- IO(call(resources, "mgr-a", "cancel", target = "subtask-1"))
+      _ <- IO(nebflow.core.flow.TeamSessionRegistry.clear.void)
+    yield res
+    val res = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
+    assert(res.isRight, s"SubTask of own member is inside the Manager subtree, got: $res")
+  }
+
+  test("Block 1: Manager denied another team's member (same bucket, different subtree)") {
+    val system = ActorSystem("ac-b1-cross")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      mgrRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1c-mgr")
+      memRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1c-mem")
+      subRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1c-sub")
+      bRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1c-b")
+      _ <- setupDualTeam(resources, mgrRef, memRef, subRef, bRef, System.currentTimeMillis())
+      res <- IO(call(resources, "mgr-a", "cancel", target = "mem-b"))
+      resB <- IO(call(resources, "mgr-a", "cancel", target = "mgr-b"))
+      rootRes <- IO(call(resources, "mgr-a", "cancel", target = "root-mount"))
+      _ <- IO(nebflow.core.flow.TeamSessionRegistry.clear.void)
+    yield (res, resB, rootRes)
+    val (res, resB, rootRes) = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
+    assert(
+      res.left.exists(_.message.contains("outside your team subtree")),
+      s"other team's member must be subtree-denied, got: $res"
+    )
+    assert(
+      resB.left.exists(_.message.contains("outside your team subtree")),
+      s"other team's Manager must be subtree-denied, got: $resB"
+    )
+    assert(
+      rootRes.left.exists(_.message.contains("outside your team subtree")),
+      s"root session must be subtree-denied for a Manager caller, got: $rootRes"
+    )
+  }
+
+  test("Block 1: Manager list is scoped to its subtree (own members visible, other team hidden)") {
+    val system = ActorSystem("ac-b1-list")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      mgrRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1l-mgr")
+      memRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1l-mem")
+      subRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1l-sub")
+      bRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1l-b")
+      _ <- setupDualTeam(resources, mgrRef, memRef, subRef, bRef, System.currentTimeMillis())
+      res <- AgentControlTool.call(
+        io.circe.JsonObject("action" -> "list".asJson), ctx(resources, "mgr-a")
+      )
+      rootRes <- AgentControlTool.call(
+        io.circe.JsonObject("action" -> "list".asJson), ctx(resources, "root-mount")
+      )
+      _ <- IO(nebflow.core.flow.TeamSessionRegistry.clear.void)
+    yield (res, rootRes)
+    val (res, rootRes) = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
+    val out = res.toOption.get
+    assert(out.contains("mem-a"), s"own member row must be visible:\n$out")
+    assert(out.contains("subtask-1"), s"member's subagent row must be visible:\n$out")
+    assert(out.contains("mgr-a"), s"the Manager's own row must be visible:\n$out")
+    assert(!out.contains("mem-b"), s"other team's member must be hidden:\n$out")
+    assert(out.contains("your team subtree"), s"scope note must be present:\n$out")
+    val rootOut = rootRes.toOption.get
+    assert(rootOut.contains("mem-b"), s"root-bucket caller still sees everything:\n$rootOut")
+  }
+
 end AgentControlToolSpec

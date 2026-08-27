@@ -5,6 +5,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.JsonObject
 import nebflow.agent.*
+import nebflow.core.flow.TeamSessionRegistry
 import nebflow.shared.Defaults
 
 import scala.concurrent.duration.*
@@ -117,6 +118,49 @@ When to use:
 
   // ── 渲染 helpers ──────────────────────────────────────────
 
+  /** Block 1 (supervision trio §B3): walk the parentSessionId chain from
+    * `from` upward (≤ maxDepth hops, cycle-safe by depth bound); true iff an
+    * anchor session is reached. Pure — unit-testable. */
+  private def chainReaches(
+    registry: Map[String, AgentRecord],
+    from: String,
+    anchors: Set[String],
+    maxDepth: Int
+  ): Boolean =
+    def walk(sid: String, depth: Int): Boolean =
+      if depth > maxDepth then false
+      else
+        val parentOpt = registry.get(sid).map(_.parentSessionId).filter(_.nonEmpty)
+        parentOpt match
+          case Some(p) => anchors.contains(p) || walk(p, depth + 1)
+          case None    => false
+    walk(from, 0)
+
+  /** Block 1 (§B3): the manager scope anchor set — the caller itself plus
+    * every session of the team instance it leads. None = caller does not
+    * lead any instance (not a Manager, or a member of one) → no scope → no
+    * manageability. */
+  private def managerAnchors(callerSid: String): IO[Option[Set[String]]] =
+    TeamSessionRegistry.teamOfSession(callerSid).flatMap {
+      case None => IO.pure(None)
+      case Some(inst) =>
+        TeamSessionRegistry.managerOf(inst).flatMap {
+          case Some(m) if m != callerSid => IO.pure(None)
+          case _ =>
+            TeamSessionRegistry.sessionIdsOf(inst).map(sids => Some((callerSid +: sids).toSet))
+        }
+    }
+
+  /** Block 1 (§B3): a root-bucket caller's rootSessionId IS its own session id
+    * (Nebula / root agents). All other callers (team Managers) are scoped to
+    * their subtree instead of the bucket. A caller with NO registry record is
+    * treated as root-bucket: only Nebula (Root) and team Managers hold the
+    * tool, both are registered whenever they act — an unregistered caller is
+    * a legacy/test shape and keeps the legacy global semantics. */
+  private def callerIsRootBucket(registry: Map[String, AgentRecord], callerSid: String): Boolean =
+    callerSid.isEmpty || registry.get(callerSid).fold(true)(_.rootSessionId == callerSid)
+
+
   private def fmtDuration(ms: Long): String =
     if ms < 0 then "-"
     else if ms < 60_000 then s"${ms / 1000}s"
@@ -149,10 +193,10 @@ When to use:
         val reason = input("reason").flatMap(_.asString).getOrElse("")
 
         action match
-          case "list" => doList(resources)
+          case "list" => doList(resources, ctx)
           case "status" =>
             if sessionId.isEmpty then IO.pure(Left(ToolError("status requires sessionId (run list first to get one)")))
-            else doStatus(resources, sessionId)
+            else doStatus(resources, ctx, sessionId)
           case "cancel" =>
             if sessionId.isEmpty then IO.pure(Left(ToolError("cancel requires sessionId (run list first to get one)")))
             else withGuardedRecord(resources, ctx, sessionId, "cancel")((rec, _) => doCancel(resources, rec, reason))
@@ -164,14 +208,26 @@ When to use:
               Left(ToolError(s"Unknown action '$other'. Supported: list, status, cancel, restart."))
             )
 
-  /** 统一守卫（§4）：查无 / kind 白名单 / 自杀守卫 / rootSessionId 同桶。 */
+  /** 统一守卫（§4）：查无 / kind 白名单 / 自杀守卫 / rootSessionId 同桶。
+    * Block 1（supervision trio §B3）：root 桶调用者（Nebula，rootSessionId ==
+    * 自身 sid）维持同桶=全局；非 root 调用者（team Manager，唯一非 root 被
+    * 授权者）从「同桶」收紧为「子树」——同桶会放行它管**别的 team** 的子代
+    * （所有挂载 team 共享挂载 root 的桶）。 */
   private def withGuardedRecord(resources: SharedResources, ctx: ToolContext, sessionId: String, action: String)(
     body: (AgentRecord, String) => IO[Either[ToolError, String]]
   ): IO[Either[ToolError, String]] =
     val callerSessionId = ctx.sessionId.getOrElse("")
+    def proceed(rec: AgentRecord, callerRoot: String): IO[Either[ToolError, String]] =
+      // v2 升级链父重启（§5.3.3）：直接父 = 调用者会话 == 目标记录的 parentSessionId
+      // （Manager/owner 管理自有 Team 成员；Delegate/SubTask 的父同理）。
+      val callerIsDirectParent = rec.parentSessionId.nonEmpty && rec.parentSessionId == callerSessionId
+      kindRejection(rec.kind, action, callerIsDirectParent) match
+        case Some(msg) => IO.pure(Left(ToolError(msg)))
+        case None      => body(rec, callerRoot)
     for
       registry <- resources.agentRegistry.get
       callerRoot = registry.get(callerSessionId).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(callerSessionId)
+      rootBucket = callerIsRootBucket(registry, callerSessionId)
       result <- registry.get(sessionId) match
         case None =>
           val manageable = registry.values
@@ -190,31 +246,60 @@ When to use:
         case Some(rec) =>
           if rec.sessionId == callerSessionId then
             IO.pure(Left(ToolError(s"Self-guard: you cannot $action your own session.")))
-          else if rec.rootSessionId.nonEmpty && callerRoot.nonEmpty && rec.rootSessionId != callerRoot then
-            IO.pure(
-              Left(
-                ToolError(
-                  s"Permission denied: session '$sessionId' belongs to root session '${rec.rootSessionId}', " +
-                    s"yours is '$callerRoot'. You can only manage agents under your own root session."
+          else if rootBucket then
+            // root 桶调用者：同桶 = 全局（原语义不变）
+            if rec.rootSessionId.nonEmpty && callerRoot.nonEmpty && rec.rootSessionId != callerRoot then
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"Permission denied: session '$sessionId' belongs to root session '${rec.rootSessionId}', " +
+                      s"yours is '$callerRoot'. You can only manage agents under your own root session."
+                  )
                 )
               )
-            )
+            else proceed(rec, callerRoot)
           else
-            // v2 升级链父重启（§5.3.3）：直接父 = 调用者会话 == 目标记录的 parentSessionId
-            // （Manager/owner 管理自有 Team 成员；Delegate/SubTask 的父同理）。
-            val callerIsDirectParent = rec.parentSessionId.nonEmpty && rec.parentSessionId == callerSessionId
-            kindRejection(rec.kind, action, callerIsDirectParent) match
-              case Some(msg) => IO.pure(Left(ToolError(msg)))
-              case None => body(rec, callerRoot)
+            // Block 1：非 root 调用者（Manager）——子树判定取代同桶
+            managerAnchors(callerSessionId).flatMap {
+              case Some(anchors) if anchors.contains(sessionId) || chainReaches(registry, sessionId, anchors, 8) =>
+                proceed(rec, callerRoot)
+              case _ =>
+                IO.pure(
+                  Left(
+                    ToolError(
+                      s"Permission denied: session '$sessionId' is outside your team subtree " +
+                        "(your own team members and their sub-agents). Root sessions and other teams' agents are not manageable by you."
+                    )
+                  )
+                )
+            }
     yield result
 
-  private def doList(resources: SharedResources): IO[Either[ToolError, String]] =
+  /** Block 1（supervision trio §B4）：list 的可见面。root 桶调用者（Nebula）
+    * 看全部；非 root 调用者（team Manager）只看自己的子树（本队成员 + 其
+    * 子代），表头附 parent 列辅助辨认层级。 */
+  private def scopeFilterFor(
+    resources: SharedResources,
+    ctx: ToolContext
+  ): IO[(Map[String, AgentRecord], Option[Set[String]])] =
+    val callerSid = ctx.sessionId.getOrElse("")
     for
       registry <- resources.agentRegistry.get
+      pred <- if callerIsRootBucket(registry, callerSid) then IO.pure(None)
+              else managerAnchors(callerSid)
+    yield (registry, pred)
+  private def doList(resources: SharedResources, ctx: ToolContext): IO[Either[ToolError, String]] =
+    for
+      (registry, anchorsOpt) <- scopeFilterFor(resources, ctx)
+      inScope = (sid: String) =>
+        anchorsOpt match
+          case None         => true // root bucket caller — global view
+          case Some(anchors) => anchors.contains(sid) || chainReaches(registry, sid, anchors, 8)
       runningTasks <- resources.subAgentTaskStore.findRunningTasks
       taskMap = runningTasks.map(t => t.taskId -> t).toMap
       now = System.currentTimeMillis()
       rows = registry.values.toList
+        .filter(rec => inScope(rec.sessionId))
         .sortBy(r => if r.startedAt > 0 then r.startedAt else Long.MaxValue)
         .map { rec =>
           val task = taskMap.get(rec.sessionId)
@@ -233,6 +318,7 @@ When to use:
             rec.sessionId,
             rec.kind.toString,
             agent,
+            if rec.parentSessionId.nonEmpty then rec.parentSessionId.take(16) else "-",
             rec.status.toString,
             stuck,
             barrier,
@@ -243,10 +329,14 @@ When to use:
           )
         }
     yield
-      val header = List("sessionId", "kind", "agent", "status", "stuck?", "barrier", "up", "idle", "retries", "task")
+      val header = List("sessionId", "kind", "agent", "parent", "status", "stuck?", "barrier", "up", "idle", "retries", "task")
       val table = (header :: rows).map(r => "| " + r.mkString(" | ") + " |").mkString("\n")
+      val scopeNote =
+        if anchorsOpt.isDefined then
+          "\nScope: your team subtree only (own members + their sub-agents) — root sessions and other teams' agents are hidden."
+          else ""
       val summary =
-        if rows.isEmpty then "No live background agents (registry is empty)."
+        if rows.isEmpty then "No live background agents in your scope (registry is empty or outside your subtree)."
         else
           s"""Background agents (${rows.size}):
              |
@@ -255,11 +345,36 @@ When to use:
              |stuck? = Processing with no activity for >${Defaults.StuckThresholdMs / 60000}min (same threshold as the automatic watcher).
              |barrier = outstandingSubagents/heldResults (issue #31): outstanding>0 while idle with no in-flight work = phantom slot
              |          (a batch member hung or died without a terminal event — held results never inject until restart).
-             |Cancelable kinds: Delegate / SubTask / Ephemeral. Restartable: Delegate(ephemeral) / SubTask. Team/Flow/Root are read-only.""".stripMargin
+             |Cancelable kinds: Delegate / SubTask / Ephemeral. Restartable: Delegate(ephemeral) / SubTask. Team members: Manager (direct parent) or Nebula. Flow/Root are read-only.$scopeNote""".stripMargin
       Right(summary)
 
-  private def doStatus(resources: SharedResources, sessionId: String): IO[Either[ToolError, String]] =
+  private def doStatus(resources: SharedResources, ctx: ToolContext, sessionId: String): IO[Either[ToolError, String]] =
     resources.agentRegistry.get.flatMap { registry =>
+      // Block 1（§B4）：status 同样受 scope 限制——root 全局，Manager 仅子树
+      val callerSid = ctx.sessionId.getOrElse("")
+      if !callerIsRootBucket(registry, callerSid) then
+        managerAnchors(callerSid).flatMap {
+          case Some(anchors) if anchors.contains(sessionId) || chainReaches(registry, sessionId, anchors, 8) =>
+            doStatusBody(resources, registry, sessionId)
+          case _ =>
+            IO.pure(
+              Left(
+                ToolError(
+                  s"Permission denied: session '$sessionId' is outside your team subtree " +
+                    "(your own team members and their sub-agents)."
+                )
+              )
+            )
+        }
+      else doStatusBody(resources, registry, sessionId)
+    }
+
+  private def doStatusBody(
+    resources: SharedResources,
+    registry: Map[String, AgentRecord],
+    sessionId: String
+  ): IO[Either[ToolError, String]] =
+    {
       val now = System.currentTimeMillis()
       registry.get(sessionId) match
         case Some(rec) =>
