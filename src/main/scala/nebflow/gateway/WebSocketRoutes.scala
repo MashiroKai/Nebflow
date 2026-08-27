@@ -3496,12 +3496,24 @@ class WebSocketRoutes(
                       )
                     )
                 else
-                  // Resolve projectRoot for local file search before processing attachments
-                  (for
-                    metaOpt <- sessionStore.getSessionMeta(msgSessionId)
-                    folderId = metaOpt.flatMap(_.folderId)
-                    projectRoot <- sessionStore.resolveProjectRoot(folderId)
-                  yield (metaOpt, projectRoot)).flatMap { (metaOpt, projectRoot) =>
+                  // P1 2026-08-27: user-message handling must survive a client
+                  // disconnect. The receive pipe evalMap cancels in-flight
+                  // handlers when the WebSocket closes (user refresh after
+                  // seeing no response). Attachment resolution (fs walk +
+                  // Spotlight) can take 5-30s, during which a refresh cancels
+                  // the chain *after* the upload file is saved but *before*
+                  // history/dispatch run — the message is then silently lost
+                  // (observed: uploads/<sid>/pasted-text-*.txt written, no
+                  // input_history entry, no LLM turn). Uncancelable guarantees
+                  // the persist+dispatch tail completes; clientMessageId dedup
+                  // in AgentActor makes a client resend idempotent.
+                  IO.uncancelable(_ =>
+                    // Resolve projectRoot for local file search before processing attachments
+                    (for
+                      metaOpt <- sessionStore.getSessionMeta(msgSessionId)
+                      folderId = metaOpt.flatMap(_.folderId)
+                      projectRoot <- sessionStore.resolveProjectRoot(folderId)
+                    yield (metaOpt, projectRoot)).flatMap { (metaOpt, projectRoot) =>
                     val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
                     if content.nonEmpty then blocks += ContentBlock.Text(content)
 
@@ -3555,18 +3567,24 @@ class WebSocketRoutes(
                       else
                         // Non-image: try to find the file locally by name + size + hash
                         // Search priority: project root → common user dirs → full home → Spotlight
+                        // P1 2026-08-27: attachments generated in-memory by the frontend
+                        // (large paste → pasted-text-*.txt, input.js paste handler) never
+                        // exist on disk — the fs walk + Spotlight search below is a
+                        // guaranteed miss costing 5-30s of silent processing. Skip
+                        // straight to the data-save branch when base64 data is in hand.
+                        val isFrontendBlob = name.startsWith("pasted-text-") && data.nonEmpty
                         val home = os.home.toString
                         val commonDirs = List("Downloads", "Desktop", "Documents")
                           .map(d => s"$home/$d")
                           .filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
                         val searchPaths = projectRoot.toList ::: commonDirs ::: List(home)
                         val localPath =
-                          if hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths)
+                          if !isFrontendBlob && hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths)
                           else None
                         // Fallback: macOS Spotlight (finds files in Library, Containers, etc.)
                         val spotlightPath = localPath match
                           case Some(_) => localPath
-                          case None if hash.nonEmpty && fileSize > 0 => spotlightSearch(name, hash, fileSize)
+                          case None if !isFrontendBlob && hash.nonEmpty && fileSize > 0 => spotlightSearch(name, hash, fileSize)
                           case None => None
                         spotlightPath match
                           case Some(path) =>
@@ -3680,10 +3698,11 @@ class WebSocketRoutes(
                                   )
                                 }
                               }
-                            }
+                              }
                           }
                       }
                   }
+                  ) // end IO.uncancelable
               }
             else IO.unit
             end if
