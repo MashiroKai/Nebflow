@@ -63,7 +63,7 @@ export default {
   'input.voiceError': 'Voice input not supported in this browser. Try Chrome.',
   'input.queued': 'Queued',
   'input.sendImmediate': 'Send Now',
-  'input.pasteTooLarge': 'Pasted content too large (>2MB) - inserted as plain text instead',
+  'input.pasteTooLarge': 'Pasted content too large (>300KB) - inserted as plain text instead',
   'input.removeQueued': 'Remove',
   'modal.newSession': 'New Session',
   'modal.sessionName': 'Session name',

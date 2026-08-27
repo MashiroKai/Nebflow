@@ -20,12 +20,14 @@ import { showToast } from './modal.js';
 
 // ---------- Large text auto-attachment (paste detection) ----------
 const LARGE_TEXT_THRESHOLD = 1000;
-// Safety cap: a paste larger than this falls back to inserting the text inline
-// (plain user-message content) instead of converting to an attachment. Above
-// ~2MB the base64 payload (×1.35) + JSON.stringify of a single multi-MB string
-// risks blowing the WS send path; the backend has no size guard either, so the
-// cap lives on the producer side where the user can still edit/retry.
-const LARGE_TEXT_MAX_CHARS = 2 * 1024 * 1024;
+// Conversion cap (user ruling 2026-08-27, 方案①): pastes larger than this are
+// inserted inline (plain message content) instead of converting to an
+// attachment. BYTE-based because persistQueue's survival cap counts base64
+// chars (400_000); base64 inflates ×4/3, so 300_000 bytes → exactly 400_000
+// base64 chars — every converted attachment is guaranteed refresh-survivable
+// and the 400KB-2MB loss window is mathematically closed (a char-based cap
+// cannot guarantee this: CJK text is 3 bytes/char).
+const LARGE_TEXT_MAX_BYTES = 300_000;
 
 /** Show a transient banner at the top of the viewport. */
 function showAttachmentBanner(message) {
@@ -1191,7 +1193,8 @@ export function initInput(view) {
       // Large text paste → auto-convert to file attachment via existing mechanism
       const pastedText = e.clipboardData.getData('text/plain') || '';
       if (pastedText.length > LARGE_TEXT_THRESHOLD) {
-        if (pastedText.length > LARGE_TEXT_MAX_CHARS) {
+        const blob = new Blob([pastedText], { type: 'text/plain' });
+        if (blob.size > LARGE_TEXT_MAX_BYTES) {
           // Above the cap: keep inline (browser default paste) + toast, never
           // silently drop the text.
           showToast(t('input.pasteTooLarge'));
@@ -1199,7 +1202,6 @@ export function initInput(view) {
         }
         e.preventDefault();
         e.stopPropagation();
-        const blob = new Blob([pastedText], { type: 'text/plain' });
         const file = new File([blob], `pasted-text-${Date.now()}.txt`, { type: 'text/plain' });
         addFileAttachment(file);
         showAttachmentBanner(`大段文本（${pastedText.length} 字符）已转为文件附件`);
