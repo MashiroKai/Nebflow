@@ -93,6 +93,10 @@ final class ShellSession private (
       case false => IO.raiseError(new IllegalStateException("Session has been destroyed"))
     }
 
+  /** Liveness probe for the registry self-heal path (doGetOrCreate): a killed
+    * session left in the map must be replaced, not returned. */
+  private[tools] def isDead: IO[Boolean] = isAlive.get.map(!_)
+
   /**
    * Execute a command synchronously, updating cwd afterwards via pwd.
    *  If pwd fails (e.g. old cwd was deleted), currentDir is left unchanged.
@@ -1044,18 +1048,27 @@ object ShellSession:
   def forSession(sessionId: String, initialDir: Option[String] = None): IO[ShellSession] =
     createMutex.flatMap(_.lock.surround(doGetOrCreate(sessionId, initialDir)))
 
-  private def doGetOrCreate(sessionId: String, initialDir: Option[String]): IO[ShellSession] =
+  private  def doGetOrCreate(sessionId: String, initialDir: Option[String]): IO[ShellSession] =
+    def replace(old: ShellSession): IO[ShellSession] =
+      old.cancelCleanupFiber() *> old.kill() *> sessions.update(_ - sessionId) *>
+        ShellSession.create(sessionId, initialDir).flatMap { newS =>
+          sessions.update(_ + (sessionId -> newS)).as(newS)
+        }
     sessions.get.flatMap { m =>
       m.get(sessionId) match
         case Some(s) =>
           s.isStale.flatMap {
             case true =>
               // Cancel the old cleanup fiber before killing the session to prevent fiber leak
-              s.cancelCleanupFiber() *> s.kill() *> sessions.update(_ - sessionId) *>
-                ShellSession.create(sessionId, initialDir).flatMap { newS =>
-                  sessions.update(_ + (sessionId -> newS)).as(newS)
-                }
-            case false => s.touch.as(s)
+              replace(s)
+            case false =>
+              // 2026-08-28 restart 恢复修复：滞留注册表的死会话（isAlive=false，
+              // 如 restart/Stop 杀进程后未出 map 的历史形态）不返回——自愈重建，
+              // 否则恢复后的 member 首个 Bash 调用 checkAlive 永远抛
+              // "Session has been destroyed"，无法自愈。
+              s.isDead.flatMap { dead =>
+                if dead then replace(s) else s.touch.as(s)
+              }
           }
         case None =>
           ShellSession.create(sessionId, initialDir).flatMap { newS =>
@@ -1079,7 +1092,18 @@ object ShellSession:
    */
   def killSessionProcesses(sessionId: Option[String]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
-      sessions.get.flatMap(_.get(sid).fold(IO.unit)(s => s.killActiveProcesses() *> s.kill()))
+      // 2026-08-28 restart 恢复修复：kill 的同时把会话移出注册表（与
+      // destroySession 对称）。原实现只杀进程+置 isAlive=false，死会话滞留
+      // sessions map → member restart 恢复后 forSession 命中 Some(死) →
+      // touch 原样返回 → 首个 Bash 调用 checkAlive 抛 "Session has been
+      // destroyed" 且永不自愈（slideblocks Frontend restart 后无法跑命令、
+      // 收尾卡死的根因）。移出后恢复路径走 get-or-create 的 None 分支，
+      // 惰性重建新会话。
+      sessions.modify { m =>
+        m.get(sid) match
+          case Some(s) => (m - sid, s.killActiveProcesses() *> s.kill())
+          case None    => (m, IO.unit)
+      }.flatten
     }
 
   private[tools] def create(sessionId: String, initialDir: Option[String] = None): IO[ShellSession] =
