@@ -149,14 +149,23 @@ Message type (optional, default "INFO"):
                 case None =>
                   IO.pure(Left(ToolError("No actor system available")))
                 case Some(system) =>
+                  // Observability (qa #8 note): unknown delivery values (e.g. an
+                  // old caller still sending "ask") silently converge to the
+                  // immediate path — warn so stale callers surface in logs.
                   delivery match
                     case "queue" =>
                       if address.contains("://") then
                         IO.pure(Left(ToolError("Queue mode is only for team agents (short names), not URLs.")))
                       else deliverQueue(address, message, mailType, imagePaths, ctx, system)
-                    case _ =>
+                    case "immediate" =>
                       if address.contains("://") then deliverToAddress(address, message, blocks, mailType, ctx, system)
                       else deliverToShortName(address, message, blocks, mailType, ctx, system)
+                    case other =>
+                      IO(logger.warnSync(
+                        s"[mail] unknown delivery mode '$other' from ${ctx.sessionId.getOrElse("?").take(8)} — falling back to immediate"
+                      )) *>
+                        (if address.contains("://") then deliverToAddress(address, message, blocks, mailType, ctx, system)
+                         else deliverToShortName(address, message, blocks, mailType, ctx, system))
           }
   end call
 

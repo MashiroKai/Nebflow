@@ -28,7 +28,8 @@ import scala.concurrent.duration.*
   * messages — every respawn was an amnesiac (turn counts reset, prior
   * context lost; live evidence: 19:16 respawn msgs=0 while disk held 230+,
   * 19:24 turn-complete msgs=62 all-fresh). The fix loads the persisted
-  * messages through the same pattern as doFork / ensureRootAgent.
+  * messages through the same pattern as activateAgent's fresh spawn /
+  * ensureRootAgent.
   *
   * #1 silent death + busy leak: Mail-spawned team agents lived outside
   * FlowTreeActor's watch system, so their death left actorMap holding a
