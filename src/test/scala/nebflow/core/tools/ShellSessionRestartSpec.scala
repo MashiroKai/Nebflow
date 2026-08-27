@@ -62,9 +62,7 @@ class ShellSessionRestartSpec extends FunSuite:
       s1 <- ShellSession.forSession(id)
       _ <- s1.kill() // 直接 kill（不出 map）——模拟任意路径留下的滞留死会话
       deadConfirmed <- s1.isDead
-      _ <- IO.println(s"[SPEC] after kill: s1.isDead=$deadConfirmed obj=${System.identityHashCode(s1)}")
       s2 <- ShellSession.forSession(id) // 必须自愈，而非返回死会话
-      _ <- IO.println(s"[SPEC] healed: s2 obj=${System.identityHashCode(s2)}")
       dead2 <- s2.isDead
       res <- s2.execute("echo heal-ok", 30.seconds)
     yield (s1, deadConfirmed, s2, dead2, res)
