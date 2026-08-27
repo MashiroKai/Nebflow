@@ -421,4 +421,114 @@ class MailIdleGateWiringSpec extends FunSuite:
     assert(clue(firstIdx) < clue(secondIdx), s"FIFO order broken: first=$firstIdx second=$secondIdx")
     assert(clue(queueAfter).isEmpty, s"queue not fully drained: $queueAfter")
 
+  // ---------- AC-12：#10 mail-queue wedge——turn-end drain 的 gate 拦截走
+  // returnToIdle 后计数必须存活（2026-08-27 生产积压实证：多会话 mail-queue.json
+  // 有货但永不 drain，直至另一封 MailQueued 到达才续命）。根因=returnToIdle 用
+  // ExecutionContext.idle 重建把 pendingMailQueueCount 归 0，下一次 finishTurnCont
+  // 的 drain 分支条件 `pendingMailQueueCount > 0` 永久为 false → 磁盘队列楔死。
+  // 回归=子 agent 完成事件驱动的新 turn 结束时（不重发 MailQueued）队列仍被 drain。
+
+  test("AC-12 turn-end gate deferral preserves the count — later turn end drains without re-send"):
+    val system = ActorSystem(s"cqi-a12-${java.util.UUID.randomUUID().toString.take(6)}")
+    val tmp = os.temp.dir(prefix = "cqi-a12")
+    fixtureTeam(tmp, "cqi12")
+    val llm = new RecordingLlm
+
+    val io = for
+      sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
+      bossMeta <- sessionStore.createSession("cqi12/boss", agentName = Some("boss"), flowName = Some("cqi12"))
+      memberMeta <- sessionStore.createSession("cqi12/member", agentName = Some("member"), flowName = Some("cqi12"))
+      _ <- TeamSessionRegistry.registerSession("cqi12", "boss", bossMeta.id)
+      _ <- TeamSessionRegistry.registerSession("cqi12", "member", memberMeta.id)
+      _ <- TeamSessionRegistry.registerManager("cqi12", bossMeta.id)
+      resources <- mkResources(system, tmp, llm, sessionStore)
+      _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
+      // member 子树忙（Delegate 在飞）→ team 内 queue mail 被 idle gate 拦截
+      memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
+      _ <- injectChild(resources, "member-child", memberRef)
+      _ <- MailTool.queueToSession(
+        memberMeta.id, "member", "A12_WEDGE_MARKER", "INFO", Nil,
+        ctxFor(resources, system, bossMeta.id), system, bossMeta.id
+      )
+      _ <- IO.sleep(600.millis) // let the deferral land (count=1, queue retained)
+      _ <- llm.requests.update(_ => Nil)
+      // 触发一轮真实 turn（子 agent 完成事件驱动的等价物）：turn 结束走
+      // finishTurnCont drain 分支 → gate 仍忙 → returnToIdle——计数必须存活
+      memberRef2 <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
+      _ <- memberRef2.traverse_(ref => ref ! AgentCommand.ImmediateInput("A12_TURN1", source = Some("test")))
+      _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty)) // TURN1 已处理
+      _ <- llm.requests.update(_ => Nil)
+      // 子树空闲，但**不重发 MailQueued**——下一次 turn 结束应自动 drain
+      _ <- removeChild(resources, "member-child")
+      memberRef3 <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
+      _ <- memberRef3.traverse_(ref => ref ! AgentCommand.ImmediateInput("A12_TURN2", source = Some("test")))
+      _ <- waitUntil(20.seconds)(llm.requests.get.map(_.exists(r =>
+        r.messages.map(_.content.fold(identity, _.mkString)).exists(_.contains("A12_WEDGE_MARKER"))
+      )))
+      reqs <- llm.requests.get
+      queueAfter <- MailQueueStore.load(memberMeta.id)
+    yield (reqs, queueAfter)
+
+    val (reqs, queueAfter) = io.unsafeRunSync()
+    val texts = reqs.flatMap(_.messages.map(_.content.fold(identity, _.mkString)))
+    assert(
+      clue(texts).exists(_.contains("A12_WEDGE_MARKER")),
+      "queue mail wedged: a later turn end must drain without re-sending MailQueued"
+    )
+    assert(clue(queueAfter).isEmpty, s"queue not drained: $queueAfter")
+
+  // ---------- AC-13：#10 idle deferral 计数累加——多封 queue mail 在 idle+子树忙
+  // 时到达，每封都走 idle gate 拦截；旧代码硬编码 `= 1` 丢计数 → 只投最后一封。
+  // 回归=多封在子树空闲后逐封 drain（FIFO），不丢中间件。
+
+  test("AC-13 multiple idle-gate deferrals accumulate — all items drain after subtree frees"):
+    val system = ActorSystem(s"cqi-a13-${java.util.UUID.randomUUID().toString.take(6)}")
+    val tmp = os.temp.dir(prefix = "cqi-a13")
+    fixtureTeam(tmp, "cqi13")
+    val llm = new RecordingLlm
+
+    val io = for
+      sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
+      bossMeta <- sessionStore.createSession("cqi13/boss", agentName = Some("boss"), flowName = Some("cqi13"))
+      memberMeta <- sessionStore.createSession("cqi13/member", agentName = Some("member"), flowName = Some("cqi13"))
+      _ <- TeamSessionRegistry.registerSession("cqi13", "boss", bossMeta.id)
+      _ <- TeamSessionRegistry.registerSession("cqi13", "member", memberMeta.id)
+      _ <- TeamSessionRegistry.registerManager("cqi13", bossMeta.id)
+      resources <- mkResources(system, tmp, llm, sessionStore)
+      _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
+      memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
+      _ <- injectChild(resources, "member-child", memberRef)
+      // 两封 queue mail 在 idle+子树忙时相继到达（各走一次 idle gate 拦截）
+      _ <- MailTool.queueToSession(
+        memberMeta.id, "member", "A13_FIRST_MARKER", "INFO", Nil,
+        ctxFor(resources, system, bossMeta.id), system, bossMeta.id
+      )
+      _ <- IO.sleep(300.millis)
+      _ <- MailTool.queueToSession(
+        memberMeta.id, "member", "A13_SECOND_MARKER", "INFO", Nil,
+        ctxFor(resources, system, bossMeta.id), system, bossMeta.id
+      )
+      _ <- IO.sleep(600.millis) // both deferrals land; count must be 2, not 1
+      _ <- llm.requests.update(_ => Nil)
+      // 子树空闲 → 单轮 turn 结束自动逐封 drain（FIFO）
+      _ <- removeChild(resources, "member-child")
+      memberRef2 <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
+      _ <- memberRef2.traverse_(ref => ref ! AgentCommand.ImmediateInput("A13_TURN", source = Some("test")))
+      _ <- waitUntil(20.seconds)(llm.requests.get.map(_.exists(r =>
+        r.messages.map(_.content.fold(identity, _.mkString)).exists(_.contains("A13_SECOND_MARKER"))
+      )))
+      _ <- IO.sleep(1.seconds) // let the second item drain too
+      reqs <- llm.requests.get
+      queueAfter <- MailQueueStore.load(memberMeta.id)
+    yield (reqs, queueAfter)
+
+    val (reqs, queueAfter) = io.unsafeRunSync()
+    val texts = reqs.flatMap(_.messages.map(_.content.fold(identity, _.mkString)))
+    val firstIdx = texts.indexOf("A13_FIRST_MARKER")
+    val secondIdx = texts.indexOf("A13_SECOND_MARKER")
+    assert(clue(firstIdx) >= 0, "first item never drained (count lost by idle deferral clamp)")
+    assert(clue(secondIdx) >= 0, "second item never drained")
+    assert(clue(firstIdx) < clue(secondIdx), s"FIFO order broken: first=$firstIdx second=$secondIdx")
+    assert(clue(queueAfter).isEmpty, s"queue not fully drained: $queueAfter")
+
 end MailIdleGateWiringSpec
