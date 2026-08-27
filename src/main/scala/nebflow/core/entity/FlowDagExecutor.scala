@@ -397,14 +397,18 @@ object FlowDagExecutor:
           end for
       }
 
-    /** Terminal cleanup of a node's dag session (P2 supervision): success,
-      * explicit Stop/Resume, or exhausted Restart retries all delete the
-      * session. A preserved checkpoint only lives between a retryable failure
-      * and its Restart. */
+    /** Terminal bookkeeping for a node's dag session (P2 supervision, updated
+      * P1 deck-v6): drop the FlowReport payload and the executor's
+      * nodeSessions map entry on every terminal outcome — but PRESERVE the
+      * session files. The flow-run panel opens a node's conversation from
+      * these files after the node (or the whole flow) has finished; deleting
+      * them left completed nodes unopenable.
+      *
+      * A preserved checkpoint between a retryable failure and its Restart is
+      * unaffected: the session simply stays until the retry reuses it. */
     def cleanupNodeSession(nodeId: String): IO[Unit] =
       st.nodeSessions.get.flatMap(_.get(nodeId).traverse_ { sid =>
-        FlowReportStore.remove(sid) *>
-          resources.sessionStore.deleteSession(sid).handleErrorWith(_ => IO.unit)
+        FlowReportStore.remove(sid)
       }) *> st.nodeSessions.update(m => m - nodeId)
 
     /** Error handling + retry logic.
@@ -1213,26 +1217,24 @@ object FlowDagExecutor:
       _ <- resources.agentRegistry.update(_ - sessionId)
       _ <- actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
       _ <- actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
-      // ── Session cleanup timing (supervision P2) ─────────────────────
-      // Success / cancel / abort: terminal — delete now (pre-P2 behavior).
-      // Failure: keepSessionOnFailure && retryable → PRESERVE the session —
-      // AgentActor already persisted the conversation before failing; the
-      // executor's Restart path resumes from this checkpoint instead of a
-      // fresh re-run (the incident lost 20min/86k-token context here).
-      // Non-retryable failures and exhausted retries are cleaned up by
-      // handleResult's terminal branches (cleanupNodeSession).
+      // ── Session retention (P1 #deck-v6: flow-run node observability) ────
+      // Node dag-* sessions are PERSISTED for every terminal outcome — the
+      // flow-run panel resolves a node's sessionId by scanning these files
+      // (GET /api/sessions?includeUnindexed=1 → getHistory), so deleting them
+      // on success/cancel/abort left every completed node unopenable ("该节点还
+      // 没有会话记录"). Only the FlowReport payload (internal verdict data) is
+      // removed; the conversation itself stays as the audit trail.
+      // Failure + keepSessionOnFailure: same preservation, plus the executor's
+      // Restart path resumes from this checkpoint instead of a fresh re-run
+      // (the incident lost 20min/86k-token context here).
       reportOpt <- FlowReportStore.get(sessionId)
       sessionCleanup <- eventResult match
-        case Right(_) =>
-          FlowReportStore.remove(sessionId) *>
-            resources.sessionStore.deleteSession(sessionId).handleErrorWith(_ => IO.unit)
+        case Right(_) => FlowReportStore.remove(sessionId)
         case Left(fo) if fo.retryable && keepSessionOnFailure =>
           logger.info(
             s"Flow '$flowName' node '$nodeId' failed retryable — preserving session $sessionId for checkpoint restart"
           )
-        case Left(_) =>
-          FlowReportStore.remove(sessionId) *>
-            resources.sessionStore.deleteSession(sessionId).handleErrorWith(_ => IO.unit)
+        case Left(_) => FlowReportStore.remove(sessionId)
       nodeResult <- eventResult match
         case Right(messages) =>
           val textOutput = extractLastAssistantOutput(messages)
