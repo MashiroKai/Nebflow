@@ -1545,10 +1545,10 @@ private[agent] trait AgentCore:
     // #438: the save phase is system machinery (memory maintenance), not an
     // agent-capability turn — its [Write, Edit, Read] whitelist is guaranteed
     // at the mechanism layer, independent of the agent's configured tools.
-    // The old premise ("the six are always in the toolset, the whitelist
-    // never empties them out") broke when the six became Nebula's
-    // configurable region: a bare Nebula def would run save turns with ZERO
-    // file tools and silently stop persisting memory.
+    // 2026-08-28: the six are mechanism-fixed for ALL agents again (user
+    // ruling, reverses #438) — the guarantee below is now idempotent with
+    // fixedToolsFor, kept as belt-and-suspenders against config anomalies
+    // (e.g. seeds-fallback defs, SaveTurnGuardSpec P0-1).
     val allowed = buildToolList(agentDef, depth, isSubTaskWorker, isFlowNode, isTeamLead)
       .getOrElse(Nil)
       .filter(td => SaveTurnToolWhitelist.contains(td.name))
@@ -1863,9 +1863,10 @@ object AgentCore:
   )
 
   /** Nebula 的 9 个编排工具（user ruling 2026-08-25 17:49：Nebula 系统固定
-    * 改为 9 个编排工具；Read/Grep/Bash 等按需经 BaseTools/agent.json 保留）。
-    * 机制层固定注入——不依赖 agent.json 声明（防面板编辑误删导致调度器失能），
-    * 同时也意味着非 Nebula agent 声明这些工具中的 Nebula 专属项无效。 */
+    * 为 9 个编排工具）。机制层固定注入——不依赖 agent.json 声明（防面板编辑
+    * 误删导致调度器失能），同时也意味着非 Nebula agent 声明这些工具中的
+    * Nebula 专属项无效。六件基础工具同样是机制固定（2026-08-28 00:55 用户
+    * 裁定，见 BaseTools）。 */
   val NebulaOrchestrationTools = Set(
     "AgentControl",
     "TaskUpdate",
@@ -1907,6 +1908,12 @@ object AgentCore:
    * Fixed tools for a given agent: base tools plus category-specific tools.
    * These are auto-injected and should NOT be stored in agent.json.
    *
+   * - ALL agents (including Nebula, 2026-08-28 00:55 用户裁定「6类工具还是
+   *   作为统一的agent都有的工具」— reverses #438): BaseTools (Read/Write/
+   *   Edit/Glob/Grep/Bash) are mechanism-fixed for every category. agent.json
+   *   tools declarations remain an additional source and coexist idempotently
+   *   (Set semantics — duplicates harmless). Nebula's file declaration of the
+   *   six (8684acd) stays as a belt-and-suspenders no-op.
    * - Team agents: BaseTools + Mail + SubTask + FlowExecute (user ruling
    *   2026-08-24: team members get SubTask at the mechanism layer — relying
    *   on manual agent.json declarations is error-prone; html-deck-studio
@@ -1915,14 +1922,11 @@ object AgentCore:
    *   capability, no agent.json declaration needed). SubTask workers and
    *   FlowExecute nodes are still stripped of it downstream (isSubTaskWorker
    *   / isFlowNode leaf rules in buildAllowedToolSet).
-   * - Nebula (root orchestrator): Issue + FlowExecute +
-    *   NebulaOrchestrationTools — and NOT BaseTools (#438 semantics
-    *   correction, user ruling 2026-08-27): the six (Read/Write/Edit/Glob/
-    *   Grep/Bash) are mechanism-fixed only for NON-Nebula agents; for Nebula
-    *   they belong to the agent.json configurable region (declared =
-    *   present, default absent). The 9 orchestration tools stay
-    *   mechanism-fixed (2026-08-25 17:49, unchanged); the root agent
-    *   dynamically creates flows too.
+   * - Nebula (root orchestrator): BaseTools + Issue + FlowExecute +
+   *   NebulaOrchestrationTools (#404/2026-08-25 17:49 ruling, unchanged;
+   *   the #438 "six are Nebula's configurable region" semantics was
+   *   reversed by user ruling 2026-08-28 00:55 — the six are uniformly
+   *   mechanism-fixed again). The root agent dynamically creates flows too.
    * - Flow agents: BaseTools + FlowReport (no Mail, no SubTask — flow nodes
    *   are leaves; FlowReport is injected by execution context for dynamic
    *   flows, see FlowDagExecutor.executeNode)
@@ -1933,9 +1937,10 @@ object AgentCore:
       case "team" => BaseTools + "Mail" + "SubTask" + "FlowExecute"
       case "flow" => BaseTools + "FlowReport"
       case _ if agentDef.name == "Nebula" =>
-        // #438: BaseTools (the six) intentionally NOT injected here — they
-        // are Nebula's configurable region (agent.json tools declaration).
-        Set("Issue", "FlowExecute") ++ NebulaOrchestrationTools
+        // 2026-08-28 00:55 用户裁定：六件工具作为所有 agent 统一拥有的机制
+        // 固定工具（反转 #438 的 Nebula 默认不配）。agent.json 声明保留为
+        // 额外来源（幂等共存）；文件声明兜底（8684acd）不回滚。
+        BaseTools ++ Set("Issue", "FlowExecute") ++ NebulaOrchestrationTools
       case _ => BaseTools
 
 end AgentCore
