@@ -1028,7 +1028,13 @@ object AgentActor extends AgentCore with AgentSession:
                     resources,
                     depth,
                     parentRef,
-                    state.copy(execution = state.execution.copy(pendingMailQueueCount = 1))
+                    // #10 (2026-08-27 mail-queue wedge): accumulate, don't clamp —
+                    // multiple mails arriving while idle+subtree-busy each take
+                    // this deferral path; `= 1` would lose the earlier count and
+                    // the turn-end drain would deliver only the last one.
+                    state.copy(execution =
+                      state.execution.copy(pendingMailQueueCount = state.execution.pendingMailQueueCount + 1)
+                    )
                   )
                 )
             else
@@ -2786,7 +2792,16 @@ object AgentActor extends AgentCore with AgentSession:
                 outstandingSubagentResults = state.execution.outstandingSubagentResults,
                 // #25: parked completion debt survives the turn boundary —
                 // paid off when a later turn ends with the barrier at 0.
-                owedCompletion = owedAfter
+                owedCompletion = owedAfter,
+                // #10 (2026-08-27 mail-queue wedge): ExecutionContext.idle
+                // rebuilds pendingMailQueueCount to 0. This returnToIdle tail
+                // is ALSO reached by the queue drain branch's idle-gate
+                // deferral path (pendingMailQueueCount>0 but subtree busy) —
+                // without carrying the counter, the NEXT turn's drain branch
+                // (`pendingMailQueueCount > 0`) is permanently false and the
+                // disk queue wedges until another MailQueued arrives. The two
+                // earlier injection branches already carry it; this tail must too.
+                pendingMailQueueCount = state.execution.pendingMailQueueCount
               )
           )
           .withMailTurnCount(state.mailTurnCount + 1)
