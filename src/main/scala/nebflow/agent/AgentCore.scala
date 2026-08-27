@@ -1354,13 +1354,21 @@ private[agent] trait AgentCore:
       else if isNebula then Set("TeamTaskList")
       else Set.empty[String]
     val withTeamTask = (nebulaFiltered -- AgentCore.TeamTaskTools) ++ teamTaskGrant
+    // Block 1 (supervision trio §C2, 2026-08-27): AgentControl mechanism-layer
+    // grant — a team lead (Manager) gains subtree-scoped control over its own
+    // team (members + their sub-agents; the subtree guard in AgentControlTool
+    // enforces the scope), Nebula keeps global authority. The grant is the
+    // ONLY source: declaring AgentControl in agent.json grants nothing
+    // (TeamTaskTools precedent — the tool name IS the permission boundary).
+    val controlGrant = if isNebula || isTeamLead then Set("AgentControl") else Set.empty[String]
+    val withControl = (withTeamTask -- Set("AgentControl")) ++ controlGrant
     // Task tools: available to Nebula and Team Lead, NOT workers
     val taskFiltered = agentDef.tools match
       case List("*") =>
-        if depth >= 2 then withTeamTask -- (LeadLevelTools ++ AgentCore.TeamTaskTools)
-        else withTeamTask
+        if depth >= 2 then withControl -- (LeadLevelTools ++ AgentCore.TeamTaskTools)
+        else withControl
       case _ =>
-        withTeamTask
+        withControl
     // MCP tools: agents may use MCP tools from explicitly granted servers
     // (mcpServers) plus their own dedicated agent-scoped servers, which are
     // always auto-allowed. Tool names are mcp__<serverId>__<tool>; dedicated
