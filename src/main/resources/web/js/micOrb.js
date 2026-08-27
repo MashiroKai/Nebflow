@@ -1,4 +1,9 @@
-// micOrb.js — Mic bubble (liquid orb) v8.2.2: pure Orb, state expressed via
+// micOrb.js — Mic bubble (liquid orb) v8.2.3: white-base fix — alpha skirt
+// tightened (0.96r0-1.05r0, fully transparent past 1.05r0) so the orb sits
+// directly on the frosted glass panel without the bright outer ring the old
+// 0.98-1.14r0 skirt produced ("white circular base" user report 08-27);
+// material optics / palettes / motion are untouched from v8.2.2.
+// v8.2.2: pure Orb, state expressed via
 // color + motion layering, zero overlay layers (user ruling 2026-08-26 01:11:
 // "还是用纯Orb吧" — v1-v7's 9-state overlay animations are all dropped).
 // v8.2.2 (spec §10.7): error states (mic-error red / frozen-error amber) go
@@ -173,10 +178,15 @@ const FS = [
   '  outCol=mix(vec3(gg),outCol,sat)*lum;',
   '  outCol=clamp(outCol,0.0,1.0);',
   '  float glassA=pow(clamp(max(outCol.r,max(outCol.g,outCol.b))*1.06,0.0,1.0),1.58);',
-  '  float shape=1.0-smoothstep(r0*0.98,r0*1.14,len);',
+  '  /* v8.2.3 white-base fix: the old falloff band (0.98r0-1.14r0) let the',
+  '     halo-lifted rim rgb bleed out as a bright ring over the glass panel',
+  '     ("white circular base" user report 2026-08-27). Tighten the alpha',
+  '     skirt so the canvas reads fully transparent past 1.05r0 - the orb',
+  '     sits directly on the frosted glass; material optics above untouched. */',
+  '  float shape=1.0-smoothstep(r0*0.96,r0*1.05,len);',
   '  float a=clamp(glassA*shape,0.0,1.0);',
   '  a=mix(a,a*0.94,isLight);',
-  '  a=clamp(a+smoothstep(r0*0.80,r0*1.00,len)*isLight*0.12,0.0,1.0);',
+  '  a=clamp(a+smoothstep(r0*0.80,r0*0.96,len)*isLight*0.12,0.0,1.0);',
   '  return vec4(outCol,clamp(a,0.0,1.0));',
   '}',
   'vec4 mainImage(vec2 fragCoord){',
