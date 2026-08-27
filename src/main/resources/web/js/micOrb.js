@@ -1,4 +1,18 @@
-// micOrb.js — Mic bubble (liquid orb) v8.2.3: white-base fix — alpha skirt
+// micOrb.js — Mic bubble (liquid orb) v8.2.4: edge-clean fix ("unclean
+// cutout" edge report 2026-08-28). Three surgical changes, inner material
+// (<=0.92r0) pixel-identical to v8.2.3:
+//  1) rim/fresnel light is evaluated on a CONTRACTED sphere (Rf=0.90r0) and
+//     windowed to zero by 1.00r0 - the bright rim now lives fully inside the
+//     opaque silhouette instead of straddling the alpha skirt (no bright
+//     semi-transparent fringe at the boundary);
+//  2) alpha is derived from the PRE-RIM body color (colNoRim) - the rim/halo
+//     brightening no longer inflates edge alpha via the alpha-from-rgb
+//     extractAlpha coupling (spec §10.8 root-cause family);
+//  3) the light-theme inner alpha lift is gated by the shape skirt - the old
+//     smoothstep stays at 1 past 0.96r0, painting a constant +0.12 alpha
+//     square veil across the whole canvas outside the orb (hard square
+//     boundary = cutout look on light panels). Now it dies with the skirt.
+// v8.2.3: white-base fix — alpha skirt
 // tightened (0.96r0-1.05r0, fully transparent past 1.05r0) so the orb sits
 // directly on the frosted glass panel without the bright outer ring the old
 // 0.98-1.14r0 skirt produced ("white circular base" user report 08-27);
@@ -86,6 +100,7 @@ const FS = [
   '   crystalline structure (fluid/refraction/highlight/rim all preserved) */',
   'uniform vec3 palA; uniform vec3 palB; uniform vec3 palC;',
   'varying vec2 vUv;',
+  'const vec3 LUMA=vec3(0.299,0.587,0.114);',
   'vec3 rgb2yiq(vec3 c){',
   '  float y=dot(c,vec3(0.299,0.587,0.114));',
   '  float i=dot(c,vec3(0.596,-0.274,-0.322));',
@@ -155,29 +170,46 @@ const FS = [
   '  float core=1.0-smoothstep(0.0,r0*0.58,len);',
   '  float pulse=0.88+0.12*snoise3(vec3(uv*2.2,t*0.8));',
   '  col+=mix(c1,C_ICE,0.4)*core*pulse*mix(0.28,0.20,isLight);',
-  '  float fres=pow(1.0-clamp(N.z,0.0,1.0),2.4);',
+  '  /* v8.2.4 edge-clean: rim light on a CONTRACTED sphere (Rf=0.90r0),',
+  '     windowed to zero by 1.00r0 - the bright rim sits fully inside the',
+  '     opaque silhouette instead of straddling the alpha skirt. */',
+  '  float Rf=r0*0.90;',
+  '  float zf=sqrt(max(Rf*Rf-len*len,0.0));',
+  '  vec3 Nf=normalize(vec3(uv,zf));',
+  '  float fres=pow(1.0-clamp(Nf.z,0.0,1.0),2.4)*(1.0-smoothstep(r0*0.92,r0*1.00,len));',
+  '  /* alpha source: pre-rim body color (rim/halo brightening must not',
+  '     inflate edge alpha through the alpha-from-rgb coupling) */',
+  '  vec3 colNoRim=col;',
   '  vec3 rimBright=mix(c1,C_ICE,0.5);',
   '  col+=rimBright*fres*(1.0-isLight)*0.50;',
   '  col=mix(col,c3*1.10,fres*isLight*0.50);',
   '  col+=rimBright*fres*isLight*0.10;',
   '  vec3 H=normalize(Ld+vec3(0.0,0.0,1.0));',
   '  float ndh=clamp(dot(N,H),0.0,1.0);',
-  '  col+=vec3(1.0,0.99,0.97)*pow(ndh,mix(90.0,140.0,isLight))*mix(0.75,0.85,isLight);',
-  '  col+=C_ICE*pow(ndh,8.0)*0.10;',
+  '  vec3 specHi=vec3(1.0,0.99,0.97)*pow(ndh,mix(90.0,140.0,isLight))*mix(0.75,0.85,isLight)+C_ICE*pow(ndh,8.0)*0.10;',
+  '  col+=specHi; colNoRim+=specHi;',
   '  float ca=1.0-smoothstep(0.0,r0*0.30,distance(uv,vec2(0.10,-0.42)*r0));',
-  '  col+=mix(c1,C_ICE,0.3)*ca*ca*mix(0.20,0.14,isLight);',
-  '  col*=mix(1.03,1.12,isLight);',
-  '  float g0=dot(col,vec3(0.299,0.587,0.114));',
+  '  vec3 caHi=mix(c1,C_ICE,0.3)*ca*ca*mix(0.20,0.14,isLight);',
+  '  col+=caHi; colNoRim+=caHi;',
+  '  col*=mix(1.03,1.12,isLight); colNoRim*=mix(1.03,1.12,isLight);',
+  '  float g0=dot(col,LUMA);',
   '  col=mix(col,mix(vec3(g0),col,1.42),isLight);',
   '  col=clamp(col,0.0,1.0);',
+  '  float gb=dot(colNoRim,LUMA);',
+  '  colNoRim=mix(colNoRim,mix(vec3(gb),colNoRim,1.42),isLight);',
+  '  colNoRim=clamp(colNoRim,0.0,1.0);',
+  '  /* v8.2.4: halo glow dies inside the skirt (windowed), rgb-only */',
   '  float halo=exp(-max(len-r0*1.02,0.0)*9.0)*(1.0-bodyA);',
-  '  float haloA=halo*0.16*(1.0-isLight);',
+  '  float haloA=halo*0.16*(1.0-isLight)*(1.0-smoothstep(r0*0.98,r0*1.05,len));',
   '  vec3 haloCol=mix(c1,c2,0.5)*1.15;',
   '  vec3 outCol=mix(col,haloCol,clamp(haloA*1.5,0.0,1.0)*(1.0-bodyA));',
-  '  float gg=dot(outCol,vec3(0.299,0.587,0.114));',
+  '  float gg=dot(outCol,LUMA);',
   '  outCol=mix(vec3(gg),outCol,sat)*lum;',
   '  outCol=clamp(outCol,0.0,1.0);',
-  '  float glassA=pow(clamp(max(outCol.r,max(outCol.g,outCol.b))*1.06,0.0,1.0),1.58);',
+  '  float gb2=dot(colNoRim,LUMA);',
+  '  colNoRim=mix(vec3(gb2),colNoRim,sat)*lum;',
+  '  colNoRim=clamp(colNoRim,0.0,1.0);',
+  '  float glassA=pow(clamp(max(colNoRim.r,max(colNoRim.g,colNoRim.b))*1.06,0.0,1.0),1.58);',
   '  /* v8.2.3 white-base fix: the old falloff band (0.98r0-1.14r0) let the',
   '     halo-lifted rim rgb bleed out as a bright ring over the glass panel',
   '     ("white circular base" user report 2026-08-27). Tighten the alpha',
@@ -186,7 +218,10 @@ const FS = [
   '  float shape=1.0-smoothstep(r0*0.96,r0*1.05,len);',
   '  float a=clamp(glassA*shape,0.0,1.0);',
   '  a=mix(a,a*0.94,isLight);',
-  '  a=clamp(a+smoothstep(r0*0.80,r0*0.96,len)*isLight*0.12,0.0,1.0);',
+  '  /* v8.2.4: the light-theme inner lift is gated by shape - the bare',
+  '     smoothstep stays at 1 past 0.96r0 and painted a constant +0.12 alpha',
+  '     veil across the whole canvas outside the orb (square cutout edge). */',
+  '  a=clamp(a+smoothstep(r0*0.80,r0*0.96,len)*shape*isLight*0.12,0.0,1.0);',
   '  return vec4(outCol,clamp(a,0.0,1.0));',
   '}',
   'vec4 mainImage(vec2 fragCoord){',
