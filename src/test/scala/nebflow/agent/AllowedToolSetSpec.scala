@@ -396,6 +396,29 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!CoreProbe.allowed(solo).contains("TeamTaskList"), "standalone: no TeamTaskList")
     assert(!CoreProbe.allowed(flow).contains("TeamTaskList"), "flow agent: no TeamTaskList")
 
+  // ===== Block 1 (supervision trio §C2): AgentControl mechanism-layer grant =====
+
+  test("Block 1: team lead gets AgentControl via mechanism grant (no declaration needed)"):
+    val lead = mkDef("Manager", List("Read", "Grep", "Bash", "Mail")).copy(category = "team")
+    val allowed = CoreProbe.allowed(lead, isTeamLead = true)
+    assert(allowed.contains("AgentControl"), "team lead gets AgentControl (subtree scope enforced by the tool guard)")
+
+  test("Block 1: declaring AgentControl in agent.json grants nothing (non-lead member)"):
+    val member = mkDef("backend", List("Read", "AgentControl", "Mail")).copy(category = "team")
+    val allowed = CoreProbe.allowed(member) // isTeamLead=false
+    assert(!allowed.contains("AgentControl"), "member: AgentControl stripped despite explicit declaration")
+
+  test("Block 1: Nebula keeps AgentControl; SubTask self-clone of a lead never gets it"):
+    val nebula = mkDef("Nebula", List("Read"))
+    assert(CoreProbe.allowed(nebula).contains("AgentControl"), "Nebula keeps global AgentControl")
+    // a worker self-cloned from a Manager: new session id → isTeamLeadStatus false,
+    // and the mechanism grant is the only source — "*" must not resurrect it
+    val clone = mkDef("Manager", List("*")).copy(category = "team")
+    val workerAllowed = CoreProbe.allowed(clone, isSubTaskWorker = true)
+    assert(!workerAllowed.contains("AgentControl"), "worker clone: AgentControl stripped")
+    val deepAllowed = CoreProbe.allowed(clone, depth = 2)
+    assert(!deepAllowed.contains("AgentControl"), "depth-2 agent: AgentControl stripped")
+
   test("SubTask worker strips TeamTask* even when the parent is a team lead"):
     // A worker self-cloned from a Manager (category=team + isTeamLead grant)
     // must lose the team task board entirely — leaf isolation (spec §3).
