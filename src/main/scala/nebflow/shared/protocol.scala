@@ -51,7 +51,7 @@ case class Message(
   /**
    * Injection source marker (任务 P): when a message was injected by a tool
    * rather than typed by the user, this records where it came from —
-   * "mail" / "delegate" / "subtask" / "flow" / "ask" / "skill" / "tool".
+   * "mail" / "delegate" / "subtask" / "flow" / "skill" / "tool".
    * None = normal user-typed message (backward compatible: old persisted
    * messages decode with source=None).
    */
@@ -109,7 +109,7 @@ case class LlmRequest(
    */
   agentModel: Option[AgentModelConfig] = None,
   /** WebSearch P0: provider-native search injection is allowed for this
-    * request. Housekeeping turns (compaction / save-turn / ask) and
+    * request. Housekeeping turns (compaction / save-turn) and
     * maintenance LLM calls set this to false so a server-side search tool
     * never leaks into summarization or memory-extraction requests. */
   searchAllowed: Boolean = true
