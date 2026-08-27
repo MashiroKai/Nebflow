@@ -324,4 +324,64 @@ class ConfigServiceSpec extends FunSuite:
     assertEquals(coding.downField("description").as[String], Right("d"))
   }
 
+
+  // ── runtime-authoritative overrides（冻结修复 2026-08-27）：陈旧快照不得回滚 ──
+
+  /** Seed nebflow.json with a frozen schedule + provider, mirroring the on-disk
+    * state after the user has configured a freeze schedule. */
+  private def seedConfigWithSchedule(enabled: Boolean, segs: String): Unit =
+    os.write.over(
+      PathUtil.dataRoot / "nebflow.json",
+      s"""{"workSchedule":{"enabled":$enabled,"segments":$segs},"llm":{"providers":{"glm":${validProvider("glm").noSpaces}}}}""",
+      createFolders = true
+    )
+
+  private def readWorkSchedule(): Option[Json] =
+    parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get.hcursor.downField("workSchedule").as[Json].toOption
+
+  test("updateConfig: stale incoming workSchedule is overridden by runtime-authoritative value (roll-back regression)") {
+    seedConfigWithSchedule(enabled = true, segs = """[{"start":"09:00","end":"12:00"}]""")
+    // The authoritative in-memory ref says: disabled BUT segments preserved (08-25 ruling).
+    val authoritative = parse("""{"enabled":false,"segments":[{"start":"09:00","end":"12:00"}]}""").toOption.get
+    // A stale full-config snapshot captured BEFORE the user toggled off — it still
+    // carries enabled=true. Any provider save flushes this back; without the
+    // override the disk rolls back and freeze resurrects after restart.
+    val staleIncoming = s"""{"workSchedule":{"enabled":true,"segments":[]},"llm":{"providers":{"newp":${validProvider("newp").noSpaces}}}}"""
+    val result = ConfigService.updateConfig(staleIncoming, Map("workSchedule" -> authoritative)).unsafeRunSync()
+    assertEquals(result, Right(()))
+    val ws = readWorkSchedule().get
+    // Disk keeps the runtime truth: disabled + original segment intact
+    // (value-level, spacing-independent comparison).
+    assert(!ws.noSpaces.replace(" ", "").contains("\"enabled\":true"), s"stale snapshot rolled the toggle back: $ws")
+    assertEquals(
+      ws.noSpaces.replace(" ", ""),
+      """{"enabled":false,"segments":[{"start":"09:00","end":"12:00"}]}"""
+    )
+    // The non-runtime part of the update still landed (deep merge unchanged).
+    val providers = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get.hcursor.downField("llm").downField("providers")
+    assertEquals(providers.downField("newp").as[Json].isRight, true)
+  }
+
+  test("updateConfig: no overrides keeps legacy deep-merge semantics (incoming wins)") {
+    seedConfigWithSchedule(enabled = true, segs = """[{"start":"23:00","end":"08:00"}]""")
+    val incoming = """{"workSchedule":{"enabled":false,"segments":[]}}"""
+    val result = ConfigService.updateConfig(incoming).unsafeRunSync()
+    assertEquals(result, Right(()))
+    val ws = readWorkSchedule().get.noSpaces
+    assert(ws.contains("\"enabled\":false"), s"incoming should win without overrides: $ws")
+  }
+
+  test("updateConfig: override keys do not leak into providers scope or delete unrelated top-level keys") {
+    seedConfigWithSchedule(enabled = false, segs = "[]")
+    val thOverride = parse("""{"enabled":true,"budgetTokens":1234}""").toOption.get
+    val real = s"""{"llm":{"providers":{"z2":${validProvider("z2").noSpaces}}}}"""
+    val result = ConfigService.updateConfig(real, Map("thinkingConfig" -> thOverride)).unsafeRunSync()
+    assertEquals(result, Right(()))
+    val cfg = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
+    val tfFocus = cfg.hcursor.downField("thinkingConfig").focus
+    assertEquals(cfg.hcursor.downField("thinkingConfig").downField("budgetTokens").as[Int], Right(1234))
+    assertEquals(cfg.hcursor.downField("workSchedule").as[Json].isRight, true)
+    assertEquals(cfg.hcursor.downField("llm").downField("providers").downField("z2").as[Json].isRight, true)
+  }
+
 end ConfigServiceSpec

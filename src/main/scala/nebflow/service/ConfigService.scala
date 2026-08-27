@@ -9,6 +9,25 @@ import nebflow.core.PathUtil
 import nebflow.llm.Config
 
 object ConfigService:
+
+  /**
+   * nebflow.json 全部 read-modify-write 写者的进程级串行锁。
+   *
+   * 写者 = updateConfig（WS/REST 全量保存）+ gateway 各 targeted write
+   * （persistWorkSchedule/persistThinkingConfig/persistMcpServerEnabled/
+   * setToolResultTtl）。这些函数都是「读盘 → 内存合并 → 整文件覆写」形态：
+   * 无锁并发时读到旧底稿的一方会把他人刚写入的键冲回旧值——2026-08-27 冻结
+   * 修复批实证（宿主日志 08-25 15:06:25.698/.717 同秒 enabled=false→true
+   * 双写互踩两例；segments「反复丢失」即此族）。单例锁按 JVM 实例隔离，
+   * 测试同 JVM 并发 suite 共享一把锁仅表现为串行、不破坏语义。
+   */
+  private val configWriteLock = new java.util.concurrent.locks.ReentrantLock()
+
+  /** 在配置写锁内执行 ioa（attempt 包裹保证异常路径也释放）。 */
+  def writeLocked[A](ioa: IO[A]): IO[A] =
+    IO.blocking(configWriteLock.lock()).flatMap { _ =>
+      ioa.attempt.flatMap(r => IO.blocking(configWriteLock.unlock()) *> IO.fromEither(r))
+    }
   // def (not val): dual-read resolves per access; a val would freeze the
   // first-touched dataRoot (test isolation) and skip the legacy fallback.
   private def configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
@@ -71,51 +90,72 @@ object ConfigService:
     errors.toList
   end validateConfigJson
 
-  def updateConfig(incomingRaw: String): IO[Either[String, Unit]] =
-    IO.blocking {
-      val existing = if os.exists(configPath) then os.read(configPath) else "{}"
-      // Provider rename detection (B2): delete-old + add-new with identical
-      // content is a rename. Masked apiKeys on renamed providers are restored
-      // from the old entry (mergeConfig cannot preserve them — the new name has
-      // no existing twin). (#339：llm.model 链的 rename 改写已删——字段退役；
-      // preset 引用的改写在下方的 rewritePresetRefs。)
-      val renames = detectProviderRenames(existing, incomingRaw)
-      val incoming0 = restoreRenamedSecrets(incomingRaw, existing, renames)
-      (existing, incoming0, renames)
-    }.flatMap { (existing, incoming, renames) =>
-      // Validate before writing
-      val errors = validateConfig(incoming)
-      if errors.nonEmpty then IO.pure(Left(errors.mkString("; ")))
-      else
-        val deletedProviders = deletedProviderNames(incoming)
-        // Renamed providers KEEP their references — only pure deletes scrub.
-        val renameOlds = renames.map(_._1).toSet
-        val pureDeletes = deletedProviders.filterNot(renameOlds.contains)
-        // Save snapshot before every write for crash/recovery safety
-        ConfigSnapshot.save() *>
-          IO
-            .blocking {
-              val merged = mergeConfig(existing, incoming)
-              // (#339：llm.model 的 scrubGlobalChain/rewriteChainRefs 已删——字段
-              // 退役。provider 删除/改名对 preset 引用的清理由下方
-              // scrubPresetRefs/rewritePresetRefs 承担，agent.json 由
-              // rewriteAgentModelRefs 承担。)
-              // Write path: always the brand config name — the first
-              // read-modify-write after a rename completes the file
-              // migration (existing was read through the legacy fallback).
-              os.write.over(PathUtil.configJsonWritePath(PathUtil.dataRoot), merged, createFolders = true)
-            }
-            .attempt
-            .flatMap {
-              case Left(e) => IO.pure(Left(e.getMessage))
-              case Right(_) =>
-                // Reference cleanup across agent.json (all three layers) and
-                // model presets: pure deletes scrub, renames rewrite old→new.
-                scrubAgentModelRefs(pureDeletes) *>
-                  rewriteAgentModelRefs(renames) *>
-                  scrubPresetRefs(pureDeletes) *>
-                  rewritePresetRefs(renames).as(Right(()))
-            }
+  /**
+   * Update nebflow.json from an incoming full/partial config (deep merge,
+   * incoming-优先), under the config write lock.
+   *
+   * @param runtimeOverrides 运行时热更键的内存权威值（freezeScheduleRef /
+   *   thinkingConfigRef / toolResultTtlRef 等）。merge 完成后这些顶层键以
+   *   权威值覆写落盘——调用方的 incoming 快照（如前端 state.parsedConfig）
+   *   可能是页面加载时刻的陈旧底稿，若不覆写，任意 provider 类保存都会把
+   *   用户早已改过的 runtime 键回滚到快照值（冻结「关了又开/segments 反复
+   *   丢失」的根因，2026-08-27）。调用方省略某键 = 该键允许由 incoming 深
+   *   合并（无热更 ref 的普通配置键不受影响）。
+   */
+  def updateConfig(incomingRaw: String, runtimeOverrides: Map[String, Json] = Map.empty): IO[Either[String, Unit]] =
+    writeLocked {
+      IO.blocking {
+        val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+        // Provider rename detection (B2): delete-old + add-new with identical
+        // content is a rename. Masked apiKeys on renamed providers are restored
+        // from the old entry (mergeConfig cannot preserve them — the new name has
+        // no existing twin). (#339：llm.model 链的 rename 改写已删——字段退役；
+        // preset 引用的改写在下方的 rewritePresetRefs。)
+        val renames = detectProviderRenames(existing, incomingRaw)
+        val incoming0 = restoreRenamedSecrets(incomingRaw, existing, renames)
+        (existing, incoming0, renames)
+      }.flatMap { (existing, incoming, renames) =>
+        // Validate before writing
+        val errors = validateConfig(incoming)
+        if errors.nonEmpty then IO.pure(Left(errors.mkString("; ")))
+        else
+          val deletedProviders = deletedProviderNames(incoming)
+          // Renamed providers KEEP their references — only pure deletes scrub.
+          val renameOlds = renames.map(_._1).toSet
+          val pureDeletes = deletedProviders.filterNot(renameOlds.contains)
+          // Save snapshot before every write for crash/recovery safety
+          ConfigSnapshot.save() *>
+            IO
+              .blocking {
+                val merged0 = mergeConfig(existing, incoming)
+                val merged =
+                  if runtimeOverrides.isEmpty then merged0
+                  else
+                    parse(merged0).toOption match
+                      case Some(j) =>
+                        // Runtime-authoritative keys win over the incoming snapshot.
+                        val overridden = runtimeOverrides.foldLeft(j) { (acc, kv) =>
+                          acc.mapObject(_.add(kv._1, kv._2))
+                        }
+                        overridden.spaces2
+                      case None => merged0
+                // Write path: always the brand config name — the first
+                // read-modify-write after a rename completes the file
+                // migration (existing was read through the legacy fallback).
+                os.write.over(PathUtil.configJsonWritePath(PathUtil.dataRoot), merged, createFolders = true)
+              }
+              .attempt
+              .flatMap {
+                case Left(e) => IO.pure(Left(e.getMessage))
+                case Right(_) =>
+                  // Reference cleanup across agent.json (all three layers) and
+                  // model presets: pure deletes scrub, renames rewrite old→new.
+                  scrubAgentModelRefs(pureDeletes) *>
+                    rewriteAgentModelRefs(renames) *>
+                    scrubPresetRefs(pureDeletes) *>
+                    rewritePresetRefs(renames).as(Right(()))
+              }
+      }
     }
   end updateConfig
 

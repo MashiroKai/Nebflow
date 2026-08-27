@@ -838,7 +838,10 @@ class WebSocketRoutes(
 
   end broadcastServerConfig
 
-  /** Persist thinking config to nebflow.json — targeted field update. */
+  /** Persist thinking config to nebflow.json — targeted field update.
+    * 冻结修复（2026-08-27）：不再吞写盘错误——失败必须上浮给调用方回执
+    * configUpdateFailed，否则用户看到「已保存」而重启后配置回滚（off 假成功）。
+    * 调用方负责 writeLocked 串行化。 */
   private def persistThinkingConfig(tc: ThinkingConfig): IO[Unit] =
     IO.blocking {
       // Read through the dual-read path (legacy fallback), write the brand
@@ -851,13 +854,12 @@ class WebSocketRoutes(
         }
         os.write.over(path, updated.spaces2, createFolders = true)
       }
-    }.handleErrorWith { e =>
-      logger.warn(s"Failed to persist thinking config: ${e.getMessage}")
     }
 
   /** Persist freeze schedule to nebflow.json — targeted top-level write (照抄
     * persistThinkingConfig 的 read-merge-write 语义，merge 纯函数在
-    * FreezeSchedule.mergeIntoConfig 便于 B9 测试）。JSON 键名保留 "workSchedule"（前端契约）。 */
+    * FreezeSchedule.mergeIntoConfig 便于 B9 测试）。JSON 键名保留 "workSchedule"（前端契约）。
+    * 冻结修复（2026-08-27）：错误上浮不吞——调用方持锁调用并负责失败回执。 */
   private def persistWorkSchedule(cfg: nebflow.core.schedule.FreezeScheduleConfig): IO[Unit] =
     IO.blocking {
       val existing = if os.exists(nebflow.llm.Config.DefaultConfigPath) then os.read(nebflow.llm.Config.DefaultConfigPath) else "{}"
@@ -866,11 +868,10 @@ class WebSocketRoutes(
         val updated = nebflow.core.schedule.FreezeSchedule.mergeIntoConfig(json, cfg)
         os.write.over(path, updated.spaces2, createFolders = true)
       }
-    }.handleErrorWith { e =>
-      logger.warn(s"Failed to persist work schedule: ${e.getMessage}")
     }
 
-  /** Persist MCP server enabled state to nebflow.json — targeted field update. */
+  /** Persist MCP server enabled state to nebflow.json — targeted field update.
+    * 冻结修复（2026-08-27）：错误上浮不吞（同族 fail-loud）。调用方持锁。 */
   private def persistMcpServerEnabled(serverId: String, enabled: Boolean): IO[Unit] =
     IO.blocking {
       // Read through the dual-read path (legacy fallback), write the brand
@@ -887,8 +888,6 @@ class WebSocketRoutes(
         }
         os.write.over(path, updated.spaces2, createFolders = true)
       }
-    }.handleErrorWith { e =>
-      logger.warn(s"Failed to persist MCP server enabled state: ${e.getMessage}")
     }
 
   /** Broadcast current MCP server list to all connected clients. */
@@ -1272,9 +1271,14 @@ class WebSocketRoutes(
               case Some(v) => v.hcursor.downField("budgetTokens").as[Int].getOrElse(32000)
             val tc = ThinkingConfig(enabled, budgetTokens)
             logger.info(s"Thinking mode set to: enabled=$enabled budgetTokens=$budgetTokens") *>
-              sharedResources.thinkingConfigRef.set(tc) *>
-              persistThinkingConfig(tc) *>
-              broadcastServerConfig
+              // 冻结修复（2026-08-27）：同族排序——persist 成功才热更，失败回执。
+              nebflow.service.ConfigService.writeLocked(persistThinkingConfig(tc)).attempt.flatMap {
+                case Left(e) =>
+                  logger.warn(s"Failed to persist thinking config: ${e.getMessage}") *>
+                    wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> s"思考模式保存失败: ${e.getMessage}".asJson))
+                case Right(_) =>
+                  sharedResources.thinkingConfigRef.set(tc) *> broadcastServerConfig
+              }
 
           case "setWorkSchedule" =>
             // 冻结调度（freeze-schedule spec ⑦ + 2026-08-25 裁定「设置关闭保留
@@ -1295,11 +1299,21 @@ class WebSocketRoutes(
               merged <- IO.pure(nebflow.core.schedule.FreezeSchedule.mergeValidate(current, payload))
               _ <- merged match
                 case Right(cfg) =>
+                  // 冻结修复（2026-08-27）排序：写盘成功才热更 ref——persist 失败时
+                  // 内存与盘保持一致并回执 failed（此前 persist 静默吞错 + ref 先行，
+                  // 会造成「UI 已关、重启后又冻」的假保存）。写盘段持 config 写锁。
                   logger.info(s"Freeze schedule set: enabled=${cfg.enabled} segments=${cfg.segments.size}") *>
-                    sharedResources.freezeScheduleRef.set(cfg) *>
-                    persistWorkSchedule(cfg) *>
-                    broadcastServerConfig *>
-                    nebflow.core.processor.FreezeScheduler.scan(sharedResources)
+                    nebflow.service.ConfigService.writeLocked(persistWorkSchedule(cfg)).attempt.flatMap {
+                      case Left(e) =>
+                        logger.warn(s"Failed to persist work schedule: ${e.getMessage}") *>
+                          wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> s"冻结配置保存失败: ${e.getMessage}".asJson))
+                      case Right(_) =>
+                        sharedResources.freezeScheduleRef.set(cfg) *>
+                          broadcastServerConfig *>
+                          // 立即让所有 Frozen agent 重评估（不用等 30s 轮询——改配置
+                          // 关功能即恢复）。
+                          nebflow.core.processor.FreezeScheduler.scan(sharedResources)
+                    }
                 case Left(err) =>
                   logger.warn(s"Invalid workSchedule payload rejected: $err") *>
                     wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
@@ -1384,18 +1398,24 @@ class WebSocketRoutes(
                     // the IO-returning variant would be built, not run.
                     AtomicJson.writeSync(path, updated.noSpaces)
                   }
-                }.handleErrorWith { e =>
-                  logger.warn(s"Failed to persist toolResultTtl: ${e.getMessage}")
                 }
-                persist *> sharedResources.toolResultTtlRef.set(cfg) *>
-                  logger.info(
-                    s"Tool result TTL set: enabled=${cfg.enabled} ttlMinutes=${cfg.ttlMinutes} " +
-                      s"keepRecent=${cfg.keepRecent} minChars=${cfg.minChars}"
-                  ) *>
-                  wsSend(io.circe.Json.obj(
-                    "type" -> "toolResultTtlSaved".asJson,
-                    "config" -> cfg.asJson
-                  ))
+                // 冻结修复（2026-08-27）：同族排序——persist 成功才热更 ref，
+                // 失败回执 failed（写盘段持 config 写锁）。
+                nebflow.service.ConfigService.writeLocked(persist).attempt.flatMap {
+                  case Left(e) =>
+                    logger.warn(s"Failed to persist toolResultTtl: ${e.getMessage}") *>
+                      wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> s"TTL 配置保存失败: ${e.getMessage}".asJson))
+                  case Right(_) =>
+                    sharedResources.toolResultTtlRef.set(cfg) *>
+                      logger.info(
+                        s"Tool result TTL set: enabled=${cfg.enabled} ttlMinutes=${cfg.ttlMinutes} " +
+                          s"keepRecent=${cfg.keepRecent} minChars=${cfg.minChars}"
+                      ) *>
+                      wsSend(io.circe.Json.obj(
+                        "type" -> "toolResultTtlSaved".asJson,
+                        "config" -> cfg.asJson
+                      ))
+                }
 
           case "setVoiceMuted" =>
             val muted = parse(text).toOption
@@ -3322,7 +3342,19 @@ class WebSocketRoutes(
           case "updateConfig" =>
             val cfg = parse(text).flatMap(_.hcursor.downField("config").as[String]).getOrElse("")
             if cfg.nonEmpty then
-              configService.updateConfig(cfg).flatMap {
+              // 冻结修复（2026-08-27）：runtime 热更键以内存 ref 为权威——调用方的
+              // config 快照可能陈旧（页面加载时刻底稿），不覆写则任意 provider 类
+              // 保存会把 workSchedule/thinkingConfig/toolResultTtl 回滚到快照值。
+              (sharedResources.freezeScheduleRef.get,
+               sharedResources.thinkingConfigRef.get,
+               sharedResources.toolResultTtlRef.get).mapN { (wsCfg, thCfg, ttlCfg) =>
+                Map[String, io.circe.Json](
+                  "workSchedule" -> wsCfg.asJson,
+                  "thinkingConfig" -> thCfg.asJson,
+                  "toolResultTtl" -> ttlCfg.asJson
+                )
+              }.flatMap { runtimeOverrides =>
+              configService.updateConfig(cfg, runtimeOverrides).flatMap {
                 case Left(err) =>
                   wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
                 case Right(_) =>
@@ -3351,6 +3383,7 @@ class WebSocketRoutes(
                         logger.warn(s"Config hot-reload failed: ${e.getMessage}")
                     } *> wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
               }
+              }
             else IO.unit
 
           case "toggleMcpServer" =>
@@ -3363,8 +3396,15 @@ class WebSocketRoutes(
                   case Some(mcpCfg) =>
                     val action =
                       if enabled then mcpManager.enableServer(serverId, mcpCfg) else mcpManager.disableServer(serverId)
-                    action *> persistMcpServerEnabled(serverId, enabled) *>
-                      broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
+                    // 冻结修复（2026-08-27）：persist 持锁 + 失败回执（不再静默）。
+                    action *>
+                      nebflow.service.ConfigService.writeLocked(persistMcpServerEnabled(serverId, enabled)).attempt.flatMap {
+                        case Left(e) =>
+                          logger.warn(s"Failed to persist MCP server state: ${e.getMessage}") *>
+                            wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> s"MCP 状态保存失败: ${e.getMessage}".asJson)) *>
+                            broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
+                        case Right(_) => broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
+                      }
                   case None =>
                     logger.warn(s"toggleMcpServer: server '$serverId' not found in config") *> IO.unit
               }
