@@ -815,6 +815,13 @@ case class SessionContext(
    */
   isFlowNode: Boolean = false,
   /**
+   * 轨道二 #5：本节点的 userFacing 白名单声明（FlowNode.userFacing 原样透传）。
+   * spawn 时从 DAG 定义读入，与 dedicatedAgents 开关解耦——开关在消费点
+   * （buildAllowedToolSet 剥离 / PromptSections 条款变体）每 turn 热读，改动
+   * nebflow.json 后下个 turn 生效，无需重启或 respawn。
+   */
+  userFacingNode: Boolean = false,
+  /**
    * #30: true when this agent is a Mail ask fork (forkToSession). Ask forks
    * only answer a question — side-effect tools (Mail/Write/Edit/Bash/…) are
    * stripped from the allowed set so the fork can never dispatch work or
@@ -1083,7 +1090,8 @@ object AgentState:
     isSubTaskWorker: Boolean = false,
     forkContext: Boolean = false,
     freezeExempt: Boolean = false,
-    isFlowNode: Boolean = false
+    isFlowNode: Boolean = false,
+    userFacingNode: Boolean = false
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -1108,7 +1116,8 @@ object AgentState:
         isSubTaskWorker = isSubTaskWorker,
         forkContext = forkContext,
         freezeExempt = freezeExempt,
-        isFlowNode = isFlowNode
+        isFlowNode = isFlowNode,
+        userFacingNode = userFacingNode
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
@@ -1157,6 +1166,7 @@ extension (s: AgentState)
   def expectsMail: Boolean = s.session.expectsMail
   def isSubTaskWorker: Boolean = s.session.isSubTaskWorker
   def isFlowNode: Boolean = s.session.isFlowNode
+  def userFacingNode: Boolean = s.session.userFacingNode
   def forkContext: Boolean = s.session.forkContext
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)

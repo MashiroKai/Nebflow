@@ -71,7 +71,17 @@ object PromptSections:
     /** Inherited project rules text (from folder chain). */
     rulesMd: Option[String] = None,
     /** True when this agent is a SubTask worker (leaf execution pipeline). */
-    isSubTaskWorker: Boolean = false
+    isSubTaskWorker: Boolean = false,
+    /** 轨道二 #5: dedicatedAgents guardrails flag (hot-read per turn). */
+    guardrailsOn: Boolean = false,
+    /** 轨道二 #5: true when this agent is a flow DAG node (#406). */
+    isFlowNode: Boolean = false,
+    /** 轨道二 #5: this flow node's userFacing whitelist declaration. */
+    userFacingNode: Boolean = false,
+    /** #30: Mail ask fork context (forks are excluded from identity clauses). */
+    forkContext: Boolean = false,
+    /** Whether this session's agent is the team lead (Manager). */
+    isTeamLead: Boolean = false
   )
 
   object PromptContext:
@@ -163,6 +173,51 @@ object PromptSections:
       |- Testing: ask "Test type?" (id: test) and if Unit → "Mock library?", if Integration → "Test database?"
       |
       |Independent questions don't need dependsOn — just include them all in one call.""".stripMargin
+
+  // 轨道二 #5 identity clauses（设计基线 20260827_dedicated-agents-taxonomy-design.md §B2/§B3）。
+  // 注入条件由 order-395 动态 section 控制；文本固定一段，避免每份定义手写漂移。
+
+  /** T1 flow worker 条款。userFacing=false：受众=编排器与下游节点（严格版）。 */
+  def flowWorkerIdentityBlock(userFacing: Boolean): String =
+    if userFacing then
+      """## 身份与受众（不可协商）
+        |
+        |- 你是流水线节点（用户终审环节）。你的产出两头都要喂：编排器与下游
+        |  节点通过 $x.output 与 slots 字段机器消费；终端用户只阅读你标为交付的部分。
+        |- 中间产物一律 Write 落盘并在 FlowReport 给出绝对路径；「写文件给下游」
+        |  永远优于「渲染给人看」。
+        |- 需求歧义时不要等待提问：在 outputs 中标注 assumption 字段并继续，
+        |  由编排器路由裁决。
+        |- 最终轮输出 ≤ 800 tokens：结论与交付说明为主，不堆背景叙述。
+        |""".stripMargin
+    else
+      """## 身份与受众（不可协商）
+        |
+        |- 你是流水线节点。你的受众是编排器与下游节点——它们通过 $x.output 与
+        |  slots 字段机器消费你的产出；终端用户不直接阅读你的任何文本。
+        |- 禁止面向用户的展示类动作：不调用 Pop，不制作「给人看」的可视化包装页、
+        |  汇总美化稿。证据用截图落盘文件 + 路径引用代替。
+        |- 中间产物一律 Write 落盘并在 FlowReport 给出绝对路径；「写文件给下游」
+        |  永远优于「渲染给人看」。
+        |- 需求歧义时不要等待提问：你没有对话对象——在 outputs 中标注 assumption
+        |  字段并继续，由编排器路由裁决。
+        |- 最终轮输出 ≤ 500 tokens：只写结论、状态与下游模板需要的字段，
+        |  不写背景叙述、不写给用户看的总结语。
+        |""".stripMargin
+
+  /** T2 team member 条款变体：通道 Mail、[RESULT] 收口、[ASSUMPTION] 行。 */
+  val teamMemberIdentityBlock: String =
+    """## 身份与受众（不可协商）
+      |
+      |- 你是团队成员。你的受众是 Team Lead——它汇总你的 [RESULT] 后才会传递
+      |  给终端用户；终端用户不直接阅读你的任何文本。你不与用户对话，
+      |  用户通过 Lead 与你交互。
+      |- 默认禁用面向用户的展示类动作：证据用截图落盘文件 + 路径引用代替；
+      |  仅当成员定义里显式声明并注明触发条件时才允许 Pop 类工具。
+      |- 交付以文件为准：中间产物一律 Write 落盘，Mail 报告给出绝对路径。
+      |- 需求歧义时在 Mail 里写显式 [ASSUMPTION] 行并继续，由 Lead 裁决或升级。
+      |- Mail 回 Lead 的 [RESULT] ≤ 300 tokens：只写状态、关键产物路径与下一步建议。
+      |""".stripMargin
 
   /** Injected when the Read tool is available. Explains live-update behavior and how to compare historical snapshots. */
   val readLiveSection: String =
@@ -257,6 +312,21 @@ object PromptSections:
   // ============================================================
 
   private val dynamicSections: List[PromptSection] = List(
+    // --- 轨道二 #5 identity clauses (before tool guides — who reads your
+    // output comes first). Only when dedicatedAgents guardrails are enabled:
+    // T1 flow nodes get the strict machine-consumer clause (or its
+    // userFacing dual-audience variant); T2 team members (non-lead,
+    // non-fork) get the Mail-report variant. SubTask workers keep their own
+    // Worker Identity Block (order 999).
+    PromptSection.dynamic(
+      395,
+      condition = ctx => ctx.guardrailsOn && !ctx.isSubTaskWorker,
+      renderer = ctx =>
+        if ctx.isFlowNode then flowWorkerIdentityBlock(ctx.userFacingNode)
+        else if !ctx.forkContext && !ctx.isTeamLead && ctx.agentCategory == "team" then teamMemberIdentityBlock
+        else ""
+    ),
+
     // --- Tool-dependent sections ---
     PromptSection(
       400,

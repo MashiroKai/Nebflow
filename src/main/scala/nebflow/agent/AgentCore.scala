@@ -475,7 +475,10 @@ private[agent] trait AgentCore:
           // gets the owner toolset; derived from the registry at turn time so
           // mount/unmount/hot-reload always reflects reality.
           isTeamLead <- isTeamLeadStatus(freshDef, stateForLlm.sessionId)
-          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, isFlowNode = stateForLlm.isFlowNode, isTeamLead = isTeamLead)
+          // 轨道二 #5: hot-read the dedicatedAgents flag once per turn — flows
+          // into tool stripping (T1 leaf display tools) + identity clause.
+          guardrailsOn <- nebflow.core.Guardrails.enabled
+          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, isFlowNode = stateForLlm.isFlowNode, isTeamLead = isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn)
           // #16 observability: one log line per LLM call when MCP tools are
           // injected — names the servers explicitly so phantom-tool suspicion
           // can be settled by grepping the log instead of reconstructing
@@ -544,7 +547,12 @@ private[agent] trait AgentCore:
             teamCatalog = turnCtx.teamCatalog,
             memoryBlock = turnCtx.memoryBlock,
             rulesMd = turnCtx.rulesMd,
-            isSubTaskWorker = stateForLlm.isSubTaskWorker
+            isSubTaskWorker = stateForLlm.isSubTaskWorker,
+            guardrailsOn = guardrailsOn,
+            isFlowNode = stateForLlm.isFlowNode,
+            userFacingNode = stateForLlm.userFacingNode,
+            forkContext = stateForLlm.forkContext,
+            isTeamLead = isTeamLead
           )
           // systemStable: rebuilt only at lifecycle nodes; otherwise reuse the
           // cached string byte-for-byte (provider prefix cache stays hit).
@@ -626,7 +634,7 @@ private[agent] trait AgentCore:
           freshTools =
             if isCompactTurn then Some(Nil)
             else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, stateForLlm.isFlowNode, isTeamLead)
-            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, stateForLlm.isFlowNode, isTeamLead)
+            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.forkContext, stateForLlm.isFlowNode, isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn)
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
           // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
@@ -839,7 +847,8 @@ private[agent] trait AgentCore:
       currentDefOpt <- ContextRefresher.loadCurrentDef(teamNameOpt, resources, agentDef)
       effectiveDef = currentDefOpt.getOrElse(agentDef)
       isTeamLead <- isTeamLeadStatus(effectiveDef, state.sessionId)
-      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker, state.forkContext, state.isFlowNode, isTeamLead)
+      guardrailsOn <- nebflow.core.Guardrails.enabled
+      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker, state.forkContext, state.isFlowNode, isTeamLead, userFacingNode = state.userFacingNode, guardrailsOn = guardrailsOn)
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
         // agent-tool whitelist — it is provider-injected (not an agent tool)
@@ -1312,7 +1321,9 @@ private[agent] trait AgentCore:
     isSubTaskWorker: Boolean = false,
     forkContext: Boolean = false,
     isFlowNode: Boolean = false,
-    isTeamLead: Boolean = false
+    isTeamLead: Boolean = false,
+    userFacingNode: Boolean = false,
+    guardrailsOn: Boolean = false
   ): Set[String] =
     val base = agentDef.tools match
       case Nil => Set.empty[String]
@@ -1383,7 +1394,13 @@ private[agent] trait AgentCore:
       if isSubTaskWorker then
         mcpFiltered -- (Set("Mail", "SubTask", "Delegate", "FlowTrigger", "FlowExecute") ++ AgentCore.TeamTaskTools)
       else if isFlowNode then
-        mcpFiltered -- (Set("FlowExecute", "FlowTrigger", "SubTask", "Delegate") ++ AgentCore.TeamTaskTools)
+        val leafStripped = mcpFiltered -- (Set("FlowExecute", "FlowTrigger", "SubTask", "Delegate") ++ AgentCore.TeamTaskTools)
+        // 轨道二 #5（专用化护栏，设计 §C1）：T1 flow worker 默认剥离面向用户
+        // 的展示类工具——引擎级剥离而非提示词恳求（deck-v6 实证：提示词约束在
+        // 错位人设下会被推翻）。即使 agent.json 显式声明也扣掉；userFacing:true
+        // 节点（白名单）豁免。策略=「写文件给下游」≠「Pop 给用户」。
+        if guardrailsOn && !userFacingNode then leafStripped -- nebflow.core.Guardrails.FlowWorkerStrippedTools
+        else leafStripped
       // Flow agents have no Mail — flow nodes report via FlowReport, not Mail.
       // Structurally defends against the 08-14 P0 root cause: a flow agent
       // whose agent.json lists Mail (or uses "*") could block forever on a
@@ -1405,9 +1422,11 @@ private[agent] trait AgentCore:
     isSubTaskWorker: Boolean = false,
     forkContext: Boolean = false,
     isFlowNode: Boolean = false,
-    isTeamLead: Boolean = false
+    isTeamLead: Boolean = false,
+    userFacingNode: Boolean = false,
+    guardrailsOn: Boolean = false
   ): Option[List[ToolDefinition]] =
-    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, forkContext, isFlowNode, isTeamLead)
+    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, forkContext, isFlowNode, isTeamLead, userFacingNode, guardrailsOn)
     Some(ToolRegistry.ALL_TOOLS.flatMap { td =>
       if !allowedSet.contains(td.name) then None
       // R8-P1: flow node agents get their per-node contract (verdict enum +
