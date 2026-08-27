@@ -4,17 +4,19 @@ import nebflow.agent.{AgentKind, AgentRecord, AgentStatus}
 import nebflow.core.flow.RunningFlowRegistry.RunningFlow
 
 /**
- * #407 (2026-08-25 用户裁定 19:53+19:57)：queue 模式 Mail 的投递时机 gate。
+ * #407 (2026-08-25 用户裁定 19:53) + 2026-08-28 01:00 统一裁定：queue 模式
+ * Mail 的投递时机 gate。
  *
  * 用户裁定：
- *  - queue Mail 投递时机 = 目标 agent 连同其子树（子 agent/flow）全空闲才投递；
- *  - 按发送者区分（「不要有强制」）：Nebula（root）→ Manager 等**整个 team** 停；
- *    team 内 queue 等**目标 agent 单独**（自身+子树）停；
- *  - Q3 纳入：RunningFlow.sessionId 关联（flow 在飞检测完整）；
+ *  - queue Mail 投递时机 = **目标 agent 自身**连同其子树（子 agent/flow）全空闲
+ *    才投递——**无论发送者是谁**（08-28 统一裁定废除 08-25 的按发送者区分：
+ *    「Nebula→Manager 等全 team 停」不再成立，Manager 忙不因兄弟成员在飞而被
+ *    阻塞；全 team 停的旧语义让无关成员的忙碌无限期扣住投递）；
+ *  - Q3 保留：RunningFlow.sessionId 关联（flow 在飞检测完整）；
  *  - 不做 MailQueueDrainer / force 兜底（子 agent 卡死归 TaskStuckWatcher 既有机制）。
  *
- * 纯函数（可单测）。AgentActor 负责组装运行时数据（registry 快照 / running flows /
- * team 会话集合）后调用。
+ * 纯函数（可单测）。AgentActor 负责组装运行时数据（registry 快照 / running flows）
+ * 后调用。
  */
 object MailIdleGate:
 
@@ -52,18 +54,9 @@ object MailIdleGate:
       !registry.values.exists(c =>
         c.parentRef.exists(_ == rec.ref) && taskKinds.contains(c.kind)
       ) &&
-      // 无关联 running flow（改动 8：RunningFlow.sessionId 关联触发者，补节点间隙窗口）
+      // 无关联 running flow（Q3：RunningFlow.sessionId 关联触发者，补节点间隙窗口）
       !runningFlows.exists(f => f.status == NodeStatus.Running && f.sessionId.contains(sid))
     }
-
-  /**
-   * 规则①：整个 team（Manager + 成员）及其子树完全空闲（Nebula→Manager 语义）。
-   * teamSessionIds 由调用方从 TeamSessionRegistry.sessionIdsOf 获取。
-   *
-   * checkSelfStatus：目标自身（targetSid）的 turn 状态是否计入——turn-end drain
-   * 上下文传 false（自身 turn 已结束，status 残留 Processing 不算忙），其他成员
-   * 始终查 status（他们可能正在 turn）。
-   */
   def isTeamTreeIdle(
     targetSid: String,
     teamSessionIds: List[String],
