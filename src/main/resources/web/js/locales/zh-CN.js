@@ -63,6 +63,7 @@ export default {
   'input.voiceError': '语音输入不可用，请使用 Chrome 浏览器',
   'input.queued': '排队中',
   'input.sendImmediate': '立即发送',
+  'input.pasteTooLarge': '粘贴内容过大（>2MB），已改为直接插入文本',
   'input.removeQueued': '移除',
   'modal.newSession': '新建会话',
   'modal.sessionName': '会话名称',

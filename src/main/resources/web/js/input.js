@@ -20,6 +20,12 @@ import { showToast } from './modal.js';
 
 // ---------- Large text auto-attachment (paste detection) ----------
 const LARGE_TEXT_THRESHOLD = 1000;
+// Safety cap: a paste larger than this falls back to inserting the text inline
+// (plain user-message content) instead of converting to an attachment. Above
+// ~2MB the base64 payload (×1.35) + JSON.stringify of a single multi-MB string
+// risks blowing the WS send path; the backend has no size guard either, so the
+// cap lives on the producer side where the user can still edit/retry.
+const LARGE_TEXT_MAX_CHARS = 2 * 1024 * 1024;
 
 /** Show a transient banner at the top of the viewport. */
 function showAttachmentBanner(message) {
@@ -765,12 +771,18 @@ function persistQueue() {
         mode: it.mode || null,
         // v2 B15: taskRef chips must survive refresh — keep taskId/sessionId
         // (+ subject as the display name); #303: ref blocks keep their full
-        // Reference shape; file/image keep type+name only.
+        // Reference shape; file/image keep type+name only — EXCEPT pasted-text
+        // attachments, whose base64 data IS the only copy of the content (the
+        // file never existed on disk). Keep small text payloads (<=400KB
+        // base64) so drain-after-refresh still delivers the content; images
+        // stay stripped (too large for localStorage).
         attachments: (it.attachments || []).map(a => a.type === 'taskRef'
           ? { type: 'taskRef', taskId: a.taskId, sessionId: a.sessionId, subject: a.subject, name: a.subject }
           : a.type === 'ref'
             ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
-            : { type: a.type, name: a.name })
+            : a.type === 'text' && typeof a.data === 'string' && a.data.length > 0 && a.data.length <= 400000
+              ? { type: a.type, mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0 }
+              : { type: a.type, name: a.name })
       }));
     }
     localStorage.setItem(LS_QUEUE_KEY, JSON.stringify(serializable));
@@ -830,11 +842,17 @@ function sendImmediate(sessionId, item) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
   const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
   const refs = (item.attachments || []).filter(a => a.type === 'ref');
+  // File/image attachments (base64 data payload) ride the same default
+  // user-message frame. Without this branch, an attachment-only queued item
+  // fell into the immediateInput branch, whose backend handler reads only
+  // `content` — with content === '' the frame hit handleUserText's empty
+  // guard and the agent never saw it (silent non-response).
+  const fileAtts = (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref');
   if (item.mode === 'compact') {
     sendWs({ type: 'command', command: 'compact', sessionId, instruction: item.text || undefined });
   } else if (item.skillName) {
     sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
-  } else if (taskRefs.length > 0 || refs.length > 0) {
+  } else if (taskRefs.length > 0 || refs.length > 0 || fileAtts.length > 0) {
     // v2 + #303: a return/reference message must ride the default user-message
     // branch — the backend parses taskRefs/refs only there (WebSocketRoutes
     // §6.2); immediateInput goes through handleUserText and would drop them.
@@ -1173,6 +1191,12 @@ export function initInput(view) {
       // Large text paste → auto-convert to file attachment via existing mechanism
       const pastedText = e.clipboardData.getData('text/plain') || '';
       if (pastedText.length > LARGE_TEXT_THRESHOLD) {
+        if (pastedText.length > LARGE_TEXT_MAX_CHARS) {
+          // Above the cap: keep inline (browser default paste) + toast, never
+          // silently drop the text.
+          showToast(t('input.pasteTooLarge'));
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         const blob = new Blob([pastedText], { type: 'text/plain' });
