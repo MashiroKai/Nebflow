@@ -309,7 +309,11 @@ case class FlowNode(
   // R8-P1: structured output contract — slot name → "string" | "array".
   // Flow agents report values via FlowReport's `slots` parameter; downstream
   // nodes reference them with $<nodeId>.slots.<field>.
-  outputs: Map[String, String] = Map.empty
+  outputs: Map[String, String] = Map.empty,
+  // 轨道二 #5（专用化护栏）：节点级白名单——显式要回面向用户的展示类工具
+  // （Pop/AskUserQuestion）并让身份条款切换为「受众=用户+下游」变体。默认
+  // false；只应在「哪个环节天然面向用户」的终审型节点上开启。
+  userFacing: Boolean = false
 )
 
 object FlowNode:
@@ -322,6 +326,7 @@ object FlowNode:
       onError <- c.downField("onError").as[Option[OnError]]
       maxRetries <- c.downField("maxRetries").as[Option[Int]]
       outputs <- c.downField("outputs").as[Option[Map[String, String]]]
+      userFacing <- c.downField("userFacing").as[Option[Boolean]]
       _ <-
         // Reject unknown slot types at parse time — a typo'd "strng" would
         // otherwise silently pass every runtime check.
@@ -332,7 +337,7 @@ object FlowNode:
               case bad =>
                 Left(DecodingFailure(s"outputs slot types must be \"string\" or \"array\", got: ${bad.mkString(", ")}", c.history))
           case None => Right(())
-    yield FlowNode(agent, input, onComplete, onError, maxRetries.getOrElse(0), outputs.getOrElse(Map.empty))
+    yield FlowNode(agent, input, onComplete, onError, maxRetries.getOrElse(0), outputs.getOrElse(Map.empty), userFacing.getOrElse(false))
   }
 
   given Encoder[FlowNode] = Encoder.instance { n =>
@@ -342,7 +347,9 @@ object FlowNode:
       "onComplete" -> n.onComplete.asJson,
       "onError" -> n.onError.asJson,
       "maxRetries" -> n.maxRetries.asJson,
-      "outputs" -> (if n.outputs.isEmpty then Json.Null else n.outputs.asJson)
+      "outputs" -> (if n.outputs.isEmpty then Json.Null else n.outputs.asJson),
+      // Default is false — omit so legacy round-trips stay byte-compatible.
+      "userFacing" -> (if n.userFacing then Json.True else Json.Null)
     )
   }
 

@@ -393,7 +393,9 @@ object AgentActor extends AgentCore with AgentSession:
     /** D11 交互豁免：freezeExempt 会话不参与冻结（PlanAgent.spawn 传 true）。 */
     freezeExempt: Boolean = false,
     /** #406: one-shot FlowExecute node — leaf tools stripped (see SessionContext.isFlowNode). */
-    isFlowNode: Boolean = false
+    isFlowNode: Boolean = false,
+    /** 轨道二 #5: 节点 userFacing 白名单声明（详见 SessionContext.userFacingNode）。 */
+    userFacingNode: Boolean = false
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -436,7 +438,8 @@ object AgentActor extends AgentCore with AgentSession:
             isSubTaskWorker = isSubTaskWorker,
             forkContext = forkContext,
             freezeExempt = freezeExempt,
-            isFlowNode = isFlowNode
+            isFlowNode = isFlowNode,
+            userFacingNode = userFacingNode
           )
         )(using ctx)
       )
