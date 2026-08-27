@@ -214,6 +214,11 @@ object AgentActor extends AgentCore with AgentSession:
   /** 同 reason 连续 ErrorFrozen ≥ 本值 → 进入升级链（请求父干预，不再直接 fatal）。 */
   private val ErrorFreezeEscalationThreshold = 3
 
+  /** Block 3 循环检测器 L2（supervision trio §D3）：Loop 冻结的 resumeAt 偏移
+    * ——语义「永不自动续跑」（1 年），恢复只走人工三路：用户输入唤醒 /
+    * Manager·Nebula AgentControl restart / cancel 终态。 */
+  private val LoopFreezeResumeMs = 365L * 24 * 3600 * 1000
+
   /** Network 类错误的 ErrorFrozen 退避窗口：10-30s（含 jitter），短退避后自动重试 1-2 次。 */
   private val NetworkErrorFreezeBackoffMs = 10_000L
 
@@ -227,6 +232,7 @@ object AgentActor extends AgentCore with AgentSession:
     case FreezeReason.Network         => "network"
     case FreezeReason.ProviderDown    => "provider-down"
     case FreezeReason.RestartRecovery => "restart-recovery"
+    case FreezeReason.Loop            => "loop"
 
   /** Overload-class reasons: provider saturated, backoff can heal it. */
   private def isOverloadClass(r: FailoverReason): Boolean = AgentActor.isOverloadReason(r)
@@ -616,7 +622,9 @@ object AgentActor extends AgentCore with AgentSession:
               resources,
               depth,
               parentRef,
-              stateWithFlush.withMessages(newMessages).withEmptyResponseRetries(0).withMailUsedThisTurn(false),
+              stateWithFlush.withMessages(newMessages).withEmptyResponseRetries(0).withMailUsedThisTurn(false)
+                // Block 3：新用户/系统 turn 起点——loop 纪元 +1
+                .withNextLoopTurn,
               replyTo,
               // D2：真实用户 WS 输入恒带 clientMessageId → UserWake（冻结时段也
               // 放行，用户输入即唤醒）；系统注入（Mail/continue 等 None）→ Gated。
@@ -632,6 +640,7 @@ object AgentActor extends AgentCore with AgentSession:
           .withMessages(state.messages :+ askReminder)
           .withAskMode(Some(question))
           .withStatus(AgentStatus.Processing)
+          .withNextLoopTurn
         pipeLlmCall(agentDef, resources, depth, parentRef, askState, None, DispatchCause.UserWake)
 
       case AgentCommand.SkillActivate(skillName, input, skillSessionId, skillContent, skillBaseDir) =>
@@ -649,6 +658,7 @@ object AgentActor extends AgentCore with AgentSession:
             state.messages :+ Message(MessageRole.User, Left(combinedText), source = Some("skill"))
           )
           .withStatus(AgentStatus.Processing)
+          .withNextLoopTurn
         val sessionBusyIO2 =
           if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit
@@ -819,7 +829,8 @@ object AgentActor extends AgentCore with AgentSession:
                 .withMessages(
                   state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource.orElse(Some("external")))
                 )
-                .withOutstandingSubagentResults(newOutstanding),
+                .withOutstandingSubagentResults(newOutstanding)
+                .withNextLoopTurn, // Block 3：外部事件唤醒 = 新 turn
               None
             )
           yield result
@@ -841,7 +852,8 @@ object AgentActor extends AgentCore with AgentSession:
                   outstandingSubagentResults = 0,
                   pendingEvents = Nil
                 )
-              ).withMessages(state.messages :+ batchMessage),
+              ).withMessages(state.messages :+ batchMessage)
+                .withNextLoopTurn, // Block 3：批次汇聚唤醒 = 新 turn
               None
             )
           yield result
@@ -871,7 +883,8 @@ object AgentActor extends AgentCore with AgentSession:
                 // unconditionally at turn end; once the completion debt is
                 // parked (#25) a stuck counter means the debt is NEVER paid
                 // and the waiting supervisor/bridge hangs.
-                .withOutstandingSubagentResults(newOutstanding),
+                .withOutstandingSubagentResults(newOutstanding)
+                .withNextLoopTurn, // Block 3：外部事件唤醒 = 新 turn
               None
             )
           yield result
@@ -1093,7 +1106,7 @@ object AgentActor extends AgentCore with AgentSession:
               )
             )
             .handleErrorWith(_ => IO.unit)
-          result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState, None)
+          result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState.withNextLoopTurn, None)
         yield result
 
       case _ =>
@@ -1183,7 +1196,7 @@ object AgentActor extends AgentCore with AgentSession:
                 resources,
                 depth,
                 parentRef,
-                state.withMessages(newMessages).withPlanMode(None),
+                state.withMessages(newMessages).withPlanMode(None).withNextLoopTurn, // Block 3：计划执行 = 新 turn
                 None,
                 DispatchCause.UserWake
               )
@@ -1388,7 +1401,7 @@ object AgentActor extends AgentCore with AgentSession:
           )
         end if
 
-      case LlmFailed(error, replyTo, turnId) =>
+      case LlmFailed(error, replyTo, turnId, msg) =>
         if turnId != state.currentTurnId then
           logAgentEvent(
             agentDef,
@@ -1420,7 +1433,9 @@ object AgentActor extends AgentCore with AgentSession:
               pipeLlmCall(agentDef, resources, depth, parentRef, compactState, replyTo)
             }
         else
-          val cleanedState = state
+          val cleanedState = msg match
+            case Some(cnt) => state.withLoopCounters(cnt) // Block 3：L1 终止的计数器写回
+            case None      => state
           // P4 (flow-node supervision): provider/attempt/stall-age observability
           // on llm-fail — the fields needed to tell "upstream jitter" from
           // "provider dead" in post-mortems without re-reading router logs.
@@ -1513,6 +1528,9 @@ object AgentActor extends AgentCore with AgentSession:
               case _: FallbackExhaustedError => AgentActor.llmFailureRetryable(error)
               // 工具管道错误：工具链路问题，不是 provider 条件性错误 → 不冻结（原语义）
               case _: ToolPipelineError => false
+              // Block 3 循环检测器 L1：turn 级终止，非条件性错误 → 不冻结
+              // （L2 冻结走 LoopFreezeDetected 独立路径，不经 LlmFailed）
+              case _: LoopDetectedError => false
               case _ => errCls.permanence == ErrorPermanence.Transient
             )
             if shouldErrorFreeze then
@@ -1551,6 +1569,8 @@ object AgentActor extends AgentCore with AgentSession:
                   NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
                 case e: ToolPipelineError =>
                   e.message
+                case e: LoopDetectedError =>
+                  e.getMessage
                 case _ =>
                   NebflowError.toUserMessage(
                     NebflowError.Internal(Option(error.getMessage).getOrElse("internalError"))
@@ -1747,8 +1767,14 @@ object AgentActor extends AgentCore with AgentSession:
               imm.delivery
             )
           case _ => IO.unit
+        // Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒以
+        // user system-reminder 追加在工具结果之后（同 saveTurnDriftReminder 形态）
+        // ——零成本给模型自纠机会；不阻断轮次。
+        val loopReminderMsgs = tc.loopReminder match
+          case Some(rem) => List(Message(MessageRole.User, Left(rem)))
+          case None      => Nil
         val newMessages =
-          baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages
+          baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages ++ loopReminderMsgs
         // Increment delegate count for Delegate/SubTask calls
         val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "SubTask")
         val newDelegateCount = state.delegateCount + delegateIncrement
@@ -1766,7 +1792,7 @@ object AgentActor extends AgentCore with AgentSession:
         // holds every later ephemeral batch's results.
         val spawnedIncrement = TurnBoundaryDrains.countBarrierIncrements(tc.results)
         val newOutstanding = state.execution.outstandingSubagentResults + spawnedIncrement
-        val updatedState =
+        val updatedState0 =
           state.copy(execution =
             state.execution
               .copy(
@@ -1785,17 +1811,84 @@ object AgentActor extends AgentCore with AgentSession:
                   tc.results.exists((call, r) => call.name == "Mail" && !r.isError)
               )
           )
-        for
-          _ <- ctx.forkTurn(
-            persistIfSession(resources, updatedState)
-              .handleErrorWith(e =>
-                NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}")
+        // Block 3：LoopGuard 计数器快照写回（pipeToolExecutions 异步 IO 内计算、
+        // 经消息携带——S1/S2 跨轮 + S3 跨 turn 持久化的唯一载体）。
+        val updatedState = tc.loopCounters match
+          case Some(cnt) => updatedState0.withLoopCounters(cnt)
+          case None      => updatedState0
+        tc.freezeAfter match
+          case Some(detail) =>
+            // Block 3 L2（supervision trio §D3）：消息组装/持久化/计数器写回后
+            // 不续轮——WS loopDetected 广播 + 父 ExternalEvent("loop-detected") +
+            // enterFrozen(Loop) 待人工（用户唤醒 / Manager·Nebula AgentControl
+            // restart / cancel 终态；resumeAt=1 年，语义「永不自动续跑」）。
+            for
+              _ <- persistIfSession(resources, updatedState)
+                .handleErrorWith(e =>
+                  NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}")
+                )
+              _ <- IO {
+                logAgentEvent(
+                  agentDef,
+                  depth,
+                  state.sessionId,
+                  state.sessionName,
+                  "loop-freeze",
+                  s"detail=${detail.take(120)}"
+                )
+              }
+              _ <- state.sessionId.fold(IO.unit) { sid =>
+                state
+                  .wsSend(
+                    Json.obj(
+                      "type" -> "loopDetected".asJson,
+                      "sessionId" -> sid.asJson,
+                      "detail" -> detail.take(300).asJson
+                    )
+                  )
+                  .handleErrorWith(_ => IO.unit)
+              }
+              _ <- parentRef.fold(IO.unit) { parent =>
+                val sid = state.sessionId.getOrElse("")
+                parent ! AgentCommand.ExternalEvent(
+                  source = "team",
+                  eventType = "loop-detected",
+                  payload =
+                    s""""${agentDef.name}" loop detected and frozen: ${detail.take(200)}""" +
+                      (if sid.nonEmpty then s" [session=$sid]" else ""),
+                  metadata = JsonObject(
+                    "failedSessionId" -> sid.asJson,
+                    "retryable" -> false.asJson,
+                    "failureType" -> "loop".asJson,
+                    "agentName" -> agentDef.name.asJson
+                  ),
+                  correlationId = Some(sid).filter(_.nonEmpty)
+                )
+              }
+              result <- enterErrorFrozen(
+                agentDef,
+                resources,
+                depth,
+                parentRef,
+                updatedState,
+                tc.replyTo,
+                FreezeReason.Loop,
+                LoopFreezeResumeMs,
+                LoopDetectedError(detail)
               )
-          )
-          _ <- immEventIO
-          _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, remainingEvents.size)
-          result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
-        yield result
+            yield result
+          case None =>
+            for
+              _ <- ctx.forkTurn(
+                persistIfSession(resources, updatedState)
+                  .handleErrorWith(e =>
+                    NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}")
+                  )
+              )
+              _ <- immEventIO
+              _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, remainingEvents.size)
+              result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
+            yield result
 
       // --- Interrupt ---
       case AgentCommand.Interrupt() =>
@@ -1851,7 +1944,7 @@ object AgentActor extends AgentCore with AgentSession:
               )
             )
             .handleErrorWith(_ => IO.unit)
-          result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState, None)
+          result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState.withNextLoopTurn, None)
         yield result
         end for
 
@@ -1991,7 +2084,7 @@ object AgentActor extends AgentCore with AgentSession:
                           messages = compactedState.messages :+ immMessage,
                           pendingImmediateInputs = remainingImmInputs
                         )
-                      )
+                      ).withNextLoopTurn // Block 3：压缩后注入 = 新 turn
                       for
                         _ <- imm.source match
                           case Some(src) =>
@@ -2051,7 +2144,7 @@ object AgentActor extends AgentCore with AgentSession:
                                   messages = compactedState.messages :+ eventMessage,
                                   pendingEvents = remainingEvents
                                 )
-                              )
+                              ).withNextLoopTurn // Block 3：压缩后事件注入 = 新 turn
                               pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
                             case None =>
                               IO.pure(idle(agentDef, resources, depth, parentRef, compactedState))
@@ -2858,7 +2951,7 @@ object AgentActor extends AgentCore with AgentSession:
                 outstandingSubagentResults = state.execution.outstandingSubagentResults,
                 // #25: hold/replay the completion debt across this injection.
                 owedCompletion = owedAfter)
-      )
+      ).withNextLoopTurn // Block 3：turn 末事件注入 = 新 turn
       for
         _ <- roundCompleteIO
         _ <-
@@ -2924,6 +3017,7 @@ object AgentActor extends AgentCore with AgentSession:
                   // #25: hold/replay the completion debt across this injection.
                   owedCompletion = owedAfter)
         )
+        .withNextLoopTurn // Block 3：turn 末注入 = 新 turn
       for
         _ <- roundCompleteIO
         _ <-
@@ -3008,7 +3102,7 @@ object AgentActor extends AgentCore with AgentSession:
                               outstandingSubagentResults = state.execution.outstandingSubagentResults,
                               // #25: hold/replay the completion debt across this injection.
                               owedCompletion = owedAfter)
-                    )
+                    ).withNextLoopTurn // Block 3：Mail 队列投递 = 新 turn
                     _ <- nebflow.core.flow.MailQueueStore.removeHead(sid)
                     _ <-
                       if !isSubagent then emitSessionBusy(state.wsSend, sid, busy = true)
@@ -3504,6 +3598,7 @@ object AgentActor extends AgentCore with AgentSession:
               .withMessages(stateWithWidth.messages :+ userMsg)
               .withEmptyResponseRetries(0)
               .withMailUsedThisTurn(false)
+              .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
             logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"text=${text.take(60)}")
             emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
               pipeLlmCall(agentDef, resources, depth, parentRef, wakeState, replyTo2, DispatchCause.UserWake)
@@ -3528,6 +3623,7 @@ object AgentActor extends AgentCore with AgentSession:
           .withMessages(state.messages :+ askReminder)
           .withAskMode(Some(question))
           .withStatus(AgentStatus.Processing)
+          .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
         emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
           pipeLlmCall(agentDef, resources, depth, parentRef, askState, None, DispatchCause.UserWake)
 
@@ -3540,6 +3636,7 @@ object AgentActor extends AgentCore with AgentSession:
             state.messages :+ Message(MessageRole.User, Left(combinedText), source = Some("skill"))
           )
           .withStatus(AgentStatus.Processing)
+          .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
         for
           _ <- emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None)
           _ <- emitInjectedUserEvent(state.wsSend, state.sessionId, input, "skill", None)
