@@ -31,7 +31,7 @@ object AgentCommand:
     sender: Option[String] = None,
     /** Team name of the sender for Mail-delivered messages (shown as attribution label). */
     senderTeam: Option[String] = None,
-    /** Delivery mode marker: "ask" | "queue" | "immediate" for Mail-injected inputs. */
+    /** Delivery mode marker: "queue" | "immediate" for Mail-injected inputs. */
     delivery: Option[String] = None,
     /** Structured event type (e.g. completion status) for the UI source label —
      *  carried through from ImmediateInput so flow results render
@@ -50,7 +50,7 @@ object AgentCommand:
     sender: Option[String] = None,
     /** Team name of the sender for Mail-delivered messages. */
     senderTeam: Option[String] = None,
-    /** Delivery mode marker: "ask" | "queue" | "immediate" for Mail delivery. */
+    /** Delivery mode marker: "queue" | "immediate" for Mail delivery. */
     delivery: Option[String] = None
   ) extends AgentCommand
 
@@ -822,15 +822,6 @@ case class SessionContext(
    */
   userFacingNode: Boolean = false,
   /**
-   * #30: true when this agent is a Mail ask fork (forkToSession). Ask forks
-   * only answer a question — side-effect tools (Mail/Write/Edit/Bash/…) are
-   * stripped from the allowed set so the fork can never dispatch work or
-   * write memory while the real agent's own turn is running (2026-08-21
-   * double-write race: an ask fork dispatched team members and wrote memory
-   * in parallel with the main agent).
-   */
-  forkContext: Boolean = false,
-  /**
    * D11 交互豁免（freeze-schedule spec v1.1）：用户在场等待的交互会话（plan
    * agent 等）不参与冻结——冻结它们省下的 token 远低于浪费的用户等待时间。
    * PlanAgent.spawn 传 true；其余 spawn 点默认 false 零改动。ask 轮的豁免走
@@ -1088,7 +1079,6 @@ object AgentState:
     expectsMail: Boolean = false,
     rootSessionId: String = "",
     isSubTaskWorker: Boolean = false,
-    forkContext: Boolean = false,
     freezeExempt: Boolean = false,
     isFlowNode: Boolean = false,
     userFacingNode: Boolean = false
@@ -1114,7 +1104,6 @@ object AgentState:
         expectsMail = expectsMail,
         rootSessionId = rootSessionId,
         isSubTaskWorker = isSubTaskWorker,
-        forkContext = forkContext,
         freezeExempt = freezeExempt,
         isFlowNode = isFlowNode,
         userFacingNode = userFacingNode
@@ -1167,7 +1156,6 @@ extension (s: AgentState)
   def isSubTaskWorker: Boolean = s.session.isSubTaskWorker
   def isFlowNode: Boolean = s.session.isFlowNode
   def userFacingNode: Boolean = s.session.userFacingNode
-  def forkContext: Boolean = s.session.forkContext
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)

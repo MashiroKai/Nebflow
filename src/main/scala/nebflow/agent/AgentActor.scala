@@ -243,7 +243,6 @@ object AgentActor extends AgentCore with AgentSession:
    *   delegate-… → "delegate"   SubTaskTool worker
    *   subtask-…  → "subtask"    SubTaskTool worker
    *   dag-…      → "flow"       FlowDagExecutor node
-   *   fork-adapter replyTo      → "ask"        Mail ask/fork
    *   otherwise  → "tool"
    */
   private def inferInjectionSource(
@@ -254,7 +253,6 @@ object AgentActor extends AgentCore with AgentSession:
     if sid.startsWith("delegate-") then Some("delegate")
     else if sid.startsWith("subtask-") then Some("subtask")
     else if sid.startsWith("dag-") then Some("flow")
-    else if replyTo.exists(_.path.name.startsWith("fork-adapter")) then Some("ask")
     else Some("tool")
 
   /** issue #31 Fix D (2026-08-20)：把自身 barrier 状态快照进 agentRegistry，
@@ -388,8 +386,6 @@ object AgentActor extends AgentCore with AgentSession:
      */
     rootSessionId: String = "",
     isSubTaskWorker: Boolean = false,
-    /** #30: Mail ask fork — side-effect tools stripped (see SessionContext.forkContext). */
-    forkContext: Boolean = false,
     /** D11 交互豁免：freezeExempt 会话不参与冻结（PlanAgent.spawn 传 true）。 */
     freezeExempt: Boolean = false,
     /** #406: one-shot FlowExecute node — leaf tools stripped (see SessionContext.isFlowNode). */
@@ -436,7 +432,6 @@ object AgentActor extends AgentCore with AgentSession:
             expectsMail = expectsMail,
             rootSessionId = effectiveRootSessionId,
             isSubTaskWorker = isSubTaskWorker,
-            forkContext = forkContext,
             freezeExempt = freezeExempt,
             isFlowNode = isFlowNode,
             userFacingNode = userFacingNode

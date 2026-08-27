@@ -49,33 +49,6 @@ class MailToolRootSenderSpec extends FunSuite:
   private def teamMemberCtx(workerSid: String): ToolContext =
     ToolContext(projectRoot = tempRoot.toString, sessionId = Some(workerSid))
 
-  private def askCtx: ToolContext =
-    rootCtx.copy(
-      actorSystem = Some(ActorSystem("mail-root-spec")),
-      sharedResources = Some(
-        new SharedResources(
-          llm = null,
-          dispatcher = null,
-          sessionStore = null,
-          projectRoot = os.pwd,
-          thinkingConfigRef = cats.effect.Ref.unsafe[IO, nebflow.llm.ThinkingConfig](nebflow.llm.ThinkingConfig()),
-          rateLimiter = null,
-          fileChangeTracker = null,
-          contextWindow = 100_000,
-          agentLibrary = null,
-          taskStore = null,
-          historyArchiver = null,
-          fileLockManager = null,
-          sessionModelOverrides = cats.effect.Ref.unsafe[IO, Map[String, nebflow.llm.ModelCandidate]](Map.empty),
-          providerRegistry = null,
-          healthMonitor = null,
-          actorSystem = null,
-          agentRegistry = cats.effect.Ref.unsafe[IO, Map[String, nebflow.agent.AgentRecord]](Map.empty),
-          voiceMutedRef = cats.effect.Ref.unsafe[IO, Boolean](false)
-        )
-      )
-    )
-
   private def assertRejected(res: Either[ToolError, String], what: String): Unit =
     res match
       case Left(err) =>
@@ -99,10 +72,6 @@ class MailToolRootSenderSpec extends FunSuite:
       .unsafeRunSync()
     assertRejected(res, "immediate team/agent")
 
-  test("ask: root sender + team/agent address rejected"):
-    val res = MailTool.forkAndAsk("myteam/Frontend", "question?", None, askCtx).unsafeRunSync()
-    assertRejected(res, "ask team/agent")
-
   // ── root sender + bare short name: still rejected (b9d427c6 regression) ──
 
   test("queue: root sender + bare short name still rejected"):
@@ -114,10 +83,6 @@ class MailToolRootSenderSpec extends FunSuite:
       .deliverShortNameUnscoped("Backend", "hi", None, "INFO", rootCtx, null, rootSid)
       .unsafeRunSync()
     assertRejected(res, "immediate short name")
-
-  test("ask: root sender + bare short name still rejected"):
-    val res = MailTool.forkAndAsk("Backend", "question?", None, askCtx).unsafeRunSync()
-    assertRejected(res, "ask short name")
 
   // ── root sender + TEAM name: routes to the team Manager ──
 
