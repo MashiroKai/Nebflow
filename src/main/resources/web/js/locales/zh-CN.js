@@ -79,6 +79,9 @@ export default {
   'agent.toolsFixedLabel': '系统固定',
   'agent.toolsConfigLabel': '可配置',
   'agent.toolsFixedTip': '由系统固定注入，不可移除',
+  'agent.toolsFixedSpecialty.flow': 'Flow 固定（本类专属）',
+  'agent.toolsFixedSpecialty.team': 'Team 固定（本类专属）',
+  'agent.toolsFixedSpecialty.orchestrator': '编排固定（Nebula 专属）',
   // === 实体图标语义化 + Nebula 独立分区（20260824_entity-icons-visual-spec §6）===
   'agents.group.orchestrator': '编排者',
   'agents.group.standalone': 'Standalone Agents',
