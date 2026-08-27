@@ -1018,11 +1018,11 @@ object AgentActor extends AgentCore with AgentSession:
         for
           items <- nebflow.core.flow.MailQueueStore.load(sid)
           headOpt = items.headOption
-          // #407 idle gate: 目标 agent 连同子树（root 发送者→全 team）完全空闲才
+          // #407 idle gate（08-28 统一裁定）：目标 agent 自身+子树完全空闲才
           // 投递；不空闲则延迟（不消费队列，pendingMailQueueCount=1 保持「有货
           // 未投递」状态），由子 agent 完成事件驱动的 turn 结束重检
           // （finishTurnCont drain 分支的 gate）投递。
-          idleOk <- fullyIdle(sid, headOpt.map(_.fromSession).getOrElse(""), state, resources)
+          idleOk <- fullyIdle(sid, state, resources)
           result <-
             if !idleOk then
               IO(
@@ -3063,7 +3063,7 @@ object AgentActor extends AgentCore with AgentSession:
         headOpt = items.headOption
         // skipSelfStatus=true：turn 已结束（finishTurnCont 执行中），registry
         // status 还是 Processing 残留——自身不算忙，只查子树与 flow
-        idleOk <- fullyIdle(sid, headOpt.map(_.fromSession).getOrElse(""), state, resources, skipSelfStatus = true)
+        idleOk <- fullyIdle(sid, state, resources, skipSelfStatus = true)
         result <-
           if !idleOk then
             IO(
@@ -3184,18 +3184,15 @@ object AgentActor extends AgentCore with AgentSession:
    * #407: queue Mail 空闲 gate —— 目标 agent 连同子树（root 发送者→整个 team）
    * 完全空闲才投递（用户裁定 2026-08-25 19:53/19:57）。判定数据：
    *  - registry 快照（status / outstandingSubagents / 任务型子记录 parentRef）
-   *  - RunningFlowRegistry（改动 8：RunningFlow.sessionId 关联触发者）
+   *  - RunningFlowRegistry（Q3：RunningFlow.sessionId 关联触发者）
    *  - agent 内部权威 barrier（state.execution.outstandingSubagentResults）
    *
-   * senderSession 来自磁盘队列头 item 的 fromSession（持久化，覆盖 idle 态
-   * MailQueued / finishTurnCont 续投 / activateAgent 冷激活恢复三路径）。
-   * sender 为 Root kind（Nebula / standalone root）→ team 范围（team 内任意
-   * 成员忙即不投递）；sender 查不到或非 root → 目标自身子树（team 内语义）。
-   * 空 sender（冷激活兜底）按自身子树处理（保守宽松，避免不必要延迟）。
+   * 2026-08-28 01:00 统一裁定：投递判定 = 目标 agent 自身+子树空闲，**与发送者
+   * 无关**——废除 08-25 按发送者区分（root→全 team 停）的语义：无关成员的忙碌
+   * 不再无限期扣住投递（旧 senderIsRoot 分支连同 isTeamTreeIdle 一并退役）。
    */
   private def fullyIdle(
     sid: String,
-    senderSession: String,
     state: AgentState,
     resources: SharedResources,
     skipSelfStatus: Boolean = false
@@ -3206,29 +3203,7 @@ object AgentActor extends AgentCore with AgentSession:
       // agent 内部权威 barrier（registry 快照之外的一层防御）
       internalIdle = state.execution.outstandingSubagentResults == 0
       selfOk = nebflow.core.flow.MailIdleGate.isAgentTreeIdle(sid, registry, flows, checkStatus = !skipSelfStatus)
-      // #407 fix（E2E 实证）：sender 的「root」判据不能用 AgentKind.Root——
-      // ensureRootAgent 把 team 成员 session 也统一 spawn 成 Root 记录（
-      // WebSocketRoutes.doSpawnRootAgent 对任何 session 写 AgentKind.Root），
-      // team 内成员发 queue Mail 会被误判为 root 发送者 → 走全 team 范围检查
-      // （含发送者自身 Processing）→ 永远 deferred 死锁。正确判据 = 发送者
-      // 不在任何 team（Nebula/standalone 无 team 归属 → 外部投递语义全 team 停；
-      // team 内发送者 → 目标自身子树）。
-      senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSession).map(_.map(_ => ()))
-      senderIsRoot = senderSession.nonEmpty && senderTeamOpt.isEmpty
-      result <-
-        if senderIsRoot then
-          TeamSessionRegistry.teamOfSession(sid).flatMap {
-            case Some(team) =>
-              TeamSessionRegistry.sessionIdsOf(team).map { sids =>
-                nebflow.core.flow.MailIdleGate.isTeamTreeIdle(sid, sids, registry, flows, checkSelfStatus = !skipSelfStatus) &&
-                  internalIdle
-              }
-            case None =>
-              IO.pure(selfOk && internalIdle)
-          }
-        else
-          IO.pure(selfOk && internalIdle)
-    yield result
+    yield selfOk && internalIdle
 
   /** Emit a WS event so the frontend removes a pending mail-queue item. */
   private def emitDequeuedWs(wsSend: Json => IO[Unit], sessionId: String, itemId: String): IO[Unit] =

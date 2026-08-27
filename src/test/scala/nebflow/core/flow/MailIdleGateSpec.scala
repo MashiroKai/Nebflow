@@ -6,10 +6,12 @@ import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
 import nebflow.core.flow.RunningFlowRegistry.RunningFlow
 
 /**
- * #407 Mail idle gate —— 纯函数判定矩阵（方案 AC-4 / AC-5）。
+ * #407 Mail idle gate —— 纯函数判定矩阵（AC-4）。
  *
- * 用户裁定（2026-08-25 19:53/19:57）：queue Mail 投递时机 = 目标 agent 连同子树
- * 全空闲；按发送者区分（root→全 team，team 内→目标自身子树）。
+ * 用户裁定：2026-08-25 19:53（目标 agent 连同子树全空闲）+ **2026-08-28 01:00
+ * 统一裁定**：无论发送者是谁，投递时机一律 = 目标 agent 自身+子树空闲——
+ * 08-25 的按发送者区分（root→全 team）废除，isTeamTreeIdle 退役（其场景
+ * 由 wiring 层 AC-6 翻转用例覆盖：Nebula→Manager 不再等兄弟成员）。
  */
 class MailIdleGateSpec extends FunSuite:
 
@@ -132,36 +134,6 @@ class MailIdleGateSpec extends FunSuite:
     assert(MailIdleGate.isAgentTreeIdle("t", registry, List(completed)))
     assert(MailIdleGate.isAgentTreeIdle("t", registry, List(otherFlow)))
 
-  // ---------- AC-5: isTeamTreeIdle ----------
-
-  test("team 任一成员忙 → 整个 team 不空闲"):
-    val registry = Map(
-      "m1" -> rec("m1"),
-      "m2" -> rec("m2", status = AgentStatus.Processing)
-    )
-    assert(!MailIdleGate.isTeamTreeIdle("m1", List("m1", "m2"), registry))
-
-  test("team 成员子树忙（成员有 Delegate 在飞）→ 不空闲"):
-    val registry = Map(
-      "m1" -> rec("m1"),
-      "m2" -> rec("m2"),
-      "m2-delegate" -> rec("m2-delegate", AgentKind.Delegate, parentRef = Some(nullRef))
-    )
-    assert(!MailIdleGate.isTeamTreeIdle("m1", List("m1", "m2"), registry))
-
-  test("team 全空闲 → 空闲"):
-    val registry = Map(
-      "m1" -> rec("m1"),
-      "m2" -> rec("m2")
-    )
-    assert(MailIdleGate.isTeamTreeIdle("m1", List("m1", "m2"), registry))
-
-  test("team 会话列表为空 → 空闲（forall 空集）"):
-    assert(MailIdleGate.isTeamTreeIdle("x", Nil, Map.empty))
-
-  test("team 成员 running flow → 不空闲"):
-    val registry = Map("m1" -> rec("m1"))
-    assert(!MailIdleGate.isTeamTreeIdle("m1", List("m1"), registry, List(runningFlow(Some("m1")))))
   // ---------- checkStatus / checkSelfStatus（turn-end drain 上下文） ----------
 
   test("checkStatus=false：自身 Processing 残留不算忙（turn-end drain 语义）"):
@@ -179,17 +151,4 @@ class MailIdleGateSpec extends FunSuite:
     assert(!MailIdleGate.isAgentTreeIdle("t", flowRegistry, List(runningFlow(Some("t"))), checkStatus = false),
       "关联 running flow 仍应判不空闲")
 
-  test("isTeamTreeIdle checkSelfStatus=false：目标自身 Processing 不算忙，成员 Processing 算忙"):
-    val registry = Map(
-      "t" -> rec("t", status = AgentStatus.Processing),
-      "m" -> rec("m")
-    )
-    assert(MailIdleGate.isTeamTreeIdle("t", List("t", "m"), registry, checkSelfStatus = false),
-      "目标自身 Processing 残留不应阻塞（turn-end drain）")
-    val registry2 = Map(
-      "t" -> rec("t", status = AgentStatus.Processing),
-      "m" -> rec("m", status = AgentStatus.Processing)
-    )
-    assert(!MailIdleGate.isTeamTreeIdle("t", List("t", "m"), registry2, checkSelfStatus = false),
-      "成员 Processing 仍应阻塞（team 范围语义）")
 end MailIdleGateSpec

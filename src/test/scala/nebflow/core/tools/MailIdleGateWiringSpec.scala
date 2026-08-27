@@ -23,11 +23,11 @@ import scala.concurrent.duration.*
  *
  * 用户裁定（2026-08-25 19:53/19:57）：
  *  - queue Mail 投递时机 = 目标 agent 连同子树（子 agent/flow）全空闲；
- *  - 按发送者区分：Nebula（root）→ Manager 等全 team；team 内→目标自身子树；
+ *  - 08-28 统一裁定：无论发送者，一律只等目标 agent 自身+子树（root→全 team 旧语义废除）；
  *  - Q3：RunningFlow.sessionId 关联（flow 在飞检测完整）；
  *  - 不做 force 兜底（无 MailQueueDrainer）。
  *
- * 覆盖：AC-6（root→team 全停）/ AC-7（team 内→自身子树）/ AC-8（flow 在飞）/
+ * 覆盖：AC-6（08-28 翻转：root→Manager 只等 Manager 自身子树，兄弟忙不阻塞）/ AC-7（team 内→自身子树）/ AC-8（flow 在飞）/
  * AC-10（冷激活恢复立即投递）/ AC-11（immediate 不经 gate、FIFO 保持）。
  */
 class MailIdleGateWiringSpec extends FunSuite:
@@ -144,9 +144,10 @@ class MailIdleGateWiringSpec extends FunSuite:
   private def removeChild(resources: SharedResources, childSid: String): IO[Unit] =
     resources.agentRegistry.update(_ - childSid)
 
-  // ---------- AC-6：规则① root（Nebula）→ Manager queue：等全 team 空闲 ----------
+  // ---------- AC-6（08-28 统一裁定翻转）：root（Nebula）→ Manager queue：
+  // 只等 Manager 自身+子树，兄弟成员忙不再阻塞 ----------
 
-  test("AC-6 root→Manager queue mail deferred while any team member subtree busy, drains when idle"):
+  test("AC-6 root→Manager queue mail delivers by Manager's own subtree — sibling member busy no longer blocks"):
     val system = ActorSystem(s"cqi-a6-${java.util.UUID.randomUUID().toString.take(6)}")
     val tmp = os.temp.dir(prefix = "cqi-a6")
     fixtureTeam(tmp, "cqi6")
@@ -165,31 +166,23 @@ class MailIdleGateWiringSpec extends FunSuite:
       // 先激活 boss + member（确保 registry 记录与 live ref）
       _ <- MailTool.activateAgent(bossMeta.id, resources, system, ctxFor(resources, system, "root-sid"))
       _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, "root-sid"))
-      // member 子树忙（Delegate 在飞）→ 全 team 不空闲
+      // member 子树忙（Delegate 在飞）——08-28 起不再阻塞 Nebula→Manager 投递
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
-      // root → boss queue mail（等全 team 空闲——member 忙 → 不投递）
+      // root → boss queue mail：Manager 自身+子树空闲 → 应当立即投递
       _ <- MailTool.queueToSession(
         bossMeta.id, "boss", "A6_TEAM_BUSY_MARKER", "INFO", Nil,
         ctxFor(resources, system, "root-sid"), system, "root-sid"
       )
-      _ <- IO.sleep(600.millis) // let any (wrong) drain happen
-      _ <- llm.requests.update(_ => Nil) // 清零基线（若被错误投递会再出现）
-      queueBusy <- MailQueueStore.load(bossMeta.id)
-      // member 子树空闲 → 重发 MailQueued → gate 通过 → 投递
-      _ <- removeChild(resources, "member-child")
-      bossRef <- resources.agentRegistry.get.map(_.get(bossMeta.id).map(_.ref))
-      head <- MailQueueStore.load(bossMeta.id).map(_.headOption)
-      _ <- head.traverse_(h => bossRef.traverse_(ref => ref ! AgentCommand.MailQueued(h, "root-sid")))
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
       reqs <- llm.requests.get
       queueAfter <- MailQueueStore.load(bossMeta.id)
-    yield (queueBusy.nonEmpty, reqs, queueAfter)
+    yield (reqs, queueAfter)
 
-    val (busyKept, reqs, queueAfter) = io.unsafeRunSync()
-    assert(clue(busyKept), "queue mail should be deferred while a team member's subtree is busy")
+    val (reqs, queueAfter) = io.unsafeRunSync()
     val texts = reqs.flatMap(_.messages.map(_.content.fold(identity, _.mkString)))
-    assert(clue(texts).exists(_.contains("A6_TEAM_BUSY_MARKER")), "queue mail never drained after team idle")
+    assert(clue(texts).exists(_.contains("A6_TEAM_BUSY_MARKER")),
+      "Nebula→Manager queue mail must deliver on the Manager's own idle — a sibling member's busy subtree must not block (08-28 ruling)")
     assert(clue(queueAfter).isEmpty, s"queue not drained: $queueAfter")
 
   // ---------- AC-7：规则② team 内 queue：等目标自身子树，不管其他成员 ----------
