@@ -42,7 +42,9 @@ cloud/node_modules/
 credentials.json
 dist/
 beta.md
-typescript
+# Root-level scratch file only (51c0882d). Must NOT match the vendored monaco
+# TS language dirs (vendor/monaco/vs/{language,basic-languages}/typescript/).
+/typescript
 
 # ZCode agent workspace
 .zcode/
