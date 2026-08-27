@@ -305,6 +305,11 @@ When to use:
           val task = taskMap.get(rec.sessionId)
           val agent = task.map(_.agentName).getOrElse(agentNameFromSessionId(rec.sessionId))
           val stuck = if isStuck(rec, now) then s"⚠ ${fmtMillis(now - rec.lastActivityMs)}" else "no"
+          // Block 3（§3.4）：LoopGuard 计数镜像——S1 连败 streak / S2 无进展轮数
+          //（streak@warn=3, terminate=8；非零即有循环嫌疑，供 Manager/Nebula 决策）
+          val loop =
+            if rec.loopStreak > 0 || rec.loopRounds > 0 then s"${rec.loopStreak}/${rec.loopRounds}"
+            else "-"
           val readOnly = if !CancelableKinds.contains(rec.kind) then " （read-only）" else ""
           val taskLabel = (task.map(_.description).getOrElse("") + readOnly).trim
           // issue #31 Fix D: barrier snapshot — phantom visibility. outstanding>0
@@ -321,6 +326,7 @@ When to use:
             if rec.parentSessionId.nonEmpty then rec.parentSessionId.take(16) else "-",
             rec.status.toString,
             stuck,
+            loop,
             barrier,
             fmtMillis(if rec.startedAt > 0 then now - rec.startedAt else 0),
             fmtMillis(if rec.lastActivityMs > 0 then now - rec.lastActivityMs else 0),
@@ -329,7 +335,7 @@ When to use:
           )
         }
     yield
-      val header = List("sessionId", "kind", "agent", "parent", "status", "stuck?", "barrier", "up", "idle", "retries", "task")
+      val header = List("sessionId", "kind", "agent", "parent", "status", "stuck?", "loop", "barrier", "up", "idle", "retries", "task")
       val table = (header :: rows).map(r => "| " + r.mkString(" | ") + " |").mkString("\n")
       val scopeNote =
         if anchorsOpt.isDefined then
@@ -343,6 +349,8 @@ When to use:
              |$table
              |
              |stuck? = Processing with no activity for >${Defaults.StuckThresholdMs / 60000}min (same threshold as the automatic watcher).
+             |loop = streak/rounds (loop-guard): streak = consecutive rounds failing the same call (warn@3); rounds = non-progressing
+             |       rounds this turn (escalates at 70% turn budget / 8). Non-zero = loop suspicion — check status, consider restart.
              |barrier = outstandingSubagents/heldResults (issue #31): outstanding>0 while idle with no in-flight work = phantom slot
              |          (a batch member hung or died without a terminal event — held results never inject until restart).
              |Cancelable kinds: Delegate / SubTask / Ephemeral. Restartable: Delegate(ephemeral) / SubTask. Team members: Manager (direct parent) or Nebula. Flow/Root are read-only.$scopeNote""".stripMargin
@@ -384,6 +392,9 @@ When to use:
               s"kind: ${rec.kind}",
               s"status: ${rec.status}",
               s"stuck: ${if isStuck(rec, now) then s"YES (idle ${fmtMillis(now - rec.lastActivityMs)})" else "no"}",
+              // Block 3（§3.4）：loop-guard 计数详情
+              s"loop: streak=${rec.loopStreak} rounds=${rec.loopRounds}" +
+                (if rec.loopStreak >= 3 then " ⚠ same call failing repeatedly" else ""),
               s"startedAt: ${if rec.startedAt > 0 then fmtMillis(now - rec.startedAt) + " ago" else "(unknown)"}",
               s"lastActivity: ${if rec.lastActivityMs > 0 then fmtMillis(now - rec.lastActivityMs) + " ago" else "(never)"}",
               s"rootSessionId: ${rec.rootSessionId}",

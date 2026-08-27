@@ -94,7 +94,11 @@ object AgentCommand:
   case class LlmFailed(
     error: Throwable,
     replyTo: Option[ActorRef[AgentEvent]],
-    turnId: Long
+    turnId: Long,
+    /** Block 3：LoopGuard L1 终止路径的计数器快照（terminatedFps 随 state 存活，
+      * 后续 turn 同 fp 复发 → 直接 L2 冻结）。该路径不投 ToolsComplete——
+      * LlmFailed 本身是计数器写回的唯一载体。其余调用方默认 None。 */
+    loopCounters: Option[nebflow.core.processor.LoopGuard.Counters] = None
   ) extends AgentCommand
 
   case class SetPermissionDeferred(deferred: cats.effect.Deferred[IO, Boolean]) extends AgentCommand
@@ -105,7 +109,21 @@ object AgentCommand:
     replyTo: Option[ActorRef[AgentEvent]],
     compactedMessages: Option[List[Message]] = None,
     thinking: Option[String] = None,
-    thinkingSignature: Option[String] = None
+    thinkingSignature: Option[String] = None,
+    /** Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒——
+      * 下一轮以 user system-reminder 消息注入（同 saveTurnDriftReminder 形态），
+      * 零成本给模型自纠机会。 */
+    loopReminder: Option[String] = None,
+    /** Block 3：本轮 evaluate 产出的计数器快照——pipeToolExecutions 的计数器在
+      * 异步 IO 内计算，行为返回时不可见；经消息携带由 ToolsComplete handler 写回
+      * state（S1/S2 跨轮、S3 跨 turn 持久化的载体）。None=非 loop-guard 路径。 */
+    loopCounters: Option[nebflow.core.processor.LoopGuard.Counters] = None,
+    /** Block 3 L2：Some(detail) 时 handler 完成消息组装/持久化/计数器写回后
+      * 不续轮（不 pipeLlmCall），转而冻结（loopDetected 广播 + 父通知 +
+      * enterFrozen(Loop)）。此前用独立 LoopFreezeDetected 消息实现——但
+      * ToolsComplete 链式 dispatch 会递增 currentTurnId，后续消息按 stale
+      * 丢弃，冻结永不落地（wiring 实证）。 */
+    freezeAfter: Option[String] = None
   ) extends AgentCommand
 
   case class CompactionComplete(result: Either[String, List[Message]]) extends AgentCommand
@@ -316,7 +334,12 @@ case class AgentRecord(
    * 时间表冻结（正常调度，不可父重启）与错误族冻结（可重启）。与
    * AgentState 的 lastErrorFreezeReason 同步维护；恢复/解除冻结时清 None。
    */
-  frozenReason: Option[String] = None
+  frozenReason: Option[String] = None,
+  /** Block 3 循环检测器观测镜像（supervision trio §D2-B）：当前 turn 的
+    * 同参同败连续计数 / 非进展轮数——pipeToolExecutions 每轮随 touchRegistryActivity
+    * 同步写入。AgentControl list 的 stuck? 列旁显示 loop×N（诊断「高活动零进展」）。 */
+  loopStreak: Int = 0,
+  loopRounds: Int = 0
 )
 
 // ============================================================
@@ -401,6 +424,11 @@ final case class InteractionAnswered(
  */
 case class ToolPipelineError(message: String) extends RuntimeException(message)
 
+/** Block 3 循环检测器 L1（supervision trio §D3）：同参同败超阈 / 轮预算超限的
+  * turn 级终止。分类=Permanent（不重试不冻结）→ LlmFailed fatal 链（supervisor
+  * notify / team 成员父 ExternalEvent(failed, retryable=true) / 持久化）。 */
+final case class LoopDetectedError(message: String) extends RuntimeException(message)
+
 sealed trait AgentEvent
 
 object AgentEvent:
@@ -422,6 +450,7 @@ enum FreezeReason:
   case Network         // 连接重置/超时/未知瞬态，恢复条件=短退避到期
   case ProviderDown    // 全候选 provider Down，恢复条件=HealthMonitor 探测恢复（P0 用 R1 轮询兜底）
   case RestartRecovery // 崩溃/进程重启后重建，恢复条件=条件检查通过后立即续跑
+  case Loop            // Block 3 循环检测器 L2（supervision trio §D3）：恢复条件=仅人工（用户输入唤醒 / AgentControl restart / cancel）——不自动续跑
 
 /** 升级链状态（v2 §5.2）：同 reason 连续冻结 ≥3 次进入——挂 AgentRecord（P0 内存态）。
   * level=当前升级层级（1 起）；escalateAt=本层等待父决策的截止时间；awaitedParentSessionId=等待的父会话。 */
@@ -673,6 +702,7 @@ enum AgentStreamEvent:
           case FreezeReason.Network         => "network"
           case FreezeReason.ProviderDown    => "provider-down"
           case FreezeReason.RestartRecovery => "restart-recovery"
+          case FreezeReason.Loop            => "loop"
         val withReason = withResume.deepMerge(Json.obj("reason" -> reasonStr.asJson))
         val withDetail = detail.fold(withReason)(d => withReason.deepMerge(Json.obj("detail" -> d.asJson)))
         val withRetry = if retryCount > 0 then withDetail.deepMerge(Json.obj("retryCount" -> retryCount.asJson)) else withDetail
@@ -1049,7 +1079,17 @@ case class AgentState(
    * taskListUpdate already converged the visible state. Append order ==
    * chronological cancel order.
    */
-  cancelNotices: List[AgentCommand.TaskCancelNotice]
+  cancelNotices: List[AgentCommand.TaskCancelNotice],
+  /** Block 3 循环检测器计数器（supervision trio §D1）：顶层——S3 跨 turn 保留
+    * （turn 边界只清 S1/S2，见 LoopGuard.evaluate 的 turnKey 判定）。 */
+  loopCounters: nebflow.core.processor.LoopGuard.Counters,
+  /** Block 3：逻辑 turn 纪元（每次真实 turn 开始 +1——UserInput/ExternalEvent
+    * 唤醒/Mail 激活/冻结唤醒等 dispatch 起点；ToolsComplete 续轮/retry/压缩
+    * 续跑不递增）。LoopGuard 的 turnKey 来源——currentTurnId 是每次 LLM
+    * dispatch 都 +1 的序号（wiring 实证），不能当 turn 身份用。
+    * （默认值只在 object AgentState.apply 提供——case class 字段带默认会与
+    * 自定义 apply 的全默认参数形成重载冲突。） */
+  loopTurnKey: Long
 )
 
 object AgentState:
@@ -1081,7 +1121,8 @@ object AgentState:
     isSubTaskWorker: Boolean = false,
     freezeExempt: Boolean = false,
     isFlowNode: Boolean = false,
-    userFacingNode: Boolean = false
+    userFacingNode: Boolean = false,
+    loopTurnKey: Long = 0L
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -1114,10 +1155,22 @@ object AgentState:
       None,
       None,
       None,
-      Nil // cancelNotices (cancel-batch)
+      Nil, // cancelNotices (cancel-batch)
+      nebflow.core.processor.LoopGuard.Counters.Empty,
+      loopTurnKey
     )
   end apply
 end AgentState
+
+extension (s: AgentState)
+  def withLoopCounters(c: nebflow.core.processor.LoopGuard.Counters): AgentState =
+    s.copy(loopCounters = c)
+
+  /** Block 3：turn 纪元 +1——真实 turn 开始的 dispatch 点调用
+    *（UserInput/ExternalEvent 唤醒/Mail 激活/冻结唤醒/队列 drain）；
+    * ToolsComplete 续轮、retry、save/compact 续跑不递增。 */
+  def withNextLoopTurn: AgentState =
+    s.copy(loopTurnKey = s.loopTurnKey + 1)
 
 extension (s: AgentState)
   def messages: List[Message] = s.execution.messages
