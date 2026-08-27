@@ -172,6 +172,29 @@ class AgentControlToolSpec extends CatsEffectSuite:
     program.guarantee(system.stopAll.attempt.void)
   }
 
+  test("status Team member for a root-bucket caller shows manageable (Block 2 §C3 — not read-only)") {
+    val system = ActorSystem("ac-status-team")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      memRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "status-team-mem")
+      _ <- resources.agentRegistry.set(Map(
+        "team-member-x" -> AgentRecord(
+          "team-member-x", memRef, AgentKind.Team, "root-t1",
+          startedAt = System.currentTimeMillis() - 30_000, status = AgentStatus.Processing,
+          lastActivityMs = System.currentTimeMillis() - 5_000, parentSessionId = "mgr-inst"
+        )
+      ))
+      res <- IO(call(resources, "root-t1", "status", target = "team-member-x"))
+    yield
+      val out = res.toOption.get
+      assert(out.contains("kind: Team"), s"$out")
+      // v2：root 全局可管 Team——manage 行不得沿用 v1 的恒 read-only
+      assert(out.contains("manageable: cancel / restart"), s"$out")
+      assert(!out.contains("read-only kind"), s"Team must not render read-only for a root caller:\n$out")
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
   test("status detects orphan task files (registry empty, task still running)") {
     val system = ActorSystem("ac-orphan")
     val tmp = os.temp.dir()
