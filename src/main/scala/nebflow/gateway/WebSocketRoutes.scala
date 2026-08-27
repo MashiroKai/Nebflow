@@ -3732,7 +3732,17 @@ class WebSocketRoutes(
           List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
         ) *>
         ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
-    else IO.unit
+    else
+      // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
+      // empty-content frame (attachments dropped), which reached this path and was
+      // silently dropped here — the defining feature of the incident was ZERO logs /
+      // zero user feedback. An empty payload is not a dispatchable turn, but it must
+      // leave a trace so a lost user message is diagnosable instead of invisible.
+      // (Note: the default no-type frame path tolerates content-empty + attachments
+      // payloads; this text-only path has no attachments to fall back on.)
+      logger.warn(
+        s"handleUserText($source): dropped EMPTY content for session '$sessionId' — no turn dispatched (frame was sent but carried no text)"
+      ) *> IO.unit
   end handleUserText
 
   /**
