@@ -962,17 +962,99 @@ private[agent] trait AgentCore:
       droppedResults = droppedCalls.map(call =>
         (call, ToolExecResult(s"Tool not available: ${call.name}", isError = true))
       )
-      _ <- ctx.self ! ToolsComplete(
-        guardedBatch ++ droppedResults,
-        result.text,
-        replyTo,
-        None,
-        result.thinking,
-        result.thinkingSignature
+      // ── Block 3 循环检测器（supervision trio §D2-A，2026-08-27）────────
+      // guardBatch 之后、ToolsComplete 之前的单一 choke point——一切 kind 的
+      // AgentActor 工具轮都过此环。Root 例外（D3）：depth==0 的 L1 降级为
+      // L0 警告（root turn 不自动终止，错误由用户裁决）。save-turn 豁免 S2
+      // （guardSaveTurn 自有更严的 10 轮预算，裁定②双治理豁免）。
+      loopCfg <- nebflow.core.processor.LoopGuard.loadConfig
+      loopEvents = (guardedBatch ++ droppedResults).map { (call, r) =>
+        nebflow.core.processor.LoopGuard.RoundEvent(
+          toolName = call.name,
+          args = Json.fromJsonObject(call.input),
+          isError = r.isError,
+          errorText = if r.isError then r.content.take(160) else "",
+          permissionDenied = r.isError &&
+            r.content.startsWith(s"Tool ${call.name} is denied by the session permission policy")
+        )
+      }
+      saveTurnNow = state.pendingCompaction.exists(_.phase == CompactionPhase.Save)
+      (loopCounters, loopVerdictRaw) = nebflow.core.processor.LoopGuard.evaluate(
+        loopEvents,
+        // turnKey = 逻辑 turn 纪元（loopTurnKey）——currentTurnId 是每次 dispatch
+        // 都 +1 的序号（wiring 实证：一轮工具 = 一个新 currentTurnId，S1 永不
+        // 累计、S3 假命中），不能用。
+        state.loopTurnKey.toString,
+        state.loopCounters,
+        loopCfg,
+        s2Exempt = saveTurnNow
       )
+      loopVerdict = loopVerdictRaw match
+        case t: nebflow.core.processor.LoopGuard.Verdict.Terminate if depth == 0 =>
+          NebflowLogger.forName("nebflow.agent").warnSync(
+            s"[loop-guard] root agent L1 suppressed (turn NOT auto-terminated): ${t.msg}"
+          )
+          nebflow.core.processor.LoopGuard.Verdict.Warn(t.msg)
+        case v => v
+      _ <- loopVerdict match
+        case f: nebflow.core.processor.LoopGuard.Verdict.Freeze =>
+          // L2：单条 ToolsComplete(freezeAfter)——handler 组装/持久化/计数器写回
+          // 后不续轮，转冻结（loopDetected 广播 + 父通知 + enterFrozen(Loop)）。
+          // 不用独立的 LoopFreezeDetected 消息：ToolsComplete 链式 dispatch 会
+          // 递增 currentTurnId，后续消息 stale 丢弃，冻结永不落地（wiring 实证）。
+          ctx.self ! ToolsComplete(
+            guardedBatch ++ droppedResults,
+            result.text,
+            replyTo,
+            None,
+            result.thinking,
+            result.thinkingSignature,
+            loopCounters = Some(loopCounters),
+            freezeAfter = Some(f.msg)
+          )
+        case t: nebflow.core.processor.LoopGuard.Verdict.Terminate =>
+          // L1：turn 以 LoopDetected 失败——不投 ToolsComplete，走 LlmFailed fatal
+          // 链（supervisor notify / team 成员父 ExternalEvent(failed) / Done / 持久化）。
+          // 计数器（含 terminatedFps）随 LlmFailed 写回——后续 turn 同 fp 复发
+          // → recurrence → L2 冻结。
+          ctx.self ! AgentCommand.LlmFailed(LoopDetectedError(t.msg), replyTo, state.currentTurnId, Some(loopCounters))
+        case w: nebflow.core.processor.LoopGuard.Verdict.Warn =>
+          // L0：正常续轮 + loopReminder（下一轮 user system-reminder 注入，D3）
+          ctx.self ! ToolsComplete(
+            guardedBatch ++ droppedResults,
+            result.text,
+            replyTo,
+            None,
+            result.thinking,
+            result.thinkingSignature,
+            loopReminder = Some(nebflow.core.processor.LoopGuard.reminderMessage(w)),
+            loopCounters = Some(loopCounters)
+          )
+        case nebflow.core.processor.LoopGuard.Verdict.Pass =>
+          ctx.self ! ToolsComplete(
+            guardedBatch ++ droppedResults,
+            result.text,
+            replyTo,
+            None,
+            result.thinking,
+            result.thinkingSignature,
+            loopCounters = Some(loopCounters)
+          )
       // P0 阶段 3：工具执行完成——touch 活动戳（长工具执行期间流已结束，
       // 若无此 touch 会被误判卡死；下轮 LLM 调用开始会再次 mark Processing）。
-      _ <- touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing)
+      // Block 3：同点镜像 loopStreak/loopRounds（AgentControl list 的 loop×N）。
+      _ <- touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing) *>
+        sessionIdOpt.fold(IO.unit) { sid =>
+          resources.agentRegistry.update { m =>
+            m.get(sid) match
+              case Some(rec) =>
+                m.updated(sid, rec.copy(
+                  loopStreak = loopCounters.streakCount,
+                  loopRounds = loopCounters.roundCount
+                ))
+              case None => m
+          }
+        }
     yield ()
 
     for _ <- ctx.forkTurn(io.handleErrorWith { e =>
@@ -985,6 +1067,8 @@ private[agent] trait AgentCore:
         )
       })
     yield
+      // loopCounters 不在此写回——它在 forkTurn 的异步 IO 内计算，行为返回时
+      // 尚不可见；经 ToolsComplete.loopCounters 由 handler 应用（见上）。
       val updatedState = state
         .copy(execution = state.execution.copy(turnIdx = nextTurnIdx))
         .withLastDispatch(Some(LastDispatch(isToolExecution = true, Some(result))))
