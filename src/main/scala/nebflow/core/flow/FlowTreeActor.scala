@@ -60,6 +60,11 @@ object TeamSessionRegistry:
    * (permissionAnswer/askUserAnswer) route to Mail-activated team agents.
    * rootSessionId anchors the permission-policy bucket (P2 inheritance chain).
    * P3 removes this overload and the actorMap itself.
+   *
+   * Block 0 registration chain (supervision trio §B2): also stamps
+   * parentSessionId — a member's parent is its team Manager, the Manager's
+   * parent is the mounting root (parentForRecord). Fallback = rootSessionId
+   * so the chain is never empty for team records.
    */
   def registerActor(
     sid: String,
@@ -68,7 +73,10 @@ object TeamSessionRegistry:
     rootSessionId: String
   ): IO[Unit] =
     actorMap.update(_ + (sid -> ref)) *>
-      resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Team, rootSessionId)))
+      parentForRecord(sid).flatMap { parentOpt =>
+        resources.agentRegistry.update(_ + (sid ->
+          AgentRecord(sid, ref, AgentKind.Team, rootSessionId, parentSessionId = parentOpt.getOrElse(rootSessionId))))
+      }
 
   def unregisterActor(sid: String): IO[Unit] =
     actorMap.update(_ - sid)
@@ -85,6 +93,25 @@ object TeamSessionRegistry:
 
   def isManager(sid: String): IO[Boolean] =
     managerMap.get.map(_.values.toSet.contains(sid))
+
+  /** Block 0 registration chain (supervision trio §B2): the Manager sessionId
+    * for a team instance, if registered. */
+  def managerOf(instance: String): IO[Option[String]] =
+    managerMap.get.map(_.get(instance))
+
+  /** Block 0 registration chain: resolve the parent session for a team agent
+    * record — a MEMBER's parent is its team Manager; the MANAGER's parent is
+    * the mounting root session (parentSessionMap). Unknown session → None
+    * (callers fall back to the activating/mounting session id). */
+  def parentForRecord(sid: String): IO[Option[String]] =
+    teamOfSession(sid).flatMap {
+      case Some(inst) =>
+        managerOf(inst).flatMap {
+          case Some(mgr) if mgr != sid => IO.pure(Some(mgr))
+          case _                        => parentSessionOf(inst)
+        }
+      case None => IO.pure(None)
+    }
 
   def registerParentSession(instance: String, sid: String): IO[Unit] =
     parentSessionMap.update(_ + (instance -> sid))
