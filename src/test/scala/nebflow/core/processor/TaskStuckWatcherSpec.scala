@@ -437,4 +437,64 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       assert(cmds.count(_.isInstanceOf[AgentCommand.Stop]) == 2, s"both scans must still send Stop, got $cmds")
   }
 
+  // ---- Block 0 (supervision trio): team stuck notice carries turn-level
+  // semantics per user ruling 2026-08-27 ("turn 级中止 ≠ actor 级 Stop") —
+  // the ACTOR is never auto-stopped, a looping TURN may be terminated, and
+  // the Manager/Nebula can cancel/restart via AgentControl. The old wording
+  // ("read-only notice … user/Nebula can restart") contradicted both the
+  // let-it-crash intent and the (now granted) AgentControl capabilities.
+
+  test("Block 0: team stuck notice wording — turn-level semantics, not read-only") {
+    val system = ActorSystem("test-team-stuck-wording")
+    val lbLogger =
+      org.slf4j.LoggerFactory.getLogger("nebflow.core.processor.stuck")
+        .asInstanceOf[ch.qos.logback.classic.Logger]
+    val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+    appender.start()
+    lbLogger.addAppender(appender)
+    try
+      val program = for
+        tmp <- IO(os.temp.dir())
+        resources <- mkResources(system, tmp)
+        teamRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "team-agent-w")
+        wsHub = new WsHub()
+        receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
+        _ <- wsHub.register(json => receivedWs.update(_ :+ json))
+        now = IO(System.currentTimeMillis())
+        _ <- now.flatMap { n =>
+          resources.agentRegistry.set(
+            Map("team-w-1" -> AgentRecord(
+              sessionId = "team-w-1",
+              ref = teamRef,
+              kind = AgentKind.Team,
+              rootSessionId = "root-1",
+              startedAt = n - 2 * 60 * 60 * 1000L,
+              status = AgentStatus.Processing,
+              lastActivityMs = n - 11 * 60 * 1000L
+            ))
+          )
+        }
+        _ <- TaskStuckWatcher.scan(resources, wsHub, 10 * 60 * 1000L)
+        _ <- IO.sleep(200.millis)
+        wsEvents <- receivedWs.get
+      yield wsEvents
+
+      val wsEvents = program.unsafeRunSync()
+      import scala.jdk.CollectionConverters.*
+      val warnings = appender.list.asScala.toList
+        .filter(_.getLevel == ch.qos.logback.classic.Level.WARN)
+        .map(_.getFormattedMessage)
+        .filter(_.contains("team-w-1"))
+      assertEquals(wsEvents.size, 1, s"exactly one taskStuck broadcast, got $wsEvents")
+      assert(warnings.nonEmpty, "no WARN notice captured for the stuck team agent")
+      val msg = warnings.head
+      assert(msg.contains("actor is never auto-stopped"), s"wording must scope no-stop to the ACTOR: $msg")
+      assert(msg.contains("loop guard"), s"wording must mention turn-level loop termination: $msg")
+      assert(msg.contains("cancel/restart"), s"wording must state the AgentControl remedy: $msg")
+      assert(!msg.contains("read-only notice"), s"stale read-only wording must be gone: $msg")
+    finally
+      lbLogger.detachAppender(appender)
+      system.stopAll.attempt.void.unsafeRunSync()
+  }
+
 end TaskStuckWatcherSpec

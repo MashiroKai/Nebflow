@@ -201,4 +201,49 @@ class MailActivateLifecycleSpec extends FunSuite:
     assert(registryEntry.isEmpty, "agentRegistry entry leaked past actor death")
   }
 
+  // ---- Block 0 registration chain (supervision trio §B2) ----
+
+  test("Block 0: member activation stamps parentSessionId=Manager sid + rootSessionId=mount root") {
+    val system = ActorSystem(s"mail-rc-${java.util.UUID.randomUUID().toString.take(6)}")
+    val tmp = os.temp.dir(prefix = "mail-regchain")
+    fixtureTeam(tmp)
+    val llm = new RecordingLlm
+
+    val io = for
+      sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
+      meta <- sessionStore.createSession(
+        "lifecyc/member",
+        agentName = Some("member"),
+        flowName = Some("lifecyc")
+      )
+      // Registry state as the mount would leave it: instance=lifecyc has a
+      // Manager (mgr-1) and was mounted from root-1.
+      _ <- TeamSessionRegistry.clear
+      _ <- TeamSessionRegistry.registerSession("lifecyc", "member", meta.id)
+      _ <- TeamSessionRegistry.registerSession("lifecyc", "Manager", "mgr-1")
+      _ <- TeamSessionRegistry.registerManager("lifecyc", "mgr-1")
+      _ <- TeamSessionRegistry.registerParentSession("lifecyc", "root-1")
+      resources <- mkResources(system, tmp, llm, sessionStore)
+      _ <- MailTool.activateAgent(meta.id, resources, system, ToolContext(projectRoot = os.pwd.toString))
+      memberRec <- resources.agentRegistry.get.map(_.get(meta.id))
+      // registerActor 4-arg (resumeInterruptedAgent path): the MANAGER branch
+      // of parentForRecord — parent = mounting root.
+      probeRef <- system.spawn(
+        Behaviors.receiveMessage[nebflow.agent.AgentCommand](_ => IO.pure(Behaviors.stopped)),
+        s"mgr-probe-${meta.id.take(6)}"
+      )
+      _ <- TeamSessionRegistry.registerActor("mgr-1", probeRef, resources, "root-1")
+      mgrRec <- resources.agentRegistry.get.map(_.get("mgr-1"))
+      _ <- TeamSessionRegistry.clear
+    yield (memberRec, mgrRec)
+
+    val (memberRec, mgrRec) = io.unsafeRunSync()
+    assert(memberRec.isDefined, "member was not registered in agentRegistry")
+    assertEquals(memberRec.get.parentSessionId, "mgr-1")
+    assertEquals(memberRec.get.rootSessionId, "root-1")
+    assert(mgrRec.isDefined, "registerActor 4-arg did not write the AgentRecord")
+    assertEquals(mgrRec.get.parentSessionId, "root-1")
+    assertEquals(mgrRec.get.rootSessionId, "root-1")
+  }
+
 end MailActivateLifecycleSpec
