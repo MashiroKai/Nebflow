@@ -3,8 +3,25 @@
 
 import { getToken, addSourceToggle } from './shared.js';
 
-/** Markdown viewer — render formatted markdown (read-only preview) */
+/** Markdown viewer - render formatted markdown (read-only preview) */
 async function viewMarkdown(pane, { content, absPath, fileName }) {
+  // Content-unchanged guard. Focus/visibility refreshes re-fetch the same
+  // file and re-render every open tab; rebuilding .canvas-md-scroll via
+  // innerHTML resets scrollTop and throws the reader back to the top (bug:
+  // Canvas md reading position lost on app switch). Same "unchanged never
+  // remounts" rule as the Monaco path in canvas.js openWorkspaceItem. The
+  // guard also requires a live preview DOM: a source-mode round trip wipes
+  // innerHTML before calling back into this function, so scroller is null
+  // there and the re-render must proceed.
+  const scroller = pane.querySelector('.canvas-md-scroll');
+  if (scroller && /** @type {any} */ (pane)._renderedMdContent === content) return;
+
+  // Capture before rebuild: when content actually changed (external edit),
+  // restore the reader's position afterwards so the refresh at worst drifts
+  // but never jumps to the top. The scrollTop setter auto-clamps when the
+  // new content is shorter than the old scroll offset.
+  const prevScrollTop = scroller ? scroller.scrollTop : 0;
+
   const { renderMarkdownWithMath } = await import('../utils.js');
   let html = renderMarkdownWithMath(content || '', false);
 
@@ -31,6 +48,12 @@ async function viewMarkdown(pane, { content, absPath, fileName }) {
 
   pane.classList.remove('scrollable');
   pane.innerHTML = `<div class="canvas-md-scroll"><div class="canvas-md-viewer">${html}</div></div>`;
+  /** @type {any} */ (pane)._renderedMdContent = content;
+
+  // Restore the reader's position after a content-changed rebuild. Clamped
+  // automatically if the new document is shorter (scrollTop setter).
+  const newScroller = pane.querySelector('.canvas-md-scroll');
+  if (newScroller && prevScrollTop > 0) newScroller.scrollTop = prevScrollTop;
 
   // marked v5+ dropped the `headerIds` option, so add slug ids manually
   // for TOC anchor navigation. Keeps word chars, spaces, CJK, hyphens;
