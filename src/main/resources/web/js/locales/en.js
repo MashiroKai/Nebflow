@@ -662,7 +662,7 @@ export default {
   'neblink.devices': 'Devices',
   'neblink.thisDevice': 'This device',
   'neblink.unknownDevice': 'Unnamed device',
-  'neblink.noPeersHint': 'No other devices found. Configure NebLink Server on both devices.',
+  'neblink.noPeersHint': 'No other devices found. Configure the device link service on both devices.',
   'neblink.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',
   'neblink.save': 'Save',
   'neblink.update': 'Update',

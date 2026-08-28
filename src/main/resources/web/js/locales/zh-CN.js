@@ -669,7 +669,7 @@ export default {
   'neblink.devices': '设备',
   'neblink.thisDevice': '本机',
   'neblink.unknownDevice': '未命名设备',
-  'neblink.noPeersHint': '还没有其他设备。请在两台设备上都配置 NebLink Server。',
+  'neblink.noPeersHint': '还没有其他设备。请在两台设备上都配置设备互联服务。',
   'neblink.deviceDescHint': '如：校园网环境、有 Vivado 2023.2',
   'neblink.save': '保存',
   'neblink.update': '更新',
