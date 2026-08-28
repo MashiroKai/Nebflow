@@ -182,6 +182,12 @@ final class FriendService(
   /** 删除好友（UI 操作，无权限/限速控制）。 */
   def removeFriend(friendUserId: String): IO[Either[String, String]] = client.removeFriend(friendUserId)
 
+  /** 拉黑好友（#290 §1.2）。 */
+  def blockFriend(friendUserId: String): IO[Either[String, String]] = client.blockFriend(friendUserId)
+
+  /** 移出黑名单（仅拉黑方）。 */
+  def unblockFriend(friendUserId: String): IO[Either[String, String]] = client.unblockFriend(friendUserId)
+
   /** 用户身份直接发送（前端 UI 输入框发送；与 agent 的 sendAsAgent 不同，无
     * 权限档位/限速——spec §7.2 限制的是 agent 代发）。发送成功后补拉会话增量。 */
   def sendAsUser(friendUserId: String, body: String): IO[Either[String, Json]] =

@@ -1069,6 +1069,22 @@ class RestApiRoutes(
           case Some(fs) => fs.removeFriend(friendUserId).flatMap(friendResultRaw)
       }
 
+    /** 拉黑好友（#290 §1.2 WeChat 式黑名单）。 */
+    case req @ POST -> Root / "friends" / friendUserId / "block" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) => fs.blockFriend(friendUserId).flatMap(friendResultRaw)
+      }
+
+    /** 移出黑名单（仅拉黑方；上游非拉黑方 403 not_blocker → BadGateway 透传错误）。 */
+    case req @ POST -> Root / "friends" / friendUserId / "unblock" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) => fs.unblockFriend(friendUserId).flatMap(friendResultRaw)
+      }
+
     /** 会话列表（按 last_message_id 倒序，含 unreadCount）。 */
     case req @ GET -> Root / "conversations" =>
       withAuth(req) {

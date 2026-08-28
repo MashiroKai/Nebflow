@@ -358,6 +358,14 @@ class NeblinkClient(
   def removeFriend(friendUserId: String): IO[Either[String, String]] =
     withSessionRaw("DELETE", s"/api/friends/$friendUserId", "")
 
+  /** 拉黑好友（#290 §1.2 WeChat 式黑名单；上游 upsert 到 blocked）。 */
+  def blockFriend(friendUserId: String): IO[Either[String, String]] =
+    withSessionRaw("POST", s"/api/friends/$friendUserId/block", "")
+
+  /** 移出黑名单（仅拉黑方；上游非拉黑方 403 not_blocker）。 */
+  def unblockFriend(friendUserId: String): IO[Either[String, String]] =
+    withSessionRaw("POST", s"/api/friends/$friendUserId/unblock", "")
+
   /** 会话列表（按 last_message_id 倒序，含 unreadCount）。 */
   def listConversations: IO[Either[String, List[ConversationSummary]]] =
     withSessionJson[List[ConversationSummary]]("GET", "/api/conversations", "")
