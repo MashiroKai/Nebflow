@@ -234,7 +234,7 @@ export function neblinkSettingsHTML() {
   }).join('');
 
   const peerHint = peers.length === 0
-    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure NebLink Server is configured on both devices.'}</div>`
+    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure the device link service is configured on both devices.'}</div>`
     : '';
 
   return `
