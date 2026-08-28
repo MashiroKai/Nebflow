@@ -226,12 +226,17 @@ jobs:
       - name: Collect assets
         run: |
           mkdir -p release-assets
-          find dist -name '${LOWER_NAME}-assembly-*.jar' -exec cp {} release-assets/ \;
-          find dist -name '${PRODUCT_NAME}-*.dmg' -exec cp {} release-assets/ \;
-          find dist -name '${PRODUCT_NAME}-*.msi' -exec cp {} release-assets/ \;
-          find dist -name '${PRODUCT_NAME}-*.deb' -exec cp {} release-assets/ \;
-          find dist -name '${PRODUCT_NAME}-*-app-image.tar.gz' -exec cp {} release-assets/ \;
+          find dist -name "${LOWER_NAME}-assembly-*.jar" -exec cp {} release-assets/ \;
+          find dist -name "${PRODUCT_NAME}-*.dmg" -exec cp {} release-assets/ \;
+          find dist -name "${PRODUCT_NAME}-*.msi" -exec cp {} release-assets/ \;
+          find dist -name "${PRODUCT_NAME}-*.deb" -exec cp {} release-assets/ \;
+          find dist -name "${PRODUCT_NAME}-*-app-image.tar.gz" -exec cp {} release-assets/ \;
           ls -lh release-assets/
+          # Empty release = silent failure (5 file patterns above are the contract)
+          if [ -z "$(ls -A release-assets)" ]; then
+            echo "::error::no release assets collected — pattern/brand mismatch"
+            exit 1
+          fi
 
       - name: Create tag
         run: |
