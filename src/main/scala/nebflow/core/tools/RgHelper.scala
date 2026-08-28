@@ -31,8 +31,12 @@ object RgHelper:
       Option(System.getenv("LOCALAPPDATA")).map(_ + File.separator + "Nebflow" + File.separator + rgBinName)
     else None
 
-  /** Resolve rg path: PATH lookup → local nebflow bin (~/.nebflow/bin) → Windows install dir */
+  /** Resolve rg path: bundled app-dir copy → PATH lookup → local nebflow bin
+    * (~/.nebflow/bin) → Windows install dir. The bundled copy (msi payload
+    * <install>\app\rg.exe, staged by packaging/build-msi.sh) wins for
+    * determinism — pinned version, tested with the release. */
   private def resolveRgPath: Option[String] =
+    val fromBundled = nebflow.core.InstallLayout.bundledRg
     val pathEnv = sys.env.getOrElse("PATH", "")
     // 1. PATH lookup
     val fromPath = pathEnv
@@ -45,7 +49,11 @@ object RgHelper:
     val fromCache = Some(new File(rgLocalPath)).filter(_.isFile).map(_.getAbsolutePath)
     // 3. Windows install dir (%LOCALAPPDATA%\Nebflow\rg.exe)
     val fromWinInstall = rgWinInstallPath.flatMap(p => Some(new File(p)).filter(_.isFile).map(_.getAbsolutePath))
-    fromPath.orElse(fromCache).orElse(fromWinInstall)
+    fromBundled.orElse(fromPath).orElse(fromCache).orElse(fromWinInstall)
+
+  /** Resolved rg path — exposed for the boot-time dependency probe
+    * (WindowsDepProbe). */
+  def resolvedPath: Option[String] = resolveRgPath
 
   /** Read an InputStream line-by-line, throwing OutputTooLargeException if it exceeds 500KB. */
   def readWithLimit(is: java.io.InputStream): String =
@@ -75,7 +83,7 @@ object RgHelper:
       case None =>
         Left(
           ToolError(
-            "ripgrep (rg) not found. Run 'nebflow update' or reinstall to get it: https://github.com/BurntSushi/ripgrep"
+            "ripgrep (rg) not found (checked bundled app dir, PATH, ~/.nebflow/bin). Run 'nebflow update' or reinstall to get it: https://github.com/BurntSushi/ripgrep"
           )
         )
       case Some(rgPath) =>
