@@ -350,6 +350,92 @@ export function cancelDeviceFlow() {
   }
 }
 
+// ---- PKCE login (Authorization Code + PKCE, loopback redirect) ----
+// Primary login path when the gateway has Logto configured: the browser does
+// the full hosted login and redirects back to 127.0.0.1/auth/callback; this
+// side just opens the URL and polls the flow state. When Logto is NOT
+// configured the gateway answers 404 logto-not-configured and callers fall
+// back to the device flow above.
+
+/**
+ * Start a Logto Authorization Code + PKCE login.
+ * Returns {authorizeUrl} on success; returns null when the gateway reports
+ * 404 logto-not-configured (caller should fall back to startDeviceFlow);
+ * throws Error(message) on any other failure.
+ */
+export async function startPkceLogin() {
+  const resp = await fetch('/api/neblink/auth/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
+  });
+  let data = {};
+  try { data = await resp.json(); } catch (_) { data = {}; }
+  if (resp.status === 404 && data.error === 'logto-not-configured') return null;
+  if (!resp.ok || !data.authorizeUrl) throw new Error(data.error || '启动登录失败');
+  return data;
+}
+
+/**
+ * Poll the local gateway's /api/neblink/auth/state until the PKCE login
+ * resolves. Statuses: idle | pending (keep polling) | success | error.
+ * On success the backend has already registered the device and persisted the
+ * credential - the UI just refreshes state.
+ */
+let _pkcePollTimer = null;
+export function pollPkceState(onSuccess, onError, intervalMs = 1200, timeoutMs = 300000) {
+  // Cancel any existing poll.
+  if (_pkcePollTimer) clearTimeout(_pkcePollTimer);
+  const deadline = Date.now() + timeoutMs;
+
+  const fail = (errMsg) => {
+    neblinkState.flowState = 'idle';
+    neblinkState.pairError = errMsg;
+    if (_rerender) _rerender();
+    onError?.(errMsg);
+  };
+
+  const poll = async () => {
+    if (Date.now() > deadline) {
+      fail('登录超时，请重试');
+      return;
+    }
+    try {
+      const resp = await fetch('/api/neblink/auth/state', {
+        headers: { 'Authorization': 'Bearer ' + getAuthToken() },
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        fail(data.error || '登录失败');
+        return;
+      }
+      if (data.status === 'success') {
+        // Success - device registered, credential persisted.
+        neblinkState.flowState = 'success';
+        neblinkState.pairError = '';
+        if (_rerender) _rerender();
+        // Refresh neblink status after a short delay so the profile shows up.
+        setTimeout(() => fetchNeblinkStatus(), 1500);
+        onSuccess?.();
+        return;
+      }
+      if (data.status === 'error') {
+        fail(data.error || '登录失败');
+        return;
+      }
+      // idle | pending - keep polling (idle is possible right after start).
+      _pkcePollTimer = setTimeout(poll, intervalMs);
+    } catch (e) {
+      fail('网络错误: ' + e.message);
+    }
+  };
+  _pkcePollTimer = setTimeout(poll, intervalMs);
+}
+
+/** Cancel an in-progress PKCE state poll (e.g. the login modal was closed). */
+export function cancelPkceFlow() {
+  if (_pkcePollTimer) { clearTimeout(_pkcePollTimer); _pkcePollTimer = null; }
+}
+
 // ---- Bind events after HTML insert ----
 export function bindNeblinkEvents(rerender) {
   _rerender = rerender;

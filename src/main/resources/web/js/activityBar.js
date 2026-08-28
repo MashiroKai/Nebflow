@@ -2,7 +2,8 @@
 //
 // Layout (top → bottom):
 //   • Avatar — the NebLink login entry. Tap when logged out → opens the
-//     NebLink device-flow login modal (GitHub OAuth). Tap when logged in →
+//     NebLink login modal (Logto OIDC, Authorization Code + PKCE; legacy
+//     device flow as fallback). Tap when logged in →
 //     opens the profile page on nebflow.space in a new tab.
 //   • Side Bar panel switch buttons (Files; future panels register the same way).
 //   • (spacer)
@@ -18,7 +19,7 @@
 // stays visible when the sidebar is collapsed.
 
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
-import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow } from './neblink.js';
+import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow } from './neblink.js';
 import { openAgents } from './agentManager.js';
 import { createIconsIn, escapeHtml } from './utils.js';
 import { brand } from './brand.js';
@@ -255,13 +256,13 @@ function bindAvatar() {
       // Logged in → open the profile page on the product domain
       window.open(`https://${brand.domain}/profile`, '_blank');
     } else {
-      // Not logged in → open the NebLink device-flow login modal (GitHub OAuth)
+      // Not logged in → open the NebLink login modal (PKCE, device-flow fallback)
       showLoginModal();
     }
   });
 }
 
-// ── Login modal (device flow) ────────────────────────────
+// ── Login modal (PKCE primary, device-flow fallback) ─────
 // Styles are injected once here (rather than a CSS file) so the modal stays
 // self-contained in this module; all values come from the Sapphire Glass
 // design variables so it themes with the rest of the UI.
@@ -338,7 +339,7 @@ function injectLoginModalStyles() {
 }
 
 /**
- * Public entry for the NebLink device-flow login modal (used by the
+ * Public entry for the NebLink login modal (used by the
  * friends/messages panels' logged-out empty states).
  */
 export function openLoginModal() {
@@ -346,8 +347,10 @@ export function openLoginModal() {
 }
 
 /**
- * Centered glass modal driving the NebLink device-flow login.
- * States: starting → waiting (user code + polling) → success | error.
+ * Centered glass modal driving the NebLink login.
+ * States: starting → waiting (PKCE browser login) → success | error, with a
+ * waiting-device state (user code + polling) when the gateway reports
+ * logto-not-configured and the legacy device flow takes over.
  * Closing the modal cancels polling.
  */
 function showLoginModal() {
@@ -367,6 +370,7 @@ function showLoginModal() {
 
   const close = () => {
     if (!finished) {
+      cancelPkceFlow();
       cancelDeviceFlow();
       setPairing(false);
     }
@@ -390,10 +394,18 @@ function showLoginModal() {
   const render = (state, data = {}) => {
     let body = '';
     if (state === 'starting') {
-      body = `<div class="login-waiting" style="margin-top:0;padding:12px 0">正在启动设备授权…</div>`;
+      body = `<div class="login-waiting" style="margin-top:0;padding:12px 0">正在启动登录…</div>`;
     } else if (state === 'waiting') {
+      // PKCE primary path: nothing to copy - the browser tab does the whole
+      // hosted login and redirects back to the local gateway.
       body = `
-        <div class="login-hint">在浏览器中完成 GitHub 授权以连接此设备</div>
+        <div class="login-hint">在浏览器中登录 NebLink 账号以连接此设备</div>
+        <button class="login-modal-btn glass-control" id="login-open-auth">重新打开登录页面</button>
+        <div class="login-waiting">等待登录完成…</div>`;
+    } else if (state === 'waiting-device') {
+      // Legacy device-flow fallback (gateway reports logto-not-configured).
+      body = `
+        <div class="login-hint">在浏览器中完成授权以连接此设备</div>
         <div class="login-user-code">${escapeHtml(data.userCode || '')}</div>
         <div class="login-code-caption">授权码</div>
         <button class="login-modal-btn glass-control" id="login-open-auth">打开授权页面</button>
@@ -402,7 +414,7 @@ function showLoginModal() {
       body = `<div class="login-success">✓ 连接成功，设备已加入网络</div>`;
     } else if (state === 'error') {
       body = `
-        <div class="login-error-msg">${escapeHtml(data.message || '授权失败')}</div>
+        <div class="login-error-msg">${escapeHtml(data.message || '登录失败')}</div>
         <button class="login-modal-btn glass-control" id="login-retry">重试</button>`;
     }
     modal.innerHTML = `
@@ -413,7 +425,8 @@ function showLoginModal() {
       <div class="login-modal-body">${body}</div>`;
     modal.querySelector('.login-modal-close').onclick = close;
     modal.querySelector('#login-open-auth')?.addEventListener('click', () => {
-      if (flowInfo?.verificationUri) window.open(flowInfo.verificationUri, '_blank');
+      if (flowInfo?.authorizeUrl) window.open(flowInfo.authorizeUrl, '_blank');
+      else if (flowInfo?.verificationUri) window.open(flowInfo.verificationUri, '_blank');
     });
     modal.querySelector('#login-retry')?.addEventListener('click', () => startFlow());
   };
@@ -422,37 +435,50 @@ function showLoginModal() {
     setPairing(true);
     finished = false;
     render('starting');
+    const onSuccess = () => {
+      finished = true;
+      setPairing(false);
+      render('success');
+      setTimeout(() => { close(); refresh(); }, 1500);
+    };
+    const onError = (errMsg) => {
+      finished = true;
+      setPairing(false);
+      render('error', { message: errMsg });
+    };
     try {
+      // Primary path: Authorization Code + PKCE via the hosted Logto page.
+      const pkce = await startPkceLogin();
+      if (pkce) {
+        flowInfo = pkce;
+        st.flowState = 'waiting';
+        render('waiting');
+        // Auto-open the login page; the in-modal button is the fallback
+        // in case the popup was blocked.
+        window.open(pkce.authorizeUrl, '_blank');
+        pollPkceState(onSuccess, onError);
+        return;
+      }
+      // Fallback: gateway answered logto-not-configured - legacy device flow.
       flowInfo = await startDeviceFlow();
       // Mirror the codes into neblinkState (same as the Settings flow) so the
       // Settings panel shows the waiting UI if it's open.
       st.deviceCode = flowInfo.deviceCode;
       st.userCode = flowInfo.userCode;
       st.flowState = 'waiting';
-      render('waiting', { userCode: flowInfo.userCode });
-      // Auto-open the authorization page; the in-modal button is the fallback
-      // in case the popup was blocked.
+      render('waiting-device', { userCode: flowInfo.userCode });
       if (flowInfo.verificationUri) window.open(flowInfo.verificationUri, '_blank');
       pollDeviceFlow(
         flowInfo.deviceCode,
         flowInfo.interval || 3,
         flowInfo.expiresIn || 900,
-        () => { // success
-          finished = true;
-          setPairing(false);
-          render('success');
-          setTimeout(() => { close(); refresh(); }, 1500);
-        },
-        (errMsg) => { // error / timeout
-          finished = true;
-          setPairing(false);
-          render('error', { message: errMsg });
-        }
+        onSuccess,
+        onError
       );
     } catch (e) {
       finished = true;
       setPairing(false);
-      render('error', { message: e.message || '启动设备流程失败' });
+      render('error', { message: e.message || '启动登录失败' });
     }
   };
 
@@ -460,7 +486,7 @@ function showLoginModal() {
 }
 
 // ── State refresh → avatar styling ───────────────────────
-// Error latch: remember avatar URLs that failed to load (e.g. GitHub avatars
+// Error latch: remember avatar URLs that failed to load (e.g. account avatars
 // unreachable without a proxy). Without this, the 10s refresh poll re-shows
 // the broken <img> every cycle (src unchanged → no retry → broken-image icon)
 // and the onerror fallback to the logo never sticks.
