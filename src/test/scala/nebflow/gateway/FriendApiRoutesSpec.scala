@@ -78,6 +78,11 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
             respond(ex, 200, """{"friendshipId":"fs-1","conversationId":"c1"}""")
           case ("POST", p) if p.endsWith("/decline") =>
             respond(ex, 200, """{"ok":true}""")
+          case ("POST", p) if p.endsWith("/unblock") && p.contains("forbidden-guy") =>
+            // 非拉黑方上游拒绝形态（#290 域 A 错误透传路径）
+            respond(ex, 403, """{"error":"not_blocker"}""")
+          case ("POST", p) if p.endsWith("/block") || p.endsWith("/unblock") =>
+            respond(ex, 200, """{"ok":true}""")
           case ("POST", p) if p.endsWith("/messages") =>
             respond(ex, 200, """{"messageId":5,"conversationId":"c1","createdAt":1234567899}""")
           case ("DELETE", _) => respond(ex, 200, """{"ok":true}""")
@@ -283,6 +288,47 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
         authed(Request[IO](Method.GET, Uri.unsafeFromString("/users/lookup")))
       ).map(resp => assertEquals(resp.status, Status.BadRequest))
+    }
+  }
+
+  test("POST /friends/:id/block proxies upstream ok") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
+        authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/u1/block")))
+      ).flatMap { resp =>
+        assertEquals(resp.status, Status.Ok)
+        resp.as[Json].map(body =>
+          assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true))
+        )
+      }
+    }
+  }
+
+  test("POST /friends/:id/unblock proxies upstream ok") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
+        authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/u1/unblock")))
+      ).flatMap { resp =>
+        assertEquals(resp.status, Status.Ok)
+        resp.as[Json].map(body =>
+          assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true))
+        )
+      }
+    }
+  }
+
+  test("POST /friends/:id/unblock upstream 403 not_blocker -> 502 with error passthrough") {
+    // 既有代理模式（decline/remove 同族）：上游非 2xx 在 NeblinkClient 折叠为
+    // Left("HTTP 403: ...")，网关层统一 502 + error 字符串——错误体内容随行透传。
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
+        authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/forbidden-guy/unblock")))
+      ).flatMap { resp =>
+        assertEquals(resp.status, Status.BadGateway)
+        resp.as[Json].map(body =>
+          assert(body.hcursor.downField("error").as[String].exists(_.contains("not_blocker")))
+        )
+      }
     }
   }
 
