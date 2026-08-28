@@ -68,9 +68,23 @@ object LogtoAuthCode:
 
   // ── URL / request builders (pure) ───────────────────────────────────────
 
-  /** The hosted authorize URL the browser opens. Loopback redirect (RFC
-    * 8252 §7.3): the port is added at request time and accepted by the
-    * provider against the registered port-less URI. */
+  /**
+   * The hosted authorize URL the browser opens. Loopback redirect (RFC
+   * 8252 §7.3): the port is added at request time and accepted by the
+   * provider against the registered port-less URI.
+   *
+   * `prompt=consent` is REQUIRED: this Logto build silently drops the
+   * `offline_access` scope from the grant when the authorize request lacks
+   * it — the token response then carries no refresh_token and the silent
+   * re-login chain (LogtoSilentRelogin) is dead on arrival. Real-chain
+   * probe (qa e2e 2026-08-28, 5 controlled experiments): baseline,
+   * `alwaysIssueRefreshToken=true`, and a zero-history fresh account all
+   * granted "openid" only; with prompt=consent the grant is
+   * "openid offline_access" + refresh_token. Consent is NOT remembered
+   * across authorizes (exp. 5), so the prompt ships on EVERY login — the
+   * cost is one extra consent screen on the low-frequency browser login
+   * path (daily use rides the deviceToken + refresh_token silent chain).
+   */
   def authorizeUrl(
     endpoint: String,
     clientId: String,
@@ -84,6 +98,7 @@ object LogtoAuthCode:
         "redirect_uri" -> redirectUri,
         "response_type" -> "code",
         "scope" -> "openid offline_access",
+        "prompt" -> "consent",
         "code_challenge" -> codeChallenge,
         "code_challenge_method" -> "S256",
         "state" -> state
