@@ -40,12 +40,13 @@ class LogtoAuthCodeSpec extends FunSuite:
       codeChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
       state = "st-123"
     )
-    assertEquals(url, "https://auth.example/oidc/auth?client_id=pkce-app&redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fauth%2Fcallback&response_type=code&scope=openid+offline_access&prompt=consent&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=st-123")
+    assertEquals(url, "https://auth.example/oidc/auth?client_id=pkce-app&redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fauth%2Fcallback&response_type=code&scope=openid+offline_access+email&prompt=consent&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=st-123")
     // Named regression nails: Logto silently drops offline_access (→ no
     // refresh_token → silent re-login dead) when prompt=consent is missing.
     // qa real-chain probe 2026-08-28, 5 controlled experiments.
     assert(url.contains("prompt=consent"), "prompt=consent must ship on EVERY authorize — without it Logto drops offline_access and no refresh_token is issued")
     assert(url.contains("offline_access"), "offline_access scope is the precondition for the refresh_token that LogtoSilentRelogin rotates")
+    assert(url.contains("email"), "#290 gap 1: email scope is the neblink_id source for pure-Logto accounts — the me endpoint scopes claims to the grant")
   }
 
   // ── token requests ──────────────────────────────────────────────────────
@@ -65,7 +66,7 @@ class LogtoAuthCodeSpec extends FunSuite:
     val req = LogtoAuthCode.refreshTokenRequest("https://auth.example", "pkce-app", "rt-1")
     assert(req.body.contains("grant_type=refresh_token"))
     assert(req.body.contains("refresh_token=rt-1"))
-    assert(req.body.contains("scope=openid+offline_access"))
+    assert(req.body.contains("scope=openid+offline_access+email"))
   }
 
   // ── response mapping ────────────────────────────────────────────────────
