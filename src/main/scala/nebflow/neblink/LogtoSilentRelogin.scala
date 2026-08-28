@@ -40,7 +40,11 @@ object LogtoSilentRelogin:
     for
       stored <- DeviceCredential.load
       refreshToken = stored.flatMap(_.logto).map(_.refreshToken)
-      logto <- ms.neblinkConfig.map(_.logto)
+      // Embedded-default fallback: missing logto block resolves to the
+      // product's hosted auth service, so a refresh token minted via the
+      // default PKCE chain stays refreshable after restart (same resolution
+      // as the auth/start endpoint).
+      logto <- ms.neblinkConfig.map(_.effectiveLogto)
       serverUrl <- serverUrlOf
       fresh <- startRefresh(refreshToken, logto.map(_.endpoint), logto.flatMap(_.pkceClientId))
       out <- IO.defer(dispatchRefresh(fresh, ms, discovery, gatewayPort, serverUrl, serverUrlOf))

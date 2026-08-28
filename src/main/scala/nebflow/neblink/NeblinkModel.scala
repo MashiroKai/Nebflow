@@ -149,7 +149,15 @@ case class NeblinkConfig(
   /** Agent messaging permissions (A2A 一期, spec §7.2): how the
     * SendFriendMessage tool may send on the user's behalf. */
   agentMessaging: AgentMessagingConfig = AgentMessagingConfig()
-)
+):
+  /** Login-chain resolution: an explicit `logto` block wins verbatim; a
+    * missing block falls back to `LogtoConfig.embeddedDefault` so fresh
+    * installs get the hosted PKCE login out of the box. PKCE consumers
+    * (auth/start, silent re-login) read this instead of the raw `logto`
+    * field; the legacy device-flow sites keep reading raw `logto` so their
+    * no-provider branch (neblink-server proxy) stays reachable exactly as
+    * before. */
+  def effectiveLogto: Option[LogtoConfig] = Some(logto.getOrElse(LogtoConfig.embeddedDefault))
 
 /**
  * Agent messaging permission tier (A2A 一期, spec §7.2-7.3). `mode`:
@@ -214,6 +222,24 @@ object LogtoConfig:
       pkceClientId <- c.downField("pkceClientId").as[Option[String]]
     yield LogtoConfig(endpoint, clientId, pkceClientId)
   }
+
+  /** Embedded default login provider: the product's own hosted auth service
+    * (production constants — public client identifiers, not secrets and not
+    * user-private knowledge; the 2026-08-19 red line targets user-specific
+    * runtime config like private gateways/keys, which this is not). This is
+    * the distribution fallback for fresh installs whose
+    * `<home>/neblink/config.json` has no `logto` block yet — without it every
+    * new user silently falls back to the legacy device-flow chain
+    * (beta.53 install-test finding, 2026-08-28). An explicit config.json
+    * `logto` block always wins (self-hosted scenarios). `clientId` is
+    * intentionally empty: the embedded default covers the PKCE login chain
+    * only; the legacy device-flow chain keeps its neblink-server proxy
+    * fallback and is scheduled for removal (beta.54). */
+  val embeddedDefault: LogtoConfig = LogtoConfig(
+    endpoint = "https://auth.neblink.space",
+    clientId = "",
+    pkceClientId = Some("csxh16cas0x03bgk6w7ej")
+  )
 
 object NeblinkConfig:
   given Encoder[NeblinkConfig] = deriveEncoder
