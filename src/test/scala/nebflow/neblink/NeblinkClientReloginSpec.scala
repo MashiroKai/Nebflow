@@ -65,9 +65,12 @@ class NeblinkClientReloginSpec extends FunSuite:
     val client = new NeblinkClient(
       cfg,
       serverPort = 1,
+      // Cap the hook at 3 entries: under a gate/call-site regression the
+      // retry path would loop — the cap makes that fail FAST on the
+      // hookCalls assertion instead of hanging until the suite timeout.
       onDeviceTokenRejected = Some(IO(hookToken).flatMap { t =>
         hookCalls += 1
-        IO.pure(t)
+        if hookCalls > 2 then IO.pure(None) else IO.pure(t)
       })
     ):
       override protected def sendRequest(
