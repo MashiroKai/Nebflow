@@ -425,12 +425,28 @@ object GatewayMain extends IOApp.Simple:
                                         new nebflow.neblink.NeblinkPresenceService(neblinkService, cfg.port.value)(
                                           dispatcher
                                         )
+                                      // Late-bound discovery holder for the silent re-login hook: the
+                                      // startup client is created BEFORE NeblinkDiscovery (below) —
+                                      // the hook resolves the hot-swap target at call time.
+                                      val neblinkDiscoveryHolder =
+                                        new java.util.concurrent.atomic.AtomicReference[Option[nebflow.neblink.NeblinkDiscovery]](None)
                                       // Check if NebLink Server is configured; if so, create client for NebLink-based discovery
                                       val neblinkClient: Option[nebflow.neblink.NeblinkClient] =
                                         neblinkService.neblinkConfig.unsafeRunSync() match
                                           case nc if nc.neblinkServer.isDefined =>
                                             Some(
-                                              new nebflow.neblink.NeblinkClient(nc.neblinkServer.get, cfg.port.value)
+                                              new nebflow.neblink.NeblinkClient(
+                                                nc.neblinkServer.get,
+                                                cfg.port.value,
+                                                onDeviceTokenRejected = Some(
+                                                  nebflow.neblink.LogtoSilentRelogin.make(
+                                                    neblinkService,
+                                                    IO(neblinkDiscoveryHolder.get),
+                                                    cfg.port.value,
+                                                    IO.pure(neblinkService.neblinkConfig.unsafeRunSync().neblinkServer.map(_.url).getOrElse(Branding.serverUrl))
+                                                  )
+                                                )
+                                              )
                                             )
                                           case _ => None
                                       // Wire relay client + presence service into NeblinkService so
@@ -491,6 +507,7 @@ object GatewayMain extends IOApp.Simple:
                                         presenceService,
                                         neblinkClient
                                       )
+                                      neblinkDiscoveryHolder.set(Some(tsDiscovery))
                                       neblinkService.setDiscoveryHook(
                                         tsDiscovery.discoverCycle
                                           .handleErrorWith(e =>
@@ -618,6 +635,10 @@ object GatewayMain extends IOApp.Simple:
                                                     Router(
                                                       "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
                                                         .presenceWsRoutes(wsb)),
+                                                      // Logto AC+PKCE loopback callback (RFC 8252) —
+                                                      // root-level, outside /api: the provider's browser
+                                                      // redirect carries no gateway token.
+                                                      "/auth" -> restApiRoutes.authCallbackRoutes,
                                                       // Static tree only — gzip must never wrap the
                                                       // "/api" tree (SSE stream, presence WS).
                                                       "/" -> GzipMiddleware(wsRoutes.routes)
