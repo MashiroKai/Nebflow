@@ -86,7 +86,10 @@ object LoopGuard:
     /** fp → 曾 L1 终止过的集合（同 fp 复发 → 直接 L2，D3）。 */
     terminatedFps: Set[String] = Set.empty,
     /** fp → 失败过的 turn 集合（S3；该 fp 任一次成功即整条清除）。 */
-    crossTurn: Map[String, Set[String]] = Map.empty
+    crossTurn: Map[String, Set[String]] = Map.empty,
+    /** F2 防轮询记账：连续「唯一成功 Bash 且同 fp」轮的 fp 与计数（turn 边界归零）。 */
+    sameBashFp: String = "",
+    sameBashCount: Int = 0
   )
 
   object Counters:
@@ -101,11 +104,19 @@ object LoopGuard:
     permissionDenied: Boolean
   )
 
-  /** 成功即视为「有进展轮」的工具集（S2 progress 轮不计）。简化：成功的
-    * Edit/Write/任务状态迁移 = 进展——同 hash 无效写由 guardSaveTurn 在 save
-    * 阶段独立治理（单一职责，不重复实现 fileHistory 比对）。 */
+  /** 成功即视为「有进展轮」的工具集（S2 progress 轮不计）。F2（2026-08-29，
+    * loop-detected 报告 §6）：验证型工作的主体是成功的 Bash/Read/Grep——
+    * 08-28 十起 S2 误杀全是「写盘稀疏但真验证」形态（跑测试/查日志/读代码），
+    * 只认 Edit/Write 会把合法验证工作推出 60 轮预算。同 hash 无效写由
+    * guardSaveTurn 在 save 阶段独立治理（单一职责）。 */
   private val ProgressTools: Set[String] =
-    Set("Edit", "Write", "TaskUpdate", "TaskCreate", "TeamTaskCreate", "TeamTaskUpdate")
+    Set("Edit", "Write", "TaskUpdate", "TaskCreate", "TeamTaskCreate", "TeamTaskUpdate",
+        "Bash", "Read", "Grep")
+
+  /** F2 反向规则（报告 option a 的附带条件）：同 fp 的成功 Bash 连续超过该值
+    * 视为轮询（watch/sleep 循环每轮都「成功」），此后该轮计回非进展——S2 预算
+    * 仍然管得住轮询循环。 */
+  private val BashPollBackstop = 3
 
   sealed trait Verdict extends Product with Serializable
   object Verdict:
@@ -173,14 +184,26 @@ object LoopGuard:
       // turn 边界：S1/S2 归零，S3（crossTurn/terminatedFps）跨 turn 保留
       val base =
         if counters.turnKey != turnKey then counters.copy(turnKey = turnKey, roundCount = 0,
-          streakFp = "", streakErrHash = "", streakCount = 0)
+          streakFp = "", streakErrHash = "", streakCount = 0, sameBashFp = "", sameBashCount = 0)
         else counters
 
-      val roundHasProgress = events.exists(e => !e.isError && ProgressTools.contains(e.toolName))
-      val roundCount = if s2Exempt then base.roundCount else base.roundCount + (if roundHasProgress then 0 else 1)
+      // F2 防轮询：本轮若恰为一轮成功 Bash 且 fp 与上轮相同 → 连续计数；超过
+      // backstop 后本轮不再算进展（S2 预算接管轮询循环）。
+      val roundBashFps = events.filter(e => !e.isError && e.toolName == "Bash")
+        .map(e => fingerprint(e.toolName, e.args)).distinct
+      val (nextBashFp, nextBashCount, bashPollStalled) = roundBashFps match
+        case List(fp) if base.sameBashFp == fp =>
+          val n = base.sameBashCount + 1
+          (fp, n, n > BashPollBackstop)
+        case List(fp) => (fp, 1, false)
+        case _ => ("", 0, false)
+      val roundHasProgress =
+        events.exists(e => !e.isError && ProgressTools.contains(e.toolName)) && !bashPollStalled
+      val base2 = base.copy(sameBashFp = nextBashFp, sameBashCount = nextBashCount)
+      val roundCount = if s2Exempt then base2.roundCount else base2.roundCount + (if roundHasProgress then 0 else 1)
 
       // 逐事件折叠 S1 streak / S3 crossTurn
-      val counted = events.foldLeft(base.copy(roundCount = roundCount)) { (acc, e) =>
+      val counted = events.foldLeft(base2.copy(roundCount = roundCount)) { (acc, e) =>
         val exempt = cfg.exemptTools.contains(e.toolName)
         val counted = e.isError && !exempt && !e.permissionDenied
         if !counted then
