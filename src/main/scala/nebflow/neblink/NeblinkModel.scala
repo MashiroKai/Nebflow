@@ -183,7 +183,13 @@ object AgentMessagingConfig:
   * `pkceClientId` = the Authorization Code + PKCE app (stage 2 primary
   * login, 2026-08-28). Separate apps because the deployed Logto pins a
   * device-flow app to the device_code grant via `isDeviceFlow` and that
-  * metadata is not editable through the Management API. */
+  * metadata is not editable through the Management API.
+  *
+  * Config surface (single, deliberate): decoded from
+  * `<home>/neblink/config.json` → `logto{endpoint,clientId,pkceClientId}`.
+  * There is NO reader for a nebflow.json `neblink.logto` block — entries
+  * there are inert (2026-08-28 dispatch misdirected the file once; qa
+  * fact-checked it). */
 case class LogtoConfig(
   endpoint: String,
   clientId: String,
