@@ -9,6 +9,7 @@ import { setActivityBadge, openLoginModal } from './activityBar.js';
 import { onMessage } from './ws.js';
 import * as api from './friendsApi.js';
 import { openChatWithFriend } from './messages.js';
+import { showPopupMenu } from './contextMenu.js';
 
 let friends = [];
 let incoming = [];
@@ -19,6 +20,20 @@ let searchResult = null;   // null | {found:false} | {found:true,...}
 let verifyFor = null;      // neblinkId awaiting verification-note input
 let sentTo = new Set();    // neblinkIds with a pending outgoing request (this load)
 
+// #290 §1.2 WeChat-style blacklist: blocked friends stay in the list, greyed.
+// The server (neblink-server list_friendships) currently excludes blocked
+// rows from GET /api/friends - so the blocked set is mirrored client-side
+// (localStorage) and merged back into the list on refresh. When the server
+// starts returning blocked rows (with a blocked flag), the server data wins
+// and the cache entry is dropped.
+const LS_BLOCKED = 'fm_blocked';
+function loadBlockedCache() {
+  try { return JSON.parse(localStorage.getItem(LS_BLOCKED) || '[]'); } catch { return []; }
+}
+function saveBlockedCache(list) {
+  try { localStorage.setItem(LS_BLOCKED, JSON.stringify(list)); } catch { /* non-critical */ }
+}
+
 function loggedIn() { return !!getNeblinkState().loggedIn; }
 
 export function getFriendList() { return friends; }
@@ -28,7 +43,20 @@ async function refresh() {
   if (!loggedIn()) { friends = []; incoming = []; outgoing = []; render(); return; }
   try {
     const data = await api.getFriends();
-    friends = data.friends || [];
+    const serverFriends = data.friends || [];
+    // Merge the client-side blocked mirror: rows the server excluded (blocked)
+    // reappear greyed; if the server does return a blocked row, its data wins.
+    const cache = loadBlockedCache();
+    const serverIds = new Set(serverFriends.map(f => f.userId));
+    const merged = [...serverFriends];
+    const keepCache = [];
+    for (const b of cache) {
+      if (serverIds.has(b.userId)) continue; // server row wins
+      merged.push({ ...b, blocked: true });
+      keepCache.push(b);
+    }
+    saveBlockedCache(keepCache);
+    friends = merged;
     incoming = (data.incoming || []);
     outgoing = (data.outgoing || []);
     sentTo = new Set(outgoing.filter(r => r.status === 'pending').map(r => (r.to?.neblinkId || '').toLowerCase()));
@@ -115,7 +143,8 @@ function render() {
 }
 
 function friendRow(f) {
-  const row = el('div', 'fm-row fm-friend-row');
+  const blocked = !!f.blocked;
+  const row = el('div', 'fm-row fm-friend-row' + (blocked ? ' fm-blocked' : ''));
   row.setAttribute('role', 'option');
   row.setAttribute('tabindex', '0');
   row.setAttribute('aria-selected', 'false');
@@ -124,10 +153,69 @@ function friendRow(f) {
   meta.appendChild(el('div', 'fm-row-name', f.name || f.neblinkId));
   meta.appendChild(el('div', 'fm-row-sub', f.neblinkId));
   row.appendChild(meta);
+  if (blocked) row.appendChild(el('span', 'fm-status-text fm-blocked-tag', t('contacts.blocked')));
   const open = () => openChatWithFriend(f);
   row.addEventListener('click', open);
   row.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); open(); } });
+  // #290 §1.1/§1.2: WeChat-style row context menu (delete / block / unblock).
+  row.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const items = [
+      { label: t('contacts.menuDelete'), danger: true, onClick: () => confirmDeleteFriend(f) },
+      blocked
+        ? { label: t('contacts.menuUnblock'), onClick: () => unblockFriend(f) }
+        : { label: t('contacts.menuBlock'), danger: true, onClick: () => confirmBlockFriend(f) },
+    ];
+    showPopupMenu(e.clientX, e.clientY, items);
+  });
   return row;
+}
+
+// ── Delete / block flows (#290 §1.1/§1.2, WeChat-style confirm) ─────────
+function confirmDeleteFriend(f) {
+  const name = f.name || f.neblinkId || '';
+  const run = async () => {
+    try {
+      await api.removeFriend(f.userId);
+      friends = friends.filter(x => x.userId !== f.userId);
+      saveBlockedCache(loadBlockedCache().filter(b => b.userId !== f.userId));
+      render();
+      window.dispatchEvent(new CustomEvent('fm-friends-changed'));
+    } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
+  };
+  if (typeof window.__showConfirm === 'function') {
+    window.__showConfirm(t('contacts.deleteTitle'), t('contacts.deleteConfirm', { name }), run);
+  } else { run(); }
+}
+
+function confirmBlockFriend(f) {
+  const name = f.name || f.neblinkId || '';
+  const run = async () => {
+    try {
+      await api.blockFriend(f.userId);
+      const cache = loadBlockedCache();
+      if (!cache.some(b => b.userId === f.userId)) {
+        cache.push({ userId: f.userId, neblinkId: f.neblinkId || '', name: f.name || '', avatarUrl: f.avatarUrl || '' });
+        saveBlockedCache(cache);
+      }
+      const row = friends.find(x => x.userId === f.userId);
+      if (row) row.blocked = true;
+      render();
+      window.dispatchEvent(new CustomEvent('fm-friends-changed'));
+    } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
+  };
+  if (typeof window.__showConfirm === 'function') {
+    window.__showConfirm(t('contacts.blockTitle'), t('contacts.blockConfirm', { name }), run);
+  } else { run(); }
+}
+
+async function unblockFriend(f) {
+  try {
+    await api.unblockFriend(f.userId);
+    saveBlockedCache(loadBlockedCache().filter(b => b.userId !== f.userId));
+    await refresh();
+    window.dispatchEvent(new CustomEvent('fm-friends-changed'));
+  } catch (err) { window.__showToast?.(err.message || t('messages.networkError'), 'error'); }
 }
 
 // ── Search (submit-style, 1s min interval) ───────────────
@@ -294,7 +382,8 @@ export function initContacts() {
   if (loggedIn()) refresh();
 }
 
-/** Used by messages.js for the not-friend gate (§3.3/R8). */
+/** Used by messages.js for the not-friend gate (§3.3/R8). Blocked rows stay
+ *  in the list (WeChat-style) but are not messageable - same gate as deleted. */
 export function isFriendUser(userId) {
-  return friends.some(f => f.userId === userId);
+  return friends.some(f => f.userId === userId && !f.blocked);
 }
