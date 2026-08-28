@@ -50,3 +50,8 @@ interface Window {
 interface Window {
   __showToast?: (message: string, kind?: string) => void;
 }
+
+/** Global confirm dialog (set by modal.js initModals) */
+interface Window {
+  __showConfirm?: (title: string, message: string, onConfirm: () => void) => void;
+}

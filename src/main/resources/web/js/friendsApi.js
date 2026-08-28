@@ -211,6 +211,35 @@ export async function sendFriendMessage(friendUserId, body) {
   return { messageId: msg.id, conversationId: conv.conversationId, createdAt: msg.createdAt };
 }
 
+/** DELETE /api/friends/{friendUserId} → 200 (#290 addendum §1.1) */
+export async function removeFriend(friendUserId) {
+  if (!MOCK) return req('DELETE', `/api/friends/${encodeURIComponent(friendUserId)}`);
+  await delay();
+  const m = mockStore();
+  m.friends = m.friends.filter(f => f.userId !== friendUserId);
+  return {};
+}
+
+/** POST /api/friends/{friendUserId}/block → 200 (#290 addendum §1.2) */
+export async function blockFriend(friendUserId) {
+  if (!MOCK) return req('POST', `/api/friends/${encodeURIComponent(friendUserId)}/block`);
+  await delay();
+  const m = mockStore();
+  const f = m.friends.find(f => f.userId === friendUserId);
+  if (f) f.blocked = true;
+  return {};
+}
+
+/** POST /api/friends/{friendUserId}/unblock → 200 (#290 addendum §1.2) */
+export async function unblockFriend(friendUserId) {
+  if (!MOCK) return req('POST', `/api/friends/${encodeURIComponent(friendUserId)}/unblock`);
+  await delay();
+  const m = mockStore();
+  const f = m.friends.find(f => f.userId === friendUserId);
+  if (f) f.blocked = false;
+  return {};
+}
+
 /** POST /api/conversations/{id}/read {lastReadMessageId} → 200 */
 export async function markConversationRead(conversationId, lastReadMessageId) {
   if (!MOCK) { await req('POST', `/api/conversations/${encodeURIComponent(conversationId)}/read`, { lastReadMessageId }); return; }
