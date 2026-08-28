@@ -131,13 +131,15 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      # WiX 3.x is a hard dependency of jpackage msi. WiX 3.14 pairs with
-      # JDK <= 23 (JDK 24+ switches to WiX 4/5) — keep this in sync with the
-      # packaging JDK version above.
+      # WiX 3.x is a hard dependency of jpackage msi. Runner images may ship a
+      # newer WiX 3.14.x preinstalled — install pinned version only if the
+      # toolset is absent (choco refuses downgrade without --allow-downgrade).
       - name: Install WiX 3.14
         shell: bash
         run: |
-          choco install wixtoolset --version=3.14.1.2728 -y
+          if [ ! -f "C:/Program Files (x86)/WiX Toolset v3.14/bin/candle.exe" ]; then
+            choco install wixtoolset --version=3.14.1.2728 -y
+          fi
           echo "C:/Program Files (x86)/WiX Toolset v3.14/bin" >> $GITHUB_PATH
 
       - name: Download jar
