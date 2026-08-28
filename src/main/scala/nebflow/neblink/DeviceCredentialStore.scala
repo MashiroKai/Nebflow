@@ -66,7 +66,9 @@ object DeviceCredential:
     yield DeviceCredential(serverUrl, networkId, deviceId, deviceToken, logto)
   }
 
-  private val credPath = PathUtil.dataRoot / "neblink" / "device.json"
+  // def, not val: PathUtil.dataRoot is redirectable (setDataRoot); a val would
+  // freeze the path at object-init and break per-test data roots (f1cd3709 rule).
+  private def credPath = PathUtil.dataRoot / "neblink" / "device.json"
 
   def load: IO[Option[DeviceCredential]] =
     IO.blocking {
