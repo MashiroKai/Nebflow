@@ -50,7 +50,7 @@ jobs:
         if: steps.check.outputs.skipped == 'false'
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
           cache: sbt
 
       - name: Setup sbt
