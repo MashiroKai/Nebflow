@@ -30,7 +30,12 @@ class WebSearchRaceSpec extends CatsEffectSuite:
     // antispider Left cancels 360's slow-but-real Right. New semantics: the
     // fast Left is recorded, the slow Right still wins.
     val fastFail = IO.pure(Left(s"${eSogou.name}: anti-bot blocked (antispider)"))
-    val slowSuccess = IO.sleep(150.millis) *> IO.pure(Right(ok360))
+    // 500ms (was 150ms): on a loaded CI runner the main fiber can be
+    // descheduled between `.start` and `IO.race` — with both Deferreds
+    // already complete, the race winner is nondeterministic and `done` won
+    // at ~152ms, turning the fast failure into the terminal Left. 500ms
+    // gives a 3x+ margin under CI scheduling stalls; munitIOTimeout is 15s.
+    val slowSuccess = IO.sleep(500.millis) *> IO.pure(Right(ok360))
     WebSearchTool.raceFirstSuccess(List(fastFail, slowSuccess)).map { r =>
       assert(r.isRight, s"fast failure must not poison the batch, got: $r")
       assertEquals(r.toOption.get._1.name, "360")
