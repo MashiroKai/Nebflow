@@ -399,7 +399,7 @@ function showLoginModal() {
       // PKCE primary path: nothing to copy - the browser tab does the whole
       // hosted login and redirects back to the local gateway.
       body = `
-        <div class="login-hint">在浏览器中登录 NebLink 账号以连接此设备</div>
+        <div class="login-hint">在浏览器中登录 nebflow 账号以连接此设备</div>
         <button class="login-modal-btn glass-control" id="login-open-auth">重新打开登录页面</button>
         <div class="login-waiting">等待登录完成…</div>`;
     } else if (state === 'waiting-device') {
@@ -419,7 +419,7 @@ function showLoginModal() {
     }
     modal.innerHTML = `
       <div class="login-modal-header">
-        <h3>登录到 NebLink</h3>
+        <h3>登录 nebflow 账号</h3>
         <button class="login-modal-close">&times;</button>
       </div>
       <div class="login-modal-body">${body}</div>`;

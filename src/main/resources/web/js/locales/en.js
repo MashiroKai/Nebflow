@@ -19,7 +19,7 @@ export default {
   'panel.contacts': 'Contacts',
 
   // === Friends & messages (A2A) ===
-  'contacts.searchPlaceholder': 'NebLink ID / Email',
+  'contacts.searchPlaceholder': 'nebflow ID / Email',
   'contacts.search': 'Search',
   'contacts.notFound': 'User not found',
   'contacts.addFriend': 'Add',
@@ -32,7 +32,7 @@ export default {
   'contacts.accepted': 'Added',
   'contacts.declined': 'Declined',
   'contacts.sentRequests': 'Sent',
-  'contacts.empty': 'No contacts yet — search by NebLink ID or email',
+  'contacts.empty': 'No contacts yet — search by nebflow ID or email',
   'contacts.verifyMessagePlaceholder': 'Add a message (optional)',
   'contacts.ariaRequests': '{n} friend requests',
   'messages.empty': 'No conversations',
@@ -42,7 +42,7 @@ export default {
   'messages.forwardToast': 'Sent to current session',
   'messages.agentBadge': 'Sent by agent',
   'messages.notFriendBlocked': 'You can no longer message this contact',
-  'messages.loginRequired': 'Log in to NebLink to use messages and contacts',
+  'messages.loginRequired': 'Log in to your nebflow account to use messages and contacts',
   'messages.login': 'Log in',
   'messages.reconnecting': 'Connection lost, reconnecting…',
   'messages.networkError': 'Network error — please check your connection',

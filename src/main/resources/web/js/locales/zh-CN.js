@@ -19,7 +19,7 @@ export default {
   'panel.contacts': '联系人',
 
   // === Friends & messages (A2A) ===
-  'contacts.searchPlaceholder': 'NebLink 号 / 邮箱',
+  'contacts.searchPlaceholder': 'nebflow 号 / 邮箱',
   'contacts.search': '搜索',
   'contacts.notFound': '未找到该用户',
   'contacts.addFriend': '加好友',
@@ -32,7 +32,7 @@ export default {
   'contacts.accepted': '已添加',
   'contacts.declined': '已拒绝',
   'contacts.sentRequests': '我发出的',
-  'contacts.empty': '暂无联系人，搜索 NebLink 号或邮箱添加',
+  'contacts.empty': '暂无联系人，搜索 nebflow 号或邮箱添加',
   'contacts.verifyMessagePlaceholder': '发送验证消息（可选）',
   'contacts.ariaRequests': '{n} 个好友请求',
   'messages.empty': '暂无会话',
@@ -42,7 +42,7 @@ export default {
   'messages.forwardToast': '已发送到当前会话',
   'messages.agentBadge': 'Agent 代发',
   'messages.notFriendBlocked': '对方已不是你的好友，无法发送消息',
-  'messages.loginRequired': '登录 NebLink 后使用消息与联系人',
+  'messages.loginRequired': '登录 nebflow 账号后使用消息与联系人',
   'messages.login': '登录',
   'messages.reconnecting': '连接已断开，正在重连…',
   'messages.networkError': '网络错误，请检查连接',
