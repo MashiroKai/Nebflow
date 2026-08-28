@@ -57,6 +57,10 @@ object ToolRegistry:
       "SubTask" -> SubTaskTool,
       // Cross-device file transfer
       "TransferFile" -> TransferFileTool,
+      // A2A 一期: agent sends a message to one of the user's NebLink friends
+      // (#290). Authorization: Nebula-only via agent.json tools declaration
+      // (author ruling 2026-08-28) — no mechanism-layer injection.
+      "SendFriendMessage" -> FriendMessageTool,
       // Load Team/Flow from disk (validate + mount)
       "Load" -> LoadTool,
       // Flow agent result reporting (verdict + output for DAG switch routing)
