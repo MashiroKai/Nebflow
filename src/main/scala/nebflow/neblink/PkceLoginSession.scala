@@ -67,9 +67,11 @@ final class PkceLoginSession private (
       case Status.Error(m) => Json.obj("status" -> "error".asJson, "error" -> m.asJson)
     }
 
-  /** Drop a stale pending attempt (Logto authorization codes live ~10 min;
-    * the session expires slightly earlier so a late callback reads as a
-    * clean error instead of a verifier mismatch). */
+  /** Drop a stale pending attempt. Logto authorization codes live ~10 min and
+    * our window (15 min) intentionally outlives them: a late callback fails
+    * in Logto's token exchange (code expired) rather than the local verifier
+    * check — either way the user gets a clean error, never a hung pending
+    * state. */
   private def expired(f: InFlight): Boolean =
     System.currentTimeMillis() - f.createdAt > ExpiryMs
 

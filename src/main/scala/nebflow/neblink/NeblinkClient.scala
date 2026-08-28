@@ -244,29 +244,33 @@ class NeblinkClient(
                 .as(Left(s"Decode error: ${err.getMessage}"))
         // Stage 2: the server rejected the long-lived deviceToken (revoked /
         // rotated out) — attempt ONE silent Logto re-login, then retry the
-        // session exchange with the fresh token.
-        case Left(err) if allowRelogin && isUnauthorized(err) =>
-          onDeviceTokenRejected match
-            case None => IO.pure(Left(err))
-            case Some(hook) =>
-              logger.info("Device token rejected by NebLink Server — attempting Logto silent re-login") *>
-                hook.flatMap {
-                  case Some(newToken) =>
-                    IO { activeDeviceToken = Some(newToken) } *>
-                      doLogin(deviceId, deviceName, platform, endpoints, allowRelogin = false)
-                  case None =>
-                    logger.warn("Logto silent re-login unavailable — surfacing login required").as(Left(err))
-                }
-        case Left(err) => IO.pure(Left(err))
+        // session exchange with the fresh token. NeblinkClient.reloginAllowed
+        // is the ONLY route to the hook: the retry call passes
+        // `allowRelogin = false`, so a repeated 401 can never re-enter the
+        // hook (single-shot anti-loop guarantee — spec'd + mutation-nailed in
+        // NeblinkClientReloginSpec; an unbounded loop would re-send the login
+        // and re-run the refresh-token rotation forever).
+        case Left(err) =>
+          if NeblinkClient.reloginAllowed(err, allowRelogin) then
+            onDeviceTokenRejected match
+              case None => IO.pure(Left(err))
+              case Some(hook) =>
+                logger.info("Device token rejected by NebLink Server — attempting Logto silent re-login") *>
+                  hook.flatMap { newToken =>
+                    NeblinkClient.reloginOutcome(newToken, err) match
+                      case Right(fresh) =>
+                        IO { activeDeviceToken = Some(fresh) } *>
+                          doLogin(deviceId, deviceName, platform, endpoints, allowRelogin = false)
+                      case Left(original) =>
+                        logger
+                          .warn("Logto silent re-login unavailable — surfacing login required")
+                          .as(Left(original))
+                  }
+          else IO.pure(Left(err))
       }
     yield result
 
-  /** HTTP 401 from sendRequest's `HTTP <code>: <body>` error shape. */
-  private def isUnauthorized(err: String): Boolean =
-    err.startsWith("HTTP 401")
-
-  /**
-   * Send heartbeat and get updated peer list. Requires prior login.
+  /** Send heartbeat and get updated peer list. Requires prior login.
    *
    * Re-detects local endpoints on every heartbeat so the server sees our current
    * IP — after a network change (e.g. laptop moved to a different Wi-Fi), the
@@ -484,7 +488,12 @@ class NeblinkClient(
 
   // ===== Private helpers =====
 
-  private def sendRequest(
+  /**
+   * HTTP transport seam. `protected` (not private) so NeblinkClientReloginSpec's
+   * stub subclass can inject a canned transport and observe the full retry
+   * chain — hook entry count + retry-request body — without real sockets.
+   */
+  protected def sendRequest(
     method: String,
     url: String,
     body: String,
@@ -514,5 +523,36 @@ class NeblinkClient(
             // never NPE on encoding/logging.
             Left(if e.getMessage == null then e.toString else e.getMessage)
     }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
+
+end NeblinkClient
+
+object NeblinkClient:
+
+  /** HTTP 401 marker from sendRequest's `HTTP <code>: <body>` error shape. */
+  private[neblink] def isUnauthorized(err: String): Boolean =
+    err.startsWith("HTTP 401")
+
+  /**
+   * Phase-1 gate for the deviceToken-rejected path — the ONLY route to the
+   * silent re-login hook (single call site in doLogin, grep-audited).
+   *
+   * The single-shot anti-loop guarantee lives here: `allowRelogin` is true
+   * only on the first attempt; the post-relogin retry passes false, so a
+   * fresh 401 can never re-enter the hook. An unbounded retry loop would
+   * re-send the full login request and re-run the refresh-token rotation
+   * forever, burning provider tokens. Regression nails (NeblinkClientReloginSpec):
+   * pure-gate quadrants + full-chain single-shot + mutation red for
+   * both the gate check and the `allowRelogin = false` call-site constant.
+   */
+  private[neblink] def reloginAllowed(err: String, allowRelogin: Boolean): Boolean =
+    allowRelogin && isUnauthorized(err)
+
+  /**
+   * Phase-2 decision after the hook ran: a fresh token retries the session
+   * exchange exactly once; None (hook not configured / unavailable / failed)
+   * surfaces the ORIGINAL error so the frontend prompts a fresh login.
+   */
+  private[neblink] def reloginOutcome(hookResult: Option[String], originalErr: String): Either[String, String] =
+    hookResult.toRight(originalErr)
 
 end NeblinkClient
