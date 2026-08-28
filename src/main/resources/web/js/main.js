@@ -1,4 +1,22 @@
+import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
 import state from './state.js';
+import { initBranding } from './brand.js';
+
+// Branding first: correct the tab title before any other module body runs.
+initBranding();
+
+// Embedded-context gate (flag set by the inline classic script in index.html —
+// see its comment). Module imports above already executed, but they are
+// side-effect-free at import time (connect/restore/init all run from this
+// file's body), so throwing here stops the boot before anything opens WS
+// connections or restores canvas tabs — which is what recursed.
+if (document.documentElement.dataset.nfEmbedded === '1') {
+  document.title = 'nebflow (embedded)';
+  document.addEventListener('DOMContentLoaded', () => {
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:24px;text-align:center">nebflow 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
+  });
+  throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
+}
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
 import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath } from './utils.js';
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
@@ -8,26 +26,31 @@ import {
   appendAgentText, finishAgent, getAgentColor,
   renderTool, renderToolPending, renderError, renderTimeoutNotice,
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
+  renderCompactStartCard, renderCompactDoneCard, renderCompactFailCard,
   showOptions, renderAskUser, renderPermissionPrompt,
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
   appendThinkingDelta, finishThinking,
-  appendToolStreamDelta, cancelToolStreamRAF
+  appendToolStreamDelta, cancelToolStreamRAF,
+  formatResumeClock
 } from './chat.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
   initHeaderModelInfo,
   persistUnread, createNewFolder, getCurrentFolderId,
-  resetChatForActiveSession
+  resetChatForActiveSession,
+  computeAgentStates
 } from './sidebar.js';
+import { initOnboarding } from './onboarding.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
   showDeleteModal, confirmDeleteSession,
   showDeleteFolderModal,
   showAgentModal, hideAgentModal, initModals
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup } from './persistence.js';
+import { initMicOrb } from './micOrb.js';
 import { renderTaskList } from './taskList.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
@@ -38,19 +61,25 @@ import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initDaemons } from './daemons.js';
 import { initChatSearch } from './chatSearch.js';
+import { initUsageDashboard } from './usageDashboard.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
-import { handleFlowAgentHistory } from './flowAgentPopup.js';
+import { isErrorReason, normalizeReason, applyErrorFrozen, clearErrorFrozen, renderEscalationCard } from './errorRecovery.js';
+import { handleFlowAgentHistory, openStepPopup as openFlowStepPopup } from './flowAgentPopup.js';
 import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
+import { fmtUptime, isFailedSnapshotStatus } from './managePanel.js';
 import { initNeblink } from './neblink.js';
 import { initDropbox } from './dropbox.js';
+import { initContacts } from './contacts.js';
+import { initMessages } from './messages.js';
 import { formatLiveDuration } from './chat.js';
+import { collapseTurn, failTurn } from './turnGroup.js';
 import * as planMode from './planMode.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initLightbox } from './lightbox.js';
 import * as flowCanvas from './flowCanvas.js';
 import { initColResizers } from './colResizer.js';
-import { initActivityBar } from './activityBar.js';
+import { initActivityBar, toggleSideBar } from './activityBar.js';
 
 // ---------- Live thinking timer ----------
 let _thinkingTimerInterval = null;
@@ -165,6 +194,7 @@ initChatView(
   // so Object.assign(state.dom, view.dom) correctly overrides each field.
   {
     chat: document.getElementById('chat'),
+    inputBar: document.getElementById('input-bar'),
     input: document.getElementById('input'),
     sendBtn: document.getElementById('send-btn'),
     stopBtn: document.getElementById('stop-btn'),
@@ -265,6 +295,26 @@ function clearBusyFor(msg) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
   }
+  // Freeze fallback (spec §7 risk table): a terminal event while frozen must
+  // clear the frozen marker + input-bar visual too — 'done' arriving without a
+  // resumed event would otherwise leave a stale frozen bar over a dead turn.
+  if (sid && state.frozenSessions.has(sid)) {
+    state.frozenSessions.delete(sid);
+    delete state.errorRecovery[sid];
+    const fv = findViewBySessionId(sid);
+    if (fv && fv.dom && fv.dom.inputBar) {
+      fv.dom.inputBar.classList.remove('frozen', 'frozen-error');
+      delete fv.dom.inputBar.dataset.frozen;
+      delete fv.dom.inputBar.dataset.errorFrozen;
+      // Error-recovery family: also drop the amber reason strip (UI-7 cleanup).
+      clearErrorFrozen(sid);
+      // Restore the mode-appropriate placeholder when the frozen session is
+      // the one on screen (otherwise it self-heals on next view activation).
+      if (fv === activeView && fv.dom.input) {
+        import('./input.js').then(({ applyInputModes }) => applyInputModes());
+      }
+    }
+  }
   // Drain queued messages after a short delay to let the UI finalize first
   if (sid) {
     setTimeout(() => drainMessageQueue(sid), 50);
@@ -289,6 +339,243 @@ function resetStreamTimeout(sid) {
     }
   }, state.streamTimeoutMs + 30000);
 }
+
+// ── Freeze schedule (work hours) events ──────────────────────────────────
+// Backend emits 'frozen' (root session) / 'agentFrozen' (sub-agent) when an
+// agent parks at a dispatch boundary outside work hours; 'resumed' /
+// 'agentResumed' when it wakes (schedule re-open, config change, or a user
+// message). Contract: protocol.scala AgentStreamEvent Frozen/Resumed.
+onMessage('frozen', (msg) => {
+  const sid = msg.sessionId;
+  if (!sid) return;
+  state.frozenSessions.add(sid);
+  // Error-recovery family (frozen-error-recovery plan §4): reason≠schedule →
+  // amber UI (input-bar tint + reason strip + retry/abandon buttons). The
+  // park semantics (frozenSessions) are the same; only the presentation and the
+  // actionable buttons differ.
+  const reason = normalizeReason(msg.reason);
+  const isError = isErrorReason(reason);
+  if (isError) {
+    state.errorRecovery[sid] = {
+      reason,
+      retryCount: msg.retryCount,
+      detail: msg.detail,
+      resumeAt: msg.resumeAt,
+      escalation: msg.escalation,
+    };
+  }
+  // F8/F4: a freeze can last hours — kill the activity stream timeout so it
+  // cannot false-fire at streamTimeoutMs+30s and clear the busy state (which
+  // would also drain the queue) mid-freeze. resumed re-arms it via activity.
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+  const v = findViewBySessionId(sid);
+  if (v) {
+    setActiveView(v);
+    // 2026-08-24 ruling: no standalone status bar — the input bar itself
+    // carries the frozen state (ice-blue material + placeholder).
+    if (v.dom && v.dom.inputBar) {
+      if (isError) {
+        // Amber family: .frozen-error (never .frozen — UI-1 mutex).
+        applyErrorFrozen(v, { sessionId: sid, reason, retryCount: msg.retryCount, escalation: msg.escalation });
+      } else {
+        v.dom.inputBar.classList.add('frozen');
+        v.dom.inputBar.dataset.frozen = 'true';
+        setFrozenBarState(v, true);
+        // Clear any stale error-family state (reason may change across events —
+        // UI-1 mutex must hold in both directions).
+        v.dom.inputBar.classList.remove('frozen-error');
+        delete v.dom.inputBar.dataset.errorFrozen;
+        const host = v.dom.inputBar.querySelector('#input-wrap');
+        const strip = host && host.querySelector('.error-recovery-strip');
+        if (strip) strip.remove();
+      }
+    }
+    if (v.dom && v.dom.input && !isError) {
+      const clock = formatResumeClock(msg.resumeAt || null);
+      v.dom.input.placeholder = clock
+        ? t('chat.frozenPlaceholder', { time: clock })
+        : t('chat.frozenPlaceholderNoTime');
+    }
+  }
+});
+
+onMessage('resumed', (msg) => {
+  const sid = msg.sessionId;
+  if (!sid) return;
+  if (!state.frozenSessions.has(sid)) return;   // stale/dup — no-op
+  state.frozenSessions.delete(sid);
+  delete state.errorRecovery[sid];
+  // Error-recovery family: remove the amber tint + strip (if present).
+  clearErrorFrozen(sid);
+  const v = findViewBySessionId(sid);
+  if (v) {
+    setActiveView(v);
+    if (v.dom && v.dom.inputBar) {
+      v.dom.inputBar.classList.remove('frozen');
+      delete v.dom.inputBar.dataset.frozen;
+    }
+    setFrozenBarState(v, false);
+    // Restore the mode-appropriate placeholder (default / skill / ask / plan)
+    import('./input.js').then(({ applyInputModes }) => applyInputModes());
+  }
+});
+
+// ── ⑩ Local schedule freeze (2026-08-24 ruling) ───────────────────────────
+// "处于冻结时间段，如果没有在工作过程（idle），也应该立即冻结消息输入框" —
+// the frozen display follows the schedule window itself, not just the
+// backend's park events (which only fire at dispatch boundaries mid-work).
+// Determined locally from the serverConfig-echoed schedule; the event path
+// (frozen/resumed) keeps authority over parked (frozenSessions) sessions.
+function freezeWindowState() {
+  const ws = state.workSchedule;
+  if (!ws || !ws.enabled || !Array.isArray(ws.segments)) return null;
+  const now = new Date();
+  const cur = now.getHours() * 60 + now.getMinutes();
+  for (const seg of ws.segments) {
+    const [sh, sm] = String(seg.start || '').split(':').map(Number);
+    const [eh, em] = String(seg.end || '').split(':').map(Number);
+    if ([sh, sm, eh, em].some(Number.isNaN)) continue;
+    const s = sh * 60 + sm, e = eh * 60 + em;
+    // Blacklist semantics; cross-midnight segments (start > end) are legal.
+    const inside = s < e ? (cur >= s && cur < e) : (cur >= s || cur < e);
+    if (inside) {
+      const end = new Date(now);
+      end.setHours(eh, em, 0, 0);
+      if (end <= now) end.setDate(end.getDate() + 1); // cross-midnight → tomorrow
+      return { resumeAt: end.getTime() };
+    }
+  }
+  return null;
+}
+
+// Frozen state makes the whole input bar inert EXCEPT the "跳过本次" button
+// (08-25 22:28 user ruling: no more "send a message to wake" — the freeze window
+// blocks input + mic until the user explicitly skips). The textarea and the
+// mic/attach/send/stop controls all get disabled; only the skip control stays
+// interactive. `disabled` (not readonly) so the inert textarea fires no keydown
+// and can never send. Un-frees by removing the attributes.
+function setFrozenBarState(v, frozen) {
+  const bar = v && v.dom && v.dom.inputBar;
+  if (!bar) return;
+  const input = v.dom.input;
+  if (input) {
+    if (frozen) { input.setAttribute('disabled', ''); input.setAttribute('aria-disabled', 'true'); }
+    else { input.removeAttribute('disabled'); input.setAttribute('aria-disabled', 'false'); }
+  }
+  for (const sel of ['#voice-btn', '#attach-btn', '#send-btn', '#stop-btn']) {
+    const el = bar.querySelector(sel);
+    if (!el) continue;
+    if (frozen) el.setAttribute('disabled', '');
+    else el.removeAttribute('disabled');
+  }
+}
+
+function applyLocalFreeze() {
+  const v = activeView;
+  const bar = v && v.dom && v.dom.inputBar;
+  if (!bar || !v.sessionId) return;
+  const win = freezeWindowState();
+  const parked = state.frozenSessions.has(v.sessionId); // event path owns it
+  const busy = state.busySessionIds.has(v.sessionId);   // woken mid-window: working
+  // A user who clicked "跳过本次" voided the current window (08-25 ruling:
+  // skip is not permanent — it expires at the window end, so the next window
+  // re-freezes). skipFrozenUntil mirrors the backend freezeSkipUntilRef.
+  const skipped = win && skipFrozenUntil > Date.now();
+  if (win && !parked && !busy && !skipped) {
+    if (!bar.classList.contains('frozen')) {
+      bar.classList.add('frozen');
+      bar.dataset.frozen = 'true';
+      setFrozenBarState(v, true);
+      if (v.dom.input) v.dom.input.placeholder = t('chat.frozenPlaceholder', { time: formatResumeClock(win.resumeAt) });
+    }
+  } else if ((!win || busy || skipped) && !parked && bar.classList.contains('frozen')) {
+    bar.classList.remove('frozen');
+    delete bar.dataset.frozen;
+    setFrozenBarState(v, false);
+    import('./input.js').then(({ applyInputModes }) => applyInputModes());
+  }
+}
+// Window boundary crossings (window start/end) without any event: tick.
+setInterval(applyLocalFreeze, 60000);
+
+// ── Skip-current-freeze (user ruling 08-25 14:40: "跳过本次" makes the current
+//    freeze window void so the user can keep talking — the message "跳过了才让
+//    说"). Skip is NOT permanent: it expires at the window end (skipFrozenUntil
+//    = resumeAt), so the next schedule window freezes again. ──────────────────
+// Mirrors the backend skipCurrentFreezeWindow (freezeSkipUntilRef). The button
+// also sends {type:'skipFreeze'} — a no-op on backends that have not yet
+// implemented the command (it hits the catch-all with empty content, recording
+// nothing — no fake bubble, no mis-route), and the authoritative wake once they
+// have (skipCurrentFreezeWindow unfreezes all parked agents). The local mirror
+// is what makes the UI recover immediately, independent of the backend.
+let skipFrozenUntil = 0;
+
+function skipCurrentFreeze() {
+  // Record the window end so applyLocalFreeze won't re-freeze the rest of this
+  // window. Guarded: when no local window is found (e.g. the backend parked via
+  // event before the schedule echo landed), we still un-freeze the UI — the
+  // button appearing means .frozen is present, so the click must always work.
+  const win = freezeWindowState();
+  if (win) skipFrozenUntil = win.resumeAt;
+  // Best-effort authoritative wake on the backend (safe no-op if unimplemented).
+  sendWs({ type: 'skipFreeze' });
+  // Immediate local UI unwind: un-freeze the active input bar (skip only the
+  // schedule-frozen state — never the amber error-recovery family).
+  const v = activeView;
+  const bar = v && v.dom && v.dom.inputBar;
+  if (bar) {
+    if (!bar.classList.contains('frozen-error')) {
+      bar.classList.remove('frozen');
+      delete bar.dataset.frozen;
+      setFrozenBarState(v, false);
+    }
+  }
+  if (v && v.dom && v.dom.input) {
+    import('./input.js').then(({ applyInputModes }) => applyInputModes());
+  }
+}
+
+// Wire the frozen-mode "跳过本次" button (single static element; shown via CSS
+// only while #input-bar has the schedule-frozen class).
+document.getElementById('skip-freeze-btn')?.addEventListener('click', () => skipCurrentFreeze());
+
+// Sub-agent freeze: mark the sessionBgAgents entry so the bg-agent dropdown
+// badge reflects the parked state (agentFrozen carries agentId; bgAgentPopup
+// intercepts the same event via nodeSessionId for its tile footer).
+onMessage('agentFrozen', (msg, view) => {
+  const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
+  if (!sid) return;
+  const aid = msg.agentId || (view && view.stream.activeAgentId);
+  if (aid && state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
+    state.sessionBgAgents[sid][aid].frozen = true;
+    state.sessionBgAgents[sid][aid].frozenResumeAt = msg.resumeAt || null;
+    // Error-recovery family: pass the reason (UI-7 amber dot vs sapphire).
+    state.sessionBgAgents[sid][aid].freezeReason = normalizeReason(msg.reason);
+    if (view) renderBgAgentDropdown();
+  }
+});
+
+onMessage('agentResumed', (msg, view) => {
+  const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
+  if (!sid) return;
+  const aid = msg.agentId || (view && view.stream.activeAgentId);
+  if (aid && state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
+    state.sessionBgAgents[sid][aid].frozen = false;
+    state.sessionBgAgents[sid][aid].frozenResumeAt = null;
+    state.sessionBgAgents[sid][aid].freezeReason = null;
+    if (view) renderBgAgentDropdown();
+  }
+});
+
+// Error-recovery escalation (frozen-error-recovery plan §5.3.2): auto-recovery
+// exhausted → parent/user decision is required. Render the amber decision card
+// at the top of the session view. Not auto-dismissed (user = final arbiter).
+onMessage('errorEscalated', (msg) => {
+  renderEscalationCard(msg);
+});
 
 // --- Chat streaming ---
 // ALL sessions: save to localStorage. Active session only: render DOM.
@@ -521,16 +808,26 @@ function formatTokens(n) {
 }
 
 function updateHeaderModelInfo() {
-  if (!activeView) return;
-  const el = activeView.dom.headerModelInfoEl;
+  // The header element lives in the primary window only (popups pass
+  // headerModelInfo: null), so always render the PRIMARY view's session —
+  // using activeView here dropped repaints whenever a bg-agent/flow popup was
+  // active while the primary session's usageUpdate/done arrived.
+  const el = document.getElementById('header-model-info');
   if (!el) return;
-  const sid = activeView?.sessionId;
+  const sid = chatViews.primary?.sessionId || state.activeSessionId;
   const info = sid ? state.sessionModelInfo[sid] : null;
-  if (!info || !info.contextWindow) {
+  // Header shows the context-usage ring only — the model name label was
+  // removed per user request (#313). The model is still surfaced via the
+  // ring's tooltip so the info isn't lost, just no longer visually present.
+  const hasRing = !!(info && info.contextWindow);
+  if (!hasRing) {
     el.textContent = '';
     el.style.display = 'none';
+    el.dataset.mode = '';
     return;
   }
+  const mode = 'r';
+
   const ratio = info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
   const pct = Math.min(Math.round(ratio * 100), 100);
   let barColor = '#4caf50';
@@ -538,9 +835,13 @@ function updateHeaderModelInfo() {
   if (ratio > 0.75) barColor = '#e53935';
 
   const thresholdPct = Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
-  const tooltip = info.inputTokens != null
-    ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%) · threshold ${thresholdPct}%`
-    : `${formatTokens(info.contextWindow)} context window`;
+  const outPart = info.outputTokens != null ? ` · +${formatTokens(info.outputTokens)} out` : '';
+  const tooltip = [
+    info.model || '',
+    info.inputTokens != null
+      ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%)${outPart} · threshold ${thresholdPct}%`
+      : `${formatTokens(info.contextWindow)} context window`,
+  ].filter(Boolean).join(' · ');
 
   const R = 15;
   const CIRC = 2 * Math.PI * R;
@@ -549,41 +850,27 @@ function updateHeaderModelInfo() {
 
   el.style.display = 'inline-flex';
 
-  const existingBar = el.querySelector('.ctx-bar-wrap');
-  const existingRing = el.querySelector('.ctx-ring-wrap');
-
-  if (existingBar && existingRing) {
-    existingBar.title = tooltip;
-    const fill = existingBar.querySelector('.ctx-bar-fill');
-    if (fill) { fill.style.width = pct + '%'; fill.style.background = barColor; }
-    const threshold = existingBar.querySelector('.ctx-bar-threshold');
-    if (threshold) threshold.style.left = thresholdPct + '%';
-    const thresholdLabel = existingBar.querySelector('.ctx-bar-threshold-label');
-    if (thresholdLabel) { thresholdLabel.style.left = thresholdPct + '%'; thresholdLabel.textContent = thresholdPct + '%'; }
-    const label = existingBar.querySelector('.ctx-bar-label');
-    if (label) label.textContent = `${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}`;
-    existingRing.title = tooltip;
-    const ringFill = existingRing.querySelector('circle:nth-child(2)');
-    if (ringFill) {
-      ringFill.setAttribute('stroke', barColor);
-      ringFill.setAttribute('stroke-dasharray', `${dashLen} ${CIRC}`);
+  // In-place update when the rendered structure matches the current mode.
+  if (el.dataset.mode === mode) {
+    const ring = /** @type {HTMLElement|null} */ (el.querySelector('.ctx-ring-wrap'));
+    if (ring) {
+      ring.title = tooltip;
+      const ringFill = ring.querySelector('circle:nth-child(2)');
+      if (ringFill) {
+        ringFill.setAttribute('stroke', barColor);
+        ringFill.setAttribute('stroke-dasharray', `${dashLen} ${CIRC}`);
+      }
+      const ringLine = ring.querySelector('.ctx-ring-threshold');
+      if (ringLine) ringLine.setAttribute('transform', `rotate(${thresholdAngle} 18 18)`);
+      const ringPct = ring.querySelector('.ctx-ring-pct');
+      if (ringPct) ringPct.textContent = String(pct);
     }
-    const ringLine = existingRing.querySelector('.ctx-ring-threshold');
-    if (ringLine) ringLine.setAttribute('transform', `rotate(${thresholdAngle} 18 18)`);
-    const ringPct = existingRing.querySelector('.ctx-ring-pct');
-    if (ringPct) ringPct.textContent = pct;
     return;
   }
 
+  // Structure change (ring appearing or disappearing) — rebuild.
+  el.dataset.mode = mode;
   el.innerHTML = `
-    <div class="ctx-bar-wrap ctx-full" title="${tooltip}">
-      <div class="ctx-bar-track">
-        <div class="ctx-bar-fill" style="width:${pct}%;background:${barColor};"></div>
-        <div class="ctx-bar-threshold" style="left:${thresholdPct}%;"></div>
-        <div class="ctx-bar-threshold-label" style="left:${thresholdPct}%;">${thresholdPct}%</div>
-      </div>
-      <span class="ctx-bar-label">${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}</span>
-    </div>
     <div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
       <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
         <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
@@ -607,9 +894,13 @@ onMessage('usageUpdate', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && msg.inputTokens != null && msg.contextWindow) {
     state.sessionModelInfo[sid] = {
-      model: state.sessionModelInfo[sid]?.model,
+      // #308 actual model: usageUpdate now carries the model actually used
+      // this round (backend B2); prefer it over the stale stored value.
+      model: msg.model || state.sessionModelInfo[sid]?.model,
       contextWindow: msg.contextWindow,
       inputTokens: msg.inputTokens,
+      // outputTokens absent (older backend) preserves the previous value
+      outputTokens: msg.outputTokens ?? state.sessionModelInfo[sid]?.outputTokens,
       compactThreshold: msg.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
@@ -634,6 +925,7 @@ onMessage('done', (msg, view) => {
       model: msg.model || state.sessionModelInfo[sid]?.model,
       contextWindow: msg.contextWindow || state.sessionModelInfo[sid]?.contextWindow,
       inputTokens: msg.inputTokens != null ? msg.inputTokens : state.sessionModelInfo[sid]?.inputTokens,
+      outputTokens: msg.outputTokens ?? state.sessionModelInfo[sid]?.outputTokens,
       compactThreshold: msg.compactThreshold != null ? msg.compactThreshold : state.sessionModelInfo[sid]?.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
@@ -705,6 +997,17 @@ onMessage('done', (msg, view) => {
     activeView.stream.agentBubbles = {};
     activeView.stream.activeAgentId = null;
     clearStatus();
+    // #346: gather this turn's process rows and collapse immediately
+    // (synchronous, no linger). The summary freezes the phrase + model
+    // (both visible, v1.2); the timestamp rides in the title tooltip.
+    const lastBadge = Array.from(activeView.dom.chat.querySelectorAll('.duration-badge')).pop();
+    collapseTurn(activeView, {
+      durationMs,
+      model: msg.model,
+      phrase: lastBadge?.dataset.nfPhrase || '',
+      title: lastBadge?.querySelector('.duration-badge-time')?.textContent || '',
+      sessionId: sid,
+    });
   } else {
     markSessionUnread(msg.sessionId);
   }
@@ -770,6 +1073,7 @@ onMessage('error', (msg, view) => {
     }
     finishThinking();
     finishAi();
+    failTurn(activeView); // #346: group but keep expanded for troubleshooting
     renderError(msg.message);
     clearStatus();
   } else {
@@ -798,6 +1102,7 @@ onMessage('interrupted', (msg, view) => {
     }
     finishThinking();
     finishAi();
+    failTurn(activeView); // #346: interrupted turns stay expanded
     clearStatus();
   }
 });
@@ -814,6 +1119,7 @@ onMessage('timeout', (msg, view) => {
   if (view) {
     finishThinking();
     finishAi();
+    failTurn(activeView); // #346: timed-out turns stay expanded
     renderTimeoutNotice();
     clearStatus();
   } else {
@@ -840,6 +1146,7 @@ onMessage('maxTokens', (msg, view) => {
     }
     finishThinking();
     finishAi();
+    failTurn(activeView); // #346: truncated turns stay expanded
     renderError('Max tokens reached — response truncated');
     clearStatus();
   } else {
@@ -864,16 +1171,83 @@ onMessage('askUser', (msg, view) => {
       const prevData = finishAi();
       if (prevData) saveMsg(prevData, sid);
     }
-    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName);
+    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId);
     if (data) saveMsg(data, msg.sessionId);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName }, sid);
+    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId }, sid);
   }
 });
 
+// F4 (#433): global actionable toast for permission cards whose target root
+// session is unreachable. Glass panel, no overlay dimming (弹窗禁令). Stack
+// top-right; removed on answer or on permissionExpired for the same root sid.
+let __permToastHost = null;
+function showGlobalPermissionToast(msg) {
+  const sid = msg.sessionId || '';
+  if (!__permToastHost) {
+    __permToastHost = document.createElement('div');
+    __permToastHost.id = 'global-perm-toasts';
+    document.body.appendChild(__permToastHost);
+  }
+  const card = document.createElement('div');
+  card.className = 'global-perm-toast';
+  card.dataset.rootSid = sid;
+  const title = document.createElement('div');
+  title.className = 'global-perm-toast-title';
+  title.textContent = t('perm.fallbackTitle', { agent: msg.sourceAgent || '?' });
+  const body = document.createElement('div');
+  body.className = 'global-perm-toast-body';
+  body.textContent = `${msg.toolName || ''}${msg.summary ? ' · ' + msg.summary : ''}`;
+  const actions = document.createElement('div');
+  actions.className = 'global-perm-toast-actions';
+  const send = (approved) => {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved, ...(msg.requestId && { requestId: msg.requestId }) }));
+    }
+    card.remove();
+  };
+  const denyBtn = document.createElement('button');
+  denyBtn.className = 'global-perm-toast-btn deny';
+  denyBtn.textContent = t('perm.fallbackDeny');
+  denyBtn.addEventListener('click', () => send(false));
+  const okBtn = document.createElement('button');
+  okBtn.className = 'global-perm-toast-btn approve';
+  okBtn.textContent = t('perm.fallbackApprove');
+  okBtn.addEventListener('click', () => send(true));
+  actions.appendChild(denyBtn);
+  actions.appendChild(okBtn);
+  card.appendChild(title);
+  card.appendChild(body);
+  card.appendChild(actions);
+  __permToastHost.appendChild(card);
+  // Safety net: the backend auto-denies after 5 min — retire the card by then.
+  setTimeout(() => card.remove(), 5 * 60 * 1000);
+}
+
+function dismissGlobalPermissionToasts(rootSid) {
+  if (!__permToastHost) return;
+  __permToastHost.querySelectorAll('.global-perm-toast').forEach(el => {
+    if (!rootSid || el.dataset.rootSid === rootSid) el.remove();
+  });
+}
+
 onMessage('askPermission', (msg, view) => {
   const sid = msg.sessionId;
+  // F4 (#433): fallback card — the card's target root session is unreachable
+  // (deleted / zombie / never had a client). The backend fanned it out to all
+  // roots with fallback:true; render a global actionable toast instead of
+  // routing the card into a session that cannot be opened. Also catch the
+  // un-flagged variant whose sessionId is not in the session list (older
+  // backend or non-flagged graveyard route). Answers match by requestId, so
+  // answering from this toast completes the pending request from any window.
+  if (msg.fallback || (sid && !state.sessionAgentMap[sid])) {
+    showGlobalPermissionToast(msg);
+    if (msg.sourceSession && state.sessionAgentMap[msg.sourceSession]) {
+      setSessionAttention(msg.sourceSession, true);
+    }
+    return;
+  }
   // Bypass mode: auto-approve immediately without showing attention indicator.
   // This must run for BOTH active and non-active sessions — previously only
   // active sessions got bypass treatment (inside renderPermissionPrompt),
@@ -882,13 +1256,13 @@ onMessage('askPermission', (msg, view) => {
     if (view) {
       // Active session: renderPermissionPrompt detects bypass, sends approval,
       // and shows the "auto-approved" badge. Let it handle everything.
-      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession);
+      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId);
     } else {
       // Non-active session: auto-approve directly (renderPermissionPrompt is never called).
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved: true }));
+        state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved: true, ...(msg.requestId && { requestId: msg.requestId }) }));
       }
-      saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, autoApproved: true, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession }, sid);
+      saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, autoApproved: true, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId }, sid);
     }
     return;
   }
@@ -904,15 +1278,16 @@ onMessage('askPermission', (msg, view) => {
   // disabled because answeredPermissions still holds this sid.
   if (sid) state.answeredPermissions.delete(sid);
   if (view) {
-    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession);
+    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession }, sid);
+    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId }, sid);
   }
 });
 
 onMessage('permissionExpired', (msg, view) => {
   const sid = msg.sessionId;
+  dismissGlobalPermissionToasts(sid); // F4 (#433): retire any fallback toast for this root
   if (!sid) return;
   // Mark as answered so the prompt isn't re-created on session switch
   state.answeredPermissions.add(sid);
@@ -1016,7 +1391,11 @@ onMessage('historyPage', (msg, view) => {
     view.pagination.offset = msg.offset;
     view.pagination.total = msg.total;
     view.pagination.hasMore = msg.hasMore;
-    restoreFromBackendHistory(msg.messages);
+    // #346 boundary fix (2026-08-24): when the session is still mid-turn at
+    // reload/reconnect, the trailing segment must stay flat — grouping it
+    // would stamp it 'failed' and strand a zombie group (see turnGroup.js).
+    const isStillBusy = state.busySessionIds.has(sid);
+    restoreFromBackendHistory(msg.messages, { busyTail: isStillBusy });
 
     // Detect if the agent is waiting for AskUser — in that case it's NOT actively streaming.
     const histMsgs = msg.messages;
@@ -1033,7 +1412,7 @@ onMessage('historyPage', (msg, view) => {
     }
 
     // Re-create streaming/completed state from sessionTexts/sessionThinkingBuffers/pendingRestore.
-    const isStillBusy = state.busySessionIds.has(sid);
+    // (isStillBusy computed above for the busyTail history-restore hint.)
     if (!isAskUserPending && !isAskPermissionPending) {
       // If the backend history already includes the completed message, clean up pendingRestore
       // to avoid duplication. Check last AI message text+thinking match.
@@ -1156,7 +1535,7 @@ onMessage('historyPage', (msg, view) => {
       activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.option-box')) row.remove();
       });
-      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName);
+      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName, lastHistMsg.requestId);
     }
 
     // Re-create interactive AskPermission if the last history message is an unanswered askPermission.
@@ -1168,7 +1547,7 @@ onMessage('historyPage', (msg, view) => {
       activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.permission-pending-box')) row.remove();
       });
-      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel, lastHistMsg.sourceAgent, lastHistMsg.sourceSession);
+      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel, lastHistMsg.sourceAgent, lastHistMsg.sourceSession, lastHistMsg.sourceTeam, lastHistMsg.requestId);
     }
 
     // Final scroll-to-bottom: after all rendering (history + streaming bubbles + pending tools)
@@ -1187,9 +1566,14 @@ onMessage('historyPage', (msg, view) => {
   } else {
     // Scroll-up pagination — prepend older messages
     // Guard against duplicate historyPage responses (e.g. from double getHistory on initial load):
-    // Skip if the response offset is >= what we already have, OR if offset is 0
-    // (offset 0 means "no older messages" — there is nothing valid to prepend).
-    if (msg.offset >= view.pagination.offset || msg.offset === 0) {
+    // skip when the response offset is NOT older than what we already have.
+    // This also covers the fully-loaded case (current offset 0, duplicate
+    // response offset 0 → 0 >= 0 skips). Note offset === 0 is NOT a skip
+    // condition on its own: the server packs the oldest page into an
+    // offset-0 response (SessionStore.getHistoryPage: offset=max(0,before-
+    // limit), messages=slice(offset, ...)) — skipping it made the oldest
+    // ≤50 messages unreachable and looped the top loader forever.
+    if (msg.offset >= view.pagination.offset) {
       // Skipping duplicate response
       return;
     }
@@ -1247,6 +1631,7 @@ function updateBgAgentIndicator(targetSid) {
     el.querySelector('.bgagent-count').textContent = count;
   } else {
     el.classList.add('hidden');
+    el.setAttribute('aria-expanded', 'false');
     const dropdown = view.dom.bgagentDropdownEl;
     if (dropdown) dropdown.classList.add('hidden');
   }
@@ -1254,30 +1639,142 @@ function updateBgAgentIndicator(targetSid) {
 }
 state.updateBgAgentIndicator = updateBgAgentIndicator;
 
+// ── Sub-agents panel (2026-08-25 spec, frozen @142535e9) ─────────────
+// Row = [status dot + label][kind chip][name · task][uptime][retries ×N]
+//       + secondary lines: stuck alert label / current tool subtitle.
+// User rulings locked in the spec: barrier hidden, retries only when >0,
+// NO kind grouping (chip instead), NO inline stuck buttons (operations
+// live in the agent popup — A13).
+
+/** Derive the AgentKind from the session-id prefix when the snapshot kind is
+ *  absent (live agentStart carries no kind field). */
+function bgAgentKindFromSession(sessionId) {
+  const raw = sessionId || '';
+  if (raw.startsWith('team-')) return 'Team';
+  if (raw.startsWith('delegate-')) return 'Delegate';
+  if (raw.startsWith('subtask-')) return 'SubTask';
+  if (raw.startsWith('dag-')) return 'Flow';
+  if (raw.startsWith('ephemeral-')) return 'Ephemeral';
+  return '';
+}
+
+/** Resolve which session bucket a background task belongs to for the UI.
+ *  A task executed by a background (sub)agent carries the agent's OWN
+ *  sessionId (delegate-/subtask- prefix), not the top-level session the user
+ *  is viewing — so without this the task lands in a bucket updateBgTasksUI
+ *  never reads and is neither counted nor shown. sessionBgAgents is keyed by
+ *  the root session (agentStart carries rootSessionId) and each entry holds
+ *  info.sessionId = the agent's node session, so reverse-look-up that mapping
+ *  to route a sub-agent's background task into the owning root bucket.
+ *  Backend-provided msg.rootSessionId wins when present. */
+function bgTaskRootFor(sessionId) {
+  if (!sessionId) return '';
+  for (const [root, agents] of Object.entries(state.sessionBgAgents || {})) {
+    if (!agents) continue;
+    for (const entry of Object.values(agents)) {
+      if ((entry.sessionId || '') === sessionId) return root;
+    }
+  }
+  return sessionId;
+}
+
+/** Row state machine (spec §3): done > stuck > frozen > error > idle > active. */
+function bgRowState(info) {
+  if (info.done) return 'done';
+  if (info.stuck) return 'stuck';
+  if (info.frozen) return 'frozen';
+  if (isFailedSnapshotStatus(info.status)) return 'error';
+  const st = info.status || '';
+  if (st === 'Idle' || st === 'WaitingForUser' || st === 'idle') return 'idle';
+  return 'active';
+}
+
+// Uptime tick: while the dropdown is open, refresh .bg-task-uptime text in
+// place every 15s (no full re-render — keeps keyboard focus). Self-terminates
+// once the dropdown hides, regardless of which close path ran.
+let bgUptimeTick = null;
+function armBgUptimeTick(view) {
+  if (bgUptimeTick) clearTimeout(bgUptimeTick);
+  bgUptimeTick = setTimeout(() => {
+    bgUptimeTick = null;
+    const dd = view && view.dom.bgagentDropdownEl;
+    if (dd && !dd.classList.contains('hidden')) {
+      dd.querySelectorAll('.bg-task-uptime[data-started-at]').forEach(el => {
+        const started = Number(el.getAttribute('data-started-at'));
+        if (started > 0) el.textContent = fmtUptime(Date.now() - started);
+      });
+      armBgUptimeTick(view);
+    }
+  }, 15000);
+}
+
 function renderBgAgentDropdown() {
   if (!activeView) return;
+  const dropdownEl = activeView.dom.bgagentDropdownEl;
   const listEl = activeView.dom.bgagentDropdownListEl;
   if (!listEl) return;
   const sid = activeView?.sessionId;
   const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
   const entries = Object.entries(bgAgents);
+  // Panel header carries the live count (aria-live polite, spec §5).
+  const headerEl = dropdownEl ? dropdownEl.querySelector('.bg-dropdown-header') : null;
+  if (headerEl) headerEl.textContent = t('subagents.header', { count: entries.length });
   if (entries.length === 0) {
-    listEl.innerHTML = '';
+    // Empty state (spec §6): restrained i18n line, never fake rows.
+    listEl.innerHTML = '<div class="bg-dropdown-empty">' + escapeHtml(t('subagents.empty')) + '</div>';
     return;
   }
   listEl.innerHTML = entries.map(([id, info]) => {
-    const toolLabel = info.currentTool || '';
-    const toolPart = toolLabel ? '<span class="bgagent-tool">' + escapeHtml(toolLabel) + '</span>' : '';
-    const status = info.done ? '<span class="bgagent-done">done</span>' : '<span class="bgagent-running">running</span>';
+    const rowState = bgRowState(info);
+    const terminal = rowState === 'done' || rowState === 'error';
+    const statusLabel = t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
+    const dotClass = {
+      active: 'bg-status-active', idle: 'bg-status-idle', stuck: 'bg-status-stuck',
+      error: 'bg-status-error', frozen: 'bg-status-frozen', done: 'bg-status-done',
+    }[rowState];
+    const kind = info.kind || bgAgentKindFromSession(info.sessionId || id);
+    const kindPart = kind ? '<span class="bg-task-kind">' + escapeHtml(kind) + '</span>' : '';
     const displayName = info.name || id;
-    const label = info.task ? displayName + ' · ' + escapeHtml(info.task) : displayName;
-    // nodeSessionId for Delegate/SubTask sub-agents starts with "delegate-"/"subtask-" (backend protocol)
-    const nodeSessionId = isBgAgentId(id) ? id : null;
-    const clickAttr = nodeSessionId ? `data-node-session-id="${escapeHtml(nodeSessionId)}" style="cursor:pointer"` : '';
-    return '<div class="bg-task-row" ' + clickAttr + '>' +
+    const taskText = info.task ? displayName + ' · ' + info.task : displayName;
+    const namePart = '<span class="bg-task-name" title="' + escapeHtml(taskText) + '">' + escapeHtml(taskText) + '</span>';
+    // Uptime (spec §2.2): relative duration while non-terminal; hidden once done.
+    const uptimePart = (!terminal && info.startedAt)
+      ? '<span class="bg-task-uptime" data-started-at="' + info.startedAt + '">' + escapeHtml(fmtUptime(Date.now() - info.startedAt)) + '</span>'
+      : '';
+    // Retries chip: only when >0 (0 is noise — user ruling ②).
+    const retries = info.retryCount || 0;
+    const retriesPart = retries > 0
+      ? '<span class="bg-task-retries" title="' + escapeHtml(t('manage.retry')) + ' ×' + retries + '">×' + retries + '</span>'
+      : '';
+    // Stuck: restrained red label with idle seconds (manage-panel semantics).
+    // NO inline cancel/restart buttons — operations live in the agent popup (A13).
+    const stuckPart = (rowState === 'stuck' && info.stuck)
+      ? '<span class="bg-task-stuck" role="alert">' + escapeHtml(
+          info.stuck.action === 'restart'
+            ? t('manage.stuckAutoRestart')
+            : t('manage.stuck', { secs: info.stuck.idleSecs ?? '' })
+        ) + '</span>'
+      : '';
+    const toolLabel = info.currentTool || '';
+    const toolPart = (toolLabel && !terminal)
+      ? '<span class="bgagent-tool" title="' + escapeHtml(toolLabel) + '">↳ ' + escapeHtml(toolLabel) + '</span>'
+      : '';
+    // The sub-agent's OWN session id — agentStart carries it as
+    // msg.nodeSessionId (delegate-*/subtask-*/team-<sid>/dag-*). Every row
+    // is clickable; the click handler strips the team- prefix and routes
+    // dag-*/bare sids to the flow popup (same view the Flow panel uses).
+    const sessionId = info.sessionId || (isBgAgentId(id) ? id : '');
+    const clickAttr = sessionId
+      ? `data-bg-key="${escapeHtml(id)}" data-node-session-id="${escapeHtml(sessionId)}"`
+      : '';
+    return '<div class="bg-task-row' + (rowState === 'done' ? ' done' : '') + '" role="listitem" tabindex="0" ' + clickAttr + '>' +
+      '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
-        '<span class="bg-task-name">' + status + ' ' + label + '</span>' +
-        toolPart +
+        '<div class="bg-task-line">' +
+          '<span class="bg-task-state bg-state-' + rowState + '">' + escapeHtml(statusLabel) + '</span>' +
+          kindPart + namePart + uptimePart + retriesPart +
+        '</div>' +
+        stuckPart + toolPart +
       '</div>' +
     '</div>';
   }).join('');
@@ -1286,16 +1783,48 @@ function renderBgAgentDropdown() {
   listEl.querySelectorAll('[data-node-session-id]').forEach(row => {
     row.addEventListener('click', (e) => {
       e.stopPropagation();
-      const nodeSessionId = row.getAttribute('data-node-session-id');
-      const info = bgAgents[nodeSessionId];
-      if (info) {
-        openBgAgentPopup(nodeSessionId, info.name, info.task);
-        // Close the dropdown
+      const rawSessionId = row.getAttribute('data-node-session-id');
+      const info = bgAgents[row.getAttribute('data-bg-key')];
+      if (info && rawSessionId) {
+        // Capture the dropdown BEFORE opening the popup — openStepPopup
+        // switches activeView to the popup view whose fakeDom has no dropdown.
         const dropdown = activeView.dom.bgagentDropdownEl;
+        // team-<sid> wraps the agent's bare session id (its ui.json key) —
+        // strip it, matching the Flow/Team panel entry (flowTeams.js).
+        const sessionId = rawSessionId.replace(/^team-/, '');
+        if (isBgAgentId(rawSessionId)) {
+          // delegate-*/subtask-* → bg-agent popup (ephemeral sessions,
+          // live-rendered; history only persists at completion).
+          openBgAgentPopup(rawSessionId, info.name, info.task);
+        } else {
+          // dag-*/bare sid → flow popup — the SAME entry the Flow/Team panel
+          // uses, so live events flow into one shared view instead of
+          // building a duplicate hidden view per popup module.
+          openFlowStepPopup(row.getAttribute('data-bg-key'), info.name, info.name, '', sessionId);
+        }
+        // Close the dropdown
         if (dropdown) dropdown.classList.add('hidden');
       }
     });
   });
+
+  // Keyboard (spec §7 / APG listbox): Enter/Space opens the row's popup,
+  // ArrowUp/ArrowDown move between rows. Property assignment — idempotent
+  // across re-renders (no listener accumulation).
+  listEl.onkeydown = (e) => {
+    const row = e.target && e.target.closest ? e.target.closest('.bg-task-row') : null;
+    if (!row) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      row.click();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const rows = [...listEl.querySelectorAll('.bg-task-row')];
+      const i = rows.indexOf(row);
+      const next = rows[e.key === 'ArrowDown' ? i + 1 : i - 1];
+      if (next) next.focus();
+    }
+  };
 }
 
 // Toggle dropdown on indicator click — register for ALL views
@@ -1303,15 +1832,23 @@ Object.values(chatViews).forEach(v => {
   const indicator = v.dom.bgagentIndicatorEl;
   const dropdown = v.dom.bgagentDropdownEl;
   if (!indicator || !dropdown) return;
-  indicator.addEventListener('click', (e) => {
+  const toggle = (e) => {
     e.stopPropagation();
     setActiveView(v);
-    if (dropdown.classList.contains('hidden')) {
+    const opening = dropdown.classList.contains('hidden');
+    if (opening) {
       renderBgAgentDropdown();
       dropdown.classList.remove('hidden');
+      armBgUptimeTick(v);
     } else {
       dropdown.classList.add('hidden');
     }
+    indicator.setAttribute('aria-expanded', String(opening));
+  };
+  indicator.addEventListener('click', toggle);
+  // role=button keyboard parity (spec §7 — non-mouse reachable).
+  indicator.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
   });
 });
 
@@ -1321,7 +1858,10 @@ document.addEventListener('click', (e) => {
     const dropdown = v.dom.bgagentDropdownEl;
     const indicator = v.dom.bgagentIndicatorEl;
     if (dropdown && !dropdown.contains(e.target) && indicator && !indicator.contains(e.target)) {
-      dropdown.classList.add('hidden');
+      if (!dropdown.classList.contains('hidden')) {
+        dropdown.classList.add('hidden');
+        if (indicator) indicator.setAttribute('aria-expanded', 'false');
+      }
     }
   });
 });
@@ -1336,9 +1876,36 @@ onMessage('agentStart', (msg, view) => {
   const aid = msg.agentId || msg.name;
   if (view) view.stream.activeAgentId = aid;
   if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
+  // Cross-keyspace dedupe: snapshot-restored entries (activeAgents handler)
+  // key on the bare sessionId (getActiveAgents pins agentId == sessionId),
+  // while live events key on the actor-path agentId (mail-*). Without this,
+  // the same agent renders twice in the dropdown whenever a snapshot row
+  // coexists with a live turn (e.g. page refresh while a team agent is busy,
+  // then its next turn starts). The live row is richer (carries
+  // taskDescription) — drop the stale snapshot-keyed twin.
+  const sessionKey = (msg.nodeSessionId || '').replace(/^team-/, '');
+  if (sessionKey && sessionKey !== aid && state.sessionBgAgents[sid][sessionKey]) {
+    delete state.sessionBgAgents[sid][sessionKey];
+  }
+  // Sub-agents panel (2026-08-25): preserve management fields across turns —
+  // a per-turn agentStart overwrites the entry, so kind/startedAt/retryCount
+  // carry over from the previous entry; a fresh turn clears stuck/frozen
+  // (activity resumed) and marks the row active.
+  const prev = state.sessionBgAgents[sid][aid] || null;
   state.sessionBgAgents[sid][aid] = {
     name: msg.name || aid,
     task: msg.taskDescription || '',
+    // nodeSessionId is the sub-agent's OWN session id (delegate-*/subtask-*/
+    // team-<sid>/dag-*; AgentStart carries no sessionId field of its own —
+    // msg.sessionId on delegate/subtask events is the PARENT session (injected
+    // by routeWsSend), so using it here loaded the host's history (串台).
+    sessionId: msg.nodeSessionId || '',
+    kind: (prev && prev.kind) || bgAgentKindFromSession(msg.nodeSessionId || ''),
+    startedAt: (prev && prev.startedAt) || Date.now(),
+    status: 'Processing',
+    retryCount: (prev && prev.retryCount) || 0,
+    stuck: null,
+    frozen: false,
     currentTool: null,
     done: false,
   };
@@ -1348,11 +1915,25 @@ onMessage('agentStart', (msg, view) => {
   updateBgAgentIndicator(sid);
 });
 
-onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); });
-onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+// Sub-agents panel (2026-08-25): any activity on a stuck entry clears the
+// stuck flag — the row falls back to its live state on the next render.
+function clearBgStuck(msg) {
+  const sid = msg.rootSessionId || msg.sessionId;
+  const aid = msg.agentId;
+  if (!sid || !aid) return;
+  const entry = state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid];
+  if (entry && entry.stuck) {
+    entry.stuck = null;
+    updateBgAgentIndicator(sid);
+  }
+}
+
+onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
+onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
 
 onMessage('agentToolStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
+  clearBgStuck(msg);
   const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
@@ -1365,35 +1946,74 @@ onMessage('agentToolStart', (msg, view) => {
 onMessage('agentToolEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
 onMessage('agentEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
 
-onMessage('agentThinking', (msg, view) => { resetStreamTimeout(msg.sessionId); });
-onMessage('agentRetryStatus', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentThinking', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
+onMessage('agentRetryStatus', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
+
+// Sub-agents panel (2026-08-25 spec §3): taskStuck marks the dropdown row —
+// taskStuck carries the child's BARE sessionId while sessionBgAgents entries
+// store it as info.sessionId (possibly team- wrapped). action=restart counts
+// as one auto-restart (the visible ×N retries chip, manage-panel semantics).
+onMessage('taskStuck', (msg) => {
+  const bare = (msg.sessionId || '').replace(/^team-/, '');
+  if (!bare) return;
+  for (const [rootSid, agents] of Object.entries(state.sessionBgAgents)) {
+    for (const info of Object.values(agents)) {
+      const entrySid = (info.sessionId || '').replace(/^team-/, '');
+      if (entrySid !== bare) continue;
+      info.stuck = { idleSecs: msg.idleSecs, action: msg.action };
+      if (msg.kind) info.kind = msg.kind;
+      if (msg.action === 'restart') info.retryCount = (info.retryCount || 0) + 1;
+      updateBgAgentIndicator(rootSid);
+    }
+  }
+});
 
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
-  if (aid && state.sessionBgAgents[sid]) {
-    if (state.sessionBgAgents[sid][aid]) state.sessionBgAgents[sid][aid].done = true;
-    if (view) renderBgAgentDropdown();
+  // W1-d dual-key cleanup: live events key sessionBgAgents entries on the
+  // actor-path agentId, but entries rebuilt from the activeAgents snapshot
+  // after a refresh key on the agent's SESSION id (backend pins agentId ==
+  // sessionId for restored rows — WebSocketRoutes getActiveAgents). An
+  // agentDone carrying the actor-path key can never clear a sessionId-keyed
+  // restored row, so an agent that was mid-turn during a refresh ghosted as
+  // "running" until the next refresh. Resolve the session-id key from
+  // nodeSessionId (strip the team- routing prefix) and clear BOTH keys.
+  const sessionKey = (msg.nodeSessionId || '').replace(/^team-/, '');
+  const keys = [...new Set([aid, sessionKey].filter(Boolean))];
+  if (keys.length && state.sessionBgAgents[sid]) {
+    let touched = false;
+    for (const k of keys) {
+      if (state.sessionBgAgents[sid][k]) {
+        state.sessionBgAgents[sid][k].done = true;
+        state.sessionBgAgents[sid][k].stuck = null; // done supersedes stuck (bgRowState order)
+        touched = true;
+      }
+    }
+    if (touched && view) renderBgAgentDropdown();
     // Clean up bg-agent popup view after a delay
-    if (isBgAgentId(aid)) cleanupBgAgentView(aid);
+    if (aid && isBgAgentId(aid)) cleanupBgAgentView(aid);
     // Remove after 2s — always runs, even if the parent session isn't displayed
     setTimeout(() => {
-      if (state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
-        delete state.sessionBgAgents[sid][aid];
-        // Clean up empty session entries
-        if (Object.keys(state.sessionBgAgents[sid]).length === 0) {
-          delete state.sessionBgAgents[sid];
-        }
-        // Update indicator if the affected view is currently displayed
-        const targetView = findViewBySessionId(sid);
-        if (targetView) {
-          const saved = activeView;
-          setActiveView(targetView);
-          updateBgAgentIndicator();
-          setActiveView(saved);
-        }
+      if (!state.sessionBgAgents[sid]) return;
+      let removedAny = false;
+      for (const k of keys) {
+        if (state.sessionBgAgents[sid][k]) { delete state.sessionBgAgents[sid][k]; removedAny = true; }
+      }
+      if (!removedAny) return;
+      // Clean up empty session entries
+      if (Object.keys(state.sessionBgAgents[sid]).length === 0) {
+        delete state.sessionBgAgents[sid];
+      }
+      // Update indicator if the affected view is currently displayed
+      const targetView = findViewBySessionId(sid);
+      if (targetView) {
+        const saved = activeView;
+        setActiveView(targetView);
+        updateBgAgentIndicator();
+        setActiveView(saved);
       }
     }, 2000);
   }
@@ -1406,6 +2026,8 @@ window.addEventListener('nebflow-session-change', (e) => {
   refreshExplorer(e.detail.sessionId);
   refreshScheduledTasks(e.detail.sessionId);
   if (e.detail.sessionId) sendWs({ type: 'getTaskList', sessionId: e.detail.sessionId });
+  // ⑩ the frozen input-bar visual follows the newly activated session.
+  applyLocalFreeze();
 });
 
 onMessage('treeBranchMounted', () => {
@@ -1450,16 +2072,22 @@ onMessage('flowStarted', (msg) => {
   flowCanvas.onFlowStarted(msg);
 });
 
+onMessage('flowNodesAdded', (msg) => {
+  flowCanvas.onFlowNodesAdded(msg);
+});
+
 onMessage('flowProgress', (msg) => {
   flowCanvas.onFlowProgress(msg);
 });
 
-onMessage('flowStarted', (msg) => {
-  flowCanvas.onFlowStarted(msg);
-});
-
 onMessage('flowCompleted', (msg) => {
   flowCanvas.onFlowCompleted(msg);
+});
+
+// Team Manager task list live refresh (2026-08-25 team-manager-task-tool).
+// no sessionId — the teams panel owns the rendered state via flowCanvas.
+onMessage('teamTaskListUpdate', (msg) => {
+  flowCanvas.onTeamTaskListUpdate(msg);
 });
 
 // --- Compaction events (per-session) ---
@@ -1482,7 +2110,10 @@ onMessage('compactStart', (msg, view) => {
   resetStreamTimeout(sid);
   setCompacting(sid, true);
   if (view) {
-    renderSystemBubble(t('chat.compacting'));
+    renderCompactStartCard(view);
+    // Persist the same system text as before — history restore renders it as
+    // a quiet notice card; the live status card is a live-view-only element.
+    saveMsg({ type: 'system', content: t('chat.compacting') }, sid);
   }
 });
 
@@ -1491,6 +2122,15 @@ onMessage('compactComplete', (msg, view) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
+  // Compaction shrinks the live context — refresh the usage ring immediately
+  // instead of leaving the pre-compaction (near-threshold) value up until the
+  // next LLM round's usageUpdate. outputTokens is stale per-turn data, drop it.
+  if (msg.after != null) {
+    const prev = state.sessionModelInfo[sid] || {};
+    state.sessionModelInfo[sid] = { ...prev, inputTokens: msg.after, outputTokens: undefined };
+    try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
+    updateHeaderModelInfo();
+  }
   // Compaction completes outside the normal done chain — finish any
   // streaming agent bubbles so their cursors don't linger.
   if (view) {
@@ -1500,7 +2140,9 @@ onMessage('compactComplete', (msg, view) => {
   }
   if (view) {
     const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
-    renderSystemBubble(t('chat.compacted', { before: msg.before, after: msg.after, detail }));
+    const text = t('chat.compacted', { before: msg.before, after: msg.after, detail });
+    renderCompactDoneCard(view, { before: msg.before, after: msg.after, detail });
+    saveMsg({ type: 'system', content: text }, sid);
   }
   // Drain queued messages only if agent is NOT busy. During auto-compaction
   // with resume, the agent immediately starts a resume turn after compactComplete.
@@ -1522,7 +2164,9 @@ onMessage('compactFailed', (msg, view) => {
     view.stream.activeAgentId = null;
   }
   if (view) {
-    renderSystemBubble(t('chat.compactFailed', { attempt: msg.attempt, maxAttempts: msg.maxAttempts }));
+    const text = t('chat.compactFailed', { attempt: msg.attempt, maxAttempts: msg.maxAttempts });
+    renderCompactFailCard(view, text);
+    saveMsg({ type: 'system', content: text }, sid);
   }
   if (msg.attempt >= msg.maxAttempts) {
     if (view) {
@@ -1587,6 +2231,29 @@ onMessage('serverConfig', (msg, view) => {
   if (msg.mcpServers) {
     state.mcpServers = msg.mcpServers;
   }
+  // !== undefined (not truthiness): the schedule node must sync even when
+  // falsy-but-present ({enabled:false,...}) so the settings panel always
+  // echoes server truth (freeze-consistency fix 2026-08-27).
+  if (msg.workSchedule !== undefined) {
+    state.workSchedule = msg.workSchedule;
+    // ⑩ schedule change re-evaluates the local freeze display immediately.
+    applyLocalFreeze();
+    // Re-render the settings panel if open so the schedule editor echoes the
+    // authoritative server config (freeze-schedule spec F2/F5).
+    const settingsOverlay = document.getElementById('settings-overlay');
+    if (settingsOverlay && settingsOverlay.classList.contains('on')) {
+      import('./sidebar.js').then(({ renderSettings }) => renderSettings());
+    }
+  }
+  if (msg.stt) {
+    state.stt = msg.stt;
+    // STT config echo — re-render the settings panel so the status indicator
+    // (configured / free-browser-path) stays authoritative (#295).
+    const settingsOverlay = document.getElementById('settings-overlay');
+    if (settingsOverlay && settingsOverlay.classList.contains('on')) {
+      import('./sidebar.js').then(({ renderSettings }) => renderSettings());
+    }
+  }
 });
 
 // MCP server list updated (after background init completes)
@@ -1606,6 +2273,9 @@ onMessage('configData', (msg, view) => {
   if (settingsOverlay && settingsOverlay.classList.contains('on')) {
     renderSettings();
   }
+  // First-run onboarding: fixed wizard (new user) or one-time greeting offer
+  // (returning user). Triggers once per boot — configData re-fires on save.
+  initOnboarding(msg);
 });
 
 onMessage('configUpdated', (msg, view) => {
@@ -1629,6 +2299,17 @@ onMessage('sessionModelSet', (msg, view) => {
 onMessage('modelChanged', (msg, view) => {
   if (msg.newModel) {
     state.currentModel = msg.newModel;
+    // Record the ACTUAL model on the session so the header model label /
+    // tooltip switch from the configured to the used model immediately —
+    // previously this event only set the global currentModel (unread by any
+    // UI), so a GLM→deepseek fallback left the display showing the old model.
+    const sid = msg.sessionId || state.activeSessionId;
+    if (sid) {
+      const prev = state.sessionModelInfo[sid] || {};
+      state.sessionModelInfo[sid] = { ...prev, model: msg.newModel };
+      try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
+      updateHeaderModelInfo();
+    }
   }
 });
 
@@ -1654,10 +2335,10 @@ onMessage('user', (msg, view) => {
   // window on restore ("outgoing Delegate prompt shows as blue bubble").
   // Sub-agent streams restore from their own backend history instead.
   if (!msg.nodeSessionId) {
-    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null }, sid);
+    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null }, sid);
   }
   if (sid === state.activeSessionId && view) {
-    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam);
+    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery);
     smartScroll();
   }
 });
@@ -1688,7 +2369,7 @@ onMessage('messageRecalled', (msg) => {
           cleanupCardIframes(activeView.dom.chat);
           activeView.dom.chat.innerHTML = '';
         }
-        restoreFromStorage();
+        restoreFromStorage({ busyTail: state.busySessionIds.has(sid) });
       });
     }
   }
@@ -1739,6 +2420,9 @@ onMessage('sessionBusy', (msg, view) => {
       clearStatus();
     }
   }
+  // ⑩ busy start (woken mid-window) drops the frozen visual; busy end (idle
+  // again inside the window) restores it.
+  applyLocalFreeze();
 });
 
 // --- Task list ---
@@ -1920,7 +2604,11 @@ document.addEventListener('click', (e) => {
 });
 
 onMessage('backgroundTaskUpdate', (msg, view) => {
-  const sid = msg.sessionId;
+  // A background-task event emitted by a background (sub)agent carries the
+  // agent's OWN sessionId (delegate-/subtask- prefix) in msg.sessionId, not
+  // the top-level session the user is viewing — route it to the owning root
+  // bucket so it's counted and shown in that window (bug fix 2026-08-25).
+  const sid = msg.rootSessionId || bgTaskRootFor(msg.sessionId) || msg.sessionId;
   if (!sid) return;
   if (!state.sessionBgTasks[sid]) state.sessionBgTasks[sid] = [];
   const tasks = state.sessionBgTasks[sid];
@@ -2121,6 +2809,17 @@ onMessage('forkComplete', (msg, view) => {
     const bgAgentDropdown = document.getElementById('bgagent-dropdown');
     if (bgAgentDropdown && !bgAgentDropdown.classList.contains('hidden')) {
       bgAgentDropdown.classList.add('hidden');
+      const bgAgentIndicator = document.getElementById('bgagent-indicator');
+      if (bgAgentIndicator) bgAgentIndicator.setAttribute('aria-expanded', 'false');
+      e.preventDefault();
+      return;
+    }
+
+    const flowsDropdown = document.getElementById('flows-dropdown');
+    if (flowsDropdown && !flowsDropdown.classList.contains('hidden')) {
+      flowsDropdown.classList.add('hidden');
+      const flowsIndicator = document.getElementById('flows-indicator');
+      if (flowsIndicator) flowsIndicator.setAttribute('aria-expanded', 'false');
       e.preventDefault();
       return;
     }
@@ -2141,39 +2840,100 @@ onMessage('forkComplete', (msg, view) => {
   }, true); // capture phase — intercept before other handlers
 })();
 
+// #396 Header adaptive layout (spec 52b19a64, frozen): measurement-driven
+// priority hiding + center clamp — ANY width zero icon overlap; no flex-wrap;
+// no "⋯" overflow menu (user 2026-08-25 裁定: 仅自动隐藏). The fixed set
+// (sidebar-toggle / header-model-info / memory-btn / bg-indicator / bgagent-
+// indicator / canvas-toggle-btn) is never hidden; non-fixed right buttons hide
+// by priority P1→P5 (bypass > voice > search > reminder > daemon), session-name
+// truncates first (ellipsis) then hides (P5).
 (function initHeaderResizeObserver() {
   const header = document.getElementById('header');
   if (!header || !window.ResizeObserver) return;
-  let compactMode = false;
-  let rafId = null;
-  let suppressUntil = 0;
-  const check = () => {
-    if (rafId) cancelAnimationFrame(rafId);
-    rafId = requestAnimationFrame(() => {
-      rafId = null;
-      if (performance.now() < suppressUntil) return;
-      const center = header.querySelector('.header-center');
-      if (!center) return;
-      const cw = center.clientWidth;
-      if (!compactMode && cw < 140) {
-        compactMode = true;
-        header.classList.add('header-compact');
-        // Suppress callbacks for 300ms — the class toggle changes center
-        // width, which would re-trigger ResizeObserver and bounce back.
-        suppressUntil = performance.now() + 300;
-      } else if (compactMode && cw > 300) {
-        compactMode = false;
-        header.classList.remove('header-compact');
-        suppressUntil = performance.now() + 300;
+  const HIDE = 'nb-header-hide';
+  // Non-fixed right-cluster controls in hide-priority order (lowest first).
+  const rightPrio = [
+    () => document.getElementById('bypass-dropdown'),
+    () => document.getElementById('voice-toggle-btn'),
+    () => document.getElementById('search-btn'),
+    () => document.getElementById('reminder-btn'),
+    () => document.getElementById('daemon-btn'),
+  ];
+  const centerEl = () => /** @type {HTMLElement|null} */ (header.querySelector('.header-center'));
+  const leftEl = () => /** @type {HTMLElement|null} */ (header.querySelector('.header-left'));
+  const rightEl = () => /** @type {HTMLElement|null} */ (header.querySelector('.header-right'));
+  let raf = null;
+
+  function layout() {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      raf = null;
+      const center = centerEl();
+      const session = document.getElementById('session-name');
+      const mem = document.getElementById('memory-btn');
+      if (!center || !session || !mem) return;
+      // Reset to the widest reasonable state each pass, then hide by priority.
+      rightPrio.forEach(fn => { const el = fn(); if (el) el.classList.remove(HIDE); });
+      session.classList.remove(HIDE);
+      const headerW = header.clientWidth;
+      const memW = mem.offsetWidth || 28;
+      const CS_GAP = 8;         // .header-center flex gap (session ↔ memory)
+      const MIN_SESSION = 28;   // §6: session hides if it can't seat a meaningful chunk
+      // Zero-overlap clamp for the absolute-centered .header-center (left:50%,
+      // translateX(-50%)). A centered box of width c clears the left cluster iff
+      // c ≤ 2·(centerX - leftCluster.right), and the right cluster iff
+      // c ≤ 2·(rightCluster.left - centerX). We measure the real pixel rects so
+      // header border+padding are accounted for (§8 A2 zero-overlap guarantee).
+      const measure = () => {
+        const hr = header.getBoundingClientRect();
+        const cx = hr.left + hr.width / 2;            // center of the sticky box
+        const leftR = leftEl() ? leftEl().getBoundingClientRect() : { right: cx };
+        const rightR = rightEl() ? rightEl().getBoundingClientRect() : { left: cx };
+        const leftRoom = Math.max(0, 2 * (cx - leftR.right));
+        const rightRoom = Math.max(0, 2 * (rightR.left - cx));
+        const safe = Math.min(leftRoom, rightRoom);
+        const leftW = leftEl() ? leftEl().offsetWidth : 0;
+        const rightW = rightEl() ? rightEl().offsetWidth : 0;
+        return { safe, leftW, rightW };
+      };
+      // Greedy: hide non-fixed right buttons P1→P5 (bypass first) until the
+      // centered center box can seat the memory button plus a meaningful
+      // MIN_SESSION chunk without overlap AND the right cluster no longer
+      // collides with the left. §4.3 right-cluster fill; session hides last.
+      for (let i = 0; i <= rightPrio.length; i++) {
+        const { safe, leftW, rightW } = measure();
+        const need = memW + CS_GAP + MIN_SESSION;
+        if (safe >= need && leftW + rightW <= headerW) break;
+        if (i < rightPrio.length) {
+          const el = rightPrio[i]();
+          if (el) { el.classList.add(HIDE); continue; }       // hide this priority
+        }
+        session.classList.add(HIDE);                          // P5: hide session
+        break;
       }
+      // Apply the clamp after the final visibility state. session-name ellipsizes
+      // inside the center; if safe < memW (pathological <240px) we keep the mem
+      // button floor and accept the §8 A10 theoretical clip rather than overlap.
+      const { safe } = measure();
+      center.style.maxWidth = Math.max(memW, safe) + 'px';
+      center.style.minWidth = memW + 'px';
     });
-  };
-  const center = header.querySelector('.header-center');
-  if (center) {
-    const ro = new ResizeObserver(check);
-    ro.observe(center);
   }
-  check();
+
+  const ro = new ResizeObserver(layout);
+  if (header) ro.observe(header);
+  const mainEl = document.getElementById('main');
+  if (mainEl) ro.observe(mainEl);
+  // Observe the fixed-set, content-driven elements too. When a dynamic fixed
+  // element appears (context-ring / memory / bg-indicator / bgagent-indicator)
+  // it grows its cluster WITHOUT resizing #header, so ResizeObserver on the
+  // header alone would miss the reflow and leave a stale (too-loose) clamp
+  // that overlaps (§8 A2). These elements are never toggled by layout() so
+  // observing them cannot cause a feedback loop.
+  ['sidebar-toggle', 'header-model-info', 'memory-btn',
+    'bg-indicator', 'bgagent-indicator', 'flows-indicator', 'canvas-toggle-btn']
+    .forEach(id => { const el = document.getElementById(id); if (el) ro.observe(el); });
+  layout();
 })();
 
 // ---------- 5. Initialize UI modules ----------
@@ -2183,6 +2943,8 @@ initModals();
 initRulesModal();
 initPathPicker();
 initInput(chatViews.primary);
+initMicOrb(); // Mic bubble orb v8.2.2 (#419) — binds #voice-btn canvas/css-orb
+initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
 
 // Keep the last chat message visible above the floating #input-area.
 // #input-area (position:absolute; bottom:0) overlays #chat and has variable
@@ -2248,8 +3010,11 @@ if (!restoreTabs()) {
 initScheduledTask();
 initDaemons();
 initChatSearch();
+initUsageDashboard();
 initNeblink();
 initDropbox();
+initContacts();
+initMessages();
 planMode.init();
 
 // Preload Monaco Editor during idle time so first file open is instant.
@@ -2324,25 +3089,19 @@ onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
   }
 })();
 
-// Sidebar collapse toggle
+// Sidebar collapse toggle — visibility is owned by the activityBar panel
+// registry (single state source); both entries below call the same API.
 (function initSidebarToggle() {
-  const LS_KEY = 'nebflow_sidebar_collapsed';
   const btn = document.getElementById('sidebar-toggle');
   if (!btn) return;
-  const collapsed = localStorage.getItem(LS_KEY) === 'true';
-  if (collapsed) document.body.classList.add('sidebar-collapsed');
-  btn.addEventListener('click', () => {
-    document.body.classList.toggle('sidebar-collapsed');
-    localStorage.setItem(LS_KEY, document.body.classList.contains('sidebar-collapsed'));
-  });
+  btn.addEventListener('click', () => toggleSideBar());
   // Keyboard shortcut: Cmd/Ctrl+B
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
       const tag = document.activeElement?.tagName;
       if (tag === 'TEXTAREA' || tag === 'INPUT') return;
       e.preventDefault();
-      document.body.classList.toggle('sidebar-collapsed');
-      localStorage.setItem(LS_KEY, document.body.classList.contains('sidebar-collapsed'));
+      toggleSideBar();
     }
   });
 })();
@@ -2355,6 +3114,8 @@ onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
 // Re-apply locale when language changes
 window.addEventListener('locale-changed', () => {
   applyLocaleToHtml();
+  // Sub-agents panel: status labels/header/empty state are t()-driven
+  renderBgAgentDropdown();
   // Force session sidebar rebuild by invalidating fingerprint cache
   const sl = state.dom.sessionList;
   if (sl) sl._lastFingerprint = null;
@@ -2401,6 +3162,8 @@ onReconnect(() => {
   // Sync background sub-agent state — agentStart events are not replayed
   // after a page refresh, so the indicator count would be lost without this
   sendWs({ type: 'getActiveAgents' });
+  // Re-fetch session list — sessions may have been created/removed during disconnect
+  sendWs({ type: 'listSessions' });
 });
 
 // ---------- Reconnect: sync background tasks ----------
@@ -2409,9 +3172,20 @@ onReconnect(() => {
 // (they completed during the disconnect), and keep tasks the backend confirms.
 onMessage('activeBgTasks', (msg) => {
   const backendTasks = msg.tasks || {};
+  // Backend groups background tasks by the executing agent's sessionId, which
+  // for a background (sub)agent is a delegate-/subtask- session, not the
+  // root session the user is viewing. Remap to root buckets before
+  // reconciling so sub-agent background tasks are counted under the owning
+  // window (mirrors bgTaskRootFor on the live backgroundTaskUpdate path).
+  const byRoot = {};
+  for (const [sid, tasks] of Object.entries(backendTasks)) {
+    const root = bgTaskRootFor(sid);
+    if (!byRoot[root]) byRoot[root] = [];
+    byRoot[root].push(...tasks);
+  }
   // Remove locally-tracked tasks that the backend no longer knows about
   for (const sid of Object.keys(state.sessionBgTasks)) {
-    const backendSessionTasks = backendTasks[sid] || [];
+    const backendSessionTasks = byRoot[sid] || [];
     const backendIds = new Set(backendSessionTasks.map(t => t.taskId));
     const before = state.sessionBgTasks[sid].length;
     state.sessionBgTasks[sid] = state.sessionBgTasks[sid].filter(t => backendIds.has(t.taskId));
@@ -2441,19 +3215,44 @@ onMessage('activeBgTasks', (msg) => {
 // finished (the backend registry no longer tracks it).
 onMessage('activeAgents', (msg) => {
   const agents = msg.agents || [];
+  // Rebuild sessionBgAgents from backend truth
   state.sessionBgAgents = {};
+  const activeRootSessions = new Set();
   for (const a of agents) {
     const sid = a.rootSessionId || a.sessionId;
     if (!sid || !a.agentId) continue;
     if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
     state.sessionBgAgents[sid][a.agentId] = {
       name: a.agentName || a.agentId,
-      task: '',
+      task: a.task || '',
+      sessionId: a.sessionId || '',
+      // Management panel (2026-08-22): kind drives the permission matrix
+      // (Delegate/SubTask/Ephemeral operable, Team/Flow read-only); startedAt
+      // powers uptime restore; status ("Error(msg)" form) powers the failed
+      // state and retryCount the retries chip after a page refresh (backend
+      // fields landed @179a009e).
+      kind: a.kind || '',
+      startedAt: a.startedAt || null,
+      status: a.status || '',
+      retryCount: typeof a.retryCount === 'number' ? a.retryCount : 0,
       currentTool: null,
       done: false,
     };
+    activeRootSessions.add(sid);
+  }
+  // Sync busySessionIds: clear sessions that are no longer active on the backend.
+  // A 'done' event missed during WS disconnect leaves the session stuck as busy
+  // forever — the agent panel shows "running" even though the agent finished.
+  // The active primary session is exempt (its busy state is managed by the
+  // streaming pipeline: setBusy on textDelta, clearBusy on done/error).
+  for (const sid of [...state.busySessionIds]) {
+    if (sid !== state.activeSessionId && !activeRootSessions.has(sid)) {
+      clearBusy(sid);
+    }
   }
   if (activeView) updateBgAgentIndicator();
+  // Recompute agent nav states — the visual indicator depends on busySessionIds
+  computeAgentStates();
 });
 
 // Scroll listener (primary window)

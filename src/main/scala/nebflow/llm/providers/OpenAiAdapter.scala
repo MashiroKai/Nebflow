@@ -7,16 +7,40 @@ import fs2.Stream
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.llm.{AdapterResponse, ProviderAdapter, SendMessageParams}
+import nebflow.core.NebflowLogger
+import nebflow.llm.{AdapterResponse, ProviderAdapter, ProviderSearchKind, SendMessageParams}
 import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
 
+import scala.collection.mutable
 import scala.concurrent.duration.*
+
+/** Per-index accumulator for one streaming tool call (OpenAI adapter).
+  * The StringBuilder and the empty-id/name counters are deliberately mutable
+  * and updated in place inside Ref.modify — SSE lines are evaluated
+  * sequentially per request (evalMap), the Ref only threads state across
+  * chunks, so there is no concurrent access.
+  *
+  * The empty-id/name bookkeeping aggregates qwen's argument-stream
+  * continuation frames (literal "" id/name) so the adapter can emit ONE
+  * summary WARN per tool call at the finish flush instead of one WARN per
+  * frame (~26 frames/call flooded logs at peak 1038 lines/min, 2026-08-21).
+  */
+private[providers] final class ToolCallEntry(val id: String, val name: String, initialArgs: String = ""):
+  val sb = new StringBuilder(initialArgs)
+  /** Continuation frames with literal empty id/name merged into this call. */
+  var emptyIdNameFrames = 0
+  /** Total argument chars contributed by those frames. */
+  var emptyIdNameChars = 0
+  /** Raw frame samples for the aggregated summary (first few only). */
+  val emptyIdNameSamples = mutable.ListBuffer.empty[String]
+end ToolCallEntry
 
 class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, Fs2Streams[IO]])
     extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
+  private val logger = NebflowLogger.forName("nebflow.llm.openai")
 
   /** Full endpoint URL: use base as-is if it already points to /chat/completions, otherwise append. */
   private val endpoint =
@@ -127,17 +151,114 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       end match
     }
 
-  private def toOpenAiTools(tools: List[ToolDefinition]): Json =
-    Json.fromValues(tools.map { t =>
-      Json.obj(
-        "type" -> "function".asJson,
-        "function" -> Json.obj(
-          "name" -> t.name.asJson,
-          "description" -> t.description.asJson,
-          "parameters" -> Json.fromJsonObject(t.inputSchema)
-        )
+  private def toolDefJson(t: ToolDefinition): Json =
+    Json.obj(
+      "type" -> "function".asJson,
+      "function" -> Json.obj(
+        "name" -> t.name.asJson,
+        "description" -> t.description.asJson,
+        "parameters" -> Json.fromJsonObject(t.inputSchema)
       )
-    })
+    )
+
+  private def toOpenAiTools(tools: List[ToolDefinition]): Json =
+    Json.fromValues(tools.map(toolDefJson))
+
+  // ── WebSearch P0: provider-native search injection ─────────────────
+  // Injection shapes per provider (SearchProviderResolver.capabilityFor):
+  //   zhipu  → {"type":"web_search","web_search":{"search_result":true}}
+  //            (search_result:true makes the response carry the structured
+  //            `web_search` field — the evidence for the Tier 2 executor)
+  //   kimi   → {"type":"builtin_function","function":{"name":"$web_search"}}
+  //            (round-trip tool: the model emits $web_search, AgentCore
+  //            echoes the arguments back verbatim; thinking must be off)
+  //   qwen   → request-level enable_search:true (no tools entry)
+
+  private[providers] def searchToolEntries(kind: ProviderSearchKind): List[Json] =
+    kind match
+      case ProviderSearchKind.ZhipuWebSearchTool =>
+        // enable:true is REQUIRED (omitting it → zhipu 1210 "API 调用参数有误",
+        // verified against the real endpoint 2026-08-23). search_result:true
+        // makes the response carry the structured `web_search` field — the
+        // evidence for the Tier 2 executor.
+        List(
+          Json.obj(
+            "type" -> "web_search".asJson,
+            "web_search" -> Json.obj(
+              "enable" -> true.asJson,
+              "search_result" -> true.asJson
+            )
+          )
+        )
+      case ProviderSearchKind.KimiBuiltinWebSearch =>
+        List(
+          Json.obj(
+            "type" -> "builtin_function".asJson,
+            "function" -> Json.obj("name" -> nebflow.llm.SearchProviderResolver.KimiWebSearchToolName.asJson)
+          )
+        )
+      case ProviderSearchKind.QwenEnableSearch => Nil
+
+  /** Merge tools: agent function tools first, provider search tool APPENDED —
+    * deepMerge would REPLACE the array, clobbering the agent's tool
+    * definitions (the P0 spec's explicit deepMerge-order regression point). */
+  private[providers] def bodyWithSearchTools(
+      body: Json,
+      tools: Option[List[ToolDefinition]],
+      search: Option[ProviderSearchKind]
+  ): Json =
+    val agentTools = tools.getOrElse(Nil)
+    val extra = search.toList.flatMap(searchToolEntries)
+    if agentTools.isEmpty && extra.isEmpty then body
+    else body.deepMerge(Json.obj("tools" -> Json.fromValues(agentTools.map(toolDefJson) ++ extra)))
+
+  /** Thinking with kimi-search interplay: $web_search is mutually exclusive
+    * with thinking — when kimi search is armed, skip the model's thinking
+    * body entirely (incl. reasoning_effort) and force thinking disabled. */
+  private[providers] def bodyWithSearchThinking(
+      body: Json,
+      model: String,
+      thinking: Option[io.circe.Json],
+      search: Option[ProviderSearchKind]
+  ): Json =
+    if search.contains(ProviderSearchKind.KimiBuiltinWebSearch) then
+      body.deepMerge(Json.obj("thinking" -> Json.obj("type" -> "disabled".asJson)))
+    else body.deepMerge(thinkingBody(model, thinking))
+
+  /** Non-tools request-level extras (qwen enable_search). */
+  private[providers] def searchRequestExtras(
+      search: Option[ProviderSearchKind]
+  ): Json =
+    search match
+      case Some(ProviderSearchKind.QwenEnableSearch) =>
+        Json.obj("enable_search" -> true.asJson)
+      case _ => Json.obj()
+
+  /** Observability for provider-native search (smoke diagnostics): which
+    * injection was armed for this request — one INFO line per request, only
+    * when injection is active (no log spam in normal traffic). */
+  private def logSearchInjection(params: SendMessageParams): Unit =
+    params.providerSearch.foreach { kind =>
+      logger.infoSync(
+        s"provider search armed: $kind (session ${params.sessionId.getOrElse("-")} " +
+          s"agent ${params.agentId.getOrElse("-")})"
+      )
+    }
+
+  /** Structured search results from the response (zhipu `web_search` array /
+    * qwen `search_info` object) — the Tier 2 evidence source. Both top-level
+    * and message-level placements are checked (zhipu returns top-level
+    * `web_search`; DashScope nests `search_info` under choices[0].message).
+    * Streaming responses don't capture this in P0 (only the non-streaming
+    * executor path consumes it). */
+  private[providers] def extractSearchInfo(response: Json): Option[Json] =
+    val message = response.hcursor.downField("choices").downN(0).downField("message")
+    def both(h: io.circe.ACursor): Option[Json] =
+      h.downField("web_search").as[Json].toOption
+        .orElse(h.downField("search_info").as[Json].toOption)
+    both(response.hcursor)
+      .orElse(both(message))
+      .filter(j => j.isArray || j.isObject)
 
   private[providers] def extractToolCalls(response: Json): List[ToolCall] =
     response.hcursor
@@ -147,12 +268,25 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       .downField("tool_calls")
       .as[List[Json]]
       .getOrElse(Nil)
-      .map { tc =>
+      .flatMap { tc =>
         val id = tc.hcursor.downField("id").as[String].getOrElse("")
         val name = tc.hcursor.downField("function").downField("name").as[String].getOrElse("")
         val args = tc.hcursor.downField("function").downField("arguments").as[String].getOrElse("{}")
-        val input = parse(args).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
-        ToolCall(id, name, input)
+        // qwen-degenerate guard (2026-08-20 incident): a tool call with an
+        // empty name (and/or empty id) cannot pass the agent's allowed-tool
+        // whitelist — it would surface as "Tool not available: " and send the
+        // model into a retry storm. Drop it here instead of fabricating a
+        // call that can never execute.
+        if name.trim.isEmpty then
+          logger.warnSync(
+            s"dropped tool call with empty name (degenerate provider frame): ${tc.noSpaces.take(160)}"
+          )
+          None
+        else
+          val input = ToolInputJson.parseToolInput(name, args)
+          // rawArguments kept byte-faithful for provider round-trip semantics
+          // (kimi $web_search echo — see SearchProviderResolver.kimiEchoContent).
+          Some(ToolCall(id, name, input, Some(args)))
       }
 
   /**
@@ -178,14 +312,15 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       "messages" -> Json.fromValues(allMessages),
       "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokensCompact)).asJson
     )
-    val bodyWithTools = params.tools.filter(_.nonEmpty) match
-      case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
-      case None => body
+    // WebSearch P0: search tool appended AFTER agent tools (never replaces);
+    // kimi search forces thinking disabled; qwen gets enable_search.
+    val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)
     // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
-    val bodyWithThinking = bodyWithTools.deepMerge(thinkingBody(params.model, params.thinking))
+    val bodyWithThinking = bodyWithSearchThinking(bodyWithTools, params.model, params.thinking, params.providerSearch)
+    val bodyWithSearchExtras = bodyWithThinking.deepMerge(searchRequestExtras(params.providerSearch))
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
-        bodyWithThinking.deepMerge(
+        bodyWithSearchExtras.deepMerge(
           Json.obj(
             "metadata" -> Json.obj(
               "session_id" -> sid.asJson,
@@ -194,17 +329,17 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           )
         )
       case (Some(sid), _) =>
-        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
+        bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
       case (_, Some(aid)) =>
-        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
-      case _ => bodyWithThinking
+        bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
+      case _ => bodyWithSearchExtras
 
     val request = basicRequest
       .post(uri"$endpoint")
       .header("Authorization", s"Bearer $apiKey")
       .header("content-type", "application/json")
       .body(bodyWithMetadata.noSpaces)
-
+    IO.delay(logSearchInjection(params)) *>
     backend.send(request).flatMap { response =>
       response.body match
         case Left(error) =>
@@ -251,7 +386,9 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                         s"LLM returned empty response$detail"
                       )
                     )
-                  else IO.pure(AdapterResponse(reply, toolCalls, usage))
+                  else
+                    val searchInfo = extractSearchInfo(json)
+                    IO.pure(AdapterResponse(reply, toolCalls, usage, searchInfo))
                   end if
                 }
           }
@@ -269,15 +406,16 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokensCompact)).asJson,
       "stream" -> true.asJson,
       "stream_options" -> Json.obj("include_usage" -> true.asJson)
-    )
-    val bodyWithTools = params.tools.filter(_.nonEmpty) match
-      case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
-      case None => body
+    )    // WebSearch P0: same injection chain as the non-streaming path (see
+    // sendMessage) — the main conversation is streaming, so provider-native
+    // search must be armed here too.
+    val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)
     // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
-    val bodyWithThinking = bodyWithTools.deepMerge(thinkingBody(params.model, params.thinking))
+    val bodyWithThinking = bodyWithSearchThinking(bodyWithTools, params.model, params.thinking, params.providerSearch)
+    val bodyWithSearchExtras = bodyWithThinking.deepMerge(searchRequestExtras(params.providerSearch))
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
-        bodyWithThinking.deepMerge(
+        bodyWithSearchExtras.deepMerge(
           Json.obj(
             "metadata" -> Json.obj(
               "session_id" -> sid.asJson,
@@ -286,12 +424,13 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           )
         )
       case (Some(sid), _) =>
-        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
+        bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
       case (_, Some(aid)) =>
-        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
-      case _ => bodyWithThinking
+        bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
+      case _ => bodyWithSearchExtras
 
-    Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
+    Stream.eval(IO.delay(logSearchInjection(params))).drain ++
+      Stream.eval(IO.ref(Map.empty[Int, ToolCallEntry])).flatMap { toolCallState =>
       val request = basicRequest
         .post(uri"$endpoint")
         .header("Authorization", s"Bearer $apiKey")
@@ -305,7 +444,15 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           case Left(error) =>
             Stream.eval(IO.raiseError(new RuntimeException(s"OpenAI API error: $error")))
           case Right(byteStream) =>
+            // If the stream dies mid-tool-call (transport error, or downstream
+            // cancellation from the no-progress watchdog / a fallback switch),
+            // the finish flush never runs — this finalizer emits whatever
+            // empty-id/name summaries were already counted so aggregation
+            // never silently loses content (日志完整性优先). After a normal
+            // finish flush the state map is empty and this is a no-op;
+            // getAndSet makes it idempotent under any termination path.
             parseOpenAiSseIncrementally(byteStream, toolCallState, params)
+              .onFinalize(flushEmptyIdNameSummaries(toolCallState, params))
       }
     }
 
@@ -313,7 +460,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
 
   private def parseOpenAiSseIncrementally(
     byteStream: Stream[IO, Byte],
-    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
+    toolCallState: Ref[IO, Map[Int, ToolCallEntry]],
     params: SendMessageParams
   ): Stream[IO, StreamChunk] =
     byteStream
@@ -331,7 +478,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
 
   private[providers] def processOpenAiData(
     data: String,
-    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
+    toolCallState: Ref[IO, Map[Int, ToolCallEntry]],
     params: SendMessageParams
   ): IO[List[StreamChunk]] =
     def makeMeta: LlmMeta = LlmMeta(
@@ -342,7 +489,13 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       durationMs = 0
     )
     parse(data) match
-      case Left(_) => IO.pure(Nil)
+      case Left(err) =>
+        // Observability (issue #18 follow-up): dropped SSE data used to be
+        // invisible; log so malformed provider frames are diagnosable.
+        NebflowLogger
+          .forName("nebflow.llm.openai")
+          .warn(s"dropped unparseable SSE data (${err.message}): ${data.take(120)}")
+          .as(Nil)
       case Right(json) =>
         // Check for usage-only chunk (stream_options.include_usage sends a final chunk with empty choices)
         val usageOpt = json.hcursor.downField("usage").as[Json].toOption.map { u =>
@@ -381,6 +534,61 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
 
               d.hcursor.downField("tool_calls").as[List[Json]].toOption match
                 case Some(tcs) =>
+                  // Fragment classification. A fragment STARTS a tool call only
+                  // when both id and name are present AND non-empty. DashScope
+                  // compatible-mode (qwen) streams its argument continuation
+                  // frames with literal EMPTY strings for id/name ("" on the
+                  // wire, not absent — their standard continuation shape,
+                  // ~26 frames per tool call; 2026-08-20 incident: treating
+                  // those as starts produced ToolCall(name=""), which the
+                  // agent's allowed-tool whitelist dropped as "Tool not
+                  // available: <empty>" for EVERY tool, a two-day retry
+                  // storm. A late degenerate fragment under the old code also
+                  // clobbered a valid entry). Empty-id/name frames now route
+                  // to the continuation branch — never starting, never
+                  // clobbering — and are counted per call; ONE aggregated
+                  // summary WARN is emitted at the finish flush (the
+                  // per-frame WARN flooded logs at peak 1038 lines/min,
+                  // 2026-08-21; content preserved, only granularity changed).
+                  def continueFragment(
+                    acc: List[StreamChunk],
+                    index: Int,
+                    args: Option[String],
+                    emptyIdNameRaw: Option[String] = None
+                  ): IO[List[StreamChunk]] =
+                    toolCallState
+                      .modify { m =>
+                        m.get(index) match
+                          case Some(entry) =>
+                            args.foreach(entry.sb.append)
+                            emptyIdNameRaw.foreach { raw =>
+                              entry.emptyIdNameFrames += 1
+                              entry.emptyIdNameChars += args.map(_.length).getOrElse(0)
+                              if entry.emptyIdNameSamples.size < MaxEmptyIdNameSamples then
+                                entry.emptyIdNameSamples += raw
+                            }
+                            val chunks =
+                              args.filter(_.nonEmpty).map(a => StreamChunk.ToolArgDelta(entry.name, a)).toList
+                            (m, (chunks, false))
+                          case None => (m, (Nil, emptyIdNameRaw.isDefined))
+                      }
+                      .flatMap { case (chunks, orphan) =>
+                        // Orphan empty-id/name frame: no valid start seen for
+                        // this index, its args are dropped, and no flush can
+                        // ever cover a call that never started — log it now
+                        // (0 occurrences in production 2026-08-20/21; this
+                        // stays silent in normal operation and is the only
+                        // remaining per-frame WARN path).
+                        if orphan then
+                          logger
+                            .warn(
+                              s"orphan empty-id/name continuation frame dropped (no valid start for index $index): " +
+                                emptyIdNameRaw.getOrElse("")
+                            )
+                            .as(acc ++ chunks)
+                        else IO.pure(acc ++ chunks)
+                      }
+
                   tcs
                     .foldM(Nil: List[StreamChunk]) { (acc, tc) =>
                       val index = tc.hcursor.downField("index").as[Int].getOrElse(0)
@@ -389,44 +597,59 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                       val args = tc.hcursor.downField("function").downField("arguments").as[String].toOption
 
                       (id, name) match
-                        case (Some(toolId), Some(toolName)) =>
+                        case (Some(toolId), Some(toolName))
+                            if toolId.nonEmpty && toolName.nonEmpty =>
                           toolCallState
-                            .update(_ + (index -> (toolId, toolName, new StringBuilder(args.getOrElse("")))))
+                            .modify { m =>
+                              // Some OpenAI-compatible providers repeat id+name
+                              // in every fragment chunk. Resetting the builder
+                              // per chunk kept only the LAST fragment, so the
+                              // accumulated JSON no longer parsed and arguments
+                              // were silently lost (same class as issue #18).
+                              // Accumulate instead when the entry is the same call.
+                              m.get(index) match
+                                case Some(entry) if entry.id == toolId && entry.name == toolName =>
+                                  args.foreach(entry.sb.append)
+                                  (m.updated(index, entry), ())
+                                case _ =>
+                                  (m.updated(index, ToolCallEntry(toolId, toolName, args.getOrElse(""))), ())
+                            }
                             .as {
                               val start = StreamChunk.ToolCallStart(toolName)
                               val argChunks =
                                 args.filter(_.nonEmpty).map(a => StreamChunk.ToolArgDelta(toolName, a)).toList
                               acc ++ (start :: argChunks)
                             }
+                        case (Some(_), Some(_)) =>
+                          // qwen's standard argument-stream continuation frame
+                          // (empty id/name) — merge as continuation, count for
+                          // the aggregated flush summary. logger.warn returns
+                          // IO[Unit]; never wrap it in IO.delay (builds-but-
+                          // never-runs the inner IO — qa 2026-08-20 catch).
+                          continueFragment(acc, index, args, Some(tc.noSpaces.take(160)))
                         case _ =>
-                          toolCallState
-                            .modify { m =>
-                              m.get(index) match
-                                case Some((tid, tname, sb)) =>
-                                  args.foreach(sb.append)
-                                  val chunks =
-                                    args.filter(_.nonEmpty).map(a => StreamChunk.ToolArgDelta(tname, a)).toList
-                                  (m.updated(index, (tid, tname, sb)), chunks)
-                                case None => (m, Nil)
-                            }
-                            .map(chunks => acc ++ chunks)
+                          continueFragment(acc, index, args)
                       end match
                     }
                     .flatMap { acc =>
                       if finishReason.contains("tool_calls") || finishReason.contains("function_call") then
-                        toolCallState.getAndSet(Map.empty).map { m =>
-                          val toolChunks = m.values.toList.map { case (id, name, sb) =>
-                            val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
-                            StreamChunk.ToolCallChunk(ToolCall(id, name, input))
+                        toolCallState.getAndSet(Map.empty).flatMap { m =>
+                          logEmptyIdNameSummaries(m, params).as {
+                            val toolChunks = m.values.toList.map { entry =>
+                              val input = ToolInputJson.parseToolInput(entry.name, entry.sb.toString)
+                              StreamChunk.ToolCallChunk(
+                                ToolCall(entry.id, entry.name, input, Some(entry.sb.toString))
+                              )
+                            }
+                            // Include any text/thinking deltas from this chunk AND a Done chunk,
+                            // consistent with the case None branch below.
+                            allTextDeltas ++ acc ++ toolChunks :+ StreamChunk.Done(
+                              finishReason,
+                              usageOpt,
+                              Some(makeMeta),
+                              None
+                            )
                           }
-                          // Include any text/thinking deltas from this chunk AND a Done chunk,
-                          // consistent with the case None branch below.
-                          allTextDeltas ++ acc ++ toolChunks :+ StreamChunk.Done(
-                            finishReason,
-                            usageOpt,
-                            Some(makeMeta),
-                            None
-                          )
                         }
                       else if finishReason.isDefined then
                         IO.pure(allTextDeltas ++ acc :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None))
@@ -436,12 +659,16 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                   // finish_reason may arrive in a chunk with empty delta (no tool_calls field).
                   // Flush accumulated tool call state when finish_reason indicates tool use.
                   if finishReason.exists(fr => fr.contains("tool_calls") || fr.contains("function_call")) then
-                    toolCallState.getAndSet(Map.empty).map { m =>
-                      val toolChunks = m.values.toList.map { case (id, name, sb) =>
-                        val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
-                        StreamChunk.ToolCallChunk(ToolCall(id, name, input))
+                    toolCallState.getAndSet(Map.empty).flatMap { m =>
+                      logEmptyIdNameSummaries(m, params).as {
+                        val toolChunks = m.values.toList.map { entry =>
+                          val input = ToolInputJson.parseToolInput(entry.name, entry.sb.toString)
+                          StreamChunk.ToolCallChunk(
+                            ToolCall(entry.id, entry.name, input, Some(entry.sb.toString))
+                          )
+                        }
+                        allTextDeltas ++ toolChunks :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None)
                       }
-                      allTextDeltas ++ toolChunks :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None)
                     }
                   else if finishReason.isDefined then
                     IO.pure(allTextDeltas :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None))
@@ -451,4 +678,42 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         end if
     end match
   end processOpenAiData
+  /** Raw frame samples kept per tool call for the aggregated summary. */
+  private val MaxEmptyIdNameSamples = 3
+
+  /** Emit ONE aggregated WARN per flushed tool call that received qwen-style
+    * empty-id/name continuation frames — replaces the per-frame WARN that
+    * flooded logs at ~26 lines per tool call (peak 1038 lines/min,
+    * 2026-08-21). Content preserved: frame count, argument char volume,
+    * merge health of the accumulated args, session/agent correlation (the
+    * old per-frame WARN had none — multi-stream attribution was guesswork),
+    * and the first raw frames (≤160 chars each, same truncation as before).
+    */
+  private def logEmptyIdNameSummaries(m: Map[Int, ToolCallEntry], params: SendMessageParams): IO[Unit] =
+    m.toList.traverse_ { case (index, entry) =>
+      IO.whenA(entry.emptyIdNameFrames > 0) {
+        val mergeHealth =
+          if entry.sb.isEmpty then "no args"
+          else if parse(entry.sb.toString).isRight then "parsed OK"
+          else "not strict JSON (rescue path)"
+        logger.warn(
+          s"empty-id/name continuation frames merged into tool ${entry.name} (index $index): " +
+            s"${entry.emptyIdNameFrames} frames, ${entry.emptyIdNameChars} arg chars, " +
+            s"merged args ${entry.sb.length} chars ($mergeHealth), " +
+            s"session ${params.sessionId.getOrElse("-")} agent ${params.agentId.getOrElse("-")}; " +
+            s"first frames: ${entry.emptyIdNameSamples.mkString(" | ")}"
+        )
+      }
+    }
+
+  /** Flush aggregated empty-id/name summaries when the stream terminates
+    * abnormally (error or cancellation) so the finish-flush aggregation
+    * never silently loses content it already counted.
+    */
+  private def flushEmptyIdNameSummaries(
+    toolCallState: Ref[IO, Map[Int, ToolCallEntry]],
+    params: SendMessageParams
+  ): IO[Unit] =
+    toolCallState.getAndSet(Map.empty).flatMap(logEmptyIdNameSummaries(_, params))
+
 end OpenAiAdapter

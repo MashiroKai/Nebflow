@@ -71,7 +71,13 @@
   font-weight: 600;
   white-space: nowrap;
   user-select: none;
+  /* #396 spec §8 A8: session name degrades — truncate first, hide last (P5) */
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
+/* #396 adaptive header: non-fixed right buttons hide by priority (display:none,
+   no overflow "⋯" menu — user 2026-08-25 裁定 仅自动隐藏). */
+#header .nb-header-hide { display: none !important; }
 #header .memory-btn {
   background: none;
   border: 1px solid transparent; /* reserves edge space for glass hover */
@@ -137,6 +143,8 @@
 
 #header #header-model-info {
   display: none;
+  align-items: center;
+  gap: 6px;
   color: var(--color-frame-text-muted);
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, monospace;
@@ -196,6 +204,18 @@
 }
 
 /* Compact ring — always shown (read-only threshold marker) */
+.ctx-model-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-frame-text-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  letter-spacing: 0.2px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+
 .ctx-ring-wrap {
   display: inline-flex;
   align-items: center;
@@ -221,7 +241,8 @@
   line-height: 1;
 }
 
-/* Compact ring is always shown — no header-compact toggle needed */
+/* Context-ring (header-model-info) is always shown once data arrives; the
+   adaptive header (#396) never toggles it — it's part of the fixed set. */
 /* (header-right rules consolidated above) */
 /* conn-pulse keyframe — reused by the activity-bar avatar pairing animation. */
 @keyframes conn-pulse {
@@ -287,6 +308,128 @@
 .bgagent-count { font-weight: 500; }
 #bgagent-indicator:hover { background: rgb(var(--sapphire) / 0.25); }
 
+/* ── Running flows indicator (2026-08-26 flow-complement-design §5.3) ──
+   Mirrors the Sub-Agents (#bgagent-indicator) badge so the "运行中 flows"
+   re-entry affordance sits in the same header cluster with a matching look.
+   Hidden until a flow is running; count = running flows. */
+#flows-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgb(var(--sapphire) / 0.15);
+  border-radius: 999px;
+  border: 1px solid rgb(var(--sapphire) / 0.35);
+  padding: 2px 9px;
+  font-size: 12px;
+  color: rgb(var(--sapphire));
+  cursor: pointer;
+  transition: background 0.2s;
+}
+#flows-indicator.hidden { display: none; }
+.flows-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: rgb(var(--sapphire));
+  animation: bg-pulse 1.5s ease-in-out infinite;
+}
+.flows-count { font-weight: 500; }
+#flows-indicator:hover { background: rgb(var(--sapphire) / 0.25); }
+
+/* Running flows dropdown — same glass shell as #bgagent-dropdown. */
+#flows-dropdown {
+  position: absolute;
+  top: 50px;
+  right: 24px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  min-width: 280px;
+  max-width: 380px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+  z-index: 100;
+  overflow: hidden;
+}
+#flows-dropdown::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 10%,
+    var(--sapphire-refraction) 50%,
+    transparent 90%
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+@media (prefers-color-scheme: dark) {
+  #flows-dropdown {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+#flows-dropdown.hidden { display: none; }
+
+/* Flows dropdown rows — one per running flow instance. */
+.flows-dropdown-list { max-height: 60vh; overflow-y: auto; }
+.flows-row {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--glass-border);
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.flows-row:last-child { border-bottom: none; }
+.flows-row:hover { background: var(--color-frame-hover); }
+.flows-row:focus-visible {
+  outline: none;
+  background: var(--color-frame-hover);
+  box-shadow: inset 2px 0 0 rgb(var(--sapphire) / 0.8);
+}
+.flows-status {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+.flows-status.running { background: var(--color-success); box-shadow: 0 0 4px rgba(76,175,80,0.5); animation: bg-pulse 1.5s ease-in-out infinite; }
+.flows-status.failed { background: var(--color-error); box-shadow: 0 0 4px rgba(244,67,54,0.5); }
+.flows-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.flows-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.flows-name {
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flows-progress { font-size: 11px; color: var(--color-text-muted); white-space: nowrap; flex-shrink: 0; }
+.flows-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--color-text-muted); }
+.flows-cancel {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 1px 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.flows-cancel:hover { border-color: var(--color-error); color: var(--color-error); }
+.flows-cancel:disabled { opacity: 0.4; cursor: default; }
+
 /* Background sub-agent dropdown — sapphire glass.
    Positioned relative to #main (not .header-right) so backdrop-filter
    can blur chat content instead of being trapped inside #header's backdrop root. */
@@ -333,9 +476,77 @@
 }
 #bgagent-dropdown.hidden { display: none; }
 
-.bgagent-running { color: rgb(var(--sapphire)); font-size: 11px; }
-.bgagent-done { color: var(--color-success); font-size: 11px; }
 .bgagent-tool { font-size: 10px; color: var(--color-text-muted); display: block; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Sub-agents panel rows (2026-08-25 spec, frozen @142535e9) ──────────
+   State ladder: active=green+pulse, idle=amber, stuck=red+blink,
+   error=red solid, frozen=sapphire, done=neutral muted. Color is ALWAYS
+   paired with a text label (Carbon status-indicator / spec §7). */
+.bg-dropdown-list { max-height: 60vh; overflow-y: auto; }
+.bg-dropdown-empty {
+  padding: 14px 12px;
+  font-size: 12px;
+  color: var(--color-frame-text-muted);
+  text-align: center;
+}
+.bg-task-row { cursor: pointer; }
+.bg-task-row.done { opacity: 0.6; }
+.bg-task-row:focus-visible {
+  outline: none;
+  background: var(--color-frame-hover);
+  box-shadow: inset 2px 0 0 rgb(var(--sapphire) / 0.8);
+}
+.bg-task-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap; /* narrow viewport: meta wraps to a second line, never overflows */
+  min-width: 0;
+}
+.bg-task-state {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-frame-text-muted);
+  flex-shrink: 0;
+}
+.bg-task-state.bg-state-stuck,
+.bg-task-state.bg-state-error { color: var(--color-error); }
+.bg-task-state.bg-state-frozen { color: rgb(var(--sapphire)); }
+.bg-task-state.bg-state-done { color: var(--color-frame-text-dim); }
+.bg-task-kind {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  color: var(--color-frame-text-muted);
+  flex-shrink: 0;
+}
+.bg-task-uptime {
+  font-size: 10px;
+  color: var(--color-frame-text-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.bg-task-retries {
+  font-size: 11px;
+  color: var(--color-frame-text-dim);
+  flex-shrink: 0;
+}
+.bg-task-stuck {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-error);
+  margin-top: 2px;
+}
+.bg-task-status.bg-status-error { background: var(--color-error); box-shadow: 0 0 4px rgba(244,67,54,0.5); }
+.bg-task-status.bg-status-frozen { background: rgb(var(--sapphire)); box-shadow: 0 0 4px rgb(var(--sapphire) / 0.4); }
+.bg-task-status.bg-status-done { background: var(--color-frame-text-muted); box-shadow: none; }
+@media (prefers-reduced-motion: reduce) {
+  .bg-task-status { animation: none !important; }
+}
 
 /* Background tasks dropdown — sapphire glass.
    Positioned relative to #main (not .header-right) so backdrop-filter works. */
@@ -429,7 +640,7 @@
   border-radius: 50%;
   flex-shrink: 0;
 }
-.bg-task-status.bg-status-active { background: var(--color-success); box-shadow: 0 0 4px rgba(76,175,80,0.5); }
+.bg-task-status.bg-status-active { background: var(--color-success); box-shadow: 0 0 4px rgba(76,175,80,0.5); animation: bg-pulse 1.5s ease-in-out infinite; }
 .bg-task-status.bg-status-idle { background: #d4a030; box-shadow: 0 0 4px rgba(212,160,48,0.4); }
 .bg-task-status.bg-status-stuck { background: var(--color-error); box-shadow: 0 0 4px rgba(244,67,54,0.5); animation: bg-status-blink 1s ease-in-out infinite; }
 @keyframes bg-status-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
@@ -605,6 +816,45 @@
   color: rgb(var(--sapphire) / 0.85);
   opacity: 1;
 }
+/* Collapsible injected header (2026-08-23 ruling): when the label is wired as
+ * a toggle it gains a chevron + role="button" — show pointer + gentle hover.
+ * Restrained: opacity feedback only, matching .thinking-label.collapsible. */
+.bubble.injected .injected-source-label[role="button"] {
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.bubble.injected .injected-source-label[role="button"]:hover {
+  opacity: 0.8;
+}
+
+/* Mail delivery mode badge (ask/queue/immediate) in the injected bubble
+ * source label. ask = emphasis (sender is synchronously waiting), queue =
+ * de-emphasized (async, will be handled later), immediate = plain text
+ * continuation (the default mode). Only rendered when the event/record
+ * carries a `delivery` field. */
+.delivery-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 9px;
+  line-height: 14px;
+  letter-spacing: 0.4px;
+  vertical-align: 1px;
+}
+.delivery-queue {
+  color: var(--color-text-muted);
+  background: rgba(128, 128, 128, 0.14);
+}
+.delivery-immediate {
+  color: var(--color-text-muted);
+  background: none;
+  padding: 0;
+  margin-left: 4px;
+}
+.delivery-immediate::before {
+  content: '· ';
+}
 .bubble.user.att-bubble {
   background: rgba(0,0,0,0.04);
   color: #888;
@@ -623,6 +873,104 @@
 .bubble.user.att-bubble .att-file-tag {
   color: #888;
   font-size: 12px;
+}
+/* #303 §4: message ref card — a block-level card (not an inline tag) using the
+   glass-etched surface, no new color tokens, visual-style font weights. */
+.bubble.user.att-bubble.att-ref-bubble {
+  max-width: 340px;
+}
+.bubble.user .att-ref-card {
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-top: 2px;
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.bubble.user .att-ref-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;           /* card title weight (铁律 标题 600) */
+}
+.bubble.user .att-ref-card-icon {
+  display: flex;
+  align-items: center;
+  color: rgb(var(--sapphire));
+  flex-shrink: 0;
+}
+.bubble.user .att-ref-card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bubble.user .att-ref-card-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+.bubble.user .att-ref-card-source {
+  color: var(--color-text-muted);
+  font-weight: 400;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bubble.user .att-ref-card-content {
+  color: var(--color-text);
+  font-weight: 400;
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* ── 打回注入块 one-line form (2026-08-27 用户裁定「只显任务名」) ──
+   Converged shape for task references in the message stream AND the collapsed
+   [打回任务] injection body: one row, 任务号+标题 only, opinion clipped to a
+   single muted trailing line. 描述/产出 have no node here at all. */
+.att-task-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--color-text);
+  line-height: 1.4;
+  padding: 1px 0;
+}
+.att-task-line-icon {
+  display: flex;
+  align-items: center;
+  color: rgb(var(--sapphire));
+  flex-shrink: 0;
+}
+.att-task-line-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.att-task-line-name {
+  font-weight: 600;           /* title weight (铁律 标题 600) */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.att-task-line-opinion {
+  color: var(--color-text-muted);
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 40px;
 }
 
 .bubble.ai {
@@ -790,29 +1138,12 @@
   user-select: none;
   width: fit-content;
 }
-.duration-badge-text {
-  font-size: 11px;
-  color: var(--color-text);
-  opacity: 0.45;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 260px;
-}
 .duration-badge-divider {
   width: 1px;
   height: 10px;
   background: currentColor;
   opacity: 0.2;
   flex-shrink: 0;
-}
-.duration-badge-model {
-  font-size: 10px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  color: var(--color-text);
-  opacity: 0.35;
-  letter-spacing: 0.1px;
 }
 .duration-badge-time {
   font-size: 10px;
@@ -1013,36 +1344,6 @@
 .tool-mail-msg strong { font-weight: 600; }
 .tool-mail-msg a { color: var(--color-primary); }
 
-/* RemoveUnnecessary tool — result badge + summary body */
-.tool-result-badge {
-  display: inline-block;
-  margin-top: 4px;
-  padding: 2px 8px;
-  font-size: 11px;
-  color: var(--color-text-muted, #888);
-  background: var(--color-surface-hover, rgba(255,255,255,0.06));
-  border-radius: 4px;
-}
-.tool-removeunnecessary-summary {
-  margin-top: 6px;
-  padding: 8px 10px;
-  background: var(--color-surface, rgba(255,255,255,0.04));
-  border-radius: 6px;
-  font-size: 13px;
-  line-height: 1.5;
-}
-.tool-removeunnecessary-summary p { margin: 4px 0; }
-.tool-removeunnecessary-summary p:first-child { margin-top: 0; }
-.tool-removeunnecessary-summary p:last-child { margin-bottom: 0; }
-.tool-removeunnecessary-summary ul, .tool-removeunnecessary-summary ol { margin: 4px 0 4px 18px; padding: 0; }
-.tool-removeunnecessary-summary li { margin: 2px 0; }
-.tool-removeunnecessary-summary code { background: rgba(0,0,0,0.05); padding: 1px 4px; border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, SFMono-Regular, monospace; }
-.tool-removeunnecessary-summary pre { background: rgba(0,0,0,0.05); padding: 8px 12px; border-radius: 8px; overflow-x: auto; font-size: 12px; margin: 6px 0; }
-.tool-removeunnecessary-summary pre code { background: none; padding: 0; }
-.tool-removeunnecessary-summary blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding-left: 10px; color: var(--color-text-muted); }
-.tool-removeunnecessary-summary strong { font-weight: 600; }
-.tool-removeunnecessary-summary a { color: var(--color-primary); }
-
 /* Pop tool — rainbow filename inline + clickable card */
 .tool-card.pop-tool-card { cursor: pointer; }
 .pop-rainbow-name {
@@ -1121,6 +1422,54 @@
 .notice-info {
   background: rgba(91,141,217,0.1);
   color: #5b8dd9;
+}
+
+/* ---------- Compaction status card ---------- */
+/* Live compactStart → compactComplete/Failed lifecycle. One card morphs in
+ * place: spinning (active) → check (done) / × (error). Restrained glass-lite
+ * surface — hairline border, no backdrop blur, single sapphire accent. */
+.compact-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 12px;
+  padding: 7px 14px;
+  font-size: 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.25s ease, color 0.25s ease;
+  max-width: 85%;
+}
+.compact-card-label {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compact-card-spinner {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border: 2px solid rgb(var(--sapphire) / 0.25);
+  border-top-color: rgb(var(--sapphire) / 0.9);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+.compact-card-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  animation: fadeIn 0.2s ease;
+}
+.compact-card-icon.ok { color: var(--color-success); }
+.compact-card-icon.err { color: var(--color-error); }
+.compact-card[data-state="active"] {
+  border-color: rgb(var(--sapphire) / 0.3);
+  color: var(--color-text);
+}
+.compact-card[data-state="error"] {
+  border-color: rgba(244, 67, 54, 0.35);
 }
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
@@ -1207,8 +1556,6 @@
     background: rgba(255,255,255,0.04);
     box-shadow: 0px 0px 0px 1px rgba(255,255,255,0.06);
   }
-  .duration-badge-text { opacity: 0.55; }
-  .duration-badge-model { opacity: 0.28; }
   .duration-badge-time { opacity: 0.28; }
 
   .retry-status { background: rgba(217,165,65,0.12); color: #d4a030; }
@@ -1261,6 +1608,52 @@
   opacity: 0.5;
   cursor: default;
   pointer-events: none;
+}
+/* Multi-select questions (multiple: true): checkboxes stacked vertically,
+   full-width rows — stays clean at narrow chat widths (~490px). */
+.option-opts.multi {
+  flex-direction: column;
+  align-items: stretch;
+}
+.option-opts.multi .option-btn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  border-radius: 10px;
+  padding: 7px 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.option-opts.multi .option-btn .option-text {
+  flex: 1;
+  min-width: 0;
+}
+.option-check {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  border: 1.5px solid rgba(145, 170, 210, 0.45);
+  border-radius: 4px;
+  position: relative;
+  background: transparent;
+  transition: all 0.2s ease;
+}
+.option-btn.picked .option-check {
+  border-color: #fff;
+  background: var(--color-primary);
+}
+.option-btn.picked .option-check::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }
 .option-custom-input {
   display: block;
@@ -1336,6 +1729,153 @@
   font-size: 13px;
   color: var(--color-primary);
   font-weight: 400;
+}
+
+/* ---------- AskUser preview thumbnails (direction C §7) ---------- */
+/* Only buttons carrying a preview get the inline-flex layout — buttons without
+   a preview field render byte-for-byte like before (E1 zero regression). */
+.option-btn.has-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.option-btn.has-preview .option-text {
+  text-align: left;
+  min-width: 0;
+}
+.option-preview {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 40px;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  background: var(--color-surface);
+}
+.option-preview .preview-swatch {
+  flex: 1;
+  min-width: 0;
+}
+.option-preview .preview-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;                     /* §6: fade in on load (see .nf-loaded) */
+  transition: opacity 0.2s ease-out;
+}
+.option-preview .preview-img.nf-loaded {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .option-preview .preview-img { transition: none; }
+}
+/* Selected ring: outline offset outside the filled .picked background so it
+   stays visible on the primary-colored button (spec §7.1/§7.3). */
+.option-btn.picked.has-preview .option-preview {
+  outline: 1.5px solid var(--color-primary);
+  outline-offset: 2px;
+}
+/* AskUser card animations (onboarding spec §7 A-1/A-2): card fade-in on
+   insert, per-question reveal when a dependsOn branch becomes visible. */
+@keyframes ob-card-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ob-q-reveal-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.option-box.ob-fade-in {
+  animation: ob-card-in 200ms ease-out;
+}
+.ob-q-reveal {
+  animation: ob-q-reveal-in 150ms ease-out;
+}
+/* A-5: confirm button unlock transition (120ms opacity). */
+.option-confirm {
+  transition: background 0.2s ease-out, opacity 0.12s ease-out;
+}
+.option-confirm:disabled {
+  opacity: 0.6;
+}
+/* AskUser canvas comparison button (direction C §4.1) — glass control,
+   sits above the option box. */
+.ob-compare-btn {
+  margin-bottom: 6px;
+  font-size: 12px;
+  padding: 4px 12px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s,
+              box-shadow 0.15s, opacity 0.15s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .option-box.ob-fade-in,
+  .ob-q-reveal {
+    animation: none;
+  }
+}
+
+/* ---------- Chat-native onboarding (onboarding-redesign-spec §8.4) ---------- */
+/* Typewriter simulation: paragraph stack + blinking cursor + skip button.
+   Zero new colors — cursor uses var(--color-text), skip inherits .glass-control. */
+.ob-sim-bubble {
+  position: relative; /* anchor for the absolute skip button */
+}
+.ob-body {
+  margin-top: 4px;
+}
+.ob-para {
+  margin: 0;
+}
+.ob-para + .ob-para {
+  margin-top: 4px;
+}
+.ob-cursor {
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--color-text);
+  animation: ob-blink 1s steps(2) infinite;
+}
+@keyframes ob-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.ob-skip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s,
+              box-shadow 0.15s, opacity 0.15s;
+}
+/* Summary / error action rows (glass controls, §8.2 — save button keeps the
+   translucent-green send-button accent). */
+.ob-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ob-actions button {
+  transition: background 0.15s, color 0.15s, border-color 0.15s,
+              box-shadow 0.15s, opacity 0.15s;
+}
+.glass-control.ob-primary {
+  background: rgba(7, 193, 96, 0.42);
+}
+.ob-probing {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ob-cursor {
+    display: none;
+  }
 }
 
 /* ===== Top Overlays (task list + notifications) ===== */
@@ -1456,6 +1996,11 @@
   font-size: 13px;
 }
 .thinking-label {
+  /* Pre-#345 look restored (2026-08-24 ruling): small caps muted label, no
+     chevron. Flex layout kept only so the streaming pulse dots stay aligned. */
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -1472,6 +2017,30 @@
 }
 .thinking-label.collapsible:hover {
   opacity: 0.7;
+}
+/* Shared 12px chevron — #346 turn summary bar only (2026-08-24 ruling:
+   thinking labels and injected-bubble headers dropped it) */
+.nf-chevron {
+  display: inline-flex;
+  transition: transform 0.15s ease;
+}
+.nf-chevron svg { display: block; }
+.expanded > .nf-chevron,
+[aria-expanded="true"] > .nf-chevron {
+  transform: rotate(90deg);
+}
+.thinking-label .thinking-dot {
+  width: 3px;
+  height: 3px;
+  background: var(--color-text-muted);
+}
+/* dots are children 2/3/4 inside the label (text span precedes them) */
+.thinking-label .thinking-dot:nth-child(2) { animation-delay: 0s; }
+.thinking-label .thinking-dot:nth-child(3) { animation-delay: 0.15s; }
+.thinking-label .thinking-dot:nth-child(4) { animation-delay: 0.3s; }
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dot { animation-duration: 0.01s !important; }
+  .nf-chevron { transition-duration: 0.01s; }
 }
 .thinking-label.collapsible::before {
   content: '';
@@ -1495,6 +2064,48 @@
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 12px;
+}
+
+/* ── #346 turn-level collapse: summary bar ───────────────────────────────
+   Muted text form (same design language as the #345 thinking label): no
+   background, no glass, no hover fill — chevron + text brighten on hover. */
+.turn-group { margin: 2px 0; }
+.turn-summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 85%;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-dim);
+  opacity: 0.9;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity 0.15s ease;
+  animation: turnSummaryIn 0.15s ease-out;
+}
+.turn-summary:hover { opacity: 1; }
+.turn-summary:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+.turn-summary-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.turn-group[data-turn-state="failed"] .turn-summary { display: none; }
+.turn-steps { /* rows keep their own spacing; container is plain */ }
+@keyframes turnSummaryIn {
+  from { opacity: 0; }
+  to { opacity: 0.9; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-summary { animation-duration: 0.01s; transition-duration: 0.01s; }
 }
 
 /* Streaming cursor */
@@ -1786,5 +2397,116 @@
   background: var(--color-surface);
   text-align: center;
   font-style: italic;
+}
+
+/* ── Error-recovery escalation card (frozen-error-recovery plan §5.3.2) ──
+   Amber decision card rendered at the top of a session view when auto-recovery
+   has been exhausted and a parent/user decision is needed. Uses the same
+   glass+frost language as the frozen family but the amber hue ("error family"),
+   no overlay dimming (per the standing no-overlay ruling). */
+.error-escalation-card {
+  margin: 10px 14px 4px 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgb(var(--amber) / 0.07);
+  border: 1px solid rgb(var(--amber) / 0.32);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.20),
+    0 0 16px rgb(var(--amber-glow) / 0.10);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--color-text);
+}
+.error-escalation-card .error-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: rgb(var(--amber));
+  animation: error-pulse 1.6s ease-in-out infinite;
+}
+.error-escalation-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+.error-escalation-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.error-escalation-meta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+.error-escalation-wait {
+  font-size: 12px;
+  color: rgb(var(--amber));
+  font-weight: 500;
+  line-height: 1.4;
+}
+.error-escalation-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.error-escalation-actions button {
+  pointer-events: auto;
+  font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  border-radius: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* 重启并续跑 → parentRestart */
+.error-restart-btn {
+  background: rgb(var(--amber) / 0.18);
+  border: 1px solid rgb(var(--amber) / 0.50);
+  color: rgb(var(--amber));
+}
+.error-restart-btn:hover {
+  background: rgb(var(--amber) / 0.28);
+}
+/* 取消任务 → cancelAgent */
+.error-abandon-btn {
+  background: transparent;
+  border: 1px solid rgb(var(--color-error, 244 67 54) / 0.40);
+  color: var(--color-error, #f44336);
+}
+.error-abandon-btn:hover {
+  background: rgb(var(--color-error, 244 67 54) / 0.10);
+}
+/* 继续等待 → close card */
+.error-wait-btn {
+  background: transparent;
+  border: 1px solid var(--glass-etched-border);
+  color: var(--color-text-muted);
+}
+.error-wait-btn:hover {
+  background: var(--glass-etched-bg);
+}
+@media (prefers-color-scheme: dark) {
+  .error-escalation-card {
+    background: rgb(var(--amber) / 0.10);
+    border-color: rgb(var(--amber) / 0.38);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0 0 16px rgb(var(--amber-glow) / 0.14);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .error-escalation-card .error-icon,
+  .error-recovery-strip .error-icon {
+    animation: none;
+  }
 }
 

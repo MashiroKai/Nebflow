@@ -64,6 +64,19 @@ class GatewayClient(baseUri: String, token: String):
     parseJson(resp.body, path)
   }
 
+  /** HTTP PUT — sends JSON body, returns JSON (#339: model set → PUT /presets/:name) */
+  def put(path: String, body: Json): IO[Json] = IO.blocking {
+    val uri = Uri.unsafeParse(s"$baseUri$path").withParam("token", token)
+    val resp = basicRequest
+      .put(uri)
+      .header("Authorization", s"Bearer $token")
+      .header("Content-Type", "application/json")
+      .body(body.noSpaces)
+      .response(asStringAlways)
+      .send(backend)
+    parseJson(resp.body, path)
+  }
+
   /** POST /api/command — generic WS-equivalent endpoint */
   def command(payload: Json): IO[Json] = post("/api/command", payload)
 
@@ -124,7 +137,7 @@ object GatewayClient:
 
   /** Read the Gateway port from env or default */
   def readPort: IO[Int] = IO.blocking {
-    sys.env.get("NEBFLOW_GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
+    nebflow.core.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
   }
 
   /** Create a client if Gateway is running and accessible */

@@ -52,93 +52,69 @@ object SystemReminders:
   end collectAll
 
   /**
-   * Collect per-turn reminders including time-of-day context (peak/off-peak +
-   * next idle window from usage history) and a summary of pending scheduled
-   * tasks for this session. IO because it queries the scheduled-task store and
-   * the persisted usage pattern.
+   * Collect per-turn reminders including a summary of pending scheduled
+   * tasks for this session. IO because it queries the scheduled-task store.
    *
    * Cache-optimization v2 (2026-08-11): dynamic values that were moved OUT of
    * the per-turn system prompt are injected here instead — request-level
-   * reminders (never persisted). Callers pass the *current* values; only
-   * changed values produce a reminder (task list is always reported on user
-   * turns). The time reminder keeps its persisted semantics (任务 O).
+   * reminders (never persisted). The time reminder keeps its persisted
+   * semantics (任务 O).
+   *
+   * Reminder refactor (2026-08-20, user ruling — audit
+   * docs/Nebflow/20260820_system-reminder-audit.md, 44K token/半天 waste):
+   *  - time: injected on real-user turns always; on system-event turns
+   *    (mail/external/skill injections) at most once per hour — the caller
+   *    passes `injectTime` after checking the gap.
+   *  - tasks: Nebula (root) only, real-user turns only; the caller supplies
+   *    pre-rendered full/delta/unchanged text (change detection lives in
+   *    AgentCore). Manager/team agents query via the TaskList tool instead.
+   *  - schedule: Nebula (root) only.
+   *  - sessions & environment reminder types REMOVED (user ruling: sessions
+   *    outdated; environment change notifications cut — only stable fields
+   *    remain in systemStable, jittery chatWidth dropped from the template).
+   *  - devices: caller supplies a pre-computed delta (+/- lines).
+   *
+   * Reminder audit (2026-08-19): time-context (peak/off-peak + next idle
+   * window) removed entirely — user flagged "Off-peak hours." as noise
+   * (00:00 实测). `tasks` is gated to root agents: subagent workers receive
+   * their work from the parent's Delegate/SubTask instructions, not the task
+   * store.
    */
   def collectAllIO(
     isUserTurn: Boolean,
     taskStore: ScheduledTaskStore,
     sessionId: Option[String],
-    deviceInfo: String = "",
-    sessionsText: String = "",
+    deviceDelta: String = "",
     taskListText: String = "",
     language: Option[String] = None,
-    envInfo: String = ""
+    isRootAgent: Boolean = false,
+    injectTime: Boolean = true
   ): IO[List[SystemReminder]] =
     if !isUserTurn then IO.pure(Nil)
     else
       for
-        pattern <- UsageTracker.loadPattern()
         pending <- sessionId.fold(IO.pure(Nil: List[ScheduledTask]))(taskStore.loadTasks)
-        reminders = collectAll(isUserTurn = true) ++
-          timeContextReminder(pattern) ++
-          pendingScheduleReminder(pending) ++
-          devicesReminder(deviceInfo) ++
-          sessionsReminder(sessionsText) ++
-          envReminder(envInfo) ++
-          tasksReminder(taskListText) ++
+        reminders = (if injectTime then collectAll(isUserTurn = true) else Nil) ++
+          (if isRootAgent then pendingScheduleReminder(pending) else None) ++
+          devicesReminder(deviceDelta) ++
+          (if isRootAgent then tasksReminder(taskListText) else None) ++
           languageReminder(language)
       yield reminders
 
-  /** Devices changed since systemStable was built (cache v2). */
-  private def devicesReminder(deviceInfo: String): Option[SystemReminder] =
-    if deviceInfo.isEmpty then None
-    else Some(SystemReminder("devices", s"Devices changed:\n$deviceInfo"))
+  /** Devices changed since systemStable was built (cache v2; delta lines 2026-08-20). */
+  private def devicesReminder(deviceDelta: String): Option[SystemReminder] =
+    if deviceDelta.isEmpty then None
+    else Some(SystemReminder("devices", s"Devices changed:\n$deviceDelta"))
 
-  /** Active sessions changed since systemStable was built (cache v2). */
-  private def sessionsReminder(sessionsText: String): Option[SystemReminder] =
-    if sessionsText.isEmpty then None
-    else Some(SystemReminder("sessions", s"Active sessions changed:\n$sessionsText"))
-
-  /** Environment section (chat width / PID / platform) changed (cache v2). */
-  private def envReminder(envInfo: String): Option[SystemReminder] =
-    if envInfo.isEmpty then None
-    else Some(SystemReminder("environment", s"Environment changed:\n$envInfo"))
-
-  /** Current task list — user-turn only, never part of systemStable (cache v2). */
+  /** Current task list — Nebula-only user-turn reminder, never part of systemStable.
+    * The caller (AgentCore) supplies full / delta / unchanged text. */
   private def tasksReminder(taskListText: String): Option[SystemReminder] =
     if taskListText.isEmpty then None
-    else Some(SystemReminder("tasks", s"Current tasks:\n$taskListText"))
+    else Some(SystemReminder("tasks", taskListText))
 
   /** Language setting changed since systemStable was built (cache v2). */
   private def languageReminder(language: Option[String]): Option[SystemReminder] =
     language.map(lang => SystemReminder("language", s"Language changed: respond in $lang"))
-
-  /** Peak (14-18 on weekdays) / off-peak + next idle window from usage history. */
-  private def timeContextReminder(pattern: UsagePattern): Option[SystemReminder] =
-    val now = ZonedDateTime.now()
-    val isPeak = now.getDayOfWeek.getValue <= 5 && now.getHour >= 14 && now.getHour < 18
-    val peakPart = if isPeak then "Peak hours active (14:00-18:00, 3x pricing)" else "Off-peak hours"
-    val idlePart = nextIdleWindow(pattern, now) match
-      case Some(w) => s"Next idle window: ${w.startHour}:00 (${w.durationHours}h)"
-      case None => ""
-    val content = s"$peakPart. $idlePart".trim
-    if content.isEmpty then None else Some(SystemReminder("time-context", content))
-
-  /** Find the next idle window strictly after now (today or upcoming days). */
-  private def nextIdleWindow(pattern: UsagePattern, now: ZonedDateTime): Option[TimeWindow] =
-    if pattern.idleWindows.isEmpty then None
-    else
-      val todayDow = now.getDayOfWeek.getValue % 7
-      val nowHour = now.getHour
-      // Candidates today (later hours) and the next 7 days
-      (0 to 7).iterator
-        .flatMap { dayOffset =>
-          val dow = (todayDow + dayOffset) % 7
-          pattern.idleWindows.filter(_.dayOfWeek == dow).map(w => (dayOffset, w))
-        }
-        .collectFirst {
-          case (0, w) if w.startHour > nowHour => w
-          case (dayOffset, w) if dayOffset > 0 => w
-        }
 
   /** Summary of this session's pending (untriggered) scheduled tasks. */
   private def pendingScheduleReminder(pending: List[ScheduledTask]): Option[SystemReminder] =
@@ -169,13 +145,27 @@ object SystemReminders:
       else zdt.format(DateTimeFormatter.ofPattern("MM-dd"))
     s"${zdt.format(fmt)} $day"
 
-  /** Log reminders and return them wrapped in IO. */
+  /** Log reminders and return them wrapped in IO.
+    *
+    * Reminder refactor (2026-08-20): the `time` category fires on nearly every
+    * user turn (~2.3K log lines/half-day) — downsampled to at most one log
+    * line per [[TimeLogSampleMs]]. The injection itself is unaffected. */
   def logAndReturn(reminders: List[SystemReminder]): IO[List[SystemReminder]] =
     reminders
       .traverse_ { r =>
-        logger.info(s"[${r.category}] ${r.content.take(100)}")
+        val now = System.currentTimeMillis()
+        val shouldLog = r.category != "time" || now - lastTimeLogMs >= TimeLogSampleMs
+        if !shouldLog then IO.unit
+        else
+          if r.category == "time" then lastTimeLogMs = now
+          logger.info(s"[${r.category}] ${r.content.take(100)}")
       }
       .as(reminders)
+
+  /** Min interval between two logged `time` reminders (log-noise downsample). */
+  private val TimeLogSampleMs = 10 * 60 * 1000L
+
+  @volatile private var lastTimeLogMs: Long = 0L
 
   // ------------------------------------------------------------------
   // Persisted time-reminder retention (anti-bloat)

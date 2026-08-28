@@ -2,14 +2,18 @@
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';
-import { activeView, setActiveView } from './chatView.js';
+import { key } from './branding.js';
+import { activeView, setActiveView, findViewBySessionId } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
-import { sendWs } from './ws.js';
+import { sendWs, onMessage } from './ws.js';
+import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine } from './reference.js';
 
 // ---------- Time format preference (12h / 24h toggle) ----------
-const TIME_FORMAT_KEY = 'nebflow:timeFormat';
+// Legacy spelling 'nebflow:timeFormat' is normalized into this key by
+// branding.js at module init (see LEGACY_IRREGULAR there).
+const TIME_FORMAT_KEY = key('time_format');
 let _timeFormat = localStorage.getItem(TIME_FORMAT_KEY) || '24h';
 
 function refreshAllTimestamps() {
@@ -209,6 +213,20 @@ export function clearStatus() {
   stopSpinner();
 }
 
+// ---------- Freeze visuals (work schedule, freeze-schedule spec §3.2) ------
+// 2026-08-24 ruling: the standalone .frozen-status bar is RETIRED — the input
+// bar itself carries the frozen state (ice-blue material + placeholder). Only
+// the resume-clock formatter survives (shared by the event path and the
+// schedule-window local path in main.js).
+export function formatResumeClock(resumeAt) {
+  if (!resumeAt) return '';
+  const d = new Date(resumeAt);
+  if (Number.isNaN(d.getTime())) return '';
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
 export function renderRetryStatus(msg) {
   const { chat } = activeView.dom;
   let el = document.getElementById('retry-status');
@@ -284,7 +302,18 @@ export function renderUserBubble(text, attachments, timestamp) {
   (attachments || []).forEach(att => {
     const bubble = document.createElement('div');
     bubble.className = 'bubble user att-bubble';
-    if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
+    if (att.type === 'ref' || att.type === 'taskRef') {
+      // #303 v1.1 + (2026-08-27 打回注入块收敛): ALL task-return references -
+      // unified type:'ref' AND the legacy type:'taskRef' from old
+      // history/queue restores - normalize into the same Reference and render
+      // through renderRefBlock(message), which emits the one-line
+      // `#<任务号> <任务标题>` form for tasks. One renderer, no dual styles.
+      // Ref nodes need more width than compact file tags, so the bubble is
+      // widened via .att-ref-bubble.
+      bubble.classList.add('att-ref-bubble');
+      const ref = att.type === 'ref' ? att : normalizeTaskRef(att);
+      if (ref) bubble.appendChild(renderRefBlock(ref, { mode: 'message' }));
+    } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
       const img = document.createElement('img');
       img.className = 'att-img';
       img.src = att.preview;
@@ -369,6 +398,24 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam) {
   return parts.join(' · ');
 }
 
+/** Mail delivery modes from the backend contract ('queue'|'immediate').
+ *  Badges are appended to the injected source label when the WS event /
+ *  UiMessage carries a `delivery` field; old messages lack it → no badge
+ *  (the former 'ask' mode was removed 2026-08-27 — legacy history rows that
+ *  still carry it render without a badge). */
+const DELIVERY_MODES = new Set(['queue', 'immediate']);
+
+/** Append a delivery-mode badge to the label element (no-op when the field
+ *  is absent or not a known mode — backward compatible with old history). */
+function appendDeliveryBadge(label, delivery) {
+  if (!delivery || !DELIVERY_MODES.has(delivery)) return;
+  const badge = document.createElement('span');
+  badge.className = `delivery-badge delivery-${delivery}`;
+  badge.textContent = t(`mailDelivery.${delivery}`);
+  badge.title = t(`mailDelivery.${delivery}Title`);
+  label.appendChild(badge);
+}
+
 /** Build a row element for an injected message (pure builder — no DOM append,
  *  no scroll). Shared by live render (renderInjectedBubble) and history
  *  restore (persistence.js) so both paths render identically.
@@ -376,8 +423,10 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam) {
  *  defer markdown rendering into post-append rAF batches — prevents a
  *  synchronous markdown storm when restoring long histories (P0-2).
  *  sourceTeam (optional): Team name for Team-agent messages — shown in the
- *  source label as 'team/agent' (see injectedSourceLabel). */
-export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn) {
+ *  source label as 'team/agent' (see injectedSourceLabel).
+ *  delivery (optional): Mail delivery mode 'queue'|'immediate' — shown
+ *  as a badge in the label; absent on old messages → hidden. */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery) {
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -385,10 +434,36 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   bubble.className = 'bubble injected';
   const label = document.createElement('div');
   label.className = 'ask-label injected-source-label';
-  label.textContent = injectedSourceLabel(source, eventType, sender, sourceTeam);
+  const trimmed = (text || '').trim();
   const content = document.createElement('div');
-  if (deferFn) deferFn(content, text || '');
-  else content.innerHTML = renderMarkdownWithMath(text || '', false);
+  // 打回注入块收敛 (2026-08-27 user ruling): the backend [打回任务 #id: title]
+  // injection collapses to the one-line `#<任务号> <任务标题>` form with a
+  // one-line-truncated opinion. 描述/产出 never render. Both the live dispatch
+  // and BOTH history-restore paths funnel through this single builder, so every
+  // entry renders byte-identically (AC d).
+  const retMsg = parseTaskReturnText(trimmed);
+  if (retMsg) {
+    content.appendChild(buildTaskRefLine(retMsg));
+  } else {
+    if (deferFn) deferFn(content, trimmed);
+    else content.innerHTML = renderMarkdownWithMath(trimmed, false);
+  }
+
+  // Default-collapsed (2026-08-23 ruling): blue injected bubbles show only the
+  // category header (SOURCE · AGENT · EVENT_TYPE); the body expands on click.
+  // Same product thought as #346: the stream stays clean, observability is
+  // on-demand. Expansion is not persisted — refresh returns to collapsed.
+  // Only collapses when there IS content; empty injected markers stay flat.
+  // Expand affordance (2026-08-24 ruling): NO chevron icon — the quiet muted
+  // label itself is the toggle (old「思考过程」interaction: cursor + hover
+  // opacity only), which also fixes the icon's vertical misalignment.
+  const collapsible = trimmed.length > 0;
+  if (collapsible) {
+    content.style.display = 'none'; // collapsed default
+    bindCollapsibleToggle(label, () => content);
+  }
+  label.appendChild(document.createTextNode(injectedSourceLabel(source, eventType, sender, sourceTeam)));
+  appendDeliveryBadge(label, delivery);
   bubble.appendChild(label);
   bubble.appendChild(content);
   row.appendChild(bubble);
@@ -417,9 +492,9 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
 }
 
 /** Live-render an injected message into the active view. */
-export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam) {
+export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery) {
   const chat = activeView.dom.chat;
-  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam);
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery);
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
 }
@@ -640,7 +715,15 @@ export function pickThinkingPhrase(durationMs, seed) {
 
 /**
  * Create a duration badge DOM element (pill style).
- * Shows the full phrase with duration embedded, plus optional model tag and timestamp.
+ *
+ * v1.2 user ruling (2026-08-21 12:08): AI bubble footers are uniformly
+ * time + copy only — no phrase, no model tag in the footer. The phrase
+ * (with embedded duration) and model name still travel on the badge as
+ * dataset attributes (data-nf-phrase / data-nf-model) so the turn-group
+ * summary row (#346) can recover them: live path via main.js, history
+ * reload via turnGroup.groupSegment. The summary row is now the sole
+ * display home of the phrase/model metadata.
+ *
  * @param {number} durationMs
  * @param {string} [model]
  * @param {number} [seed]
@@ -650,26 +733,23 @@ export function pickThinkingPhrase(durationMs, seed) {
 export function createDurationBadgeElement(durationMs, model, seed, timestamp, copyText) {
   const badge = document.createElement('div');
   badge.className = 'duration-badge';
+  // Metadata for #346 summary reconstruction (not rendered — footer is
+  // time + copy only, v1.2 ruling).
+  badge.dataset.nfPhrase = pickThinkingPhrase(durationMs, seed);
+  if (model) badge.dataset.nfModel = model;
 
-  const phraseSpan = document.createElement('span');
-  phraseSpan.className = 'duration-badge-text';
-  phraseSpan.textContent = pickThinkingPhrase(durationMs, seed);
-  badge.appendChild(phraseSpan);
-
-  if (model) {
+  // Divider is a SEPARATOR: insert only between two existing/forthcoming
+  // elements — never as a leading or trailing orphan (v1.2 footer = time +
+  // copy only; the old leading divider was a leftover of "phrase | time").
+  const appendDivider = () => {
+    if (badge.childElementCount === 0) return;
     const div = document.createElement('span');
     div.className = 'duration-badge-divider';
     badge.appendChild(div);
-    const modelSpan = document.createElement('span');
-    modelSpan.className = 'duration-badge-model';
-    modelSpan.textContent = model;
-    badge.appendChild(modelSpan);
-  }
+  };
 
   if (timestamp) {
-    const div = document.createElement('span');
-    div.className = 'duration-badge-divider';
-    badge.appendChild(div);
+    appendDivider();
     const timeSpan = document.createElement('span');
     timeSpan.className = 'duration-badge-time';
     timeSpan.setAttribute('data-ts', timestamp);
@@ -680,9 +760,7 @@ export function createDurationBadgeElement(durationMs, model, seed, timestamp, c
   }
 
   if (copyText) {
-    const div = document.createElement('span');
-    div.className = 'duration-badge-divider';
-    badge.appendChild(div);
+    appendDivider();
     const copyBtn = createMsgCopyButton(copyText);
     badge.appendChild(copyBtn);
   }
@@ -752,6 +830,44 @@ export function finishAgent(agentId) {
 
 // ---------- Tool rendering ----------
 
+/**
+ * Extract the Pop/Card artifact from a tool label + raw input — the SINGLE
+ * detection predicate shared by the message-bubble Pop card (applyPopCard)
+ * and the search-results click (chatSearch queue #2): a Pop or legacy-Card
+ * tool whose input JSON carries a resolvable filePath. Returns
+ * {filePath, title} or null (not an openable artifact → plain jump).
+ */
+export function popArtifactFromInput(label, inputJson) {
+  const name = label ? label.split('(')[0].split('\n')[0].trim() : '';
+  if ((name !== 'Pop' && name !== 'Card') || !inputJson) return null;
+  let filePath = '';
+  let title = '';
+  try {
+    const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
+    filePath = inp.filePath || '';
+    title = inp.title || '';
+  } catch { /* malformed input → no openable artifact */ }
+  return filePath ? { filePath, title } : null;
+}
+
+/** Open a Pop artifact in the Canvas panel — the SINGLE open path shared by
+ *  the message-bubble Pop card and the search-results click (queue #2).
+ *  Dispatches the workspace-open-item event canvas.js listens for; the empty
+ *  content + absPath shape makes canvas fetch the real content via readFile. */
+export function openPopArtifact(filePath, title) {
+  const fileName = filePath.split('/').pop() || filePath;
+  window.dispatchEvent(new CustomEvent('workspace-open-item', {
+    detail: {
+      id: 'file:' + filePath,
+      title: title || fileName,
+      itemType: '',
+      content: '',
+      absPath: filePath,
+      pinned: true
+    }
+  }));
+}
+
 /** Render a Pop tool card onto an existing card element.
  *  Shared between live renderTool and history restoreFromBackendHistory.
  *  Returns true if the card was handled (Pop tool), false otherwise. */
@@ -762,13 +878,9 @@ export function applyPopCard(card, label, summary, inputJson, isError) {
   const icon = isError
     ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
     : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
-  let popFilePath = '';
-  let popTitle = '';
-  try {
-    const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
-    popFilePath = inp.filePath || '';
-    popTitle = inp.title || '';
-  } catch {}
+  const art = popArtifactFromInput(label, inputJson);
+  const popFilePath = art ? art.filePath : '';
+  const popTitle = art ? art.title : '';
   const popFileName = popFilePath.split('/').pop() || popFilePath;
   const popLocalLabel = localizeToolLabel(label);
   const popLocalSummary = localizeToolSummary(summary, label);
@@ -781,19 +893,7 @@ export function applyPopCard(card, label, summary, inputJson, isError) {
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
     '<div class="content"><div class="label">' + labelHtml + '</div></div>';
   if (popFilePath) {
-    card.addEventListener('click', () => {
-      const fileName = popFilePath.split('/').pop() || popFilePath;
-      window.dispatchEvent(new CustomEvent('workspace-open-item', {
-        detail: {
-          id: 'file:' + popFilePath,
-          title: popTitle || fileName,
-          itemType: '',
-          content: '',
-          absPath: popFilePath,
-          pinned: true
-        }
-      }));
-    });
+    card.addEventListener('click', () => openPopArtifact(popFilePath, popTitle));
   }
   return true;
 }
@@ -903,36 +1003,6 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
       (mailBody ? '<div class="body">' + mailBody + '</div>' : '') + '</div>';
     smartScroll();
     if (mailBody) attachToolClick(card);
-    return { type: 'tool', label, summary, content: null, isError, input: inputJson };
-  }
-
-  if (_toolName === 'RemoveUnnecessary' && inputJson) {
-    const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
-    const localLabel = localizeToolLabel(label);
-    const labelParts = localLabel.split('\n', 2);
-    const labelHtml = escapeHtml(labelParts[0])
-      + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
-
-    // Extract the user's summary from input
-    let summaryBody = '';
-    try {
-      const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
-      const userSummary = inp.summary || '';
-      if (userSummary) {
-        summaryBody = '<div class="tool-removeunnecessary-summary">' + renderMarkdownWithMath(userSummary) + '</div>';
-      }
-    } catch {}
-
-    // Result text (e.g. "Replaced 3 tool result(s)") — strip the "Summary: ..." suffix
-    const resultText = content ? content.replace(/Summary:.*$/s, '').trim() : '';
-
-    card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-      '<div class="content"><div class="label">' + labelHtml + '</div>' +
-      (resultText ? '<div class="tool-result-badge">' + escapeHtml(resultText) + '</div>' : '') +
-      (summaryBody ? '<div class="body">' + summaryBody + '</div>' : '') + '</div>';
-    smartScroll();
-    if (summaryBody) attachToolClick(card);
     return { type: 'tool', label, summary, content: null, isError, input: inputJson };
   }
 
@@ -1070,7 +1140,6 @@ const TOOL_PRIMARY_FIELDS = {
   'WebFetch': 'url',
   'TaskCreate': 'description',
   'TaskUpdate': 'description',
-  'RemoveUnnecessary': 'summary',
   'Mail': 'message',
   'TransferFile': 'sourcePath',
   'MailAgent': 'message',
@@ -1280,10 +1349,139 @@ export function renderSystemBubble(text) {
   return { type: 'system', text };
 }
 
+// ---------- Compaction status card ----------
+// Live-rendered status card for the compactStart → compactComplete/Failed
+// lifecycle: one card that morphs in place (spinning → done/failed) instead
+// of two plain notice bubbles. History restore is unchanged — the persisted
+// system text still renders as quiet notice cards after a refresh.
+const compactCheckSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+const compactFailSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+function findActiveCompactCard(view) {
+  return view?.dom?.chat?.querySelector('.compact-card[data-state="active"]') || null;
+}
+
+function appendCompactCard(view, state, innerHtml, startTs) {
+  const chat = view?.dom?.chat;
+  if (!chat) return null;
+  const row = document.createElement('div');
+  row.className = 'row notice';
+  const card = document.createElement('div');
+  card.className = 'compact-card';
+  card.dataset.state = state;
+  if (startTs) card.dataset.startTs = startTs;
+  card.innerHTML = innerHtml;
+  row.appendChild(card);
+  chat.appendChild(row);
+  smartScroll();
+  return card;
+}
+
+export function renderCompactStartCard(view = activeView) {
+  if (!view?.dom?.chat) return;
+  if (findActiveCompactCard(view)) return; // one active card at a time
+  appendCompactCard(view, 'active',
+    `<span class="compact-card-spinner"></span><span class="compact-card-label">${escapeHtml(t('chat.compactingCard'))}</span>`,
+    Date.now());
+}
+
+export function renderCompactDoneCard(view = activeView, { before, after, detail } = {}) {
+  const active = findActiveCompactCard(view);
+  const startTs = Number(active?.dataset.startTs) || 0;
+  const elapsed = startTs ? Math.max(1, Math.round((Date.now() - startTs) / 1000)) : 0;
+  let label = t('chat.compacted', { before, after, detail: detail || '' });
+  if (elapsed) label += t('chat.compactElapsed', { seconds: elapsed });
+  const inner = `<span class="compact-card-icon ok">${compactCheckSvg}</span><span class="compact-card-label">${escapeHtml(label)}</span>`;
+  if (active) {
+    active.dataset.state = 'done';
+    delete active.dataset.startTs;
+    active.innerHTML = inner;
+  } else {
+    // No active card (view was restored/switched mid-compaction) — append a
+    // card directly in its final state.
+    appendCompactCard(view, 'done', inner, 0);
+  }
+  smartScroll();
+}
+
+export function renderCompactFailCard(view = activeView, text) {
+  const active = findActiveCompactCard(view);
+  const inner = `<span class="compact-card-icon err">${compactFailSvg}</span><span class="compact-card-label">${escapeHtml(text)}</span>`;
+  if (active) {
+    active.dataset.state = 'error';
+    delete active.dataset.startTs;
+    active.innerHTML = inner;
+  } else {
+    appendCompactCard(view, 'error', inner, 0);
+  }
+  smartScroll();
+}
+
 
 // ---------- Universal Option Box ----------
 // Renders an inline option picker. Used by AskUser tool, /thinking, permission prompts.
-const ASKUSER_DRAFTS_KEY = 'nebflow_askuser_drafts';
+const ASKUSER_DRAFTS_KEY = key('askuser_drafts');
+
+// AskUser cards registry — lets Canvas iframes answer a visible single-choice
+// question via postMessage (askuser-canvas-integration-spec, direction C §3.2).
+// The Canvas button is a REMOTE TRIGGER: it writes into the card's answers
+// array and runs the same confirm path — it does not hold state. Only cards
+// rendered via renderAskUser carry an askSessionId; permission prompts /
+// slash-cmd pickers pass undefined and stay out of the registry.
+const askCardRegistry = new Map(); // sessionId → { questions, answers, shouldShow, selectOption, confirmIfReady }
+
+/** Build the inline preview slot for an option (direction C §2.1/§4.1).
+ *  swatch: 1-5 color stripes filling the 56×40 slot; image: object-fit cover.
+ *  Returns '' when the preview is absent/invalid so the button renders exactly
+ *  like the pre-preview version (E1/E3 zero regression). */
+function buildOptionPreview(pv) {
+  if (!pv || typeof pv !== 'object') return '';
+  if (pv.type === 'swatch') {
+    const colors = Array.isArray(pv.colors) ? pv.colors.filter(c => typeof c === 'string' && c.trim()) : [];
+    if (colors.length === 0) return ''; // E3: empty swatch → no preview
+    const inner = colors.map((c, i) =>
+      `<span class="preview-swatch" style="background:${escapeHtml(c.trim())};${i > 0 ? 'border-left:1px solid var(--color-surface)' : ''}"></span>`
+    ).join('');
+    return `<span class="option-preview" aria-hidden="true">${inner}</span>`;
+  }
+  if (pv.type === 'image' && pv.src) {
+    // §6 preview fades in on load (200ms ease-out); on error the slot hides
+    // itself (E2) — label/desc stay clickable either way.
+    return `<span class="option-preview" aria-hidden="true"><img class="preview-img" src="${escapeHtml(pv.src)}" alt="" loading="lazy" onload="this.classList.add('nf-loaded')" onerror="this.closest('.option-preview').style.display='none'"></span>`;
+  }
+  return '';
+}
+
+/** Broadcast an answered/locked AskUser card to every Canvas iframe so their
+ *  embedded "pick this" buttons disable (§5.1 S5, spec §11.2). */
+function broadcastAskState(sid) {
+  document.querySelectorAll('.canvas-tab-pane iframe').forEach(iframe => {
+    try {
+      /** @type {HTMLIFrameElement} */ (iframe).contentWindow?.postMessage({ _nfAskState: { sessionId: sid, answered: true } }, '*');
+    } catch { /* cross-origin/no window — ignore */ }
+  });
+}
+
+// Canvas → parent answer channel (direction C §3.2). The iframe content is
+// UNTRUSTED (agent-produced HTML) — every payload is validated against the
+// current visible card state; anything not matching is silently dropped.
+// Bound once at module scope; cards self-register via showOptions.
+window.addEventListener('message', (e) => {
+  const payload = e.data && e.data._nfAskAnswer;
+  if (!payload) return;
+  const entry = askCardRegistry.get(payload.sessionId);
+  if (!entry) return;                              // E9 no such card / E6 already locked
+  const qi = Number(payload.questionIndex);
+  if (!Number.isInteger(qi) || qi < 0) return;
+  const item = entry.questions[qi];
+  if (!item || item.multiple === true) return;     // E4 multi stays on the card path
+  if (!entry.shouldShow(qi)) return;               // E5 dependsOn-hidden question
+  const answer = typeof payload.answer === 'string' ? payload.answer : '';
+  const labels = (item.options || []).map(o => typeof o === 'string' ? o : o.label);
+  if (!labels.includes(answer)) return;            // E7 invalid label (incl. Other free text)
+  entry.selectOption(qi, answer);
+  entry.confirmIfReady();                          // S3b → S4: confirm when all visible answered
+});
 
 function loadAskDrafts(sid) {
   try { return JSON.parse(localStorage.getItem(ASKUSER_DRAFTS_KEY))?.[sid] || {}; } catch { return {}; }
@@ -1322,13 +1520,24 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     const dep = item.dependsOn;
     const refIdx = questions.findIndex(q => q.id === dep.ref);
     if (refIdx === -1) return true;
-    return answers[refIdx] === dep.equals;
+    const a = answers[refIdx];
+    // Multi-select ref question: the dependency matches when equals is among the selections
+    return Array.isArray(a) ? a.includes(dep.equals) : a === dep.equals;
   }
 
   function updateVisibility() {
     questionWrappers.forEach((wrapper, qi) => {
       const visible = shouldShow(qi);
+      const wasHidden = wrapper.style.display === 'none';
       wrapper.style.display = visible ? '' : 'none';
+      // A-2 (onboarding spec §7): dependsOn reveal animates in; hide is
+      // instant. The initial updateVisibility() runs before the box enters
+      // the DOM, so the reveal class cannot fire on first render.
+      if (visible && wasHidden) {
+        wrapper.classList.remove('ob-q-reveal');
+        void wrapper.offsetWidth; // reflow to restart the animation
+        wrapper.classList.add('ob-q-reveal');
+      }
       if (!visible && answers[qi] !== null) {
         answers[qi] = null;
         wrapper.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
@@ -1336,6 +1545,23 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         if (input) input.value = '';
       }
     });
+  }
+
+  // --- Multi-select: recompute answers[qi] from the DOM picked state ---
+  // answers[qi] is an array of selected option labels (plus Other text when
+  // typed) or null when nothing is picked. Serialized as a JSON array string
+  // on submit — the answers wire stays one string slot per question.
+  function syncMulti(qi) {
+    const wrapper = questionWrappers[qi];
+    if (!wrapper) return;
+    const labels = [];
+    wrapper.querySelectorAll('.option-btn.picked').forEach(el => {
+      if (el.dataset.other !== '1' && el.dataset.label) labels.push(el.dataset.label);
+    });
+    const otherPicked = wrapper.querySelector('.option-btn[data-other="1"].picked');
+    const input = wrapper.querySelector('.option-custom-input');
+    if (otherPicked && input && input.value.trim()) labels.push(input.value.trim());
+    answers[qi] = labels.length ? labels : null;
   }
 
   // --- Build question DOM ---
@@ -1352,6 +1578,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     const optsDiv = document.createElement('div');
     optsDiv.className = 'option-opts';
     const hasOptions = item.options && item.options.length > 0;
+    // Multi-select question: checkbox group, confirm when done
+    const isMulti = hasOptions && item.multiple === true;
+    if (isMulti) optsDiv.classList.add('multi');
 
     if (hasOptions) {
       item.options.forEach((opt, oi) => {
@@ -1360,20 +1589,41 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         const isStr = typeof opt === 'string';
         const label = isStr ? opt : opt.label;
         const desc = isStr ? '' : (opt.desc || opt.description || '');
-        btn.innerHTML = escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '');
-        btn.onclick = () => {
-          answers[qi] = label;
-          optsDiv.querySelectorAll('.option-btn').forEach((el, i) => {
-            el.classList.toggle('picked', i === oi);
-          });
-          if (customInput) {
-            customInput.style.display = 'none';
-            customInput.value = '';
+        if (isMulti) {
+          btn.dataset.label = label;
+          const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
+          if (preview) btn.classList.add('has-preview');
+          btn.innerHTML = '<span class="option-check"></span>' + (preview ? buildOptionPreview(preview) : '') + '<span class="option-text">' +
+            escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '') + '</span>';
+          btn.onclick = () => {
+            btn.classList.toggle('picked');
+            syncMulti(qi);
+            updateVisibility();
+            checkAllAnswered();
+          };
+        } else {
+          btn.dataset.label = label;
+          const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
+          if (preview) btn.classList.add('has-preview');
+          if (preview) {
+            btn.innerHTML = buildOptionPreview(preview) + '<span class="option-text">' + escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '') + '</span>';
+          } else {
+            btn.innerHTML = escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '');
           }
-          if (askSessionId) saveAskDraft(askSessionId, qi, '');
-          updateVisibility();
-          checkAllAnswered();
-        };
+          btn.onclick = () => {
+            answers[qi] = label;
+            optsDiv.querySelectorAll('.option-btn').forEach((el, i) => {
+              el.classList.toggle('picked', i === oi);
+            });
+            if (customInput) {
+              customInput.style.display = 'none';
+              customInput.value = '';
+            }
+            if (askSessionId) saveAskDraft(askSessionId, qi, '');
+            updateVisibility();
+            checkAllAnswered();
+          };
+        }
         optsDiv.appendChild(btn);
       });
     }
@@ -1385,7 +1635,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     customInput.rows = 2;
 
     const savedVal = saved[qi];
-    if (savedVal) {
+    if (savedVal && !isMulti) {
       customInput.value = savedVal;
       answers[qi] = savedVal;
     }
@@ -1396,24 +1646,50 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     if (hasOptions && allowOther) {
       otherBtn = document.createElement('button');
       otherBtn.className = 'option-btn';
-      otherBtn.textContent = t('chat.other');
-      if (savedVal && !item.options.some(o => (typeof o === 'string' ? o : o.label) === savedVal)) {
-        otherBtn.classList.add('picked');
-        customInput.style.display = '';
-      } else {
-        customInput.style.display = 'none';
-      }
-      otherBtn.onclick = () => {
-        optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
-        otherBtn.classList.add('picked');
-        customInput.style.display = '';
-        customInput.focus();
-        if (customInput.value.trim()) {
-          answers[qi] = customInput.value.trim();
+      if (isMulti) {
+        otherBtn.dataset.other = '1';
+        otherBtn.innerHTML = '<span class="option-check"></span><span class="option-text">' + escapeHtml(t('chat.other')) + '</span>';
+        if (savedVal) {
+          otherBtn.classList.add('picked');
+          customInput.style.display = '';
+          customInput.value = savedVal;
+        } else {
+          customInput.style.display = 'none';
         }
-        updateVisibility();
-        checkAllAnswered();
-      };
+        otherBtn.onclick = () => {
+          otherBtn.classList.toggle('picked');
+          if (otherBtn.classList.contains('picked')) {
+            customInput.style.display = '';
+            customInput.focus();
+          } else {
+            customInput.style.display = 'none';
+            customInput.value = '';
+            if (askSessionId) saveAskDraft(askSessionId, qi, '');
+          }
+          syncMulti(qi);
+          updateVisibility();
+          checkAllAnswered();
+        };
+      } else {
+        otherBtn.textContent = t('chat.other');
+        if (savedVal && !item.options.some(o => (typeof o === 'string' ? o : o.label) === savedVal)) {
+          otherBtn.classList.add('picked');
+          customInput.style.display = '';
+        } else {
+          customInput.style.display = 'none';
+        }
+        otherBtn.onclick = () => {
+          optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
+          otherBtn.classList.add('picked');
+          customInput.style.display = '';
+          customInput.focus();
+          if (customInput.value.trim()) {
+            answers[qi] = customInput.value.trim();
+          }
+          updateVisibility();
+          checkAllAnswered();
+        };
+      }
       optsDiv.appendChild(otherBtn);
     } else if (hasOptions) {
       customInput.style.display = 'none';
@@ -1423,7 +1699,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 
     customInput.oninput = () => {
       const val = customInput.value.trim();
-      if (val) {
+      if (isMulti) {
+        syncMulti(qi);
+      } else if (val) {
         answers[qi] = val;
         if (hasOptions) {
           optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
@@ -1441,6 +1719,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     optsDiv.appendChild(customInput);
     wrapper.appendChild(optsDiv);
     box.appendChild(wrapper);
+    if (isMulti) syncMulti(qi); // pick up restored Other text, if any (needs the DOM in place)
   });
 
   // Apply initial visibility after all questions are in DOM
@@ -1453,6 +1732,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   cancelBtn.className = 'option-cancel';
   cancelBtn.textContent = t('chat.cancel');
   cancelBtn.onclick = () => {
+    if (askSessionId) askCardRegistry.delete(askSessionId);
     box.querySelectorAll('.option-btn, .option-confirm').forEach(el => { el.disabled = true; });
     cancelBtn.disabled = true;
     confirmBtn.disabled = true;
@@ -1465,6 +1745,9 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   confirmBtn.innerHTML = '<i data-lucide="check"></i><span>' + escapeHtml(confirmLabel) + '</span>';
   confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || answers[qi] !== null);
   confirmBtn.onclick = () => {
+    // Lock the card: drop it from the Canvas answer registry (E6: late
+    // _nfAskAnswer postMessages find no entry and are silently discarded).
+    if (askSessionId) askCardRegistry.delete(askSessionId);
     box.querySelectorAll('.option-btn').forEach(el => { el.disabled = true; });
     cancelBtn.disabled = true;
     confirmBtn.disabled = true;
@@ -1473,16 +1756,45 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 
     const ansDiv = document.createElement('div');
     ansDiv.className = 'option-answer';
-    ansDiv.textContent = '-> ' + answers.filter(a => a).join(', ');
+    ansDiv.textContent = '-> ' + answers
+      .filter(a => a)
+      .map(a => Array.isArray(a) ? '[' + a.join(', ') + ']' : a)
+      .join(', ');
     box.appendChild(ansDiv);
 
     if (askSessionId) clearAskDrafts(askSessionId);
-    const finalAnswers = answers.map(a => a !== null ? a : '');
+    // Multi-select answers serialize as JSON array strings; the wire stays one string slot per question.
+    const finalAnswers = answers.map(a => Array.isArray(a) ? JSON.stringify(a) : (a !== null ? a : ''));
     if (onConfirm) onConfirm(finalAnswers);
   };
   btnRow.appendChild(cancelBtn);
   btnRow.appendChild(confirmBtn);
   box.appendChild(btnRow);
+
+  // Register as a remote-answerable AskUser card (Canvas channel, direction C
+  // §3.2). Deleted on confirm/cancel — a missing entry is the
+  // "locked/answered" signal (E6/E9). The Canvas button is a remote trigger:
+  // it writes the same answers[] slot and runs the same confirm path.
+  if (askSessionId) {
+    askCardRegistry.set(askSessionId, {
+      questions, answers, shouldShow,
+      selectOption(qi, label) {
+        const wrapper = questionWrappers[qi];
+        if (!wrapper) return;
+        answers[qi] = label;
+        wrapper.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
+        wrapper.querySelectorAll('.option-btn').forEach(el => {
+          if (el.dataset.label === label) el.classList.add('picked');
+        });
+        checkAllAnswered();
+      },
+      confirmIfReady() { if (!confirmBtn.disabled) confirmBtn.click(); },
+    });
+  }
+
+  // A-1 (onboarding spec §7): whole card fades in. Class applied before the
+  // box enters the DOM so the animation fires exactly once on insert.
+  box.classList.add('ob-fade-in');
   container.appendChild(box);
   createIconsIn(box);
   smartScroll();
@@ -1493,7 +1805,44 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 }
 
 // ---------- AskUser ----------
-export function renderAskUser(items, askSessionId, agentName) {
+/** Open an AskUser comparison page in Canvas (direction C §2.1 canvas field).
+ *  Read failure must not block the question card (E8) — errors are silent. */
+function openAskCanvas(tabId, absPath) {
+  import('./canvas.js').then(({ openWorkspaceItem }) => {
+    openWorkspaceItem({ id: tabId, itemType: '', title: String(absPath).split('/').pop() || 'compare', content: '', absPath })
+      .catch(() => {});
+  }).catch(() => {});
+}
+
+/** Probe that a canvas comparison file is readable before we surface the
+ *  "view comparison" button (E8). The backend pop.readFile responds with a
+ *  `fileContent` frame — success carries content/size, failure carries error.
+ *  Resolves true only on a positive read; a missing/broken file resolves
+ *  false (the button is suppressed, question card still renders). */
+function probeCanvasFile(path) {
+  return new Promise(resolve => {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) { resolve(false); return; }
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (unsub) unsub();
+      resolve(ok);
+    };
+    let unsub = null;
+    unsub = onMessage('fileContent', (msg) => {
+      if (msg.path !== path) return;
+      // success = no error AND real content/binary presence; empty text files
+      // legitimately arrive with content:"" so error is the reliable signal.
+      finish(!msg.error && (typeof msg.content === 'string' || msg.size != null));
+    });
+    const timer = setTimeout(() => finish(false), 1500);
+    sendWs({ type: 'pop.readFile', path, sessionId: undefined });
+  });
+}
+
+export function renderAskUser(items, askSessionId, agentName, requestId) {
   if (!Array.isArray(items) || items.length === 0) {
     renderError(t('chat.waitingQuestion'));
     return { type: 'askUser', items: [] };
@@ -1515,29 +1864,54 @@ export function renderAskUser(items, askSessionId, agentName) {
     bubble.appendChild(badge);
   }
   chat.appendChild(row);
+  // canvas field (direction C §2.1): probe readability, then offer a glass
+  // "view comparison" button beside the question and auto-open it in Canvas.
+  // E8: a missing/broken canvas file does not render the button and does not
+  // block the question card — the probe decides, so we never show a dead path.
+  const canvasPath = items.map(i => i && i.canvas).find(Boolean) || null;
+  if (canvasPath) {
+    const tabId = 'askcanvas:' + canvasPath;
+    const viewBtn = document.createElement('button');
+    viewBtn.className = 'glass-control ob-compare-btn';
+    viewBtn.style.display = 'none'; // shown only after a successful probe (E8)
+    viewBtn.textContent = t('askUser.viewCompare');
+    viewBtn.onclick = () => openAskCanvas(tabId, canvasPath);
+    bubble.appendChild(viewBtn);
+    probeCanvasFile(canvasPath).then(ok => {
+      if (ok) {
+        viewBtn.style.display = '';
+        openAskCanvas(tabId, canvasPath);
+      } else {
+        console.warn('[askUser] canvas file missing or unreadable:', canvasPath);
+        viewBtn.remove();
+      }
+    });
+  }
   // Use the sessionId from the askUser message, not the currently active session
   const targetSid = askSessionId || activeView.sessionId;
   try {
     showOptions(bubble, items, (answers) => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers }));
+        state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers, ...(requestId && { requestId }) }));
       }
+      broadcastAskState(targetSid);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, t('chat.confirm'), () => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'] }));
+        state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'], ...(requestId && { requestId }) }));
       }
+      broadcastAskState(targetSid);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, targetSid);
   } catch (e) {
     console.error('[askUser] render failed:', e);
     bubble.textContent = t('chat.failedRender');
   }
-  return { type: 'askUser', items };
+  return { type: 'askUser', items, requestId };
 }
 
 // ---------- Permission prompt ----------
-export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession) {
+export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession, sourceTeam, requestId) {
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
@@ -1580,12 +1954,14 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   }
 
   // Source badge: show which sub-agent this permission request came from
+  // (with team attribution when the requester is a team agent — #12)
   if (sourceAgent) {
     const sourceBadge = document.createElement('div');
     sourceBadge.className = 'perm-source-badge';
     const shortSession = sourceSession ? sourceSession.substring(0, 12) : '';
+    const agentLabel = sourceTeam ? `${sourceTeam}/${sourceAgent}` : sourceAgent;
     sourceBadge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17l9.2-9.2M17 17V7H7"/></svg>' +
-      '<span>' + escapeHtml(t('chat.permSource', { agent: sourceAgent, session: shortSession })) + '</span>';
+      '<span>' + escapeHtml(t('chat.permSource', { agent: agentLabel, session: shortSession })) + '</span>';
     bubble.appendChild(sourceBadge);
   }
 
@@ -1597,7 +1973,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   // If bypass is enabled for this session, auto-approve immediately
   if (state.bypassSessions.has(targetSid)) {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: true }));
+      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: true, ...(requestId && { requestId }) }));
     }
     const autoBadge = document.createElement('div');
     autoBadge.className = 'perm-auto-approved';
@@ -1626,7 +2002,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   showOptions(bubble, items, (answers) => {
     const approved = answers[0] === allowLabel;
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved }));
+      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved, ...(requestId && { requestId }) }));
     }
     // Track answered permission: prevents re-creating interactive prompt on
     // session switch-back while tool is still executing (askPermission is still
@@ -1637,7 +2013,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
   }, t('chat.confirm'), () => {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: false }));
+      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: false, ...(requestId && { requestId }) }));
     }
     // Track denied permission (same reason as above)
     state.answeredPermissions.add(targetSid);
@@ -1658,7 +2034,18 @@ export function renderAttachmentPreview(target) {
   if (!attPreview) return;
   attPreview.innerHTML = '';
   attachments.forEach((att, idx) => {
-    if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
+    // ── 全局引用（#303 v1.1）：type='ref'（新统一模型）与旧 type='taskRef'
+    // 都走 renderRefBlock —— 输入框引用块定高/截断/可展开（A1-A6）。旧 taskRef
+    // 经 normalizeTaskRef 归一为 refRefType='task' 渲染（§2.4 渐进收敛）。──
+    if (att.type === 'ref' || att.type === 'taskRef') {
+      const ref = att.type === 'ref' ? att : normalizeTaskRef(att);
+      const remove = () => {
+        attachments.splice(idx, 1);
+        renderAttachmentPreview(target);
+      };
+      const card = renderRefBlock(ref, { mode: 'input' }, remove);
+      attPreview.appendChild(card);
+    } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
       const wrap = document.createElement('div');
       wrap.style.position = 'relative';
       const img = document.createElement('img');
@@ -1772,7 +2159,8 @@ export function finishAskAnswer(durationMs, model) {
     }
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(activeView.stream.currentAskBubble, durationMs, model, seed, Date.now());
+      // v1.2 footer ruling: time + copy only (metadata lives in the summary row)
+      renderDurationBadge(activeView.stream.currentAskBubble, durationMs, model, seed, Date.now(), activeView.stream.askAnswerText);
     }
     activeView.stream.currentAskBubble = null;
     activeView.stream.askAnswerText = '';
@@ -1799,6 +2187,47 @@ export function renderAskError(msg) {
 let _pendingThinkingRAF = null;
 // Capture the bubble + chat at schedule time so the rAF renders into the correct
 let _thinkingRafTarget = null;
+
+// #345 segment-level thinking collapse (OpenAI paradigm): the label shows
+// 「思考中…」+ pulse dots while streaming (content hidden), collapsing to the
+// quiet「思考过程」label at finishThinking (2026-08-24 ruling: no duration
+// numbers, no chevron — pre-#345 look restored).
+
+/** #345 duration label removed (2026-08-24 ruling): the done label reverts to
+ *  the pre-#345 design — always「思考过程」(chat.thinkingLabel), no duration
+ *  numbers, no chevron icon. */
+
+/** Shared keyboard-activatable toggle for thinking labels and the #346 turn
+ *  summary bar (spec §8: both implementations share one helper). */
+export function bindCollapsibleToggle(el, getContent, onToggle) {
+  el.setAttribute('role', 'button');
+  el.setAttribute('tabindex', '0');
+  el.setAttribute('aria-expanded', el.classList.contains('expanded') ? 'true' : 'false');
+  const toggle = () => {
+    const content = getContent();
+    if (!content) return;
+    const visible = content.style.display !== 'none';
+    content.style.display = visible ? 'none' : '';
+    el.classList.toggle('expanded', !visible);
+    el.setAttribute('aria-expanded', String(!visible));
+    onToggle?.(!visible);
+  };
+  el.onclick = toggle;
+  el.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+  };
+}
+
+/** 12px inline chevron (currentColor) used by the #346 turn summary bar —
+ *  no icon library, muted color follows the text. (2026-08-24 ruling: thinking
+ *  labels and injected-bubble headers no longer use it.) */
+export function chevronSvg() {
+  const span = document.createElement('span');
+  span.className = 'nf-chevron';
+  span.setAttribute('aria-hidden', 'true');
+  span.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+  return span;
+}
 export function appendThinkingDelta(delta) {
   // NOTE: always accumulate thinking text for saveMsg even if we skip DOM creation
   activeView.stream.thinkingText += delta;
@@ -1818,14 +2247,29 @@ export function appendThinkingDelta(delta) {
     const bubble = document.createElement('div');
     bubble.className = 'bubble ai thinking-bubble';
     const label = document.createElement('div');
-    label.className = 'thinking-label';
-    label.textContent = t('chat.thinkingLabel');
+    label.className = 'thinking-label thinking-streaming';
+    const labelText = document.createElement('span');
+    labelText.className = 'thinking-label-text';
+    labelText.textContent = t('chat.thinkingInProgress');
+    label.appendChild(labelText);
+    // #345: three pulse dots after the label (OpenAI paradigm)
+    for (let i = 0; i < 3; i++) {
+      const dot = document.createElement('span');
+      dot.className = 'thinking-dot';
+      if (i === 1) dot.style.animationDelay = '0.15s';
+      if (i === 2) dot.style.animationDelay = '0.3s';
+      label.appendChild(dot);
+    }
     const content = document.createElement('div');
     content.className = 'thinking-content';
+    content.style.display = 'none'; // #345: streaming-collapsed by default
     bubble.appendChild(label);
     bubble.appendChild(content);
     row.appendChild(bubble);
     chat.appendChild(row);
+    // #345: streaming-expanded is reachable — click/Enter reveals live content
+    // (rAF keeps rendering into it); finishThinking preserves the open state.
+    bindCollapsibleToggle(label, () => content);
     activeView.stream.currentThinkingBubble = bubble;
   }
   // Capture the render target synchronously (correct during ws.js push/pull window).
@@ -1875,14 +2319,21 @@ export function finishThinking() {
     activeView.stream.currentThinkingBubble.classList.add('thinking-done');
     const label = activeView.stream.currentThinkingBubble.querySelector('.thinking-label');
     const content = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
-    if (content) content.style.display = 'none';
+    // #345: done label reverts to the pre-#345 design (2026-08-24 ruling):
+    // text「思考过程」, streaming dots removed, no chevron; a user-expanded
+    // streaming bubble STAYS expanded — only collapse when not manually opened.
     if (label) {
+      label.classList.remove('thinking-streaming');
       label.classList.add('collapsible');
-      label.onclick = () => {
-        const visible = content.style.display !== 'none';
-        content.style.display = visible ? 'none' : '';
-        label.classList.toggle('expanded', !visible);
-      };
+      label.querySelectorAll('.thinking-dot').forEach((d) => d.remove());
+      const labelText = label.querySelector('.thinking-label-text');
+      if (labelText) labelText.textContent = t('chat.thinkingLabel');
+      const wasExpanded = label.classList.contains('expanded');
+      if (content) content.style.display = wasExpanded ? '' : 'none';
+      label.setAttribute('aria-expanded', String(wasExpanded));
+      bindCollapsibleToggle(label, () => content);
+    } else if (content) {
+      content.style.display = 'none';
     }
     const text = activeView.stream.thinkingText;
     activeView.stream.currentThinkingBubble = null;

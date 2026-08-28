@@ -15,6 +15,7 @@ object ToolRegistry:
       "Read" -> ReadTool,
       "Write" -> WriteTool,
       "Edit" -> EditTool,
+      "MultiEdit" -> MultiEditTool,
       // Search
       "Glob" -> GlobTool,
       "Grep" -> GrepTool,
@@ -31,16 +32,27 @@ object ToolRegistry:
       // Task management
       "TaskCreate" -> TaskCreateTool,
       "TaskUpdate" -> TaskUpdateTool,
+      "TaskQuery" -> TaskQueryTool,
+      // Team Manager task tools (2026-08-25 team-manager-task-tool): Manager
+      // owner (Create/Update/List) + Nebula read-only (List). Injected at the
+      // mechanism layer via buildAllowedToolSet isTeamLead / Nebula grants.
+      "TeamTaskCreate" -> TeamTaskCreateTool,
+      "TeamTaskUpdate" -> TeamTaskUpdateTool,
+      "TeamTaskList" -> TeamTaskListTool,
       // Scheduled tasks
       "Schedule" -> ScheduleTool,
-      // Workspace knowledge
-      "SaveWorkspaceItem" -> SaveWorkspaceItemTool,
-      // Agent lifecycle — always available, no tool whitelist filtering
-      "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Unified agent communication (message + ask modes)
       "Mail" -> MailTool,
       // Sub-agent delegation (background + persistent modes) — Nebula/调度器专用
       "Delegate" -> DelegateTool,
+      // Background agent inspection & control (list/status/cancel/restart) — Nebula 专用
+      "AgentControl" -> AgentControlTool,
+      // Flow DAG pipeline triggering — whitelist-driven via agent.json flows
+      // (injected by buildAllowedToolSet for agents declaring flows)
+      "FlowTrigger" -> FlowTriggerTool,
+      // One-shot dynamic flow execution (#406) — inline DAG, no persistence.
+      // Mechanism-layer injected for Team members + Nebula (fixedToolsFor).
+      "FlowExecute" -> FlowExecuteTool,
       // Team-member task delegation (self-clone + ephemeral worker, no Mail identity)
       "SubTask" -> SubTaskTool,
       // Cross-device file transfer

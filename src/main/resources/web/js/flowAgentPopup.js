@@ -10,9 +10,14 @@
 // draggable — position is always centered.
 
 import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
-import { sendWs, onMessage, setFlowStepInterceptor } from './ws.js';
+import { sendWs, onMessage, setFlowStepInterceptor, setTeamMetaApplier } from './ws.js';
 import { restoreFromBackendHistory } from './persistence.js';
+import { authHeaders } from './flowHelpers.js';
 import state from './state.js';
+import { key } from './branding.js';
+import { t } from './i18n.js';
+import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
+import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
 
 // ── Per-agent state ───────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -44,6 +49,9 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   max-width: 100%; max-height: 100%;
   display: flex; flex-direction: column;
   background: var(--glass-bg);
+  /* Panel keeps its own glass blur; only the overlay is forbidden from dimming. */
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: 20px;
   overflow: hidden;
@@ -108,10 +116,11 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 .flow-agent-modal .code-copy-btn { right: 40px; }
 
 /* Chat area — no custom overrides; inherits chat.css bubble/tool-card styles.
-   Matches #chat layout: flex column + overscroll-behavior. */
+   Matches #chat layout: flex column + overscroll-behavior.
+   Bottom padding ≥12px: visual gap above the glass input bar (popup-input-polish §I). */
 .flow-agent-chat {
   flex: 1; overflow-y: auto;
-  padding: 12px 16px 8px;
+  padding: 12px 16px 12px;
   display: flex; flex-direction: column;
   overscroll-behavior: contain;
   scrollbar-color: var(--color-frame-border) transparent;
@@ -124,6 +133,10 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   padding: 8px 16px;
   border-top: 1px solid var(--glass-border);
   position: relative;
+  /* 2026-08-24 frozen-input spec §4: 300ms material transition */
+  transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .flow-agent-footer::before {
   content: '';
@@ -141,7 +154,8 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--color-text-muted); opacity: 0.5; flex-shrink: 0;
 }
-.flow-agent-footer.running .fa-status-dot {
+.flow-agent-footer.running .fa-status-dot,
+.flow-agent-footer.responding .fa-status-dot {
   background: var(--color-primary, #07c160); opacity: 1;
   animation: fa-pulse 1.4s ease-in-out infinite;
 }
@@ -151,11 +165,135 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 .flow-agent-footer.failed .fa-status-dot {
   background: var(--color-error, #f44336); opacity: 1;
 }
+/* Frozen (work-schedule park, freeze-spec §3.2): sapphire dot + tint ring,
+   sapphire task text — distinct from running (pulse green) / done (green) */
+/* 2026-08-24 frozen-input spec §5.3: the footer container itself takes the
+   ice-blue material (weaker frost glow than the main input bar — hierarchy).
+   Zero new tokens: sapphire/sapphire-glow alpha variants only. */
+.flow-agent-footer.frozen {
+  background: rgb(var(--sapphire) / 0.08);
+  border-top-color: rgb(var(--sapphire) / 0.30);
+  box-shadow: 0 0 12px rgb(var(--sapphire-glow) / 0.18);
+}
+/* Error-recovery frozen tile (frozen-error-recovery plan UI-7): amber tint +
+   amber dot — distinct from the sapphire schedule park. Applied as a modifier
+   alongside .frozen when the agentFrozen reason is error-family. */
+.flow-agent-footer.frozen.error {
+  background: rgb(var(--amber) / 0.09);
+  border-top-color: rgb(var(--amber) / 0.34);
+  box-shadow: 0 0 12px rgb(var(--amber-glow) / 0.18);
+}
+@media (prefers-color-scheme: dark) {
+  .flow-agent-footer.frozen {
+    background: rgb(var(--sapphire) / 0.12);
+    border-top-color: rgb(var(--sapphire) / 0.35);
+    box-shadow: 0 0 12px rgb(var(--sapphire-glow) / 0.24);
+  }
+  .flow-agent-footer.frozen.error {
+    background: rgb(var(--amber) / 0.14);
+    border-top-color: rgb(var(--amber) / 0.40);
+    box-shadow: 0 0 12px rgb(var(--amber-glow) / 0.24);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-agent-footer { transition-duration: 0.01s !important; }
+}
+.flow-agent-footer.frozen .fa-status-dot {
+  background: rgb(var(--sapphire)); opacity: 1;
+  box-shadow: 0 0 0 3px rgb(var(--sapphire) / 0.15);
+  animation: none;
+}
+.flow-agent-footer.frozen .fa-task {
+  color: rgb(var(--sapphire));
+}
+.flow-agent-footer.frozen.error .fa-status-dot {
+  background: rgb(var(--amber)); opacity: 1;
+  box-shadow: 0 0 0 3px rgb(var(--amber) / 0.18);
+}
+.flow-agent-footer.frozen.error .fa-task {
+  color: rgb(var(--amber));
+}
+.flow-agent-footer .fa-task .error-icon {
+  width: 13px;
+  height: 13px;
+  color: rgb(var(--amber));
+  vertical-align: -2px;
+  margin-right: 4px;
+  animation: error-pulse 1.6s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.flow-agent-footer .fa-task .fa-task-text {
+  font-weight: 500;
+  vertical-align: middle;
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-agent-footer .fa-task .error-icon { animation: none; }
+}
+/* #343 phase granularity: thinking = sapphire pulse, tool = amber pulse */
+.flow-agent-footer.thinking .fa-status-dot {
+  background: rgb(var(--sapphire)); opacity: 1;
+  animation: fa-pulse 1.4s ease-in-out infinite;
+}
+.flow-agent-footer.tool .fa-status-dot {
+  background: #d4a030; opacity: 1;
+  animation: fa-pulse 0.9s ease-in-out infinite;
+}
+.flow-agent-footer .fa-phase {
+  flex-shrink: 0;
+  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted);
+  margin-left: 2px;
+}
 @keyframes fa-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 .flow-agent-footer .fa-task {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
+}
+
+/* ── Management cluster (2026-08-22 user ruling: sub-agent window = manage
+   surface). Right-aligned in the footer; buttons reuse .glass-control
+   material at 28px, stop tinted with the existing error token, retry with
+   sapphire. Read-only kinds grey out instead of hiding (permission matrix). */
+.flow-agent-footer .fa-manage {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 8px;
+  flex-shrink: 0;
+}
+.flow-agent-footer .fa-mgmt-btn {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s, box-shadow 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.flow-agent-footer .fa-mgmt-btn svg { width: 13px; height: 13px; stroke-width: 2.5; }
+.flow-agent-footer .fa-mgmt-stop { color: var(--color-error, #f44336); }
+.flow-agent-footer .fa-mgmt-retry { color: rgb(var(--sapphire)); }
+.flow-agent-footer .fa-mgmt-btn.readonly {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.flow-agent-footer .fa-retries {
+  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: #d4a030;
+}
+.flow-agent-footer .fa-uptime {
+  font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+/* Stuck: restrained red — dot + task text only, no full-panel alarm. */
+.flow-agent-footer.stuck .fa-status-dot {
+  background: var(--color-error, #f44336); opacity: 1;
+  animation: fa-pulse 0.9s ease-in-out infinite;
+}
+.flow-agent-footer.stuck .fa-task { color: var(--color-error, #f44336); }
+/* Stopped (user-intent interrupt): muted dot, no alarm. */
+.flow-agent-footer.stopped .fa-status-dot {
+  background: var(--color-text-muted); opacity: 0.7;
 }
 
 /* Hidden containers for background rendering */
@@ -181,6 +319,11 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   height: 80vh; max-height: 85vh;
   margin: 6vh auto;
 }
+
+/* Input-area CSS removed 2026-08-22 (user ruling: sub-agent windows are
+   management surfaces — no message input bar). Management cluster styles
+   live above (fa-manage / fa-mgmt-btn / stuck). */
+
 </style>`;
 
 if (!document.getElementById('flow-agent-popup-css')) {
@@ -196,6 +339,46 @@ function getHiddenRoot() {
     document.body.appendChild(hiddenRoot);
   }
   return hiddenRoot;
+}
+
+// ── Resolve a DAG node's real session id ──────────────────
+// Flow node sessions are spawned as `dag-<flow[:10]>-<nodeId>-<millis6>`
+// (FlowDagExecutor). Every node click site historically passed NO session id
+// (or the instanceId), so the popup opened on a synthetic "flow/node" key —
+// no getHistory, no live routing, an empty window (372-1 "消息不可见").
+// Resolution: live stepViews first (this app session's node events), then a
+// REST disk scan (sessions survive page reloads and flow completion).
+
+/** True when id is a dag session for exactly this flowName + nodeId. */
+function isDagSessionOf(id, flowName, nodeId) {
+  const prefix = `dag-${String(flowName).slice(0, 10)}-${nodeId}-`;
+  return id.startsWith(prefix) && /^\d{6}$/.test(id.slice(prefix.length));
+}
+
+/** Resolve the newest session id for a flow node, or null when the node has
+ *  never run (pending) within reach of live state or disk history. */
+export async function resolveFlowNodeSession(flowName, nodeId) {
+  // Live: stepViews were keyed by real node session ids as node events
+  // arrived; prefer the most recently started attempt (restarts re-run a node
+  // under a fresh millis suffix).
+  let best = null;
+  for (const [sid, entry] of stepViews) {
+    if (!isDagSessionOf(sid, flowName, nodeId)) continue;
+    if (!best || (entry.meta.startedAt || 0) > (best.startedAt || 0)) best = { sid, startedAt: entry.meta.startedAt || 0 };
+  }
+  if (best) return best.sid;
+  // REST fallback: includeUnindexed scans .ui.json files on disk (dag-*
+  // sessions never enter the session index), sorted by -updatedAt — the first
+  // match is the latest run.
+  try {
+    const resp = await fetch('/api/sessions?includeUnindexed=1', { headers: authHeaders() });
+    if (resp.ok) {
+      const data = await resp.json();
+      const hit = (data.sessions || []).find(s => isDagSessionOf(s.id || '', flowName, nodeId));
+      if (hit) return hit.id;
+    }
+  } catch { /* non-critical */ }
+  return null;
 }
 
 // ── Ensure a ChatView exists for a nodeSessionId ──────────
@@ -225,6 +408,11 @@ function ensureStepView(sessionId) {
   view.sessionId = sessionId;
   // Hidden until the popup opens — ws.js gates DOM rendering while false.
   view.visible = false;
+  // Register in the global view registry so findViewBySessionId() can route
+  // live events here even while hidden (streamDispatchView then marks
+  // dirtyWhileHidden → reopen forces a history refresh). This is what makes
+  // the team branch (ws.js "team-" prefix) reach an open team popup at all.
+  chatViews[view.id] = view;
 
   const entry = { view, container, meta: { agentName: '', task: '', status: '' }, historyLoaded: false };
   stepViews.set(sessionId, entry);
@@ -240,13 +428,16 @@ function resetCardWidths(container) {
 
 // ── Open popup ────────────────────────────────────────────
 
-export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessionId) {
+export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessionId, kindHint) {
   closeStepPopup();
   currentStepId = nodeSessionId || stepId;
 
   // Ensure view exists (in case no events arrived yet)
   const entry = ensureStepView(currentStepId);
   entry.view.visible = true;
+  // Permission matrix source: caller knows the attribution (team tile = Team,
+  // DAG node = Flow); snapshot kind from activeAgents may refine later.
+  entry.meta.kind = kindHint || 'Flow';
 
   // Events were skipped while hidden → DOM is stale or empty. Force a full
   // refresh from backend history (same pipeline as first open) and seed
@@ -263,6 +454,7 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
 
   popupOverlay = document.createElement('div');
   popupOverlay.className = 'flow-agent-overlay fullscreen';
+  lastModelBadgeHtml = null; // fresh badge element — force first render on open
 
   // Mount on document.body — the popup is always viewport-centered (same as
   // the Delegate popup). Mounting inside the flow pane would let renderAll's
@@ -282,6 +474,8 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
       <div class="flow-agent-footer" id="flow-agent-footer">
         <span class="fa-status-dot"></span>
         <span class="fa-task">${esc(entry.meta.task || 'Session')}</span>
+        <span class="fa-phase" style="display:none"></span>
+        <span class="fa-manage-slot"></span>
       </div>
     </div>
   `;
@@ -299,6 +493,14 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   const footer = popupOverlay.querySelector('#flow-agent-footer');
   modal.insertBefore(entry.container, footer);
   entry.footerEl = footer;
+
+  // Management panel (2026-08-22 ruling): no input bar — stop/retry + state.
+  const v = entry.view;
+  const bar = buildManageBar();
+  footer.querySelector('.fa-manage-slot').replaceWith(bar.root);
+  entry.manageBar = bar;
+  bindManageActions(bar, () => currentStepId);
+  import('./utils.js').then(({ createIconsIn }) => { createIconsIn(bar.root); });
 
   // Sync footer with any meta captured before opening
   updateFooterStatus(entry);
@@ -329,9 +531,11 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   popupResizeObs.observe(modal);
 
   // Load session history from backend via WS getHistory (same as main chat).
-  // This uses the exact same pipeline as session switching — the backend
-  // responds with historyPage, which restoreFromBackendHistory renders.
-  if (nodeSessionId && !entry.historyLoaded && entry.container.children.length === 0) {
+  // Flow/team sessions are real sessions persisted live on disk, so always
+  // re-pull on open — cheap (disk read, 100-msg cap) and guarantees fresh
+  // content even if events streamed in while the popup was closed or the
+  // same session was shown in the main window meanwhile.
+  if (nodeSessionId) {
     entry.historyLoaded = true;
     setActiveView(entry.view);
     entry.view.pagination.pendingInitialLoad = true;
@@ -347,24 +551,42 @@ function fmtTokens(n) {
   return String(n);
 }
 
+// #308 actual-model display: the header badge shows the model this agent
+// ACTUALLY used on its last LLM round (live from state.sessionModelInfo),
+// falling back to the backend health-resolved candidate (cfg.current), then
+// to the configured preferred. Never show "preferred" as if it were live.
+let popupModelCfg = null;      // last fetched /api/agents/:name/model response
+let lastModelBadgeHtml = null; // value-change guard — keep DOM stable
+
+function modelBadgeHtml(current, preferred) {
+  if (!current) return '';
+  const isFallback = !!(preferred && current !== preferred);
+  return isFallback
+    ? `<span class="flow-agent-model-badge">${esc(current)}</span>`
+    : `<span class="flow-agent-subtitle">${esc(current)}</span>`;
+}
+
+function renderModelBadge() {
+  const el = popupOverlay?.querySelector('#flow-agent-model');
+  if (!el) return;
+  const live = currentStepId ? state.sessionModelInfo[currentStepId]?.model : null;
+  const cfg = popupModelCfg || {};
+  const current = live || cfg.current || cfg.preferred || '';
+  const html = modelBadgeHtml(current, cfg.preferred);
+  if (html === lastModelBadgeHtml) return; // unchanged — no DOM write
+  lastModelBadgeHtml = html;
+  el.innerHTML = html;
+}
+
 /** Fetch agent model config and render a badge in the popup header. */
 async function fetchAgentModelBadge(agentName) {
   try {
-    const token = localStorage.getItem('nebflow_token') || '';
+    const token = localStorage.getItem(key('token')) || '';
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const resp = await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers });
     if (!resp.ok) return;
-    const cfg = await resp.json();
-    const el = popupOverlay?.querySelector('#flow-agent-model');
-    if (!el) return;
-    // preferred is the configured model — trust it over `current`
-    // (current is only a reference from the backend resolution).
-    const current = cfg.preferred || cfg.current || cfg.default || '';
-    if (!current) { el.innerHTML = ''; return; }
-    const isFallback = cfg.preferred && current !== cfg.preferred;
-    el.innerHTML = isFallback
-      ? `<span class="flow-agent-model-badge">${esc(current)}</span>`
-      : `<span class="flow-agent-subtitle">${esc(current)}</span>`;
+    popupModelCfg = await resp.json();
+    renderModelBadge();
   } catch (e) { /* non-critical */ }
 }
 
@@ -408,9 +630,9 @@ function updatePopupCtxRing() {
   </div>`;
 }
 
-// Update popup ring when model info arrives for any session
-onMessage('usageUpdate', () => { if (popupOverlay) updatePopupCtxRing(); });
-onMessage('done', () => { if (popupOverlay) updatePopupCtxRing(); });
+// Update popup ring + model badge when model info arrives for any session
+onMessage('usageUpdate', () => { if (popupOverlay) { updatePopupCtxRing(); renderModelBadge(); } });
+onMessage('done', () => { if (popupOverlay) { updatePopupCtxRing(); renderModelBadge(); } });
 
 export function closeStepPopup() {
   if (!popupOverlay) return;
@@ -449,6 +671,7 @@ export function removeStepView(sessionId) {
       clearTimeout(removalTimers.get(sessionId));
       removalTimers.delete(sessionId);
     }
+    delete chatViews[entry.view.id];
     entry.container.remove();
     stepViews.delete(sessionId);
   }
@@ -486,19 +709,64 @@ function enforceStepViewCap() {
 // so chat.js rendering functions target the right container.
 // Returns true if the event was handled (should NOT render into primary chat).
 
-export function interceptFlowStep(msg) {
-  if (!msg.nodeSessionId) return false;
-  const entry = ensureStepView(msg.nodeSessionId);
-
-  // Capture meta + lifecycle status from key events.
+/** Shared meta capture for flow/team agent lifecycle events. The team branch
+ *  in ws.js routes converted events itself but must still update popup meta —
+ *  it calls applyTeamMeta() for the raw msg. */
+export function applyAgentMeta(msg) {
+  if (!msg.nodeSessionId) return null;
+  const entry = stepViews.get(msg.nodeSessionId) || ensureStepView(msg.nodeSessionId);
   if (msg.type === 'agentStart') {
     entry.meta.agentName = msg.name || '';
     entry.meta.task = msg.taskDescription || '';
     entry.meta.status = 'running';
+    entry.meta.startedAt = entry.meta.startedAt || Date.now(); // uptime anchor
+    entry.meta.stuck = null;
   } else if (msg.type === 'agentDone' || msg.type === 'agentEnd') {
     entry.meta.status = 'done';
+    entry.meta.stuck = null;
     scheduleStepViewRemoval(msg.nodeSessionId);
+  } else if (msg.type === 'agentFrozen') {
+    entry.meta.status = 'frozen';
+    entry.meta.frozenResumeAt = msg.resumeAt || null;
+    entry.meta.freezeReason = msg.reason; // UI-7: error-family → amber tile
+    entry.meta.escalation = msg.escalation ? msg.escalation.level : null;
+  } else if (msg.type === 'agentResumed') {
+    entry.meta.status = 'running';
+    entry.meta.frozenResumeAt = null;
+    entry.meta.freezeReason = null;
+    entry.meta.escalation = null;
+  } else if (msg.type === 'agentThinking') {
+    // Granular phase (#343): LLM reasoning in progress — set once, subsequent
+    // delta chunks no-op so the footer doesn't churn on every token.
+    if (entry.meta.status !== 'thinking') entry.meta.status = 'thinking';
+  } else if (msg.type === 'agentToolStart') {
+    entry.meta.status = 'tool';
+    entry.meta.toolLabel = msg.label || '';
+  } else if (msg.type === 'agentToolEnd') {
+    entry.meta.status = 'running';
+    entry.meta.toolLabel = '';
+  } else if (msg.type === 'agentTextDelta') {
+    if (entry.meta.status !== 'responding') entry.meta.status = 'responding';
+  } else if (msg.type === 'interrupted') {
+    // User pressed stop — the turn ended by intent, not failure.
+    entry.meta.status = 'stopped';
+    entry.meta.stuck = null;
   }
+  return entry;
+}
+
+/** Team branch entry (ws.js): raw team-* events update popup meta even though
+ *  converted-event routing happens in ws.js itself. */
+export function applyTeamMeta(msg) {
+  if (!msg.nodeSessionId || !msg.nodeSessionId.startsWith('team-')) return;
+  const entry = applyAgentMeta({ ...msg, nodeSessionId: msg.nodeSessionId.replace(/^team-/, '') });
+  if (entry && currentStepId === entry.view.sessionId) updateFooterStatus(entry);
+}
+
+export function interceptFlowStep(msg) {
+  if (!msg.nodeSessionId) return false;
+  const entry = applyAgentMeta(msg);
+  if (!entry) return false;
 
   // Set activeView so chat.js rendering functions target this view's container.
   // This is the same mechanism used for the primary chat window.
@@ -522,6 +790,7 @@ export function interceptFlowStep(msg) {
 // circular import (ws.js → flowAgentPopup.js → ws.js). ws.js holds the
 // interceptor in a variable and calls it at runtime during onmessage.
 setFlowStepInterceptor(interceptFlowStep);
+setTeamMetaApplier(applyTeamMeta);
 
 // ── historyPage handler ───────────────────────────────────
 // When the backend responds to getHistory for a flow agent session,
@@ -545,7 +814,10 @@ export function handleFlowAgentHistory(msg) {
     view.pagination.hasMore = msg.hasMore;
 
     setActiveView(view);
-    restoreFromBackendHistory(msg.messages);
+    // #346 boundary fix: mid-turn tail stays flat when the agent is still
+    // active (running/thinking/tool/frozen/stuck) — terminal event gathers it.
+    const busyTail = ['running', 'thinking', 'tool', 'frozen', 'stuck'].includes(entry.meta.status);
+    restoreFromBackendHistory(msg.messages, { busyTail });
 
     requestAnimationFrame(() => {
       entry.container.scrollTop = entry.container.scrollHeight;
@@ -558,19 +830,68 @@ export function handleFlowAgentHistory(msg) {
 function updateFooterStatus(entry) {
   if (!entry.footerEl) return;
   const status = entry.meta.status || '';
-  entry.footerEl.classList.remove('running', 'done', 'failed');
+  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding', 'stuck', 'stopped', 'error');
   if (status) entry.footerEl.classList.add(status);
   const taskEl = entry.footerEl.querySelector('.fa-task');
+  const isErrorFrozen = status === 'frozen' && isErrorReason(entry.meta.freezeReason);
+  // UI-7: error-recovery frozen → amber tile (add .error modifier for the dot/text).
+  if (isErrorFrozen) entry.footerEl.classList.add('error');
   if (taskEl) {
-    const label = entry.meta.task
-      ? entry.meta.task
-      : status === 'running' ? 'Running…'
-      : status === 'done' ? 'Done'
-      : status === 'failed' ? 'Failed'
-      : 'Session';
-    taskEl.textContent = label;
+    if (status === 'frozen') {
+      if (isErrorFrozen) {
+        // Error family: reason short text (重试中 / 等恢复 / 等待上级决策).
+        const escTxt = errorTileText(entry.meta);
+        // Show the title icon + short reason (no HH:mm — it's not a schedule wait).
+        taskEl.innerHTML = `${errorIcon(entry.meta.freezeReason, 'error-icon')}<span class="fa-task-text">${escTxt}</span>`;
+      } else {
+        // Frozen tile: "已冻结 · HH:mm 恢复" — resumeAt epoch → local HH:mm
+        const at = entry.meta.frozenResumeAt;
+        const clock = at ? (() => {
+          const d = new Date(at);
+          if (Number.isNaN(d.getTime())) return '';
+          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        })() : '';
+        taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
+      }
+    } else if (status === 'stuck' && entry.meta.stuck) {
+      taskEl.textContent = entry.meta.stuck.action === 'restart'
+        ? t('manage.stuckAutoRestart')
+        : t('manage.stuck', { secs: entry.meta.stuck.idleSecs ?? '' });
+    } else {
+      taskEl.textContent = entry.meta.task || 'Session';
+    }
   }
+  // Phase text (#343): granular activity — thinking / tool / responding.
+  const phaseEl = entry.footerEl.querySelector('.fa-phase');
+  if (phaseEl) {
+    const phaseMap = {
+      running: 'Working…',
+      thinking: 'Thinking…',
+      responding: 'Responding…',
+      tool: entry.meta.toolLabel ? `Using tool: ${entry.meta.toolLabel}` : 'Running tool…',
+      done: 'Done',
+      failed: 'Failed',
+      stuck: 'Stuck',
+      stopped: 'Stopped',
+    };
+    const text = phaseMap[status] || '';
+    phaseEl.textContent = text;
+    phaseEl.style.display = text ? '' : 'none';
+  }
+  // Management cluster: state-linked buttons + permission matrix.
+  syncManageControls(entry.manageBar, entry.meta);
 }
+
+// ── Stuck visibility (taskStuck broadcast, whitelisted 2026-08-22) ──────
+// Team/Flow popups key stepViews on the bare sessionId — taskStuck carries it.
+onMessage('taskStuck', (msg) => {
+  const entry = stepViews.get(msg.sessionId);
+  if (!entry) return;
+  entry.meta.status = 'stuck';
+  entry.meta.stuck = { idleSecs: msg.idleSecs, action: msg.action };
+  if (msg.action === 'restart') entry.meta.retries = (entry.meta.retries || 0) + 1;
+  if (currentStepId === msg.sessionId) updateFooterStatus(entry);
+});
 
 // ── Utils ────────────────────────────────────────────────
 function esc(str) {

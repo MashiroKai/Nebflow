@@ -3,9 +3,8 @@ package nebflow.agent
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.entity.{EntityLoader, TeamCatalog}
-import nebflow.core.presets.PresetStore
 import nebflow.core.skill.SkillService
-import nebflow.core.{PathUtil, SystemReminder, SystemReminders}
+import nebflow.core.{HeadlessMode, PathUtil, SystemReminder, SystemReminders}
 import nebflow.service.{MemoryStore, RulesStore}
 
 /**
@@ -243,6 +242,24 @@ object ContextRefresher:
   // ============================================================
 
   /**
+   * Memory injection gate — pure so both branches are spec-covered
+   * (HeadlessModeSpec); the refreshTurn touchpoint binds HeadlessMode.enabled.
+   *
+   * Headless (NEBFLOW_HEADLESS=1, benchmark mode) skips the WHOLE memory
+   * block: User/Agent memory accumulates across runs, and injecting
+   * previous-run state into a fresh benchmark session breaks determinism.
+   * With headless off the legacy gate (SubTask workers excluded; Nebula and
+   * team agents eligible) is unchanged.
+   */
+  def shouldInjectMemory(
+    isWorker: Boolean,
+    isTeamAgent: Boolean,
+    agentName: String,
+    headless: Boolean = HeadlessMode.enabled
+  ): Boolean =
+    !headless && !isWorker && (isTeamAgent || agentName == "Nebula")
+
+  /**
    * Build a memory block string for system prompt injection.
    *
    * Reads memory levels and formats them into a single Markdown block:
@@ -286,6 +303,71 @@ object ContextRefresher:
    * All sources are resolved fresh from disk (mtime-cached so unchanged
    * files cost only a stat() syscall). Returns TurnContext with current values.
    */
+  /**
+   * Load the CURRENT AgentDef for a running actor — the single refresh
+   * source shared by the schema layer (refreshTurn → request.tools) and the
+   * executor gate (AgentCore.pipeToolExecutions → call filtering +
+   * ToolContext.agentDef). Keeping both layers on this one source is what
+   * makes panel edits (flows whitelist, tools) take effect on the running
+   * actor mid-session.
+   *
+   * Team agents resolve from the team dir, global agents from the agents
+   * dir; presentation fields (avatar/displayName/voiceEnabled) are carried
+   * over from the actor-startup def because AgentEntry doesn't carry them.
+   * Returns None when neither disk source has the agent — callers fall back
+   * to the actor-startup snapshot.
+   */
+  def loadCurrentDef(
+    teamNameOpt: Option[String],
+    resources: SharedResources,
+    agentDef: AgentDef
+  ): IO[Option[AgentDef]] =
+    // Team agents reload their def from the team dir every turn so panel
+    // edits (e.g. PUT /api/agents/:name/model) take effect on the running
+    // actor. agentLibrary.get only scans the GLOBAL agents dir — for team
+    // agents it returns None and the code would silently keep using the
+    // actor-startup snapshot (MailTool/FlowTreeActor loadTeamAgent result).
+    // loadTeamAgent checks teams/<team>/agents/<name>/ first, then global.
+    teamNameOpt match
+      case Some(teamName) =>
+        EntityLoader.loadTeamAgent(teamName, agentDef.name).map { entryOpt =>
+          entryOpt.map(_.toAgentDef.copy(
+            // AgentEntry doesn't carry presentation fields — keep whatever
+            // the running actor already resolved (avatar from panel config).
+            avatar = agentDef.avatar,
+            displayName = agentDef.displayName,
+            voiceEnabled = agentDef.voiceEnabled
+          )).map(applyRuntimeOverrides(agentDef, _))
+        }
+      case None => resources.agentLibrary.get(agentDef.name).map(_.map(applyRuntimeOverrides(agentDef, _)))
+
+  /**
+   * Re-apply ALL runtime injections made at spawn time onto the freshly
+   * reloaded disk def. The per-turn reload (panel edits take effect on the
+   * running actor) must not silently drop spawn-time overrides:
+   *
+   *  - modelOverride (#291: Delegate/SubTask `preset` param) — wins over
+   *    disk/panel edits for the actor's lifetime;
+   *  - flowContract + the FlowReport tool append (#406: FlowDagExecutor
+   *    injects both per node via `baseDef.copy(...)`). FlowReport is only
+   *    fixed-injected for category=flow agents; dynamic flows reuse
+   *    standalone/team agents (e.g. Explorer) whose disk def lacks it, so a
+   *    bare reload silently strips the verdict tool and the node can never
+   *    report a structured verdict (strictVerdict switch nodes then FAIL).
+   */
+  private def applyRuntimeOverrides(running: AgentDef, fresh: AgentDef): AgentDef =
+    val withModel = running.modelOverride match
+      case Some(cfg) => fresh.copy(model = Some(cfg), preset = running.preset, modelOverride = Some(cfg))
+      case None => fresh
+    val tools =
+      if running.tools.contains("FlowReport") && !withModel.tools.contains("FlowReport") then
+        withModel.tools :+ "FlowReport"
+      else withModel.tools
+    withModel.copy(
+      tools = tools,
+      flowContract = if running.flowContract.nonEmpty then running.flowContract else withModel.flowContract
+    )
+
   def refreshTurn(
     state: AgentState,
     resources: SharedResources,
@@ -297,35 +379,7 @@ object ContextRefresher:
       teamNameOpt <- state.sessionId match
         case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
         case None => IO.pure(None)
-      // Team agents reload their def from the team dir every turn so panel
-      // edits (e.g. PUT /api/agents/:name/model) take effect on the running
-      // actor. agentLibrary.get only scans the GLOBAL agents dir — for team
-      // agents it returns None and the code would silently keep using the
-      // actor-startup snapshot (MailTool/FlowTreeActor loadTeamAgent result).
-      // loadTeamAgent checks teams/<team>/agents/<name>/ first, then global.
-      freshDefOpt <- teamNameOpt match
-        case Some(teamName) =>
-          EntityLoader.loadTeamAgent(teamName, agentDef.name).map { entryOpt =>
-            entryOpt.map { entry =>
-              val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
-              AgentDef(
-                name = entry.name,
-                description = entry.description,
-                tools = entry.tools,
-                systemPrompt = entry.systemPrompt,
-                category = entry.category,
-                mcpServers = entry.mcpServers,
-                model = Some(resolvedModel),
-                preset = entry.preset,
-                skills = entry.skills,
-                flows = entry.flows,
-                avatar = agentDef.avatar,
-                displayName = agentDef.displayName,
-                voiceEnabled = agentDef.voiceEnabled
-              )
-            }
-          }
-        case None => resources.agentLibrary.get(agentDef.name)
+      freshDefOpt <- loadCurrentDef(teamNameOpt, resources, agentDef)
       globalDef = freshDefOpt.getOrElse(agentDef)
       // SubTask workers are leaf task-execution pipelines: strip all team /
       // manager / memory context — the prompt is their only context source.
@@ -370,9 +424,10 @@ object ContextRefresher:
       // Memory: only Nebula (standalone, name="Nebula") and team agents get memory.
       // Team agents get memory; standalone agents (Coder/Explorer/etc) don't.
       // SubTask workers get none — clean context, prompt is the only input.
+      // Headless (NEBFLOW_HEADLESS=1): none at all — benchmark determinism.
       isTeamAgent = teamNameOpt.isDefined
       memoryBlock =
-        if !isWorker && (isTeamAgent || globalDef.name == "Nebula") then buildMemoryBlock(globalDef.name, teamNameOpt)
+        if shouldInjectMemory(isWorker, isTeamAgent, globalDef.name) then buildMemoryBlock(globalDef.name, teamNameOpt)
         else ""
     yield TurnContext(
       globalDef,
@@ -409,15 +464,24 @@ object ContextRefresher:
           teamNameOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
           result <- teamNameOpt match
             case Some(teamName) =>
-              // Team agent: show team-specific catalog
+              // Team agent: show team-specific catalog. The agents map MUST
+              // cover team-local definitions (teams/<name>/agents/): lead and
+              // members live there, and listAgents() only scans the GLOBAL
+              // agents dir — passing it alone rendered "(agent not found)"
+              // leads and empty member lists, which team Managers read as
+              // "my members don't exist" and reported activation failures
+              // without ever trying to Mail them. Mirror the runtime
+              // resolution order (loadTeamAgent: team-local first, global
+              // fallback) so the catalog shows exactly what Mail can reach.
               for
                 team <- EntityLoader.loadTeam(teamName)
-                agents <- EntityLoader.listAgents()
+                globalAgents <- EntityLoader.listAgents()
+                teamAgents <- EntityLoader.listTeamAgents(teamName)
                 flows <- EntityLoader.listFlows()
                 rules <- EntityLoader.loadTeamRules(teamName)
               yield team
                 .map { t =>
-                  val catalog = TeamCatalog.buildCatalog(t, agents, flows)
+                  val catalog = TeamCatalog.buildCatalog(t, globalAgents ++ teamAgents, flows)
                   if rules.nonEmpty then s"$catalog\n\n=== Team Rules: ${t.name} ===\n$rules\n=== End Team Rules ==="
                   else catalog
                 }

@@ -35,7 +35,9 @@ import scala.concurrent.duration.*
 final class NeblinkRelayTunnel(
   neblinkService: NeblinkService,
   serverUrl: String,
-  tokenGetter: () => Option[String]
+  tokenGetter: () => Option[String],
+  /** A2A 一期（spec §5.1）：friend_event 推送回调（事件去重/未读/补拉在 FriendService）。 */
+  private[neblink] val friendService: Option[FriendService] = None
 )(dispatcher: Dispatcher[IO]):
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
 
@@ -133,7 +135,7 @@ final class NeblinkRelayTunnel(
     val requestId = hc.downField("requestId").as[String].getOrElse("")
     val action = hc.downField("action").as[String].getOrElse("")
     // Expand ~ to *this* device's user.home — must happen on the receiver so
-    // the path resolves to the local filesystem (e.g. C:\Users\kai on Windows),
+    // the path resolves to the local filesystem (e.g. C:\Users\name on Windows),
     // not the sender's home directory.
     val params = PathUtil.expandPathParams(
       hc.downField("params").as[JsonObject].getOrElse(JsonObject.empty)
@@ -258,6 +260,12 @@ private final class RelayWsListener(
               catch case _: Exception => ()
             case "pong" =>
               tunnel.updateLastPong()
+            case "friend_event" =>
+              // A2A 一期：好友/消息推送（spec §5.1 复用 relay 隧道）。尽力而为
+              // 优化——REST 补拉兜底，事件丢失不影响正确性。
+              tunnel.friendService.foreach { fs =>
+                dispatcher.unsafeRunAndForget(fs.onFriendEvent(json))
+              }
             case _ => ()
         case Left(_) => ()
     catch case _: Exception => ()

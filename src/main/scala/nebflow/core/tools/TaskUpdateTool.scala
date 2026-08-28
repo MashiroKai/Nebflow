@@ -14,27 +14,47 @@ object TaskUpdateTool extends Tool:
 
 ## When to Use
 
-**Mark tasks as resolved:**
-- IMPORTANT: Always mark tasks as completed when you FULLY finish them
-- After resolving, check your task list in the system prompt for the next task
+**Finishing a task (IMPORTANT — completion needs user confirmation):**
+- When you FULLY finish a task, set status to `needs_confirmation` (NOT `completed`) and attach a `note` summarizing the outcome
+- `completed` is RESERVED for the user: they confirm via the circle in the todos panel — you may NOT set it directly (the backend rejects agent → completed)
+- After confirming, check your task list in the system prompt for the next task
 - If you encounter errors, blockers, or cannot finish, mark as failed
-- Never mark completed if tests are failing, implementation is partial, or you encountered unresolved errors
+- Never mark needs_confirmation if tests are failing, implementation is partial, or you encountered unresolved errors
+- While a task is `needs_confirmation` (awaiting user ruling), the user either confirms it (panel circle → completed) or returns it. If the user revises it via DIALOGUE feedback (no panel click), take it back yourself: set status back to `in_progress` AND attach a `note` quoting/describing the user feedback — the backend REQUIRES the note on this transition (anti-abuse). Then revise per the feedback and re-mark `needs_confirmation` when done.
+- A [打回任务] block in your input means the user returned it via the PANEL — it is already back in `in_progress`; revise per the block and re-mark needs_confirmation
 
 **Update task details or dependencies:**
 - Set status to `in_progress` when starting work on a task
 - Use `addBlockedBy`/`removeBlockedBy` to manage dependencies
 
+**Record outcomes (notes):**
+- When marking `needs_confirmation` (or `failed`), attach a `note` summarizing what was
+  done, key results and where artifacts landed (commit hash / file paths).
+  `noteLinks` lists clickable references (file paths, URLs, task IDs).
+- Notes are append-only and preserved in the task archive for later retrieval.
+
 ## Batch Update
 
 Pass comma-separated task IDs to apply the same update to multiple tasks at once:
-{"taskId": "1,2,3", "status": "completed"} — marks tasks #1, #2, #3 as completed in one call.
-Single-task calls {"taskId": "1", "status": "completed"} work exactly as before.
+{"taskId": "1,2,3", "status": "needs_confirmation"} — marks tasks #1, #2, #3 in one call.
+Single-task calls {"taskId": "1", "status": "needs_confirmation"} work exactly as before.
 
 ## Status Workflow
 
-`pending` -> `in_progress` -> `completed` or `failed`
+`pending` -> `in_progress` -> `needs_confirmation` (done, awaiting user confirmation) or `failed`
 
-Terminal states: `completed` and `failed` cannot transition to any other state.
+- `needs_confirmation` -> `in_progress` is legal when the user returns the task with feedback
+  (panel click, or dialogue feedback you take back yourself with a note)
+
+- The user confirms needs_confirmation tasks themselves (todos panel circle) — that moves them to `completed`
+- The user may return a needs_confirmation task to you with feedback — panel return goes straight back to `in_progress` (with a [打回任务] block); dialogue feedback you take back yourself via `in_progress` + a note describing the feedback
+- **Cancelling a task**: set status to `cancelled` (from `pending`, `in_progress` or
+  `needs_confirmation`) when the task is no longer wanted — the backend REQUIRES
+  a `note` stating the cancel reason (anti-abuse, mirrored from the return path).
+  `cancelled` is a terminal state: it cannot transition to any other state, and
+  cancelled tasks vanish from the panel (they surface in the task archive).
+  The USER may also cancel tasks from the panel (their reason lands in the archive).
+- Terminal states: `completed`, `failed` and `cancelled` cannot transition to any other state.
 
 ## Dependency Management
 
@@ -45,12 +65,13 @@ Terminal states: `completed` and `failed` cannot transition to any other state.
 
 ## Examples
 
-Mark as in progress: {"taskId": "1", "status": "in_progress"}
-Mark as completed:  {"taskId": "1", "status": "completed"}
-Mark as failed:     {"taskId": "1", "status": "failed"}
-Batch complete:     {"taskId": "1,2,3", "status": "completed"}
-Set dependency:     {"taskId": "2", "addBlockedBy": ["1"]}
-Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
+Mark as in progress:   {"taskId": "1", "status": "in_progress"}
+Finished, awaiting user: {"taskId": "1", "status": "needs_confirmation", "note": "Implemented X, tests green, commit abc1234", "noteLinks": ["/tmp/report.md"]}
+Mark as failed:        {"taskId": "1", "status": "failed", "note": "blocked by upstream API outage"}
+Cancel a task:         {"taskId": "1", "status": "cancelled", "note": "user no longer needs this"}
+Batch finish:          {"taskId": "1,2,3", "status": "needs_confirmation"}
+Set dependency:        {"taskId": "2", "addBlockedBy": ["1"]}
+Remove dependency:     {"taskId": "2", "removeBlockedBy": ["1"]}"""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -74,7 +95,14 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
         ),
         "status" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> Json.arr("pending".asJson, "in_progress".asJson, "completed".asJson, "failed".asJson),
+          "enum" -> Json.arr(
+            "pending".asJson,
+            "in_progress".asJson,
+            "needs_confirmation".asJson,
+            "completed".asJson,
+            "failed".asJson,
+            "cancelled".asJson
+          ),
           "description" -> "New status".asJson
         ),
         "addBlocks" -> Json.obj(
@@ -96,6 +124,15 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
           "type" -> "array".asJson,
           "items" -> Json.obj("type" -> "string".asJson),
           "description" -> "Task IDs to remove from blockedBy".asJson
+        ),
+        "note" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Append a durable outcome note to this task (what was done, results, artifact locations). Recommended whenever marking completed/failed.".asJson
+        ),
+        "noteLinks" -> Json.obj(
+          "type" -> "array".asJson,
+          "items" -> Json.obj("type" -> "string".asJson),
+          "description" -> "Clickable references attached to the note (file paths, URLs, task IDs)".asJson
         )
       ),
       "required" -> Json.arr("taskId".asJson)
@@ -118,8 +155,10 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
         val statusOpt = input("status").flatMap(_.asString).flatMap {
           case "pending" => Some(TaskStatus.Pending)
           case "in_progress" => Some(TaskStatus.InProgress)
+          case "needs_confirmation" => Some(TaskStatus.NeedsConfirmation)
           case "completed" => Some(TaskStatus.Completed)
           case "failed" => Some(TaskStatus.Failed)
+          case "cancelled" => Some(TaskStatus.Cancelled)
           case _ => None
         }
         val updates = TaskUpdateInput(
@@ -130,7 +169,9 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
           addBlocks = input("addBlocks").flatMap(_.as[List[String]].toOption),
           addBlockedBy = input("addBlockedBy").flatMap(_.as[List[String]].toOption),
           removeBlocks = input("removeBlocks").flatMap(_.as[List[String]].toOption),
-          removeBlockedBy = input("removeBlockedBy").flatMap(_.as[List[String]].toOption)
+          removeBlockedBy = input("removeBlockedBy").flatMap(_.as[List[String]].toOption),
+          note = input("note").flatMap(_.asString),
+          noteLinks = input("noteLinks").flatMap(_.as[List[String]].toOption)
         )
 
         taskIds match
@@ -144,7 +185,7 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
                 case Some(updated) =>
                   TaskToolHelper
                     .emitTaskListUpdate(store, sessionId, ctx)
-                    .as(Right(s"${updated.subject} → ${updated.status.toString.toLowerCase}"))
+                    .as(Right(s"${updated.subject} → ${TaskStatus.wireName(updated.status)}"))
                 case None => IO.pure(Left(ToolError(s"Task #$single not found")))
               }
               .handleErrorWith {
@@ -163,7 +204,7 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
                   case (id, Left(e)) => s"$id (${e.getClass.getSimpleName})"
                 }
                 TaskToolHelper.emitTaskListUpdate(store, sessionId, ctx).as {
-                  val statusStr = statusOpt.map(s => s" → ${s.toString.toLowerCase}").getOrElse("")
+                  val statusStr = statusOpt.map(s => s" → ${TaskStatus.wireName(s)}").getOrElse("")
                   (successCount, notFoundIds, errorIds) match
                     case (0, _, errs) if errs.nonEmpty =>
                       Left(ToolError(s"All ${multiple.size} tasks failed. Errors: ${errs.mkString("; ")}"))

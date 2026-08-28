@@ -3,11 +3,14 @@
 // for optimistic display during streaming, and a fallback when backend is unreachable.
 
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
+import { key } from './branding.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
-import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow } from './chat.js';
+import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow, bindCollapsibleToggle } from './chat.js';
+import { buildTurnGroupsForHistory } from './turnGroup.js';
+import { renderRefBlock, normalizeTaskRef } from './reference.js';
 
 // ---------- AI message badge (no duration) ----------
 // Builds a duration-badge pill with timestamp + copy button, matching
@@ -23,9 +26,12 @@ function createAiCopyBadge(timestamp, text) {
     timeSpan.title = '点击切换 12/24 小时制';
     timeSpan.addEventListener('click', toggleTimeFormat);
     badge.appendChild(timeSpan);
-    const div = document.createElement('span');
-    div.className = 'duration-badge-divider';
-    badge.appendChild(div);
+    // Divider is a separator — only between time and copy, never trailing.
+    if (text) {
+      const div = document.createElement('span');
+      div.className = 'duration-badge-divider';
+      badge.appendChild(div);
+    }
   }
   if (text) badge.appendChild(createMsgCopyButton(text));
   return badge;
@@ -121,11 +127,86 @@ function sanitizeForCache(entry) {
     e.text = e.text.slice(0, MAX_TEXT_LEN) + '…';
   if (typeof e.answer === 'string' && e.answer.length > MAX_TEXT_LEN)
     e.answer = e.answer.slice(0, MAX_TEXT_LEN) + '…';
-  // Strip base64 attachment previews — they can be multi-MB
+  // Strip base64 attachment previews — they can be multi-MB. Keep `path`:
+  // it's a small string and lets the restore path re-render the image from
+  // the uploads route (G1) even after the preview is gone.
   if (e.attachments) {
-    e.attachments = e.attachments.map(a => ({ type: a.type, name: a.name }));
+    e.attachments = e.attachments.map(a => ({
+      type: a.type, name: a.name, path: a.path,
+      // v2: taskRef chips keep their identity (tiny fields) so a restored
+      // history renders the return reference, not a bare [file] tag.
+      ...(a.type === 'taskRef' ? { taskId: a.taskId, sessionId: a.sessionId, subject: a.subject } : {}),
+      // #303 D4: preserve the Reference mini fields (source/anchor/meta/display)
+      // so a refreshed history re-renders the reference card instead of a bare
+      // [file] tag. Deep fields are small — no base64, safe for the cache.
+      ...(a.type === 'ref' ? { refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display } : {})
+    }));
   }
   return e;
+}
+
+// ---------- Attachment rendering (shared by both restore paths) ----------
+
+/** Convert an absolute uploads path (ui.json records attachments as
+ *  {name, type, path}) into a served URL for the backend's
+ *  GET /uploads/<sid>/<file> route. Auth: same-origin cookie usually
+ *  suffices; the ?token= query is the stale-cookie fallback (token from the
+ *  frontend's existing store — localStorage key('token'), same one
+ *  the WS connect uses). Returns null when the path isn't under an
+ *  uploads dir or is otherwise unusable. */
+export function attachmentImageUrl(path) {
+  if (!path || typeof path !== 'string') return null;
+  const norm = path.replace(/\\/g, '/');
+  const idx = norm.indexOf('/uploads/');
+  if (idx < 0) return null;
+  const rel = norm.slice(idx + '/uploads/'.length); // <sid>/<file>
+  if (!rel || rel.includes('..')) return null;
+  const encoded = rel.split('/').map(encodeURIComponent).join('/');
+  const tok = localStorage.getItem(key('token')) || '';
+  return `/uploads/${encoded}` + (tok ? `?token=${encodeURIComponent(tok)}` : '');
+}
+
+/** Append one attachment bubble to a message row. Images render as <img>
+ *  from the live preview (dataURL) or, after a refresh, from the uploads
+ *  route via att.path (G1). Non-image attachments keep the plain text tag. */
+export function appendAttachmentBubble(row, att) {
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble user att-bubble';
+  if (att.type === 'ref' || att.type === 'taskRef') {
+    // #303 D4 + (2026-08-27 打回注入块收敛): restore a Reference as the
+    // message card - same renderRefBlock(message) as the live
+    // renderUserBubble path, so restored rows are byte-identical to live ones.
+    // Legacy type:'taskRef' rows from old history normalize into the same
+    // Reference first (one-line `#<任务号> <任务标题>` form for tasks).
+    bubble.classList.add('att-ref-bubble');
+    const ref = att.type === 'taskRef' ? normalizeTaskRef(att) : att;
+    const cardNode = ref ? renderRefBlock(ref, { mode: 'message' }) : null;
+    if (cardNode) bubble.appendChild(cardNode);
+    row.appendChild(bubble);
+    return;
+  }
+  const imgSrc =
+    att.type === 'image'
+      ? (att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:'))
+        ? att.preview
+        : attachmentImageUrl(att.path)
+      : null;
+  if (imgSrc) {
+    const img = document.createElement('img');
+    img.src = imgSrc;
+    img.className = 'att-img';
+    img.title = att.name || '';
+    img.draggable = false;
+    // Missing file (uploads dir cleaned, session deleted) — hide the broken
+    // img, the tag below still labels the attachment.
+    img.onerror = () => { img.style.display = 'none'; };
+    bubble.appendChild(img);
+  }
+  const tag = document.createElement('span');
+  tag.className = 'att-file-tag';
+  tag.textContent = (att.type === 'image' ? '[image' : '[file') + (att.name ? ': ' + att.name : '') + ']';
+  bubble.appendChild(tag);
+  row.appendChild(bubble);
 }
 
 // ---------- Save a message entry to localStorage (best-effort cache) ----------
@@ -187,7 +268,7 @@ export function loadMsgs() {
 // ---------- Replay all stored messages into the DOM (localStorage fallback) ----------
 // Builds DOM directly (doesn't call render functions from chat.js) to avoid
 // circular deps and to avoid re-saving.
-export function restoreFromStorage() {
+export function restoreFromStorage(opts = {}) {
   const chat = activeView?.dom?.chat;
   if (!chat) return;
   const msgs = loadMsgs();
@@ -199,7 +280,7 @@ export function restoreFromStorage() {
       // content — skip them.
       if (m.injected && m.source) {
         if (isOutgoingInjection(m)) return;
-        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam));
+        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -227,26 +308,7 @@ export function restoreFromStorage() {
         }
         row.appendChild(bubble);
       }
-      (m.attachments || []).forEach(att => {
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble user att-bubble';
-        if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
-          const img = document.createElement('img');
-          img.src = att.preview;
-          img.className = 'att-img';
-          bubble.appendChild(img);
-          const tag = document.createElement('span');
-          tag.className = 'att-file-tag';
-          tag.textContent = '[image' + (att.name ? ': ' + att.name : '') + ']';
-          bubble.appendChild(tag);
-        } else {
-          const tag = document.createElement('span');
-          tag.className = 'att-file-tag';
-          tag.textContent = '[file' + (att.name ? ': ' + att.name : '') + ']';
-          bubble.appendChild(tag);
-        }
-        row.appendChild(bubble);
-      });
+      (m.attachments || []).forEach(att => appendAttachmentBubble(row, att));
       // Timestamp + copy button (pill style, matching AI duration badge)
       if (m.timestamp && m.timestamp > 0) {
         const badge = document.createElement('div');
@@ -278,7 +340,7 @@ export function restoreFromStorage() {
         tBubble.className = 'bubble ai thinking-bubble thinking-done';
         const tLabel = document.createElement('div');
         tLabel.className = 'thinking-label collapsible';
-        tLabel.textContent = t('chat.thinkingLabel');
+        tLabel.textContent = t('chat.thinkingLabel'); // pre-#345 label restored (2026-08-24 ruling)
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         tContent.innerHTML = renderMarkdownWithMath(m.thinking);
@@ -292,11 +354,7 @@ export function restoreFromStorage() {
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
         chat.appendChild(tRow);
-        tLabel.onclick = () => {
-          const visible = tContent.style.display !== 'none';
-          tContent.style.display = visible ? 'none' : '';
-          tLabel.classList.toggle('expanded', !visible);
-        };
+        bindCollapsibleToggle(tLabel, () => tContent);
       }
       // Only render AI bubble if there's actual text content
       if (m.text) {
@@ -463,7 +521,8 @@ export function restoreFromStorage() {
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
+          // v1.2 footer ruling: time + copy only
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.answer);
           aRow.appendChild(badge);
         }
         chat.appendChild(aRow);
@@ -506,6 +565,7 @@ export function restoreFromStorage() {
       chat.appendChild(row);
     }
   });
+  buildTurnGroupsForHistory(chat, { busyTail: !!opts.busyTail }); // #346 E4: rebuild turn groups from flat rows
   chat.scrollTop = chat.scrollHeight;
   if (activeView) activeView.stream.scrollSnapped = true;
   // Schedule deferred scrolls to catch async iframe height changes from card rendering.
@@ -518,7 +578,7 @@ export function restoreFromStorage() {
 // Same logic as restoreFromStorage but takes messages array directly (from backend).
 // Uses DocumentFragment to batch DOM insertions and avoids redundant scroll operations.
 export function restoreFromBackendHistory(msgs, opts = {}) {
-  const { scrollToBottom = true } = opts;
+  const { scrollToBottom = true, busyTail = false } = opts;
   const chat = activeView.dom.chat;
   const fragment = document.createDocumentFragment();
   let skipMsg = false;
@@ -541,7 +601,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         // messages join the rAF markdown batch — no synchronous render storm
         // on hard-refresh (P0-2).
         fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam,
-          (el, text) => deferMd(el, text, false)));
+          (el, text) => deferMd(el, text, false), m.delivery));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -571,26 +631,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         }
         row.appendChild(bubble);
       }
-      (m.attachments || []).forEach(att => {
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble user att-bubble';
-        if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
-          const img = document.createElement('img');
-          img.src = att.preview;
-          img.className = 'att-img';
-          bubble.appendChild(img);
-          const tag = document.createElement('span');
-          tag.className = 'att-file-tag';
-          tag.textContent = '[image' + (att.name ? ': ' + att.name : '') + ']';
-          bubble.appendChild(tag);
-        } else {
-          const tag = document.createElement('span');
-          tag.className = 'att-file-tag';
-          tag.textContent = '[file' + (att.name ? ': ' + att.name : '') + ']';
-          bubble.appendChild(tag);
-        }
-        row.appendChild(bubble);
-      });
+      (m.attachments || []).forEach(att => appendAttachmentBubble(row, att));
       // Timestamp + copy button (pill style, matching AI duration badge)
       if (m.timestamp && m.timestamp > 0) {
         const badge = document.createElement('div');
@@ -620,7 +661,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         tBubble.className = 'bubble ai thinking-bubble thinking-done';
         const tLabel = document.createElement('div');
         tLabel.className = 'thinking-label collapsible';
-        tLabel.textContent = t('chat.thinkingLabel');
+        tLabel.textContent = t('chat.thinkingLabel'); // pre-#345 label restored (2026-08-24 ruling)
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         deferMd(tContent, m.thinking);
@@ -634,11 +675,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
         fragment.appendChild(tRow);
-        tLabel.onclick = () => {
-          const visible = tContent.style.display !== 'none';
-          tContent.style.display = visible ? 'none' : '';
-          tLabel.classList.toggle('expanded', !visible);
-        };
+        bindCollapsibleToggle(tLabel, () => tContent);
       }
       // Only render AI bubble if there's actual text content
       if (m.text) {
@@ -688,32 +725,6 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           row.appendChild(card);
           fragment.appendChild(row);
         } else {
-        // RemoveUnnecessary tool: dedicated rendering (shared with live renderTool)
-        const _tn = m.label ? m.label.split('(')[0].split('\n')[0].trim() : '';
-        if (_tn === 'RemoveUnnecessary' && m.input) {
-          const icon2 = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                               : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
-          const ruLabel = localizeToolLabel(m.label);
-          const ruLabelParts = ruLabel.split('\n', 2);
-          const ruLabelHtml = esc(ruLabelParts[0])
-            + (ruLabelParts.length > 1 ? '<br><span class="tool-detail">' + esc(ruLabelParts[1]) + '</span>' : '');
-          let ruSummaryBody = '';
-          try {
-            const ruInp = typeof m.input === 'string' ? JSON.parse(m.input) : m.input;
-            const userSummary = ruInp.summary || '';
-            if (userSummary) {
-              ruSummaryBody = '<div class="tool-removeunnecessary-summary">' + renderMarkdownWithMath(userSummary) + '</div>';
-            }
-          } catch {}
-          const ruResultText = m.content ? m.content.replace(/Summary:.*$/s, '').trim() : '';
-          card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon2 + '</span>' +
-            '<div class="content"><div class="label">' + ruLabelHtml + '</div>' +
-            (ruResultText ? '<div class="tool-result-badge">' + esc(ruResultText) + '</div>' : '') +
-            (ruSummaryBody ? '<div class="body">' + ruSummaryBody + '</div>' : '') + '</div>';
-          row.appendChild(card);
-          fragment.appendChild(row);
-          if (ruSummaryBody) attachToolClick(card);
-        } else {
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const detailHtml = buildToolDetail(m.input, m.label);
@@ -734,7 +745,6 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         row.appendChild(card);
         fragment.appendChild(row);
         if (hasBody) attachToolClick(card);
-        }
         }
       }
     } else if (m.type === 'askUser') {
@@ -844,7 +854,8 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
+          // v1.2 footer ruling: time + copy only
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.answer);
           aRow.appendChild(badge);
         }
         fragment.appendChild(aRow);
@@ -887,6 +898,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     }
   });
   chat.appendChild(fragment);
+  buildTurnGroupsForHistory(chat, { busyTail }); // #346 E4: rebuild turn groups from flat rows
   // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
   // followed by deferred rAF (catches late layout changes from streaming state restoration, etc.).
   // Caller can set scrollToBottom=false (e.g. scroll-up pagination preserves position).

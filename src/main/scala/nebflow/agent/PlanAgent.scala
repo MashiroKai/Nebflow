@@ -78,7 +78,10 @@ object PlanAgent:
           projectRoot = Some(projectRoot),
           // P2: the plan agent shares the main agent's session — it inherits
           // the same root-session policy bucket.
-          rootSessionId = parentSessionId.getOrElse("")
+          rootSessionId = parentSessionId.getOrElse(""),
+          // D11 交互豁免（freeze-schedule）：用户在场看着规划面板等 plan 产出，
+          // 冻结它省的 token 远低于浪费的用户等待——不参与工作时间冻结。
+          freezeExempt = true
         ),
         planAgentId
       )
@@ -111,19 +114,21 @@ object PlanAgent:
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       given system: ActorSystem = ctx.system
-      ctx.watch(planAgentRef)
-
-      IO.pure(
+      ctx.watch(planAgentRef) *> IO.pure(
         new Behavior[AgentEvent]:
           def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
             event match
               case AgentEvent.Completed(_, messages) =>
                 val text = extractLastAssistantText(messages)
-                val planText = if text.nonEmpty then text else "(plan agent produced no text output)"
+                // trim guard: whitespace-only tail is not a real plan
+                val planText = if text.trim.nonEmpty then text.trim else "(plan agent produced no text output)"
                 (mainAgentRef ! AgentCommand.PlanTurnComplete(planText)) *>
                   IO.pure(this)
               case AgentEvent.Failed(_, error) =>
                 (mainAgentRef ! AgentCommand.PlanFailed(error.message)) *>
+                  IO.pure(Behaviors.stopped[AgentEvent])
+              case AgentEvent.Cancelled(_, reason) =>
+                (mainAgentRef ! AgentCommand.PlanFailed(s"plan agent cancelled: $reason")) *>
                   IO.pure(Behaviors.stopped[AgentEvent])
 
           override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
@@ -149,7 +154,7 @@ object PlanAgent:
       .collectFirst {
         case msg if msg.role == MessageRole.Assistant => msg.textContent
       }
-      .filter(_.nonEmpty)
+      .filter(_.trim.nonEmpty)
       .getOrElse("")
 
 end PlanAgent

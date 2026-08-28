@@ -21,23 +21,33 @@ class AgentLibrary(
 ):
   private val logger = NebflowLogger.forName("nebflow.agent.library")
 
-  def globalContextWindow: Int =
-    serviceConfig match
-      case None => Defaults.ContextWindow
-      case Some(cfg) =>
-        val (providerId, modelId) = Config.parseModelRef(cfg.llm.model.default)
-        val provider = cfg.llm.providers
-          .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
-        provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(Defaults.ContextWindow)
-
+  /**
+   * 全局 maxTokens 上限（AgentCore 每请求调用）。#339：数据源从 llm.model
+   * 改为**默认 preset** 链首个能解析到 provider 模型表的 ref（preferred 优先
+   * 逐个试 fallbacks）。任何解析失败回 Defaults.MaxTokens，**不再抛异常**
+   * （旧实现对未知 provider 会 throw——本次顺手加固；agent 路径不该因
+   * 配置漂移而炸请求）。
+   *
+   * 既有债（不在本次范围）：所有 agent 共用这一个全局值，而非各 agent 解析
+   * 到的模型的 maxTokens——按模型区分留作后续项。
+   */
   def globalMaxTokens: Int =
     serviceConfig match
       case None => Defaults.MaxTokens
       case Some(cfg) =>
-        val (providerId, modelId) = Config.parseModelRef(cfg.llm.model.default)
-        val provider = cfg.llm.providers
-          .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
-        provider.models.find(_.id == modelId).map(_.maxTokens).getOrElse(Defaults.MaxTokens)
+        try
+          val (resolved, _) = nebflow.core.presets.PresetStore().resolve(None, None)
+          val chain = resolved.preferred.toList ++ resolved.fallbacks
+          chain.flatMap { ref =>
+            try
+              val (providerId, modelId) = Config.parseModelRef(ref)
+              cfg.llm.providers
+                .get(providerId)
+                .flatMap(_.models.find(_.id == modelId))
+                .map(_.maxTokens)
+            catch case _: Exception => None
+          }.headOption.getOrElse(Defaults.MaxTokens)
+        catch case _: Exception => Defaults.MaxTokens
 
   // ============================================================
   // Public API
@@ -95,10 +105,14 @@ class AgentLibrary(
       val json = os.read(jsonPath)
       io.circe.parser.parse(json).toOption match
         case Some(parsed) =>
-          // Filter out fixed tools and wildcard — they're auto-injected
+          // Filter out fixed tools and wildcard — they're auto-injected.
+          // Nebula-exclusive tools (#404, ruling 2026-08-25) are also dropped
+          // for non-Nebula agents: buildAllowedToolSet strips them at runtime,
+          // so persisting the declaration would only confuse the panel.
           val defn = loadFromDir(agentsDir / name).getOrElse(AgentDef(name = name, description = ""))
           val fixed = AgentCore.fixedToolsFor(defn)
-          val configurable = tools.filterNot(t => t == "*" || fixed.contains(t))
+          val nebulaExclusive = if defn.name == "Nebula" then Set.empty[String] else AgentCore.NebulaExclusiveTools
+          val configurable = tools.filterNot(t => t == "*" || fixed.contains(t) || nebulaExclusive.contains(t))
           val updated = parsed.deepMerge(io.circe.Json.obj("tools" -> configurable.asJson))
           os.write.over(jsonPath, updated.noSpaces)
         case None => () // skip if unparseable
@@ -164,7 +178,9 @@ class AgentLibrary(
               model = Some(resolvedModel),
               preset = j.preset,
               category = j.category.getOrElse("standalone"),
-              mcpServers = j.mcpServers.getOrElse(Nil)
+              mcpServers = j.mcpServers.getOrElse(Nil),
+              skills = j.skills.getOrElse(Nil),
+              flows = j.flows.getOrElse(Nil)
             )
           )
         case None =>
@@ -222,7 +238,9 @@ private case class AgentJson(
   voice: Option[Boolean] = None,
   model: Option[AgentModelConfig] = None,
   preset: Option[String] = None,
-  category: Option[String] = None
+  category: Option[String] = None,
+  skills: Option[List[String]] = None,
+  flows: Option[List[String]] = None
 )
 
 private object AgentJson:
@@ -247,7 +265,9 @@ private object AgentJson:
       voice = c.downField("voice").as[Option[Boolean]].toOption.flatten,
       model = c.downField("model").as[Option[AgentModelConfig]].toOption.flatten,
       preset = c.downField("preset").as[Option[String]].toOption.flatten,
-      category = c.downField("category").as[Option[String]].toOption.flatten
+      category = c.downField("category").as[Option[String]].toOption.flatten,
+      skills = c.downField("skills").as[Option[List[String]]].toOption.flatten,
+      flows = c.downField("flows").as[Option[List[String]]].toOption.flatten
     )
   }
 
@@ -266,6 +286,8 @@ private object AgentJson:
       .deepMerge(j.model.map(m => Json.obj("model" -> m.asJson)).getOrElse(Json.obj()))
       .deepMerge(j.preset.map(p => Json.obj("preset" -> p.asJson)).getOrElse(Json.obj()))
       .deepMerge(j.category.map(c => Json.obj("category" -> c.asJson)).getOrElse(Json.obj()))
+      .deepMerge(j.skills.map(s => Json.obj("skills" -> s.asJson)).getOrElse(Json.obj()))
+      .deepMerge(j.flows.map(f => Json.obj("flows" -> f.asJson)).getOrElse(Json.obj()))
   }
 end AgentJson
 
@@ -312,7 +334,6 @@ private object Seeds:
       "Mail",
       "Pop",
       "Read",
-      "RemoveUnnecessary",
       "Schedule",
       "TaskCreate",
       "TaskUpdate",
@@ -357,7 +378,7 @@ Flows are task pipelines that run once with fresh context. No memory between run
     "Explorer",
     None,
     "Code exploration and research",
-    List("Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch", "RemoveUnnecessary"),
+    List("Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch"),
     """You are Explorer, an investigation sub-agent.
 
 ## Your Role
@@ -378,7 +399,7 @@ You investigate codebases and report findings. You CANNOT modify files, but you 
     "Coder",
     Some("Coder"),
     "Deep coding specialist — implementation, debugging, refactoring",
-    List("Read", "Write", "Edit", "Bash", "Grep", "Glob", "WebSearch", "WebFetch", "RemoveUnnecessary", "TransferFile"),
+    List("Read", "Write", "Edit", "Bash", "Grep", "Glob", "WebSearch", "WebFetch", "TransferFile"),
     """You are Coder, a deep coding specialist running inside Nebflow.
 
 You are invoked when actual code work is needed — implementation, debugging, refactoring, testing. You are NOT an orchestrator: you do not manage flows, delegate to other agents, or handle high-level user interaction. You receive a coding task and execute it with precision.

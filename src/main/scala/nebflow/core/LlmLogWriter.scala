@@ -140,7 +140,7 @@ object LlmLogWriter:
 
         // ── SSE events ──
 
-        val sseEvents = chunksToSseEvents(chunks, requestId, agent, model)
+        val sseEvents = chunksToSseEvents(chunks, requestId, agent, model, keepDetail = true)
         sseEvents.foreach(appendJsonl("sse", _))
 
         // ── Response entry ──
@@ -217,6 +217,33 @@ object LlmLogWriter:
 
   private val writeLock = new Object
 
+  /**
+   * gate-wedge P2 (2026-08-20): pre-gate request INTAKE event — one JSONL line
+   * appended to the sse file the moment a streaming request is accepted by the
+   * interface, BEFORE provider selection / gate acquire. The incident showed
+   * requests that died while queued at the gate leave ZERO traces in the stream
+   * logs (SSE logging only starts once bytes flow). With intake lines, a
+   * request_id that has an intake but no response is instantly identifiable as
+   * "never fired" (gate wedge / pre-gate death) instead of requiring 8h of
+   * forensic reconstruction. One line per request; no objects stored.
+   */
+  def logIntake(requestId: String, sessionId: String, agentId: String): IO[Unit] =
+    if !enabled.get() then IO.unit
+    else
+      IO.blocking {
+        appendJsonl(
+          "sse",
+          Json.obj(
+            "timestamp" -> Instant.now().toString.asJson,
+            "type" -> "intake".asJson,
+            "request_id" -> requestId.asJson,
+            "session" -> sessionId.asJson,
+            "agent" -> agentId.asJson,
+            "stage" -> "pre-gate".asJson
+          )
+        )
+      }.handleErrorWith(e => logger.warn(s"LlmLogWriter.logIntake: ${e.getMessage}"))
+
   private def appendJsonl(suffix: String, json: Json): Unit = writeLock.synchronized {
     val date = Instant.now().toString.take(10) // yyyy-MM-dd
     val path = logDir.resolve(s"${date}_$suffix.jsonl")
@@ -258,12 +285,16 @@ object LlmLogWriter:
       val base = Json.obj("type" -> "thinking".asJson, "thinking" -> text.asJson)
       signature.fold(base)(s => base.deepMerge(Json.obj("signature" -> s.asJson)))
     case ContentBlock.Image(data, mediaType) =>
+      // Log-only serialization (API requests are built in AnthropicAdapter
+      // and keep the full payload) — the base64 data is replaced by a
+      // placeholder so request logs don't balloon with megabytes of image
+      // data per message.
       Json.obj(
         "type" -> "image".asJson,
         "source" -> Json.obj(
           "type" -> "base64".asJson,
           "media_type" -> mediaType.asJson,
-          "data" -> data.asJson
+          "data" -> s"<base64 omitted, ${data.length} bytes>".asJson
         )
       )
 
@@ -311,7 +342,8 @@ object LlmLogWriter:
     chunks: List[StreamChunk],
     requestId: String,
     agent: String,
-    model: String
+    model: String,
+    keepDetail: Boolean
   ): List[Json] =
 
     val entries = List.newBuilder[Json]
@@ -338,6 +370,30 @@ object LlmLogWriter:
 
     for chunk <- chunks do
       chunk match
+        case StreamChunk.Done(stopReason, usage, _, _) =>
+          val entry = baseSse("message_delta")
+            .deepMerge(
+              Json.obj(
+                "stop_reason" -> stopReason.getOrElse("end_turn").asJson
+              )
+            )
+          val withUsage = usage
+            .map { u =>
+              val baseU = Json.obj(
+                "input_tokens" -> u.inputTokens.asJson,
+                "output_tokens" -> u.outputTokens.asJson
+              )
+              val withCr = u.cacheReadTokens
+                .map(cr => baseU.deepMerge(Json.obj("cache_read_input_tokens" -> cr.asJson)))
+                .getOrElse(baseU)
+              val withCw = u.cacheWriteTokens
+                .map(cw => withCr.deepMerge(Json.obj("cache_creation_input_tokens" -> cw.asJson)))
+                .getOrElse(withCr)
+              entry.deepMerge(Json.obj("usage" -> withCw))
+            }
+            .getOrElse(entry)
+          entries += withUsage
+
         case StreamChunk.ThinkingDelta(delta) =>
           if thinkingIdx < 0 then
             thinkingIdx = nextBlockIdx
@@ -388,30 +444,6 @@ object LlmLogWriter:
               )
             )
 
-        case StreamChunk.Done(stopReason, usage, _, _) =>
-          val entry = baseSse("message_delta")
-            .deepMerge(
-              Json.obj(
-                "stop_reason" -> stopReason.getOrElse("end_turn").asJson
-              )
-            )
-          val withUsage = usage
-            .map { u =>
-              val baseU = Json.obj(
-                "input_tokens" -> u.inputTokens.asJson,
-                "output_tokens" -> u.outputTokens.asJson
-              )
-              val withCr = u.cacheReadTokens
-                .map(cr => baseU.deepMerge(Json.obj("cache_read_input_tokens" -> cr.asJson)))
-                .getOrElse(baseU)
-              val withCw = u.cacheWriteTokens
-                .map(cw => withCr.deepMerge(Json.obj("cache_creation_input_tokens" -> cw.asJson)))
-                .getOrElse(withCr)
-              entry.deepMerge(Json.obj("usage" -> withCw))
-            }
-            .getOrElse(entry)
-          entries += withUsage
-
         case _ => () // ToolCallStart, ToolArgDelta, ThinkingSignature: covered by ToolCallChunk / Done
     end for
 
@@ -437,33 +469,25 @@ object LlmLogWriter:
         .toString
         .take(10)
 
-      // 1. Delete old JSONL files and collect remaining hashes
+      // 1. Delete old JSONL files and collect remaining hashes.
+      //    Only `_full.jsonl` entries carry object refs (system_ref /
+      //    tools_ref / message_refs) — summary and sse files are pure
+      //    stats/events and are NEVER scanned (#26: sse files reach
+      //    hundreds of MB; readAllLines on them OOMs the JVM).
       val usedHashes = scala.collection.mutable.Set.empty[String]
+      // Oversized full files are skipped (their refs unknown) — when that
+      // happens the orphan sweep is suppressed so live objects are never
+      // mistaken for orphans and deleted.
+      val scanIncomplete =
+        if Files.exists(logDir) then
+          val cutoffDelete = cutoff
+          scanFullLogsForRefs(logDir, cutoffDelete, usedHashes, MaxPruneScanBytes)
+        else false
 
-      if Files.exists(logDir) then
-        for
-          file <- Files.list(logDir).iterator().asScala.toList
-          if file.getFileName.toString.endsWith(".jsonl")
-        do
-          val fname = file.getFileName.toString
-          val dateStr = fname.take(10)
-          if dateStr < cutoff then Files.deleteIfExists(file)
-          else
-            // Collect referenced hashes from remaining files
-            for line <- Files.readAllLines(file).asScala if line.nonEmpty do
-              io.circe.parser.parse(line).toOption.flatMap(_.asObject) match
-                case Some(obj) =>
-                  obj("system_ref").flatMap(_.asString).foreach(usedHashes += _)
-                  obj("tools_ref").flatMap(_.asString).foreach(usedHashes += _)
-                  obj("message_refs")
-                    .flatMap(_.asArray)
-                    .foreach:
-                      _.foreach(_.asString.foreach(usedHashes += _))
-                case None => ()
-      end if
-
-      // 2. Delete orphaned objects
-      if Files.exists(objectsDir) then
+      // 2. Delete orphaned objects — only when every full file was fully
+      //    scanned; a skipped file's refs are unknown, so deleting "orphans"
+      //    could remove objects still in use.
+      if !scanIncomplete && Files.exists(objectsDir) then
         for
           file <- Files.list(objectsDir).iterator().asScala.toList
           if file.getFileName.toString.endsWith(".json")
@@ -473,5 +497,61 @@ object LlmLogWriter:
 
       logger.infoSync(s"Log retention: pruned files older than $cutoff")
     catch case e: Exception => logger.warnSync(s"Log retention error: ${e.getMessage}")
+
+  /** Max size of a single full.jsonl file we are willing to scan for refs. */
+  private val MaxPruneScanBytes: Long = 128L * 1024 * 1024
+
+  /** Scan jsonl files in `dir` for retention: delete files older than
+    * `cutoff` (date-prefix compare), and collect object refs from remaining
+    * `_full.jsonl` files into `usedHashes`.
+    *
+    * Returns true when any remaining full file was SKIPPED because it
+    * exceeded `maxBytes` — the caller must then suppress the orphan sweep
+    * (a skipped file's refs are unknown, so deleting "orphans" could remove
+    * objects still in use).
+    *
+    * Only `_full.jsonl` is scanned: summary/sse entries carry no object
+    * refs. Package-visible for tests (#26). */
+  private[core] def scanFullLogsForRefs(
+      dir: Path,
+      cutoff: String,
+      usedHashes: scala.collection.mutable.Set[String],
+      maxBytes: Long
+  ): Boolean =
+    var incomplete = false
+    for
+      file <- Files.list(dir).iterator().asScala.toList
+      if file.getFileName.toString.endsWith(".jsonl")
+    do
+      val fname = file.getFileName.toString
+      val dateStr = fname.take(10)
+      if dateStr < cutoff then Files.deleteIfExists(file)
+      else if fname.endsWith("_full.jsonl") then
+        // Stream line-by-line (bounded memory); skip gigantic files rather
+        // than risking OOM — pruning is best-effort cleanup.
+        if Files.size(file) <= maxBytes then collectReferencedHashes(file, usedHashes)
+        else incomplete = true
+    incomplete
+
+  /** Stream one full.jsonl line-by-line, collecting object refs. Memory is
+    * bounded to a single line (readAllLines would load the whole file —
+    * #26: multi-hundred-MB files OOM under the default 1g heap). */
+  private def collectReferencedHashes(file: Path, usedHashes: scala.collection.mutable.Set[String]): Unit =
+    val reader = Files.newBufferedReader(file)
+    try
+      var line = reader.readLine()
+      while line != null do
+        if line.nonEmpty then
+          io.circe.parser.parse(line).toOption.flatMap(_.asObject) match
+            case Some(obj) =>
+              obj("system_ref").flatMap(_.asString).foreach(usedHashes += _)
+              obj("tools_ref").flatMap(_.asString).foreach(usedHashes += _)
+              obj("message_refs")
+                .flatMap(_.asArray)
+                .foreach:
+                  _.foreach(_.asString.foreach(usedHashes += _))
+            case None => ()
+        line = reader.readLine()
+    finally reader.close()
 
 end LlmLogWriter

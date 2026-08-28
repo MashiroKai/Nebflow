@@ -47,14 +47,36 @@ class SubAgentTaskStore(baseDir: os.Path):
 
   private val logger = NebflowLogger.forName("nebflow.subagent-task.store")
 
-  private def sessionFile(parentSessionId: String): os.Path =
-    baseDir / s"$parentSessionId.json"
+  /**
+   * 并发写锁（2026-08-18 11:08 重放实证）：多个 Delegate 并发 spawn 时
+   * recordTask/updateStatus 同时 load→modify→save 同一文件——读-改-写竞态
+   * 导致任务记录互相覆盖甚至被半写状态解析失败后写空（[]）。load-modify-save
+   * 必须整体持锁串行化。ReentrantLock + IO.blocking：JVM 内进程级互斥，
+   * 无创建点改动（SharedResources 默认参数 + 测试共用同一构造签名）。
+   */
+  private val lock = new java.util.concurrent.locks.ReentrantLock()
 
-  private def ensureBaseDir: IO[Unit] = IO.blocking {
-    if !os.exists(baseDir) then os.makeDir.all(baseDir)
+  private def withLock[A](body: => A): IO[A] = IO.blocking {
+    lock.lock()
+    try body
+    finally lock.unlock()
   }
 
-  def loadTasks(parentSessionId: String): IO[List[SubAgentTask]] = IO.blocking {
+  private def sessionFile(parentSessionId: String): os.Path =
+    // Guard: a blank parentSessionId (caller bug — e.g. an unsupervised
+    // context with no session) must not silently write to ".json" where it
+    // pollutes the directory and is never read back. Callers already wrap
+    // store operations in handleErrorWith, so this degrades to a warn.
+    if parentSessionId.isBlank then
+      throw new IllegalArgumentException(
+        s"subAgentTaskStore: blank parentSessionId refused (would write ${baseDir}/.json)"
+      )
+    baseDir / s"$parentSessionId.json"
+
+  private def ensureBaseDirSync(): Unit =
+    if !os.exists(baseDir) then os.makeDir.all(baseDir)
+
+  private def readTasksSync(parentSessionId: String): List[SubAgentTask] =
     val f = sessionFile(parentSessionId)
     if !os.exists(f) then Nil
     else
@@ -63,17 +85,21 @@ class SubAgentTaskStore(baseDir: os.Path):
         case Left(err) =>
           logger.warnSync(s"Failed to parse subagent tasks for $parentSessionId: ${err.getMessage}")
           Nil
-  }
+
+  private def writeTasksSync(parentSessionId: String, tasks: List[SubAgentTask]): Unit =
+    ensureBaseDirSync()
+    os.write.over(sessionFile(parentSessionId), tasks.asJson.noSpaces)
+
+  def loadTasks(parentSessionId: String): IO[List[SubAgentTask]] =
+    withLock(readTasksSync(parentSessionId))
 
   def saveTasks(parentSessionId: String, tasks: List[SubAgentTask]): IO[Unit] =
-    ensureBaseDir *> IO.blocking {
-      os.write.over(sessionFile(parentSessionId), tasks.asJson.noSpaces)
-    }
+    withLock(writeTasksSync(parentSessionId, tasks))
 
   /** Record a new task at spawn time. */
   def recordTask(task: SubAgentTask): IO[Unit] =
-    loadTasks(task.parentSessionId).flatMap { existing =>
-      saveTasks(task.parentSessionId, existing :+ task)
+    withLock {
+      writeTasksSync(task.parentSessionId, readTasksSync(task.parentSessionId) :+ task)
     }
 
   /** Update a task's status. */
@@ -85,8 +111,8 @@ class SubAgentTaskStore(baseDir: os.Path):
     lastError: Option[String] = None,
     completedAt: Option[Long] = None
   ): IO[Unit] =
-    loadTasks(parentSessionId).flatMap { existing =>
-      val updated = existing.map { t =>
+    withLock {
+      val updated = readTasksSync(parentSessionId).map { t =>
         if t.taskId == taskId then
           t.copy(
             status = status,
@@ -96,13 +122,13 @@ class SubAgentTaskStore(baseDir: os.Path):
           )
         else t
       }
-      saveTasks(parentSessionId, updated)
+      writeTasksSync(parentSessionId, updated)
     }
 
   /** Remove a task (called after successful completion + grace period). */
   def removeTask(parentSessionId: String, taskId: String): IO[Unit] =
-    loadTasks(parentSessionId).flatMap { existing =>
-      saveTasks(parentSessionId, existing.filterNot(_.taskId == taskId))
+    withLock {
+      writeTasksSync(parentSessionId, readTasksSync(parentSessionId).filterNot(_.taskId == taskId))
     }
 
   /** Find all tasks in "running" status (for startup recovery). */
@@ -121,5 +147,28 @@ class SubAgentTaskStore(baseDir: os.Path):
           .toList
     }
     .handleErrorWith(e => logger.warn(s"findRunningTasks failed: ${e.getMessage}").as(Nil))
+
+  /**
+   * AgentControl（spec §2 status 命令）：按 taskId 全目录反查任务记录——registry
+   * 无记录时检测孤儿任务（task status=running 但 actor 已不存在），也用于
+   * restart 前区分 ephemeral Delegate（有任务记录）与 persistent（无记录）。
+   * 文件数 = 活跃父会话数（量小），线性扫描可接受。
+   */
+  def findByTaskId(taskId: String): IO[Option[SubAgentTask]] =
+    IO
+      .blocking {
+        if !os.exists(baseDir) then None
+        else
+          os.list(baseDir)
+            .flatMap { f =>
+              if f.toString.endsWith(".json") then
+                decode[List[SubAgentTask]](os.read(f)) match
+                  case Right(list) => list.filter(_.taskId == taskId)
+                  case Left(_) => Nil
+              else Nil
+            }
+            .headOption
+      }
+      .handleErrorWith(e => logger.warn(s"findByTaskId failed: ${e.getMessage}").as(None))
 
 end SubAgentTaskStore

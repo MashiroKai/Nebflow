@@ -8,18 +8,6 @@ object CompactUtils:
 
   private val logger = NebflowLogger.forName("nebflow.compact")
 
-  /** Replace Image blocks with placeholder text to avoid sending base64 to SubAgent. */
-  def stripImages(messages: List[Message]): List[Message] =
-    messages.map {
-      case msg @ Message(_, Right(blocks), _, _) =>
-        val stripped = blocks.map {
-          case ContentBlock.Image(_, mediaType) => ContentBlock.Text(s"[image: $mediaType]")
-          case other => other
-        }
-        msg.copy(content = Right(stripped))
-      case other => other
-    }
-
   // Placeholder for stripped tool results
   private val ToolResultPlaceholder = "[Output removed to free context space]"
 
@@ -73,7 +61,14 @@ object CompactUtils:
         val phase3 = phase2.takeRight(keepAtEnd)
         logger.info(s"Emergency clean phase 3: truncated to last $keepAtEnd messages")
         val desc = s"Stripped tool results + removed old messages, kept last $keepAtEnd of ${messages.size}"
-        (ensureHeadUser(phase3, messages.size), desc)
+        // Orphan guard (2026-08-23 deepseek 422): a bare takeRight can cut
+        // between an assistant(tool_use) and its user(tool_result), leaving
+        // the result as the HEAD message with no preceding tool_use — Anthropic
+        // protocol rejects it ("Each tool_result block must have a
+        // corresponding tool_use block"). ensureHeadUser alone misses this
+        // because tool_result messages ARE User role. Drop orphaned head
+        // results (their tool_use was truncated away, the result is dangling).
+        (ensureHeadUser(dropOrphanHeadToolResults(phase3), messages.size), desc)
       end if
     end if
   end emergencyClean
@@ -140,6 +135,23 @@ object CompactUtils:
       else List(msg)
     }
   end removeOldToolResultMessages
+
+  /**
+   * Drop head user messages that contain ONLY orphaned tool_result blocks
+   * (their assistant(tool_use) was truncated away by the phase-3 tail cut).
+   * Keeps dropping while the head is such a message. A user message that
+   * mixes text with tool results is KEPT as-is (it has content beyond the
+   * dangling result). Returns the cleaned list.
+   */
+  private def dropOrphanHeadToolResults(messages: List[Message]): List[Message] =
+    def headIsOrphanResult(msgs: List[Message]): Boolean =
+      msgs.headOption match
+        case Some(Message(MessageRole.User, Right(blocks), _, _)) =>
+          blocks.nonEmpty && blocks.forall(_.isInstanceOf[ContentBlock.ToolResult])
+        case _ => false
+    def go(msgs: List[Message]): List[Message] =
+      if headIsOrphanResult(msgs) then go(msgs.tail) else msgs
+    go(messages)
 
   private def hasToolResults(msg: Message): Boolean =
     msg.content match

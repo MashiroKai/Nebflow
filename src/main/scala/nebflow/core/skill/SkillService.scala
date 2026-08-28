@@ -20,6 +20,14 @@ final case class SkillInfo(
   userInvocable: Boolean = true,
   modelInvocable: Boolean = true,
   version: Option[String] = None,
+  /** Owning team (frontmatter `audience`): real team name, e.g. nebflow-project — not a namespace. */
+  audience: Option[String] = None,
+  /** Last date the content was verified against reality (frontmatter `last_verified`, YYYY-MM-DD). */
+  lastVerified: Option[String] = None,
+  /** Lifecycle state: draft / active / deprecated (frontmatter `status`). */
+  status: Option[String] = None,
+  /** Successor skill for a deprecated one (frontmatter `replaced_by`). */
+  replacedBy: Option[String] = None,
   /** Where this skill was loaded from: "user" | "project" | "commands" */
   source: String = "user"
 )
@@ -38,6 +46,10 @@ object SkillInfo:
       "userInvocable" -> s.userInvocable.asJson,
       "modelInvocable" -> s.modelInvocable.asJson,
       "version" -> s.version.asJson,
+      "audience" -> s.audience.asJson,
+      "lastVerified" -> s.lastVerified.asJson,
+      "status" -> s.status.asJson,
+      "replacedBy" -> s.replacedBy.asJson,
       "source" -> s.source.asJson
     )
   }
@@ -69,7 +81,10 @@ object SkillService:
   }
 
   private val exampleSkillMd: String =
-    """---
+    // s-interpolation: documents the REAL data dir (brand.conf homeDirName;
+    // the "nebflow/visual-style" example stays — it is a live namespace
+    // skill, a data fact rather than a brand string).
+    s"""---
       |name: example
       |description: An example skill — copy this folder to create your own
       |language: zh
@@ -120,7 +135,7 @@ object SkillService:
       |└── assets/               # Optional — output files (templates, icons, fonts, etc.)
       |```
       |
-      |Skills live at `~/.nebflow/skills/<skill-name>/`. The `name` field in frontmatter must match the directory name.
+      |Skills live at `~/${nebflow.core.Branding.homeDirName}/skills/<skill-name>/`. The `name` field in frontmatter must match the directory name. Namespaced skills live two levels deep: `~/${nebflow.core.Branding.homeDirName}/skills/<ns>/<name>/SKILL.md` — their identifier is the relative path (`<ns>/<name>`, e.g. `nebflow/visual-style`), and agent.json `skills` entries must use the full path.
       |
       |## Frontmatter (YAML)
       |
@@ -135,6 +150,10 @@ object SkillService:
       || `disable-model-invocation` | No | false | When true, skill is hidden from agent catalog (slash-command only) |
       || `version` | No | — | Semantic version string |
       || `when_to_use` | No | — | Additional context for when to use this skill |
+      || `audience` | No | — | Team this skill semantically belongs to — real team name (e.g. `nebflow-project`), not a namespace; subscription stays per-agent |
+      || `last_verified` | No | — | Date (YYYY-MM-DD) the content was last verified against reality; audited when older than 90 days |
+      || `status` | No | active | Lifecycle state: `draft` / `active` / `deprecated` |
+      || `replaced_by` | No | — | Successor skill identifier, shown to subscribers when this skill is deprecated |
       || `allowed-tools` | No | all | Comma-separated tool allowlist |
       || `arguments` | No | — | Argument names (YAML block list or comma-separated) |
       |
@@ -166,38 +185,62 @@ object SkillService:
       |- **Scripts do real work** — bundle executable scripts in `scripts/` rather than describing steps in prose.
       |- **References for deep context** — put large docs in `references/` that the agent can Read on demand, keeping SKILL.md concise.
       |- **One skill = one purpose** — don't combine unrelated workflows.
+      |
+      |## Evidence (user-ruling provenance)
+      |
+      |When a skill originates from a user correction, add a `## Evidence` section:
+      |
+      |- Quote the user **verbatim**, one entry per ruling, with source and timestamp — e.g. `("以后弹窗都用毛玻璃" — input_history.jsonl, 2026-08-14)`
+      |- The practice itself belongs in the body (Steps/Rules), never inside Evidence — Evidence is provenance, not instruction
+      |- Nebula's final review spot-checks Evidence against the recorded user input; missing or paraphrased entries fail the audit
       |""".stripMargin
 
   // ============================================================
   // Skill Catalog (for progressive disclosure)
   // ============================================================
 
-  /** Simple TTL cache to avoid rebuilding the catalog every turn. */
-  @volatile private var catalogCache: (Long, String) = (0L, "")
-  private val CatalogTtlMs = 3000L
-
   /**
-   * Build a compact skill catalog string for system prompt injection.
-   * Only skills with `modelInvocable = true` and a non-empty description are included.
-   * The catalog tells the agent what skills exist and where to find them;
-   * the agent reads the full skill file when it decides a skill is relevant.
+   * Skills that are always appended to any injected catalog, even when no agent
+   * declared them (R3 §3.3-1: the discovery/creation meta entry point). Only
+   * takes effect when a catalog is produced at all — an agent with an empty
+   * skills declaration still gets no catalog section.
    */
+  val alwaysVisible: List[String] = List("skill-creator")
+
   /**
    * Build a skill catalog containing only the skills declared by the agent.
    * Empty list → empty string (no injection, no global fallback).
+   * The wildcard "*" subscribes to every skill in the library (same semantics as
+   * the flows whitelist) — used by orchestrators that need the full index.
+   *
+   * Mirrors the modelInvocable rule of the (removed) global catalog: skills
+   * marked `disable-model-invocation: true` are slash-command-only and stay
+   * out even when the agent declares them. when_to_use frontmatter is kept
+   * in the entry — it is the anti-misuse metadata the author wrote for
+   * exactly this moment.
    */
   def buildPerAgentCatalog(skillNames: List[String]): IO[String] =
     if skillNames.isEmpty then IO.pure("")
     else
       listSkills().map { allSkills =>
-        val skillMap = allSkills.map(s => s.name -> s).toMap
-        val visible = skillNames.flatMap(skillMap.get).filter(_.description.nonEmpty)
+        val visibleIn: SkillInfo => Boolean = s => s.modelInvocable && s.description.nonEmpty
+        val declared =
+          if skillNames.contains("*") then allSkills.filter(visibleIn)
+          else skillNames.flatMap(allSkills.map(s => s.name -> s).toMap.get).filter(visibleIn)
+        // Bootstrap entry points are appended unconditionally (dedup when declared)
+        val appended = allSkills
+          .filter(s => alwaysVisible.contains(s.name) && visibleIn(s))
+          .filterNot(s => declared.exists(_.name == s.name))
+        val visible = declared ++ appended
         if visible.isEmpty then ""
         else
-          val entries = visible.map(s => s"- ${s.name}: ${s.description.take(200)}").mkString("\n")
+          val entries = visible.map { s =>
+            val when = s.whenToUse.filter(_.nonEmpty).map(w => s" [when: $w]").getOrElse("")
+            s"- ${s.name}: ${s.description.take(200)}$when"
+          }.mkString("\n")
           s"""# Skills
              |
-             |Skills live at ~/.nebflow/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
+             |Skills live at ~/${nebflow.core.Branding.homeDirName}/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
              |
              |$entries""".stripMargin
       }
@@ -216,34 +259,10 @@ object SkillService:
           val entries = visible.map(f => s"- ${f.name}: ${f.description.take(200)}").mkString("\n")
           s"""# Available Flows
              |
+             |Trigger via FlowTrigger(flow="<name>", prompt="<task input>"). The flow runs in the background; its result is delivered to you when it completes.
+             |
              |$entries""".stripMargin
       }
-
-  def buildSkillCatalog(currentDelegateCount: Int): IO[String] =
-    val now = System.currentTimeMillis()
-    if now - catalogCache._1 < CatalogTtlMs then IO.pure(catalogCache._2)
-    else
-      listSkills().map { skills =>
-        val visible = skills
-          .filter(s => s.modelInvocable && s.description.nonEmpty)
-        val catalog =
-          if visible.isEmpty then ""
-          else
-            val entries = visible
-              .map { s =>
-                s"- ${s.name}: ${s.description.take(200)}"
-              }
-              .mkString("\n")
-            s"""# Skills
-               |
-               |Skills live at ~/.nebflow/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
-               |
-               |$entries""".stripMargin
-        catalogCache = (now, catalog)
-        catalog
-      }
-    end if
-  end buildSkillCatalog
 
   // ============================================================
   // Public API
@@ -269,20 +288,25 @@ object SkillService:
   }
 
   /**
-   * Delete a user-level skill by name.
+   * Delete a user-level skill by its identifier ("name" or "ns/name").
    * Only skills under ~/.nebflow/skills/ can be deleted (source = "user").
    * Project-level and legacy command skills are managed via version control.
    * Returns true if the skill was found and deleted, false otherwise.
    */
   def deleteSkill(name: String): IO[Boolean] = IO.delay {
-    val skillDir = userSkillsDir / name
-    if os.isDir(skillDir) then
-      os.remove.all(skillDir)
-      logger.info(s"Deleted skill '$name' from $skillDir")
-      true
-    else
-      logger.warn(s"Cannot delete skill '$name': directory $skillDir not found or not a user-level skill")
-      false
+    val segments = name.split('/').map(_.trim).filter(_.nonEmpty).toList
+    // Namespaced ids resolve to nested dirs; refuse traversal segments
+    val skillDir =
+      if segments.exists(s => s == "." || s == "..") then None
+      else Some(segments.foldLeft(userSkillsDir)((d, seg) => d / seg))
+    skillDir match
+      case Some(dir) if os.isDir(dir) =>
+        os.remove.all(dir)
+        logger.info(s"Deleted skill '$name' from $dir")
+        true
+      case _ =>
+        logger.warn(s"Cannot delete skill '$name': directory not found or not a user-level skill")
+        false
   }
 
   /** Load full skill content from a skill file path. */
@@ -302,21 +326,27 @@ object SkillService:
   // Multi-source loading
   // ============================================================
 
-  /** Project-level skill directories to scan, in priority order. */
+  /** Project-level skill directories to scan, in priority order. Both the
+    * brand dir name and the hardcoded legacy ".nebflow" are listed — project
+    * dirs belong to the user's repo and are never migrated, so rename-day
+    * projects on either name keep loading (distinct collapses the current
+    * identical pair). */
   private def projectSkillPaths: List[os.Path] =
     val cwd = os.pwd
     List(
+      cwd / nebflow.core.Branding.homeDirName / "skills",
       cwd / ".nebflow" / "skills",
       cwd / ".claude" / "skills"
-    )
+    ).distinct
 
   /** Project-level legacy command directories to scan. */
   private def projectCommandPaths: List[os.Path] =
     val cwd = os.pwd
     List(
+      cwd / nebflow.core.Branding.homeDirName / "commands",
       cwd / ".nebflow" / "commands",
       cwd / ".claude" / "commands"
-    )
+    ).distinct
 
   private def loadProjectSkills(): List[SkillInfo] =
     projectSkillPaths.flatMap(dir => loadFromSkillsDir(dir, "project"))
@@ -328,6 +358,13 @@ object SkillService:
   // Directory format: skill-name/SKILL.md or skill-name/skill.md
   // ============================================================
 
+  /**
+   * Scan a skills directory two levels deep:
+   *   - flat:      <dir>/<name>/SKILL.md         → identifier = frontmatter name (fallback dir name)
+   *   - namespace: <dir>/<ns>/<name>/SKILL.md    → identifier = relative path "<ns>/<name>"
+   * A namespace directory may itself contain a SKILL.md (then it is ALSO a flat skill) —
+   * both load. Deeper nesting is ignored, matching the previous single-level behavior.
+   */
   private def loadFromSkillsDir(dir: os.Path, source: String): List[SkillInfo] =
     if !os.isDir(dir) then Nil
     else
@@ -335,10 +372,20 @@ object SkillService:
         .filter(sub => os.isDir(sub) && sub.baseName != "_example")
         .flatMap { subDir =>
           // Prefer SKILL.md (Claude Code convention), fall back to skill.md (Nebflow convention)
-          val skillFile = resolveSkillFile(subDir)
-          skillFile.map { f =>
-            parseSkillFile(f, source, Some(subDir.baseName))
+          val flat = resolveSkillFile(subDir).map { f =>
+            parseSkillFile(f, source, Some(subDir.baseName), relativeName = None)
           }
+          // Namespaced skills: the relative path is the authoritative identifier —
+          // a mismatched frontmatter name must not break subscription by path.
+          val nested = os.list(subDir)
+            .filter(nameDir => os.isDir(nameDir) && nameDir.baseName != "_example")
+            .flatMap { nameDir =>
+              val relName = s"${subDir.baseName}/${nameDir.baseName}"
+              resolveSkillFile(nameDir).map { f =>
+                parseSkillFile(f, source, Some(relName), relativeName = Some(relName))
+              }
+            }
+          flat ++ nested
         }
         .toList
 
@@ -373,13 +420,20 @@ object SkillService:
   // Frontmatter parsing
   // ============================================================
 
-  private def parseSkillFile(filePath: os.Path, source: String, nameOverride: Option[String]): SkillInfo =
+  private def parseSkillFile(
+    filePath: os.Path,
+    source: String,
+    nameOverride: Option[String],
+    relativeName: Option[String] = None
+  ): SkillInfo =
     val content = os.read(filePath)
     val fm = extractFrontmatter(content)
 
-    val name = extractField(fm, "name")
-      .orElse(nameOverride)
-      .getOrElse(filePath.baseName)
+    // Consistency rule: flat skill name = frontmatter name (fallback: dir name);
+    // namespaced skill name = relative path "<ns>/<name>" (frontmatter cannot override).
+    val name = relativeName match
+      case Some(rel) => rel
+      case None => extractField(fm, "name").orElse(nameOverride).getOrElse(filePath.baseName)
 
     val description = extractField(fm, "description").getOrElse("")
     val whenToUse = extractField(fm, "when_to_use").orElse(extractField(fm, "when-to-use"))
@@ -395,6 +449,12 @@ object SkillService:
     val allowedTools = extractListField(fm, "allowed-tools")
     val argumentNames = extractListField(fm, "arguments")
 
+    // Lifecycle / governance metadata (optional, consumed by skill audit)
+    val audience = extractField(fm, "audience")
+    val lastVerified = extractField(fm, "last_verified")
+    val status = extractField(fm, "status")
+    val replacedBy = extractField(fm, "replaced_by")
+
     SkillInfo(
       name = name,
       description = description,
@@ -406,6 +466,10 @@ object SkillService:
       userInvocable = userInvocable,
       modelInvocable = modelInvocable,
       version = version,
+      audience = audience,
+      lastVerified = lastVerified,
+      status = status,
+      replacedBy = replacedBy,
       source = source
     )
 

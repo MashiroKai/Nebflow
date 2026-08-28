@@ -15,13 +15,21 @@ case class SendMessageParams(
   /** Session identifier for LLM provider metadata. */
   sessionId: Option[String] = None,
   /** Agent identifier for LLM provider metadata. */
-  agentId: Option[String] = None
+  agentId: Option[String] = None,
+  /** WebSearch P0: provider-native search injection kind for this request
+    * (resolved per-candidate in interface.scala — fallback switches provider
+    * mid-request and must not carry the previous provider's injection).
+    * Consumed by OpenAiAdapter; Anthropic-protocol candidates never set it. */
+  providerSearch: Option[ProviderSearchKind] = None
 )
 
 case class AdapterResponse(
   reply: String,
   toolCalls: List[ToolCall],
-  usage: Option[TokenUsage] = None
+  usage: Option[TokenUsage] = None,
+  /** WebSearch P0: structured provider search results (zhipu `web_search` /
+    * qwen `search_info` response field), when the provider returned them. */
+  searchInfo: Option[io.circe.Json] = None
 )
 
 trait ProviderAdapter[F[_]]:

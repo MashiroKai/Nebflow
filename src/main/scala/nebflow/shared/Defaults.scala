@@ -34,8 +34,31 @@ object Defaults:
    * recovery mechanism for hung connections (e.g. after Mac sleep/wake).
    * Applies AFTER the first token. Shorter than StreamTimeoutSec because LLM providers
    * should always produce chunks within a few seconds, even during extended thinking.
+   *
+   * Flow-node supervision P3 (2026-08-26): 60 → 120s. Phase-2 stalls on thinking
+   * models without SSE keep-alive can legally exceed 60s (production incident:
+   * kimi k3 mid-stream stall at 60s with sibling requests healthy). Aligned with
+   * the firstToken 90s thinking-margin logic; phase-1 and the 600s whole-stream
+   * guard are unchanged. Override via llm.streamTimeouts.inactivitySec.
    */
-  val LlmStreamInactivitySec: Int = 60
+  val LlmStreamInactivitySec: Int = 120
+
+  /**
+   * Whole-stream no-progress watchdog (issue #31, 2026-08-20): bounds the blind
+   * window BEFORE the per-provider inactivityTimeout arms. The per-provider
+   * watchdog (LlmFirstTokenTimeoutSec / LlmStreamInactivitySec) only covers a
+   * provider stream once it starts producing — the intake→first-chunk
+   * evaluation chain (candidates resolve / health check / adapter
+   * fetch / HTTP setup / consumer-side processing) has NO coverage: a fiber
+   * parked there hangs forever (incident: intake logged at 22:48:41, then 40min
+   * of zero traces; Stop and hard-cancel both ineffective because the fiber was
+   * suspended on a non-cancellable wait). This outer guard fails the whole
+   * sendStream when NO chunk appears within this window (and likewise between
+   * chunks — legal fallback silences are bounded well below it: overload
+   * backoff 60s + first-token 90s per hop). Aligned with LlmTimeoutMs
+   * (the non-streaming per-request timeout) as the "10min total" mental model.
+   */
+  val LlmStreamNoProgressTimeoutSec: Int = 600
 
   /** Per-provider LLM request timeout (covers streaming generation). */
   val LlmTimeoutMs: Long = 600_000L
@@ -74,6 +97,26 @@ object Defaults:
    */
   val BgIdleTimeoutSec: Int = 300
 
+  // ---- Bash 卡死防护（#391，2026-08-25 用户裁定：5 分钟自动转后台）----
+
+  /**
+   * 前台命令自动转后台阈值（ms）。用户 08-25 裁定：前台命令运行超过此阈值
+   * （默认 300s/5min）自动转后台——不杀进程、turn 释放、完成时异步通知。
+   * 恢复 #319 前的 registerBackgroundJob 骨架；sleep 类命令同样转后台
+   * （sleep-like 豁免只保留在 no-progress ceiling / idle timeout 语义中）。
+   */
+  val BashAutoBackgroundMs: Long = 300_000L
+
+  /**
+   * 后台命令硬超时（ms）：运行超过此阈值（默认 30min）后进入停滞观察期——
+   * 输出零增长且 CPU 增量 < 10ms/采样窗口 连续 ≥ BashStuckWindowSec 才杀
+   * （双条件裁定：输出零增长且 CPU 零消耗）。CPU 忙的合法任务不杀。
+   */
+  val BashBackgroundHardTimeoutMs: Long = 30 * 60 * 1000L
+
+  /** 硬超时后的停滞观察窗口（s）：停滞连续满此值 → killProcessTree + TimeoutException。 */
+  val BashStuckWindowSec: Int = 120
+
   // ---- Tool Result Guard ----
 
   /**
@@ -93,4 +136,60 @@ object Defaults:
 
   /** Preview size in characters for persisted tool results. */
   val ToolResultPreviewSize: Int = 2048
+
+  // ---- Mail queue delivery dedup (P0 投递层指纹去重) ----
+
+  /**
+   * Fingerprint dedup window for queue-delivery: the same sender + recipient
+   * + content hash delivers at most once per window. Covers the restart-replay
+   * root cause (MailTool restart recovery re-fires MailQueued for the disk
+   * head). Content-identical mails outside the window deliver normally —
+   * legitimate re-sends are never eaten. Window long enough to span a restart
+   * cycle, short enough to never eat a deliberate re-send minutes later.
+   */
+  val MailDedupWindowMs: Long = 30 * 60 * 1000L
+
+  // ---- Task stuck detection (P0 阶段 3) ----
+
+  /**
+   * Default stuck threshold: an agent in Processing with no turn activity for
+   * this long is considered stuck. 10min is far above the llm-fail retry chain
+   * upper bound (8s×3 + provider probe 120s) — every retry action touches the
+   * activity stamp, so a healthy agent in the retry chain is never misjudged.
+   */
+  val StuckThresholdMs: Long = 10 * 60 * 1000L
+
+  /** TaskStuckWatcher scan interval. */
+  val StuckWatcherIntervalSec: Int = 30
+
+  // ---- STT（语音输入，可配置转录服务，#295）----
+
+  /** STT 默认模型（OpenAI 兼容音频转录 API 的公共模型名，非用户配置）。 */
+  val SttDefaultModel: String = "glm-asr-2512"
+
+  /** STT 默认端点（智谱开放平台音频转录；配置文件可覆盖）。 */
+  val SttDefaultEndpoint: String =
+    "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions"
+
+  /**
+   * FreezeScheduler 扫描间隔（冻结恢复延迟上限，freeze-schedule spec ⑤）。
+   * frozen agent 靠本扫描驱动重评估时间表——出冻结段后最多延迟本值恢复 dispatch。
+   * setWorkSchedule 配置热更走即时 scan，不受此间隔约束。
+   */
+  val FreezeCheckIntervalSec: Int = 30
+
+  /**
+   * v2 冻结式错误恢复升级链（§5.1-5.2）：进入升级链后等待父决策的窗口。
+   * 每级窗口相同（从升级链启动算起逐级顺延）；用户级不设超时（最终仲裁，
+   * 卡片持久化等待）。与 TaskStuckWatcher 卡死阈值同量级（用户有合理决策窗口）。
+   */
+  val ErrorEscalateAfterMs: Long = 10 * 60 * 1000L
 end Defaults
+
+/** Bash 卡死防护阈值配置（#391，nebflow.json 顶层键可覆盖，默认值见 Defaults）。 */
+case class BashResilienceConfig(
+  autoBackgroundMs: Long = Defaults.BashAutoBackgroundMs,
+  hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
+  stuckWindowSec: Int = Defaults.BashStuckWindowSec,
+  healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec
+)

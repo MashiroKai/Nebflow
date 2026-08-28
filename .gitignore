@@ -30,7 +30,6 @@ tmp/
 docs/
 test-envs.sh
 CHANGELOG.md
-package-lock.json
 *demo*.html
 /nebflow
 nul
@@ -43,7 +42,9 @@ cloud/node_modules/
 credentials.json
 dist/
 beta.md
-typescript
+# Root-level scratch file only (51c0882d). Must NOT match the vendored monaco
+# TS language dirs (vendor/monaco/vs/{language,basic-languages}/typescript/).
+/typescript
 
 # ZCode agent workspace
 .zcode/
@@ -51,8 +52,8 @@ typescript
 # Node / Playwright
 node_modules/
 test-results/
-package.json
-package-lock.json
+# NOTE: package.json / package-lock.json are TRACKED since P1 (esbuild build
+# tooling, scripts/build-web.mjs) - they used to be ignored as scratch files.
 playwright.config.mjs
 
 # Test artifacts
@@ -65,3 +66,7 @@ swarm/
 
 # Internal handover doc (contains server credentials)
 NEBLINK_HANDOVER.md
+build/
+
+# P1 web build tooling
+node_modules/

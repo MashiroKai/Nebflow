@@ -26,7 +26,7 @@ Usage:
 - This tool will overwrite the existing file if there is one at the provided path.
 - Recommended: read the existing file first so the new content is informed by current state.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-- Prefer the Edit tool for modifying existing files — it only sends the diff. Only use this tool to create new files or for complete rewrites.
+- Prefer the Edit or MultiEdit tool for modifying existing files — they only send the diff. Only use this tool to create new files or for complete rewrites.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
 - Do not use Bash (echo, cat heredoc) to create files — use this tool instead."""
 

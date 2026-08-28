@@ -51,7 +51,7 @@ case class Message(
   /**
    * Injection source marker (任务 P): when a message was injected by a tool
    * rather than typed by the user, this records where it came from —
-   * "mail" / "delegate" / "subtask" / "flow" / "ask" / "skill" / "tool".
+   * "mail" / "delegate" / "subtask" / "flow" / "skill" / "tool".
    * None = normal user-typed message (backward compatible: old persisted
    * messages decode with source=None).
    */
@@ -74,7 +74,14 @@ case class ToolDefinition(
 
 // ===== Tool Call =====
 
-case class ToolCall(id: String, name: String, input: JsonObject)
+/** Raw wire-format arguments string as received from the provider, kept
+  * byte-faithful alongside the parsed JsonObject. Needed by provider-native
+  * round-trip semantics (kimi $web_search: the caller must echo the model's
+  * arguments back verbatim as the tool result — re-serializing the parsed
+  * object would break byte-identity, and rescued/malformed inputs would
+  * degrade to "{}").
+  */
+case class ToolCall(id: String, name: String, input: JsonObject, rawArguments: Option[String] = None)
 
 // ===== LLM =====
 
@@ -98,9 +105,14 @@ case class LlmRequest(
   systemDynamic: Option[String] = None,
   /**
    * Per-agent model configuration (preferred + fallbacks). When set, the
-   *  candidate chain is built from this instead of the global model chain.
+   * candidate chain is built from this instead of the global model chain.
    */
-  agentModel: Option[AgentModelConfig] = None
+  agentModel: Option[AgentModelConfig] = None,
+  /** WebSearch P0: provider-native search injection is allowed for this
+    * request. Housekeeping turns (compaction / save-turn) and
+    * maintenance LLM calls set this to false so a server-side search tool
+    * never leaks into summarization or memory-extraction requests. */
+  searchAllowed: Boolean = true
 )
 
 case class TokenUsage(
@@ -124,7 +136,11 @@ case class LlmResponse(
   reply: String,
   toolCalls: List[ToolCall],
   usage: Option[TokenUsage],
-  meta: LlmMeta
+  meta: LlmMeta,
+  /** WebSearch P0: structured search results from a provider-native search
+    * (zhipu `web_search` response field / qwen `search_info`), when present.
+    * None on providers/paths without structured search output. */
+  searchInfo: Option[Json] = None
 )
 
 case class LlmOptions(configPath: Option[String] = None)
@@ -250,7 +266,8 @@ object UiMessage:
     source: Option[String] = None,
     eventType: Option[String] = None,
     sender: Option[String] = None,
-    senderTeam: Option[String] = None
+    senderTeam: Option[String] = None,
+    delivery: Option[String] = None
   ) extends UiMessage:
     val typeName = "user"
 
@@ -302,7 +319,8 @@ object UiMessage:
       val withSrc = m.source.fold(withInj)(s => withInj.deepMerge(Json.obj("source" -> s.asJson)))
       val withEt = m.eventType.fold(withSrc)(et => withSrc.deepMerge(Json.obj("eventType" -> et.asJson)))
       val withSender = m.sender.fold(withEt)(s => withEt.deepMerge(Json.obj("sender" -> s.asJson)))
-      m.senderTeam.fold(withSender)(t => withSender.deepMerge(Json.obj("senderTeam" -> t.asJson)))
+      val withTeam = m.senderTeam.fold(withSender)(t => withSender.deepMerge(Json.obj("senderTeam" -> t.asJson)))
+      m.delivery.fold(withTeam)(d => withTeam.deepMerge(Json.obj("delivery" -> d.asJson)))
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -351,6 +369,7 @@ object UiMessage:
           eventType <- cursor.downField("eventType").as[Option[String]]
           sender <- cursor.downField("sender").as[Option[String]]
           senderTeam <- cursor.downField("senderTeam").as[Option[String]]
+          delivery <- cursor.downField("delivery").as[Option[String]]
         yield User(
           text,
           atts.getOrElse(Nil),
@@ -359,7 +378,8 @@ object UiMessage:
           source,
           eventType,
           sender,
-          senderTeam
+          senderTeam,
+          delivery
         )
       case "ai" =>
         for

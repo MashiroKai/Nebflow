@@ -8,15 +8,21 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.AgentCore
 import nebflow.agent.SharedResources
+import nebflow.core.AtomicJson
+import nebflow.core.Branding
 import nebflow.core.PathUtil
 import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
 import nebflow.core.skill.SkillService
+// FreezeScheduleConfig encoder givens (workSchedule runtime-authoritative PATCH)
+import nebflow.core.schedule.FreezeSchedule.given
+import nebflow.core.task.{FileTaskStore, TaskStore}
 import cats.effect.unsafe.implicits.global
-import nebflow.llm.NebflowServiceConfig
+import nebflow.llm.{HealthState, NebflowServiceConfig, SearchApiHealth}
 import nebflow.neblink.*
+import nebflow.neblink.FriendCodecs.given
 import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -41,14 +47,62 @@ class RestApiRoutes(
   neblinkService: Option[NeblinkService] = None,
   ttsService: Option[TtsService] = None,
   neblinkDiscovery: Option[nebflow.neblink.NeblinkDiscovery] = None,
-  gatewayPort: Int = 8080
+  gatewayPort: Int = 8080,
+  wsHub: WsHub = new WsHub
 ):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.rest-api")
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
-    // Health check
+    // Health check (P2-6 layered, 2026-08-25): `providers` = per-model health
+    // (up / down:<reason>), `search` = Tier 2a standalone search API health
+    // (unconfigured/up/down) — INDEPENDENT of model health, so "模型配额 DOWN
+    // 但搜索 API 正常" is visible at a glance. `status` stays "ok" while the
+    // gateway serves (the watchdog keys on HTTP 200).
     case GET -> Root / "health" =>
-      Ok(Json.obj("status" -> "ok".asJson, "version" -> nebflow.Version.string.asJson))
+      for
+        modelStates <- sharedResources.healthMonitor.getStates
+        searchHealth <- sharedResources.healthMonitor.getSearchHealth
+        providers = modelStates.map { case (k, st) =>
+          k -> (st match
+            case HealthState.Up              => "up"
+            case HealthState.Down(reason, _) => s"down: $reason")
+        }
+        search = searchHealth match
+          case SearchApiHealth.Unconfigured => Json.obj("status" -> "unconfigured".asJson)
+          case SearchApiHealth.Up           => Json.obj("status" -> "up".asJson)
+          case SearchApiHealth.Down(reason, since) =>
+            Json.obj("status" -> "down".asJson, "reason" -> reason.asJson, "since" -> since.asJson)
+        resp <- Ok(
+          Json.obj(
+            "product" -> "nebflow".asJson, // single-instance guard identification
+            "status" -> "ok".asJson,
+            "version" -> nebflow.Version.string.asJson,
+            "providers" -> providers.asJson,
+            "search" -> search
+          )
+        )
+      yield resp
+
+    // Token consumption dashboard aggregate (2026-08-18): structured LLM usage
+    // telemetry with dimension slicing.
+    //   dim=provider|model|agent|hour|day (absent = totals only)
+    //   from/to = epoch millis, inclusive lower / exclusive upper (both optional)
+    //   provider/model/agent = exact-match filters, applied before grouping
+    //     (dashboard D1: orthogonal to dim — all absent = unfiltered, and an
+    //     empty value is treated as absent for backward compatibility)
+    case req @ GET -> Root / "usage" / "aggregate" =>
+      withAuth(req) {
+        val params = req.uri.multiParams
+        val dim = params.get("dim").flatMap(_.headOption)
+        val from = params.get("from").flatMap(_.headOption).flatMap(_.toLongOption)
+        val to = params.get("to").flatMap(_.headOption).flatMap(_.toLongOption)
+        val provider = params.get("provider").flatMap(_.headOption).filter(_.nonEmpty)
+        val model = params.get("model").flatMap(_.headOption).filter(_.nonEmpty)
+        val agent = params.get("agent").flatMap(_.headOption).filter(_.nonEmpty)
+        sharedResources.usageRecordStore
+          .aggregate(dim, from, to, provider, model, agent)
+          .flatMap(agg => Ok(agg.asJson))
+      }
 
     // TTS 语音合成（无需 auth，内部调用）
     case req @ POST -> Root / "tts" =>
@@ -85,10 +139,39 @@ class RestApiRoutes(
         }
       }
 
-    // Session list
+    // Headless synchronous turn (P0 benchmark): send user text into a session
+    // and block until the turn completes, returning the final assistant
+    // message and tool trace. Logic lives in TurnEndpoint (testable);
+    // this route adds auth + session validation.
+    case req @ POST -> Root / "sessions" / sessionId / "turn" =>
+      withAuth(req) {
+        req.as[Json].flatMap { body =>
+          val content = body.hcursor.downField("content").as[String].getOrElse("")
+          val timeoutSec =
+            body.hcursor.downField("timeoutSec").as[Int].getOrElse(1800).min(7200).max(1)
+          if content.isEmpty then BadRequest(Json.obj("error" -> "content is required".asJson))
+          else
+            sessionStore.getSessionMeta(sessionId).flatMap {
+              case None => NotFound(Json.obj("error" -> s"session not found: $sessionId".asJson))
+              case Some(_) =>
+                TurnEndpoint.gated(sessionId) {
+                  TurnEndpoint.runTurn(
+                    wsHub, sessionStore, wsRoutes.dispatchUserText, sessionId, content, timeoutSec)
+                }
+            }
+        }
+      }
+
+    // Session list. `includeUnindexed=1` (search scope) unions in on-disk-only
+    // .ui.json sessions (delegate/subtask/dag sub-agents) that never enter the
+    // index. The sidebar consumes this endpoint WITHOUT the param and must stay
+    // index-only — that isolation is the reason this is a query param.
     case req @ GET -> Root / "sessions" =>
       withAuth(req) {
-        sessionStore.listSessions.flatMap { sessions =>
+        val list =
+          if req.params.get("includeUnindexed").contains("1") then sessionStore.listSessionsIncludeUnindexed
+          else sessionStore.listSessions
+        list.flatMap { sessions =>
           sessionStore.getActiveId.flatMap { activeId =>
             Ok(Json.obj("sessions" -> sessions.asJson, "activeId" -> activeId.asJson))
           }
@@ -110,8 +193,17 @@ class RestApiRoutes(
           val name = body.hcursor.downField("name").as[String].getOrElse("New Session")
           val agentName = body.hcursor.downField("agentName").as[Option[String]].getOrElse(None)
           val folderId = body.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
-          sessionStore.createSession(name, agentName = agentName, folderId = folderId).flatMap { meta =>
-            Ok(meta.asJson)
+          // F1 (#433): new sessions inherit the GLOBAL safety mode instead of
+          // the hardcoded confirm-edits — a global auto-all must reach e2e/
+          // temp/secondary sessions too, otherwise their permission buckets
+          // seed restrictive and background agents hit invisible walls.
+          nebflow.core.GlobalSafety.defaultMode.flatMap { mode =>
+            sessionStore
+              .createSession(name, agentName = agentName, folderId = folderId,
+                safetyMode = nebflow.core.SafetyMode.toString(mode))
+              .flatMap { meta =>
+                Ok(meta.asJson)
+              }
           }
         }
       }
@@ -137,13 +229,32 @@ class RestApiRoutes(
       withAuth(req) {
         req.as[Json].flatMap { body =>
           val cfgStr = body.hcursor.downField("config").as[String].getOrElse(body.noSpaces)
-          ConfigService.updateConfig(cfgStr).flatMap {
-            case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
-            case Right(_) =>
-              sharedResources.providerRegistry.reloadConfig().attempt.flatMap {
-                case Right(_) => logger.info("Config hot-reloaded via REST")
-                case Left(e) => logger.warn(s"Config hot-reload failed: ${e.getMessage}")
-              } *> Ok(Json.obj("updated" -> true.asJson))
+          // 冻结修复（2026-08-27）：runtime 热更键以内存 ref 为权威（镜像 WS
+          // updateConfig 分支）——PATCH 快照陈旧时不得回滚这些键。
+          (sharedResources.freezeScheduleRef.get,
+           sharedResources.thinkingConfigRef.get,
+           sharedResources.toolResultTtlRef.get).mapN { (wsCfg, thCfg, ttlCfg) =>
+            Map[String, io.circe.Json](
+              "workSchedule" -> wsCfg.asJson,
+              "thinkingConfig" -> thCfg.asJson,
+              "toolResultTtl" -> ttlCfg.asJson
+            )
+          }.flatMap { runtimeOverrides =>
+            ConfigService.updateConfig(cfgStr, runtimeOverrides).flatMap {
+              case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+              case Right(_) =>
+                sharedResources.providerRegistry
+                  .reloadConfig(Some(sharedResources.sessionModelOverrides))
+                  .attempt
+                  .flatMap {
+                    case Right(staleIds) =>
+                      // #33: keep the persisted session meta in sync (see
+                      // WebSocketRoutes updateConfig — same cleanup).
+                      staleIds.traverse_(id => sessionStore.updateSessionModel(id, None)) *>
+                        logger.info("Config hot-reloaded via REST")
+                    case Left(e) => logger.warn(s"Config hot-reload failed: ${e.getMessage}")
+                  } *> Ok(Json.obj("updated" -> true.asJson))
+            }
           }
         }
       }
@@ -182,17 +293,35 @@ class RestApiRoutes(
         req.as[Json].flatMap { body =>
           val providerId = body.hcursor.downField("providerId").as[String].getOrElse("")
           val modelId = body.hcursor.downField("modelId").as[String].getOrElse("")
-          val vision = body.hcursor.downField("vision").as[Boolean].getOrElse(false)
+          // B3 Phase 2: vision is tri-state — absent in the request body keeps
+          // the existing annotation instead of collapsing to false.
+          val visionOpt = body.hcursor.downField("vision").as[Option[Boolean]].toOption.flatten
           val capabilities = body.hcursor.downField("capabilities").as[List[String]].getOrElse(Nil)
           if providerId.nonEmpty && modelId.nonEmpty then
             val key = s"$providerId/$modelId"
             val current = nebflow.llm.ModelRegistry.loadForApi
             val updatedEntry = current.models.get(key) match
-              case Some(existing) => existing.copy(vision = vision, capabilities = capabilities)
-              case None => nebflow.llm.ModelRegistry.ModelEntry(vision = vision, capabilities = capabilities)
+              case Some(existing) =>
+                existing.copy(
+                  vision = visionOpt.orElse(existing.vision),
+                  capabilities = capabilities
+                )
+              case None =>
+                nebflow.llm.ModelRegistry.ModelEntry(
+                  vision = visionOpt,
+                  capabilities = capabilities
+                )
             val updatedModels = current.models + (key -> updatedEntry)
             nebflow.llm.ModelRegistry.save(updatedModels)
-            Ok(Json.obj("status" -> "ok".asJson))
+            // B3 restore semantics: an explicit vision=true annotation is user
+            // intent and outranks runtime auto-demotion — clear the in-memory
+            // override (and counters) too, otherwise effectiveVision stays
+            // false until restart (stripImages blocks any image-bearing
+            // success, so resetOnSuccess can never lift it).
+            val clearRuntime =
+              if visionOpt.contains(true) then nebflow.llm.EmptyCompletionTracker.shared.clearOverride(providerId, modelId)
+              else IO.unit
+            clearRuntime *> Ok(Json.obj("status" -> "ok".asJson))
           else BadRequest(Json.obj("error" -> "providerId and modelId required".asJson))
         }
       }
@@ -523,8 +652,10 @@ class RestApiRoutes(
 
     // ===== Device authorization flow (Tailscale-style) =====
 
-    // Start device flow: proxy to neblink-server's /api/device/code.
-    // Returns {deviceCode, userCode, verificationUri} for the frontend.
+    // Start device flow. Dual-mode (Logto stage 1): with a provider
+    // configured, start its RFC 8628 /oidc/device/auth; otherwise proxy to
+    // neblink-server's /api/device/code. Both map onto the same frontend
+    // contract {deviceCode, userCode, verificationUri, interval, expiresIn}.
     case req @ POST -> Root / "neblink" / "device-flow" / "start" =>
       if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
       else
@@ -532,19 +663,27 @@ class RestApiRoutes(
           case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
           case Some(ms) =>
             for
-              identity <- ms.identity
-              // The neblink-server URL: read from existing config, or use the
-              // public default. For device flow the server must be reachable
-              // from both the browser (for OAuth) and the device (for polling).
-              serverUrl <- neblinkServerUrl(None)
-              body = Json
-                .obj(
-                  "deviceId" -> identity.deviceId.asJson,
-                  "deviceName" -> identity.deviceName.asJson,
-                  "platform" -> identity.platform.asJson
-                )
-                .noSpaces
-              result <- proxyPost(serverUrl, "/api/device/code", body)
+              logto <- ms.neblinkConfig.map(_.logto)
+              result <- logto match
+                case Some(lc) =>
+                  LogtoDeviceFlow
+                    .start(LogtoDeviceFlow.jdkSend)(lc.endpoint, lc.clientId)
+                case None =>
+                  for
+                    identity <- ms.identity
+                    // The neblink-server URL: read from existing config, or use the
+                    // public default. For device flow the server must be reachable
+                    // from both the browser (for OAuth) and the device (for polling).
+                    serverUrl <- neblinkServerUrl(None)
+                    body = Json
+                      .obj(
+                        "deviceId" -> identity.deviceId.asJson,
+                        "deviceName" -> identity.deviceName.asJson,
+                        "platform" -> identity.platform.asJson
+                      )
+                      .noSpaces
+                    result <- proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.code, body)
+                  yield result
               resp <- result match
                 case Right(json) => Ok(json)
                 case Left(err) => BadRequest(Json.obj("error" -> s"Failed to start device flow: $err".asJson))
@@ -552,6 +691,11 @@ class RestApiRoutes(
 
     // Poll device flow: proxy to neblink-server's /api/device/token.
     // On success, persist the device credential + update config + hot-swap client.
+    // Poll device flow. Dual-mode (Logto stage 1): with a provider
+    // configured, poll its /oidc/token (RFC 8628 grant) and on success
+    // exchange the access token via /api/device/register; otherwise proxy to
+    // neblink-server's /api/device/token. Both success paths converge on the
+    // same persist-credential + hot-swap completion.
     case req @ POST -> Root / "neblink" / "device-flow" / "poll" =>
       if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
       else
@@ -570,47 +714,43 @@ class RestApiRoutes(
               case Some(ms) =>
                 for
                   resolvedUrl <- neblinkServerUrl(serverUrl)
-                  pollBody = Json.obj("deviceCode" -> deviceCode.asJson).noSpaces
-                  result <- proxyPost(resolvedUrl, "/api/device/token", pollBody)
+                  logto <- ms.neblinkConfig.map(_.logto)
+                  result <- logto match
+                    case Some(lc) =>
+                      LogtoDeviceFlow
+                        .pollOnce(LogtoDeviceFlow.jdkSend)(lc.endpoint, lc.clientId, deviceCode)
+                        .flatMap {
+                          case LogtoDeviceFlow.PollOutcome.Success(accessToken) =>
+                            ms.identity.flatMap { identity =>
+                              LogtoDeviceFlow
+                                .register(LogtoDeviceFlow.jdkSend)(
+                                  resolvedUrl,
+                                  accessToken,
+                                  identity.deviceId,
+                                  identity.deviceName,
+                                  identity.platform
+                                )
+                                .map {
+                                  case Right(json) => Right(json)
+                                  case Left(err)   => Left(err)
+                                }
+                            }
+                          // Pending (incl. slow_down, normalized) and terminal
+                          // failures surface as error strings exactly like the
+                          // legacy proxy path — the frontend's
+                          // authorization_pending polling contract is unchanged.
+                          case LogtoDeviceFlow.PollOutcome.Pending(err) =>
+                            IO.pure(Left(err))
+                          case LogtoDeviceFlow.PollOutcome.Failed(err) =>
+                            IO.pure(Left(err))
+                        }
+                    case None =>
+                      val pollBody = Json.obj("deviceCode" -> deviceCode.asJson).noSpaces
+                      proxyPost(resolvedUrl, nebflow.neblink.Protocol.DeviceApi.token, pollBody)
                   resp <- result match
                     case Right(json) =>
                       // Success — persist credential + update config + hot-swap.
-                      val deviceToken = json.hcursor.downField("deviceToken").as[String].toOption
-                      val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
-                      // Extract user info from neblink-server response (if available).
-                      val avatarUrl = json.hcursor.downField("avatarUrl").as[Option[String]].toOption.flatten
-                      // neblink-server serializes github_username as "githubUsername" (camelCase)
-                      val githubLogin = json.hcursor.downField("githubUsername").as[Option[String]].toOption.flatten
-                      deviceToken match
-                        case Some(tok) =>
-                          for
-                            identity <- ms.identity
-                            cred = DeviceCredential(resolvedUrl, networkId, identity.deviceId, tok)
-                            _ <- DeviceCredential.save(cred)
-                            newConfig = NeblinkServerConfig(
-                              url = resolvedUrl,
-                              networkId = networkId,
-                              secret = "",
-                              deviceToken = Some(tok)
-                            )
-                            _ <- ms.updateConfig(cfg => cfg.copy(enabled = true, neblinkServer = Some(newConfig)))
-                            // Hot-swap the client in the discovery service.
-                            _ <- neblinkDiscovery
-                              .fold(IO.unit)(d => d.setClient(Some(new NeblinkClient(newConfig, gatewayPort))))
-                            // Trigger immediate re-discovery.
-                            _ <- ms.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
-                            // Persist GitHub user info (avatar + login) from server response.
-                            _ <- ms.updateDeviceInfo(avatarUrl = avatarUrl, githubLogin = githubLogin)
-                            r <- Ok(
-                              Json.obj(
-                                "ok" -> true.asJson,
-                                "networkId" -> networkId.asJson
-                              )
-                            )
-                          yield r
-                        case None =>
-                          BadRequest(Json.obj("error" -> "Server did not return a device token".asJson))
-                      end match
+                      completeDeviceEnrollment(ms, resolvedUrl, json)
                     case Left(err) =>
                       // authorization_pending is expected during polling — pass through.
                       BadRequest(Json.obj("error" -> err.asJson))
@@ -807,7 +947,144 @@ class RestApiRoutes(
             }
       }
 
+    // ===== A2A 好友与消息端点（spec §6.1 客户端 UI 代理层） =====
+    // 全部经 FriendService → NeblinkClient 代理到 neblink-server（Bearer device
+    // session token）。friendService 仅在 NebLink Server 配置时存在。
+
+    /** 好友列表 + 双向 pending 请求。 */
+    case req @ GET -> Root / "friends" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            fs.refreshFriends().flatMap(resp => Ok(resp.asJson))
+      }
+
+    /** 待处理请求分组（incoming / outgoing）。 */
+    case req @ GET -> Root / "friends" / "requests" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            fs.refreshFriends().flatMap { resp =>
+              Ok(Json.obj(
+                "incoming" -> resp.incoming.asJson,
+                "outgoing" -> resp.outgoing.asJson
+              ))
+            }
+      }
+
+    /** 发好友请求（按 NebLink 号寻址）。body: {query, note?} */
+    case req @ POST -> Root / "friends" / "requests" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.as[Json].flatMap { body =>
+              val query = body.hcursor.downField("query").as[String].getOrElse("")
+              val note = body.hcursor.downField("note").as[Option[String]].toOption.flatten
+              if query.isEmpty then BadRequest(Json.obj("error" -> "Missing query".asJson))
+              else
+                fs.sendFriendRequest(query, note).flatMap(friendResult)
+            }
+      }
+
+    case req @ POST -> Root / "friends" / "requests" / requestId / "accept" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) => fs.acceptFriendRequest(requestId).flatMap(friendResult)
+      }
+
+    case req @ POST -> Root / "friends" / "requests" / requestId / "decline" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) => fs.declineFriendRequest(requestId).flatMap(friendResultRaw)
+      }
+
+    /** 发消息给好友（用户身份——UI 输入框直发，无 agent 权限档位）。body: {body} */
+    case req @ POST -> Root / "friends" / friendUserId / "messages" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.as[Json].flatMap { body =>
+              val text = body.hcursor.downField("body").as[String].getOrElse("")
+              if text.isEmpty then BadRequest(Json.obj("error" -> "Missing body".asJson))
+              else fs.sendAsUser(friendUserId, text).flatMap(friendResult)
+            }
+      }
+
+    /** 删除好友。 */
+    case req @ DELETE -> Root / "friends" / friendUserId =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) => fs.removeFriend(friendUserId).flatMap(friendResultRaw)
+      }
+
+    /** 会话列表（按 last_message_id 倒序，含 unreadCount）。 */
+    case req @ GET -> Root / "conversations" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            fs.refreshConversations().flatMap(convs => Ok(convs.asJson))
+      }
+
+    /** keyset 分页拉消息。?after=N&limit=N */
+    case req @ GET -> Root / "conversations" / conversationId / "messages" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            val after = req.params.get("after").flatMap(_.toLongOption).getOrElse(0L)
+            val limit = req.params.get("limit").flatMap(_.toIntOption).getOrElse(50)
+            fs.listMessages(conversationId, after, limit).flatMap(r => friendResult(r.map(_.asJson)))
+      }
+
+    /** 标记已读。body: {lastReadMessageId} */
+    case req @ POST -> Root / "conversations" / conversationId / "read" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.as[Json].flatMap { body =>
+              val lastRead = body.hcursor.downField("lastReadMessageId").as[Long].getOrElse(-1L)
+              if lastRead < 0 then BadRequest(Json.obj("error" -> "Missing lastReadMessageId".asJson))
+              else fs.markRead(conversationId, lastRead).flatMap(friendResultRaw)
+            }
+      }
+
+    /** 查号（精确匹配 neblink_id，大小写不敏感）。?q=... */
+    case req @ GET -> Root / "users" / "lookup" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.params.get("q") match
+              case None | Some("") => BadRequest(Json.obj("error" -> "Missing q".asJson))
+              case Some(q)         => fs.lookupUser(q).flatMap(friendResult)
+      }
+
   }
+
+  /** Uniform A2A endpoint result mapping: upstream Left → 502 with error body. */
+  private def friendResult(result: Either[String, io.circe.Json]): IO[Response[IO]] =
+    result match
+      case Right(json) => Ok(json)
+      case Left(err)   => BadGateway(Json.obj("error" -> err.asJson))
+
+  /** Raw-string upstream results (decline/remove/read): parse the body as JSON
+    * when possible, else wrap as {ok, message}. */
+  private def friendResultRaw(result: Either[String, String]): IO[Response[IO]] =
+    result match
+      case Right(body) =>
+        parser.parse(body) match
+          case Right(json) => Ok(json)
+          case Left(_)     => Ok(Json.obj("ok" -> true.asJson, "message" -> body.asJson))
+      case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
 
   /** Shared remote-update logic: P2P HTTP first, relay fallback. Used by REST + WS handlers. */
   private def doRemoteUpdate(
@@ -977,7 +1254,26 @@ class RestApiRoutes(
               val route: Json = node.onComplete match
                 case nebflow.core.entity.NodeRoute.Goto(t) => Json.fromString(t)
                 case nebflow.core.entity.NodeRoute.Return => Json.fromString("$return")
-                case nebflow.core.entity.NodeRoute.Switch(expr, cases, _) =>
+                case p: nebflow.core.entity.NodeRoute.Parallel =>
+                  Json.obj(
+                    "parallel" -> p.fan.asJson,
+                    "onFail" -> (p.onFail match
+                      case nebflow.core.entity.NodeRoute.OnFailMode.Collect => Json.fromString("collect")
+                      case _ => Json.fromString("abort")
+                    )
+                  )
+                case p: nebflow.core.entity.NodeRoute.ParallelDynamic =>
+                  Json.obj(
+                    "parallel" -> Json.obj(
+                      "slots" -> Json.fromString(p.slotField),
+                      "template" -> Json.fromString(p.template)
+                    ),
+                    "onFail" -> (p.onFail match
+                      case nebflow.core.entity.NodeRoute.OnFailMode.Collect => Json.fromString("collect")
+                      case _ => Json.fromString("abort")
+                    )
+                  )
+                case nebflow.core.entity.NodeRoute.Switch(expr, cases, _, _) =>
                   val casesObj = io.circe.JsonObject.fromIterable(cases.map { (k, v) =>
                     val target: String = v match
                       case nebflow.core.entity.NodeRoute.Goto(t) => t
@@ -1253,7 +1549,7 @@ class RestApiRoutes(
                       io.circe.parser.parse(json) match
                         case Right(parsed) =>
                           val updated = parsed.deepMerge(Json.obj("model" -> modelConfig.asJson))
-                          os.write.over(jsonPath, updated.noSpaces)
+                          AtomicJson.writeSync(jsonPath, updated.noSpaces)
                           true
                         case Left(_) => false
                     }.flatMap {
@@ -1295,7 +1591,7 @@ class RestApiRoutes(
                           parsed.asObject
                             .map(obj => Json.fromFields(obj.toMap.removed("preset")))
                             .getOrElse(parsed)
-                      os.write.over(jsonPath, updated.noSpaces)
+                      AtomicJson.writeSync(jsonPath, updated.noSpaces)
                       true
                     case Left(_) => false
                 }.flatMap {
@@ -1332,7 +1628,7 @@ class RestApiRoutes(
                       val merged = parsed
                         .deepMerge(skillsOpt.toOption.map(s => Json.obj("skills" -> s.asJson)).getOrElse(Json.obj()))
                         .deepMerge(flowsOpt.toOption.map(f => Json.obj("flows" -> f.asJson)).getOrElse(Json.obj()))
-                      os.write.over(jsonPath, merged.noSpaces)
+                      AtomicJson.writeSync(jsonPath, merged.noSpaces)
                       true
                     case Left(_) => false
                 }.flatMap {
@@ -1364,18 +1660,21 @@ class RestApiRoutes(
       for
         flows <- EntityLoader.listFlows()
         entries = flows.values.toList.sortBy(_.name).map { f =>
-          val edges = f.nodes.toList.flatMap { (nodeId, node) =>
+          val edges = f.nodes.toList.sortBy(_._1).flatMap { (nodeId, node) =>
             node.onComplete match
               case NodeRoute.Goto(target) => List((nodeId, target, None))
               case NodeRoute.Return => List((nodeId, "$return", None))
-              case NodeRoute.Switch(_, cases, _) =>
+              case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, None))
+              case p: NodeRoute.ParallelDynamic => List((nodeId, p.template, None))
+              case NodeRoute.Switch(_, cases, _, _) =>
                 cases.toList.map { (cond, route) =>
-                  val target = route match
-                    case NodeRoute.Goto(t) => t
-                    case NodeRoute.Return => "$return"
-                    case _ => "?"
-                  (nodeId, target, Some(cond))
-                }
+                  route match
+                    case NodeRoute.Goto(t)     => List((nodeId, t, Some(cond)))
+                    case NodeRoute.Return      => List((nodeId, "$return", Some(cond)))
+                    case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, Some(cond)))
+                    case p: NodeRoute.ParallelDynamic => List((nodeId, p.template, Some(cond)))
+                    case _                     => List((nodeId, "?", Some(cond)))
+                }.flatten
           }
           Json.obj(
             "name" -> f.name.asJson,
@@ -1569,6 +1868,39 @@ class RestApiRoutes(
         else migrateLegacyModels(agentNames)
       }
 
+    // ===== Provider model discovery =====
+
+    // POST /provider/models — fetch a provider's model list (GET {baseUrl}models)
+    // so the settings dialog can auto-populate model ids instead of hand-typing
+    // them. Body: {baseUrl, apiKey?, protocol?, name?}. When apiKey is absent or
+    // the masked "***" (edit dialog), the stored key of provider `name` is used.
+    // Best-effort: any failure returns 502 + message; the frontend falls back to
+    // manual entry (失败降级).
+    case req @ POST -> Root / "provider" / "models" =>
+      withAuth(req) {
+        req.as[Json].flatMap { body =>
+          val baseUrl = body.hcursor.downField("baseUrl").as[String].getOrElse("").trim
+          val protocol = body.hcursor.downField("protocol").as[String].getOrElse("anthropic")
+          val name = body.hcursor.downField("name").as[String].toOption.filter(_.nonEmpty)
+          if baseUrl.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: baseUrl".asJson))
+          else
+            checkHttpUrl(baseUrl) match
+              case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+              case Right(modelsUrl) =>
+                configRef.get.flatMap { cfg =>
+                  val rawKey = body.hcursor.downField("apiKey").as[String].toOption.map(_.trim).getOrElse("")
+                  val apiKey =
+                    // Masked key from the edit dialog — fall back to the stored one.
+                    if rawKey.nonEmpty && rawKey != "***" then rawKey
+                    else name.flatMap(n => cfg.llm.providers.get(n).map(_.apiKey)).getOrElse("")
+                  fetchProviderModels(modelsUrl, apiKey, protocol).flatMap {
+                    case Right(models) => Ok(Json.obj("models" -> models.asJson))
+                    case Left(err)    => BadGateway(Json.obj("error" -> err.asJson))
+                  }
+                }
+        }
+      }
+
     // ===== Daemon Management =====
 
     // GET /daemons — list all daemons with runtime state
@@ -1579,7 +1911,11 @@ class RestApiRoutes(
           case Some(svc) =>
             val store = new DaemonStore()
             store.load().flatMap { configs =>
-              svc.getStates(configs).flatMap { states =>
+              // Reconcile first: a daemons.json hot-edit (config removed /
+              // changed under a running entry) must stop the stale process NOW,
+              // not leave a ghost holding the port until the panel's stop can
+              // no longer reach it (id changed/removed → 404).
+              svc.reconcile(configs) *> svc.getStates(configs).flatMap { states =>
                 val cfgById = configs.map(c => c.id -> c).toMap
                 val statesJson = states.map { st =>
                   st.asJson.deepMerge(
@@ -1656,12 +1992,17 @@ class RestApiRoutes(
                   port = port
                 )
                 val store = new DaemonStore()
-                store.add(config).flatMap { _ =>
-                  // Auto-start if requested
-                  val startIO = if autoStart then svc.start(config).void.handleErrorWith(_ => IO.unit) else IO.unit
-                  startIO *> svc.getState(id).flatMap {
-                    case Some(state) => Ok(state.asJson)
-                    case None => Ok(config.asJson)
+                store.add(config).flatMap { updated =>
+                  // Reconcile: adding with an existing id replaces the config —
+                  // a running process of the OLD config must be stopped so the
+                  // port is free for the new one.
+                  svc.reconcile(updated) *> {
+                    // Auto-start if requested
+                    val startIO = if autoStart then svc.start(config).void.handleErrorWith(_ => IO.unit) else IO.unit
+                    startIO *> svc.getState(id).flatMap {
+                      case Some(state) => Ok(state.asJson)
+                      case None => Ok(config.asJson)
+                    }
                   }
                 }
               end if
@@ -1682,7 +2023,10 @@ class RestApiRoutes(
             // to delete the daemon, so daemons.json is updated regardless —
             // otherwise the entry reappears on the next GET /daemons.
             val store = new DaemonStore()
-            svc.stop(daemonId).timeout(15.seconds).handleErrorWith { e =>
+            // svc.remove (not stop): also drops the entry so the takeover
+            // fiber exits — stop alone would leave it probing and resurrect
+            // the deleted daemon once the port freed.
+            svc.remove(daemonId).timeout(15.seconds).handleErrorWith { e =>
               logger.warn(
                 s"Stop failed/timed out for daemon '$daemonId' during delete; removing config anyway: ${e.getMessage}"
               )
@@ -1818,7 +2162,7 @@ class RestApiRoutes(
                 val updated = json.asObject
                   .map(obj => Json.fromFields(obj.toMap.removed("preset")))
                   .getOrElse(json)
-                if updated != json then os.write.over(path, updated.noSpaces)
+                if updated != json then AtomicJson.writeSync(path, updated.noSpaces)
               case _ => ()
           case Left(_) => () // skip unparseable file
       }
@@ -1894,7 +2238,7 @@ class RestApiRoutes(
                   .map(obj => Json.fromFields(obj.toMap.removed("model")))
                   .getOrElse(json)
                 val updated = withoutModel.deepMerge(Json.obj("preset" -> presetName.asJson))
-                os.write.over(jsonPath, updated.noSpaces)
+                AtomicJson.writeSync(jsonPath, updated.noSpaces)
               case Left(_) => ()
           case None => ()
       }
@@ -1929,25 +2273,31 @@ class RestApiRoutes(
         // remains as defense-in-depth. Fall back to all agents when the team
         // definition is missing (legacy behavior).
         val memberNames = teamDefOpt.map(td => (td.lead :: td.members).toSet)
-        agents
-          .filter((name, _) => memberNames.forall(_.contains(name)))
-          .traverse { (agentName, sid) =>
-            nebflow.core.flow.TeamSessionRegistry.isBusy(sid).map { busy =>
-              Json.obj(
-                "name" -> agentName.asJson,
-                "sessionId" -> sid.asJson,
-                "status" -> (if busy then "running" else "idle").asJson,
-                "manager" -> teamDefOpt.exists(_.lead == agentName).asJson
-              )
+        for
+          agentsJson <- agents
+            .filter((name, _) => memberNames.forall(_.contains(name)))
+            .traverse { (agentName, sid) =>
+              nebflow.core.flow.TeamSessionRegistry.isBusy(sid).map { busy =>
+                Json.obj(
+                  "name" -> agentName.asJson,
+                  "sessionId" -> sid.asJson,
+                  "status" -> (if busy then "running" else "idle").asJson,
+                  "manager" -> teamDefOpt.exists(_.lead == agentName).asJson
+                )
+              }
             }
-          }
-          .map { agentsJson =>
-            Json.obj(
-              "name" -> instanceName.asJson,
-              "type" -> "team".asJson,
-              "agents" -> agentsJson.asJson
-            )
-          }
+          // Team Manager task tool (#D 2026-08-25): the team panel renders a
+          // Tasks section from this array (flowTeams.js buildTasksSection,
+          // frontend phase-2 contract A1: id/subject/status/blockedBy/blocks).
+          // Read straight from the team task store directory (scope key
+          // "team:<name>") — empty array for teams with no tasks yet.
+          tasks <- FileTaskStore.list(TaskStore.teamScopeKey(instanceName))
+        yield Json.obj(
+          "name" -> instanceName.asJson,
+          "type" -> "team".asJson,
+          "agents" -> agentsJson.asJson,
+          "tasks" -> tasks.asJson
+        )
       }
     yield teamsList.asJson
 
@@ -2054,12 +2404,141 @@ class RestApiRoutes(
    * so direct LAN access works.
    */
   private def enrollWithServer(serverUrl: String, body: String): IO[Either[String, Json]] =
-    proxyPost(serverUrl, "/api/device/enroll", body)
+    proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.enroll, body)
+
+  /**
+   * SSRF guard for provider model discovery: only absolute http(s) URLs with a
+   * non-empty host are fetchable. Blocks other schemes (file:, jar:, ftp:...)
+   * and URLs the JDK client would resolve to something unexpected. Returns the
+   * fully-joined `{baseUrl}models` URL on success.
+   */
+  private def checkHttpUrl(baseUrl: String): Either[String, java.net.URI] =
+    try
+      val normalized = if baseUrl.endsWith("/") then baseUrl else baseUrl + "/"
+      val uri = java.net.URI.create(normalized + "models")
+      val scheme = Option(uri.getScheme).map(_.toLowerCase).getOrElse("")
+      val host = Option(uri.getHost).map(_.trim).getOrElse("")
+      if (scheme == "http" || scheme == "https") && host.nonEmpty then Right(uri)
+      else Left("baseUrl must be an absolute http(s) URL with a host")
+    catch case _: Exception => Left("Invalid baseUrl")
+
+  /**
+   * GET {baseUrl}models with protocol-specific auth headers and extract the
+   * model entries (both OpenAI-compatible and Anthropic reply
+   * `{"data":[{"id":..}]}`, normalized with empty ids removed and duplicates
+   * collapsed). Each entry is `{id}` plus `contextLength` when the provider
+   * reports one (OpenRouter `context_length`, others `context_window`) —
+   * absent/unparsable means the field is simply omitted. Uses the same JDK
+   * HttpClient posture as the LLM adapters: HTTP/1.1 forced, system proxy
+   * honored — a probe must see the same network path real completions take.
+   */
+  private def fetchProviderModels(
+    modelsUrl: java.net.URI,
+    apiKey: String,
+    protocol: String
+  ): IO[Either[String, List[Json]]] =
+    IO.blocking {
+      val client = java.net.http.HttpClient
+        .newBuilder()
+        .version(java.net.http.HttpClient.Version.HTTP_1_1)
+        .connectTimeout(java.time.Duration.ofSeconds(10))
+        .build()
+      val reqBuilder = java.net.http.HttpRequest
+        .newBuilder()
+        .uri(modelsUrl)
+        .timeout(java.time.Duration.ofSeconds(15))
+        .GET()
+      if protocol == "openai" then
+        if apiKey.nonEmpty then reqBuilder.header("Authorization", s"Bearer $apiKey")
+      else
+        // anthropic
+        reqBuilder.header("x-api-key", apiKey)
+        reqBuilder.header("anthropic-version", "2023-06-01")
+      try
+        val response = client.send(reqBuilder.build(), java.net.http.HttpResponse.BodyHandlers.ofString())
+        val status = response.statusCode()
+        if status >= 200 && status < 300 then
+          parser.parse(response.body()) match
+            case Right(json) =>
+              val entries = json.hcursor
+                .downField("data")
+                .as[List[Json]]
+                .getOrElse(Nil)
+                .flatMap(j => j.hcursor.downField("id").as[String].toOption.map(_.trim).filter(_.nonEmpty).map(id => (id, j)))
+              // distinct by id, first occurrence wins
+              val seen = scala.collection.mutable.LinkedHashSet.empty[String]
+              val models = entries.collect { case (id, raw) if seen.add(id) =>
+                val ctx = List("context_length", "context_window")
+                  .flatMap(k => raw.hcursor.downField(k).as[Long].toOption)
+                  .headOption
+                ctx match
+                  case Some(n) => Json.obj("id" -> id.asJson, "contextLength" -> n.asJson)
+                  case None    => Json.obj("id" -> id.asJson)
+              }
+              if models.isEmpty then Left("Provider returned no models")
+              else Right(models)
+            case Left(err) => Left(s"Invalid JSON from provider: ${err.message}")
+        else
+          val detail = parser.parse(response.body()).toOption
+            .flatMap(_.hcursor.downField("error").downField("message").as[String].toOption)
+            .getOrElse(response.body().take(200))
+          Left(s"Provider returned HTTP $status: $detail")
+      catch case e: Exception => Left(e.getMessage)
+      end try
+    }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
 
   /**
    * Generic POST proxy to the NebLink Server. Returns the parsed JSON on
    * success (2xx) or an error message on failure. Bypasses the system proxy.
    */
+  /**
+    * Shared completion for BOTH device-flow paths (self-hosted token poll
+    * and Logto register): read the EnrollResponse fields, persist the
+    * credential, switch the config, hot-swap the client, and record the
+    * user's profile info.
+    */
+  private def completeDeviceEnrollment(
+    ms: NeblinkService,
+    resolvedUrl: String,
+    json: Json
+  ): IO[org.http4s.Response[IO]] =
+    val deviceToken = json.hcursor.downField("deviceToken").as[String].toOption
+    val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
+    // Extract user info from neblink-server response (if available).
+    val avatarUrl = json.hcursor.downField("avatarUrl").as[Option[String]].toOption.flatten
+    // neblink-server serializes github_username as "githubUsername" (camelCase)
+    val githubLogin = json.hcursor.downField("githubUsername").as[Option[String]].toOption.flatten
+    deviceToken match
+      case Some(tok) =>
+        for
+          identity <- ms.identity
+          cred = DeviceCredential(resolvedUrl, networkId, identity.deviceId, tok)
+          _ <- DeviceCredential.save(cred)
+          newConfig = NeblinkServerConfig(
+            url = resolvedUrl,
+            networkId = networkId,
+            secret = "",
+            deviceToken = Some(tok)
+          )
+          _ <- ms.updateConfig(cfg => cfg.copy(enabled = true, neblinkServer = Some(newConfig)))
+          // Hot-swap the client in the discovery service.
+          _ <- neblinkDiscovery
+            .fold(IO.unit)(d => d.setClient(Some(new NeblinkClient(newConfig, gatewayPort))))
+          // Trigger immediate re-discovery.
+          _ <- ms.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
+          // Persist GitHub user info (avatar + login) from server response.
+          _ <- ms.updateDeviceInfo(avatarUrl = avatarUrl, githubLogin = githubLogin)
+          r <- Ok(
+            Json.obj(
+              "ok" -> true.asJson,
+              "networkId" -> networkId.asJson
+            )
+          )
+        yield r
+      case None =>
+        BadRequest(Json.obj("error" -> "Server did not return a device token".asJson))
+  end completeDeviceEnrollment
+
   private def proxyPost(serverUrl: String, path: String, body: String): IO[Either[String, Json]] =
     IO.blocking {
       // Force HTTP/1.1 + bypass system proxy. The JDK HttpClient's HTTP/2
@@ -2113,7 +2592,8 @@ class RestApiRoutes(
           case Some(ms) =>
             ms.neblinkConfig.map(_.neblinkServer.map(_.url)).flatMap {
               case Some(url) => IO.pure(url)
-              case None => IO.pure("https://neblink.nebflow.space")
+              case None => IO.pure(Branding.serverUrl)
             }
-          case None => IO.pure("https://neblink.nebflow.space")
+          case None => IO.pure(Branding.serverUrl)
+
 end RestApiRoutes

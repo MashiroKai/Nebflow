@@ -697,6 +697,51 @@
   color: var(--color-frame-text);
 }
 
+/* STT 高级设置折叠面板（用户 2026-08-20 打回：默认收起，免费路径为默认）——
+   复用 settings-row 基线，chevron 旋转表达开合，无新增颜色 token。 */
+.stt-advance-toggle-row {
+  cursor: pointer;
+}
+.settings-collapse-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  color: var(--color-frame-text);
+}
+.settings-collapse-toggle .settings-label {
+  font-weight: 500;
+}
+.settings-collapse-chevron {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--color-frame-text-muted);
+  transition: transform 0.18s ease;
+}
+.settings-collapse-toggle[aria-expanded="true"] .settings-collapse-chevron {
+  transform: rotate(180deg);
+}
+.settings-collapse-body {
+  padding: 4px 0 6px;
+}
+.stt-key-configured {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgb(var(--sapphire));
+  border: 1px solid rgb(var(--sapphire) / 0.3);
+  border-radius: 999px;
+  vertical-align: 1px;
+}
+
 /* Toggle switch */
 .toggle {
   width: 36px;
@@ -720,6 +765,7 @@
   transition: left 0.2s;
 }
 .toggle.on::after { left: 18px; }
+.toggle.disabled { opacity: 0.45; pointer-events: none; }
 /* Config editor */
 .config-editor-wrap {
   margin-top: 8px;
@@ -806,18 +852,6 @@
   white-space: nowrap;
   line-height: 1.5;
 }
-/* Vision checkbox in edit modal */
-.cfg-model-vision-check {
-  font: 500 11px -apple-system, sans-serif;
-  color: var(--color-frame-text);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.cfg-model-vision-check input { margin: 0; cursor: pointer; }
 
 .cfg-card-header {
   display: flex;
@@ -1272,6 +1306,40 @@
   font-size: 13px;
   align-self: flex-start;
 }
+/* Provider model-list auto-fetch (B1): small ghost button + status line
+ * above the models list in the provider modal. */
+.cfg-fetch-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0 6px;
+}
+.cfg-fetch-models-btn {
+  background: none;
+  border: 1px solid var(--color-frame-border-light);
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.cfg-fetch-models-btn:hover:not(:disabled) {
+  border-color: rgba(91, 127, 191, 0.45);
+  color: rgb(91, 127, 191);
+}
+.cfg-fetch-models-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.cfg-fetch-status {
+  font-size: 11px;
+  color: var(--color-frame-text-muted);
+  min-width: 0;
+}
+.cfg-fetch-status.ok { color: var(--color-success); }
+.cfg-fetch-status.fail { color: var(--color-frame-text-muted); }
 .cfg-password-wrap {
   position: relative;
   display: flex;
@@ -1363,6 +1431,25 @@
   margin-left: 4px;
   white-space: nowrap;
 }
+
+/* ⑧ Orchestrator (Nebula) — group header + badge reuse the existing sapphire
+ * recipe (agent-mgr-avatar bg/color below), zero new color tokens.
+ * Spec: 20260824_entity-icons-visual-spec §5. */
+.agent-mgr-group-header.orchestrator {
+  display: flex; align-items: center; gap: 5px;
+  color: rgb(var(--sapphire));
+}
+.agent-mgr-group-header.orchestrator svg { flex-shrink: 0; }
+.agent-mgr-orchestrator-badge {
+  font: 500 9px -apple-system, sans-serif;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(91,127,191,0.10);
+  color: rgb(91,127,191);
+  margin-left: 4px;
+  white-space: nowrap;
+}
+.agent-mgr-avatar svg { display: block; }
 
 /* Compact sidebar cards (VSCode Extensions style) */
 .agent-mgr-card {
@@ -1712,6 +1799,12 @@
   margin-bottom: 4px;
 }
 .agent-detail-tools-config-label { margin-top: 8px; }
+/* #438: class-owned specialty group - a whisper of sapphire separates it from
+   the universal base group without adding any new color tokens. */
+.agent-detail-tools-specialty-label {
+  margin-top: 7px;
+  color: rgb(var(--sapphire) / 0.85);
+}
 /* ── Skills / Flows toggle chips (P4) ── */
 .agent-detail-sub-hint {
   font: 400 10px -apple-system, sans-serif;
@@ -1794,4 +1887,82 @@
   .agent-detail-model-row { background: rgba(255,255,255,0.03); }
   .agent-detail-prompt-edit { background: rgba(255,255,255,0.03); }
   .agent-detail-save-btn { background: rgba(255,255,255,0.03); }
+}
+
+/* ---------- Work-schedule (freeze) segment editor — freeze-spec §3.2 -------
+   Reuses the cfg-* variable system (surface chips, etched inputs). Zero new
+   color tokens. */
+.segment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.segment-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;      /* narrow panels: cross-midnight chip wraps to its own line */
+  row-gap: 4px;
+  background: var(--glass-etched-bg, rgba(128,128,128,0.06));
+  border: 1px solid var(--glass-etched-border, rgba(128,128,128,0.14));
+  border-radius: 8px;
+  padding: 6px 8px 6px 12px;
+}
+.segment-row .seg-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+/* Cross-midnight hint — a freeze segment whose start > end spans into the
+   next day (e.g. 23:00-08:00). Sapphire chip, same language as .frozen-status. */
+.seg-cross-midnight {
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.1);
+  border: 1px solid rgb(var(--sapphire) / 0.22);
+  border-radius: 6px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+.time-input {
+  width: 76px;
+  background: var(--glass-etched-bg);
+  color: var(--color-frame-input-text);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.time-input:focus {
+  border-color: rgb(var(--sapphire) / 0.6);
+  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
+}
+.seg-remove {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.seg-remove:hover {
+  color: var(--color-error, #f44336);
+  background: var(--color-frame-hover);
+}
+.seg-remove:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
 }

@@ -1,0 +1,134 @@
+{
+  "generatedBy": "scripts/check-js-types.mjs --update",
+  "total": 351,
+  "files": {
+    "src/main/resources/web/js/activityBar.js": {
+      "TS2345": 1,
+      "TS2339": 9
+    },
+    "src/main/resources/web/js/agentManager.js": {
+      "TS2339": 4
+    },
+    "src/main/resources/web/js/bgAgentPopup.js": {
+      "TS2339": 1
+    },
+    "src/main/resources/web/js/canvas.js": {
+      "TS2339": 8
+    },
+    "src/main/resources/web/js/cardRegistry.js": {
+      "TS2339": 8,
+      "TS2322": 1
+    },
+    "src/main/resources/web/js/chat.js": {
+      "TS2339": 6,
+      "TS2345": 2,
+      "TS1016": 1,
+      "TS2525": 3
+    },
+    "src/main/resources/web/js/chatQueue.js": {
+      "TS2739": 1,
+      "TS2339": 1
+    },
+    "src/main/resources/web/js/colResizer.js": {
+      "TS2339": 2
+    },
+    "src/main/resources/web/js/daemons.js": {
+      "TS2339": 7,
+      "TS2345": 1
+    },
+    "src/main/resources/web/js/dropbox.js": {
+      "TS2339": 10
+    },
+    "src/main/resources/web/js/explorer.js": {
+      "TS2339": 31,
+      "TS2554": 2
+    },
+    "src/main/resources/web/js/flowAgentPopup.js": {
+      "TS2339": 1
+    },
+    "src/main/resources/web/js/flowCanvas.js": {
+      "TS2339": 9
+    },
+    "src/main/resources/web/js/flowDag.js": {
+      "TS2339": 3
+    },
+    "src/main/resources/web/js/flowHelpers.js": {
+      "TS2345": 1,
+      "TS2339": 3
+    },
+    "src/main/resources/web/js/flowList.js": {
+      "TS2339": 1
+    },
+    "src/main/resources/web/js/flowViewers.js": {
+      "TS2339": 5
+    },
+    "src/main/resources/web/js/i18n.js": {
+      "TS2339": 5
+    },
+    "src/main/resources/web/js/input.js": {
+      "TS2339": 8,
+      "TS2353": 1
+    },
+    "src/main/resources/web/js/lightbox.js": {
+      "TS2339": 1
+    },
+    "src/main/resources/web/js/main.js": {
+      "TS2339": 16,
+      "TS2554": 3,
+      "TS2345": 1
+    },
+    "src/main/resources/web/js/memory.js": {
+      "TS2339": 8
+    },
+    "src/main/resources/web/js/modal.js": {
+      "TS2339": 7
+    },
+    "src/main/resources/web/js/monacoEditor.js": {
+      "TS2339": 11,
+      "TS2349": 2
+    },
+    "src/main/resources/web/js/neblink.js": {
+      "TS2339": 10
+    },
+    "src/main/resources/web/js/notificationBanner.js": {
+      "TS2304": 1,
+      "TS1005": 1,
+      "TS2339": 1
+    },
+    "src/main/resources/web/js/onboarding.js": {
+      "TS2339": 1
+    },
+    "src/main/resources/web/js/planMode.js": {
+      "TS2339": 1
+    },
+    "src/main/resources/web/js/scheduled-task.js": {
+      "TS2362": 1,
+      "TS2363": 1,
+      "TS2339": 8
+    },
+    "src/main/resources/web/js/sidebar.js": {
+      "TS2339": 108,
+      "TS2345": 1
+    },
+    "src/main/resources/web/js/taskArchive.js": {
+      "TS2339": 1,
+      "TS2362": 3,
+      "TS2363": 3
+    },
+    "src/main/resources/web/js/viewers/docx.js": {
+      "TS2339": 4
+    },
+    "src/main/resources/web/js/viewers/html.js": {
+      "TS2339": 2
+    },
+    "src/main/resources/web/js/viewers/shared.js": {
+      "TS2339": 13
+    },
+    "src/main/resources/web/js/viewers/xlsx.js": {
+      "TS2339": 4
+    },
+    "src/main/resources/web/js/voiceEngine.js": {
+      "TS2339": 2
+    }
+  }
+}

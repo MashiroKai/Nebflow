@@ -1,9 +1,51 @@
+// ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
+// These are the cross-module data shapes other files should reference via
+// import('./state.js').<Name> in JSDoc, instead of re-declaring them ad hoc.
+
+// All storage keys are brand-namespaced via branding.js (rename-day
+// migration lives there too, as a module-init side effect ordered first in
+// main.js so it runs before the reads below).
+import { key } from './branding.js';
+
+/**
+ * A chat session as returned by /api/sessions and the sessionList WS event.
+ * @typedef {Object} Session
+ * @property {string} id
+ * @property {string} [title]
+ * @property {string} [name]
+ * @property {string} [agentName]
+ * @property {string|null} [folderId]
+ * @property {number} [createdAt] - epoch ms
+ * @property {number} [updatedAt] - epoch ms
+ * @property {boolean} [enabled]
+ * @property {boolean} [hasUnread]
+ */
+
+/**
+ * Background sub-agent row tracked in sessionBgAgents.
+ * @typedef {Object} BgAgent
+ * @property {string} name
+ * @property {string} [task]
+ * @property {string} [currentTool]
+ * @property {boolean} [done]
+ */
+
+/**
+ * Per-session model info (sessionModelInfo map values).
+ * @typedef {Object} SessionModelInfo
+ * @property {string} model
+ * @property {number} [contextWindow]
+ * @property {number} [inputTokens]
+ * @property {number} [outputTokens]
+ * @property {number} [compactThreshold]
+ */
+
 // Constants
-export const LS_KEY = 'nebflow_v3';
-export const LS_SESSIONS_KEY = 'nebflow_sessions';
-export const LS_HISTORY_KEY = 'nebflow_input_history';
-export const LS_DRAFTS_KEY = 'nebflow_input_drafts';
-export const LS_MODEL_INFO_KEY = 'nebflow_model_info';
+export const LS_KEY = key('v3');
+export const LS_SESSIONS_KEY = key('sessions');
+export const LS_HISTORY_KEY = key('input_history');
+export const LS_DRAFTS_KEY = key('input_drafts');
+export const LS_MODEL_INFO_KEY = key('model_info');
 export const AGENT_PALETTE = ['#6C8EBF', '#D4A574', '#82B366', '#B5739D', '#9678B6', '#D6B656'];
 
 function safeParse(json, fallback) {
@@ -21,14 +63,16 @@ export default {
   // Session
   activeSessionId: null,
   activeFolderId: null,
+  // Autostart status from backend (autostartStatusResult): {enabled, supported, reason}
+  autostartStatus: null,
   sessions: [],
   folders: [],
-  expandedFolders: new Set(safeParse(localStorage.getItem('nebflow_expanded_folders'), [])),
-  unreadSessions: new Set(safeParse(localStorage.getItem('nebflow_unread'), [])),
-  markedUnreadSessions: new Set(safeParse(localStorage.getItem('nebflow_marked_unread'), [])),
-  pinnedSessions: new Set(safeParse(localStorage.getItem('nebflow_pinned'), [])),
+  expandedFolders: new Set(safeParse(localStorage.getItem(key('expanded_folders')), [])),
+  unreadSessions: new Set(safeParse(localStorage.getItem(key('unread')), [])),
+  markedUnreadSessions: new Set(safeParse(localStorage.getItem(key('marked_unread')), [])),
+  pinnedSessions: new Set(safeParse(localStorage.getItem(key('pinned')), [])),
   foldersWithRules: new Set(),
-  pinnedFolders: new Set(safeParse(localStorage.getItem('nebflow_pinned_folders'), [])),
+  pinnedFolders: new Set(safeParse(localStorage.getItem(key('pinned_folders')), [])),
   attentionSessions: new Set(),
   /** Tracks sessions whose askPermission has been answered by the user.
    *  Prevents re-creating interactive permission prompts on session switch-back
@@ -40,15 +84,34 @@ export default {
   // Per-session safety mode: "confirm-edits" | "auto-edits" | "auto-all"
   safetyModes: {},  // sessionId → mode string
 
-  // Chat streaming (per-session status sets — view-level state lives on ChatView)
+  // Chat streaming (per-session status sets - view-level state lives on ChatView)
   busySessionIds: new Set(),
   sessionBusyTimeouts: {},
   compactingSessionIds: new Set(),
+  // Freeze schedule: sessionId set whose agent is parked at a dispatch boundary
+  // (work hours ended after a tool round). Sending a message to a frozen session
+  // bypasses client-side queueing and wakes the agent (freeze-schedule spec §3.2).
+  frozenSessions: new Set(),
+  // serverConfig echo of the workSchedule node: { enabled, segments:[{start,end}] }
+  workSchedule: null,
+  // Error recovery (frozen-error-recovery plan §4): per-session state for the
+  // amber "error family". sessionId -> { reason, retryCount, detail, resumeAt,
+  // escalation? }. Distinct from frozenSessions (which is the park set for both
+  // schedule and error — error entries ALSO set frozenSessions so the exempt
+  // F5/watcher semantics hold). reason is one of the FreezeReason wire names.
+  errorRecovery: {},
+  // serverConfig echo of the stt node: { sttConfigured, endpoint?, model? } — the
+  // apiKey is NEVER echoed (server-side only). null/absent = free browser path.
+  stt: null,
+  // Tool result TTL echo (#341): { enabled, ttlMinutes, keepRecent, minChars } —
+  // fetched via getToolResultTtl, refreshed by toolResultTtl/toolResultTtlSaved
+  // frames. null = not fetched yet (panel renders backend defaults).
+  toolResultTtl: null,
 
   // Timestamp of the last textDelta/thinkingDelta received (ms).
   lastStreamActivity: 0,
 
-  // Multi-agent (global color assignment — per-view bubbles live on ChatView)
+  // Multi-agent (global color assignment - per-view bubbles live on ChatView)
   agentColors: {},
   agentColorIdx: 0,
   activeDelegates: 0,
@@ -93,11 +156,11 @@ export default {
   sessionAgentMap: {},
 
   // Per-session input drafts: sessionId -> { text, attachments }
-  sessionInputDrafts: safeParse(localStorage.getItem('nebflow_input_drafts'), {}),
+  sessionInputDrafts: safeParse(localStorage.getItem(key('input_drafts')), {}),
 
   // Input (view-level state lives on ChatView; only global input state here)
   thinkingMode: null,
-  inputHistory: safeParse(localStorage.getItem('nebflow_input_history'), []),
+  inputHistory: safeParse(localStorage.getItem(key('input_history')), []),
   pendingDeleteId: null,
 
 
@@ -144,11 +207,17 @@ export default {
   // DOM refs (populated in main.js)
   dom: {},
 
+  // Active ChatView accessor - set once by chatView.js at module init. Lets
+  // utils.js / cardRegistry.js read the active view WITHOUT a static import
+  // of chatView.js (P2-4 cycle cut: chatView <-> cardRegistry <-> utils).
+  /** @type {null | (() => any)} */
+  getActiveView: null,
+
   // Background tasks update helper
   updateBgTasksUI: null,
 
   // Per-session model info: sessionId -> { model, contextWindow, inputTokens }
-  sessionModelInfo: safeParse(localStorage.getItem('nebflow_model_info'), {}),
+  sessionModelInfo: safeParse(localStorage.getItem(key('model_info')), {}),
   updateBypassToggle: null,
   updateSafetyToggle: null,
   COMPACT_THRESHOLD: 0.90,

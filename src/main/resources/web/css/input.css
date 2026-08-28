@@ -26,6 +26,11 @@
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
     0px 2px 8px rgba(0, 0, 0, 0.04),
     0px 8px 24px rgba(0, 0, 0, 0.06);
+  /* 2026-08-24 frozen-input spec §4: freeze/unfreeze material transition —
+     300ms Material standard easing on the three painted properties. */
+  transition: border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    background 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 #input-bar::before {
   content: '';
@@ -45,13 +50,213 @@
 }
 #input-wrap {
   flex: 1;
+  /* A flex item's default min-width:auto keeps its content's min-content
+     width. A reference block (.att-ref) inside #attachment-preview sets a
+     wide min-content, so #input-wrap refuses to shrink and the flex row
+     overflows — pushing #send-btn (flex-shrink:0) past the input-bar's
+     rounded right edge. min-width:0 lets the wrap shrink and the ref block
+     (max-width:100% + ellipsis) clip instead of overflowing. */
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
-/* Drag-over highlight on body indicates drop zone */
-body.drag-over #input-bar {
+/* Error-recovery strip (frozen-error-recovery plan §4.3 dims 2-5): icon +
+   reason + retry count + retry/abandon buttons, rendered inside the input
+   wrap above the textarea — the "input bar carries the state" carrier. Amber
+   glass, distinct from the quiet sapphire schedule tint. Shared by the main
+   input bar (#input-bar) and the popup input bar (.fa-input-bar). */
+.error-recovery-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 6px 6px;
+  font-size: 12px;
+  color: rgb(var(--amber) / 1);
+  user-select: none;
+}
+.error-recovery-strip .error-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: rgb(var(--amber));
+  animation: error-pulse 1.6s ease-in-out infinite;
+}
+.error-recovery-strip .error-recovery-text {
+  min-width: 0;
+  flex: 1;
+  color: var(--color-text);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.error-retry-btn,
+.error-abandon-btn {
+  pointer-events: auto;
+  font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  border-radius: 8px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.error-retry-btn {
+  background: rgb(var(--amber) / 0.16);
+  border: 1px solid rgb(var(--amber) / 0.45);
+  color: rgb(var(--amber));
+}
+.error-retry-btn:hover {
+  background: rgb(var(--amber) / 0.26);
+}
+.error-abandon-btn {
+  background: transparent;
+  border: 1px solid rgb(var(--color-error, 244 67 54) / 0.40);
+  color: var(--color-error, #f44336);
+}
+.error-abandon-btn:hover {
+  background: rgb(var(--color-error, 244 67 54) / 0.10);
+}
+@keyframes error-pulse {
+  0%, 100% { opacity: 0.75; transform: scale(1.0); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .error-recovery-strip .error-icon {
+    animation: none;
+  }
+  .error-retry-btn, .error-abandon-btn {
+    transition: none;
+  }
+}
+/* Drag-over highlight — the input bar being dragged over (#303).
+   Element-scoped: primary #input-bar + popup .fa-input-bar share the same
+   visual. (Formerly body.drag-over — the stuck-highlight bug came from a
+   body-level counter that never reset; now per-bar and delegation-managed.) */
+#input-bar.drag-over,
+.fa-input-bar.drag-over {
   outline: 2px dashed var(--color-primary);
   outline-offset: -2px;
+}
+/* Frozen "ice-sealed" input bar (2026-08-24 spec, user ruling: the bar itself
+   carries the frozen state — no standalone status row). Cold sapphire glass:
+   stronger tint + border, a 3px frost ring, a frost glow, and the refraction
+   line brightened to an ice edge. Frozen ≠ disabled: the field stays fully
+   editable and the send button keeps its green (send = wake). Zero new color
+   tokens — sapphire/sapphire-glow alpha variants only. */
+#input-bar.frozen,
+.fa-input-bar.frozen {
+  border-color: rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.10);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0 0 0 3px rgb(var(--sapphire) / 0.10),
+    0 0 18px rgb(var(--sapphire-glow) / 0.22),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+}
+#input-bar.frozen::before,
+.fa-input-bar.frozen::before {
+  background: linear-gradient(90deg,
+    transparent 10%,
+    rgb(var(--sapphire-glow) / 0.55) 50%,
+    transparent 90%
+  );
+}
+/* Ice-blue placeholder with a frost halo (text-shadow carries the "frosted
+   glass text" feel — blurring the glyphs themselves is forbidden). */
+#input-bar.frozen #input::placeholder,
+.fa-input-bar.frozen .fa-input::placeholder {
+  color: rgb(var(--sapphire) / 0.9);
+  text-shadow: 0 0 8px rgb(var(--sapphire-glow) / 0.35);
+}
+/* Skip-current-freeze button (08-25 ruling: "跳过本次" voids the current
+   freeze window; 22:28 amendment — minimal text button, lowest visual weight).
+   Shown ONLY while the input bar is schedule-frozen (.frozen, never the amber
+   error family). Restraint: a small sapphire text chip, no glass panel — the
+   whole bar is otherwise inert, so the one interactive control stays quiet. */
+.skip-freeze-btn {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: rgb(var(--sapphire));
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.skip-freeze-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+}
+.skip-freeze-btn:hover {
+  background: rgb(var(--sapphire) / 0.12);
+}
+.skip-freeze-btn:active {
+  background: rgb(var(--sapphire) / 0.2);
+}
+.skip-freeze-btn:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 2px;
+}
+#input-bar.frozen:not(.frozen-error) #skip-freeze-btn,
+.fa-input-bar.frozen:not(.frozen-error) #skip-freeze-btn {
+  display: inline-flex;
+}
+/* Frozen bar is fully inert (08-25 22:28): the textarea + mic/attach/send/stop
+   are disabled and dimmed, keeping the sapphire ice material readable. */
+#input-bar.frozen #input[disabled] {
+  color: rgb(var(--sapphire) / 0.6);
+}
+#input-bar.frozen #voice-btn[disabled],
+#input-bar.frozen #attach-btn[disabled],
+#input-bar.frozen #stop-btn[disabled] {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+#input-bar.frozen #send-btn[disabled] {
+  cursor: default;
+  pointer-events: none;
+}
+/* Error-recovery input bar (frozen-error-recovery plan §4.3 dim 1) — amber
+   family. Mirrors the .frozen structure EXACTLY (border/bg/ring/glow/edge/
+   transition) and swaps only the hue — the "同族" skeleton with an importable
+   hue difference. Applied alongside the error strip; the strip is the added
+   differentiation (icon + reason + retry/abandon buttons). */
+#input-bar.frozen-error,
+.fa-input-bar.frozen-error {
+  border-color: rgb(var(--amber) / 0.45);
+  background: rgb(var(--amber) / 0.10);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0 0 0 3px rgb(var(--amber) / 0.10),
+    0 0 18px rgb(var(--amber-glow) / 0.22),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+}
+#input-bar.frozen-error::before,
+.fa-input-bar.frozen-error::before {
+  background: linear-gradient(90deg,
+    transparent 10%,
+    rgb(var(--amber-glow) / 0.55) 50%,
+    transparent 90%
+  );
+}
+#input-bar.frozen-error #input::placeholder,
+.fa-input-bar.frozen-error .fa-input::placeholder {
+  color: rgb(var(--amber) / 0.95);
+  text-shadow: 0 0 8px rgb(var(--amber-glow) / 0.30);
 }
 #attachment-preview {
   display: flex;
@@ -73,6 +278,185 @@ body.drag-over #input-bar {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+/* v2 §5.2: task return reference chip — sapphire tint (distinct from the
+   grey .att-file), zero new color tokens (sapphire alpha variants only).
+   rgb(var(--sapphire) / a) form — the triplet is space-separated, rgba()
+   with a comma would be dropped as invalid. */
+.att-taskref {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgb(var(--sapphire) / 0.06);
+  border: 1px solid rgb(var(--sapphire) / 0.25);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--color-text);
+  position: relative;
+  max-width: 100%;                 /* never exceed the chips container (B13) */
+  animation: taskref-in 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes taskref-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.att-taskref-icon {
+  color: rgb(var(--sapphire));
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+.att-taskref-num {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.att-taskref-subject {
+  font-weight: 500;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;                    /* allow shrink → ellipsis on narrow view */
+  flex-shrink: 1;
+}
+.att-taskref-opinion {
+  color: var(--color-text-muted);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;                    /* allow shrink → ellipsis on narrow view */
+  flex-shrink: 1;
+  border-left: 1px solid rgb(var(--sapphire) / 0.2);
+  padding-left: 6px;
+}
+.att-taskref-opinion[hidden] {
+  display: none;
+}
+@media (prefers-color-scheme: dark) {
+  .att-taskref { background: rgb(var(--sapphire) / 0.10); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .att-taskref { animation: none; }
+  /* frozen spec §4: material transition compresses to ≤0.01s */
+  #input-bar, .fa-input-bar { transition-duration: 0.01s !important; }
+}
+
+/* ── 全局引用输入块（#303 v1.1 §3.5）: .att-ref 定高 36px 单行截断、⤢ 展开。
+   A1-A6 断言基准 —— 高度恒定、不随输入内容变长。沿用 .att-taskref 的 sapphire
+   tint 与视觉语言（零新增颜色 token），但卡片是固定 footprint（A1）。── */
+.att-ref {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;                  /* A1: 固定单行高，含边框 */
+  box-sizing: border-box;
+  max-width: 100%;
+  background: rgb(var(--sapphire) / 0.06);
+  border: 1px solid rgb(var(--sapphire) / 0.25);
+  border-radius: 8px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--color-text);
+  overflow: hidden;              /* A1 */
+  cursor: pointer;
+  position: relative;
+  animation: taskref-in 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.att-ref.expanded {
+  height: auto;                  /* A4: 展开态自己撑高至 ≤72px */
+  max-height: 72px;
+  align-items: flex-start;
+  overflow-y: auto;
+  padding: 6px 8px;
+}
+.att-ref-icon {
+  color: rgb(var(--sapphire));
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.att-ref-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.att-ref-label {
+  font-weight: 500;
+  max-width: 200px;
+  overflow: hidden;              /* A2 */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.att-ref-opinion {
+  color: var(--color-text-muted);
+  overflow: hidden;              /* A2 */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex-shrink: 1;
+  border-left: 1px solid rgb(var(--sapphire) / 0.2);
+  padding-left: 6px;
+}
+.att-ref-opinion:empty { display: none; }
+.att-ref-meta {
+  color: var(--color-text-muted);
+  overflow: hidden;              /* A2 */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  flex-shrink: 0;
+  max-width: 160px;
+  min-width: 0;
+}
+.att-ref.expanded .att-ref-body {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.att-ref.expanded .att-ref-opinion {
+  white-space: normal;           /* A4: 展开可换行 */
+  max-height: 40px;
+  overflow-y: auto;
+  border-left: none;
+  padding-left: 0;
+  flex-basis: 100%;
+}
+.att-ref.expanded .att-ref-meta {
+  flex-basis: 100%;
+}
+.att-ref-expand,
+.att-ref-remove {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+}
+.att-ref-expand:hover,
+.att-ref-remove:hover {
+  color: var(--color-text);
+  background: var(--color-frame-hover);
+}
+.att-ref-remove { color: var(--color-error); }
+.att-ref-remove:hover { color: var(--color-error); background: var(--glass-control-bg-hover); }
+@media (prefers-color-scheme: dark) {
+  .att-ref { background: rgb(var(--sapphire) / 0.10); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .att-ref { animation: none; }
 }
 .att-error {
   background: rgba(244, 67, 54, 0.12);
@@ -149,6 +533,182 @@ body.drag-over #input-bar {
 @keyframes voicePulse {
   0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(7,193,96,0.5); }
   50%      { transform: scale(1.12); box-shadow: 0 0 0 10px rgba(7,193,96,0); }
+}
+
+/* ============================================================================
+   Mic bubble (liquid orb) v8.2.2 — pure Orb, state = color + motion layering,
+   zero overlay layers, no text label (user rulings 2026-08-26 01:11 + 07:31;
+   spec mic-bubble-spec.md §10). Orb body = v7 transparent liquid material;
+   the 9-state colors are sapphire/violet family derived via hue/sat/lum
+   (WebGL shader) or filter (CSS orb). v8.2.2: the two error states
+   (mic-error red / frozen-error amber) go through the SAME WebGL crystalline
+   structure via palette uniforms; the CSS orb below is only the
+   WebGL-unavailable fallback. State class lives on .mic-orb-wrap; the orb +
+   ripple consume --orb-filter / --orb-glow / --orb-dot / --orb-inset.
+   ============================================================================ */
+.mic-orb-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  /* Orb base gradient (dark default); light theme overrides below. */
+  --orb-base: radial-gradient(120% 120% at 32% 28%, #b6cff5 0%, #8C7DD6 45%, #2f3d78 100%);
+}
+.micbubble {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.micbubble:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
+}
+.micbubble .orb-canvas,
+.micbubble .css-orb {
+  width: 48px;
+  height: 48px;
+  display: block;
+  border-radius: 50%;
+}
+
+/* Click ripple (v8.1, jarvis orb-ripple paradigm): 2px ring in the current
+   state's semantic color, scale 0.8->1.5 + opacity 0.6->0 over 0.8s. */
+.orb-ripple {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 2px solid var(--ripple, #78A0DC);
+  opacity: 0; pointer-events: none; z-index: 5;
+}
+.orb-ripple.go { animation: orb-ripple-anim 0.8s ease-out; }
+@keyframes orb-ripple-anim {
+  0% { transform: scale(0.8); opacity: 0.6; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+
+/* CSS liquid orb (WebGL-unavailable fallback only — v8.2.2: error states use
+   the WebGL palette path too). Base gradient + top highlight + thin
+   filaments, same family as v7 css-orb; v8.2.2 error-state crystallization:
+   --orb-bg uses the --orb-base structure and --orb-inset takes a same-family
+   shadow color (red/amber instead of the old blue-black shadow). */
+.css-orb.orb {
+  position: relative;
+  background: var(--orb-bg, var(--orb-base));
+  box-shadow:
+    inset 0 0 8px rgba(255,255,255,0.10),
+    inset -3px -5px 14px var(--orb-inset, rgba(20,26,60,0.30)),
+    0 0 16px var(--orb-glow, rgba(120,160,220,0.28)),
+    0 2px 8px rgba(0,0,0,0.22);
+  filter: var(--orb-filter, none);
+  transition: filter 0.7s ease, box-shadow 0.7s ease, background 0.7s ease;
+}
+.css-orb.orb::before {
+  content: "";
+  position: absolute; inset: 0; border-radius: 50%;
+  background:
+    radial-gradient(72% 62% at 50% 42%, rgba(255,255,255,0.07) 0%, transparent 62%),
+    radial-gradient(12% 9% at 62% 30%, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.20) 52%, transparent 78%);
+}
+.css-orb.orb::after {
+  content: "";
+  position: absolute; inset: 0; border-radius: 50%;
+  background:
+    radial-gradient(40% 30% at 34% 58%, rgba(255,255,255,0.14) 0%, transparent 62%),
+    radial-gradient(10% 8% at 28% 56%, rgba(255,255,255,0.34) 0%, transparent 72%),
+    radial-gradient(30% 22% at 52% 88%, rgba(120,160,220,0.20) 0%, transparent 70%),
+    radial-gradient(6% 6% at 64% 66%, rgba(255,255,255,0.42) 0%, transparent 78%);
+  mix-blend-mode: screen;
+  animation: css-orb-flow 9s ease-in-out infinite;
+}
+@keyframes css-orb-flow {
+  0%,100% { transform: translate(0,0) scale(1); opacity: 0.85; }
+  33% { transform: translate(6%,-5%) scale(1.06); opacity: 1; }
+  66% { transform: translate(-5%,6%) scale(0.97); opacity: 0.8; }
+}
+
+/* v8.1 (user ruling 08-26 07:31 "orb 下方不要文字了"): the 11.5px text label
+   is removed entirely — state = pure color + motion layering; screen readers
+   get the state from the button/css-orb aria-label (runtime t() text). */
+
+/* 9 states (dark default) — set the shared CSS vars on the wrap.
+   (--orb-dot doubles as the click-ripple color; v8.1 removed the text label,
+   so --orb-label is gone.) */
+.mic-orb-wrap.s-idle      { --orb-filter:none; --orb-glow:rgba(120,160,220,.30); --orb-dot:#78A0DC; }
+.mic-orb-wrap.s-listening { --orb-filter:hue-rotate(-18deg) saturate(1.08) brightness(1.07); --orb-glow:rgba(126,178,236,.34); --orb-dot:#7FB3EA; }
+.mic-orb-wrap.s-processing{ --orb-filter:hue-rotate(22deg) saturate(1.06) brightness(0.96); --orb-glow:rgba(139,134,216,.32); --orb-dot:#8B86D8; }
+.mic-orb-wrap.s-nebula    { --orb-filter:hue-rotate(34deg) saturate(1.16) brightness(1.06); --orb-glow:rgba(169,139,232,.36); --orb-dot:#A98BE8; }
+.mic-orb-wrap.s-bg        { --orb-filter:hue-rotate(8deg) saturate(0.80) brightness(0.94); --orb-glow:rgba(144,153,203,.28); --orb-dot:#9099CB; }
+.mic-orb-wrap.s-frozen    { --orb-filter:saturate(0.40) brightness(0.75); --orb-glow:rgba(126,136,162,.16); --orb-dot:#7E88A2; }
+.mic-orb-wrap.s-frozenerr { --orb-bg:radial-gradient(120% 120% at 32% 28%, #F0D9C0 0%, #C99A6E 48%, #5E4130 100%); --orb-inset:rgba(58,38,22,0.32); --orb-filter:none; --orb-glow:rgba(214,150,110,.30); --orb-dot:#B08468; }
+.mic-orb-wrap.s-micerr    { --orb-bg:radial-gradient(120% 120% at 32% 28%, #FADBD4 0%, #DE575C 48%, #7E262C 100%); --orb-inset:rgba(64,16,20,0.34); --orb-filter:none; --orb-glow:rgba(229,72,77,.40); --orb-dot:#E5484D; }
+.mic-orb-wrap.s-offline   { --orb-filter:saturate(0) brightness(0.88); --orb-glow:rgba(150,155,165,.14); --orb-dot:#8A8F98; }
+
+/* Action layering (v8.1 §10.3③ / v8.2 §10.5, CSS fallback family):
+   working states move, non-working states stay still. */
+/* L0 still: internal filaments frozen */
+.mic-orb-wrap.s-frozen .css-orb.orb::after,
+.mic-orb-wrap.s-frozenerr .css-orb.orb::after,
+.mic-orb-wrap.s-micerr .css-orb.orb::after,
+.mic-orb-wrap.s-offline .css-orb.orb::after { animation: none; }
+/* L2/L3 working: filament flow speed tiers */
+.mic-orb-wrap.s-listening .css-orb.orb::after { animation-duration: 4s; }
+.mic-orb-wrap.s-processing .css-orb.orb::after { animation-duration: 4.5s; }
+.mic-orb-wrap.s-nebula .css-orb.orb::after { animation-duration: 5s; }
+.mic-orb-wrap.s-bg .css-orb.orb::after { animation-duration: 7s; }
+
+/* Listening L3: restrained brightness pulse (replaces the ruled-out shake), ±6%. */
+.mic-orb-wrap.s-listening .css-orb.orb { animation: listen-pulse 1.6s ease-in-out infinite; }
+@keyframes listen-pulse {
+  0%,100% { filter: hue-rotate(-18deg) saturate(1.05) brightness(1.00); }
+  50% { filter: hue-rotate(-18deg) saturate(1.14) brightness(1.11); }
+}
+
+/* nebula-busy L3: glow rhythm pulse (halo radius 12->26px, 2.2s). */
+.mic-orb-wrap.s-nebula .css-orb.orb { animation: nebula-glow 2.2s ease-in-out infinite; }
+@keyframes nebula-glow {
+  0%,100% { box-shadow: inset 0 0 8px rgba(255,255,255,0.10), inset -3px -5px 14px var(--orb-inset, rgba(20,26,60,0.30)),
+    0 0 12px var(--orb-glow), 0 2px 8px rgba(0,0,0,0.22); }
+  50% { box-shadow: inset 0 0 10px rgba(255,255,255,0.14), inset -3px -5px 14px var(--orb-inset, rgba(20,26,60,0.30)),
+    0 0 26px var(--orb-glow), 0 2px 8px rgba(0,0,0,0.22); }
+}
+
+/* Frozen orb keeps its own cold color — do NOT apply the generic 0.4 disabled
+   dim on top of it (the label stays full-contrast; the orb shows frozen). */
+#input-bar.frozen #voice-btn[disabled] { opacity: 1; }
+
+@media (prefers-color-scheme: light) {
+  .mic-orb-wrap { --orb-base: radial-gradient(120% 120% at 32% 28%, #a6c0f0 0%, #8C7DD6 48%, #2a3766 100%); }
+  .mic-orb-wrap.s-idle      { --orb-glow:rgba(91,132,216,.16); --orb-dot:#5B84D8; }
+  .mic-orb-wrap.s-listening { --orb-glow:rgba(78,134,220,.18); --orb-dot:#4E86DC; }
+  .mic-orb-wrap.s-processing{ --orb-glow:rgba(106,104,200,.16); --orb-dot:#6A68C8; }
+  .mic-orb-wrap.s-nebula    { --orb-glow:rgba(143,106,214,.18); --orb-dot:#8F6AD6; }
+  .mic-orb-wrap.s-bg        { --orb-glow:rgba(96,106,168,.14); --orb-dot:#606AA8; }
+  .mic-orb-wrap.s-frozen    { --orb-glow:rgba(110,122,143,.12); --orb-dot:#6E7A8F; }
+  .mic-orb-wrap.s-frozenerr { --orb-inset:rgba(66,44,26,0.26); --orb-glow:rgba(190,130,95,.22); --orb-dot:#A8765A; }
+  .mic-orb-wrap.s-micerr    { --orb-bg:radial-gradient(120% 120% at 32% 28%, #F6CCC6 0%, #CE4448 52%, #762226 100%); --orb-inset:rgba(72,18,22,0.28); --orb-glow:rgba(201,54,58,.30); --orb-dot:#C9363A; }
+  .mic-orb-wrap.s-offline   { --orb-glow:rgba(128,133,142,.12); --orb-dot:#80858E; }
+  .mic-orb-wrap.s-listening .css-orb.orb { animation: listen-pulse-l 1.6s ease-in-out infinite; }
+  @keyframes listen-pulse-l {
+    0%,100% { filter: hue-rotate(-18deg) saturate(1.04) brightness(1.00); }
+    50% { filter: hue-rotate(-18deg) saturate(1.10) brightness(1.07); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .css-orb.orb, .css-orb.orb::after { animation-duration: 0.01s; animation-iteration-count: 1; }
+  .micbubble .orb-canvas, .micbubble .css-orb,
+  .css-orb.orb { transition-duration: 0.01s; }
+  .mic-orb-wrap.s-listening .css-orb.orb,
+  .mic-orb-wrap.s-nebula .css-orb.orb { animation: none; }
+  .orb-ripple { display: none; }
 }
 #send-btn {
   /* Light-green glass: semi-transparent tint over frosted backdrop */
@@ -622,6 +1182,56 @@ body.drag-over #input-bar {
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 2px 8px rgba(0, 0, 0, 0.20),
       0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  /* Frozen ice material — dark values (spec §5.1/§5.2) */
+  #input-bar.frozen,
+  .fa-input-bar.frozen {
+    border-color: rgb(var(--sapphire) / 0.50);
+    background: rgb(var(--sapphire) / 0.14);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0 0 0 3px rgb(var(--sapphire) / 0.14),
+      0 0 18px rgb(var(--sapphire-glow) / 0.30),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  #input-bar.frozen::before,
+  .fa-input-bar.frozen::before {
+    background: linear-gradient(90deg,
+      transparent 10%,
+      rgb(var(--sapphire-glow) / 0.40) 50%,
+      transparent 90%
+    );
+  }
+  #input-bar.frozen #input::placeholder,
+  .fa-input-bar.frozen .fa-input::placeholder {
+    color: rgb(var(--sapphire-glow) / 0.9);
+    text-shadow: 0 0 8px rgb(var(--sapphire-glow) / 0.45);
+  }
+  /* Error-recovery amber material — dark values (frozen-error-recovery §4.3) */
+  #input-bar.frozen-error,
+  .fa-input-bar.frozen-error {
+    border-color: rgb(var(--amber) / 0.52);
+    background: rgb(var(--amber) / 0.16);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0 0 0 3px rgb(var(--amber) / 0.16),
+      0 0 18px rgb(var(--amber-glow) / 0.30),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  #input-bar.frozen-error::before,
+  .fa-input-bar.frozen-error::before {
+    background: linear-gradient(90deg,
+      transparent 10%,
+      rgb(var(--amber-glow) / 0.42) 50%,
+      transparent 90%
+    );
+  }
+  #input-bar.frozen-error #input::placeholder,
+  .fa-input-bar.frozen-error .fa-input::placeholder {
+    color: rgb(var(--amber-glow) / 0.95);
+    text-shadow: 0 0 8px rgb(var(--amber-glow) / 0.40);
   }
   #input {
     color: #e0e2e5;

@@ -5,6 +5,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
 .explorer-header {
   padding: 10px 14px 4px;
@@ -82,7 +83,8 @@
 }
 
 /* ── Context Menu ── */
-.explorer-context-menu {
+.explorer-context-menu,
+.canvas-tab-context-menu {
   position: fixed;
   z-index: 5000;
   background: var(--glass-bg, rgba(255,255,255,0.92));
@@ -94,7 +96,8 @@
   padding: 4px;
   min-width: 120px;
 }
-.explorer-context-menu button {
+.explorer-context-menu button,
+.canvas-tab-context-menu button {
   display: block;
   width: 100%;
   text-align: left;
@@ -108,7 +111,8 @@
   border-radius: 4px;
   transition: background 0.1s;
 }
-.explorer-context-menu button:hover {
+.explorer-context-menu button:hover,
+.canvas-tab-context-menu button:hover {
   background: var(--color-hover, rgba(128,128,128,0.1));
 }
 .explorer-context-menu button.danger {
@@ -133,6 +137,15 @@
   background: rgba(128, 128, 128, 0.15);
   border-radius: 2px;
 }
+/* #303 E3: constant blank bottom drop area inside .explorer-root — guarantees a
+   visible "drop to move to root" landing zone even when the root list is full. */
+.explorer-root-drop-margin {
+  min-height: 24px;
+  flex-grow: 1;
+}
+.explorer-root-drop-margin.drop-target {
+  background: rgb(var(--sapphire) / 0.1);
+}
 
 /* ── Tree items ── */
 .explorer-item {
@@ -152,11 +165,107 @@
 .explorer-item:hover {
   background: rgba(128, 128, 128, 0.07);
 }
+
+/* ── Multi-select selection state (aligned with .session-item.selected) ── */
+.explorer-item.selected {
+  background: rgba(128, 128, 128, 0.08);
+}
+.explorer-item.selected .explorer-label {
+  color: var(--color-frame-text-bright);
+}
+.explorer-item.selected:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+/* ── Floating selection action bar (tree top, ≥2 items selected) ── */
+.explorer-selection-bar {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px 5px 12px;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.92));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
+  border: 1px solid var(--glass-border, var(--color-frame-border));
+  border-radius: 10px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.20), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  z-index: 100;
+  white-space: nowrap;
+  pointer-events: none; /* bar floats over top rows — don't block tree clicks */
+  animation: explorerBarIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes explorerBarIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.96); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+.explorer-selection-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-frame-text);
+}
+.explorer-selection-delete {
+  pointer-events: auto; /* only the button is clickable inside the bar */
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-error);
+  background: transparent;
+  border: 1px solid var(--glass-border, var(--color-frame-border));
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.explorer-selection-delete:hover {
+  background: var(--color-error);
+  color: var(--color-surface);
+}
+@media (prefers-color-scheme: dark) {
+  .explorer-selection-bar {
+    background: var(--glass-bg, rgba(28, 31, 39, 0.85));
+  }
+  .explorer-selection-delete:hover {
+    color: var(--color-text);
+  }
+}
 .explorer-item.explorer-file {
   color: var(--color-text-muted);
 }
 .explorer-item.explorer-file:hover {
   color: var(--color-text);
+}
+/* #303 internal drag: file rows are draggable into a chat input bar. */
+.explorer-item.explorer-file[draggable="true"] {
+  cursor: grab;
+}
+.explorer-item.explorer-file.dragging {
+  opacity: 0.45;
+}
+
+/* ── Drag-to-move: folder rows are draggable; folder rows + root blank area
+   are drop targets. Highlight = sapphire tint + inset ring (glass language,
+   no accent bars); invalid target = not-allowed cursor only. ── */
+.explorer-item.explorer-folder[draggable="true"] {
+  cursor: grab;
+}
+.explorer-item.explorer-folder.dragging {
+  opacity: 0.45;
+}
+.explorer-item.explorer-folder.drop-target {
+  background: rgb(var(--sapphire) / 0.14);
+  box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.45);
+  border-radius: 6px;
+}
+.explorer-root.drop-target {
+  box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.35);
+  border-radius: 8px;
+}
+.explorer-item.drop-invalid,
+.explorer-root.drop-invalid {
+  cursor: not-allowed;
 }
 .explorer-chevron {
   display: flex;
@@ -587,6 +696,52 @@ body.canvas-open #canvas-panel {
   transform: scale(1.05);
 }
 
+/* #303 B6: element-select toggle — same floating-glass style as the source
+   toggle, seated 8px to its left. */
+.canvas-ref-select {
+  position: absolute;
+  bottom: 16px;
+  right: 64px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  color: var(--color-text);
+  transition: all 0.2s ease;
+  opacity: 0.6;
+}
+.canvas-ref-select:hover {
+  background: var(--glass-control-bg-hover);
+  opacity: 1;
+  transform: scale(1.05);
+}
+/* Active (select mode engaged): sapphire-leaning accent tint */
+.canvas-ref-select.active {
+  opacity: 1;
+  color: var(--color-primary);
+  border-color: rgb(var(--sapphire) / 0.35);
+  background: rgb(var(--sapphire) / 0.12);
+}
+.canvas-ref-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+.canvas-ref-select:disabled:hover {
+  transform: none;
+  background: var(--glass-control-bg);
+}
+
 .canvas-md-scroll {
   position: absolute;
   inset: 0;
@@ -765,7 +920,7 @@ body.canvas-open #canvas-panel {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 16px;
+  padding: 16px 16px 0;
   gap: 10px;
   height: 100%;
 }
@@ -774,15 +929,27 @@ body.canvas-open #canvas-panel {
   color: var(--color-text-muted);
   opacity: 0.6;
 }
-.canvas-image-viewer img {
-  max-width: 100%;
-  height: auto;
+/* Zoom/pan viewport: overflow hidden, transform-driven (viewers/zoom.js). */
+.canvas-image-viewport {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none; /* let pointer events drive pan on touch */
+}
+.canvas-image-viewport.panning { cursor: grabbing; }
+.canvas-image-viewport img {
+  display: block;
+  max-width: none; /* natural size; visual size is transform scale */
   border-radius: 8px;
-  object-fit: contain;
+  transform-origin: 0 0;
+  will-change: transform;
   -webkit-user-drag: none; /* Safari: no native drag ghost (see draggable=false in viewImage) */
 }
 
-/* ── PDF viewer ── */
+/* ── PDF viewer (pdf.js canvas render, zoomable) ── */
 .canvas-pdf-viewer {
   width: 100%;
   height: 100%;
@@ -792,6 +959,62 @@ body.canvas-open #canvas-panel {
 .canvas-pdf-viewer iframe {
   flex: 1;
   border-radius: 0;
+}
+.pdf-loading {
+  padding: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.pdf-pages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+}
+.pdf-page {
+  background: #fff; /* PDFs are authored for paper — page canvas keeps white */
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+/* ── Shared viewer zoom bar (viewers/zoom.js) ── */
+.canvas-zoom-bar {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--glass-control-bg);
+  backdrop-filter: blur(var(--glass-blur, 12px)) saturate(1.15);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 12px)) saturate(1.15);
+  border: 1px solid var(--glass-control-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+.canvas-zoom-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 7px;
+}
+.canvas-zoom-btn svg { width: 14px; height: 14px; }
+.canvas-zoom-pct {
+  min-width: 40px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
 }
 
 /* ── XLSX viewer ── */

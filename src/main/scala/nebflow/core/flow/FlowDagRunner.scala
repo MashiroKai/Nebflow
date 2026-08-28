@@ -11,8 +11,8 @@ import nebflow.core.entity.{FlowDagDef, FlowDagExecutor}
 /**
  * One-shot actor that runs a Flow DAG and delivers the result to the caller.
  *
- *  Spawned by MailTool when a Mail targets a flow name that has a flow.json DAG.
- *  Executes the DAG (synchronous, node-by-node) and Mails the result back to
+ *  Spawned by FlowTriggerTool when an agent triggers a flow via the FlowTrigger tool.
+ *  Executes the DAG (synchronous, node-by-node) and delivers the result back to
  *  the calling agent via ImmediateInput. Stops itself after completion.
  */
 object FlowDagRunner:
@@ -27,16 +27,30 @@ object FlowDagRunner:
      * flow nodes inherit the caller's root session so their permission/AskUser
      * requests render in the same Nebula window and share its policy.
      */
-    rootSessionId: String = ""
+    rootSessionId: String = "",
+    // Structured trigger parameters (validated against flow.params schema by
+    // the caller); node inputs reference them via $params.<name>.
+    params: Map[String, Json] = Map.empty,
+    // #406: true for one-shot FlowExecute flows (inline DAG, no flows/ dir).
+    // Instance id uses the "inline-" prefix (frontend distinguishes dynamic
+    // runs) and node agents resolve from the global library only.
+    dynamic: Boolean = false,
+    // #407 (Q3): the sessionId of the agent that triggered the flow (not the
+    // root). RunningFlowRegistry.sessionId uses it to associate a running flow
+    // with its owner, so the Mail idle gate can detect "target has a flow in
+    // flight" across node gaps (serial node A done → B not yet started).
+    callerSessionId: String = ""
   )
 
   def apply(resources: SharedResources, wsSend: Option[Json => IO[Unit]]): Behavior[RunFlow] =
     Behaviors.receiveMessage:
-      case RunFlow(flowDef, taskInput, replyTo, rootSessionId) =>
-        val instanceId = s"flow-${flowDef.name.take(15)}-${java.util.UUID.randomUUID().toString.take(8)}"
+      case RunFlow(flowDef, taskInput, replyTo, rootSessionId, params, dynamic, callerSessionId) =>
+        val instanceId =
+          if dynamic then s"inline-${java.util.UUID.randomUUID().toString.take(8)}"
+          else s"flow-${flowDef.name.take(15)}-${java.util.UUID.randomUUID().toString.take(8)}"
         val parentAgentRef = Some(replyTo) // replyTo is the AgentRef of the agent that triggered the flow
         for
-          _ <- logger.info(s"Starting DAG execution for flow '${flowDef.name}' (instance: $instanceId)")
+          _ <- logger.info(s"Starting DAG execution for flow '${flowDef.name}' (instance: $instanceId${if dynamic then ", dynamic" else ""})")
           result <- FlowDagExecutor
             .execute(
               flowDef,
@@ -46,19 +60,28 @@ object FlowDagRunner:
               wsSend,
               instanceId,
               parentAgentRef,
-              rootSessionId
+              rootSessionId,
+              params,
+              dynamic,
+              callerSessionId
             )
-            .handleErrorWith(e => IO(logger.warn(s"FlowDagExecutor failed: ${e.getMessage}")).as(Left(e.getMessage)))
+            .handleErrorWith(e => logger.warn(s"FlowDagExecutor failed: ${e.getMessage}").as(Left(e.getMessage)))
           _ <- result match
             case Right(output) =>
               (replyTo ! AgentCommand.ImmediateInput(
                 s"[Flow '${flowDef.name}' completed]\n$output",
-                source = Some("flow")
+                source = Some("flow"),
+                // sender/eventType feed the injected-bubble source label:
+                // 'Flow · <flow name> · Completed' (373 — flow name was invisible).
+                eventType = Some("completed"),
+                sender = Some(flowDef.name)
               )).void
             case Left(err) =>
               (replyTo ! AgentCommand.ImmediateInput(
                 s"[Flow '${flowDef.name}' failed]\n$err",
-                source = Some("flow")
+                source = Some("flow"),
+                eventType = Some("failed"),
+                sender = Some(flowDef.name)
               )).void
         yield Behaviors.stopped
         end for

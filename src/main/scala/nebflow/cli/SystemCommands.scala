@@ -57,10 +57,10 @@ object UpdateCommand extends CliCommand:
             val script =
               if ctx.args.get("beta").contains("true") then
                 if isWindows then
-                  """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
-                else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
-              else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
-              else "curl -fsSL https://nebflow.space/install.sh | sh"
+                  """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.core.Branding.installPs1Url + """ | iex" """
+                else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh -s -- --beta"
+              else if isWindows then """powershell -Command "& { iwr """ + nebflow.core.Branding.installPs1Url + """ | iex }" """
+              else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh"
             val exitCode = script.!
             if exitCode == 0 then CliResult.text("Update completed")
             else CliResult.Error("Update failed", exitCode)
@@ -107,8 +107,8 @@ object UninstallCommand extends CliCommand:
         import sys.process.*
         val script =
           if System.getProperty("os.name").toLowerCase.contains("win") then
-            """powershell -Command "& { iwr https://nebflow.space/uninstall.ps1 | iex }" """
-          else "curl -fsSL https://nebflow.space/uninstall.sh | sh"
+            """powershell -Command "& { iwr """ + nebflow.core.Branding.uninstallPs1Url + """ | iex }" """
+          else "curl -fsSL " + nebflow.core.Branding.uninstallUrl + " | sh"
         val exitCode = script.!
         if exitCode == 0 then CliResult.text("Uninstall completed")
         else CliResult.Error("Uninstall failed", exitCode)
@@ -176,7 +176,7 @@ object StatusCommand extends CliCommand:
     def run(ctx: CliContext): IO[CliResult] =
       val pidOpt = nebflow.cli.ProcessManager.readPid()
       val running = pidOpt.exists(nebflow.cli.ProcessManager.isRunning)
-      val port = sys.env.get("NEBFLOW_GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
+      val port = nebflow.core.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
       if ctx.json then
         IO.pure(
           CliResult.Json(
@@ -222,7 +222,7 @@ object DoctorCommand extends CliCommand:
         val checks = scala.collection.mutable.ListBuffer.empty[Diagnostic]
         val fixes = scala.collection.mutable.ListBuffer.empty[String]
         val configDir = ctx.configDir
-        val configPath = configDir / "nebflow.json"
+        val configPath = nebflow.core.PathUtil.configJsonReadPath(configDir)
 
         // --- 1. Java ---
         val javaVer = sys.props.getOrElse("java.version", "unknown")
@@ -315,7 +315,7 @@ object DoctorCommand extends CliCommand:
         // --- 5. PID file / Gateway status ---
         val pidOpt = ProcessManager.readPid()
         val gatewayRunning = pidOpt.exists(ProcessManager.isRunning)
-        val port = sys.env.get("NEBFLOW_GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
+        val port = nebflow.core.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
         if gatewayRunning then checks += Diagnostic("Gateway", true, s"Running (pid=${pidOpt.get}, port=$port)", "")
         else
           // Stale PID file?

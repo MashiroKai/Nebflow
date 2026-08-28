@@ -38,7 +38,13 @@ case class ProviderConfig(
   baseUrl: String,
   apiKey: String,
   protocol: LlmProtocol,
-  models: List[ModelConfig] = Nil
+  models: List[ModelConfig] = Nil,
+  // Anthropic-protocol only: replay unsigned thinking blocks from assistant
+  // history back to the API. DeepSeek's Anthropic-compatible endpoint REQUIRES
+  // thinking blocks to be passed back in thinking mode (even without a
+  // signature), while real Anthropic REJECTS them without one. Defaults per
+  // providerId in ProviderRegistry; explicit config wins.
+  requireThinkingPassback: Option[Boolean] = None
 )
 
 object ProviderConfig:
@@ -83,19 +89,53 @@ object McpServerConfig:
 
   extension (cfg: McpServerConfig) def isEnabled: Boolean = cfg.enabled.getOrElse(true)
 
+/** Standalone search API config — the top-level `search` block of
+  * nebflow.json (Tier 2a, P2 2026-08-25). The schema existed but was unwired
+  * until P2: a paid search API is billed per call, SEPARATE from model token
+  * quotas, so a model-quota DOWN must not take search down with it.
+  *
+  *   "search": { "provider": "zhipu", "apiKey": "<existing zhipu key>",
+  *               "engine": "search_std", "baseUrl": "<optional override>",
+  *               "enabled": true }
+  *
+  * `provider` selects the adapter (zhipu / bocha); `apiKey` reuses the
+  * provider's existing key (zhipu: zero new key); `engine` picks the search
+  * tier (search_std ¥0.01/call / search_pro …); `baseUrl` overrides the
+  * endpoint (smoke tests point it at a local mock — the reason it exists);
+  * `enabled=false` or a missing/empty apiKey skips Tier 2a entirely (graceful
+  * degrade, existing users need zero migration). */
 case class SearchConfig(
   provider: String,
   apiKey: String,
   engine: Option[String] = None,
-  model: Option[String] = None
+  model: Option[String] = None,
+  baseUrl: Option[String] = None,
+  enabled: Option[Boolean] = None
 )
 
 object SearchConfig:
   given Decoder[SearchConfig] = deriveDecoder[SearchConfig]
 
+/** Stream watchdog thresholds override (flow-node supervision P3, 2026-08-26):
+  * llm.streamTimeouts { firstTokenSec, inactivitySec, noProgressSec } — each
+  * independently optional; None → Defaults. Applied at boot (LlmInterface
+  * .applyStreamTimeouts in GatewayMain); config changes take effect on restart. */
+case class StreamTimeoutsConfig(
+  firstTokenSec: Option[Int] = None,
+  inactivitySec: Option[Int] = None,
+  noProgressSec: Option[Int] = None
+)
+
+object StreamTimeoutsConfig:
+  given Decoder[StreamTimeoutsConfig] = deriveDecoder[StreamTimeoutsConfig]
+
 case class ServiceLlmConfig(
   providers: Map[String, ProviderConfig],
-  model: ModelChainConfig
+  /** #339 D-b：llm.model 已退役——默认模型唯一来源是 model-presets.json 的
+    * defaultPreset。Option 化的 schema 仅容忍存量文件的 llm.model 节（可解析
+    * 但被忽略；boot 迁移会播种成 preset 后原子剥离）。 */
+  model: Option[ModelChainConfig] = None,
+  streamTimeouts: Option[StreamTimeoutsConfig] = None
 )
 
 object ServiceLlmConfig:
@@ -130,15 +170,37 @@ case class NebflowServiceConfig(
   llm: ServiceLlmConfig,
   mcpServers: Option[Map[String, McpServerConfig]] = None,
   search: Option[SearchConfig] = None,
-  thinkingConfig: Option[ThinkingConfig] = None
+  thinkingConfig: Option[ThinkingConfig] = None,
+  // P0 阶段 3（2026-08-18）：TaskStuckWatcher 卡死判定阈值（ms）。
+  // None → Defaults.StuckThresholdMs（10min）。显式配置可收紧（测试/调试）。
+  stuckThresholdMs: Option[Long] = None,
+  /** 冻结调度（freeze-schedule，#337 黑名单语义）：顶层 workSchedule 节原样 JSON
+    * （键名保留前端契约，语义=冻结时段，支持跨午夜）——FreezeSchedule.load
+    * fail-safe 解析（非法配置视为关闭）。updateConfig 深合并保留未提及顶层键。 */
+  workSchedule: Option[io.circe.Json] = None,
+  /** Bash 卡死防护阈值（#391）：bashAutoBackgroundMs（默认 300s 转后台）、
+    * bashBackgroundHardTimeoutMs（默认 30min 硬超时起点）、bashStuckWindowSec
+    * （默认 120s 停滞窗口）、bashHealthCheckIntervalSec（默认 30s 健康检查间隔，
+    * 测试/冒烟可注入小值加速验证）。None → Defaults 值。 */
+  bashAutoBackgroundMs: Option[Long] = None,
+  bashBackgroundHardTimeoutMs: Option[Long] = None,
+  bashStuckWindowSec: Option[Int] = None,
+  bashHealthCheckIntervalSec: Option[Int] = None,
+  /** 工具结果 TTL 清理（#341，docs/Nebflow/20260820_tool-result-ttl.md）：顶层
+    * toolResultTtl 节原样 JSON——ToolResultTtlConfig.load fail-safe 解析（非法
+    * 配置视为关闭）。默认关（enabled=false）。request-only 清理，会话文件不动。 */
+  toolResultTtl: Option[io.circe.Json] = None
 )
 
 object NebflowServiceConfig:
   given Decoder[NebflowServiceConfig] = deriveDecoder[NebflowServiceConfig]
 
 object Config:
-  val NebflowHome: os.Path = PathUtil.dataRoot
-  val DefaultConfigPath: os.Path = NebflowHome / "nebflow.json"
+  // def (not val): PathUtil.dataRoot and the config-file dual-read must be
+  // resolved per access — an object val would freeze the first-touched
+  // dataRoot and break test isolation (setDataRoot after first access).
+  def NebflowHome: os.Path = PathUtil.dataRoot
+  def DefaultConfigPath: os.Path = PathUtil.configJsonReadPath(NebflowHome)
 
   private val envVarLogger = nebflow.core.NebflowLogger.forName("nebflow.config")
 
@@ -190,8 +252,9 @@ object Config:
   private lazy val defaultServiceConfig: NebflowServiceConfig =
     NebflowServiceConfig(
       llm = ServiceLlmConfig(
-        providers = Map.empty,
-        model = ModelChainConfig(default = "anthropic/claude-sonnet-4-6")
+        providers = Map.empty
+        // #339：占位 llm.model default 已删——未配置时默认 preset 链为空，
+        // registry 走"首 provider 首模型"兜底（与首配前的真实状态一致）
       )
     )
 

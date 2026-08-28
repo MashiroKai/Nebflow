@@ -7,7 +7,10 @@
 
 import { openStepPopup } from './flowAgentPopup.js';
 import { esc, authHeaders, overlayRoot, teamPendingCount } from './flowHelpers.js';
-import { orderDagNodes, dagNodeInlineHtml } from './flowDag.js';
+import { orderDagNodes, dagNodeInlineHtml, openFlowNodePopup } from './flowDag.js';
+import state from './state.js';
+import { onMessage } from './ws.js';
+import { t } from './i18n.js';
 
 // ── Module-level state for flow rows ───────────────────────
 const dagCache = new Map();           // flowName → { ordered: [{nodeId, agent}] }
@@ -97,6 +100,91 @@ function getInlineNodes(flowName, runningFlows) {
   return [];
 }
 
+// ── Team Tasks section (2026-08-25 team-manager-task-tool) ──
+
+/** Localized status word for a team task badge.
+ *  Statuses follow the four-state team matrix (pending → in_progress → completed/failed). */
+function taskStatusLabel(status) {
+  switch (status) {
+    case 'pending': return t('task.pendingShort');
+    case 'in_progress': return t('task.inProgressShort');
+    case 'completed': return t('task.completedShort');
+    case 'failed': return t('task.failedShort');
+    default: return String(status || '');
+  }
+}
+
+/** Cap a subject at n chars with an ellipsis (spec §6.2: subject 截断 30 字符). */
+function truncateSubject(subject, n = 30) {
+  const s = String(subject || '');
+  return s.length > n ? s.slice(0, n - 1) + '\u2026' : s;
+}
+
+/** Compact relative time ("刚刚"/"2m"/"3h"/"2d"); empty when no timestamp.
+ *  Accepts an ISO string (Date.parse) or epoch ms/s. Absent → '' so the row
+ *  omits the time — the A1 contract only guarantees id/subject/status/blockedBy/blocks. */
+function relTime(ts) {
+  if (ts === undefined || ts === null || ts === '') return '';
+  let ms;
+  if (typeof ts === 'number') ms = ts < 1e12 ? ts * 1000 : ts;
+  else ms = Date.parse(String(ts));
+  if (isNaN(ms)) return '';
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return t('task.justNow');
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
+  return `${Math.floor(diff / 86_400_000)}d`;
+}
+
+/** Dependency badges for a task row. Per spec §6.2: blockedBy → `⛔ dep #<id>`
+ *  (被依赖方向), blocks → `🔒 blocks #<id>` (本任务阻塞的). Gutter icons ⛔/🔒
+ *  are per the user-confirmed spec (design rule "no emoji" is a client-UI
+ *  preference; the spec explicitly specifies these glyphs). */
+function depBadgesHtml(task) {
+  const depIds = (task.blockedBy || []).map(id => `#${id}`).join(', ');
+  const blkIds = (task.blocks || []).map(id => `#${id}`).join(', ');
+  let html = '';
+  if (depIds) {
+    html += `<span class="task-dep-badge" title="${esc(t('teamTask.dependsOn', { ids: depIds }))}" data-dep="${esc(depIds)}">\u26d4 dep ${esc(depIds)}</span>`;
+  }
+  if (blkIds) {
+    html += `<span class="task-dep-badge task-dep-badge-block" title="${esc(t('teamTask.blocksIds', { ids: blkIds }))}" data-blocks="${esc(blkIds)}">\u{1f512} blocks ${esc(blkIds)}</span>`;
+  }
+  return html;
+}
+
+/** Tasks section HTML — inside a team card, between the agent grid and Flows. */
+function buildTasksSection(tasks) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const header = `<div class="team-tasks-header">${esc(t('teamTask.header'))} (${list.length})</div>`;
+  if (list.length === 0) {
+    return `
+      <div class="team-tasks-divider"></div>
+      <div class="team-tasks-section">
+        ${header}
+        <div class="team-tasks-empty">${esc(t('teamTask.empty'))}</div>
+      </div>`;
+  }
+  const rows = list.map(task => {
+    const id = task.id !== undefined && task.id !== null ? task.id : '';
+    const timeStr = relTime(task.updatedAt);
+    const timeHtml = timeStr ? `<span class="team-task-time">\u00b7 ${esc(timeStr)}</span>` : '';
+    return `
+      <div class="team-task-row" data-task-id="${esc(String(id))}" data-status="${esc(task.status || '')}">
+        <span class="task-status-badge badge-${esc(task.status || '')}">${esc(taskStatusLabel(task.status))}</span>
+        <span class="team-task-subject" title="${esc(task.subject || '')}">#${esc(String(id))} ${esc(truncateSubject(task.subject))}</span>
+        ${timeHtml}
+        ${depBadgesHtml(task)}
+      </div>`;
+  }).join('');
+  return `
+    <div class="team-tasks-divider"></div>
+    <div class="team-tasks-section">
+      ${header}
+      <div class="team-tasks">${rows}</div>
+    </div>`;
+}
+
 // ── Card rendering ─────────────────────────────────────────
 
 export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
@@ -162,6 +250,8 @@ export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
       </div>`;
   }
 
+  const tasksSectionHtml = buildTasksSection(flow.tasks);
+
   return `
     <div class="team-card">
       <div class="team-card-header">
@@ -173,6 +263,7 @@ export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
         <div class="team-card-summary ${summaryCls}"><span class="dot"></span>${summaryText}</div>
       </div>
       <div class="team-agents">${tilesHtml}</div>
+      ${tasksSectionHtml}
       ${flowsSectionHtml}
     </div>`;
 }
@@ -204,7 +295,7 @@ export function bindTileClicks() {
       const flowName = el.getAttribute('data-flow') || '';
       const agentName = el.getAttribute('data-agent') || '';
       const sid = el.getAttribute('data-sid') || null;
-      openStepPopup(`${flowName}/${agentName}`, agentName, agentName, flowName, sid || null);
+      openStepPopup(`${flowName}/${agentName}`, agentName, agentName, flowName, sid || null, 'Team');
     });
   });
 }
@@ -213,6 +304,16 @@ export function bindTileClicks() {
 export async function populateTileModels(teams) {
   const tileSel = (flowName, agentName) =>
     `.team-tile[data-agent="${esc(agentName)}"][data-flow="${esc(flowName)}"]`;
+  // #308 actual model: the session's last ACTUALLY-used model is
+  // authoritative; REST preferred/current is only a fallback when the agent
+  // has never run a LLM round (no sessionModelInfo entry).
+  const liveModelShort = (sid) => {
+    if (!sid) return null;
+    const model = state.sessionModelInfo[sid]?.model;
+    if (!model) return null;
+    const i = model.lastIndexOf('/');
+    return i >= 0 ? model.slice(i + 1) : model;
+  };
   for (const flow of teams) {
     for (const a of (flow.agents || [])) {
       const tile = document.querySelector(tileSel(flow.name, a.name));
@@ -228,9 +329,10 @@ export async function populateTileModels(teams) {
         const role = !!a.manager ? 'manager' : (el.getAttribute('data-status') || 'idle');
         roleEl.textContent = `${role} · ${shortName}`;
       };
-      // Cache hit — write synchronously, no fetch.
+      const live = liveModelShort(a.sessionId);
+      // Cache hit — write synchronously, no fetch. Live overrides cache.
       const cached = modelCache.get(a.name);
-      if (cached) { writeLabel(tile, cached); continue; }
+      if (cached) { writeLabel(tile, live || cached); continue; }
       // One in-flight fetch per agent — concurrent re-renders share it.
       if (modelPending.has(a.name)) continue;
       modelPending.add(a.name);
@@ -238,9 +340,9 @@ export async function populateTileModels(teams) {
         const resp = await fetch(`/api/agents/${encodeURIComponent(a.name)}/model`, { headers: authHeaders() });
         if (!resp.ok) continue;
         const cfg = await resp.json();
-        // preferred is the configured model — trust it over `current`
-        // (current is only a reference from the backend resolution).
-        const current = cfg.preferred || cfg.current || cfg.default || '';
+        // #308: live actual model first, then health-resolved current, then
+        // configured preferred — never show "preferred" as if it were live.
+        const current = live || cfg.current || cfg.preferred || cfg.default || '';
         if (!current) continue;
         const slashIdx = current.lastIndexOf('/');
         const shortName = slashIdx >= 0 ? current.slice(slashIdx + 1) : current;
@@ -254,6 +356,25 @@ export async function populateTileModels(teams) {
     }
   }
 }
+
+// #308 live refresh: when a LLM round reports the actual model for a team
+// agent session, update its tile label immediately (direct DOM write — no
+// cache invalidation needed; the fetch path prefers live anyway).
+function refreshTileModelLive(sid) {
+  if (!sid) return;
+  const info = state.sessionModelInfo[sid];
+  if (!info?.model) return;
+  const i = info.model.lastIndexOf('/');
+  const short = i >= 0 ? info.model.slice(i + 1) : info.model;
+  document.querySelectorAll(`.team-tile[data-sid="${CSS.escape(sid)}"]`).forEach((tile) => {
+    const roleEl = tile.querySelector('.team-tile-role');
+    if (!roleEl) return;
+    const role = tile.classList.contains('manager') ? 'manager' : (tile.getAttribute('data-status') || 'idle');
+    roleEl.textContent = `${role} · ${short}`;
+  });
+}
+onMessage('usageUpdate', (msg) => refreshTileModelLive(msg.sessionId));
+onMessage('done', (msg) => refreshTileModelLive(msg.sessionId));
 
 export function bindCardActions(openMailbox, openRules, openDefinition) {
   document.querySelectorAll('.team-act-btn').forEach(btn => {
@@ -298,14 +419,14 @@ export function bindFlowRowClicks(runningFlows, reRender) {
     });
   });
 
-  // Inline DAG node clicks — open agent popup
+  // Inline DAG node clicks — open agent popup (372-1: resolve real dag-* session first)
   document.querySelectorAll('.dag-inline-node').forEach(el => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       const flowName = el.getAttribute('data-flow') || '';
       const agentName = el.getAttribute('data-agent') || '';
       const nodeId = el.getAttribute('data-node') || '';
-      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, null);
+      openFlowNodePopup(flowName, agentName, nodeId);
     });
   });
 }

@@ -26,7 +26,7 @@ object McpCommand extends CliCommand:
         case Some(client) =>
           // Get MCP server status from config
           IO.blocking {
-            val configPath = PathUtil.dataRoot / "nebflow.json"
+            val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
             if os.exists(configPath) then
               io.circe.parser
                 .parse(os.read(configPath))
@@ -128,5 +128,5 @@ object McpCommand extends CliCommand:
         case Some(client) =>
           val id = ctx.positionalArgs.headOption.getOrElse("")
           if id.isEmpty then IO.pure(CliResult.Error("Server ID required"))
-          else IO.pure(CliResult.text(s"MCP server '$id' removed (edit nebflow.json to persist)"))
+          else IO.pure(CliResult.text(s"MCP server '$id' removed (edit ${nebflow.core.Branding.configFileName} to persist)"))
 end McpCommand

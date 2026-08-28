@@ -1,0 +1,240 @@
+package nebflow.agent
+
+import cats.effect.{IO, Ref}
+import cats.effect.std.Dispatcher
+import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
+import io.circe.syntax.*
+import munit.CatsEffectSuite
+import nebflow.actor.ActorSystem
+import nebflow.core.PathUtil
+import nebflow.core.compact.HistoryArchiver
+import nebflow.core.task.{FileTaskStore, TaskCreateInput}
+import nebflow.core.tools.FileLockManager
+import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.core.task.{FileTaskStore, TaskCreateInput}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import fs2.Stream
+
+import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration.*
+
+/**
+ * Reminder refactor (2026-08-20 user ruling) — WIRING pins on a real
+ * AgentActor (Nebula def) + mock LLM. The unit specs cover
+ * SystemReminders.collectAllIO semantics; these tests prove AgentCore's
+ * pipeLlmCall actually passes the gating:
+ *   ① system-event turns (ExternalEvent injection) inject ZERO time/tasks
+ *   ② real-user turns inject time + full tasks render (first turn)
+ *   ④ unchanged tasks on the next real-user turn render ONE "Tasks unchanged"
+ *      line — no full re-send
+ *   D6: systemStable carries the Task List Protocol section for Nebula
+ */
+class ReminderWiringSpec extends CatsEffectSuite:
+
+  override def munitIOTimeout: FiniteDuration = 90.seconds
+
+  private class CaptureLlm(requests: Ref[IO, List[LlmRequest]]) extends LlmHandle[IO]:
+    def send(req: LlmRequest): IO[LlmResponse] =
+      IO.raiseError(new RuntimeException("send not expected in this test"))
+    def sendStream(
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+    ): Stream[IO, StreamChunk] =
+      Stream.eval(requests.update(_ :+ req)).drain ++
+        Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+
+  private def mkResources(
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO]
+  ): IO[SharedResources] =
+    for
+      dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
+      rateLimiter <- RateLimiter.create()
+      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
+      fileLocks <- FileLockManager.create
+      thinkingRef <- IO.ref(ThinkingConfig())
+      modelOverrides <- IO.ref(Map.empty[String, ModelCandidate])
+      voiceMuted <- IO.ref(false)
+    yield SharedResources(
+      llm = llm,
+      dispatcher = dispatcher,
+      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks-ui"),
+      projectRoot = os.pwd,
+      thinkingConfigRef = thinkingRef,
+      rateLimiter = rateLimiter,
+      fileChangeTracker = tracker,
+      contextWindow = 100_000,
+      agentLibrary = new AgentLibrary(tmp / "agents"),
+      taskStore = FileTaskStore,
+      historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
+      fileLockManager = fileLocks,
+      sessionModelOverrides = modelOverrides,
+      providerRegistry = null,
+      healthMonitor = ProviderHealthMonitor(null),
+      actorSystem = system,
+      subAgentTaskStore = new SubAgentTaskStore(tmp / "subagent-tasks"),
+      voiceMutedRef = voiceMuted
+    )
+
+  /** Pin the Nebula def on disk (empty agents dir falls back to Seeds.Nebula
+    * with a different toolset — harness trap, see memory). */
+  private def seedNebula(tmp: os.Path): Unit =
+    val dir = tmp / "agents" / "Nebula"
+    os.makeDir.all(dir)
+    os.write.over(
+      dir / "agent.json",
+      """{"name":"Nebula","displayName":"Nebula","description":"wiring root","tools":["Read"]}"""
+    )
+
+  private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 100.millis)(
+    cond: IO[Boolean]
+  ): IO[Unit] =
+    def go(deadline: Long): IO[Unit] =
+      cond.flatMap {
+        case true  => IO.unit
+        case false =>
+          if System.currentTimeMillis() >= deadline then
+            IO.raiseError(new AssertionError(s"waitUntil: condition not met within $timeout"))
+          else IO.sleep(every) >> go(deadline)
+      }
+    go(System.currentTimeMillis() + timeout.toMillis)
+
+  private def textOf(req: LlmRequest): String =
+    req.messages.map(_.textContent).mkString("\n")
+
+  test("① system-event turn injects zero time/tasks; ② real-user turn injects both; ④ unchanged → one line"):
+    val system = ActorSystem("reminder-wiring")
+    val tmp = os.temp.dir()
+    seedNebula(tmp)
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val sid = "wiring-nebula"
+      // one active task for this session → real-user turns carry the list
+      FileTaskStore.create(sid, TaskCreateInput(subject = "wiring task", description = "d")).unsafeRunSync()
+      val program = for
+        requests <- IO.ref(List.empty[LlmRequest])
+        resources <- mkResources(system, tmp, CaptureLlm(requests))
+        nebulaDef = AgentDef(
+          name = "Nebula",
+          description = "root under test",
+          tools = List("Read"),
+          systemPrompt = ""
+        )
+        actorRef <- system.spawn(
+          AgentActor(
+            agentDef = nebulaDef,
+            resources = resources,
+            wsSend = _ => IO.unit,
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("reminder-wiring")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(
+          _ + (sid -> AgentRecord(sid, actorRef, AgentKind.Root, sid, None))
+        )
+        // ── ① ExternalEvent injection = system-event turn ──
+        _ <- actorRef ! AgentCommand.ExternalEvent(
+          source = "delegate",
+          eventType = "completed",
+          payload = "[RESULT] sub-agent finished"
+        )
+        _ <- waitUntil(15.seconds)(requests.get.map(_.size >= 1))
+        req1 <- requests.get.map(_.head)
+        // ── ② real user turn (clientMessageId → source=None) ──
+        _ <- actorRef ! AgentCommand.UserInput("hello from the user", None, Some("cmid-1"))
+        _ <- waitUntil(15.seconds)(requests.get.map(_.size >= 2))
+        req2 <- requests.get.map(_.apply(1))
+        // ── ④ next real-user turn, tasks unchanged ──
+        _ <- actorRef ! AgentCommand.UserInput("still here", None, Some("cmid-2"))
+        _ <- waitUntil(15.seconds)(requests.get.map(_.size >= 3))
+        req3 <- requests.get.map(_.apply(2))
+      yield
+        // ① system-event turn: no time, no tasks (even though the actor IS
+        // Nebula with an active task in the store)
+        assert(!textOf(req1).contains("Current time"), s"system-event turn must not inject time:\n${textOf(req1)}")
+        assert(!textOf(req1).contains("Current Tasks"), s"system-event turn must not inject tasks:\n${textOf(req1)}")
+        assert(!textOf(req1).contains("Tasks unchanged"), s"system-event turn must not inject tasks:\n${textOf(req1)}")
+        // D6: systemStable (lifecycle rebuild on turn 1) carries the protocol
+        req1.systemStable.foreach { s =>
+          assert(s.contains("## Task List Protocol"), s"Nebula systemStable must carry the protocol section")
+        }
+        // ② real-user turn: time + full render
+        assert(textOf(req2).contains("Current time"), s"real-user turn must inject time:\n${textOf(req2)}")
+        assert(textOf(req2).contains("## Current Tasks (1 active)"), s"first real-user turn renders the full list:\n${textOf(req2)}")
+        assert(textOf(req2).contains("wiring task"), s"full render carries the task line:\n${textOf(req2)}")
+        // ④ unchanged: ONE line, no full re-send
+        assert(textOf(req3).contains("Current time"), s"real-user turn must inject time:\n${textOf(req3)}")
+        assert(
+          textOf(req3).contains("Tasks unchanged (1 active)"),
+          s"unchanged tasks must collapse to one line:\n${textOf(req3)}"
+        )
+        assert(
+          !textOf(req3).contains("## Current Tasks ("),
+          s"no full re-send on unchanged turns (contextMsg is request-only):\n${textOf(req3)}"
+        )
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+
+  test("② non-Nebula agent (Manager) gets zero tasks/schedule even on real-user turns"):
+    val system = ActorSystem("reminder-wiring-mgr")
+    val tmp = os.temp.dir()
+    seedNebula(tmp)
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val sid = "wiring-manager"
+      FileTaskStore.create(sid, TaskCreateInput(subject = "mgr task", description = "d")).unsafeRunSync()
+      val program = for
+        requests <- IO.ref(List.empty[LlmRequest])
+        resources <- mkResources(system, tmp, CaptureLlm(requests))
+        mgrDef = AgentDef(
+          name = "Manager",
+          description = "team lead under test",
+          tools = List("Read"),
+          systemPrompt = ""
+        )
+        actorRef <- system.spawn(
+          AgentActor(
+            agentDef = mgrDef,
+            resources = resources,
+            wsSend = _ => IO.unit,
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("reminder-wiring-mgr")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(
+          _ + (sid -> AgentRecord(sid, actorRef, AgentKind.Root, sid, None))
+        )
+        _ <- actorRef ! AgentCommand.UserInput("hello from the user", None, Some("cmid-1"))
+        _ <- waitUntil(15.seconds)(requests.get.map(_.nonEmpty))
+        req1 <- requests.get.map(_.head)
+        sys1 = req1.systemStable.getOrElse("")
+      yield
+        assert(textOf(req1).contains("Current time"), s"real-user turn still injects time for team agents:\n${textOf(req1)}")
+        assert(!textOf(req1).contains("Current Tasks"), s"Manager must not get the tasks reminder:\n${textOf(req1)}")
+        assert(!textOf(req1).contains("mgr task"), s"Manager must not see task lines:\n${textOf(req1)}")
+        assert(!sys1.contains("## Task List Protocol"), s"Task List Protocol is Nebula-only:\n$sys1")
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+
+end ReminderWiringSpec

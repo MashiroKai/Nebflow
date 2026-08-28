@@ -10,6 +10,8 @@
 
 import { onMessage } from './ws.js';
 import { t } from './i18n.js';
+import { brand } from './brand.js';
+import { key } from './branding.js';
 import { createIconsIn } from './utils.js';
 
 // ── Inline CSS ─────────────────────────────────────────────
@@ -317,7 +319,7 @@ let panelOpen = false;
 let pollTimer = null;
 
 // ── Helpers ────────────────────────────────────────────────
-function getToken() { return localStorage.getItem('nebflow_token') || ''; }
+function getToken() { return localStorage.getItem(key('token')) || ''; }
 function authHeaders() {
   const t = getToken();
   return t ? { Authorization: `Bearer ${t}` } : {};
@@ -447,7 +449,7 @@ function buildRow(d, animate = false) {
       </div>
       <div class="daemon-command">${esc(d.command || '')}</div>
     </div>
-    <label class="daemon-autostart" title="Auto-start with Nebflow">
+    <label class="daemon-autostart" title="Auto-start with ${brand.productName}">
       <input type="checkbox" class="daemon-autostart-input" data-id="${esc(d.id)}" ${d.autoStart ? 'checked' : ''}>
       <span class="daemon-autostart-track"><span class="daemon-autostart-thumb"></span></span>
     </label>

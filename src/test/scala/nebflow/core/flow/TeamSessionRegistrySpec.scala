@@ -117,4 +117,44 @@ class TeamSessionRegistrySpec extends CatsEffectSuite:
       res == Right(None),
       s"Nebula is the root agent, never a team session — scoped team/Nebula should resolve to None: $res"
     )
+
+  // ---- Block 0 registration chain (supervision trio §B2) ----
+
+  test("managerOf returns the registered Manager sessionId for an instance") {
+    for
+      _ <- TeamSessionRegistry.clear
+      _ <- TeamSessionRegistry.registerManager("lifecyc", "mgr-1")
+      mgr <- TeamSessionRegistry.managerOf("lifecyc")
+      missing <- TeamSessionRegistry.managerOf("no-such-team")
+    yield
+      assertEquals(mgr, Some("mgr-1"))
+      assertEquals(missing, None)
+  }
+
+  test("parentForRecord: member → its Manager sid") {
+    for
+      _ <- TeamSessionRegistry.clear
+      _ <- TeamSessionRegistry.registerSession("lifecyc", "member", "sid-member")
+      _ <- TeamSessionRegistry.registerManager("lifecyc", "mgr-1")
+      _ <- TeamSessionRegistry.registerParentSession("lifecyc", "root-1")
+      parent <- TeamSessionRegistry.parentForRecord("sid-member")
+    yield assertEquals(parent, Some("mgr-1"))
+  }
+
+  test("parentForRecord: the Manager itself → the mounting root sid") {
+    for
+      _ <- TeamSessionRegistry.clear
+      _ <- TeamSessionRegistry.registerSession("lifecyc", "Manager", "mgr-1")
+      _ <- TeamSessionRegistry.registerManager("lifecyc", "mgr-1")
+      _ <- TeamSessionRegistry.registerParentSession("lifecyc", "root-1")
+      parent <- TeamSessionRegistry.parentForRecord("mgr-1")
+    yield assertEquals(parent, Some("root-1"))
+  }
+
+  test("parentForRecord: unknown session → None (caller falls back)") {
+    for
+      _ <- TeamSessionRegistry.clear
+      parent <- TeamSessionRegistry.parentForRecord("sid-not-registered")
+    yield assertEquals(parent, None)
+  }
 end TeamSessionRegistrySpec

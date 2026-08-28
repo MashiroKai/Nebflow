@@ -9,10 +9,14 @@ import nebflow.shared.AgentModelConfig
 class PresetStoreSpec extends FunSuite:
 
   private def tempStore(suffix: String): (PresetStore, os.Path) =
+    tempStore(suffix, () => List("107/glm-5.2-107", "deepseek/deepseek-v4-flash"))
+
+  /** #311: inject the seed chain so tests never depend on the real ~/.nebflow. */
+  private def tempStore(suffix: String, globalChain: () => List[String]): (PresetStore, os.Path) =
     val dir = os.pwd / "target" / "preset-test" / s"store-$suffix"
     os.makeDir.all(dir)
     val path = dir / "model-presets.json"
-    (new PresetStore(path), path)
+    (new PresetStore(path, globalChain), path)
 
   // ── Model codec ──────────────────────────────────────────
 
@@ -105,8 +109,11 @@ class PresetStoreSpec extends FunSuite:
     assertEquals(cfg.preferred, Some("default/model"))
     assertEquals(from, "default-preset")
 
-  test("resolve: global chain when no preset, no legacy, and default preset is empty"):
-    val (store, _) = tempStore("global")
+  test("resolve: no preset, no legacy, empty default → re-seeded from the configured model (#311: no global level)"):
+    // The old behavior returned AgentModelConfig.empty + "global", letting the
+    // LLM layer silently fall to the llm.model chain — the hidden "为什么在用
+    // 107" bug. Now the store repairs/re-seeds and level 3 is terminal.
+    val (store, _) = tempStore("global", () => List("zhipu/GLM-5.3", "deepseek/deepseek-v4-flash"))
     store.save(
       PresetFile(
         "general",
@@ -116,8 +123,9 @@ class PresetStoreSpec extends FunSuite:
       )
     )
     val (cfg, from) = store.resolve(None, None)
-    assertEquals(cfg, AgentModelConfig.empty)
-    assertEquals(from, "global")
+    assertEquals(cfg.preferred, Some("zhipu/GLM-5.3"))
+    assertEquals(cfg.fallbacks, List("deepseek/deepseek-v4-flash"))
+    assertEquals(from, "default-preset")
 
   test("resolve: dangling preset name falls back to legacy, then default"):
     val (store, _) = tempStore("dangling")
@@ -198,5 +206,59 @@ class PresetStoreSpec extends FunSuite:
     // defaultPreset "gone" doesn't exist in presets → repair should pick an existing one
     val f = store.load()
     assert(f.presets.contains(f.defaultPreset))
+
+  // ── resolveExplicit (tool-level override) ─────────────────
+
+  test("resolveExplicit: resolves an existing preset to its chain"):
+    val (store, _) = tempStore("explicit-ok")
+    store.save(
+      PresetFile(
+        "general",
+        Map(
+          "LowCost" -> ModelPreset("LowCost", "", Some("107/deepseek-v4-flash-ascend"), List("107/deepseek-v4-pro")),
+          "general" -> ModelPreset("general", "", Some("default/model"), Nil)
+        )
+      )
+    )
+    val result = store.resolveExplicit("LowCost")
+    assertEquals(result, Right(AgentModelConfig(Some("107/deepseek-v4-flash-ascend"), List("107/deepseek-v4-pro"))))
+
+  test("resolveExplicit: missing preset errors with available list"):
+    val (store, _) = tempStore("explicit-missing")
+    store.save(
+      PresetFile(
+        "general",
+        Map(
+          "general" -> ModelPreset("general", "", Some("default/model"), Nil),
+          "Vision" -> ModelPreset("Vision", "", Some("kimi/k3-256k"), Nil)
+        )
+      )
+    )
+    val result = store.resolveExplicit("Bogus")
+    assert(result.isLeft)
+    val err = result.swap.toOption.get
+    assert(err.contains("'Bogus' not found"), err)
+    assert(err.contains("Available presets:"), err)
+    // Sorted list includes the real presets
+    assert(err.contains("Vision"), err)
+    assert(err.contains("general"), err)
+
+  test("resolveExplicit: defined-but-empty preset errors with available list"):
+    val (store, _) = tempStore("explicit-empty")
+    store.save(
+      PresetFile(
+        "general",
+        Map(
+          "Empty" -> ModelPreset("Empty", "no chain", None, Nil),
+          "general" -> ModelPreset("general", "", Some("default/model"), Nil)
+        )
+      )
+    )
+    val result = store.resolveExplicit("Empty")
+    assert(result.isLeft)
+    val err = result.swap.toOption.get
+    assert(err.contains("'Empty'"), err)
+    assert(err.contains("no model chain"), err)
+    assert(err.contains("Available presets:"), err)
 
 end PresetStoreSpec

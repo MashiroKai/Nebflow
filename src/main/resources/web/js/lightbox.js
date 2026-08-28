@@ -98,11 +98,18 @@ export function initLightbox() {
 
   // 2. Image clicks forwarded from Canvas HTML viewer iframes
   window.addEventListener('message', (e) => {
-    if (e.origin !== window.location.origin) return;
     const d = e.data;
-    if (d && d._nfImagePreview && typeof d._nfImagePreview.src === 'string') {
-      openLightbox(d._nfImagePreview.src, d._nfImagePreview.alt);
+    if (!d || !d._nfImagePreview || typeof d._nfImagePreview.src !== 'string') return;
+    // srcdoc iframes report an opaque origin ('null'/'') even with
+    // allow-same-origin, so a strict e.origin check would silently drop them.
+    // Validate the source instead: must be a live Canvas HTML iframe.
+    if (e.origin !== window.location.origin) {
+      const frames = document.querySelectorAll('.canvas-tab-pane iframe[data-nf-canvas-html]');
+      let fromCanvas = false;
+      for (const f of frames) { if (/** @type {HTMLIFrameElement} */ (f).contentWindow === e.source) { fromCanvas = true; break; } }
+      if (!fromCanvas) return;
     }
+    openLightbox(d._nfImagePreview.src, d._nfImagePreview.alt);
   });
 
   // 3. ESC closes — capture phase so canvas/sidebar ESC handlers don't

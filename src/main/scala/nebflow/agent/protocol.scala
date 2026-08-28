@@ -30,7 +30,13 @@ object AgentCommand:
     /** Sender agent name for Mail-delivered messages (shown as attribution label). */
     sender: Option[String] = None,
     /** Team name of the sender for Mail-delivered messages (shown as attribution label). */
-    senderTeam: Option[String] = None
+    senderTeam: Option[String] = None,
+    /** Delivery mode marker: "queue" | "immediate" for Mail-injected inputs. */
+    delivery: Option[String] = None,
+    /** Structured event type (e.g. completion status) for the UI source label —
+     *  carried through from ImmediateInput so flow results render
+     *  'Flow · <name> · Completed/Failed' instead of a bare 'Flow'. */
+    eventType: Option[String] = None
   ) extends AgentCommand
 
   case class ImmediateInput(
@@ -43,8 +49,34 @@ object AgentCommand:
     /** Sender agent name for Mail-delivered messages (shown as attribution label). */
     sender: Option[String] = None,
     /** Team name of the sender for Mail-delivered messages. */
-    senderTeam: Option[String] = None
+    senderTeam: Option[String] = None,
+    /** Delivery mode marker: "queue" | "immediate" for Mail delivery. */
+    delivery: Option[String] = None
   ) extends AgentCommand
+
+  /**
+   * Cancel-batch (user ruling 2026-08-26 08:33): the user cancelled a task
+   * owned by this session — replaces the old always-immediate [任务取消]
+   * injection for the root orchestrator. Root (Nebula) BUFFERS these:
+   * idle = no turn at all (flushed as a block on the next activity),
+   * processing = debounced window (AgentActor.CancelBatchDebounceMs) so rapid
+   * cancellations merge into ONE packaged notice. Non-root agents keep the
+   * immediate-injection behavior (converted to ImmediateInput on receipt).
+   * `at` is the cancellation epoch-millis — the package renders in cancel
+   * order (append order == chronological).
+   */
+  case class TaskCancelNotice(
+    taskId: String,
+    subject: String,
+    description: String,
+    reason: String,
+    at: Long
+  ) extends AgentCommand
+
+  /** Cancel-batch internal: debounce window expired — flush the buffered
+    * cancellation notices as ONE packaged ImmediateInput. No-op when the
+    * buffer was already flushed by an activity-driven enrich. */
+  case class FlushCancelNotices() extends AgentCommand
   case class Interrupt() extends AgentCommand
 
   case class AskUser(
@@ -62,7 +94,11 @@ object AgentCommand:
   case class LlmFailed(
     error: Throwable,
     replyTo: Option[ActorRef[AgentEvent]],
-    turnId: Long
+    turnId: Long,
+    /** Block 3：LoopGuard L1 终止路径的计数器快照（terminatedFps 随 state 存活，
+      * 后续 turn 同 fp 复发 → 直接 L2 冻结）。该路径不投 ToolsComplete——
+      * LlmFailed 本身是计数器写回的唯一载体。其余调用方默认 None。 */
+    loopCounters: Option[nebflow.core.processor.LoopGuard.Counters] = None
   ) extends AgentCommand
 
   case class SetPermissionDeferred(deferred: cats.effect.Deferred[IO, Boolean]) extends AgentCommand
@@ -73,7 +109,21 @@ object AgentCommand:
     replyTo: Option[ActorRef[AgentEvent]],
     compactedMessages: Option[List[Message]] = None,
     thinking: Option[String] = None,
-    thinkingSignature: Option[String] = None
+    thinkingSignature: Option[String] = None,
+    /** Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒——
+      * 下一轮以 user system-reminder 消息注入（同 saveTurnDriftReminder 形态），
+      * 零成本给模型自纠机会。 */
+    loopReminder: Option[String] = None,
+    /** Block 3：本轮 evaluate 产出的计数器快照——pipeToolExecutions 的计数器在
+      * 异步 IO 内计算，行为返回时不可见；经消息携带由 ToolsComplete handler 写回
+      * state（S1/S2 跨轮、S3 跨 turn 持久化的载体）。None=非 loop-guard 路径。 */
+    loopCounters: Option[nebflow.core.processor.LoopGuard.Counters] = None,
+    /** Block 3 L2：Some(detail) 时 handler 完成消息组装/持久化/计数器写回后
+      * 不续轮（不 pipeLlmCall），转而冻结（loopDetected 广播 + 父通知 +
+      * enterFrozen(Loop)）。此前用独立 LoopFreezeDetected 消息实现——但
+      * ToolsComplete 链式 dispatch 会递增 currentTurnId，后续消息按 stale
+      * 丢弃，冻结永不落地（wiring 实证）。 */
+    freezeAfter: Option[String] = None
   ) extends AgentCommand
 
   case class CompactionComplete(result: Either[String, List[Message]]) extends AgentCommand
@@ -96,13 +146,14 @@ object AgentCommand:
     skillBaseDir: String
   ) extends AgentCommand
 
-  case class UpdateContextWindow(window: Int) extends AgentCommand
+  /**
+   * FreezeScheduler（30s 轮询）/ setWorkSchedule（配置热更）→ frozen agent：
+   * 重评估冻结时间表（#337 黑名单语义）——已出冻结段则恢复挂起的 dispatch，
+   * 仍在冻结段内则更新 resumeAt 留任。到达非 frozen behavior 时 no-op（幂等，无需去重）。
+   */
+  case object CheckFreezeGate extends AgentCommand
 
-  case class ReplaceToolResults(
-    rounds: Int,
-    summary: String,
-    replyTo: cats.effect.Deferred[IO, Either[String, Int]]
-  ) extends AgentCommand
+  case class UpdateContextWindow(window: Int) extends AgentCommand
 
   /** Frontend → agent: update safety mode for this session. */
   case class SetSafetyMode(mode: nebflow.core.SafetyMode) extends AgentCommand
@@ -199,6 +250,11 @@ object AgentCommand:
     item: nebflow.core.flow.MailQueueStore.MailQueueItem,
     fromSessionId: String
   ) extends AgentCommand
+
+  /** v2 冻结式错误恢复升级链（§5.2）：FreezeScheduler.scan 发现 escalation 超时
+    * 后发送——frozen behavior 中执行 escalate 动作（level+1，通知上一级/用户终态）。
+    * 消息幂等：非 frozen/无 escalation 时 no-op。 */
+  case object Escalate extends AgentCommand
 end AgentCommand
 
 /**
@@ -222,7 +278,68 @@ case class AgentRecord(
   ref: ActorRef[AgentCommand],
   kind: AgentKind,
   rootSessionId: String,
-  parentRef: Option[ActorRef[AgentCommand]] = None
+  parentRef: Option[ActorRef[AgentCommand]] = None,
+  /**
+   * P0 阶段 3（2026-08-18，设计 §4.4）：registry 注册时刻（task 生命周期起点）。
+   * 默认 0 = 未设置（旧注册点）；TaskStuckWatcher 只依赖 lastActivityMs，
+   * startedAt 供前端展示（二期 §4.6）。
+   */
+  startedAt: Long = 0L,
+  /**
+   * P0 阶段 3：当前 turn 状态快照——TaskStuckWatcher 判定 "Processing 且
+   * 长时间无活动" 的 status 来源。由 AgentCore.pipeLlmCall（Processing）与
+   * AgentActor.finishTurnCont 回 idle 分支（Idle）维护；run_in_background
+   * 时 agent 回 Idle 为合法状态，永不判卡死（防误杀铁律）。
+   */
+  status: AgentStatus = AgentStatus.Idle,
+  /**
+   * P0 阶段 3：最近一次 turn 活动时间戳（LLM 流 chunk / 工具执行完成 /
+   * turn 完成时更新）。TaskStuckWatcher 判卡死的数据源。
+   */
+  lastActivityMs: Long = 0L,
+  /**
+   * AgentControl（2026-08-19 spec §3.1）：监听该 agent 终态的 adapter 引用——
+   * ephemeral Delegate/SubTask = BackoffSupervisor；persistent Delegate =
+   * persistentAdapter；Ephemeral/Flow/Root/Team = None（无取消通道，cancel 走
+   * 降级 Stop 路径）。默认 None → 既有注册点零改动。
+   */
+  supervisorRef: Option[ActorRef[AgentEvent]] = None,
+  /**
+   * AgentControl：任务归属的父会话（SubAgentTaskStore 文件键）。Delegate/
+   * SubTask 注册点已有值；list/restart 用它反查任务元数据，避免全目录扫描。
+   */
+  parentSessionId: String = "",
+  /**
+   * issue #31 (2026-08-20) Fix D — phantom barrier 可见化：该 agent 自身
+   * outstandingSubagentResults 的最近快照（spawn 计数 / ExternalEvent 三分支
+   * 时刷新）。诊断语义：idle 期 outstanding > 0 且无在飞任务 = barrier 被
+   * phantom slot 占据（成员 hang/停止失败时发生，held 结果永不注入）。
+   */
+  outstandingSubagents: Int = 0,
+  /**
+   * issue #31 Fix D — 同上：该 agent pendingEvents（被 HOLD 的子代理结果
+   * 队列）长度的最近快照。outstanding>0 时 pending>0 = 有结果被扣留等批。
+   */
+  pendingEventCount: Int = 0,
+  /**
+   * v2 冻结式错误恢复升级链（§5.2）：升级链状态快照（P0 内存态）——
+   * enterErrorFrozen 第 3 次进入时设置、FreezeScheduler.scan 读它检查
+   * escalateAt 到期（升级/跳级/到达用户）。与 AgentState.execution.escalation
+   * 同步维护（registry 层供扫描器只读，actor 层为权威）。
+   */
+  escalation: Option[EscalationInfo] = None,
+  /**
+   * v2 冻结式错误恢复：当前冻结的 reason 字符串快照（"schedule"/"llm-transient"/
+   * "network"/"provider-down"/"restart-recovery"）。WS parentRestart 用它区分
+   * 时间表冻结（正常调度，不可父重启）与错误族冻结（可重启）。与
+   * AgentState 的 lastErrorFreezeReason 同步维护；恢复/解除冻结时清 None。
+   */
+  frozenReason: Option[String] = None,
+  /** Block 3 循环检测器观测镜像（supervision trio §D2-B）：当前 turn 的
+    * 同参同败连续计数 / 非进展轮数——pipeToolExecutions 每轮随 touchRegistryActivity
+    * 同步写入。AgentControl list 的 stuck? 列旁显示 loop×N（诊断「高活动零进展」）。 */
+  loopStreak: Int = 0,
+  loopRounds: Int = 0
 )
 
 // ============================================================
@@ -307,11 +424,59 @@ final case class InteractionAnswered(
  */
 case class ToolPipelineError(message: String) extends RuntimeException(message)
 
+/** Block 3 循环检测器 L1（supervision trio §D3）：同参同败超阈 / 轮预算超限的
+  * turn 级终止。分类=Permanent（不重试不冻结）→ LlmFailed fatal 链（supervisor
+  * notify / team 成员父 ExternalEvent(failed, retryable=true) / 持久化）。 */
+final case class LoopDetectedError(message: String) extends RuntimeException(message)
+
 sealed trait AgentEvent
 
 object AgentEvent:
   case class Completed(sessionId: String, messages: List[Message] = Nil) extends AgentEvent
   case class Failed(sessionId: String, error: AgentError) extends AgentEvent
+  /**
+   * AgentControl 取消终态（spec §3.1）：sealed 穷尽——所有 adapter 必须处理。
+   * BackoffSupervisor/persistentAdapter 走 notifyParentAndStop("cancelled")；
+   * bridge 类（Ephemeral/FlowDag/Mail fork）完成 deferred Left。
+   */
+  case class Cancelled(sessionId: String, reason: String) extends AgentEvent
+
+/** 冻结原因（v2 冻结式错误恢复，§3.1）：统一「暂停在 dispatch 边界」的语义，
+  * reason 决定恢复条件与前端两族视觉（schedule=sapphire 冷色 / 错误族=amber 暖色）。
+  * 缺省 Schedule 保证旧调用点零改动（时间表冻结=特例）。 */
+enum FreezeReason:
+  case Schedule        // 时间表冻结（#337 黑名单），恢复条件=出冻结段
+  case LlmTransient    // LLM transient 错误预算耗尽（429/529 overload），恢复条件=退避到期+provider 恢复
+  case Network         // 连接重置/超时/未知瞬态，恢复条件=短退避到期
+  case ProviderDown    // 全候选 provider Down，恢复条件=HealthMonitor 探测恢复（P0 用 R1 轮询兜底）
+  case RestartRecovery // 崩溃/进程重启后重建，恢复条件=条件检查通过后立即续跑
+  case Loop            // Block 3 循环检测器 L2（supervision trio §D3）：恢复条件=仅人工（用户输入唤醒 / AgentControl restart / cancel）——不自动续跑
+
+/** 升级链状态（v2 §5.2）：同 reason 连续冻结 ≥3 次进入——挂 AgentRecord（P0 内存态）。
+  * level=当前升级层级（1 起）；escalateAt=本层等待父决策的截止时间；awaitedParentSessionId=等待的父会话。 */
+case class EscalationInfo(
+  level: Int,
+  escalateAt: Long,
+  awaitedParentSessionId: String
+)
+
+/** v2 升级链判定（§5.1 规则，纯函数——可单测）：升级只沿 parentSessionId 静态链
+  * 向上、每级一次（通知按 level 去重）、无环（单父树）；父记录不存在 → 跳级；
+  * 最终到达用户（root/无父）即终态，无再升级对象。 */
+object Escalation:
+  enum Target:
+    /** 父存活：通知父（ExternalEvent 注入其上下文，排队不唤醒）。 */
+    case Parent
+    /** 父缺失：跳级（P0 无父链信息，视同到达用户终态，detail 标注）。 */
+    case Grandparent
+    /** 无父（root/standalone）：用户终态——WS errorEscalated，不设超时。 */
+    case User
+
+  def nextTarget(level: Int, hasParent: Boolean, parentAlive: Boolean): Target =
+    if !hasParent then Target.User
+    else if parentAlive then Target.Parent
+    else Target.Grandparent
+end Escalation
 
 enum AgentStreamEvent:
   case TextDelta(text: String)
@@ -327,15 +492,39 @@ enum AgentStreamEvent:
     model: Option[String] = None,
     contextWindow: Option[Int] = None,
     inputTokens: Option[Int] = None,
-    compactThreshold: Option[Double] = None
+    compactThreshold: Option[Double] = None,
+    outputTokens: Option[Int] = None
   )
-  case UsageUpdate(inputTokens: Int, contextWindow: Int, compactThreshold: Double)
+  case UsageUpdate(
+    inputTokens: Int,
+    contextWindow: Int,
+    compactThreshold: Double,
+    outputTokens: Option[Int] = None,
+    // #308: the model actually used in this LLM round (after fallback), so the
+    // UI can live-refresh the "actual model" badge per round — None omits the key.
+    model: Option[String] = None
+  )
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
   case CompactComplete(before: Int, after: Int, reportPath: Option[String] = None)
   case CompactFailed(reason: String, attempt: Int, maxAttempts: Int)
   case BackgroundTaskUpdate(taskId: String, description: String, status: String)
   case ExternalEventReceived(source: String, eventType: String, correlationId: Option[String])
   case Interrupted
+
+  /** 冻结调度：agent 在 dispatch 边界被冻结（处于冻结时段内，#337 黑名单语义）。resumeAtMillis 供前端展示。
+    * v2（冻结式错误恢复）：reason 泛化——Schedule=时间表冻结（默认，缺省兼容旧前端）；
+    * LlmTransient/Network/ProviderDown/RestartRecovery=错误恢复族（§3.1）；detail/retryCount/
+    * escalation 为错误族附加信息（可选，缺省无）。 */
+  case Frozen(
+      resumeAtMillis: Option[Long],
+      reason: FreezeReason = FreezeReason.Schedule,
+      detail: Option[String] = None,
+      retryCount: Int = 0,
+      escalation: Option[EscalationInfo] = None
+  )
+
+  /** 冻结调度：恢复（出冻结段自动恢复 / 用户输入唤醒 / 交互豁免路径不会发出本事件）。 */
+  case Resumed
 
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json =
     // For subagent events, inject nodeSessionId so the frontend can persist
@@ -400,15 +589,18 @@ enum AgentStreamEvent:
         if isSubagent then
           Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
         else Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
-      case Done(model, contextWindow, inputTokens, compactThreshold) =>
+      case Done(model, contextWindow, inputTokens, compactThreshold, outputTokens) =>
         val base =
           if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
           else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
         val withModel = model.fold(base)(m => base.deepMerge(Json.obj("model" -> m.asJson)))
         val withCw = contextWindow.fold(withModel)(cw => withModel.deepMerge(Json.obj("contextWindow" -> cw.asJson)))
         val withIt = inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
-        compactThreshold.fold(withIt)(ct => withIt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
-      case UsageUpdate(inputTokens, contextWindow, compactThreshold) =>
+        val withOt = outputTokens.fold(withIt)(ot => withIt.deepMerge(Json.obj("outputTokens" -> ot.asJson)))
+        compactThreshold.fold(withOt)(ct => withOt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
+      case UsageUpdate(inputTokens, contextWindow, compactThreshold, outputTokens, model) =>
+        // #308: model (actual model of this round) is merged last, same style as
+        // Done's withModel — absent when None so old payloads stay byte-stable.
         if isSubagent then
           Json.obj(
             "type" -> "usageUpdate".asJson,
@@ -417,7 +609,8 @@ enum AgentStreamEvent:
             "inputTokens" -> inputTokens.asJson,
             "contextWindow" -> contextWindow.asJson,
             "compactThreshold" -> compactThreshold.asJson
-          )
+          ).deepMerge(outputTokens.fold(Json.obj())(ot => Json.obj("outputTokens" -> ot.asJson)))
+            .deepMerge(model.fold(Json.obj())(m => Json.obj("model" -> m.asJson)))
         else
           Json.obj(
             "type" -> "usageUpdate".asJson,
@@ -425,7 +618,8 @@ enum AgentStreamEvent:
             "inputTokens" -> inputTokens.asJson,
             "contextWindow" -> contextWindow.asJson,
             "compactThreshold" -> compactThreshold.asJson
-          )
+          ).deepMerge(outputTokens.fold(Json.obj())(ot => Json.obj("outputTokens" -> ot.asJson)))
+            .deepMerge(model.fold(Json.obj())(m => Json.obj("model" -> m.asJson)))
       case CompactStart(mode, inputTokens, threshold) =>
         if isSubagent then
           Json.obj(
@@ -495,7 +689,37 @@ enum AgentStreamEvent:
       case Interrupted =>
         val base = Json.obj("type" -> "interrupted".asJson)
         if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
-        else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson)))
+        else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
+      case Frozen(resumeAtMillis, reason, detail, retryCount, escalation) =>
+        val base =
+          if isSubagent then Json.obj("type" -> "agentFrozen".asJson, "agentId" -> agentId.asJson)
+          else Json.obj("type" -> "frozen".asJson, "sessionId" -> sessionId.asJson)
+        val withResume = resumeAtMillis.fold(base)(t => base.deepMerge(Json.obj("resumeAt" -> t.asJson)))
+        // reason 缺省='schedule'（默认参数），旧前端/旧后端双向兼容；错误族前端按 reason 区分两族视觉
+        val reasonStr = reason match
+          case FreezeReason.Schedule        => "schedule"
+          case FreezeReason.LlmTransient    => "llm-transient"
+          case FreezeReason.Network         => "network"
+          case FreezeReason.ProviderDown    => "provider-down"
+          case FreezeReason.RestartRecovery => "restart-recovery"
+          case FreezeReason.Loop            => "loop"
+        val withReason = withResume.deepMerge(Json.obj("reason" -> reasonStr.asJson))
+        val withDetail = detail.fold(withReason)(d => withReason.deepMerge(Json.obj("detail" -> d.asJson)))
+        val withRetry = if retryCount > 0 then withDetail.deepMerge(Json.obj("retryCount" -> retryCount.asJson)) else withDetail
+        escalation.fold(withRetry)(e =>
+          withRetry.deepMerge(
+            Json.obj(
+              "escalation" -> Json.obj(
+                "level" -> e.level.asJson,
+                "escalateAt" -> e.escalateAt.asJson,
+                "awaitedParentSessionId" -> e.awaitedParentSessionId.asJson
+              )
+            )
+          )
+        )
+      case Resumed =>
+        if isSubagent then Json.obj("type" -> "agentResumed".asJson, "agentId" -> agentId.asJson)
+        else Json.obj("type" -> "resumed".asJson, "sessionId" -> sessionId.asJson))
   end toJson
 end AgentStreamEvent
 
@@ -516,13 +740,21 @@ case class AgentError(
   depth: Int,
   errorType: AgentErrorType,
   message: String,
-  cause: Option[AgentError] = None
+  cause: Option[AgentError] = None,
+  /** Flow-node supervision P2 (2026-08-26): agent-turn-level retryability of
+    * the failure (single source AgentActor.llmFailureRetryable). None =
+    * legacy/unset (treated as not retryable by consumers). Lets the flow
+    * executor distinguish "LLM stall, checkpoint-restart may heal it" from
+    * hard failures without string-matching error messages. */
+  retryable: Option[Boolean] = None
 )
 
 enum AgentStatus:
   case Idle
   case Processing
   case WaitingForUser
+  /** 冻结调度：dispatch 边界被冻结时间表拦住（#337 黑名单语义），挂起等待出冻结段/用户唤醒。 */
+  case Frozen
   case Error(msg: String)
 
 case class CompactionResult(before: Int, after: Int)
@@ -602,7 +834,30 @@ case class SessionContext(
    * context injection (categoryPrefix/managerPrefix/memoryBlock/teamCatalog/
    * flowCatalog stripped), and a fixed Worker Block appended to the prompt.
    */
-  isSubTaskWorker: Boolean = false
+  isSubTaskWorker: Boolean = false,
+  /**
+   * #406: true when this agent is a one-shot FlowExecute node (spawned by
+   * FlowDagExecutor.executeAgent with isFlowNode=true). Flow nodes are leaf
+   * agents: FlowExecute/FlowTrigger/SubTask/Delegate are stripped to prevent
+   * recursive flow-in-flow explosions — the same leaf rule SubTask workers
+   * get. Differs from isSubTaskWorker in that Mail stays available for
+   * team-category node agents (flow nodes may Mail the caller's team).
+   */
+  isFlowNode: Boolean = false,
+  /**
+   * 轨道二 #5：本节点的 userFacing 白名单声明（FlowNode.userFacing 原样透传）。
+   * spawn 时从 DAG 定义读入，与 dedicatedAgents 开关解耦——开关在消费点
+   * （buildAllowedToolSet 剥离 / PromptSections 条款变体）每 turn 热读，改动
+   * nebflow.json 后下个 turn 生效，无需重启或 respawn。
+   */
+  userFacingNode: Boolean = false,
+  /**
+   * D11 交互豁免（freeze-schedule spec v1.1）：用户在场等待的交互会话（plan
+   * agent 等）不参与冻结——冻结它们省下的 token 远低于浪费的用户等待时间。
+   * PlanAgent.spawn 传 true；其余 spawn 点默认 false 零改动。ask 轮的豁免走
+   * gate 内的 askMode.isDefined 检查，不经此字段。
+   */
+  freezeExempt: Boolean = false
 )
 
 case class InteractionState(
@@ -624,6 +879,35 @@ case class ExecutionContext(
   currentTurnId: Long = 0L,
   interaction: Option[InteractionState] = None,
   pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
+  /**
+   * Sub-agent result barrier (2026-08-18, worker blocking semantics): number of
+   * parallel sub-agent (Delegate/SubTask) results still awaited before their
+   * batch is delivered to the agent. Incremented at ToolsComplete by the count
+   * of Delegate/SubTask calls made that turn; decremented on each ExternalEvent
+   * with source "subtask"/"delegate" (completed OR failed — failures still
+   * count as results, so a crashed worker cannot stall the barrier forever).
+   *
+   * While > 0, subtask/delegate result events are HELD in [[pendingEvents]] —
+   * the agent is NOT interrupted one result at a time. When the counter
+   * reaches 0, ALL held results are injected together in a single turn.
+   *
+   * In-memory only (not persisted across crash recovery, same as
+   * pendingEvents): a crash mid-batch degrades to per-result delivery.
+   */
+  outstandingSubagentResults: Int = 0,
+  /**
+   * #25 (nested delegation dead-letter): completion-notification debt. When a
+   * turn ends while outstandingSubagentResults > 0, the replyTo that would
+   * have received AgentEvent.Completed is PARKED here instead of being sent —
+   * the actor lifecycle must not treat "turn ended" as "task completed" while
+   * spawned sub-agents are still in flight (the supervisor adapter would stop
+   * this actor and the grandchildren's results would dead-letter). When a
+   * later turn ends with the barrier at 0, every parked ref receives the
+   * Completed event — carrying the FINAL synthesized text — and the debt
+   * clears. In-memory only (same lifecycle as pendingEvents): a crash
+   * mid-flight degrades to the pre-#25 notification-less state.
+   */
+  owedCompletion: List[ActorRef[AgentEvent]] = Nil,
   pendingImmediateInputs: List[AgentCommand.ImmediateInput] = Nil,
   emptyResponseRetries: Int = 0,
   lastDispatch: Option[LastDispatch] = None,
@@ -648,6 +932,15 @@ case class ExecutionContext(
   // Consecutive transient LLM failures auto-retried this turn (bounded by
   // AgentActor.LlmFailRetryMax). Reset on any successful LLM completion.
   llmFailRetries: Int = 0,
+  // Per-turn LLM RETRY counter (2026-08-18 token incident, plan C): counts
+  // ONLY failed-retry re-dispatches (incremented in the AgentActor LlmFailed
+  // retry branch). Normal tool-loop calls do NOT count — tool-intensive agents
+  // (read → edit → compile → ...) never trip it. Bounded by
+  // Fallback.MaxTurnLlmCalls — exceeding it raises TurnBudgetExceeded
+  // (Permanent) so the turn fails fast instead of amplifying token spend via
+  // full-context re-dispatches. Monotonic within the turn; reset when the
+  // turn ends (ExecutionContext.idle rebuilds the counter to 0).
+  llmCallsThisTurn: Int = 0,
   // Pending queue mails (delivery=queue): counter only — actual items live on
   // disk (MailQueueStore). Drained one per turn at turn end, after immediate
   // inputs. Incremented by MailQueued in processing state, reset when drained.
@@ -657,8 +950,30 @@ case class ExecutionContext(
   // re-sent to self so the idle handler processes it with full metadata.
   // Replaces the dead-end `pending` function parameter on the processing
   // behavior (messages entered but were never drained).
-  pendingUserInputs: List[AgentCommand] = Nil
+  pendingUserInputs: List[AgentCommand] = Nil,
+  /**
+   * P0 阶段 3（2026-08-18，设计 §4.4）：最近一次 turn 活动时间戳——状态层
+   * 字段（registry 层权威源见 AgentRecord.lastActivityMs，TaskStuckWatcher
+   * 读它；本字段供 AgentState 使用与二期前端展示）。touch 点见 touchActivity。
+   */
+  lastActivityMs: Long = 0L,
+  /**
+   * v2 冻结式错误恢复（§3.3）：同 reason 连续 ErrorFrozen 进入次数（跨恢复
+   * 累计——resumed 续跑失败仍算连续，直至 turn 成功完成回 idle 清零）。
+   * Schedule 时间表冻结不参与计数。≥3 触发升级链（不再直接 fatal）。
+   * 内存态：ExecutionContext.idle 重建即清零（续跑成功=问题缓解）。
+   */
+  errorFreezeCount: Int = 0,
+  /** v2：上次错误冻结的 reason——判定「同 reason 连续」；reason 变化重置计数。 */
+  lastErrorFreezeReason: Option[FreezeReason] = None,
+  /** v2 升级链状态（§5.2，P0 内存态）：进入升级链后挂起，父决策/超时升级时更新。 */
+  escalation: Option[EscalationInfo] = None
 )
+
+/** P0 阶段 3：touch turn 活动戳（幂等——仅更新时间戳，不改变其他状态）。 */
+extension (e: ExecutionContext)
+  def touchActivity(now: Long = System.currentTimeMillis()): ExecutionContext =
+    e.copy(lastActivityMs = now)
 
 object ExecutionContext:
 
@@ -683,7 +998,17 @@ case class CompactionState(
   compactionFailures: Int = 0,
   lastCompactionFailureAt: Long = 0L,
   latestUsage: Option[TokenUsage] = None,
-  lastModel: Option[String] = None
+  lastModel: Option[String] = None,
+  /** P0-1（2026-08-22 Write-only 循环批）：Save 阶段累计工具轮数——超预算
+    * 强制转 Compact（正常 memory 维护 2-5 轮；上限 AgentActor.SaveMaxToolRounds）。
+    * 内存态（AgentState 不持久化），压缩跨阶段完成或 agent 重建自然归零。 */
+  saveToolRounds: Int = 0,
+  /** P0-1：Save 阶段最近 Write 的 (file_path, content-hash)——同元组连续
+    * N 次写入 = 零进展（生产形态：/tmp/wbv-verify.mjs 24 连 (no changes)）。 */
+  saveWriteHistory: List[(String, String)] = Nil,
+  /** P1-4：Save 阶段任务漂移计数——Write/Edit 落点在 memory/skill 路径集外
+    * 累计；一级注入强化 reminder，二级强制转 Compact。 */
+  saveDriftStrikes: Int = 0
 )
 
 case class AgentSessionInfo(
@@ -730,10 +1055,41 @@ case class AgentState(
   compaction: CompactionState,
   agentSessions: List[AgentSessionInfo],
   planMode: Option[PlanModeState],
-  /** Last built systemStable string — reused on non-lifecycle turns. */
+  /**
+   * Last built systemStable string — reused on non-lifecycle turns.
+   *
+   * Restart invariant (2026-08-15 FlowTrigger outage audit): AgentState is
+   * NEVER persisted — a JVM restart produces a fresh actor whose cache is
+   * None, so the first restored turn always takes the isLifecycleRebuild
+   * path and rebuilds systemStable from the CURRENT AgentDef (tools, flows,
+   * skills sections). That is what makes "restart" a lifecycle node per the
+   * cache-optimization design. If AgentState ever becomes persisted, the
+   * restore path MUST clear cachedSystemStable (invalidateSystemStableCache)
+   * or the restored session keeps advertising pre-restart tool sections.
+   */
   cachedSystemStable: Option[String],
   /** Dynamic values at the time systemStable was last built (change detection). */
-  stableSnapshot: Option[SystemStableSnapshot]
+  stableSnapshot: Option[SystemStableSnapshot],
+  /**
+   * Cancel-batch buffer (user ruling 2026-08-26 08:33) — TOP-LEVEL on
+   * purpose: ExecutionContext is rebuilt at every turn boundary
+   * (ExecutionContext.idle), an execution-scoped buffer would be silently
+   * wiped there. In-memory only (same lifecycle as the rest of AgentState):
+   * a restart drops un-flushed notices — acceptable, the panel's
+   * taskListUpdate already converged the visible state. Append order ==
+   * chronological cancel order.
+   */
+  cancelNotices: List[AgentCommand.TaskCancelNotice],
+  /** Block 3 循环检测器计数器（supervision trio §D1）：顶层——S3 跨 turn 保留
+    * （turn 边界只清 S1/S2，见 LoopGuard.evaluate 的 turnKey 判定）。 */
+  loopCounters: nebflow.core.processor.LoopGuard.Counters,
+  /** Block 3：逻辑 turn 纪元（每次真实 turn 开始 +1——UserInput/ExternalEvent
+    * 唤醒/Mail 激活/冻结唤醒等 dispatch 起点；ToolsComplete 续轮/retry/压缩
+    * 续跑不递增）。LoopGuard 的 turnKey 来源——currentTurnId 是每次 LLM
+    * dispatch 都 +1 的序号（wiring 实证），不能当 turn 身份用。
+    * （默认值只在 object AgentState.apply 提供——case class 字段带默认会与
+    * 自定义 apply 的全默认参数形成重载冲突。） */
+  loopTurnKey: Long
 )
 
 object AgentState:
@@ -762,7 +1118,11 @@ object AgentState:
     gitBranch: Option[String] = None,
     expectsMail: Boolean = false,
     rootSessionId: String = "",
-    isSubTaskWorker: Boolean = false
+    isSubTaskWorker: Boolean = false,
+    freezeExempt: Boolean = false,
+    isFlowNode: Boolean = false,
+    userFacingNode: Boolean = false,
+    loopTurnKey: Long = 0L
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -784,17 +1144,33 @@ object AgentState:
         safetyMode = safetyMode,
         expectsMail = expectsMail,
         rootSessionId = rootSessionId,
-        isSubTaskWorker = isSubTaskWorker
+        isSubTaskWorker = isSubTaskWorker,
+        freezeExempt = freezeExempt,
+        isFlowNode = isFlowNode,
+        userFacingNode = userFacingNode
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
       Nil,
       None,
       None,
-      None
+      None,
+      Nil, // cancelNotices (cancel-batch)
+      nebflow.core.processor.LoopGuard.Counters.Empty,
+      loopTurnKey
     )
   end apply
 end AgentState
+
+extension (s: AgentState)
+  def withLoopCounters(c: nebflow.core.processor.LoopGuard.Counters): AgentState =
+    s.copy(loopCounters = c)
+
+  /** Block 3：turn 纪元 +1——真实 turn 开始的 dispatch 点调用
+    *（UserInput/ExternalEvent 唤醒/Mail 激活/冻结唤醒/队列 drain）；
+    * ToolsComplete 续轮、retry、save/compact 续跑不递增。 */
+  def withNextLoopTurn: AgentState =
+    s.copy(loopTurnKey = s.loopTurnKey + 1)
 
 extension (s: AgentState)
   def messages: List[Message] = s.execution.messages
@@ -831,6 +1207,8 @@ extension (s: AgentState)
   def rootSessionId: String = s.session.rootSessionId
   def expectsMail: Boolean = s.session.expectsMail
   def isSubTaskWorker: Boolean = s.session.isSubTaskWorker
+  def isFlowNode: Boolean = s.session.isFlowNode
+  def userFacingNode: Boolean = s.session.userFacingNode
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)
@@ -895,6 +1273,24 @@ extension (s: AgentState)
 
   def withLlmFailRetries(count: Int): AgentState =
     s.copy(execution = s.execution.copy(llmFailRetries = count))
+
+  def llmCallsThisTurn: Int = s.execution.llmCallsThisTurn
+
+  def withLlmCallsThisTurn(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(llmCallsThisTurn = count))
+
+  def errorFreezeCount: Int = s.execution.errorFreezeCount
+
+  def lastErrorFreezeReason: Option[FreezeReason] = s.execution.lastErrorFreezeReason
+
+  def escalation: Option[EscalationInfo] = s.execution.escalation
+
+  /** v2 冻结式错误恢复：计数 + reason 记录（内存态，turn 完成回 idle 自动清零）。 */
+  def withErrorFreezeCount(count: Int, reason: FreezeReason): AgentState =
+    s.copy(execution = s.execution.copy(errorFreezeCount = count, lastErrorFreezeReason = Some(reason)))
+
+  def withEscalation(esc: Option[EscalationInfo]): AgentState =
+    s.copy(execution = s.execution.copy(escalation = esc))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
 
   def withSafetyMode(mode: String): AgentState =
@@ -921,6 +1317,17 @@ extension (s: AgentState)
   def withLastMaintenanceDelegateCount(count: Int): AgentState =
     s.copy(execution = s.execution.copy(lastMaintenanceDelegateCount = count))
 
+  def outstandingSubagentResults: Int = s.execution.outstandingSubagentResults
+
+  def withOutstandingSubagentResults(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(outstandingSubagentResults = count))
+
+  /** #25: set the parked completion-notification debt. */
+  def withOwedCompletion(targets: List[ActorRef[AgentEvent]]): AgentState =
+    s.copy(execution = s.execution.copy(owedCompletion = targets))
+
+  def owedCompletion: List[ActorRef[AgentEvent]] = s.execution.owedCompletion
+
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))
   def withLastModel(model: Option[String]): AgentState = s.copy(compaction = s.compaction.copy(lastModel = model))
@@ -930,10 +1337,27 @@ extension (s: AgentState)
     case _ => s
 
   def resetToIdle(messages: List[Message], turnIdx: Int = s.execution.turnIdx): AgentState =
-    s.copy(execution = ExecutionContext.idle(messages, turnIdx, s.execution.currentTurnId))
+    s.copy(execution = ExecutionContext.idle(messages, turnIdx, s.execution.currentTurnId)
+      // Sub-agent barrier: already-received results held for batch delivery are
+      // still due to the agent — survive the reset (the workers keep running).
+      .copy(pendingEvents = s.execution.pendingEvents,
+            outstandingSubagentResults = s.execution.outstandingSubagentResults,
+            // #25: a parked completion notification is still owed — the
+            // supervisor/bridge is still waiting for the final answer.
+            owedCompletion = s.execution.owedCompletion))
 
   def resetForInterrupt: AgentState = s.copy(
-    execution = ExecutionContext.idle(s.execution.messages, s.execution.turnIdx, s.execution.currentTurnId),
+    execution = ExecutionContext.idle(s.execution.messages, s.execution.turnIdx, s.execution.currentTurnId)
+      // Sub-agent barrier: held results survive an interrupt — they are still due.
+      .copy(pendingEvents = s.execution.pendingEvents,
+            outstandingSubagentResults = s.execution.outstandingSubagentResults,
+            // #25: parked completion debt survives an interrupt/restart —
+            // the waiting requester is still owed the final answer.
+            owedCompletion = s.execution.owedCompletion,
+            // #13: undelivered immediate inputs (queued Mail) survive
+            // interrupt/restart — they are user-originated work; resetting
+            // them away silently dropped tasks on every restartAgent.
+            pendingImmediateInputs = s.execution.pendingImmediateInputs),
     compaction = s.compaction.copy(pendingJob = None)
   )
 end extension

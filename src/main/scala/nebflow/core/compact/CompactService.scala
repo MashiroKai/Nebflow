@@ -33,8 +33,8 @@ object CompactService:
    * stop its current task and produce a summary.
    * Different agent roles need different summary focus areas.
    */
-  def buildCompactReminder(depth: Int = 0): Message =
-    val profile = CompactionProfile.fromDepth(depth)
+  def buildCompactReminder(depth: Int = 0, isLead: Boolean = false): Message =
+    val profile = CompactionProfile.fromDepth(depth, isLead)
     val prompt = profile match
       case CompactionProfile.Worker => WorkerCompactReminder
       case CompactionProfile.Manager => ManagerCompactReminder
@@ -55,13 +55,41 @@ object CompactService:
    * ContextRefresher's injection condition) get a save turn; others go
    * straight to compact (behavior unchanged).
    */
-  def buildSaveMemoryReminder(depth: Int): Message =
-    val profile = CompactionProfile.fromDepth(depth)
+  def buildSaveMemoryReminder(depth: Int, isLead: Boolean = false): Message =
+    val profile = CompactionProfile.fromDepth(depth, isLead)
     val prompt = profile match
       case CompactionProfile.Worker => WorkerSaveMemoryReminder
       case CompactionProfile.Manager => ManagerSaveMemoryReminder
       case _ => RootSaveMemoryReminder
     Message(MessageRole.User, Left(prompt))
+
+  /**
+   * P1-4（2026-08-22 Write-only 循环批）：save-turn 任务漂移一级 reminder。
+   * 触发条件：save 阶段模型对 memory/skill 路径集之外的文件做 Write/Edit
+   * （= 回到原任务——生产形态：/tmp/wbv-verify.mjs 24 连重写）。注入一次；
+   * 再漂移由 guardSaveTurn 强制转 Compact。要点：明确告诉模型原任务不会
+   * 丢（压缩后继续），消除「必须先做完任务」的续写压力。
+   */
+  def saveTurnDriftReminder: Message =
+    Message(
+      MessageRole.User,
+      Left(
+        """<system-reminder>
+          |The file operations above target files OUTSIDE your memory/skill paths —
+          |that is the ORIGINAL TASK, not memory maintenance.
+          |
+          |You are in the pre-compaction MEMORY SAVE phase. The original task is NOT
+          |lost: it resumes automatically after compaction completes. Its full state
+          |is preserved in the compaction summary step that follows.
+          |
+          |Do this now: finish or abandon the memory maintenance cycle using ONLY
+          |your memory files (memory.md / User.md) and skill drafts
+          |(~/.nebflow/skills/), then STOP — call no more tools and write no more
+          |text. Stopping proceeds to compaction automatically; continuing to write
+          |task files will trigger a forced transition to compaction.
+          |</system-reminder>""".stripMargin
+      )
+    )
 
   /** Shared preamble for all save-memory profiles. */
   private val SaveMemoryPreamble =
@@ -98,9 +126,12 @@ object CompactService:
       |LANGUAGE RULE — write your memory entries in the SAME language as the user's messages.
       |
       |Your ONLY task this turn is to run this cycle with the Write/Edit tools.
-      |When the cycle is done, END THIS TURN directly — do not output any extra text.
-      |Ending the turn is the completion signal; the system will proceed to compaction
-      |automatically.
+      |When the cycle is done, simply STOP — call no more tools and write no
+      |more text. Stopping is itself the completion signal: the system detects
+      |that you have stopped and proceeds to compaction automatically. No
+      |extra action is needed or allowed to "signal" the end — in particular,
+      |do NOT run no-op commands (e.g. `true`) and do not output filler text:
+      |a no-op command only pollutes the execution record and wastes a turn.
       |
       |Already-saved information does not need to be repeated in the compaction
       |summary afterwards.
@@ -155,6 +186,11 @@ object CompactService:
       |   task types; routing lessons reusable across flows (not one-off status reports)
       |4. ARTIFACT LOCATIONS — files agents produced (path + what it is), so you can
       |   point users/agents at results without re-searching
+      |5. PERIOD SELF-CHECK — count [USER-RULING] mails in your team's flow-mailbox
+      |   (~/.nebflow/sessions/*/flow-mailbox/ — Grep pattern:"[USER-RULING]") since
+      |   your last save turn, and summarize direct member-to-member collaboration
+      |   (pairing/handoff/review) in one line. Record counts and one-liners ONLY —
+      |   never full mail bodies.
       |
       |VERIFY & CLEAR — manager profile:
       |- Statuses: verify done/failed claims against actual artifacts before keeping
@@ -184,10 +220,20 @@ object CompactService:
       |2. EFFECTIVE PRACTICES — approaches that worked in this domain (tests, build, layout)
       |3. TOOL BEHAVIOR — non-obvious tool semantics you discovered (output formats,
       |   gotchas, failure modes) that cost you time
-      |4. REUSABLE CAPABILITIES — if this conversation produced a repeatable procedure
-      |   (seen 2+ times or clearly generalizable), organize it as a skill following the
-      |   skill-creator spec: ~/.nebflow/skills/<kebab-case-name>/SKILL.md with frontmatter
-      |   (name + description: what AND when). One skill = one purpose; no one-off skills.
+      |4. USER RULINGS — if the user corrected you, vetoed your work, or stated a
+      |   preference this session: record the ruling in your memory FIRST (quote their
+      |   exact words + date), THEN report it upward via Mail with the tag
+      |   "[RESULT] [USER-RULING]" (to your Manager, or to Nebula if you are the lead),
+      |   attaching the user's original words. Never let a ruling live only in this
+      |   conversation. If you already reported it in the turn it happened, just make
+      |   sure it is now in memory.
+      |5. REUSABLE CAPABILITIES — if the same kind of ruling or procedure has now been
+      |   seen 2+ times (counting across sessions) or is clearly generalizable, draft it
+      |   as a skill following the skill-creator spec: ~/.nebflow/skills/<name>/SKILL.md
+      |   (team-specific skills use a namespace dir like skills/<namespace>/<name>/,
+      |   with the user's original words quoted in an Evidence section). One skill = one
+      |   purpose; no one-off skills. Registration & subscription (agent.json skills) is
+      |   finalized at review — report the draft in a [USER-RULING] mail.
       |
       |VERIFY & CLEAR — worker profile:
       |- Pitfalls: confirm the fix is still in the code before keeping the entry — a
@@ -237,6 +283,12 @@ object CompactService:
       |- Preserve all decisions, trade-offs, and user preferences stated
       |- If the user gave explicit instructions, quote them verbatim
       |- Keep the summary focused and information-dense
+      |- Image attachments: for every image in the history (marked `[用户附加图片: path]`),
+      |  keep one line in the summary in this exact format:
+      |  [图片: <path> | <one-sentence description of the image, or 未描述>]
+      |  Describe the content if you can see the image; otherwise write 未描述.
+      |  Images are dropped from context after compaction — this line is the only
+      |  way to remember them and re-Read them later.
       |</system-reminder>""".stripMargin
 
   /**

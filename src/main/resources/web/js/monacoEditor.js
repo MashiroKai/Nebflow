@@ -11,6 +11,7 @@
 
 import state from './state.js';
 import { sendWs, onMessage } from './ws.js';
+import { t } from './i18n.js';
 
 // Inject CSS to hide the native textarea caret (thin cursor).
 // Monaco renders its own cursor div; the textarea's native caret bleeds through
@@ -270,20 +271,25 @@ export async function createEditor(container, opts) {
   async function save() {
     const content = model.getValue();
     return new Promise((resolve) => {
-      // Set up one-shot response handler
+      // Set up one-shot response handlers — either outcome removes BOTH (an
+      // orphaned handler would re-fire on later saves and duplicate toasts).
       const cleanup = onMessage('fileSaved', (msg) => {
         if (msg.path === opts.path) {
           cleanup();
+          cleanupErr();
           dirty = false;
           originalContent = model.getValue();
           dirtyListeners.forEach(fn => fn(false));
+          /** @type {any} */ (window).__showToast?.(t('canvas.saved', { name: opts.fileName || opts.path }), 'info');
           resolve(true);
         }
       });
       const cleanupErr = onMessage('fileSaveError', (msg) => {
         if (msg.path === opts.path) {
+          cleanup();
           cleanupErr();
           console.error('Save failed:', msg.error);
+          /** @type {any} */ (window).__showToast?.(t('canvas.saveFailed', { name: opts.fileName || opts.path, error: msg.error || '' }), 'error');
           resolve(false);
         }
       });
@@ -311,6 +317,11 @@ export async function createEditor(container, opts) {
     }
   }
 
+  // Absolute-path form detection: explorer-opened editors carry the
+  // explorer-relative path (rootPath sent alongside), source-toggle editors
+  // the absolute one. setPath keeps the same form after a drag-to-move.
+  const pathIsAbs = /^\//.test(opts.path || '') || /^[A-Za-z]:[\\/]/.test(opts.path || '');
+
   return {
     editor,
     model,
@@ -319,6 +330,10 @@ export async function createEditor(container, opts) {
     save,
     dispose,
     focus: () => editor.focus(),
+    /** Repoint the save target after the file was moved (explorer drag-to-move).
+     *  @param {string} rel - new explorer-relative path
+     *  @param {string} [abs] - new absolute path (used when created absolute) */
+    setPath: (rel, abs) => { opts.path = pathIsAbs ? (abs || rel) : rel; },
   };
 }
 

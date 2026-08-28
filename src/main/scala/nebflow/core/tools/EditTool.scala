@@ -10,6 +10,24 @@ import java.nio.file.{Files, Path, Paths}
 
 private val logger = NebflowLogger.forName("nebflow.edit")
 
+/**
+ * Structured failure of a single old→new edit applied to a buffer.
+ * Shared by EditTool and MultiEditTool — each maps these to its own
+ * user-facing error message.
+ */
+sealed trait EditFailure extends Product with Serializable
+
+object EditFailure:
+  /** old_string not found in the buffer (after 4-level fuzzy matching). */
+  case object OldStringNotFound extends EditFailure
+
+  /** old_string matches multiple locations and replace_all is false. */
+  case class NotUnique(matchCount: Int) extends EditFailure
+
+  /** old_string is empty — only meaningful for Edit's file-creation branch. */
+  case object EmptyOldString extends EditFailure
+end EditFailure
+
 object EditTool extends Tool:
   val name = "Edit"
 
@@ -25,7 +43,7 @@ Usage:
 Edit patterns:
 - Rename a variable: Use replace_all to change every occurrence. Do not do it one at a time.
 - Modify a specific function: Include enough context (function signature, surrounding lines) to make the old_string unique.
-- Multi-location edits: If the same change needs to happen in multiple places, use multiple Edit calls in parallel rather than trying to write a complex regex.
+- Multi-location edits: For 2+ changes to the SAME file, use the MultiEdit tool — one atomic call with an ordered edits array. Never send parallel Edit calls for the same file: concurrent writes race and only the last one survives.
 - Large refactors: If a change affects more than 3-4 files, consider whether the scope matches what the user asked for."""
 
   val inputSchema = JsonObject.fromIterable(
@@ -153,6 +171,46 @@ Edit patterns:
   // Core edit logic (runs inside write lock)
   // ---------------------------------------------------------------------------
 
+  /**
+   * Apply a single old→new replacement to a normalized (\r\n → \n) buffer.
+   * Pure function — no file IO. Shared by EditTool and MultiEditTool.
+   *
+   * Matching semantics (identical to Edit's single-edit behavior):
+   *  - old_string is \r\n-normalized before matching;
+   *  - StringMatcher 4-level fuzzy matching locates the actual text;
+   *  - uniqueness is enforced unless replaceAll;
+   *  - preserveQuoteStyle is applied when fuzzy matching was used.
+   */
+  def applyEditToBuffer(
+    buffer: String,
+    oldString: String,
+    newString: String,
+    replaceAll: Boolean
+  ): Either[EditFailure, String] =
+    if oldString.isEmpty then Left(EditFailure.EmptyOldString)
+    else
+      val searchStr = oldString.replace("\r\n", "\n")
+      StringMatcher.findActualString(buffer, searchStr) match
+        case None => Left(EditFailure.OldStringNotFound)
+        case Some(actualOld) =>
+          val matchCount = DiffUtil.countMatches(buffer, actualOld)
+          if matchCount > 1 && !replaceAll then Left(EditFailure.NotUnique(matchCount))
+          else
+            // Apply preserveQuoteStyle when fuzzy match was used
+            val effectiveNew =
+              if actualOld != searchStr then StringMatcher.preserveQuoteStyle(searchStr, actualOld, newString)
+              else newString
+            val updated =
+              if replaceAll then buffer.replace(actualOld, effectiveNew)
+              else
+                buffer.replaceFirst(
+                  java.util.regex.Pattern.quote(actualOld),
+                  java.util.regex.Matcher.quoteReplacement(effectiveNew)
+                )
+            Right(updated)
+      end match
+  end applyEditToBuffer
+
   private def doEdit(
     filePath: Path,
     oldString: String,
@@ -187,42 +245,33 @@ Edit patterns:
           // Normalize \r\n → \n so that matching works regardless of the file's
           // line endings.  writeFile converts back to lineSep on output.
           val content = rawContent.replace("\r\n", "\n")
-          // Also normalize old_string — it may contain \r\n if the LLM copied
-          // it from a source that preserved Windows line endings.
-          val searchStr = oldString.replace("\r\n", "\n")
           val mtime = Files.getLastModifiedTime(filePath)
 
-          // Fuzzy matching
-          StringMatcher.findActualString(content, searchStr) match
-            case None =>
+          applyEditToBuffer(content, oldString, newString, replaceAll) match
+            case Left(EditFailure.OldStringNotFound) =>
               Left(
                 ToolError(
                   "old_string not found in file. Ensure the string matches exactly, including whitespace and indentation."
                 )
               )
-            case Some(actualOld) =>
-              // Uniqueness check
-              val matchCount = DiffUtil.countMatches(content, actualOld)
-              if matchCount > 1 && !replaceAll then
-                Left(
-                  ToolError(
-                    s"Found $matchCount matches of old_string. Either provide more context to make it unique, or set replace_all to true."
-                  )
+            case Left(EditFailure.NotUnique(matchCount)) =>
+              Left(
+                ToolError(
+                  s"Found $matchCount matches of old_string. Either provide more context to make it unique, or set replace_all to true."
                 )
-              else
-                // Apply preserveQuoteStyle when fuzzy match was used
-                val effectiveNew =
-                  if actualOld != searchStr then StringMatcher.preserveQuoteStyle(searchStr, actualOld, newString)
-                  else newString
-
-                // Double-check concurrency: mtime + content comparison
-                val currentMtime = Files.getLastModifiedTime(filePath)
-                if currentMtime != mtime then
-                  val currentContent = DiffUtil.readFile(filePath).replace("\r\n", "\n")
-                  if currentContent != content then
-                    Left(ToolError("File was modified externally. Please re-read and retry."))
-                  else performReplace(filePath.toString, content, actualOld, effectiveNew, replaceAll, lineSep)
-                else performReplace(filePath.toString, content, actualOld, effectiveNew, replaceAll, lineSep)
+              )
+            case Left(EditFailure.EmptyOldString) =>
+              // Unreachable here — the creation branch above handles empty old_string.
+              Left(ToolError("old_string must not be empty."))
+            case Right(updated) =>
+              // Double-check concurrency: mtime + content comparison
+              val currentMtime = Files.getLastModifiedTime(filePath)
+              if currentMtime != mtime then
+                val currentContent = DiffUtil.readFile(filePath).replace("\r\n", "\n")
+                if currentContent != content then
+                  Left(ToolError("File was modified externally. Please re-read and retry."))
+                else performReplace(filePath.toString, content, updated, lineSep)
+              else performReplace(filePath.toString, content, updated, lineSep)
               end if
           end match
         end if
@@ -230,19 +279,9 @@ Edit patterns:
   private def performReplace(
     filePathStr: String,
     content: String,
-    actualOld: String,
-    newString: String,
-    replaceAll: Boolean,
+    updated: String,
     lineSep: String
   ): Either[ToolError, String] =
-    val updated =
-      if replaceAll then content.replace(actualOld, newString)
-      else
-        content.replaceFirst(
-          java.util.regex.Pattern.quote(actualOld),
-          java.util.regex.Matcher.quoteReplacement(newString)
-        )
-
     DiffUtil.writeFile(Paths.get(filePathStr), updated, lineSep)
 
     val (added, removed) = DiffUtil.lineStats(content, updated)

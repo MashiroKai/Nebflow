@@ -12,14 +12,23 @@ env:
   COURSIER_REPOSITORIES: "ivy2Local|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2"
 
 jobs:
-  beta:
-    name: Build & Release Beta
+  build-jar:
+    name: Build & Test (jar)
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      skipped: ${{ steps.check.outputs.skipped }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Brand values from brand.conf
+        # L2 rebrand: single source — every brand string below flows from here.
+        run: |
+          bv() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" brand.conf | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1; }
+          echo "LOWER_NAME=$(bv lowerName)" >> $GITHUB_ENV
+          echo "COS_BUCKET=$(bv cosBucket)" >> $GITHUB_ENV
       - name: Read version
         id: version
         run: |
@@ -36,8 +45,6 @@ jobs:
           else
             echo "skipped=false" >> $GITHUB_OUTPUT
           fi
-
-      # --- Build & Test ---
 
       - uses: actions/setup-java@v4
         if: steps.check.outputs.skipped == 'false'
@@ -64,36 +71,193 @@ jobs:
         if: steps.check.outputs.skipped == 'false'
         run: sbt assembly
 
-      # --- Tag & Release ---
+      - name: Upload jar artifact
+        if: steps.check.outputs.skipped == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jar
+          path: target/scala-3.5.2/${{ env.LOWER_NAME }}-assembly-*.jar
+          if-no-files-found: error
+
+  package-macos:
+    name: Package macOS (${{ matrix.label }})
+    needs: build-jar
+    if: needs.build-jar.outputs.skipped == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: arm64
+            runs-on: macos-15
+          - label: x64
+            runs-on: macos-15-intel
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Download jar
+        uses: actions/download-artifact@v4
+        with:
+          name: jar
+          path: target/scala-3.5.2
+
+      - name: Build dmg (jlink + jpackage)
+        run: |
+          chmod +x packaging/*.sh
+          ./packaging/build-dmg.sh --jar-dir target/scala-3.5.2
+
+      - name: Upload dmg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.label }}
+          path: build/dist/*.dmg
+          if-no-files-found: error
+
+  package-windows:
+    name: Package Windows (x64 msi)
+    needs: build-jar
+    if: needs.build-jar.outputs.skipped == 'false'
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # WiX 3.x is a hard dependency of jpackage msi. WiX 3.14 pairs with
+      # JDK <= 23 (JDK 24+ switches to WiX 4/5) — keep this in sync with the
+      # packaging JDK version above.
+      - name: Install WiX 3.14
+        shell: bash
+        run: |
+          choco install wixtoolset --version=3.14.1.2728 -y
+          echo "C:/Program Files (x86)/WiX Toolset v3.14/bin" >> $GITHUB_PATH
+
+      - name: Download jar
+        uses: actions/download-artifact@v4
+        with:
+          name: jar
+          path: target/scala-3.5.2
+
+      - name: Build msi (jlink + jpackage)
+        shell: bash
+        run: |
+          chmod +x packaging/*.sh
+          ./packaging/build-msi.sh --jar-dir target/scala-3.5.2
+
+      - name: Upload msi artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-x64
+          path: build/dist/*.msi
+          if-no-files-found: error
+
+  package-linux:
+    name: Package Linux (deb + app-image)
+    needs: build-jar
+    if: needs.build-jar.outputs.skipped == 'false'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # jpackage's LinuxDebBundler hard-depends on dpkg/dpkg-deb/fakeroot
+      # (research §5). dpkg ships with Ubuntu; fakeroot is explicit for safety.
+      - name: Install deb toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fakeroot
+
+      - name: Download jar
+        uses: actions/download-artifact@v4
+        with:
+          name: jar
+          path: target/scala-3.5.2
+
+      - name: Build deb + app-image (jlink + jpackage)
+        run: |
+          chmod +x packaging/*.sh
+          ./packaging/build-linux.sh --jar-dir target/scala-3.5.2
+
+      - name: Upload deb + app-image artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: |
+            build/dist/*.deb
+            build/dist/*-app-image.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Tag, Release & Mirror
+    needs: [build-jar, package-macos, package-windows, package-linux]
+    if: needs.build-jar.outputs.skipped == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Brand values from brand.conf
+        # L2 rebrand: single source — every brand string below flows from here.
+        run: |
+          bv() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" brand.conf | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1; }
+          echo "LOWER_NAME=$(bv lowerName)" >> $GITHUB_ENV
+          echo "PRODUCT_NAME=$(bv productName)" >> $GITHUB_ENV
+          echo "COS_BUCKET=$(bv cosBucket)" >> $GITHUB_ENV
+      - name: Collect assets
+        run: |
+          mkdir -p release-assets
+          find dist -name '${LOWER_NAME}-assembly-*.jar' -exec cp {} release-assets/ \;
+          find dist -name '${PRODUCT_NAME}-*.dmg' -exec cp {} release-assets/ \;
+          find dist -name '${PRODUCT_NAME}-*.msi' -exec cp {} release-assets/ \;
+          find dist -name '${PRODUCT_NAME}-*.deb' -exec cp {} release-assets/ \;
+          find dist -name '${PRODUCT_NAME}-*-app-image.tar.gz' -exec cp {} release-assets/ \;
+          ls -lh release-assets/
 
       - name: Create tag
-        if: steps.check.outputs.skipped == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
+          git tag "v${{ needs.build-jar.outputs.version }}"
+          git push origin beta --tags
 
       - name: Create GitHub Release
-        if: steps.check.outputs.skipped == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v${{ steps.version.outputs.version }}"
-          files: target/scala-3.5.2/nebflow-assembly-*.jar
+          tag_name: "v${{ needs.build-jar.outputs.version }}"
+          files: release-assets/*
           prerelease: true
           generate_release_notes: true
 
       - name: Upload to COS (China mirror)
-        if: steps.check.outputs.skipped == 'false'
         env:
           COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
           COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
         run: |
           pip install coscmd 2>/dev/null
-          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b nebflow-releases-1411212853 -e cos.accelerate.myqcloud.com
-          JAR=$(ls target/scala-3.5.2/nebflow-assembly-*.jar | head -1)
-          coscmd upload "$JAR" "$(basename "$JAR")" -f
-          echo "  Uploaded $(basename "$JAR") to COS"
-          echo -n "${{ steps.version.outputs.version }}" > /tmp/latest-beta-version.txt
+          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b "$COS_BUCKET" -e cos.accelerate.myqcloud.com
+          for f in release-assets/*; do
+            coscmd upload "$f" "$(basename "$f")" -f
+            echo "  Uploaded $(basename "$f") to COS"
+          done
+          # Beta channel pointer: latest-beta-version.txt (stable writes latest-version.txt — do not clobber)
+          echo -n "${{ needs.build-jar.outputs.version }}" > /tmp/latest-beta-version.txt
           coscmd upload /tmp/latest-beta-version.txt latest-beta-version.txt -f
           echo "  Uploaded latest-beta-version.txt to COS"

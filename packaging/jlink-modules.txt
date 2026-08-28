@@ -1,0 +1,9 @@
+# JDK modules linked into the desktop runtime image.
+# Derived: jdeps --print-module-deps --ignore-missing-deps <fat-jar> (2026-08-16)
+# Safety additions beyond jdeps output:
+#   jdk.crypto.ec — EC crypto for outbound TLS (LLM APIs); SunEC moved into
+#     java.base only in JDK 22, we still package with 21.
+# Quality gate: any dependency bump should re-run jdeps and smoke-test the
+# packaged app (start + /health + one tool round-trip) — jdeps cannot see
+# reflective/ServiceLoader loads (build-time silent, run-time explosive).
+java.base,java.desktop,java.logging,java.management,java.naming,java.net.http,jdk.crypto.ec,jdk.unsupported

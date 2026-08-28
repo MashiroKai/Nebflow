@@ -112,22 +112,84 @@ class HealthMonitorSpec extends CatsEffectSuite:
     for
       _ <- monitor.markDown("glm", "glm-5", "down")
       // Race: waitForAnyUp vs 500ms timeout — timeout should win (still blocked)
-      result1 <- monitor.waitForAnyUp().timeoutTo(500.millis, IO.pure("timeout"))
+      result1 <- monitor.waitForAnyUp(cs).timeoutTo(500.millis, IO.pure("timeout"))
       _ = assertEquals(result1, "timeout")
       // Mark up — now waitForAnyUp should complete
       _ <- monitor.markUp("glm", "glm-5")
       // Race again — wait should return immediately now
-      result2 <- monitor.waitForAnyUp().timeoutTo(500.millis, IO.pure("timeout"))
+      result2 <- monitor.waitForAnyUp(cs).timeoutTo(500.millis, IO.pure("timeout"))
     yield assert(result2 == (), s"expected unit, got $result2")
   }
 
   test("waitForAnyUp returns immediately if a signal was already fired") {
     val monitor = newMonitor
+    val cs = List(candidate("glm", "glm-5"))
 
     for
       _ <- monitor.markDown("glm", "glm-5", "down")
       _ <- monitor.markUp("glm", "glm-5") // fires signal
-      _ <- monitor.waitForAnyUp() // should not block
+      _ <- monitor.waitForAnyUp(cs) // should not block
+    yield ()
+  }
+
+  // ============================================================
+  // waitForAnyUp — multi-waiter recovery race (2026-08-15 incident)
+  // ============================================================
+
+  test("late waiter after an early waiter consumed the signal must not hang") {
+    val monitor = newMonitor
+    val cs = List(candidate("glm", "glm-5"))
+
+    // Exact reproduction of the dual-DOWN ghost timeout: waiter A enters after
+    // the signal fired (old code: tryGet=Some -> refresh Deferred -> return),
+    // then waiter B enters and finds a FRESH EMPTY Deferred with every
+    // provider already Up — old code blocked B for the full 120s timeout.
+    // New code re-checks health state on entry/wake, so B returns instantly.
+    for
+      _ <- monitor.markDown("glm", "glm-5", "timeout")
+      _ <- monitor.markUp("glm", "glm-5") // signal fires before any waiter
+      _ <- monitor.waitForAnyUp(cs) // waiter A consumes the signal path
+      r <- monitor.waitForAnyUp(cs).timeout(2.seconds).attempt // waiter B, late
+    yield assert(r.isRight, s"late waiter must pass via state re-check, got $r")
+  }
+
+  test("two parked waiters both released by one markUp signal") {
+    val monitor = newMonitor
+    val cs = List(candidate("glm", "glm-5"))
+
+    for
+      _ <- monitor.markDown("glm", "glm-5", "down")
+      dA <- IO.deferred[Unit]
+      dB <- IO.deferred[Unit]
+      fibA <- (monitor.waitForAnyUp(cs) *> dA.complete(())).start
+      fibB <- (monitor.waitForAnyUp(cs) *> dB.complete(())).start
+      _ <- IO.sleep(200.millis) // both parked on the signal or a tick
+      _ <- monitor.markUp("glm", "glm-5")
+      _ <- dA.get.timeout(2.seconds) // both must be released promptly
+      _ <- dB.get.timeout(2.seconds)
+      _ <- fibA.join *> fibB.join
+    yield ()
+  }
+
+  test("waiter blocked on an orphaned Deferred escapes via tick re-check") {
+    val monitor = newMonitor
+    val cs = List(candidate("glm", "glm-5"))
+
+    // Anti-spin path: a waiter woken without recovery replaces the signal
+    // Deferred; another waiter still parked on the old Deferred is orphaned
+    // (nothing will ever complete it) — it must escape via the periodic tick
+    // re-check once its candidates recover, not hang forever.
+    for
+      _ <- monitor.markDown("glm", "glm-5", "down")
+      dOrphan <- IO.deferred[Unit]
+      fibOrphan <- (monitor.waitForAnyUp(cs) *> dOrphan.complete(())).start
+      _ <- IO.sleep(200.millis) // orphan parked on D1
+      // Simulate another waiter's anti-spin Deferred replacement by forcing
+      // the replacement directly (refresh signalRef to a fresh empty one).
+      _ <- IO.deferred[Unit].flatMap(fresh => monitor.replaceSignalForTest(fresh))
+      _ <- monitor.markUp("glm", "glm-5") // completes the NEW Deferred only
+      _ <- dOrphan.get.timeout(ProviderHealthMonitor.RecheckIntervalSec.seconds + 2.seconds)
+      _ <- fibOrphan.join
     yield ()
   }
 
@@ -178,6 +240,19 @@ class HealthMonitorSpec extends CatsEffectSuite:
   private class FakeRegistry(adapter: ProviderAdapter[IO]) extends ProviderRegistry(null, null):
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
 
+  /** Registry that resolves a whitelist of model refs (simulates a config with
+    * a default chain that does NOT include the Down candidate — the 2026-08-25
+    * kimi scenario where kimi/k3-256k lives only in the Vision preset). */
+  private class FakeRegistry2(adapter: ProviderAdapter[IO], known: Set[String])
+      extends ProviderRegistry(null, null):
+    override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
+    override def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
+      if known.contains(ref) then
+        ref.split("/").toList match
+          case pid :: m :: Nil => IO.pure(Some(candidate(pid, m)))
+          case _               => IO.pure(None)
+      else IO.pure(None)
+
   test("probe marks Up on a successful response (empty reply OK — thinking-only)") {
     // A thinking model (GLM-5.2) can return content="" when all tokens went to
     // reasoning — with F3 the adapter treats that as success, so probe must markUp.
@@ -206,5 +281,39 @@ class HealthMonitorSpec extends CatsEffectSuite:
     yield states.get("glm/glm-5-107") match
       case Some(HealthState.Down(_, _)) => ()
       case other => fail(s"expected Down after failed probe, got $other")
+  }
+
+  // ============================================================
+  // downCandidates — probe set covers ALL Down candidates
+  // (2026-08-25 kimi incident: Vision-preset candidate was never
+  // probed because the probe set was the default chain only)
+  // ============================================================
+
+  test("downCandidates includes Down candidates outside the default chain (kimi fix)") {
+    val adapter = FakeAdapter(IO.pure(AdapterResponse("", Nil, None)))
+    // kimi/k3-256k is NOT in the default (general) chain — only in Vision preset
+    val monitor = ProviderHealthMonitor(FakeRegistry2(adapter, Set("kimi/k3-256k")))
+
+    for
+      _ <- monitor.markDown("kimi", "k3-256k", "timeout")
+      dc <- monitor.downCandidates()
+      _ <- monitor.probe(dc.head)
+      states <- monitor.getStates
+    yield
+      assertEquals(dc.map(c => s"${c.providerId}/${c.model}"), List("kimi/k3-256k"))
+      states.get("kimi/k3-256k") match
+        case Some(HealthState.Up) => ()
+        case other => fail(s"kimi/k3-256k must recover via downCandidates probe, got $other")
+  }
+
+  test("downCandidates skips refs whose provider was removed from config") {
+    val monitor = ProviderHealthMonitor(
+      FakeRegistry2(FakeAdapter(IO.pure(AdapterResponse("", Nil, None))), Set.empty)
+    )
+
+    for
+      _ <- monitor.markDown("ghost", "gone", "error")
+      dc <- monitor.downCandidates()
+    yield assertEquals(dc, List.empty[ModelCandidate])
   }
 end HealthMonitorSpec

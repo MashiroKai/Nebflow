@@ -170,6 +170,29 @@ class PromptSectionsSpec extends munit.FunSuite:
     assert(!blocks.contains("## Voice Output"))
 
   // ============================================================
+  // Reminder refactor (2026-08-20, D6): task-list semantics migrated
+  // from the per-turn tasks reminder into a cached systemStable section.
+  // ============================================================
+
+  test("Task List Protocol section is Nebula-only (2026-08-20 D6)"):
+    val nebula = buildConditionalBlocks(PromptContext(agentName = "Nebula"))
+    val manager = buildConditionalBlocks(PromptContext(agentName = "Manager"))
+    assert(nebula.contains("## Task List Protocol"), "Nebula gets the task-list semantics")
+    assert(!manager.contains("## Task List Protocol"), "non-Nebula agents never see it")
+    assert(nebula.contains("needs_confirmation"), "semantics must explain the confirmation lane")
+
+  test("Task List Protocol orders after Language and before Skills"):
+    val blocks = buildConditionalBlocks(
+      PromptContext(agentName = "Nebula", language = Some("English"), skillCatalog = "# Skills")
+    )
+    val protoIdx = blocks.indexOf("## Task List Protocol")
+    val langIdx = blocks.indexOf("# Language")
+    val skillsIdx = blocks.indexOf("# Skills")
+    assert(protoIdx >= 0, s"protocol missing: $blocks")
+    assert(langIdx < protoIdx, "Language (620) before Task List Protocol (630)")
+    assert(protoIdx < skillsIdx, "Task List Protocol (630) before Skills (800)")
+
+  // ============================================================
   // stripSection / stripAllMigrated
   // ============================================================
 
@@ -246,5 +269,23 @@ class PromptSectionsSpec extends munit.FunSuite:
     finally
       PathUtil.setDataRoot(prevRoot)
       os.remove.all(tempRoot)
+
+  // ============================================================
+  // System prompt assembly (provider prefix-cache contract)
+  // ============================================================
+
+  test("shared system prefix stays first in assembled prompt (provider prefix cache)"):
+    // The shared system-prefix-for-all block must be the first bytes of every
+    // agent's system prompt — cross-agent prefix caching depends on it.
+    val prompt = assembleSystemPrompt("SHARED-PREFIX", "AGENT-MD", "CONDITIONAL")
+    assert(prompt.startsWith("SHARED-PREFIX"), "shared prefix must be first")
+    val prefixIdx = prompt.indexOf("SHARED-PREFIX")
+    val agentIdx = prompt.indexOf("AGENT-MD")
+    val condIdx = prompt.indexOf("CONDITIONAL")
+    assert(prefixIdx < agentIdx && agentIdx < condIdx, "order must be prefix → agent.md → conditional")
+
+  test("assembleSystemPrompt omits separator when no conditional blocks"):
+    assertEquals(assembleSystemPrompt("P", "A", ""), "PA")
+    assertEquals(assembleSystemPrompt("P", "A", "C"), "PA\n\nC")
 
 end PromptSectionsSpec

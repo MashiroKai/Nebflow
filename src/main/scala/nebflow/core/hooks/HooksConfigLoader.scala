@@ -14,7 +14,7 @@ object HooksConfigLoader:
    * Returns HooksConfig.empty if no hooks are configured or on parse error.
    */
   def load(projectRoot: os.Path): HooksConfig =
-    val configPath = projectRoot / "nebflow.json"
+    val configPath = nebflow.core.PathUtil.configJsonReadPath(projectRoot)
     if !os.exists(configPath) then HooksConfig.empty
     else
       try

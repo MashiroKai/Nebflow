@@ -24,10 +24,19 @@ class ProviderRegistry(
 ):
   private val adaptersRef: Ref[IO, Map[String, ProviderAdapter[IO]]] = Ref.unsafe(Map.empty)
 
-  private def createAdapter(provider: ProviderConfig): ProviderAdapter[IO] =
+  private def createAdapter(providerId: String, provider: ProviderConfig): ProviderAdapter[IO] =
     provider.protocol match
       case LlmProtocol.OpenAI => OpenAiAdapter(provider.baseUrl, provider.apiKey, backend)
-      case LlmProtocol.Anthropic => AnthropicAdapter(provider.baseUrl, provider.apiKey, backend)
+      case LlmProtocol.Anthropic =>
+        AnthropicAdapter(
+          provider.baseUrl,
+          provider.apiKey,
+          backend,
+          // DeepSeek's thinking mode rejects history replay that omits unsigned
+          // thinking blocks (400 invalid_request → provider marked DOWN); real
+          // Anthropic is the opposite. Explicit config overrides the default.
+          requireThinkingPassback = provider.requireThinkingPassback.getOrElse(providerId == "deepseek")
+        )
 
   def getAdapter(providerId: String): IO[ProviderAdapter[IO]] =
     adaptersRef.get.map(_.get(providerId)).flatMap {
@@ -36,7 +45,7 @@ class ProviderRegistry(
         configRef.get.flatMap { config =>
           config.llm.providers.get(providerId) match
             case Some(provider) =>
-              val adapter = createAdapter(provider)
+              val adapter = createAdapter(providerId, provider)
               adaptersRef.update(_ + (providerId -> adapter)).as(adapter)
             case None =>
               IO.raiseError(new RuntimeException(s"Unknown provider: $providerId"))
@@ -45,7 +54,15 @@ class ProviderRegistry(
 
   def getCandidates(): IO[List[ModelCandidate]] =
     configRef.get.map { config =>
-      val chain = config.llm.model.default :: config.llm.model.fallbacks
+      // #339：全局链来源 = 默认 preset（llm.model 已退役）。resolve(None,None)
+      // 走 terminal 第 3 级；preset 文件小、每次读新（与 PresetStore 设计一致）。
+      // onboarding 探针 probeLlm（不带 agentModel）自动跟随默认 preset——首配
+      // 后探针测的正是刚配置的模型。
+      val chain =
+        try
+          val (am, _) = nebflow.core.presets.PresetStore().resolve(None, None)
+          am.preferred.toList ++ am.fallbacks
+        catch case _: Exception => Nil
       val fromChain = chain.flatMap { ref =>
         // Gracefully skip invalid refs instead of throwing
         try
@@ -88,7 +105,7 @@ class ProviderRegistry(
   /**
    * List all models with descriptions. Returns (ref, displayLabel, description) triples.
    * displayLabel includes the provider name to ensure uniqueness when multiple
-   * providers offer the same model ID (e.g. USTC and deepseek both have deepseek-v4-pro).
+   * providers offer the same model ID (e.g. two providers both have model-x).
    */
   def getAllModelsDetailed(): IO[List[(String, String, Option[String])]] =
     configRef.get.map { config =>
@@ -137,7 +154,10 @@ class ProviderRegistry(
 
   /**
    * Resolve vision + capabilities for a model.
-   * Priority: ModelConfig inline fields > ModelRegistry (models.json) > defaults (false, empty).
+   * Priority: ModelConfig inline fields > ModelRegistry (models.json) >
+   * optimistic default (B3 Phase 1: unannotated models resolve vision=true —
+   * a wrong strip is visible and self-corrects via runtime detection, while
+   * a wrong pessimistic default silently degrades every image request).
    */
   private def resolveCapabilities(
     providerId: String,
@@ -147,8 +167,8 @@ class ProviderRegistry(
     val registryEntry = ModelRegistry.lookup(providerId, modelId)
     val vision = modelConfig
       .flatMap(_.vision)
-      .orElse(registryEntry.map(_.vision))
-      .getOrElse(false)
+      .orElse(registryEntry.flatMap(_.vision))
+      .getOrElse(true)
     val caps = modelConfig
       .flatMap(_.capabilities)
       .orElse(registryEntry.map(_.capabilities))
@@ -158,8 +178,21 @@ class ProviderRegistry(
 
   end resolveCapabilities
 
-  /** Reload: re-read config from disk and clear adapter cache. */
-  def reloadConfig(): IO[Unit] =
+  /**
+   * Reload: re-read config from disk, clear adapter caches and drop
+   * per-session model overrides whose provider no longer exists (#33).
+   *
+   * The in-memory session overrides are `ModelCandidate` snapshots built from
+   * the OLD config — after a hot-reload removes a provider, a stale override
+   * would raise "Unknown provider" at the adapter on the next request.
+   * Dropping it here makes the session follow the new global chain (same
+   * semantics as `clearAllSessionModels` at startup — a reload is a soft
+   * restart of the model config). Returns the dropped session ids so callers
+   * can also clear the persisted session meta (`modelRef`) for UI consistency.
+   */
+  def reloadConfig(
+    overridesRef: Option[Ref[IO, Map[String, ModelCandidate]]] = None
+  ): IO[List[String]] =
     for
       newConfig <- IO.blocking {
         try Config.loadServiceConfig()
@@ -167,12 +200,31 @@ class ProviderRegistry(
           case _: Exception =>
             NebflowServiceConfig(
               llm = ServiceLlmConfig(
-                providers = Map.empty,
-                model = ModelChainConfig(default = "anthropic/claude-sonnet-4-6")
+                providers = Map.empty
+                // #339：占位 llm.model 已删（字段退役）
               )
             )
       }
       _ <- configRef.set(newConfig)
       _ <- adaptersRef.set(Map.empty)
-    yield ()
+      staleIds <- overridesRef match
+        case Some(ref) =>
+          ref.modify { overrides =>
+            val (keep, drop) = overrides.partition { case (_, c) => newConfig.llm.providers.contains(c.providerId) }
+            (keep, drop.keys.toList)
+          }
+        case None => IO.pure(Nil)
+    yield staleIds
+
+  /**
+   * Graceful skip for candidates whose provider is not present in the current
+   * config (#33). A stale session-model override (set before a hot-reload
+   * removed the provider) would otherwise surface "Unknown provider" at the
+   * adapter. The request chain simply continues with the remaining
+   * candidates — reload-time invalidation ([[reloadConfig]]) is the primary
+   * fix; this is the request-time safety net for any stale entry that slips
+   * through (e.g. a race between setSessionModel and a concurrent reload).
+   */
+  def filterKnownProviders(candidates: List[ModelCandidate]): IO[List[ModelCandidate]] =
+    configRef.get.map(cfg => candidates.filter(c => cfg.llm.providers.contains(c.providerId)))
 end ProviderRegistry

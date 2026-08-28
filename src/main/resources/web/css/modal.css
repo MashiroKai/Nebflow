@@ -35,7 +35,8 @@
 #rules-modal,
 #path-picker-modal,
 #settings-modal,
-#search-modal {
+#search-modal,
+#onboarding-panel {
   position: relative;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -57,7 +58,8 @@
   #rules-modal,
   #path-picker-modal,
   #settings-modal,
-  #search-modal {
+  #search-modal,
+  #onboarding-panel {
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 2px 8px rgba(0, 0, 0, 0.20),
@@ -73,7 +75,8 @@
 #rules-modal::before,
 #path-picker-modal::before,
 #settings-modal::before,
-#search-modal::before {
+#search-modal::before,
+#onboarding-panel::before {
   content: '';
   position: absolute;
   top: 0;
@@ -591,9 +594,6 @@
 #settings-modal {
   display: none;
   border-radius: 20px;
-  /* 用户约束：弹窗无背景模糊——覆盖共享 glass card 组的 backdrop-filter */
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
   width: 560px;
   max-width: calc(100vw - 48px);
   max-height: 85vh;
@@ -623,14 +623,15 @@
 #search-modal {
   display: none;
   border-radius: 20px;
-  /* 用户约束：弹窗无背景模糊——覆盖共享 glass card 组的 backdrop-filter */
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
   width: 640px;
   max-width: calc(100vw - 48px);
   max-height: 85vh;
   padding: 0;
-  overflow: hidden;
+  /* N1: visible, not hidden — in short-modal states (0-2 results) the date
+     popover is taller than the modal interior and must hang below the card
+     instead of being clipped. Backgrounds are corner-clipped by border-radius
+     regardless; no flow child paints outside the box. */
+  overflow: visible;
   animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #search-overlay.on #search-modal {
@@ -657,6 +658,7 @@
   flex-direction: column;
   gap: 8px;
   flex-shrink: 0;
+  position: relative;   /* anchor for #search-date-popover */
 }
 #search-keyword {
   width: 100%;
@@ -684,8 +686,244 @@
   flex-wrap: wrap;
 }
 .search-filters .cfg-select { width: auto; font-size: 12px; }
-.search-filters .cfg-input[type="date"] { width: auto; font-size: 12px; font-family: inherit; }
 #search-go { margin-left: auto; }
+
+/* ── Category tabs (v3.1, WeChat retrieval-window paradigm) ─────────────── */
+.search-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  height: 32px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--glass-border);
+}
+.search-tabs::-webkit-scrollbar { display: none; }
+.search-tab {
+  position: relative;
+  background: transparent;
+  border: none;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.search-tab:hover { color: var(--color-frame-text-bright); }
+/* Active indicator: inset 2px bottom bar (zero layout height), scaleX in. */
+.search-tab::after {
+  content: '';
+  position: absolute;
+  left: 8px; right: 8px; bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(91, 127, 191, 0.8);
+  transform: scaleX(0);
+  transition: transform 0.15s ease-out;
+}
+.search-tab.active {
+  color: var(--color-frame-text-bright);
+  font-weight: 600;
+}
+.search-tab.active::after { transform: scaleX(1); }
+.search-tab[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+.search-tab[aria-disabled="true"]:hover { color: var(--color-frame-text-muted); }
+/* Date tab clear glyph (×) — only rendered while an anchor is active. */
+.search-tab .search-date-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+}
+.search-tab .search-date-clear:hover {
+  background: var(--color-frame-hover);
+  color: var(--color-frame-text-bright);
+}
+
+/* ── Date anchor popover (v3.1) ─────────────────────────────────────────── */
+#search-date-popover {
+  position: absolute;
+  top: 100%;              /* below the controls block */
+  margin-top: 6px;
+  width: 264px;
+  z-index: 20;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(1.15);
+  backdrop-filter: blur(24px) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+  animation: searchCalIn 0.12s ease-out;
+}
+@media (prefers-color-scheme: dark) {
+  #search-date-popover {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+@keyframes searchCalIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* 8px top arrow pointing at the Date tab. --cal-arrow-left set by JS. */
+#search-date-popover::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: var(--cal-arrow-left, 50%);
+  width: 8px; height: 8px;
+  transform: translateX(-50%) rotate(45deg);
+  background: var(--glass-bg);
+  border-left: 1px solid var(--glass-border);
+  border-top: 1px solid var(--glass-border);
+}
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.cal-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+}
+.cal-pills { display: flex; gap: 6px; }
+.cal-pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.cal-pill-listbox {
+  position: absolute;
+  z-index: 30;
+  max-height: 180px;
+  overflow-y: auto;
+  min-width: 72px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(1.15);
+  backdrop-filter: blur(24px) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow:
+    0px 2px 8px rgba(0, 0, 0, 0.06),
+    0px 8px 24px rgba(0, 0, 0, 0.08);
+}
+.cal-pill-option {
+  display: block;
+  width: 100%;
+  text-align: center;
+  background: transparent;
+  border: none;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--color-frame-text);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.cal-pill-option:hover,
+.cal-pill-option.active { background: var(--color-frame-hover); }
+.cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 2px;
+}
+.cal-weekdays span {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--color-frame-text-muted);
+  line-height: 22px;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  row-gap: 2px;
+}
+.cal-day {
+  width: 32px; height: 32px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 400;
+  font-family: inherit;
+  color: var(--color-frame-text);
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+.cal-day:hover { background: var(--color-frame-hover); }
+.cal-day.cal-today {
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px rgba(91, 127, 191, 0.8);
+}
+.cal-day.cal-selected {
+  background: rgba(91, 127, 191, 0.35);
+  font-weight: 600;
+}
+.cal-day[aria-disabled="true"] {
+  opacity: 0.35;
+  cursor: default;
+}
+.cal-day[aria-disabled="true"]:hover { background: transparent; }
+.cal-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.cal-clear {
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+}
+.cal-clear:hover { color: var(--color-frame-text-bright); }
+.cal-foot .cal-spacer { flex: 1; }
+.cal-cancel {
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+}
+.cal-cancel:hover { color: var(--color-frame-text-bright); }
+
+/* ── Lazy-render sentinel (v3.1) ────────────────────────────────────────── */
+.search-sentinel { height: 1px; }
 #search-status {
   padding: 4px 16px;
   font-size: 11px;
@@ -746,6 +984,15 @@
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
+/* Queue #2: Pop/Card artifact rows open their content in Canvas on click
+   (instead of jumping to the message). A restrained ↗ arrow on the type
+   badge hints at the open-in-Canvas affordance. */
+.search-result[data-artifact="1"] .search-result-type::after {
+  content: '↗';
+  margin-left: 5px;
+  opacity: 0.65;
+  font-size: 11px;
+}
 .search-result-preview {
   font-size: 12px;
   line-height: 1.5;
@@ -761,6 +1008,54 @@
   color: inherit;
   border-radius: 3px;
   padding: 0 1px;
+}
+
+/* Group header — session name + hit count (scope=all only).
+   Reuses .search-result-session for the name (600/12px, ellipsis). */
+.search-group-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 10px 10px 2px;
+  font-size: 11px;
+  color: var(--color-frame-text-muted);
+}
+.search-group-header .search-result-session { max-width: 70%; }
+
+/* Keyboard-selected result: hover background + sapphire left edge, so the
+   focus position is visible to keyboard users without an outline. */
+.search-result.active {
+  background: var(--color-frame-hover);
+  box-shadow: inset 2px 0 0 rgba(91, 127, 191, 0.5);
+}
+
+/* Progressive search: keep previous results dimmed while reloading. */
+#search-results { transition: opacity 0.12s ease; }
+#search-results[data-loading="true"] { opacity: 0.5; }
+
+/* Inline retry button in the status line (error state). */
+#search-status .cfg-btn { margin-left: 8px; }
+
+@media (prefers-color-scheme: dark) {
+  /* Same sapphire hue, raised alpha for legibility on dark glass. */
+  .search-result-preview mark { background: rgba(91, 127, 191, 0.36); }
+  .search-result.active { box-shadow: inset 2px 0 0 rgba(91, 127, 191, 0.6); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #search-modal { animation-duration: 0.01s; }   /* near-instant, opacity fade only */
+  #search-results { transition: none; }
+  .search-hit-flash { animation-duration: 0.6s; } /* one quick flash — keep the cue */
+  .search-tab::after { transition: none; }
+  #search-date-popover { animation-duration: 0.01s; animation-name: searchCalInReduced; }
+  .cal-day { transition: none; }
+}
+@keyframes searchCalInReduced { from { opacity: 0; } to { opacity: 1; } }
+
+/* Narrow viewports: tighter panel margins; date popover stays in bounds. */
+@media (max-width: 768px) {
+  #search-modal { max-width: calc(100vw - 24px); }
+  #search-date-popover { left: 12px !important; right: 12px; width: auto; max-width: 264px; margin-left: auto; margin-right: auto; }
 }
 
 /* Flash highlight on the jumped-to message in the main chat */
@@ -815,3 +1110,54 @@
   }
 }
 
+
+/* ── Onboarding wizard (first-run) ─────────────────────────────────────── */
+/* Overlay stays transparent (no dimming per design ruling) — it only blocks
+   clicks; the panel itself joins the shared glass-card group above. */
+.onboarding-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--overlay-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 320;
+}
+#onboarding-panel {
+  border-radius: 20px;
+  width: 480px;
+  max-width: calc(100vw - 48px);
+  padding: 32px 28px 24px;
+  text-align: center;
+  overflow: visible;
+  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.onboarding-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+}
+.onboarding-sub {
+  font-size: 14px;
+  color: var(--color-text-muted);
+  margin-top: 10px;
+  line-height: 1.6;
+}
+.onboarding-error {
+  font-size: 13px;
+  color: var(--color-error);
+  margin-top: 12px;
+  word-break: break-word;
+}
+.onboarding-status {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin-top: 12px;
+}
+.onboarding-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 24px;
+}

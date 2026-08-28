@@ -87,8 +87,14 @@ end UsagePattern
 
 object UsageTracker:
   private val logger = NebflowLogger.forName("nebflow.usage")
-  private val logPath = PathUtil.dataRoot / "usage-log.jsonl"
-  private val patternPath = PathUtil.dataRoot / "usage-pattern.json"
+  // defs (not vals): PathUtil.dataRoot is mutated by tests between suites; a
+  // val here froze the first-seen root for the whole JVM and made
+  // loadPattern read a stale path after any earlier spec (e.g. one running
+  // real agent turns) happened to initialize this object first. In
+  // production dataRoot never changes after boot, so def is behaviorally
+  // identical there.
+  private def logPath = PathUtil.dataRoot / "usage-log.jsonl"
+  private def patternPath = PathUtil.dataRoot / "usage-pattern.json"
   private val MaxRecords = 10000
   private val TrimTo = 5000
 
@@ -132,7 +138,7 @@ object UsageTracker:
 
         pattern
     }
-    .handleErrorWith(e => IO(logger.warn(s"analyzePattern failed: ${e.getMessage}")).as(UsagePattern.empty))
+    .handleErrorWith(e => logger.warn(s"analyzePattern failed: ${e.getMessage}").as(UsagePattern.empty))
 
   /** Load the last persisted pattern from disk without recomputing from the log. */
   def loadPattern(): IO[UsagePattern] = IO
@@ -140,7 +146,7 @@ object UsageTracker:
       if !os.exists(patternPath) then UsagePattern.empty
       else decode[UsagePattern](os.read(patternPath)).getOrElse(UsagePattern.empty)
     }
-    .handleErrorWith(e => IO(logger.warn(s"loadPattern failed: ${e.getMessage}")).as(UsagePattern.empty))
+    .handleErrorWith(e => logger.warn(s"loadPattern failed: ${e.getMessage}").as(UsagePattern.empty))
 
   private def groupConsecutiveHours(hours: List[Int]): List[TimeWindow] =
     hours.foldLeft(List.empty[TimeWindow]) { (acc, h) =>

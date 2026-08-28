@@ -99,9 +99,9 @@ class RemoteExecutor(
 
   /**
    * When the LLM requests a remote background task, Mac handles the lifecycle:
-   * 1. Strip `run_in_background` so KAI executes synchronously
+   * 1. Strip `run_in_background` so the remote device executes synchronously
    * 2. Emit "running" indicator to frontend
-   * 3. Start a detached fiber that does the synchronous HTTP call to KAI
+   * 3. Start a detached fiber that does the synchronous HTTP call to the remote device
    * 4. Return "[Background job started]" to the LLM immediately
    * 5. When the HTTP call returns, notify agent (ExternalEvent) + frontend (WS)
    */
@@ -125,7 +125,7 @@ class RemoteExecutor(
       // 2. Start heartbeat so frontend shows progress (remote tasks have no process-level health)
       doneRef <- IO.ref(false)
       _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
-      // 3. Start detached fiber — synchronous HTTP to KAI, then notify on completion
+      // 3. Start detached fiber — synchronous HTTP to the remote device, then notify
       _ <- IO(startRemoteBgFiber(peer, toolName, remoteParams, ctx, jobId, description, doneRef))
     yield Right(
       s"[Background job started] Job ID: $jobId\nThe command is running in the background on ${peer.deviceName}. You will be automatically notified when it finishes — continue with other work or finish your turn."
@@ -366,7 +366,7 @@ class RemoteExecutor(
         val resp = basicRequest
           .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/remote-exec"))
           .contentType("application/json")
-          .header("X-Neblink-Device", selfDeviceId)
+          .header(nebflow.neblink.Protocol.DeviceHeader, selfDeviceId)
           .body(body.noSpaces)
           .readTimeout(timeout)
           .response(asStringAlways)

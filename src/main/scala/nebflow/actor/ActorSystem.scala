@@ -21,6 +21,10 @@ trait ActorSystem:
   def resolve[Msg](path: String): IO[ActorRef[Msg]]
   def stop(ref: ActorRef[?]): IO[Unit]
   def stopAll: IO[Unit]
+  /** Liveness probe (#22): a cached ActorRef whose loop has exited (crash /
+    * TTL / stop without watched cleanup) still offers into its queue —
+    * messages sent to it vanish silently. This checks the live registry. */
+  def isAlive(path: ActorPath): IO[Boolean]
   def watch(watcher: ActorPath, target: ActorPath): IO[Unit]
   def unwatch(watcher: ActorPath, target: ActorPath): IO[Unit]
 end ActorSystem
@@ -95,6 +99,8 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
       case r: LocalActorRef[?] =>
         r.stop *> registry.update(_ - r.path.toString)
       case _ => IO.unit
+
+  def isAlive(path: ActorPath): IO[Boolean] = registry.get.map(_.contains(path.toString))
 
   /** Stop all actors — for shutdown. */
   def stopAll: IO[Unit] =
@@ -192,9 +198,15 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
           yield ()
       }
 
-    // Guarantee: always runs when loop ends (normal stop, crash, cancel)
+    // Guarantee: always runs when loop ends (normal stop, crash, cancel).
+    // Self-deregistration (#22): stop(ref) removes the registry entry, but a
+    // loop that exits any other way (crash / TTL / external cancel) used to
+    // leave a ZOMBIE entry — resolve kept returning the dead ref and every
+    // message sent to it vanished into an unconsumed queue. The loop itself
+    // is the only place that knows it exited; remove self here.
     loop.guarantee {
       for
+        _ <- registry.update(_ - path.toString)
         _ <- ctx
           .cancelCurrentTurn()
           .handleErrorWith(e => ctx.log.warn(s"cancelCurrentTurn during cleanup failed: ${e.getMessage}").void)

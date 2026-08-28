@@ -12,6 +12,10 @@ import { sendWs, onMessage, setBgAgentStepInterceptor } from './ws.js';
 import { restoreFromBackendHistory } from './persistence.js';
 import { isBgAgentId } from './utils.js';
 import state from './state.js';
+import { key } from './branding.js';
+import { t } from './i18n.js';
+import { buildManageBar, bindManageActions, syncManageControls, onCancelResult, isFailedSnapshotStatus } from './managePanel.js';
+import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
 
 // ── Per-sub-agent state ────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -60,6 +64,10 @@ function ensureStepView(sessionId) {
   view.sessionId = sessionId;
   // Hidden until the popup opens — ws.js gates DOM rendering while false.
   view.visible = false;
+  // Register in the global view registry so findViewBySessionId() can route
+  // live events here even while hidden (streamDispatchView then marks
+  // dirtyWhileHidden → reopen forces a history refresh).
+  chatViews[view.id] = view;
 
   const entry = { view, container, meta: { agentName: '', task: '', status: '' }, historyLoaded: false };
   stepViews.set(sessionId, entry);
@@ -80,6 +88,26 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
 
   const entry = ensureStepView(currentStepId);
   entry.view.visible = true;
+  // Permission matrix: bg popups are Delegate/SubTask/Ephemeral (operable);
+  // snapshot kind from activeAgents refines when present (backend gap: kind
+  // arrives via sessionBgAgents once main.js stores it).
+  entry.meta.kind = entry.meta.kind || 'Delegate';
+  for (const byRoot of Object.values(state.sessionBgAgents || {})) {
+    const row = byRoot && byRoot[nodeSessionId];
+    if (row) {
+      if (row.kind) entry.meta.kind = row.kind;
+      if (row.startedAt) entry.meta.startedAt = entry.meta.startedAt || row.startedAt;
+      // Snapshot refresh fields (@179a009e): restore status/retries across a
+      // page refresh. Live events win — only seed when meta has no live state.
+      if (!entry.meta.status && row.status) {
+        if (isFailedSnapshotStatus(row.status)) entry.meta.status = 'failed';
+        else if (row.status === 'Processing') entry.meta.status = 'running';
+        else if (row.status === 'Frozen') entry.meta.status = 'frozen';
+      }
+      if (row.retryCount > 0) entry.meta.retries = Math.max(entry.meta.retries || 0, row.retryCount);
+      break;
+    }
+  }
 
   // Events were skipped while hidden → DOM is stale or empty. Force a full
   // refresh from backend history (same pipeline as first open) and seed
@@ -96,6 +124,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
 
   popupOverlay = document.createElement('div');
   popupOverlay.className = 'flow-agent-overlay fullscreen';
+  lastModelBadgeHtml = null; // fresh badge element — force first render on open
 
   // Mount on document.body for bg-agent popups (not inside a flow card)
   popupOverlay.innerHTML = `
@@ -110,6 +139,8 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
       <div class="flow-agent-footer" id="bgagent-footer">
         <span class="fa-status-dot"></span>
         <span class="fa-task">${esc(entry.meta.task || 'Session')}</span>
+        <span class="fa-phase" style="display:none"></span>
+        <span class="fa-manage-slot"></span>
       </div>
     </div>
   `;
@@ -126,6 +157,14 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   const footer = popupOverlay.querySelector('#bgagent-footer');
   modal.insertBefore(entry.container, footer);
   entry.footerEl = footer;
+
+  // Management panel (2026-08-22 ruling): no input bar — stop/retry + state.
+  const v = entry.view;
+  const bar = buildManageBar();
+  footer.querySelector('.fa-manage-slot').replaceWith(bar.root);
+  entry.manageBar = bar;
+  bindManageActions(bar, () => currentStepId);
+  import('./utils.js').then(({ createIconsIn }) => { createIconsIn(bar.root); });
 
   updateFooterStatus(entry);
 
@@ -180,6 +219,7 @@ export function closeStepPopup() {
 export function removeStepView(sessionId) {
   const entry = stepViews.get(sessionId);
   if (entry) {
+    delete chatViews[entry.view.id];
     entry.container.remove();
     stepViews.delete(sessionId);
   }
@@ -246,8 +286,8 @@ function updatePopupCtxRing() {
   </div>`;
 }
 
-onMessage('usageUpdate', () => { if (popupOverlay) updatePopupCtxRing(); });
-onMessage('done', () => { if (popupOverlay) updatePopupCtxRing(); });
+onMessage('usageUpdate', () => { if (popupOverlay) { updatePopupCtxRing(); renderModelBadge(); } });
+onMessage('done', () => { if (popupOverlay) { updatePopupCtxRing(); renderModelBadge(); } });
 
 // ── WS event interception ────────────────────────────────
 
@@ -260,8 +300,38 @@ export function interceptBgAgentStep(msg) {
     entry.meta.agentName = msg.name || '';
     entry.meta.task = msg.taskDescription || '';
     entry.meta.status = 'running';
+    entry.meta.startedAt = entry.meta.startedAt || Date.now(); // uptime anchor
+    entry.meta.stuck = null;
   } else if (msg.type === 'agentDone' || msg.type === 'agentEnd') {
     entry.meta.status = 'done';
+    entry.meta.stuck = null;
+  } else if (msg.type === 'agentFrozen') {
+    entry.meta.status = 'frozen';
+    entry.meta.frozenResumeAt = msg.resumeAt || null;
+    entry.meta.freezeReason = msg.reason; // UI-7: error-family → amber tile
+    entry.meta.escalation = msg.escalation ? msg.escalation.level : null;
+  } else if (msg.type === 'agentResumed') {
+    entry.meta.status = 'running';
+    entry.meta.frozenResumeAt = null;
+    entry.meta.freezeReason = null;
+    entry.meta.escalation = null;
+  } else if (msg.type === 'agentThinking') {
+    // Granular phase (#343): LLM reasoning in progress — set once, subsequent
+    // delta chunks no-op so the footer doesn't churn on every token.
+    if (entry.meta.status !== 'thinking') entry.meta.status = 'thinking';
+  } else if (msg.type === 'agentToolStart') {
+    entry.meta.status = 'tool';
+    entry.meta.toolLabel = msg.label || '';
+  } else if (msg.type === 'agentToolEnd') {
+    entry.meta.status = 'running';
+    entry.meta.toolLabel = '';
+  } else if (msg.type === 'agentTextDelta') {
+    if (entry.meta.status !== 'responding') entry.meta.status = 'responding';
+  } else if (msg.type === 'interrupted') {
+    // User pressed stop — the turn ended by intent, not failure. The agent
+    // goes idle; retry is offered (restart makes sense for a stopped task).
+    entry.meta.status = 'stopped';
+    entry.meta.stuck = null;
   }
 
   setActiveView(entry.view);
@@ -299,7 +369,10 @@ export function handleBgAgentHistory(msg) {
     view.pagination.hasMore = msg.hasMore;
 
     setActiveView(view);
-    restoreFromBackendHistory(msg.messages);
+    // #346 boundary fix: mid-turn tail stays flat when the agent is still
+    // active (running/thinking/tool/frozen/stuck) — terminal event gathers it.
+    const busyTail = ['running', 'thinking', 'tool', 'frozen', 'stuck'].includes(entry.meta.status);
+    restoreFromBackendHistory(msg.messages, { busyTail });
 
     requestAnimationFrame(() => {
       entry.container.scrollTop = entry.container.scrollHeight;
@@ -311,19 +384,84 @@ export function handleBgAgentHistory(msg) {
 function updateFooterStatus(entry) {
   if (!entry.footerEl) return;
   const status = entry.meta.status || '';
-  entry.footerEl.classList.remove('running', 'done', 'failed');
+  entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding', 'stuck', 'stopped', 'error');
   if (status) entry.footerEl.classList.add(status);
   const taskEl = entry.footerEl.querySelector('.fa-task');
+  const isErrorFrozen = status === 'frozen' && isErrorReason(entry.meta.freezeReason);
+  // UI-7: error-recovery frozen → amber tile (add .error modifier).
+  if (isErrorFrozen) entry.footerEl.classList.add('error');
   if (taskEl) {
-    const label = entry.meta.task
-      ? entry.meta.task
-      : status === 'running' ? 'Running...'
-      : status === 'done' ? 'Done'
-      : status === 'failed' ? 'Failed'
-      : 'Session';
-    taskEl.textContent = label;
+    if (status === 'frozen') {
+      if (isErrorFrozen) {
+        // Error family: reason short text (重试中 / 等恢复 / 等待上级决策).
+        const escTxt = errorTileText(entry.meta);
+        taskEl.innerHTML = `${errorIcon(entry.meta.freezeReason, 'error-icon')}<span class="fa-task-text">${escTxt}</span>`;
+      } else {
+        // Frozen tile: "已冻结 · HH:mm 恢复" — resumeAt epoch → local HH:mm
+        const at = entry.meta.frozenResumeAt;
+        const clock = at ? (() => {
+          const d = new Date(at);
+          if (Number.isNaN(d.getTime())) return '';
+          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        })() : '';
+        taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
+      }
+    } else if (status === 'stuck' && entry.meta.stuck) {
+      // Restrained red stuck label (manage-panel, 2026-08-22).
+      taskEl.textContent = entry.meta.stuck.action === 'restart'
+        ? t('manage.stuckAutoRestart')
+        : t('manage.stuck', { secs: entry.meta.stuck.idleSecs ?? '' });
+    } else {
+      taskEl.textContent = entry.meta.task || 'Session';
+    }
   }
+  // Phase text (#343): granular activity — thinking / tool / responding.
+  const phaseEl = entry.footerEl.querySelector('.fa-phase');
+  if (phaseEl) {
+    const phaseMap = {
+      running: 'Working…',
+      thinking: 'Thinking…',
+      responding: 'Responding…',
+      tool: entry.meta.toolLabel ? `Using tool: ${entry.meta.toolLabel}` : 'Running tool…',
+      done: 'Done',
+      failed: 'Failed',
+      stuck: 'Stuck',
+      stopped: 'Stopped',
+    };
+    const text = phaseMap[status] || '';
+    phaseEl.textContent = text;
+    phaseEl.style.display = text ? '' : 'none';
+  }
+  // Management cluster: state-linked buttons + permission matrix.
+  syncManageControls(entry.manageBar, entry.meta);
 }
+
+// ── cancelAgent result linkage (stop button, @179a009e) ────────────────
+// ok=true: terminal cancel accepted — settle the footer to stopped
+// immediately (retry offered); the backend's terminal event (agentEnd/
+// interrupted) refines/cleans up afterwards. ok=false is toasted by
+// managePanel's own handler (stale id / read-only kind).
+onCancelResult((msg) => {
+  if (!msg || msg.sessionId !== currentStepId) return;
+  const entry = stepViews.get(msg.sessionId);
+  if (!entry || msg.ok !== true) return;
+  entry.meta.status = 'stopped';
+  entry.meta.stuck = null;
+  updateFooterStatus(entry);
+});
+
+// ── Stuck visibility (taskStuck broadcast, whitelisted 2026-08-22) ──────
+// taskStuck carries the child's bare sessionId — the same key stepViews uses.
+// action=restart counts as one auto-restart (the visible "retries" number);
+// any subsequent activity event clears stuck in the interceptor.
+onMessage('taskStuck', (msg) => {
+  const entry = stepViews.get(msg.sessionId);
+  if (!entry) return;
+  entry.meta.status = 'stuck';
+  entry.meta.stuck = { idleSecs: msg.idleSecs, action: msg.action };
+  if (msg.action === 'restart') entry.meta.retries = (entry.meta.retries || 0) + 1;
+  if (currentStepId === msg.sessionId) updateFooterStatus(entry);
+});
 
 // ── Cleanup when a sub-agent session ends ─────────────────
 // Called from main.js agentDone handler when a background sub-agent finishes.
@@ -344,21 +482,41 @@ function esc(str) {
     .replace(/"/g, '"').replace(/'/g, '&#039;');
 }
 
+// #308 actual-model display: the header badge shows the model this agent
+// ACTUALLY used on its last LLM round (live from state.sessionModelInfo),
+// falling back to the backend health-resolved candidate (cfg.current), then
+// to the configured preferred. Never show "preferred" as if it were live.
+let popupModelCfg = null;      // last fetched /api/agents/:name/model response
+let lastModelBadgeHtml = null; // value-change guard — keep DOM stable
+
+function modelBadgeHtml(current, preferred) {
+  if (!current) return '';
+  const isFallback = !!(preferred && current !== preferred);
+  return isFallback
+    ? `<span class="flow-agent-model-badge">${esc(current)}</span>`
+    : `<span class="flow-agent-subtitle">${esc(current)}</span>`;
+}
+
+function renderModelBadge() {
+  const el = popupOverlay?.querySelector('#bgagent-model');
+  if (!el) return;
+  const live = currentStepId ? state.sessionModelInfo[currentStepId]?.model : null;
+  const cfg = popupModelCfg || {};
+  const current = live || cfg.current || cfg.preferred || '';
+  const html = modelBadgeHtml(current, cfg.preferred);
+  if (html === lastModelBadgeHtml) return; // unchanged — no DOM write
+  lastModelBadgeHtml = html;
+  el.innerHTML = html;
+}
+
 /** Fetch agent model config and render a badge in the popup header. */
 async function fetchAgentModelBadge(agentName) {
   try {
-    const token = localStorage.getItem('nebflow_token') || '';
+    const token = localStorage.getItem(key('token')) || '';
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const resp = await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers });
     if (!resp.ok) return;
-    const cfg = await resp.json();
-    const el = popupOverlay?.querySelector('#bgagent-model');
-    if (!el) return;
-    const current = cfg.preferred || cfg.current || cfg.default || '';
-    if (!current) { el.innerHTML = ''; return; }
-    const isFallback = cfg.preferred && current !== cfg.preferred;
-    el.innerHTML = isFallback
-      ? `<span class="flow-agent-model-badge">${esc(current)}</span>`
-      : `<span class="flow-agent-subtitle">${esc(current)}</span>`;
+    popupModelCfg = await resp.json();
+    renderModelBadge();
   } catch (e) { /* non-critical */ }
 }

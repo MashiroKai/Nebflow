@@ -60,9 +60,10 @@ object CliRouter:
           case None =>
             // Check for --help
             if subName == "--help" || subName == "-h" then printCommandHelp(cmd, jsonMode).as(ExitCode.Success)
-            else if subName.startsWith("-") then IO.println(s"Unknown option: $subName").as(ExitCode.Error)
             else
-              // Treat as default subcommand with positional args (e.g. "nebflow chat query")
+              // Treat as default subcommand with args — a leading flag
+              // (e.g. `nebflow run -p "task"`) belongs to the default sub's
+              // params, and so does a bare positional (e.g. `nebflow chat q`).
               cmd.subcommands.headOption match
                 case Some(defaultSub) =>
                   executeSubcommand(cmd, defaultSub, args, jsonMode, quietMode)
@@ -148,6 +149,9 @@ object CliRouter:
       case CliResult.Error(msg, code) =>
         if jsonMode then println(Json.obj("error" -> msg.asJson).spaces2)
         else println(s"Error: $msg")
+        ExitCode(code)
+      case CliResult.Exit(code, output) =>
+        if output.nonEmpty then println(output)
         ExitCode(code)
       case CliResult.Success =>
         ExitCode.Success

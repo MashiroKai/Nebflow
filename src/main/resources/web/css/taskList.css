@@ -67,6 +67,34 @@
   color: var(--color-text-muted, #888);
 }
 
+/* Archive entry — right end of the header (§3.4), mirrors .task-toggle */
+.task-archive-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--color-text-muted, #888);
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.task-archive-btn:hover {
+  background: var(--color-frame-hover);
+  color: var(--color-text, #000);
+}
+
+.task-archive-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
 /* Collapsed body — use grid-template-rows for smooth height-aware animation */
 .task-body {
   display: grid;
@@ -90,6 +118,36 @@
   margin-bottom: 0;
 }
 
+/* ── Section titles (§3, A6: .task-section-title is the frozen assertion
+   class; .task-group-header carries the styles) — v3: constant while the
+   panel is visible (C27), one per zone, no counts (C26) ── */
+.task-group-header {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted, #888);
+  margin: 8px 2px 2px;
+  cursor: default;
+}
+
+/* v3 dual-zone structure containers — bare by design (§15.5/§15.6 克制:
+   zone differentiation comes from content, not container decoration). */
+.task-section {
+  min-width: 0;
+}
+
+.task-body-inner > .task-group-header:first-child {
+  margin-top: 2px;
+}
+
+/* ── Empty zone state (C27, §15.5/§15.6) ── */
+.task-empty {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-muted, #888);
+  padding: 4px 2px;
+}
+
+/* ── Rows (§3.2): .task-item > .task-check + .task-item-text ── */
 .task-item {
   display: flex;
   align-items: center;
@@ -99,78 +157,318 @@
   line-height: 1.4;
 }
 
-.task-icon {
+/* Circle completion control — Apple Reminders style (§6 frozen: 20×20px
+   hit area, 14px glyph, 1.5px border at 40% alpha). 待办区专属 (裁定 19:56:
+   圆圈 = 用户可操作区专属). */
+.task-check {
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--color-text-muted, #888) 40%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.task-icon svg {
+/* 任务区专属 (裁定 19:56): square glyph — read-only observation, must NOT
+   look clickable. Same metrics, square corner. */
+.task-check-box {
+  border-radius: 4px;
+}
+
+.task-check-clickable {
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.task-check-glyph {
+  display: flex;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+/* lucide replaces the <i> with an <svg> carrying the same class — the
+   selector must target the svg itself, not a descendant. */
+svg.task-check-glyph {
   width: 14px;
   height: 14px;
 }
 
-.task-active .task-icon {
-  color: var(--color-primary, #07c160);
-  animation: spin 1.5s linear infinite;
+/* Hover previews a faint sapphire check (§5.1) */
+.task-check-clickable:hover {
+  border-color: rgb(var(--sapphire) / 0.7);
+}
+
+.task-check-clickable:hover .task-check-glyph {
+  opacity: 0.35;
+  color: rgb(var(--sapphire));
+}
+
+.task-check-clickable:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+
+/* WS down (§4): circles visibly disabled; JS also ignores clicks */
+.task-ws-down .task-check-clickable {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.task-ws-down .task-check-clickable:hover .task-check-glyph {
+  opacity: 0;
+}
+
+/* Completing: filled sapphire + white check, brief scale pulse (§5.1) */
+.task-completing {
+  pointer-events: none;
+}
+
+.task-completing .task-check {
+  background: rgb(var(--sapphire));
+  border-color: rgb(var(--sapphire));
+  animation: task-check-fill 0.18s ease;
+}
+
+.task-completing .task-check-glyph {
+  opacity: 1;
+  color: #fff;
+}
+
+@keyframes task-check-fill {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+
+/* Collapse-out after the fill beat (§5.1, ~220ms) */
+.task-collapsing {
+  animation: task-collapse 0.22s ease forwards;
+  overflow: hidden;
+}
+
+@keyframes task-collapse {
+  from { opacity: 1; max-height: 32px; }
+  to   { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
+}
+
+/* in_progress spinner inside the same circle slot */
+.task-check-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid rgb(var(--sapphire) / 0.25);
+  border-top-color: rgb(var(--sapphire));
+  animation: spin 0.9s linear infinite;
+}
+
+.task-active .task-check {
+  border-color: rgb(var(--sapphire) / 0.4);
 }
 
 @keyframes spin {
   from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  to   { transform: rotate(360deg); }
 }
 
-.task-pending .task-icon {
-  color: var(--color-text-muted, #888);
+/* failed: red x in the circle slot, label dimmed (§3.3) */
+.task-failed .task-check {
+  border-color: var(--color-error);
+}
+
+.task-failed-icon {
+  display: flex;
+  color: var(--color-error);
+}
+
+.task-failed-icon svg,
+svg.task-failed-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.task-failed .task-label {
+  opacity: 0.55;
+}
+
+.task-item-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .task-label {
-  flex: 1;
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-text, #000);
 }
 
+/* #37: description line under the subject. text-dim (not text-muted) keeps it
+   above the 4.5:1 body-text contrast floor; 2-line clamp caps row height. */
+.task-desc {
+  display: block;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 1px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--color-text-dim);
+  white-space: normal;
+}
+
+/* Rows with a description are taller - top-align the leading glyph + trailing
+   controls with the subject line instead of centering against the whole block. */
+.task-item.task-has-desc {
+  align-items: flex-start;
+}
+.task-item.task-has-desc .task-check {
+  margin-top: 1px;
+}
+
 .task-active .task-label {
   font-weight: 500;
+}
+
+/* ── v2 §3/§8: needs_confirmation row — muted status word + return button.
+   No row-level decoration (克制): the three controls self-express state. ── */
+.task-needs-confirmation .task-label {
+  font-weight: 400;               /* not the in_progress 500 — awaiting user */
+}
+
+.task-status-word {
+  flex-shrink: 0;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-text-muted, #888);
+}
+
+/* v3 C29: 待确认状态词 = sapphire 族亮度变体（待办区「需要你」信号；
+   零新全局 token，局部变量级。亮 rgb(76,110,170) 5.10:1 / 暗
+   rgb(140,165,215) 5.30:1 — §15.9 对比度核验） */
+.task-needs-confirmation .task-status-word {
+  color: rgb(76, 110, 170);
+}
+@media (prefers-color-scheme: dark) {
+  .task-needs-confirmation .task-status-word {
+    color: rgb(140, 165, 215);
+  }
+}
+
+/* v3 §15.6/§15.7: 任务区相对时间（刚分/分钟/小时/天，60s textContent 直更） */
+.task-last-active {
+  flex-shrink: 0;
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-text-muted, #888);
+}
+
+/* Return button — glass-control Pattern B (base transparent, hover glass),
+   right end of the row: corner-up-left 13px + label 11px/500 */
+.task-return-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid transparent;   /* reserves hover edge — no layout shift */
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted, #888);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, color 0.15s;
+}
+.task-return-btn:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
   color: var(--color-text, #000);
 }
+.task-return-btn:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+.task-return-btn svg {
+  width: 13px;
+  height: 13px;
+}
+.task-ws-down .task-return-btn {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
-.task-id {
+/* ── 契约#1: user-cancel control — distinct from the completed circle.
+   Glass-control Pattern B (base transparent, hover glass), mirrors
+   .task-return-btn but error-tinted on hover (destructive). The leading
+   zone glyph stays square/read-only; this is a row-end action button. ── */
+.task-cancel-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid transparent;   /* reserves hover edge — no layout shift */
+  border-radius: 6px;
+  background: transparent;
   color: var(--color-text-muted, #888);
   font-size: 11px;
-  font-family: monospace;
+  font-weight: 500;
+  cursor: pointer;
   flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, color 0.15s;
+}
+.task-cancel-btn svg {
+  width: 13px;
+  height: 13px;
+}
+.task-cancel-btn:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  color: var(--color-error);
+}
+.task-cancel-btn:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+.task-ws-down .task-cancel-btn {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.task-more {
-  font-size: 11px;
-  color: var(--color-text-muted, #888);
-  padding: 2px 0;
+/* 契约#4: optimistically-cancelling row — dim + lock (mirrors
+   .bg-task-cancelling). The cancel button shows the request state in warning
+   tint; the collapse-out follows via .task-collapsing. */
+.task-item.task-cancelling {
+  opacity: 0.65;
+  pointer-events: none;
+}
+.task-item.task-cancelling .task-cancel-btn {
+  color: var(--color-warning);
+  border-color: var(--color-warning);
 }
 
-/* ── Status transition animations ── */
-
-.task-item {
-  perspective: 200px;
-}
-
-/* Icon 3D flip on status change (pending → in_progress) */
-.task-item.task-flipping .task-icon {
-  animation: task-icon-flip 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-@keyframes task-icon-flip {
-  0%   { transform: rotateY(0deg); }
-  50%  { transform: rotateY(90deg); }
-  100% { transform: rotateY(0deg); }
-}
-
-/* New task slide-in from left */
+/* New / rolled-back task slide-in from the left */
 .task-item.task-entering {
   animation: task-enter 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -180,31 +478,73 @@
   to   { opacity: 1; transform: translateX(0); }
 }
 
-/* Completed/failed task slide-out to the right */
+/* ── v3 裁定 3: 跨区移动 (任务区 → 待办区, 进行→待确认) ──
+   Old-zone row fades out (160ms), then redraw plays .task-zone-enter on the
+   new side. 克制: 只用于状态变化瞬间, 不循环不常驻. */
 .task-item.task-leaving {
-  animation: task-leave 0.35s ease-in forwards;
-  pointer-events: none;
+  animation: task-leave 0.16s ease forwards;
 }
 
 @keyframes task-leave {
-  0%   { opacity: 1; transform: translateX(0); max-height: 30px; }
-  100% { opacity: 0; transform: translateX(30px); max-height: 0; padding-top: 0; padding-bottom: 0; }
+  from { opacity: 1; }
+  to   { opacity: 0; }
 }
 
-/* Whole card fade when all tasks done */
-.task-card.task-card-leaving {
-  animation: task-card-leave 0.3s ease forwards;
+.task-item.task-zone-enter {
+  animation: task-zone-enter 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-@keyframes task-card-leave {
-  from { opacity: 1; transform: translateY(0); }
-  to   { opacity: 0; transform: translateY(-8px); }
+@keyframes task-zone-enter {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
-  .task-toggle:hover {
+  .task-toggle:hover,
+  .task-archive-btn:hover {
     background: rgba(255,255,255,0.06);
     color: #d8dae0;
   }
+}
+
+/* ── Reduced motion (§5 A11/A15): all animation becomes instant;
+   the hover check preview stays as a static state change ── */
+@media (prefers-reduced-motion: reduce) {
+  .task-check-spinner {
+    animation: none;
+    border-top-color: rgb(var(--sapphire) / 0.25);
+  }
+  .task-check-clickable,
+  .task-check-glyph {
+    transition: none;
+  }
+  .task-completing .task-check,
+  .task-collapsing,
+  .task-item.task-entering,
+  .task-item.task-leaving,
+  .task-item.task-zone-enter {
+    animation: none;
+  }
+}
+/* ── Narrow viewport (§10 A12, 裁定 F3): tighten the header at ≤480px.
+   The archive button is NEVER hidden (archive is the only way back to
+   completed history); the stats count may shrink to ellipsis first. ── */
+@media (max-width: 480px) {
+  .task-header { gap: 4px; }
+  .task-stats {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* v2 B13: status word may give way first, then the button label — the
+     icon stays (flex absorbs, no horizontal overflow delta vs v1) */
+  .task-status-word { display: none; }
+  .task-return-btn span { display: none; }
+  .task-return-btn { padding: 2px 4px; }
+  .task-cancel-btn span { display: none; }
+  .task-cancel-btn { padding: 2px 4px; }
+  /* v3 D12: 任务区相对时间在窄屏让步（信息次要，防水平溢出增量） */
+  .task-last-active { display: none; }
 }

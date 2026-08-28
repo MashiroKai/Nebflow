@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
-
 /* ---------- Nav Bar — inner column inside #sidebar ---------- */
 #nav-bar {
   width: 54px;
@@ -23,6 +21,16 @@
   scrollbar-width: none;
 }
 #nav-agent-list::-webkit-scrollbar { display: none; }
+
+/* ⑧ Orchestrator separator — 1px hairline below Nebula in the nav agent list
+ * (entity-icons-visual-spec §3.3). Reuses --glass-border-dark token. */
+.nav-agent-separator {
+  width: 24px;
+  height: 1px;
+  background: var(--glass-border-dark);
+  margin: 4px 0;
+  flex-shrink: 0;
+}
 
 /* Agent icon in nav bar */
 .nav-agent {
@@ -75,7 +83,7 @@
   justify-content: center;
   width: 20px;
   height: 20px;
-  font-family: 'Press Start 2P', monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 10px;
   font-weight: 400;
   line-height: 1;
@@ -185,6 +193,11 @@ body.sidebar-collapsed #activity-bar {
   opacity: 1;
   margin: 16px 4px 10px;
 }
+/* prefers-reduced-motion: squash the Side Bar collapse animation
+   (transition itself lives in base.css with the --panel-* tokens). */
+@media (prefers-reduced-motion: reduce) {
+  #sidebar { transition-duration: 0.01s; }
+}
 
 /* ── Avatar (top) — login affordance ─────────────────────── */
 .activity-avatar {
@@ -210,9 +223,8 @@ body.sidebar-collapsed #activity-bar {
   width: 22px;
   height: 22px;
   object-fit: contain;
-  /* Disable the pixel-art crispEdges from favicon.svg so it scales smoothly. */
-  shape-rendering: geometricPrecision;
-  image-rendering: auto;
+  /* Pixel-art logo (224x224 source): keep crisp nearest-neighbor edges. */
+  image-rendering: pixelated;
   pointer-events: none;
 }
 /* Account avatar photo (shown after login, when an avatarUrl is available). */
@@ -261,7 +273,7 @@ body.sidebar-collapsed #activity-bar {
   justify-content: center;
   position: relative;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.1s;
   padding: 0;
 }
 .activity-btn:hover {
@@ -275,7 +287,15 @@ body.sidebar-collapsed #activity-bar {
     inset 0 -1px 0 var(--glass-control-underedge);
 }
 .activity-btn:focus { outline: none; }
+/* Visible keyboard focus ring (outline is suppressed above). */
+.activity-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
+.activity-btn:active { transform: scale(0.97); }
 .activity-btn { -webkit-tap-highlight-color: transparent; }
+/* C1: active state is background + inset shadow only — no left-edge bar of
+   any kind. The base 1px border is a transparent reservation for the glass
+   hover; drop its left edge in the active state (box-sizing: border-box
+   keeps the 36px size; flex centering keeps the icon stable). */
+.activity-btn.active { border-left-width: 0; }
 .activity-btn.active {
   color: var(--color-frame-text-bright);
   background: var(--color-frame-active);
@@ -297,6 +317,8 @@ body.sidebar-collapsed #activity-bar {
 }
 .neblink-logged-out-logo {
   width: 36px; height: 30px; opacity: 0.7;
+  object-fit: contain;
+  image-rendering: pixelated;
 }
 .neblink-logged-out-text {
   font-size: 13px; color: var(--color-text); font-weight: 500;

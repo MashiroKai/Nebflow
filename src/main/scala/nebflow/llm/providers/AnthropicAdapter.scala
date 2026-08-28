@@ -14,8 +14,17 @@ import sttp.client4.*
 
 import scala.concurrent.duration.*
 
-class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, Fs2Streams[IO]])
-    extends ProviderAdapter[IO]:
+class AnthropicAdapter(
+  baseUrl: String,
+  apiKey: String,
+  backend: StreamBackend[IO, Fs2Streams[IO]],
+  // When true, unsigned thinking blocks from assistant history are replayed
+  // (without a signature field) instead of dropped. DeepSeek's Anthropic-
+  // compatible endpoint requires thinking blocks to be passed back in thinking
+  // mode; real Anthropic rejects them without a signature. Set per provider
+  // in ProviderRegistry.createAdapter.
+  requireThinkingPassback: Boolean = false
+) extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
   /** Full endpoint URL: use base as-is if it already points to /v1/messages, otherwise append. */
@@ -23,10 +32,12 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     if base.endsWith("/v1/messages") then base else s"$base/v1/messages"
 
   // Holds (inputTokens, cacheReadTokens, cacheCreationTokens) from message_start
-  private case class Tokens(input: Int, cacheRead: Option[Int], cacheWrite: Option[Int])
+  // private[providers] so specs can drive processAnthropicEvent.
+  private[providers] case class Tokens(input: Int, cacheRead: Option[Int], cacheWrite: Option[Int])
 
-  private def toAnthropicMessages(messages: List[Message]): List[Json] =
-    mergeConsecutive(messages.filterNot(_.role == MessageRole.System)).map { msg =>
+  // private[providers] for spec access (pure JSON mapping, no backend needed)
+  private[providers] def toAnthropicMessages(messages: List[Message]): List[Json] =
+    mergeConsecutive(pairToolResults(messages.filterNot(_.role == MessageRole.System))).map { msg =>
       val role = msg.role match
         case MessageRole.User => "user"
         case MessageRole.Assistant => "assistant"
@@ -74,12 +85,61 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
                     "signature" -> sig.asJson
                   )
                 case None =>
-                  Json.Null
+                  // Unsigned thinking: replay it only for providers that demand
+                  // passback (DeepSeek). Dropping it was the root cause of the
+                  // recurring deepseek DOWN cycles on 2026-08-15 — its thinking
+                  // mode rejects history that omits thinking blocks.
+                  if requireThinkingPassback then
+                    Json.obj(
+                      "type" -> "thinking".asJson,
+                      "thinking" -> thinking.asJson
+                    )
+                  else Json.Null
           }
           val filtered = content.filterNot(_ == Json.Null)
           if filtered.isEmpty then Json.obj("role" -> Json.fromString(role), "content" -> Json.fromString(" "))
           else Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(filtered))
       end match
+    }
+
+  /**
+   * Protocol-level pairing defense for Anthropic tool calls.
+   *
+   * Root cause (2026-08-23 deepseek 422 loop): a user(tool_result) message can
+   * survive context cleanup while its preceding assistant(tool_use) message is
+   * truncated away — the orphaned tool_result then heads the message list and
+   * the provider rejects it (`Each tool_result block must have a corresponding
+   * tool_use block in the previous message`). Observed live: Manager session
+   * started with an orphan `[Output removed to free context space]` result
+   * referencing a yesterday tool_use id → deepseek DOWN/recovered loop.
+   *
+   * Fix: scan the message list, collect every tool_use id seen in assistant
+   * messages (in order), and drop tool_result blocks whose id was never seen.
+   * A user message whose tool_use was consumed by cleanup (all remaining
+   * blocks are the now-dangling tool_result's siblings) keeps its text —
+   * dropping ONLY the orphaned result block, never whole messages.
+   */
+  private def pairToolResults(messages: List[Message]): List[Message] =
+    val seen = scala.collection.mutable.HashSet.empty[String]
+    messages.map {
+      case msg @ Message(MessageRole.Assistant, Right(blocks), _, _) =>
+        blocks.foreach {
+          case ContentBlock.ToolUse(id, _, _) => seen += id
+          case _                              => ()
+        }
+        msg
+      case msg @ Message(MessageRole.User, Right(blocks), _, _) =>
+        val paired = blocks.filter {
+          case ContentBlock.ToolResult(toolUseId, _, _) => seen.contains(toolUseId)
+          case _                                        => true
+        }
+        if paired.size == blocks.size then msg
+        else
+          val newBlocks =
+            if paired.isEmpty then List(ContentBlock.Text("[dropped orphaned tool_result: referenced tool_use no longer in history]"))
+            else paired
+          msg.copy(content = Right(newBlocks))
+      case other => other
     }
 
   /** Merge consecutive messages of the same role to prevent tool_use/tool_result pairing issues. */
@@ -214,7 +274,11 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     val toolCalls = toolUseBlocks.map { b =>
       val id = b.hcursor.downField("id").as[String].getOrElse("")
       val name = b.hcursor.downField("name").as[String].getOrElse("")
-      val input = b.hcursor.downField("input").as[JsonObject].getOrElse(JsonObject.empty)
+      // Non-streaming responses carry `input` as a JSON object; a non-object
+      // input goes through the shared marker path instead of silently {}.
+      val input = b.hcursor.downField("input").as[JsonObject] match
+        case Right(obj) => obj
+        case Left(_)    => ToolInputJson.malformedInput(b.hcursor.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces)
       ToolCall(id, name, input)
     }
 
@@ -315,7 +379,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
         .flatMap(cs => if cs.nonEmpty then Stream.emits(cs) else Stream.empty)
     }
 
-  private def processAnthropicEvent(
+  private[providers] def processAnthropicEvent(
     eventType: String,
     data: String,
     toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
@@ -325,7 +389,13 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     if data == "[DONE]" then IO.pure(Nil)
     else
       parse(data) match
-        case Left(_) => IO.pure(Nil)
+        case Left(err) =>
+          // Observability (issue #18 follow-up): dropped SSE data used to be
+          // invisible; log so malformed provider frames are diagnosable.
+          nebflow.core.NebflowLogger
+            .forName("nebflow.llm.anthropic")
+            .warn(s"dropped unparseable SSE data (${err.message}): ${data.take(120)}")
+            .as(Nil)
         case Right(json) =>
           eventType match
             case "message_start" =>
@@ -336,7 +406,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
               val cacheWrite = usageObj.downField("cache_creation_input_tokens").as[Option[Int]].toOption.flatten
               nebflow.core.NebflowLogger
                 .forName("nebflow.llm.anthropic")
-                .info(
+                .infoSync(
                   s"message_start: model=${params.model} usage_json=${usageObj.as[Json].getOrElse(Json.Null).noSpaces} inputTokens=$inputTokens cacheRead=$cacheRead cacheWrite=$cacheWrite"
                 )
               tokenRef.set(Tokens(inputTokens, cacheRead, cacheWrite)).as(Nil)
@@ -384,8 +454,11 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
               toolCallState.modify { m =>
                 m.get(idx) match
                   case Some((id, name, sb)) =>
-                    val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
-                    (m - idx, List(StreamChunk.ToolCallChunk(ToolCall(id, name, input))))
+                    // Issue #18: an unparseable argument stream (e.g. GLM's
+                    // unquoted ISO-8601 triggerAt) used to be coerced to {}
+                    // here, silently. ToolInputJson repairs what it can and
+                    // marks the rest so executeTool reports it to the LLM.
+                    (m - idx, List(StreamChunk.ToolCallChunk(ToolCall(id, name, ToolInputJson.parseToolInput(name, sb.toString)))))
                   case None => (m, Nil)
               }
             case "message_delta" =>
@@ -405,7 +478,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
                 val totalInput = inputTokens + cacheRead.getOrElse(0) + cacheWrite.getOrElse(0)
                 nebflow.core.NebflowLogger
                   .forName("nebflow.llm.anthropic")
-                  .info(
+                  .infoSync(
                     s"message_delta: model=${params.model} deltaInput=$deltaInput stored_input=${t.input} final_input=$inputTokens cacheRead=$cacheRead cacheWrite=$cacheWrite totalInput=$totalInput outputTokens=$outputTokens stopReason=$stopReason"
                   )
                 val usage = Some(

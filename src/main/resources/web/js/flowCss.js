@@ -131,6 +131,14 @@ export const FLOW_CSS = `
 }
 .dag-card-cancel:hover { background: rgba(244,67,54,0.08); }
 .dag-card-cancel:disabled { opacity: 0.5; cursor: default; }
+.dag-card-close {
+  margin: 0 14px 14px; align-self: flex-start;
+  font: 600 11px -apple-system, sans-serif; color: var(--color-text);
+  background: transparent; border: 1px solid var(--glass-border);
+  border-radius: 8px; padding: 5px 14px; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.dag-card-close:hover { background: var(--glass-control-bg-hover); border-color: var(--color-primary, #07c160); }
 .dag-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: 10px 14px 0; }
 .dag-nodes { padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 0; }
 .dag-node { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 12px; border: 1.5px solid var(--glass-border); background: var(--color-surface); cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; min-width: 180px; position: relative; }
@@ -178,6 +186,7 @@ export const FLOW_CSS = `
 .flow-mail-time { margin-left: auto; font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; flex-shrink: 0; }
 .flow-mail-expand { font: 500 10px -apple-system, sans-serif; color: var(--color-primary, #07c160); opacity: 0.85; flex-shrink: 0; cursor: pointer; user-select: none; }
 .flow-mail-content { font: 400 12.5px -apple-system, sans-serif; color: var(--color-text); line-height: 1.55; word-break: break-word; overflow-wrap: anywhere; overflow-x: auto; max-width: 100%; position: relative; }
+.flow-mail-no-body { font: 400 italic 12px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; }
 .flow-mail-row:not(.expanded) .flow-mail-content { max-height: 3.6em; overflow: hidden; }
 .flow-mail-row:not(.expanded) .flow-mail-content::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 1.4em; background: linear-gradient(to bottom, transparent, rgba(128,128,128,0.06)); pointer-events: none; }
 .flow-mail-content p:first-child { margin-top: 0; } .flow-mail-content p:last-child { margin-bottom: 0; } .flow-mail-content p { margin: 4px 0; }
@@ -305,6 +314,52 @@ export const FLOW_CSS = `
 }
 .team-flow-row.expanded .team-flow-chevron { transform: rotate(90deg); }
 
+/* ── Team Tasks section (2026-08-25 team-manager-task-tool) ── */
+
+.team-tasks-divider {
+  border-top: 1px dashed var(--glass-border);
+  margin: 0 14px; opacity: 0.5;
+}
+.team-tasks-section { padding: 0 14px 14px; }
+.team-tasks-header {
+  font: 600 10px -apple-system, sans-serif; color: var(--color-text-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  margin: 10px 0 6px;
+}
+.team-tasks { display: flex; flex-direction: column; gap: 3px; }
+.team-task-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 8px; min-width: 0;
+  transition: background 0.15s;
+}
+.team-task-row:hover { background: rgba(128, 128, 128, 0.05); }
+.task-status-badge {
+  font: 600 10px -apple-system, sans-serif; flex-shrink: 0;
+  padding: 2px 8px; border-radius: 10px; white-space: nowrap;
+  border: 1px solid var(--color-text-muted); color: var(--color-text-muted);
+}
+.task-status-badge.badge-in_progress { border-color: var(--color-primary, #07c160); color: var(--color-primary, #07c160); }
+.task-status-badge.badge-completed { border-color: var(--color-success, #4caf50); color: var(--color-success, #4caf50); }
+.task-status-badge.badge-failed { border-color: var(--color-error, #f44336); color: var(--color-error, #f44336); }
+.team-task-subject {
+  font: 500 12px -apple-system, sans-serif; color: var(--color-text);
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.team-task-time {
+  font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted);
+  flex-shrink: 0; white-space: nowrap;
+}
+.task-dep-badge {
+  font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted);
+  padding: 1px 6px; border-radius: 8px; flex-shrink: 0; white-space: nowrap;
+  background: rgba(128, 128, 128, 0.10);
+}
+.task-dep-badge.task-dep-badge-block { opacity: 0.8; }
+.team-tasks-empty {
+  font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted);
+  opacity: 0.6; padding: 2px 8px 8px;
+}
+
 /* Expanded DAG inline area */
 .team-flow-dag {
   padding: 2px 0 6px 14px; margin-left: 6px;
@@ -379,6 +434,16 @@ export const FLOW_CSS = `
 .solar-card-status.failed .dot { background: #f44336; opacity: 1; }
 .solar-card-status.cancelled .dot { background: #ff9800; opacity: 1; }
 .solar-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: 10px 14px 0; flex-shrink: 0; }
+.solar-terminal-banner {
+  display: flex; align-items: center; gap: 8px;
+  margin: 10px 14px 0; padding: 8px 12px;
+  border-radius: 10px; flex-shrink: 0;
+  font: 600 12px -apple-system, sans-serif;
+}
+.solar-terminal-banner.ok { color: #2e7d32; background: rgba(76,175,80,0.12); border: 1px solid rgba(76,175,80,0.35); }
+.solar-terminal-banner.failed { color: #c62828; background: rgba(244,67,54,0.12); border: 1px solid rgba(244,67,54,0.35); }
+.solar-terminal-icon { font-weight: 700; }
+.solar-terminal-text { color: var(--color-text); }
 .solar-card-footer { display: flex; align-items: center; padding: 0 14px 14px; flex-shrink: 0; }
 .solar-card-footer:empty { display: none; }
 
@@ -388,7 +453,12 @@ export const FLOW_CSS = `
   scrollbar-color: var(--color-frame-border) transparent;
 }
 .solar-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.solar-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.06); border-radius: 4px; }
 .solar-scroll::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+.solar-scroll::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+@media (prefers-color-scheme: dark) {
+  .solar-scroll::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
+}
 
 /* Canvas: absolute-positioned nodes + SVG edges */
 .solar-canvas { position: relative; margin: 0 auto; }
@@ -408,40 +478,44 @@ export const FLOW_CSS = `
 .flow-edge-label { font: 400 9px ui-monospace; fill: var(--color-text-muted); }
 
 /* Node card — glass material (V4) */
+/* 372-3: 124x88 (was 110x80) — the old box clipped the 10px sub line in half
+ * (content 67px > 64px available) and a 120px label max-width overflowed the
+ * 82px inner width, bleeding text into neighbouring glass cards. */
 .solar-node {
-  position: absolute; width: 110px; height: 80px;
+  position: absolute; width: 124px; height: 88px;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   background: var(--glass-bg, rgba(255,255,255,0.08));
   -webkit-backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
   border: 1px solid var(--glass-border, rgba(255,255,255,0.12));
   border-radius: 14px;
-  padding: 8px 14px;
+  padding: 8px 10px;
+  box-sizing: border-box;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
   text-align: center;
   cursor: pointer; user-select: none;
   transition: opacity 0.4s ease;
 }
 
-/* Orbit — compact 36px, three counter-spinning rings (V4) */
-.solar-orbit { position: relative; width: 36px; height: 36px; margin: 0 auto 4px; flex-shrink: 0; }
+/* Orbit — compact 30px, three counter-spinning rings (V4) */
+.solar-orbit { position: relative; width: 30px; height: 30px; margin: 0 auto 4px; flex-shrink: 0; }
 .solar-ring {
   position: absolute; top: 50%; left: 50%;
   border: 1px solid var(--color-border);
   border-radius: 50%; transform: translate(-50%, -50%);
   box-sizing: border-box;
 }
-.ring-1 { width: 8px; height: 8px; }
-.ring-2 { width: 18px; height: 18px; }
-.ring-3 { width: 28px; height: 28px; }
+.ring-1 { width: 6px; height: 6px; }
+.ring-2 { width: 14px; height: 14px; }
+.ring-3 { width: 24px; height: 24px; }
 .solar-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; }
 .solar-dot {
   position: absolute; width: 3px; height: 3px;
   background: var(--color-text); border-radius: 50%; top: -1.5px;
 }
-.ring-1 .solar-dot { left: 3px; }
-.ring-2 .solar-dot { left: 8px; }
-.ring-3 .solar-dot { left: 13px; }
+.ring-1 .solar-dot { left: 2px; }
+.ring-2 .solar-dot { left: 6px; }
+.ring-3 .solar-dot { left: 11px; }
 
 /* Initial angles — three dots spread around the orbit */
 .ring-1 .solar-dot-wrap { transform: rotate(0deg); }
@@ -467,15 +541,17 @@ export const FLOW_CSS = `
 .solar-node-status.ok { color: #4caf50; }
 .solar-node-status.err { color: #f44336; }
 
-/* Node label */
+/* Node label — primary line shows the nodeId (unique per node); the agent
+ * name, when different, moves to the sub line. max-width:100% keeps text
+ * inside the card (372-3). */
 .solar-node-label {
-  font: 600 12px -apple-system, sans-serif; color: var(--color-text);
-  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 12px/1.25 -apple-system, sans-serif; color: var(--color-text);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   margin-top: 3px;
 }
 .solar-node-sub {
-  font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted);
-  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 400 10px/1.3 -apple-system, sans-serif; color: var(--color-text-muted);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   opacity: 0.7;
 }
 
@@ -566,8 +642,8 @@ export const FLOW_CSS = `
   cursor: pointer; z-index: 2;
 }
 .flow-orbit-content { position: relative; z-index: 3; text-align: center; pointer-events: none; }
-.flow-orbit-agent { font: 600 11px -apple-system; color: var(--color-text); }
-.flow-orbit-nodeid { font: 400 9px ui-monospace; color: var(--color-text-muted); margin-top: 2px; }
+.flow-orbit-agent { font: 400 9px ui-monospace; color: var(--color-text-muted); margin-top: 2px; }
+.flow-orbit-nodeid { font: 600 11px -apple-system; color: var(--color-text); }
 .flow-orbit-status { font: 600 16px -apple-system; margin-top: 2px; }
 
 /* Three orbit rings — scoped to flow-orbit-node (transform-based centering) */

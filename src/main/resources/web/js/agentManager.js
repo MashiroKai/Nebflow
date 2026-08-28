@@ -2,13 +2,15 @@
 // The Agents tab lists compact agent cards. Click opens a Canvas detail tab.
 
 import state from './state.js';
+import { key } from './branding.js';
 import { sendWs } from './ws.js';
 import { openTab, getTabPane, hasTab, setActiveTab } from './canvas.js';
 import { t } from './i18n.js';
+import { createIconsIn } from './utils.js';
 import * as presets from './presets.js';
 
 // ── Helpers ────────────────────────────────────────────────
-function getToken() { return localStorage.getItem('nebflow_token') || ''; }
+function getToken() { return localStorage.getItem(key('token')) || ''; }
 function authHeaders() {
   const tok = getToken();
   return tok ? { Authorization: `Bearer ${tok}` } : {};
@@ -24,12 +26,42 @@ const EYE_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none
 // Lock icon for system-fixed tool chips (inline SVG, no emoji per design rules)
 const LOCK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
 // Tools always injected by the system — fallback until the API ships fixedTools
-const FIXED_BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'Issue', 'RemoveUnnecessary'];
+// (Issue removed 2026-08-25 ruling: orchestrator-only, ships via API fixedTools for Nebula)
+const FIXED_BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'];
+const NEBULA_FIXED_TOOLS = [...FIXED_BASE_TOOLS, 'Issue', 'FlowExecute',
+  'AgentControl', 'TaskUpdate', 'Delegate', 'Pop', 'AskUserQuestion',
+  'TaskCreate', 'Mail', 'Schedule', 'TransferFile'];
 function resolveFixedTools(detail) {
   if (Array.isArray(detail?.fixedTools)) return detail.fixedTools;
-  if (detail?.category === 'team') return [...FIXED_BASE_TOOLS, 'Mail'];
+  if (detail?.name === 'Nebula') return NEBULA_FIXED_TOOLS;
+  if (detail?.category === 'team') return [...FIXED_BASE_TOOLS, 'Mail', 'SubTask', 'FlowExecute'];
   if (detail?.category === 'flow') return [...FIXED_BASE_TOOLS, 'FlowReport'];
   return FIXED_BASE_TOOLS;
+}
+
+// ── #438 固定工具三类锁样式 (2026-08-27 用户裁定) ──────────────────────────
+// 固定集按归属拆两组展示：「系统固定」(six base tools - identical on every
+// card) + 「<类别>专属」(this agent class's own injected tools). The owner
+// class comes from the AGENT itself (category / orchestrator name), so the
+// grouping needs NO new backend metadata and stays correct through the
+// pending six-base-tool semantic rework (the contract only changes what lands
+// in which bucket, never the two-bucket frame). Cross-card comparison makes
+// "哪类固定给谁" readable at a glance.
+const FIXED_CLASS_LABEL_KEYS = {
+  flow: 'agent.toolsFixedSpecialty.flow',
+  team: 'agent.toolsFixedSpecialty.team',
+};
+/** @param {{name?: string, category?: string} | null} detail */
+function fixedClassLabelKey(detail) {
+  if (detail?.name === 'Nebula' || !detail?.category) return 'agent.toolsFixedSpecialty.orchestrator';
+  return FIXED_CLASS_LABEL_KEYS[detail.category] || 'agent.toolsFixedSpecialty.orchestrator';
+}
+/** Split a fixed-tool list into [base, specialty], preserving list order. */
+function splitFixedTools(fixedTools) {
+  const baseSet = new Set(FIXED_BASE_TOOLS);
+  const base = fixedTools.filter(t => baseSet.has(t));
+  const specialty = fixedTools.filter(t => !baseSet.has(t));
+  return { base, specialty };
 }
 function shortModel(ref) {
   if (!ref) return '';
@@ -100,15 +132,25 @@ function renderAgentCard(a) {
   const display = esc(a.displayName || a.name);
   const desc = esc(a.description || '');
   const initial = esc((a.displayName || a.name || '?').charAt(0).toUpperCase());
+  const isNebula = a.name === 'Nebula';
   const isGlobalStandalone = (a.layer === 'global' || !a.layer) && (a.category || 'standalone') === 'standalone';
-  const showBadge = isGlobalStandalone && a.name !== 'Nebula';
+  // Nebula is the orchestrator, not a delegatable standalone — never shows the badge.
+  const showBadge = isGlobalStandalone && !isNebula;
   const badge = showBadge
     ? '<span class="agent-mgr-standalone-badge">可直接委派</span>'
     : '';
+  // ⑧ Nebula: orbit icon avatar (identity must be stable — custom avatar not accepted)
+  // + orchestrator badge pill. All other cards keep letter/custom-avatar logic.
+  const avatar = isNebula
+    ? '<span class="agent-mgr-avatar"><i data-lucide="orbit" style="width:16px;height:16px"></i></span>'
+    : `<span class="agent-mgr-avatar">${initial}</span>`;
+  const orchBadge = isNebula
+    ? `<span class="agent-mgr-orchestrator-badge">${esc(t('agents.badge.orchestrator'))}</span>`
+    : '';
   return `<div class="agent-mgr-card" data-agent="${name}">
-    <span class="agent-mgr-avatar">${initial}</span>
+    ${avatar}
     <div class="agent-mgr-info">
-      <div class="agent-mgr-name">${display}${badge}</div>
+      <div class="agent-mgr-name">${display}${badge}${orchBadge}</div>
       <div class="agent-mgr-desc">${desc}</div>
     </div>
     <span class="agent-mgr-model-tag" data-agent="${name}"></span>
@@ -169,11 +211,26 @@ export function renderAgentManager() {
 
     let html = '';
 
-    // Global section
-    if (global.length > 0) {
+    // ⑧ Orchestrator section — Nebula pinned at top in its own group
+    // (entity-icons-visual-spec §3.2). Nebula is extracted from the global
+    // standalone list: it understands intent / dispatches / accepts, it is
+    // not a delegatable executor like the standalone agents below.
+    const nebula = global.find(a => a.name === 'Nebula');
+    const standalone = global.filter(a => a.name !== 'Nebula');
+
+    if (nebula) {
+      html += `<div class="agent-mgr-group agent-mgr-group-orchestrator">`;
+      html += `<div class="agent-mgr-group-header orchestrator"><i data-lucide="orbit" style="width:14px;height:14px"></i>${esc(t('agents.group.orchestrator'))}</div>`;
+      html += renderAgentCard(nebula);
+      html += `</div>`;
+    }
+
+    // Standalone section (was "Global Agents" — Nebula moved out above).
+    // Empty group is not rendered (existing convention).
+    if (standalone.length > 0) {
       html += `<div class="agent-mgr-group">`;
-      html += `<div class="agent-mgr-group-header">Global Agents</div>`;
-      html += global.map(renderAgentCard).join('');
+      html += `<div class="agent-mgr-group-header">${esc(t('agents.group.standalone'))}</div>`;
+      html += standalone.map(renderAgentCard).join('');
       html += `</div>`;
     }
 
@@ -194,6 +251,8 @@ export function renderAgentManager() {
     }
 
     content.innerHTML = html;
+    // Replace <i data-lucide> placeholders (orchestrator group header + Nebula avatar)
+    createIconsIn(content);
 
     // Bind card clicks (single = preview, double = pinned — VS Code style)
     content.querySelectorAll('.agent-mgr-card').forEach(card => {
@@ -292,13 +351,28 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
   const fixedTools = resolveFixedTools(detail);
   const configurableTools = allTools.filter(tname => !fixedTools.includes(tname));
 
-  const fixedToolsHtml = fixedTools.length ? `
-    <div class="agent-detail-tools-fixed-label">${t('agent.toolsFixedLabel')}</div>
-    <div class="agent-detail-tools-grid">
-      ${fixedTools.map(tname =>
-        `<span class="agent-detail-tool-check fixed" title="${esc(t('agent.toolsFixedTip'))}">${LOCK_ICON_SVG}${esc(tname)}</span>`
-      ).join('')}
-    </div>` : '';
+  // #438: two-bucket display - base six (same on every card) + this class's
+  // own specialty tools, labeled by owner class so cards are distinguishable
+  // at a glance. Specialty may be empty -> single base group only.
+  const { base: fixedBase, specialty: fixedSpecialty } = splitFixedTools(fixedTools);
+  const fixedChip = tname =>
+    `<span class="agent-detail-tool-check fixed" title="${esc(t('agent.toolsFixedTip'))}">${LOCK_ICON_SVG}${esc(tname)}</span>`;
+  const specialtyLabelKey = fixedClassLabelKey(detail);
+  const fixedGroupsHtml = [
+    ...(fixedBase.length ? [{
+      key: 'base',
+      label: t('agent.toolsFixedLabel'),
+      chips: fixedBase.map(fixedChip).join(''),
+    }] : []),
+    ...(fixedSpecialty.length ? [{
+      key: 'specialty',
+      label: t(specialtyLabelKey),
+      chips: fixedSpecialty.map(fixedChip).join(''),
+    }] : []),
+  ];
+  const fixedToolsHtml = fixedGroupsHtml.map(g => `
+    <div class="agent-detail-tools-fixed-label${g.key === 'specialty' ? ' agent-detail-tools-specialty-label' : ''}" data-fixed-group="${g.key}">${esc(g.label)}</div>
+    <div class="agent-detail-tools-grid" data-fixed-group-grid="${g.key}">${g.chips}</div>`).join('');
 
   const toolsHtml = `${fixedToolsHtml}
     ${fixedTools.length ? `<div class="agent-detail-tools-config-label">${t('agent.toolsConfigLabel')}</div>` : ''}
@@ -343,7 +417,7 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
 
       <div class="agent-detail-section">
         <div class="agent-detail-label">Flows</div>
-        <div class="agent-detail-sub-hint">此 agent 可通过 Delegate(flow=…) 触发的 flow</div>
+        <div class="agent-detail-sub-hint">此 agent 可通过 FlowTrigger(flow=…) 触发的 flow</div>
         <div class="agent-detail-flows-grid" id="agent-detail-flows-grid"><span class="agent-detail-chips-loading">Loading…</span></div>
       </div>
 

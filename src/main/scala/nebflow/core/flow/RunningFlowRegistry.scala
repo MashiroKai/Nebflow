@@ -1,13 +1,14 @@
 package nebflow.core.flow
 
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
+import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 
 /**
  * Tracks running flow DAG instances for the frontend.
  *
- * Each entry represents a one-shot flow triggered via Mail.
+ * Each entry represents a one-shot flow triggered via the FlowTrigger tool.
  * The frontend polls or receives WS events to render the DAG + progress.
  */
 object RunningFlowRegistry:
@@ -32,27 +33,87 @@ object RunningFlowRegistry:
     status: NodeStatus, // running | completed | failed | cancelled
     startedAt: Long,
     completedAt: Option[Long] = None,
-    sessionId: Option[String] = None // parent session for WS routing
+    sessionId: Option[String] = None, // #407: triggering agent's OWN session — Mail idle gate associates in-flight flows via f.sessionId.contains(sid); do NOT repurpose to root
+    rootSessionId: Option[String] = None // #412: outermost root session — badge ownership / window routing (distinct from sessionId)
   )
 
   private val flows: Ref[IO, Map[String, RunningFlow]] = Ref.unsafe(Map.empty)
   private val cancelledFlows: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
 
-  /** Mark a flow as cancelled. The DAG executor checks this between nodes. */
+  // Per-instance cancel signal: completed by cancel(), raced against by the
+  // DAG executor's executeAgent so a user cancel PIERCES the running node
+  // (Stop + actor stop) instead of waiting for it to finish on its own.
+  // The cancelledFlows flag stays: it covers the between-nodes check.
+  private val cancelSignals: Ref[IO, Map[String, Deferred[IO, Unit]]] = Ref.unsafe(Map.empty)
+
+  // R8-P2 internal fail-fast signal: a parallel branch failed under
+  // onFail=abort — pierce sibling agents exactly like a user cancel, but the
+  // flow's final status is Failed (NOT Cancelled), so it is tracked separately
+  // from the user-cancel flag.
+  private val abortedFlows: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
+  private val abortSignals: Ref[IO, Map[String, Deferred[IO, Unit]]] = Ref.unsafe(Map.empty)
+
+  /** Internal fail-fast: stop sibling branch agents (idempotent). */
+  def failFast(instanceId: String): IO[Unit] =
+    abortedFlows.update(_ + instanceId) *>
+      abortSignals.get.flatMap(_.get(instanceId).traverse_(_.complete(())))
+
+  /** Check whether fail-fast fired for this instance. */
+  def isAborted(instanceId: String): IO[Boolean] =
+    abortedFlows.get.map(_.contains(instanceId))
+
+  /** The internal fail-fast signal (created on demand like cancelSignal). */
+  def abortSignal(instanceId: String): IO[Deferred[IO, Unit]] =
+    Deferred[IO, Unit].flatMap { fresh =>
+      abortSignals.modify { m =>
+        m.get(instanceId) match
+          case Some(existing) => (m, existing)
+          case None           => (m + (instanceId -> fresh), fresh)
+      }
+    }
+
+  /**
+   * Mark a flow as cancelled. Sets the between-nodes flag and completes the
+   * per-instance cancel signal (idempotent — Deferred.complete on an
+   * already-completed signal is a no-op, so repeated cancels are harmless).
+   */
   def cancel(instanceId: String): IO[Unit] =
     cancelledFlows.update(_ + instanceId) *>
-      update(instanceId)(_.copy(status = NodeStatus.Cancelled))
+      update(instanceId)(_.copy(status = NodeStatus.Cancelled)) *>
+      cancelSignals.get.flatMap(_.get(instanceId).traverse_(_.complete(())))
 
   /** Check if a flow has been cancelled. */
   def isCancelled(instanceId: String): IO[Boolean] =
     cancelledFlows.get.map(_.contains(instanceId))
 
-  /** Clear the cancel flag (called after flow execution ends). */
+  /**
+   * Clear the cancel flag and drop the cancel signal (called after flow
+   * execution ends so the signal map doesn't grow unboundedly). Also clears
+   * the internal fail-fast state.
+   */
   def clearCancelled(instanceId: String): IO[Unit] =
-    cancelledFlows.update(_ - instanceId)
+    cancelledFlows.update(_ - instanceId) *>
+      cancelSignals.update(_ - instanceId) *>
+      abortedFlows.update(_ - instanceId) *>
+      abortSignals.update(_ - instanceId)
+
+  /**
+   * The per-instance cancel signal. Creates one if absent (register normally
+   * already did), so a caller can always race on a real Deferred.
+   */
+  def cancelSignal(instanceId: String): IO[Deferred[IO, Unit]] =
+    Deferred[IO, Unit].flatMap { fresh =>
+      cancelSignals.modify { m =>
+        m.get(instanceId) match
+          case Some(existing) => (m, existing)
+          case None           => (m + (instanceId -> fresh), fresh)
+      }
+    }
 
   def register(flow: RunningFlow): IO[Unit] =
-    flows.update(_ + (flow.instanceId -> flow))
+    flows.update(_ + (flow.instanceId -> flow)) *>
+      cancelSignal(flow.instanceId).void *>
+      abortSignal(flow.instanceId).void
 
   def update(instanceId: String)(f: RunningFlow => RunningFlow): IO[Unit] =
     flows.update(m => m.get(instanceId).map(f).map(rf => m + (instanceId -> rf)).getOrElse(m))
@@ -77,16 +138,14 @@ object RunningFlowRegistry:
               if status == NodeStatus.Completed || status == NodeStatus.Failed then Some(now) else ns.completedAt
           ))
         case None => rf.nodes
-      val newStatus = status match
-        case NodeStatus.Failed => NodeStatus.Failed
-        case NodeStatus.Completed if nodeId == rf.entry => NodeStatus.Completed
-        case _ => rf.status
-      rf.copy(
-        nodes = updatedNodes,
-        status = newStatus,
-        completedAt =
-          if newStatus == NodeStatus.Completed || newStatus == NodeStatus.Failed then Some(now) else rf.completedAt
-      )
+      // #414 fix 2：setNodeStatus 只更新节点状态，绝不改 flow 整体 status。
+      // 原 `nodeId == rf.entry` 让 entry 节点（planner）一完成 flow 就被标
+      // completed，之后 redo 轮每次节点状态写入都刷新 completedAt（实证
+      // startedAt == completedAt）——「看起来失败但 flow 还在跑」假象来源。
+      // flow 整体 status 只由流程终止路径管理：FlowDagExecutor.execute 末尾
+      // （walk 结果 → Completed/Failed）、RunningFlowRegistry.cancel
+      // （Cancelled）、failFast（abort 后 walk 返回 Failed → execute 末尾）。
+      rf.copy(nodes = updatedNodes)
     }
 
   def list: IO[List[RunningFlow]] =
@@ -94,20 +153,22 @@ object RunningFlowRegistry:
 
   /** Remove a completed/failed flow instance. */
   def remove(instanceId: String): IO[Unit] =
-    flows.update(_ - instanceId)
+    flows.update(_ - instanceId) *>
+      cancelSignals.update(_ - instanceId)
 
   /**
    * Remove flows that completed more than 5 minutes ago.
    * Called periodically to prevent unbounded memory growth.
    */
   def cleanupStale(retentionMs: Long = 5 * 60 * 1000): IO[Unit] =
-    flows.update { m =>
+    flows.modify { m =>
       val now = System.currentTimeMillis()
-      m.filterNot { (_, rf) =>
+      val kept = m.filterNot { (_, rf) =>
         (rf.status == NodeStatus.Completed || rf.status == NodeStatus.Failed) &&
         rf.completedAt.exists(now - _ > retentionMs)
       }
-    }
+      (kept, kept)
+    }.flatMap(kept => cancelSignals.update(sig => sig.filter((id, _) => kept.contains(id))))
 
   def toJson(flow: RunningFlow): JsonObject = JsonObject.fromIterable(
     List(
@@ -118,6 +179,8 @@ object RunningFlowRegistry:
       "status" -> flow.status.wire.asJson,
       "startedAt" -> flow.startedAt.asJson,
       "completedAt" -> flow.completedAt.asJson,
+      "sessionId" -> flow.sessionId.asJson, // #412: serialized so API/UI can associate a flow with its triggering session
+      "rootSessionId" -> flow.rootSessionId.asJson,
       "nodes" -> flow.nodes.values.toList.map { ns =>
         JsonObject
           .fromIterable(

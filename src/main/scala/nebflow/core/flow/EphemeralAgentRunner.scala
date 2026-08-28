@@ -23,7 +23,12 @@ object EphemeralAgentRunner:
     taskInput: String,
     replyTo: ActorRef[AgentCommand],
     depth: Int,
-    projectRoot: String
+    projectRoot: String,
+    /** Block 0 registration chain (supervision trio §B2): the caller's
+      * session (parent) and root (permission bucket). Absent → legacy
+      * self-anchored behavior. */
+    callerSessionId: Option[String] = None,
+    callerRootSessionId: Option[String] = None
   )
 
   def apply(resources: SharedResources, wsSend: Option[Json => IO[Unit]]): Behavior[RunAgent] =
@@ -35,18 +40,7 @@ object EphemeralAgentRunner:
 
       for
         resultDeferred <- Deferred[IO, Either[String, List[Message]]]
-        // Bridge actor: receives AgentEvent, completes the Deferred, self-stops
-        bridgeRef <- resources.actorSystem.spawn(
-          Behaviors.receive[AgentEvent] { (ctx, event) =>
-            event match
-              case AgentEvent.Completed(_, messages) =>
-                ctx.forkTurn(resultDeferred.complete(Right(messages)).void).as(Behaviors.stopped)
-              case AgentEvent.Failed(_, err) =>
-                ctx.forkTurn(resultDeferred.complete(Left(err.message)).void).as(Behaviors.stopped)
-          },
-          s"bridge-ephemeral-${agentDef.name.take(10)}"
-        )
-        // Spawn AgentActor
+        // Spawn AgentActor first — the bridge needs its ref for death-watch
         ref <- resources.actorSystem.spawn(
           AgentActor(
             agentDef = agentDef,
@@ -61,15 +55,57 @@ object EphemeralAgentRunner:
             fileHistory = None,
             contextWindow = resources.contextWindow,
             expectsMail = false,
-            // P2: standalone agent buckets its own permission policy (same as
-            // its AgentRecord below).
-            rootSessionId = sessionId
+            // P2 / Block 0: bucket under the CALLER's root when provided
+            // (the legacy self-anchor left ephemerals outside every bucket —
+            // same-bucket guards then rejected the only callers who could
+            // manage them). Self only as fallback.
+            rootSessionId = msg.callerRootSessionId.getOrElse(sessionId)
           ),
           s"ephemeral-agent-${agentDef.name.take(10)}"
         )
+        // Bridge actor: receives AgentEvent, completes the Deferred, self-stops.
+        // AgentControl 前置修复（spec §3.3）：MUST ctx.watch(agentRef)——直接对
+        // agent 发 Stop（cancel）时，Terminated 在此完成 deferred(Left)，
+        // 否则 resultDeferred.get 永久挂起（调用方 fiber 泄漏）。
+        bridgeRef <- resources.actorSystem.spawn(
+          Behaviors.setup[AgentEvent] { bctx =>
+            bctx.watch(ref) *> IO.pure(
+              new Behavior[AgentEvent]:
+                def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
+                  event match
+                    case AgentEvent.Completed(_, messages) =>
+                      // 直接 complete（不 forkTurn）：forkTurn 与返回 stopped
+                      // 竞态——actor loop 退出时 cancel 当前 turn，forked fiber
+                      // 可能没跑，deferred 永远不完成（同 FlowDagExecutor 教训）。
+                      resultDeferred.complete(Right(messages)).void.as(Behaviors.stopped)
+                    case AgentEvent.Failed(_, err) =>
+                      resultDeferred.complete(Left(err.message)).void.as(Behaviors.stopped)
+                    case AgentEvent.Cancelled(_, reason) =>
+                      resultDeferred.complete(Left(s"cancelled: $reason")).void.as(Behaviors.stopped)
+
+                override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
+                  signal match
+                    case SystemSignal.Terminated(_) =>
+                      // agent 死了（AgentControl cancel 的 Stop / 任何未通知死亡）
+                      // ——以 cancelled 完成 deferred，runner 走正常清理返回。
+                      resultDeferred.complete(Left("cancelled")).void
+                        .handleErrorWith(_ => IO.unit)
+                        .as(Behaviors.stopped)
+            )
+          },
+          s"bridge-ephemeral-${agentDef.name.take(10)}"
+        )
         // Register in agentRegistry so WS events (askUser, permission) route correctly
         _ <- resources.agentRegistry.update(
-          _ + (sessionId -> AgentRecord(sessionId, ref, AgentKind.Ephemeral, sessionId))
+          _ + (sessionId -> AgentRecord(
+            sessionId,
+            ref,
+            AgentKind.Ephemeral,
+            msg.callerRootSessionId.getOrElse(sessionId),
+            parentSessionId = msg.callerSessionId.getOrElse(""),
+            startedAt = System.currentTimeMillis(),
+            lastActivityMs = System.currentTimeMillis()
+          ))
         )
         // Send input with bridge actor as replyTo
         _ <- (ref ! AgentCommand.UserInput(

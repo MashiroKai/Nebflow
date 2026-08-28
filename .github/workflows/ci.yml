@@ -11,6 +11,48 @@ env:
   COURSIER_REPOSITORIES: "ivy2Local|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2"
 
 jobs:
+  js-types:
+    name: JS Types (checkJs gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install TypeScript
+        run: npm install --no-save --no-package-lock typescript@5.5
+      - name: checkJs vs baseline
+        # A1 gate: any new file with errors, any (file, code) count increase,
+        # or any total increase above tests/type-baseline.json fails the job.
+        run: node scripts/check-js-types.mjs
+      - name: Circular deps (static imports)
+        # P2-4 gate: static-import SCC analysis - any cycle fails. Dynamic
+        # import() is the sanctioned escape hatch and is not counted.
+        run: node scripts/check-circular.mjs
+
+  user-knowledge-gate:
+    name: User Knowledge Gate (#338)
+    # Fail-fast static gate: user-specific knowledge (provider gateway IDs,
+    # personal paths, API keys) must not leak into src/main Scala sources.
+    # Same logic locally: bash scripts/check-user-knowledge.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check src/main for user-specific identifiers
+        run: bash scripts/check-user-knowledge.sh
+
+  dead-logging-gate:
+    name: Dead Logging Gate
+    # Fail-fast static gate: NebulaLogger double-wrap (IO(IO[Unit]) — inner
+    # log never runs; all known instances sat on error-recovery paths).
+    # Same logic locally: bash scripts/check-dead-logging.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check src/main for NebulaLogger double-wrap
+        run: bash scripts/check-dead-logging.sh
+
   compile:
     name: Compile (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -71,6 +113,16 @@ jobs:
           distribution: temurin
           java-version: 17
           cache: sbt
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Build web bundle (P1)
+        # esbuild bundle -> build/web-dist (orphan-guarded, warning-free).
+        run: |
+          npm ci
+          node scripts/build-web.mjs
       - name: Setup sbt
         shell: bash
         run: |
@@ -79,13 +131,22 @@ jobs:
           printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
+      - name: Brand values from brand.conf
+        # L2 rebrand: single source — every brand string below flows from here.
+        shell: bash
+        run: |
+          bv() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" brand.conf | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1; }
+          echo "LOWER_NAME=$(bv lowerName)" >> $GITHUB_ENV
+          echo "PRODUCT_NAME=$(bv productName)" >> $GITHUB_ENV
       - name: Build assembly
-        run: sbt assembly
+        # -D<lowerName>.webdist=1 mounts build/web-dist into the jar (opt-in
+        # so a dev machine's plain `sbt run` never serves a stale dist tree).
+        run: sbt -D${LOWER_NAME}.webdist=1 assembly
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nebflow-jar
-          path: target/scala-3.5.2/nebflow-assembly-*.jar
+          name: ${{ env.LOWER_NAME }}-jar
+          path: target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar
 
   smoke-test:
     name: Smoke Test (${{ matrix.os }})
@@ -97,18 +158,27 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+      - name: Brand values from brand.conf
+        # L2 rebrand: single source — artifact names and jar globs below flow
+        # from here. MUST precede download-artifact: ${{ env.* }} in `with:`
+        # only resolves for variables set in EARLIER steps of the same job.
+        shell: bash
+        run: |
+          bv() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" brand.conf | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1; }
+          echo "LOWER_NAME=$(bv lowerName)" >> $GITHUB_ENV
+          echo "PRODUCT_NAME=$(bv productName)" >> $GITHUB_ENV
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
       - uses: actions/download-artifact@v4
         with:
-          name: nebflow-jar
+          name: ${{ env.LOWER_NAME }}-jar
           path: ./dist
       - name: Find JAR
         id: jar
         shell: bash
-        run: echo "jar=$(ls dist/nebflow-assembly-*.jar | head -1)" >> $GITHUB_OUTPUT
+        run: echo "jar=$(ls dist/${LOWER_NAME}-assembly-*.jar | head -1)" >> $GITHUB_OUTPUT
       - name: Test version command
         shell: bash
         run: java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" version 2>&1 | head -5
@@ -121,11 +191,12 @@ jobs:
       - name: Test help command
         shell: bash
         run: java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" help 2>&1 | head -20
-      - name: Start server and test REST API
+      - name: Start server
         shell: bash
         run: |
           java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" -s &
           SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
           for i in $(seq 1 30); do
             if curl -s http://localhost:8080/ > /dev/null 2>&1; then
               echo "Server started after ${i}s"
@@ -138,15 +209,120 @@ jobs:
             fi
             sleep 1
           done
+      - name: Test REST API
+        shell: bash
+        run: |
           echo "--- Health check ---"
           curl -sf http://localhost:8080/api/health && echo "" || echo "FAIL"
           echo "--- Static assets ---"
           curl -s -o /dev/null -w "GET / -> %{http_code}\n" http://localhost:8080/
           echo "--- Config endpoint ---"
           CONFIG=$(curl -sf http://localhost:8080/api/config 2>&1) && echo "${CONFIG:0:200}..." || echo "Config not available"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Verify web assets (C1 contract)
+        shell: bash
+        # Traversal-based: every file under src/main/resources/web must be
+        # served 200. New files are covered automatically; an unroutable file
+        # fails the job.
+        run: node scripts/verify-web-assets.mjs http://localhost:8080
+      - name: Stop server
+        if: always()
+        shell: bash
+        run: |
           kill $SERVER_PID 2>/dev/null || true
-          wait $SERVER_PID 2>/dev/null || true
           echo "--- Server tests completed ---"
+
+  frontend-smoke:
+    name: Frontend Smoke (Playwright, real backend)
+    runs-on: ubuntu-latest
+    needs: assembly
+    steps:
+      - uses: actions/checkout@v4
+      - name: Brand values from brand.conf
+        # L2 rebrand: single source — every brand string below flows from here.
+        shell: bash
+        run: |
+          bv() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" brand.conf | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1; }
+          echo "LOWER_NAME=$(bv lowerName)" >> $GITHUB_ENV
+          echo "PRODUCT_NAME=$(bv productName)" >> $GITHUB_ENV
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.LOWER_NAME }}-jar
+          path: ./dist
+      - name: Install Playwright
+        run: |
+          npm install --no-save --no-package-lock @playwright/test@1.62.0
+          npx playwright install --with-deps chromium
+      - name: Start server (fresh home, real jar)
+        shell: bash
+        run: |
+          java --add-opens java.base/java.lang=ALL-UNNAMED -jar "$(ls dist/${LOWER_NAME}-assembly-*.jar | head -1)" -s &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          for i in $(seq 1 60); do
+            if curl -s http://localhost:8080/api/health > /dev/null 2>&1; then
+              echo "Server started after ${i}s"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "ERROR: Server did not start within 60s"
+              kill $SERVER_PID 2>/dev/null || true
+              exit 1
+            fi
+            sleep 1
+          done
+      - name: Assert served index bytes (rebrand injection, encoder health)
+        # Byte-level on purpose (L2 rebrand acceptance): a JSON-encoded HTML
+        # body (the http4s circe String-encoder hijack) starts with '"' and
+        # escapes quotes throughout — grep for window.__BRAND__ would still
+        # match inside the escaped body, which is exactly how that bug once
+        # slipped through. Assert on raw bytes instead:
+        #  1. first 15 bytes are exactly "<!DOCTYPE html" (no leading '"')
+        #  2. the injected contract appears with RAW quotes: "productName":
+        shell: bash
+        run: |
+          BODY=$(curl -s http://localhost:8080/)
+          FIRST15=$(printf '%s' "$BODY" | head -c 15)
+          if [ "$FIRST15" != "<!DOCTYPE html" ]; then
+            echo "FAIL: index does not start with <!DOCTYPE html (got: $FIRST15)"
+            printf '%s' "$BODY" | head -c 200
+            exit 1
+          fi
+          if ! printf '%s' "$BODY" | grep -q '"productName":"'; then
+            echo "FAIL: raw-quote brand contract missing (possible JSON-escaped body)"
+            printf '%s' "$BODY" | grep -o 'window.__BRAND__.\{0,80\}' || true
+            exit 1
+          fi
+          echo "OK: index served as raw HTML with brand contract injected"
+      - name: Run Playwright smoke suite
+        shell: bash
+        # Token comes from the fresh instance's own ~/.nebflow/auth.json —
+        # smoke.spec.mjs reads it when NEBFLOW_TOKEN is not set.
+        run: npx playwright test tests/smoke.spec.mjs
+      - name: Verify web assets (C1, dist tree)
+        shell: bash
+        # The CI jar contains the P1 bundle — guard the PUBLISHED tree.
+        # Rebuild locally (deterministic) purely to get the dist tree for
+        # traversal; the running instance serves its jar-embedded copy.
+        run: |
+          npm ci
+          node scripts/build-web.mjs
+          node scripts/verify-web-assets.mjs --root build/web-dist http://localhost:8080
+      - name: Stop server
+        if: always()
+        shell: bash
+        run: kill $SERVER_PID 2>/dev/null || true
 
   docker-test:
     name: Docker Build Test
@@ -154,16 +330,23 @@ jobs:
     needs: assembly
     steps:
       - uses: actions/checkout@v4
+      - name: Brand values from brand.conf
+        # L2 rebrand: single source — every brand string below flows from here.
+        shell: bash
+        run: |
+          bv() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" brand.conf | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1; }
+          echo "LOWER_NAME=$(bv lowerName)" >> $GITHUB_ENV
+          echo "PRODUCT_NAME=$(bv productName)" >> $GITHUB_ENV
       - uses: actions/download-artifact@v4
         with:
-          name: nebflow-jar
+          name: ${{ env.LOWER_NAME }}-jar
           path: ./target/scala-3.5.2
       - name: Build Docker image
-        run: docker build -t nebflow:test .
+        run: docker build --build-arg lower_name=${LOWER_NAME} -t ${LOWER_NAME}:test .
       - name: Test container starts
         run: |
-          docker run -d --name nebflow-test -p 8080:8080 nebflow:test
+          docker run -d --name ${LOWER_NAME}-test -p 8080:8080 ${LOWER_NAME}:test
           sleep 5
-          docker logs nebflow-test 2>&1 | head -20
+          docker logs ${LOWER_NAME}-test 2>&1 | head -20
           curl -sf http://localhost:8080/api/health || echo "Health check failed"
-          docker stop nebflow-test
+          docker stop ${LOWER_NAME}-test

@@ -92,21 +92,46 @@ object InteractionHub:
             System.currentTimeMillis()
           ))
       )
-      send <- rootWsSend.get.map(_.get(req.rootSessionId))
-      _ <- send.fold(
-        logger.warn(
-          s"InteractionRequest dropped: no root wsSend registered for rootSessionId=${req.rootSessionId}"
-        ) *> IO.unit
-      )(ws =>
-        // roundComplete first: flush any in-flight text buffer into the root
-        // session's ui.json before the interactive card (matches P1 root behavior).
-        (ws(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> req.rootSessionId.asJson)).handleErrorWith(_ =>
-          IO.unit
-        ) *>
-          ws(render).handleErrorWith { e =>
-            logger.warn(s"InteractionRequest render failed for requestId=${req.requestId}: ${e.getMessage}") *> IO.unit
-          }).void
-      )
+      send <- rootWsSend.get
+      _ <- send.get(req.rootSessionId) match
+        case Some(ws) =>
+          // roundComplete first: flush any in-flight text buffer into the root
+          // session's ui.json before the interactive card (matches P1 root behavior).
+          (ws(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> req.rootSessionId.asJson)).handleErrorWith(_ =>
+            IO.unit
+          ) *>
+            ws(render).handleErrorWith { e =>
+              logger.warn(s"InteractionRequest render failed for requestId=${req.requestId}: ${e.getMessage}") *> IO.unit
+            }).void
+        case None =>
+          // F4 (#433): the target root session is unreachable (deleted /
+          // zombie / never had a client). Rendering into it would park the
+          // card in a graveyard no one watches — invisible = unanswerable =
+          // guaranteed 5-minute timeout denial. Fan the card out to ALL other
+          // registered roots instead, flagged `fallback: true` so the frontend
+          // shows a global actionable toast rather than routing the card into
+          // a session it cannot open. Answers still match by requestId, so a
+          // user answering from any window completes the pending deferred.
+          val others = send.toList.filterNot(_._1 == req.rootSessionId)
+          if others.isEmpty then
+            logger.warn(
+              s"InteractionRequest dropped: no root wsSend registered for rootSessionId=${req.rootSessionId}"
+            )
+          else
+            others.traverse_ { case (sid, ws) =>
+              ws(render.deepMerge(Json.obj(
+                "fallback" -> true.asJson,
+                "fallbackRoot" -> req.rootSessionId.asJson
+              ))).handleErrorWith { e =>
+                logger.warn(
+                  s"InteractionRequest fallback render failed for requestId=${req.requestId} root=$sid: ${e.getMessage}"
+                ) *> IO.unit
+              }
+            } *>
+              logger.warn(
+                s"InteractionRequest root=${req.rootSessionId} unreachable — fanned out to ${others.size} " +
+                  s"registered root(s) with fallback flag (requestId=${req.requestId}, #433 F4)"
+              )
     yield ()
 
     end for
@@ -149,18 +174,51 @@ object InteractionHub:
     pending.modify { m =>
       if ans.requestId.nonEmpty then
         m.get(ans.requestId) match
-          case Some(p) => (m - ans.requestId, complete(p, ans))
+          case Some(p) =>
+            if answerCompletes(p, ans) then (m - ans.requestId, complete(p, ans))
+            else
+              // #12: a malformed answer must NOT consume the card — eating it
+              // would strand the pending deferred on its 5-minute timeout with
+              // the card gone (user cannot re-answer what they cannot see).
+              (
+                m,
+                logMissing(ans, s"answer shape does not match kind=${p.kind} of requestId=${ans.requestId} — card RETAINED")
+              )
           case None => (m, logMissing(ans, s"unknown requestId=${ans.requestId}"))
       else
-        // Old-frontend fallback: no requestId — match the oldest pending
-        // request for this root session (single-answer UX, translation layer).
+        // Old-frontend fallback: no requestId — among this root session's
+        // pending cards, take the OLDEST one this answer can complete.
+        // #12: kind-matched so a permission answer is never wired into an
+        // askUser card and vice versa; multi-card warn because the answer
+        // may not be for the matched card at all.
         val candidates = m.toList
           .filter(_._2.rootSessionId == ans.rootSessionId)
           .sortBy(_._2.createdAt)
-        candidates.headOption match
-          case Some((rid, p)) => (m - rid, complete(p, ans))
-          case None => (m, logMissing(ans, s"no pending request for rootSessionId=${ans.rootSessionId}"))
+        val multiWarn =
+          if candidates.size > 1 then
+            logger.warn(
+              s"InteractionAnswered without requestId: ${candidates.size} pending cards for " +
+                s"rootSessionId=${ans.rootSessionId} — matched the oldest kind-compatible one; " +
+                "possible cross-wiring, frontend should send requestId (#12)"
+            )
+          else IO.unit
+        candidates.find { case (_, p) => answerCompletes(p, ans) } match
+          case Some((rid, p)) => (m - rid, multiWarn *> complete(p, ans))
+          case None =>
+            (m, multiWarn *> logMissing(ans, s"no kind-compatible pending request for rootSessionId=${ans.rootSessionId}"))
     }.flatten
+
+  /** #12: does this answer payload have the shape required to complete `p`?
+    * A PermissionReply needs `approved` (boolean); an AskUserReply needs
+    * `answers` (list). Shape-mismatched answers are dropped without consuming
+    * the card — they would otherwise complete nothing while deleting the slot.
+    */
+  private def answerCompletes(p: PendingRequest, ans: InteractionAnswered): Boolean =
+    p.reply match
+      case InteractionReply.PermissionReply(_) =>
+        ans.payload.hcursor.downField("approved").as[Boolean].isRight
+      case InteractionReply.AskUserReply(_) =>
+        ans.payload.hcursor.downField("answers").as[List[String]].isRight
 
   private def logMissing(ans: InteractionAnswered, why: String): IO[Unit] =
     logger.warn(s"InteractionAnswered dropped: $why (requestId=${ans.requestId}, root=${ans.rootSessionId})") *> IO.unit

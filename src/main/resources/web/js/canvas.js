@@ -14,10 +14,15 @@
 // JS sets a CSS custom property (--canvas-width) and toggles body.canvas-open;
 // CSS handles all transitions via flex-basis.
 
+import { key } from './branding.js';
+import { t } from './i18n.js';
+import { makeReference } from './reference.js';
+import { addElementRefToggle } from './viewers/shared.js';
+
 const MIN_CANVAS_WIDTH = 320;
 const MAX_CANVAS_WIDTH = 1200;
-const LS_KEY = 'nebflow_col_widths';
-const LS_TABS_KEY = 'nebflow_canvas_tabs';
+const LS_KEY = key('col_widths');
+const LS_TABS_KEY = key('canvas_tabs');
 
 // Track pending close timeout so openCanvas can cancel it (rapid toggle safety).
 let closeTimeout = null;
@@ -34,6 +39,130 @@ let activeTabId = null;
 const previewTabs = new Map();  // previewKey -> tabId
 const previewKeyOf = (type, absPath) => absPath ? 'file' : (type || 'generic');
 
+// #303 C3: page anchors from document-reference jumps, keyed by absPath. A
+// ref click opens with empty content (readFile round trip) and the response
+// item carries no anchor — stash it here and consume at render time.
+const pendingRefAnchors = new Map();
+
+// ── #303 global-reference: build a Reference from a tab's current state ──
+// Best-effort anchor extraction per viewer type (PDF page range, Monaco text
+// selection). Tabs without absPath (panel tabs) produce no ref. The reference
+// is a pointer — source.path + optional anchor; the agent reads on demand.
+
+/** @param {string} s */
+function _trunc(s, n) {
+  const str = String(s || '');
+  return str.length > n ? str.slice(0, n) + '…' : str;
+}
+
+/** Best-effort anchor for a tab pane: PDF visible page range / Monaco selection. */
+function tabAnchor(pane) {
+  if (!pane) return { kind: 'none' };
+  // XLSX — active sheet + its full range (no cell selection in the viewer, so
+  // the whole active sheet is the anchor; C5-A4).
+  const xr = pane._xlsxRef;
+  if (xr && xr.active) {
+    return { kind: 'cell', sheet: xr.active, cellRange: (xr.dims && xr.dims[xr.active]) || '' };
+  }
+  // PDF — canvases stacked in .pdf-pages; compute the visible range from scroll.
+  const pdfPages = pane.querySelector('.pdf-pages');
+  if (pdfPages) {
+    const pages = Array.from(pdfPages.querySelectorAll('.pdf-page')).map((c, i) => ({
+      n: i + 1, top: c.offsetTop, h: c.offsetHeight,
+    })).filter(p => p.h > 0);
+    if (pages.length) {
+      const top = pdfPages.scrollTop, bottom = top + (pdfPages.clientHeight || 0);
+      const vis = pages.filter(p => p.top < bottom && (p.top + p.h) > top);
+      if (vis.length) {
+        const first = Math.min(...vis.map(p => p.n), pages[0].n);
+        const last = Math.max(...vis.map(p => p.n), first);
+        return { kind: 'page', pageStart: first, pageEnd: last };
+      }
+    }
+  }
+  // Monaco text — selection line range (fall back to cursor line).
+  const h = pane._editorHandle;
+  if (h && h.editor && typeof h.editor.getSelection === 'function') {
+    const sel = h.editor.getSelection();
+    if (sel) {
+      const start = sel.getStartPosition()?.lineNumber;
+      const end = sel.getEndPosition()?.lineNumber;
+      if (start != null) {
+        const lineStart = Math.min(start, end ?? start);
+        const lineEnd = Math.max(start, end ?? start);
+        const text = (h.editor.getModel?.()?.getValueInRange?.(sel)) || '';
+        return { kind: 'range', lineStart, lineEnd, text: _trunc(text, 160) };
+      }
+    }
+  }
+  return { kind: 'none' };
+}
+
+/** Build a makeReference input from a tab (returns null for non-file tabs). */
+function refInputForTab(tab) {
+  // #303 C5-A2: cross-origin URL tabs can't select an element (crossorigin
+  // mode) — degrade to a whole-page reference (anchor.kind='none').
+  if (tab && tab.type === 'url' && tab.id && tab.id.startsWith('url:')) {
+    const url = tab.id.slice(4);
+    return {
+      refType: 'html-element',
+      source: { kind: 'web', url, title: tab.title || url },
+      anchor: { kind: 'none' },
+    };
+  }
+  if (!tab || !tab.absPath || !tab.type) return null;
+  const name = (tab.title || tab.absPath.split('/').pop() || '');
+  // document vs file: keep the tab's itemType as refType hint, but normalize to
+  // the two pointer types we render (document for MIME docs, file otherwise).
+  const isDoc = /pdf|epub|xlsx|xl|docx|pptx/.test(tab.type) || /\.(pdf|epub|xlsx|xls|docx|pptx)$/i.test(tab.absPath);
+  const anchor = tabAnchor(tab.paneEl);
+  return {
+    refType: isDoc ? 'document' : 'file',
+    source: { kind: 'canvas', path: tab.absPath, fileName: name, title: name },
+    anchor,
+  };
+}
+
+/** Build a fully-formed Reference from a tab (makeReference over refInputForTab). */
+function refForTab(tab) {
+  const input = refInputForTab(tab);
+  return input ? makeReference(input) : null;
+}
+
+// ── Canvas tab context menu (「引用当前页/选区」) ──
+let _canvasCtxMenu = null;
+let _ctxMenuBound = false;
+function hideCanvasRefMenu() {
+  if (_canvasCtxMenu) { _canvasCtxMenu.remove(); _canvasCtxMenu = null; }
+}
+function showCanvasRefMenu(x, y, entry) {
+  hideCanvasRefMenu();
+  const ref = refForTab(entry);
+  if (!ref) {
+    window.__showToast?.(t('canvas.noRef'), 'info');
+    return;
+  }
+  const menu = document.createElement('div');
+  menu.className = 'canvas-tab-context-menu';
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  const btn = document.createElement('button');
+  btn.textContent = t('canvas.referenceCurrent');
+  btn.addEventListener('click', () => {
+    hideCanvasRefMenu();
+    // Dynamic import to avoid a static edge back into input.js (which would
+    // close the modal→taskList→taskArchive→canvas→input cycle).
+    import('./input.js').then(({ appendRefToActiveView }) => appendRefToActiveView(ref));
+  });
+  menu.appendChild(btn);
+  document.body.appendChild(menu);
+  _canvasCtxMenu = menu;
+  // Adjust if off-screen
+  const rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + 'px';
+  if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
+}
+
 // ── Drag-to-reorder ────────────────────────────────────────
 let draggedTabId = null;
 
@@ -43,6 +172,15 @@ function attachDragHandlers(tabEl, id) {
     tabEl.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', id);
+    // #303 B6b: a canvas tab dragged to an input bar carries a Reference
+    // payload (current page/selection anchor). Dragging onto another tab for
+    // reorder ignores this MIME (drop reorders via draggedTabId).
+    const tab = tabs.get(id);
+    const ref = refForTab(tab);
+    if (ref) {
+      e.dataTransfer.setData('application/x-nebflow-ref',
+        JSON.stringify({ refType: ref.refType, source: ref.source, anchor: ref.anchor }));
+    }
   });
 
   tabEl.addEventListener('dragend', () => {
@@ -433,6 +571,57 @@ export function setActiveTab(id) {
   if (entry) scheduleFileRefresh(entry);
 }
 
+/** Retarget open file tabs after an explorer drag-to-move: update absPaths,
+ *  rewrite `file:<rel>` tab ids, and sync the mounted editor's save path so a
+ *  later Cmd+S writes to the NEW location (save() captured opts.path).
+ *  @param {string} oldRel — old explorer-relative path prefix
+ *  @param {string} newRel — new explorer-relative path prefix
+ *  @param {string} rootPath — explorer root (absolute, '' = default root) */
+export function retargetFileTabs(oldRel, newRel, rootPath) {
+  const root = (rootPath || '').replace(/\/+$/, '');
+  const absOld = root ? root + '/' + oldRel : null;
+  const absNew = root ? root + '/' + newRel : null;
+  const relId = `file:${oldRel}`;
+  let changed = false;
+  for (const [id, entry] of [...tabs]) {
+    const idMatch = id === relId || id.startsWith(relId + '/');
+    const absMatch = !!(absOld && entry.absPath &&
+      (entry.absPath === absOld || entry.absPath.startsWith(absOld + '/')));
+    if (!idMatch && !absMatch) continue;
+    // Retarget the stored absolute path. Prefix swap when the project root is
+    // known; suffix swap when it is not — with the default project root the
+    // explorer passes rootPath=null (server-resolved), so absOld cannot be
+    // constructed. Explorer-opened tabs are keyed file:<rel> and their
+    // absPath ends with that same relative path.
+    if (entry.absPath) {
+      if (absMatch) {
+        entry.absPath = absNew + entry.absPath.slice(absOld.length);
+      } else if (idMatch) {
+        const tail = oldRel + id.slice(relId.length);
+        const newTail = newRel + id.slice(relId.length);
+        if (entry.absPath === tail || entry.absPath.endsWith('/' + tail)) {
+          entry.absPath = entry.absPath.slice(0, entry.absPath.length - tail.length) + newTail;
+        }
+      }
+    }
+    if (idMatch) {
+      const newId = `file:${newRel}` + id.slice(relId.length);
+      tabs.delete(id);
+      tabs.set(newId, entry);
+      entry.id = newId;
+      entry.tabEl.dataset.tabId = newId;
+      entry.paneEl.dataset.tabId = newId;
+      if (activeTabId === id) activeTabId = newId;
+      for (const [k, v] of previewTabs) { if (v === id) previewTabs.set(k, newId); }
+    }
+    // Save path is form-sensitive: explorer-opened editors store the relative
+    // path, source-toggle editors the absolute one — setPath picks correctly.
+    entry.paneEl?._editorHandle?.setPath?.(newRel + (idMatch ? id.slice(relId.length) : ''), entry.absPath);
+    changed = true;
+  }
+  if (changed) persistTabs();
+}
+
 /** Get the content pane element for a tab.
  *  External code (e.g. flowCanvas) uses this to render into their tab.
  *  @param {string} id — Tab identifier.
@@ -534,6 +723,10 @@ function renderUrlPane(pane, url) {
   });
 
   pane.append(bar, iframe, hint);
+
+  // #303 C5-A1: cross-origin URL page — element selection is unavailable;
+  // the toggle stays clickable and explains via toast (S4) instead of acting.
+  addElementRefToggle(pane, { mode: 'crossorigin' });
 }
 
 /** Open a file or workspace item in a Canvas tab.
@@ -545,7 +738,7 @@ export async function openWorkspaceItem(item) {
   // id is let (not const): the absPath dedupe below may rewrite it to the
   // existing tab's id for the same file.
   let { id } = item;
-  const { itemType, title, content, absPath, size, pinned } = item;
+  const { itemType, title, content, absPath, size, pinned, anchor } = item;
   if (!id) return;
 
   // URL type — render the page in a sandboxed iframe. Handled before all
@@ -597,16 +790,26 @@ export async function openWorkspaceItem(item) {
     // activation back to the binary tab — "can't switch away from an image").
     entry._lastRefreshAt = Date.now();
     if (content && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
-      if (entry.paneEl._editorHandle) {
-        entry.paneEl._editorHandle.dispose();
-        entry.paneEl._editorHandle = null;
+      // Skip the re-render when the live editor already shows this content —
+      // remounting Monaco on every refresh would steal the cursor/scroll for
+      // zero visible change (matters for focus-triggered refreshes).
+      const live = entry.paneEl._editorHandle?.model?.getValue?.();
+      if (live === undefined || live !== content) {
+        if (entry.paneEl._editorHandle) {
+          entry.paneEl._editorHandle.dispose();
+          entry.paneEl._editorHandle = null;
+        }
+        const { renderFile } = await import('./fileViewers.js');
+        await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
       }
-      const { renderFile } = await import('./fileViewers.js');
-      await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
     }
     // Background refresh responses must not steal activation — the user may
     // have clicked another tab while the request was in flight.
     if (!item.background) setActiveTab(id);
+    // #303 C3: reference jump to an already-open tab — scroll the live viewer
+    // (pdf.js exposes pane._scrollToPage) instead of re-rendering.
+    const pgExisting = anchor && anchor.pageStart;
+    if (Number.isFinite(pgExisting)) /** @type {any} */ (entry.paneEl)._scrollToPage?.(pgExisting);
     return;
   }
 
@@ -615,6 +818,11 @@ export async function openWorkspaceItem(item) {
   // showing a blank tab. The fileContent handler will dispatch a new
   // workspace-open-item with full content and correct itemType.
   if (content === '' && itemType === '' && absPath) {
+    // #303 C3: a document-reference jump carries a page anchor — stash it so
+    // it survives the readFile round trip (the response item has no anchor)
+    // and is consumed at render time below.
+    const pgStash = anchor && anchor.pageStart;
+    if (Number.isFinite(pgStash)) pendingRefAnchors.set(absPath, { pageStart: pgStash });
     Promise.all([
       import('./ws.js'),
       import('./state.js')
@@ -671,7 +879,12 @@ export async function openWorkspaceItem(item) {
   });
 
   const { renderFile } = await import('./fileViewers.js');
-  await renderFile(pane, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
+  // #303 C3: consume a stashed reference-jump anchor (empty-content open) or
+  // one carried directly on the item, and hand it to the viewer.
+  const stashAnchor = absPath ? pendingRefAnchors.get(absPath) : undefined;
+  if (absPath) pendingRefAnchors.delete(absPath);
+  const renderAnchor = anchor || stashAnchor;
+  await renderFile(pane, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor });
   entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
 }
 
@@ -715,11 +928,41 @@ export function initCanvas() {
       e.stopPropagation();
       pinTab(id);
     });
+
+    // #303 B2-B4: right-click a file/document tab → 「引用当前页/选区」.
+    tabBar.addEventListener('contextmenu', (e) => {
+      const tgt = /** @type {Element} */ (e.target);
+      const tabEl = tgt.closest('.canvas-tab');
+      if (!tabEl || !tabBar.contains(tabEl)) return;
+      const id = /** @type {HTMLElement} */ (tabEl).dataset.tabId;
+      const entry = id ? tabs.get(id) : null;
+      if (!entry) return;
+      e.preventDefault();
+      e.stopPropagation();
+      showCanvasRefMenu(e.clientX, e.clientY, entry);
+    });
   }
 
   // Listen for workspace-open-item events (dispatched on window by explorer.js).
   window.addEventListener('workspace-open-item', (e) => {
     if (e.detail) openWorkspaceItem(e.detail);
+  });
+
+  // Close the canvas tab context menu on any outside interaction (capture).
+  if (!_ctxMenuBound) {
+    _ctxMenuBound = true;
+    document.addEventListener('mousedown', (e) => {
+      if (_canvasCtxMenu && !_canvasCtxMenu.contains(e.target)) hideCanvasRefMenu();
+    }, true);
+    document.addEventListener('contextmenu', () => hideCanvasRefMenu(), true);
+  }
+
+  // Window-focus refresh (dispatched by explorer.js after reloading the tree):
+  // re-check the active file tab for external edits. Dirty-guarded, debounced,
+  // and unchanged content never re-renders (see openWorkspaceItem).
+  window.addEventListener('explorer-focus-refresh', () => {
+    const entry = activeTabId ? tabs.get(activeTabId) : null;
+    if (entry) scheduleFileRefresh(entry);
   });
 
   // Listen for Pop tool WS messages — agent opens a file in Canvas.

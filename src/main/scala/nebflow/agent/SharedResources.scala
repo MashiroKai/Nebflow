@@ -1,6 +1,6 @@
 package nebflow.agent
 
-import cats.effect.std.{Dispatcher, Semaphore}
+import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import nebflow.actor.{ActorRef, ActorSystem}
 import nebflow.bridge.BridgeManager
@@ -12,11 +12,11 @@ import nebflow.core.task.TaskStore
 import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.FileLockManager
 import nebflow.core.workspace.KnowledgeStore
-import nebflow.core.{FileChangeTracker, PathUtil}
+import nebflow.core.{FileChangeTracker, PathUtil, UsageRecordStore}
 import nebflow.dropbox.DropboxService
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.*
-import nebflow.neblink.NeblinkService
+import nebflow.neblink.{NeblinkService, FriendService}
 import nebflow.shared.*
 
 /**
@@ -35,7 +35,6 @@ case class SharedResources(
   fileChangeTracker: FileChangeTracker,
   contextWindow: Int,
   agentLibrary: AgentLibrary,
-  askSemaphore: Semaphore[IO],
   taskStore: TaskStore,
   historyArchiver: HistoryArchiver,
   fileLockManager: FileLockManager,
@@ -48,11 +47,15 @@ case class SharedResources(
   scheduledTaskStore: ScheduledTaskStore = new ScheduledTaskStore(PathUtil.dataRoot / "scheduled-tasks"),
   telemetry: Option[TelemetryReporter] = None,
   neblinkService: Option[NeblinkService] = None,
+  /** A2A 好友与消息服务（spec §11 客户端）。由 GatewayMain 在 NeblinkClient
+    * 初始化后创建，注入 REST 路由 + relay tunnel + WS 事件回调。 */
+  friendService: Option[FriendService] = None,
   dropboxService: Option[DropboxService] = None,
   scheduledTaskService: Option[ScheduledTaskService] = None,
   daemonService: Option[DaemonService] = None,
   knowledgeStore: KnowledgeStore = new KnowledgeStore(PathUtil.dataRoot / "workspace-items"),
   subAgentTaskStore: SubAgentTaskStore = new SubAgentTaskStore(PathUtil.dataRoot / "subagent-tasks"),
+  usageRecordStore: UsageRecordStore = new UsageRecordStore(PathUtil.dataRoot / "usage-records"),
   voiceMutedRef: Ref[IO, Boolean],
   lastWsActivity: Ref[IO, Long] = Ref.unsafe[IO, Long](System.currentTimeMillis()),
   runtimeModels: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty),
@@ -78,5 +81,32 @@ case class SharedResources(
    * before the hub actor exists (tests, early boot).
    */
   interactionHubRef: Ref[IO, Option[ActorRef[InteractionHubCommand]]] =
-    Ref.unsafe[IO, Option[ActorRef[InteractionHubCommand]]](None)
+    Ref.unsafe[IO, Option[ActorRef[InteractionHubCommand]]](None),
+  /**
+   * 冻结调度（freeze-schedule，#337 黑名单语义）：全局冻结时间表（配置段=冻结
+   * 时间/非工作时间，D5 一期全局粒度）。GatewayMain 启动时从 nebflow.json
+   * workSchedule 节（JSON 键名保留，语义=冻结时段）fail-safe 加载覆写；
+   * setWorkSchedule WS 命令热更。带默认值 → 既有测试的 SharedResources 构造零改动。
+   */
+  freezeScheduleRef: Ref[IO, nebflow.core.schedule.FreezeScheduleConfig] =
+    Ref.unsafe[IO, nebflow.core.schedule.FreezeScheduleConfig](nebflow.core.schedule.FreezeScheduleConfig()),
+  /**
+   * 用户消息全局跳过当前冻结窗口（2026-08-25 裁定）：skipUntil epoch millis——
+   * 该时刻之前 evalWithSkip 视为不冻结（本次冻结整体作废），到期自动过期
+   * （下一冻结段照常冻结）。运行时态，不持久化（跳过非永久）；handleUserText
+   * 在用户消息到达时 set + FreezeScheduler.scan 即时唤醒所有 Frozen agent。
+   * 带默认值 → 既有测试的 SharedResources 构造零改动。
+   */
+  freezeSkipUntilRef: Ref[IO, Option[Long]] = Ref.unsafe[IO, Option[Long]](None),
+  /** 工具结果 TTL 清理（#341）：request-only 清理配置。GatewayMain 启动时从
+    * nebflow.json toolResultTtl 节 fail-safe 加载覆写；默认关（disabled）。
+    * #341 WS 尾巴：Ref 化热更（镜像 freezeScheduleRef）——setToolResultTtl
+    * 写盘成功后 set，下个 LLM 请求即生效，无需重启。
+    * 带默认值 → 既有测试的 SharedResources 构造零改动。 */
+  toolResultTtlRef: Ref[IO, nebflow.core.compact.ToolResultTtlConfig] =
+    Ref.unsafe[IO, nebflow.core.compact.ToolResultTtlConfig](nebflow.core.compact.ToolResultTtlConfig()),
+  /** Bash 卡死防护阈值（#391）：GatewayMain 从 nebflow.json 顶层键 fail-safe
+    * 读取（bashAutoBackgroundMs/bashBackgroundHardTimeoutMs/bashStuckWindowSec），
+    * 经 AgentCore 注入 ToolContext → BashTool。带默认值 → 既有测试构造零改动。 */
+  bashResilience: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig()
 )

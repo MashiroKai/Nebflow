@@ -11,29 +11,50 @@ import nebflow.core.tools.ToolRegistry
  * LLM-request schema and runtime tool-call execution. The contract:
  *   - a concrete tools list → those tools + fixed tools (base + category-specific)
  *   - "*" → all registered tools
+ *   - BaseTools (Read/Write/Edit/Glob/Grep/Bash) are mechanism-fixed for ALL
+ *     agents including Nebula (2026-08-28 00:55 用户裁定, reverses #438);
+ *     agent.json declarations coexist idempotently
+ *   - Issue is Nebula-only (user ruling 2026-08-25: system feedback
+ *     collection is orchestrator-only; stripped from non-Nebula even when
+ *     explicitly listed or via wildcard)
+ *   - Nebula's 9 orchestration tools are mechanism-fixed (no declaration
+ *     needed): AgentControl/TaskUpdate/Delegate/Pop/AskUserQuestion/
+ *     TaskCreate/Mail/Schedule/TransferFile (+ Issue + FlowExecute)
  *   - Mail is team-only (auto-injected for team agents, never for flow/standalone)
+ *   - SubTask is team-only (user ruling 2026-08-24: auto-injected at the
+ *     mechanism layer — manual agent.json declarations are error-prone)
  *   - FlowReport is flow-only
- *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate)
+ *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate, Issue)
+ *   - FlowTrigger is whitelist-driven: present iff agentDef.flows is non-empty
+ *     (not Nebula-exclusive); SubTask workers never get it
  *   - SubTask workers (isSubTaskWorker=true) are leaf agents: no Mail /
- *     SubTask / Delegate regardless of their tools list
+ *     SubTask / Delegate / FlowTrigger regardless of their tools list
  */
 class AllowedToolSetSpec extends FunSuite:
 
   // AgentCore.buildAllowedToolSet is protected; expose it via a minimal stub.
   private object CoreProbe extends AgentCore:
 
-    def allowed(defn: AgentDef, depth: Int = 0, isSubTaskWorker: Boolean = false): Set[String] =
-      buildAllowedToolSet(defn, depth, isSubTaskWorker)
+    def allowed(
+        defn: AgentDef,
+        depth: Int = 0,
+        isSubTaskWorker: Boolean = false,
+        isFlowNode: Boolean = false,
+        isTeamLead: Boolean = false,
+        userFacingNode: Boolean = false,
+        guardrailsOn: Boolean = false
+    ): Set[String] =
+      buildAllowedToolSet(defn, depth, isSubTaskWorker, isFlowNode, isTeamLead, userFacingNode, guardrailsOn)
 
   private def mkDef(name: String, tools: List[String], mcpServers: List[String] = Nil): AgentDef =
     AgentDef(name = name, description = "", tools = tools, systemPrompt = "", mcpServers = mcpServers)
 
-  test("team agent concrete tools list yields those tools + base + Mail"):
+  test("team agent concrete tools list yields those tools + base + Mail + SubTask + FlowExecute"):
     val defn = mkDef("researcher", List("Read", "Glob", "Grep")).copy(category = "team")
     val allowed = CoreProbe.allowed(defn)
     assertEquals(
       allowed,
-      Set("Read", "Glob", "Grep", "Write", "Edit", "Bash", "Issue", "RemoveUnnecessary", "Mail")
+      Set("Read", "Glob", "Grep", "Write", "Edit", "Bash", "Mail", "SubTask", "FlowExecute")
     )
 
   test("standalone agent gets base fixed tools but NOT Mail"):
@@ -41,7 +62,7 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Read"))
     assert(allowed.contains("Pop"))
-    assert(allowed.contains("Issue"))
+    assert(!allowed.contains("Issue"), "Issue is Nebula-only (2026-08-25 ruling)")
     assert(allowed.contains("Write"))
     assert(!allowed.contains("Mail"), "standalone agent does not get Mail")
 
@@ -67,14 +88,13 @@ class AllowedToolSetSpec extends FunSuite:
     val standaloneDefn = mkDef("minimal", List("Read"))
     val standaloneAllowed = CoreProbe.allowed(standaloneDefn)
     assert(!standaloneAllowed.contains("Mail"), "standalone does not get Mail")
-    assert(standaloneAllowed.contains("Issue"), "Issue is a base tool")
+    assert(!standaloneAllowed.contains("Issue"), "Issue is Nebula-only — not a base tool anymore")
     assert(standaloneAllowed.contains("Write"), "Write is a base tool")
-    assert(standaloneAllowed.contains("RemoveUnnecessary"), "RemoveUnnecessary is a base tool")
 
     val teamDefn = mkDef("teammate", List("Read")).copy(category = "team")
     val teamAllowed = CoreProbe.allowed(teamDefn)
     assert(teamAllowed.contains("Mail"), "team agent gets Mail")
-    assert(teamAllowed.contains("Issue"), "team agent also gets base tools")
+    assert(!teamAllowed.contains("Issue"), "team agent also loses Issue (orchestrator-only)")
 
   test("FlowReport is available only to flow-category agents"):
     val flowDefn = mkDef("reviewer", List("Read")).copy(category = "flow")
@@ -156,7 +176,7 @@ class AllowedToolSetSpec extends FunSuite:
     val worker = mkDef("backend", List("Read", "Mail", "SubTask", "Delegate", "Issue"))
     val allowed = CoreProbe.allowed(worker, isSubTaskWorker = true)
     assert(allowed.contains("Read"), "domain tools kept")
-    assert(allowed.contains("Issue"), "Issue kept — system problem reporting, not team communication")
+    assert(!allowed.contains("Issue"), "Issue stripped — orchestrator-only (2026-08-25 ruling), even when listed")
     assert(!allowed.contains("Mail"), "Mail stripped for workers")
     assert(!allowed.contains("SubTask"), "SubTask stripped for workers (no further delegation)")
     assert(!allowed.contains("Delegate"), "Delegate stripped for workers")
@@ -172,4 +192,378 @@ class AllowedToolSetSpec extends FunSuite:
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Mail"), "team agent keeps Mail")
     assert(allowed.contains("SubTask"), "team agent keeps SubTask")
+
+  // ===== SubTask team auto-injection (user ruling 2026-08-24) =====
+
+  test("team member WITHOUT explicit SubTask gets it auto-injected"):
+    // The ruling's core case: a team member whose agent.json tools list omits
+    // SubTask must still have it (html-deck-studio missed it for all four
+    // members; manual declaration is error-prone).
+    val defn = mkDef("visual-reviewer", List("Read", "Grep", "Bash")).copy(category = "team")
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("SubTask"), "team member gets SubTask without declaring it")
+    assert(allowed.contains("Mail"), "team member keeps Mail")
+    assert(allowed.contains("Read"), "declared tools unaffected")
+
+  test("team member with '*' wildcard keeps SubTask"):
+    val defn = mkDef("omni-team", List("*")).copy(category = "team")
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("SubTask"), "wildcard team member keeps SubTask")
+
+  test("standalone agents do NOT get SubTask auto-injected"):
+    val solo = mkDef("solo", List("Read", "Grep"))
+    val allowed = CoreProbe.allowed(solo)
+    assert(!allowed.contains("SubTask"), "standalone agent has no SubTask (leaf — no team context)")
+    // Explicit listing still works (opt-in), same as Mail for standalone.
+    val explicit = mkDef("solo-explicit", List("Read", "SubTask"))
+    assert(CoreProbe.allowed(explicit).contains("SubTask"), "standalone explicitly listing SubTask keeps it")
+
+  test("flow agents do NOT get SubTask auto-injected"):
+    val flow = mkDef("scanner", List("Read", "Grep")).copy(category = "flow")
+    val allowed = CoreProbe.allowed(flow)
+    assert(!allowed.contains("SubTask"), "flow node is a leaf — no SubTask")
+    assert(!allowed.contains("Mail"), "flow node keeps the structural Mail block")
+
+  test("SubTask worker stripped of SubTask even when auto-injected team member"):
+    // A SubTask worker self-clones its team-member def (category=team →
+    // SubTask auto-injected) but the isSubTaskWorker leaf rule must still
+    // strip it — workers cannot delegate further.
+    val defn = mkDef("backend", List("Read", "Grep")).copy(category = "team")
+    val allowed = CoreProbe.allowed(defn, isSubTaskWorker = true)
+    assert(!allowed.contains("SubTask"), "worker: SubTask stripped despite team category")
+    assert(!allowed.contains("Mail"), "worker: Mail stripped")
+    assert(allowed.contains("Read"), "worker: domain tools kept")
+
+  test("Nebula is not affected by the team SubTask injection"):
+    val nebula = mkDef("Nebula", List("Read", "Delegate"))
+    val allowed = CoreProbe.allowed(nebula)
+    assert(!allowed.contains("SubTask"), "Nebula (standalone category) unchanged — uses Delegate")
+    assert(allowed.contains("Delegate"), "Nebula keeps Delegate")
+
+  // ===== Flow agents: Mail structurally disabled (08-14 P0 root cause) =====
+
+  test("flow agent with '*' wildcard never gets Mail (P0 penetration case)"):
+    val flowWildcard = mkDef("scanner", List("*")).copy(category = "flow")
+    val allowed = CoreProbe.allowed(flowWildcard)
+    assert(!allowed.contains("Mail"), "flow agent with '*' must not get Mail — a flow agent calling Mail(ask) blocks forever (08-14 P0)")
+    assert(allowed.contains("FlowReport"), "flow agent keeps FlowReport")
+    assert(allowed.contains("Read"), "flow agent keeps normal tools")
+
+  test("flow agent with Mail explicitly listed still loses it"):
+    val flowExplicit = mkDef("reviewer", List("Read", "Mail")).copy(category = "flow")
+    val allowed = CoreProbe.allowed(flowExplicit)
+    assert(!allowed.contains("Mail"), "explicitly listed Mail is stripped for flow agents")
+    assert(allowed.contains("Read"), "other tools unaffected")
+
+  test("team and standalone Mail access unaffected by the flow filter"):
+    val team = mkDef("backend", List("Read")).copy(category = "team")
+    assert(CoreProbe.allowed(team).contains("Mail"), "team agent keeps Mail")
+    // Standalone agents that explicitly list Mail keep it — the structural
+    // block is flow-only (flow nodes report via FlowReport).
+    val solo = mkDef("solo", List("Read", "Mail"))
+    assert(CoreProbe.allowed(solo).contains("Mail"), "standalone agent explicitly listing Mail keeps it")
+
+  // ===== FlowTrigger: whitelist-driven (R1 split) =====
+
+  test("FlowTrigger injected iff the agent declares flows"):
+    val withFlows = mkDef("scheduler", List("Read")).copy(flows = List("code-review"))
+    val without = mkDef("plain", List("Read"))
+    assert(CoreProbe.allowed(withFlows).contains("FlowTrigger"), "flows declared → tool injected")
+    assert(!CoreProbe.allowed(without).contains("FlowTrigger"), "no flows → no tool")
+
+  test("FlowTrigger stripped from flow-less agents even when listed or via wildcard"):
+    val listed = mkDef("sneaky", List("Read", "FlowTrigger"))
+    assert(!CoreProbe.allowed(listed).contains("FlowTrigger"), "explicit listing without flows is stripped")
+    val wildcard = mkDef("omni", List("*"))
+    assert(!CoreProbe.allowed(wildcard).contains("FlowTrigger"), "wildcard without flows is stripped")
+    val wildcardWithFlows = mkDef("omni-flow", List("*")).copy(flows = List("release-beta"))
+    assert(CoreProbe.allowed(wildcardWithFlows).contains("FlowTrigger"), "wildcard WITH flows keeps the tool")
+
+  test("FlowTrigger is NOT Nebula-exclusive — team member with flows gets it"):
+    val teamMember = mkDef("backend", List("Read")).copy(category = "team", flows = List("code-review"))
+    assert(
+      CoreProbe.allowed(teamMember).contains("FlowTrigger"),
+      "FlowTrigger availability follows the flows whitelist, not the Nebula filter"
+    )
+    val nebula = mkDef("Nebula", List("Read")).copy(flows = List("code-review"))
+    assert(CoreProbe.allowed(nebula).contains("FlowTrigger"), "Nebula with flows keeps it")
+    val nebulaNoFlows = mkDef("Nebula", List("Read", "FlowTrigger"))
+    assert(!CoreProbe.allowed(nebulaNoFlows).contains("FlowTrigger"), "even Nebula needs flows declared")
+
+  test("SubTask workers never get FlowTrigger even with flows declared"):
+    val worker = mkDef("backend", List("*")).copy(flows = List("code-review"))
+    assert(
+      !CoreProbe.allowed(worker, isSubTaskWorker = true).contains("FlowTrigger"),
+      "workers are leaf agents — no pipeline triggering"
+    )
+    assert(
+      CoreProbe.allowed(worker, isSubTaskWorker = false).contains("FlowTrigger"),
+      "same def as a normal agent would keep it (sanity)"
+    )
+
+  // ===== #406 FlowExecute mechanism-layer injection + flow-node leaf rule =====
+
+  test("team member WITHOUT explicit FlowExecute gets it auto-injected"):
+    val defn = mkDef("backend", List("Read", "Grep", "Bash")).copy(category = "team")
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("FlowExecute"), "team member gets FlowExecute without declaring it")
+    assert(allowed.contains("SubTask"), "team member keeps SubTask")
+    assert(allowed.contains("Mail"), "team member keeps Mail")
+
+  test("team member with '*' wildcard keeps FlowExecute"):
+    val defn = mkDef("omni-team", List("*")).copy(category = "team")
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("FlowExecute"), "wildcard team member keeps FlowExecute")
+
+  test("Nebula (root) gets FlowExecute without declaration"):
+    val nebula = mkDef("Nebula", List("Read", "Delegate"))
+    val allowed = CoreProbe.allowed(nebula)
+    assert(allowed.contains("FlowExecute"), "Nebula gets FlowExecute at the mechanism layer")
+    assert(allowed.contains("Delegate"), "Nebula keeps Delegate")
+
+  test("standalone agents do NOT get FlowExecute auto-injected"):
+    val solo = mkDef("solo", List("Read", "Grep"))
+    assert(!CoreProbe.allowed(solo).contains("FlowExecute"), "standalone agent has no FlowExecute by default")
+    // Explicit listing still works (opt-in) — fixedToolsFor only ADDS the
+    // mechanism-layer default; an explicit list survives.
+    val explicit = mkDef("solo-flow", List("Read", "FlowExecute"))
+    assert(CoreProbe.allowed(explicit).contains("FlowExecute"), "standalone explicitly listing FlowExecute keeps it")
+
+  test("flow-category agents do NOT get FlowExecute (predefined flow nodes are leaves too)"):
+    val flow = mkDef("scanner", List("Read", "Grep")).copy(category = "flow")
+    val allowed = CoreProbe.allowed(flow)
+    assert(!allowed.contains("FlowExecute"), "predefined flow node is a leaf — no nested flow execution")
+
+  test("isFlowNode leaf rule strips FlowExecute/FlowTrigger/SubTask/Delegate even when auto-injected"):
+    // A dynamic flow node reusing a team-category agent (FlowExecute auto-
+    // injected via fixedToolsFor) must still be stripped — flow nodes cannot
+    // open nested flows (recursive explosion guard, #406).
+    val teamNode = mkDef("backend", List("Read", "Grep")).copy(category = "team")
+    val allowed = CoreProbe.allowed(teamNode, isFlowNode = true)
+    assert(!allowed.contains("FlowExecute"), "flow node: FlowExecute stripped despite team category")
+    assert(!allowed.contains("FlowTrigger"), "flow node: FlowTrigger stripped")
+    assert(!allowed.contains("SubTask"), "flow node: SubTask stripped")
+    assert(!allowed.contains("Delegate"), "flow node: Delegate stripped")
+    assert(allowed.contains("Mail"), "flow node: team-category keeps Mail (may Mail the caller's team)")
+    assert(allowed.contains("Read"), "flow node: domain tools kept")
+
+  test("isFlowNode on a standalone-category agent keeps FlowReport when listed (verdict channel)"):
+    val node = mkDef("worker", List("Read", "Grep", "FlowReport"))
+    val allowed = CoreProbe.allowed(node, isFlowNode = true)
+    assert(!allowed.contains("FlowExecute"), "flow node: no nested flow")
+    assert(allowed.contains("FlowReport"), "flow node: FlowReport survives the leaf strip (verdict channel)")
+    assert(allowed.contains("Read"), "flow node: domain tools kept")
+
+  test("isFlowNode leaf rule also strips explicitly listed FlowExecute"):
+    val sneaky = mkDef("sneaky", List("Read", "FlowExecute", "SubTask")).copy(category = "team")
+    val allowed = CoreProbe.allowed(sneaky, isFlowNode = true)
+    assert(!allowed.contains("FlowExecute"), "explicitly listed FlowExecute stripped for flow nodes")
+    assert(!allowed.contains("SubTask"), "explicitly listed SubTask stripped for flow nodes")
+
+  test("SubTask workers also stripped of FlowExecute (leaf symmetry)"):
+    // A SubTask worker self-clones a team-member def (category=team →
+    // FlowExecute auto-injected); the worker leaf rule must strip it too.
+    val worker = mkDef("backend", List("Read", "Grep")).copy(category = "team")
+    val allowed = CoreProbe.allowed(worker, isSubTaskWorker = true)
+    assert(!allowed.contains("FlowExecute"), "worker: FlowExecute stripped despite team category")
+    assert(!allowed.contains("SubTask"), "worker: SubTask stripped")
+    assert(!allowed.contains("Mail"), "worker: Mail stripped")
+
+  // ===== #D Team Manager task tools: mechanism-layer injection + leaf isolation =====
+
+  test("team lead (isTeamLead=true) gets the full TeamTask owner set"):
+    val lead = mkDef("Manager", List("Read", "Grep", "Bash", "Mail")).copy(category = "team")
+    val allowed = CoreProbe.allowed(lead, isTeamLead = true)
+    assert(allowed.contains("TeamTaskCreate"), "team lead gets TeamTaskCreate")
+    assert(allowed.contains("TeamTaskUpdate"), "team lead gets TeamTaskUpdate")
+    assert(allowed.contains("TeamTaskList"), "team lead gets TeamTaskList")
+
+  test("Nebula gets TeamTaskList ONLY (read-only oversight — no mutation tools)"):
+    val nebula = mkDef("Nebula", List("Read", "Delegate", "TaskCreate", "TaskUpdate"))
+    val allowed = CoreProbe.allowed(nebula)
+    assert(allowed.contains("TeamTaskList"), "Nebula gets read-only TeamTaskList")
+    assert(!allowed.contains("TeamTaskCreate"), "Nebula must NOT get TeamTaskCreate (read-only hard constraint)")
+    assert(!allowed.contains("TeamTaskUpdate"), "Nebula must NOT get TeamTaskUpdate (read-only hard constraint)")
+    assert(allowed.contains("TaskCreate"), "Nebula keeps its own session TaskCreate")
+
+  test("plain team member (isTeamLead=false) gets NO TeamTask tools (U2)"):
+    val member = mkDef("backend", List("Read", "Grep", "Bash", "Mail")).copy(category = "team")
+    val allowed = CoreProbe.allowed(member)
+    assert(!allowed.contains("TeamTaskCreate"), "member: no TeamTaskCreate")
+    assert(!allowed.contains("TeamTaskUpdate"), "member: no TeamTaskUpdate")
+    assert(!allowed.contains("TeamTaskList"), "member: no TeamTaskList (U2 — members watch via the panel)")
+
+  test("standalone / flow agents never get TeamTask tools"):
+    val solo = mkDef("explorer", List("Read", "Grep"))
+    val flow = mkDef("scanner", List("Read")).copy(category = "flow")
+    assert(!CoreProbe.allowed(solo).contains("TeamTaskList"), "standalone: no TeamTaskList")
+    assert(!CoreProbe.allowed(flow).contains("TeamTaskList"), "flow agent: no TeamTaskList")
+
+  // ===== Block 1 (supervision trio §C2): AgentControl mechanism-layer grant =====
+
+  test("Block 1: team lead gets AgentControl via mechanism grant (no declaration needed)"):
+    val lead = mkDef("Manager", List("Read", "Grep", "Bash", "Mail")).copy(category = "team")
+    val allowed = CoreProbe.allowed(lead, isTeamLead = true)
+    assert(allowed.contains("AgentControl"), "team lead gets AgentControl (subtree scope enforced by the tool guard)")
+
+  test("Block 1: declaring AgentControl in agent.json grants nothing (non-lead member)"):
+    val member = mkDef("backend", List("Read", "AgentControl", "Mail")).copy(category = "team")
+    val allowed = CoreProbe.allowed(member) // isTeamLead=false
+    assert(!allowed.contains("AgentControl"), "member: AgentControl stripped despite explicit declaration")
+
+  test("Block 1: Nebula keeps AgentControl; SubTask self-clone of a lead never gets it"):
+    val nebula = mkDef("Nebula", List("Read"))
+    assert(CoreProbe.allowed(nebula).contains("AgentControl"), "Nebula keeps global AgentControl")
+    // a worker self-cloned from a Manager: new session id → isTeamLeadStatus false,
+    // and the mechanism grant is the only source — "*" must not resurrect it
+    val clone = mkDef("Manager", List("*")).copy(category = "team")
+    val workerAllowed = CoreProbe.allowed(clone, isSubTaskWorker = true)
+    assert(!workerAllowed.contains("AgentControl"), "worker clone: AgentControl stripped")
+    val deepAllowed = CoreProbe.allowed(clone, depth = 2)
+    assert(!deepAllowed.contains("AgentControl"), "depth-2 agent: AgentControl stripped")
+
+  test("SubTask worker strips TeamTask* even when the parent is a team lead"):
+    // A worker self-cloned from a Manager (category=team + isTeamLead grant)
+    // must lose the team task board entirely — leaf isolation (spec §3).
+    val leadWorker = mkDef("Manager", List("Read", "Bash")).copy(category = "team")
+    val allowed = CoreProbe.allowed(leadWorker, isSubTaskWorker = true, isTeamLead = true)
+    assert(!allowed.contains("TeamTaskCreate"), "worker: TeamTaskCreate stripped despite isTeamLead")
+    assert(!allowed.contains("TeamTaskUpdate"), "worker: TeamTaskUpdate stripped")
+    assert(!allowed.contains("TeamTaskList"), "worker: TeamTaskList stripped")
+
+  test("flow node strips TeamTask* (安全隔离, U5 — not a coupling design)"):
+    val teamNode = mkDef("backend", List("Read")).copy(category = "team")
+    val allowed = CoreProbe.allowed(teamNode, isFlowNode = true, isTeamLead = true)
+    assert(!allowed.contains("TeamTaskCreate"), "flow node: no TeamTaskCreate")
+    assert(!allowed.contains("TeamTaskUpdate"), "flow node: no TeamTaskUpdate")
+    assert(!allowed.contains("TeamTaskList"), "flow node: no TeamTaskList")
+
+  test("depth>=2 '*' agent strips TeamTask* (LeadLevelTools treatment)"):
+    val deep = mkDef("deep-worker", List("*")).copy(category = "team")
+    val allowed = CoreProbe.allowed(deep, depth = 2, isTeamLead = true)
+    assert(!allowed.contains("TeamTaskCreate"), "depth≥2 '*': no TeamTaskCreate")
+    assert(!allowed.contains("TeamTaskUpdate"), "depth≥2 '*': no TeamTaskUpdate")
+    assert(!allowed.contains("TeamTaskList"), "depth≥2 '*': no TeamTaskList")
+    val leadShallow = CoreProbe.allowed(deep, depth = 0, isTeamLead = true)
+    assert(leadShallow.contains("TeamTaskCreate"), "depth 0 lead keeps TeamTask*")
+
+  test("explicitly listed TeamTask* is NOT enough — grants come from isTeamLead/Nebula"):
+    // A member who lists TeamTaskCreate in agent.json still gets nothing
+    // (the toolset is mechanism-gated; explicit listing does not grant).
+    val sneaky = mkDef("member", List("Read", "TeamTaskCreate", "TeamTaskUpdate")).copy(category = "team")
+    val allowed = CoreProbe.allowed(sneaky)
+    assert(!allowed.contains("TeamTaskCreate"), "explicit listing without isTeamLead grant is inert")
+    assert(!allowed.contains("TeamTaskUpdate"), "explicit listing without isTeamLead grant is inert")
+
+  // ===== #404 工具体系精简 (user ruling 2026-08-25 17:49) =====
+
+  test("Issue is Nebula-only — stripped from non-Nebula even when explicitly listed"):
+    val soloExplicit = mkDef("solo", List("Read", "Issue"))
+    assert(!CoreProbe.allowed(soloExplicit).contains("Issue"), "standalone listing Issue gets nothing")
+    val teamExplicit = mkDef("backend", List("Read", "Issue")).copy(category = "team")
+    assert(!CoreProbe.allowed(teamExplicit).contains("Issue"), "team member listing Issue gets nothing")
+    val flowExplicit = mkDef("node", List("Read", "Issue")).copy(category = "flow")
+    assert(!CoreProbe.allowed(flowExplicit).contains("Issue"), "flow node listing Issue gets nothing")
+
+  test("Issue stripped from non-Nebula via wildcard too"):
+    val omni = mkDef("omni", List("*"))
+    assert(!CoreProbe.allowed(omni).contains("Issue"), "wildcard does not resurrect Issue for non-Nebula")
+
+  test("Nebula keeps Issue"):
+    val nebula = mkDef("Nebula", List("Read"))
+    assert(CoreProbe.allowed(nebula).contains("Issue"), "Issue survives only for the orchestrator")
+
+  test("Nebula gets the 9 orchestration tools mechanism-fixed — no declaration needed"):
+    // The ruling: Nebula 系统固定改为 9 个编排工具. A stripped-down Nebula def
+    // (empty tools list) must still carry the full orchestration surface —
+    // panel edits / definition mistakes cannot disarm the scheduler.
+    val orchestration = Set(
+      "AgentControl", "TaskUpdate", "Delegate", "Pop", "AskUserQuestion",
+      "TaskCreate", "Mail", "Schedule", "TransferFile"
+    )
+    val bare = mkDef("Nebula", Nil)
+    val allowed = CoreProbe.allowed(bare)
+    orchestration.foreach(t =>
+      assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
+    )
+    assert(allowed.contains("FlowExecute"), "Nebula keeps FlowExecute (#406)")
+    assert(allowed.contains("Issue"), "Nebula keeps Issue (feedback collector)")
+    // 2026-08-28 00:55 用户裁定（reverses #438）: the six are mechanism-fixed
+    // for ALL agents — a bare Nebula def carries them without declaration.
+    val six = Set("Read", "Write", "Edit", "Glob", "Grep", "Bash")
+    six.foreach(t => assert(allowed.contains(t), s"bare Nebula must get mechanism-fixed six: $t"))
+
+  test("Nebula's agent.json declaration of the six is idempotent with the mechanism layer"):
+    // agent.json tools declarations remain an additional source — duplicates
+    // with the mechanism-fixed six are harmless (Set semantics). The file
+    // declaration (8684acd) stays as belt-and-suspenders, not a requirement.
+    val defn = mkDef("Nebula", List("Read", "Grep", "Bash"))
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("Read") && allowed.contains("Grep") && allowed.contains("Bash"),
+      "declared six must be present for Nebula")
+    assert(allowed.contains("Delegate"), "orchestration fixed set unaffected by the declaration")
+    assert(allowed.contains("Write") && allowed.contains("Edit"),
+      "undeclared six members are still mechanism-injected")
+
+  test("the six are mechanism-fixed for ALL agents — cannot be configured away"):
+    val solo = mkDef("someone", Nil)
+    val soloAllowed = CoreProbe.allowed(solo)
+    val six = Set("Read", "Write", "Edit", "Glob", "Grep", "Bash")
+    six.foreach(t => assert(soloAllowed.contains(t), s"mechanism-fixed six missing for standalone: $t"))
+    val team = mkDef("backend", Nil).copy(category = "team")
+    val teamAllowed = CoreProbe.allowed(team)
+    six.foreach(t => assert(teamAllowed.contains(t), s"mechanism-fixed six missing for team: $t"))
+    val flow = mkDef("node", Nil).copy(category = "flow")
+    val flowAllowed = CoreProbe.allowed(flow)
+    six.foreach(t => assert(flowAllowed.contains(t), s"mechanism-fixed six missing for flow: $t"))
+    val nebula = mkDef("Nebula", Nil)
+    val nebulaAllowed = CoreProbe.allowed(nebula)
+    six.foreach(t => assert(nebulaAllowed.contains(t), s"mechanism-fixed six missing for Nebula: $t"))
+
+  test("the 9 orchestration tools are NOT granted to ordinary standalone agents"):
+    // Mechanism-fixed for Nebula ≠ auto-granted to everyone: a standalone agent
+    // with an empty tools list gets base tools only.
+    val solo = mkDef("someone", Nil)
+    val allowed = CoreProbe.allowed(solo)
+    assert(!allowed.contains("AgentControl"), "no AgentControl for standalone")
+    assert(!allowed.contains("Delegate"), "no Delegate for standalone")
+    assert(!allowed.contains("Schedule"), "no Schedule for standalone")
+    assert(allowed.contains("Read"), "base tools intact")
+
+  // ===== 轨道二 #5: T1 flow-worker display-tool guardrails (dedicatedAgents) =====
+
+  test("guardrails ON: flow node loses Pop/AskUserQuestion even when explicitly declared"):
+    val defn = mkDef("qa-worker", List("Read", "Grep", "Bash", "Pop", "AskUserQuestion"))
+    val allowed = CoreProbe.allowed(defn, isFlowNode = true, guardrailsOn = true)
+    assert(!allowed.contains("Pop"), "Pop stripped at engine level (deck-v6 lesson)")
+    assert(!allowed.contains("AskUserQuestion"), "AskUserQuestion stripped (nodes have nobody to ask)")
+    assert(allowed.contains("Read"), "domain tools kept")
+
+  test("guardrails OFF (default): declared Pop stays available to a flow node — zero regression"):
+    val defn = mkDef("qa-worker", List("Read", "Grep", "Bash", "Pop", "AskUserQuestion"))
+    val allowed = CoreProbe.allowed(defn, isFlowNode = true, guardrailsOn = false)
+    assert(allowed.contains("Pop"), "flag off = pre-guardrail behavior byte-compatible")
+    assert(allowed.contains("AskUserQuestion"))
+
+  test("guardrails ON + userFacing:true whitelist keeps display tools"):
+    val defn = mkDef("reviewer", List("Read", "Grep", "Pop"))
+    val allowed = CoreProbe.allowed(defn, isFlowNode = true, userFacingNode = true, guardrailsOn = true)
+    assert(allowed.contains("Pop"), "userFacing node is the whitelist escape hatch")
+    val leafStripped = CoreProbe.allowed(defn.copy(tools = List("Read", "Grep")), isFlowNode = true, userFacingNode = true, guardrailsOn = true)
+    assert(!leafStripped.contains("Pop"), "whitelist restores nothing extra — declaration remains the source")
+
+  test("guardrails ON does not touch non-flow agents"):
+    val solo = mkDef("explorer", List("Read", "Pop", "AskUserQuestion"))
+    val allowed = CoreProbe.allowed(solo, guardrailsOn = true)
+    assert(allowed.contains("Pop"), "T0 standalone untouched")
+    assert(allowed.contains("AskUserQuestion"), "T0 standalone untouched")
+    val worker = mkDef("backend", List("Read")).copy(category = "team")
+    val member = CoreProbe.allowed(worker, guardrailsOn = true)
+    assert(member.contains("Mail") && !member.contains("Pop"), "T2 team member unchanged this batch (fixed set never granted Pop)")
+
+  test("SubTask workers keep their own strip list regardless of guardrails flag"):
+    val worker = mkDef("backend", List("Read")).copy(category = "team")
+    val on = CoreProbe.allowed(worker, isSubTaskWorker = true, guardrailsOn = true)
+    val off = CoreProbe.allowed(worker, isSubTaskWorker = true, guardrailsOn = false)
+    assertEquals(on, off, "flag must not alter the SubTask-worker path in any way")
 end AllowedToolSetSpec

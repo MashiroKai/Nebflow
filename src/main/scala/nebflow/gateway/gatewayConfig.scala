@@ -8,8 +8,6 @@ case class GatewayConfig(host: Host, port: Port)
 object GatewayConfig:
   private val DefaultHost: Host = Host.fromString("0.0.0.0").get
   private val DefaultPort: Port = Port.fromInt(8080).get
-  private val HostEnv = "NEBFLOW_GATEWAY_HOST"
-  private val PortEnv = "NEBFLOW_GATEWAY_PORT"
 
   /** CLI --port override, takes priority over env var and default. */
   private var _portOverride: Option[Int] = None
@@ -23,15 +21,17 @@ object GatewayConfig:
   def noBrowser: Boolean = _noBrowser
 
   def load: IO[GatewayConfig] = IO.delay {
-    val host = sys.env
-      .get(HostEnv)
+    // L3 rebrand compat: dual-prefix env read (brand prefix first, legacy
+    // NEBFLOW_ fallback) — identical prefixes collapse to one variable.
+    val host = nebflow.core.Branding
+      .env("GATEWAY_HOST")
       .flatMap(Host.fromString)
       .getOrElse(DefaultHost)
     val port = _portOverride
       .flatMap(p => Port.fromInt(p))
       .getOrElse(
-        sys.env
-          .get(PortEnv)
+        nebflow.core.Branding
+          .env("GATEWAY_PORT")
           .flatMap(s => s.toIntOption.flatMap(Port.fromInt))
           .getOrElse(DefaultPort)
       )

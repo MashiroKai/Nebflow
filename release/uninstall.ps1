@@ -1,22 +1,28 @@
 $ErrorActionPreference = "Stop"
+
+# -- Brand values (L2 rebrand): rendered from repo-root brand.conf at -----
+# -- release time (scripts/render-brand.sh); do not edit by hand. ----------
+$ProductName = "Nebflow"
+$LowerName = "nebflow"
+$HomeDir = ".nebflow"
 $ProgressPreference = "SilentlyContinue"
 
-$InstallDir = "$env:LOCALAPPDATA\Nebflow"
-$ConfigDir = Join-Path $env:USERPROFILE ".nebflow"
+$InstallDir = "$env:LOCALAPPDATA\$ProductName"
+$ConfigDir = Join-Path $env:USERPROFILE "$HomeDir"
 
 Write-Host ""
-Write-Host "  Nebflow Uninstaller" -ForegroundColor Yellow
+Write-Host "  $ProductName Uninstaller" -ForegroundColor Yellow
 Write-Host ""
 
 # Check if installed
 if (-not (Test-Path $InstallDir)) {
-    Write-Host "  Nebflow is not installed." -ForegroundColor Red
+    Write-Host "  $ProductName is not installed." -ForegroundColor Red
     if ([Console]::IsInputRedirected -eq $false) { Read-Host "Press Enter to exit" }
     exit 1
 }
 
 # Remove install directory
-Write-Host "[1/3] Removing Nebflow files..." -ForegroundColor Yellow
+Write-Host "[1/3] Removing $ProductName files..." -ForegroundColor Yellow
 Remove-Item -Recurse -Force $InstallDir
 Write-Host "       Removed $InstallDir" -ForegroundColor Green
 
@@ -41,6 +47,6 @@ if (Test-Path $ConfigDir) {
 }
 
 Write-Host ""
-Write-Host "  Nebflow uninstalled." -ForegroundColor Green
+Write-Host "  $ProductName uninstalled." -ForegroundColor Green
 Write-Host ""
 if ([Console]::IsInputRedirected -eq $false) { Read-Host "Press Enter to exit" }

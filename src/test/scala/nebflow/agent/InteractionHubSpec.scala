@@ -86,7 +86,7 @@ class InteractionHubSpec extends CatsEffectSuite:
     end for
   }
 
-  test("old frontend fallback: answer without requestId completes oldest pending for the root session".ignore) {
+  test("old frontend fallback: answer without requestId completes oldest pending for the root session") {
     val system = nebflow.actor.ActorSystem("hub-test")
     for
       hub <- mkHub(system)
@@ -152,6 +152,148 @@ class InteractionHubSpec extends CatsEffectSuite:
       assertEquals(card.hcursor.downField("sessionId").as[String], Right("root-1"))
       assertEquals(card.hcursor.downField("requestId").as[String], Right("ask-1"))
       assertEquals(card.hcursor.downField("agentName").as[String], Right("Frontend"))
+    end for
+  }
+
+  // ---------- #12: approval link reliability ----------
+
+  test("#12 invalid answer shape does not consume the card — deferred still completable") {
+    val system = nebflow.actor.ActorSystem("hub-test")
+    for
+      hub <- mkHub(system)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)
+      d <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.Request(permRequest("r-shape", d))
+      _ <- IO.sleep(50.millis)
+      // askUser-shaped answer routed at a permission card: must NOT complete
+      // anything and must NOT delete the slot (the card stays answerable).
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("r-shape", "root-1", Json.obj("answers" -> Json.arr(Json.fromString("yes"))))
+      )
+      _ <- IO.sleep(50.millis)
+      notCompleted <- d.tryGet
+      // correct answer still reaches the SAME card
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("r-shape", "root-1", Json.obj("approved" -> Json.fromBoolean(true)))
+      )
+      a <- d.get
+      _ <- system.stopAll
+    yield
+      assertEquals(notCompleted, None) // card RETAINED, deferred not stranded
+      assertEquals(a, true)
+    end for
+  }
+
+  test("#12 fallback skips kind-incompatible cards — askUser answer never wires into an older permission card") {
+    val system = nebflow.actor.ActorSystem("hub-test")
+    val items = List(nebflow.core.AskItem("Continue?", List(nebflow.core.AskOption("yes"))))
+    for
+      hub <- mkHub(system)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)
+      // permission card is the OLDEST pending (would win naive FIFO matching)
+      dPerm <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.Request(permRequest("r-perm-old", dPerm))
+      gotAnswers <- Ref.of[IO, Option[List[String]]](None)
+      replyTo <- system.spawn(
+        nebflow.actor.Behaviors.receiveMessage[List[String]] { answers =>
+          gotAnswers.set(Some(answers)).as(nebflow.actor.Behaviors.stopped)
+        },
+        "ask-reply-sink-12"
+      )
+      _ <- hub ! InteractionHubCommand.Request(
+        InteractionRequest(
+          requestId = "r-ask-new",
+          kind = InteractionKind.AskUser,
+          payload = Json.obj("items" -> Json.arr(), "agentName" -> Json.fromString("Frontend")),
+          reply = InteractionReply.AskUserReply(Some(replyTo)),
+          rootSessionId = "root-1",
+          sourceAgent = "Frontend",
+          sourceSession = "team-abc"
+        )
+      )
+      _ <- IO.sleep(50.millis)
+      // answer WITHOUT requestId (old frontend) but askUser-shaped: the naive
+      // oldest-first match would wire it into the permission deferred and
+      // strand it; #12 requires it to reach the askUser card instead.
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("", "root-1", Json.obj("answers" -> Json.arr(Json.fromString("yes"))))
+      )
+      _ <- IO.sleep(100.millis)
+      permState <- dPerm.tryGet
+      answersOpt <- gotAnswers.get
+      _ <- system.stopAll
+    yield
+      assertEquals(permState, None) // permission card untouched (not cross-wired)
+      assertEquals(answersOpt, Some(List("yes"))) // answer reached the askUser card
+    end for
+  }
+
+  // ===== F4 (#433): unreachable-root fanout =====
+
+  test("F4: unreachable root fans the card out to other registered roots with fallback flag") {
+    val system = nebflow.actor.ActorSystem("hub-test-f4a")
+    for
+      hub <- mkHub(system)
+      sentA <- Ref.of[IO, List[Json]](Nil)
+      sentB <- Ref.of[IO, List[Json]](Nil)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("live-root", (j: Json) => sentA.update(_ :+ j))
+      _ <- hub ! InteractionHubCommand.RegisterRoot("live-root-2", (j: Json) => sentB.update(_ :+ j))
+      deferred <- Deferred[IO, Boolean]
+      // root "zombie" never registered — the incident shape
+      _ <- hub ! InteractionHubCommand.Request(permRequest("f4-1", deferred, rootSid = "zombie"))
+      _ <- IO.sleep(100.millis)
+      eventsA <- sentA.get
+      eventsB <- sentB.get
+      cardA = eventsA.find(_.hcursor.downField("type").as[String].contains("askPermission")).get
+      cardB = eventsB.find(_.hcursor.downField("type").as[String].contains("askPermission")).get
+      _ <- system.stopAll
+    yield
+      // both live roots got the card, flagged fallback with the zombie root id
+      assertEquals(cardA.hcursor.downField("fallback").as[Boolean], Right(true))
+      assertEquals(cardB.hcursor.downField("fallback").as[Boolean], Right(true))
+      assertEquals(cardA.hcursor.downField("fallbackRoot").as[String], Right("zombie"))
+      assertEquals(cardB.hcursor.downField("fallbackRoot").as[String], Right("zombie"))
+      // requestId preserved so an answer from ANY window completes the pending
+      assertEquals(cardA.hcursor.downField("requestId").as[String], Right("f4-1"))
+    end for
+  }
+
+  test("F4: answering a fanned-out card by requestId completes the pending deferred") {
+    val system = nebflow.actor.ActorSystem("hub-test-f4b")
+    for
+      hub <- mkHub(system)
+      sent <- Ref.of[IO, List[Json]](Nil)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("live-root", (j: Json) => sent.update(_ :+ j))
+      deferred <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.Request(permRequest("f4-2", deferred, rootSid = "zombie"))
+      _ <- IO.sleep(100.millis)
+      card = sent.get.map(_.find(_.hcursor.downField("type").as[String].contains("askPermission")).get).unsafeRunSync()
+      // user answers from the LIVE window (sessionId = live-root), card was for zombie —
+      // requestId matching must complete the pending request anyway
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered(
+          requestId = card.hcursor.downField("requestId").as[String].getOrElse(""),
+          rootSessionId = "live-root",
+          payload = Json.obj("approved" -> Json.fromBoolean(true))
+        )
+      )
+      answered <- deferred.get.timeout(2.seconds)
+      _ <- system.stopAll
+    yield assertEquals(answered, true)
+    end for
+  }
+
+  test("F4: no registered roots at all keeps the original WARN-drop behavior") {
+    val system = nebflow.actor.ActorSystem("hub-test-f4c")
+    for
+      hub <- mkHub(system)
+      deferred <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.Request(permRequest("f4-3", deferred, rootSid = "zombie"))
+      _ <- IO.sleep(100.millis)
+      // pending slot still registered — the deferred remains completable
+      completed <- deferred.tryGet
+      _ <- system.stopAll
+    yield assertEquals(completed, None) // timed-out path still owns auto-deny
     end for
   }
 

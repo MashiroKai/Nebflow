@@ -1,9 +1,21 @@
 <!DOCTYPE html>
 <html lang="en"><head>
   <meta charset="utf-8">
+  <script>
+  /* Anti-recursion guard (canvas-html embedded boot, 2026-08-18). Sandboxed
+     HTML previews (Canvas/Card srcdoc iframes) can navigate their frame to the
+     app URL — e.g. a slidev deck's hash router resolving against the inherited
+     base URL. A nested boot would share localStorage, restore the same canvas
+     file tab and re-render the same file → infinite nesting. Classic script so
+     it always runs before the module graph; main.js checks the flag and
+     refuses to boot. */
+  if (window.self !== window.top) document.documentElement.dataset.nfEmbedded = '1';
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>nebflow</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <!-- Neutral initial title: js/brand.js sets the real one from window.__BRAND__. -->
+  <title></title>
+  <!-- Favicon: pixel logo (bright variant), fixed regardless of theme.
+       PNG/ICO derived from css/logo-bright.png via nearest-neighbor resample. -->
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
   <link rel="shortcut icon" href="favicon.ico">
@@ -17,13 +29,16 @@
   <link rel="stylesheet" href="css/modal.css">
   <link rel="stylesheet" href="css/input.css">
   <link rel="stylesheet" href="css/taskList.css">
+  <link rel="stylesheet" href="css/taskArchive.css">
   <link rel="stylesheet" href="css/reminder.css">
   <link rel="stylesheet" href="css/neblink.css">
   <link rel="stylesheet" href="css/dropbox.css">
+  <link rel="stylesheet" href="css/friends.css">
   <link rel="stylesheet" href="css/split.css">
   <link rel="stylesheet" href="css/voice.css">
   <link rel="stylesheet" href="css/planMode.css">
   <link rel="stylesheet" href="css/lightbox.css">
+  <link rel="stylesheet" href="css/usage.css">
   <!-- sapphire.css loads LAST: it is the design-system standard layer.
        Its grouped glass-control rules must win equal-specificity ties
        against feature CSS hover/base states. -->
@@ -31,34 +46,42 @@
 </head>
 <body>
   <script>document.documentElement.classList.add('ui-init');</script>
-  <script>if(localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');</script>
+  <script>/* Classic script: cannot import branding.js. Read the brand-namespaced key first, fall back to the legacy nebflow_ spelling. */var __b=(window.__BRAND__&&window.__BRAND__.lowerName)||'nebflow';if(localStorage.getItem(__b+'_sidebar_collapsed')==='true'||localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');window.__sidebarRestore={collapsed:document.body.classList.contains('sidebar-collapsed'),panel:localStorage.getItem(__b+'_sidebar_active_panel')||localStorage.getItem('nebflow_sidebar_active_panel')||'files'};</script>
   <!-- Activity Bar — vertical icon strip (independent glass card).
-       Top: avatar (tap to log in to NebLink). Bottom: settings.
+       Top: avatar (tap to log in to NebLink), then the Side Bar panel
+       switch buttons (Files). Bottom: Teams/Flows/Agents + Settings.
        Device management lives in the Settings panel (NebLink section). -->
   <div id="activity-bar">
     <button id="activity-avatar" class="activity-avatar" title="Login">
-      <img class="activity-avatar-logo" src="logo.svg" alt="">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark.png">
+        <img class="activity-avatar-logo" src="css/logo-bright.png" alt="">
+      </picture>
       <img class="activity-avatar-photo" alt="" hidden>
       <span class="activity-avatar-letter" hidden>N</span>
     </button>
+    <button id="messages-btn" class="activity-btn" data-panel-btn="messages" title="Messages" aria-pressed="false"><i data-lucide="message-circle"></i><span class="activity-badge" id="messages-badge" hidden></span></button>
+    <button id="contacts-btn" class="activity-btn" data-panel-btn="contacts" title="Contacts" aria-pressed="false"><i data-lucide="contact-round"></i><span class="activity-badge" id="contacts-badge" hidden></span></button>
+    <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
+    <button id="usage-btn" class="activity-btn" title="Usage Dashboard" aria-haspopup="dialog"><i data-lucide="bar-chart-3"></i></button>
     <div class="activity-spacer"></div>
-    <button id="teams-btn" class="activity-btn" title="Teams"><i data-lucide="network"></i></button>
-    <button id="flows-btn" class="activity-btn" title="Flows"><i data-lucide="git-branch"></i></button>
-    <button id="agents-btn" class="activity-btn" title="Agents"><i data-lucide="users"></i></button>
+    <button id="teams-btn" class="activity-btn" title="Teams"><i data-lucide="users"></i></button>
+    <button id="flows-btn" class="activity-btn" title="Flows"><i data-lucide="workflow"></i></button>
+    <button id="agents-btn" class="activity-btn" title="Agents"><i data-lucide="bot"></i></button>
     <button id="settings-btn" class="activity-btn" title="Settings"><i data-lucide="settings"></i></button>
   </div>
 
-  <!-- Sidebar — file explorer -->
+  <!-- Sidebar — switchable panels (explorer today; registry-driven) -->
   <div id="sidebar">
     <div id="sidebar-panel">
-      <div id="panel-sessions" class="panel active">
+      <div id="panel-sessions" class="panel active" data-panel-id="files">
         <!-- Sidebar top bar -->
         <div class="sidebar-topbar"></div>
 
         <!-- Explorer Section -->
         <div id="explorer-section">
           <div class="explorer-header">
-            <span class="explorer-title">Explorer</span>
+            <span class="explorer-title" id="panel-title-explorer">Explorer</span>
             <div class="explorer-actions">
               <button class="explorer-action-btn" id="explorer-new-file-btn" title="New File">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 12v6"/><path d="M9 15h6"/></svg>
@@ -76,8 +99,42 @@
           </div>
         </div>
       </div>
+      <div id="panel-messages" class="panel" data-panel-id="messages">
+        <div class="panel-header"><span class="panel-title" data-i18n="panel.messages">Messages</span></div>
+        <div id="fm-conversations" role="listbox" aria-label="Messages"></div>
+      </div>
+      <div id="panel-contacts" class="panel" data-panel-id="contacts">
+        <div class="panel-header"><span class="panel-title" data-i18n="panel.contacts">Contacts</span></div>
+        <div id="fm-contacts-body"></div>
+      </div>
     </div>
   </div>
+  <script>
+  /* Pre-paint Side Bar panel restore (classic script — runs before the module
+     graph). The body class was set at parse start; here we resolve the
+     persisted active panel so the FIRST FRAME already shows the correct
+     panel/button state (no flicker). Unknown persisted ids fall back to
+     'files'. Collapsed → nothing is active (activityBar.js re-activates the
+     stored panel on expand). */
+  (function () {
+    var r = window.__sidebarRestore || { collapsed: false, panel: 'files' };
+    var panels = document.querySelectorAll('#sidebar-panel .panel');
+    var target = null;
+    for (var i = 0; i < panels.length; i++) {
+      if (panels[i].getAttribute('data-panel-id') === r.panel) target = panels[i];
+    }
+    if (!target) target = document.querySelector('#sidebar-panel .panel[data-panel-id="files"]');
+    for (var j = 0; j < panels.length; j++) {
+      panels[j].classList.toggle('active', !r.collapsed && panels[j] === target);
+    }
+    var pid = target ? target.getAttribute('data-panel-id') : 'files';
+    var btn = document.querySelector('#activity-bar [data-panel-btn="' + pid + '"]');
+    if (btn) {
+      btn.classList.toggle('active', !r.collapsed);
+      btn.setAttribute('aria-pressed', r.collapsed ? 'false' : 'true');
+    }
+  })();
+  </script>
 
   <!-- Column resizer — drag to adjust sidebar / main widths -->
   <div class="col-resizer" data-left="sidebar" data-right="main"></div>
@@ -106,14 +163,18 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
         </button>
         <button id="reminder-btn" title="Scheduled Tasks"><i data-lucide="clock"></i></button>
-        <button id="daemon-btn" title="开发服务器"><i data-lucide="server"></i></button>
+        <button id="daemon-btn" title="心跳进程"><i data-lucide="server"></i></button>
         <div id="bg-indicator" class="hidden">
           <span class="bg-dot"></span>
           <span class="bg-count">0</span>
         </div>
-        <div id="bgagent-indicator" class="hidden" title="Sub-agents running">
+        <div id="bgagent-indicator" class="hidden" title="Sub-agents running" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="bgagent-dropdown">
           <span class="bgagent-dot"></span>
           <span class="bgagent-count">0</span>
+        </div>
+        <div id="flows-indicator" class="hidden" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="flows-dropdown">
+          <span class="flows-dot"></span>
+          <span class="flows-count">0</span>
         </div>
         <button id="canvas-toggle-btn" class="panel-toggle-btn" title="Canvas">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
@@ -129,8 +190,12 @@
       <button data-mode="auto-all">全部放行</button>
     </div>
     <div id="bgagent-dropdown" class="hidden">
-      <div class="bg-dropdown-header">Sub-agents</div>
-      <div class="bg-dropdown-list"></div>
+      <div class="bg-dropdown-header" aria-live="polite">Sub-agents</div>
+      <div class="bg-dropdown-list" role="list"></div>
+    </div>
+    <div id="flows-dropdown" class="hidden">
+      <div class="bg-dropdown-header" aria-live="polite">Running flows</div>
+      <div class="flows-dropdown-list" role="list"></div>
     </div>
     <div id="bg-dropdown" class="hidden">
       <div class="bg-dropdown-header">Background tasks</div>
@@ -153,7 +218,7 @@
     <!-- Daemon Panel — floating dropdown from header button -->
     <div id="daemon-panel">
       <div class="daemon-panel-header">
-        <div class="daemon-panel-title" data-i18n="daemons.title">Dev Servers</div>
+        <div class="daemon-panel-title" data-i18n="daemons.title">Heartbeat</div>
         <div class="daemon-panel-header-right">
           <button class="daemon-close-btn" id="daemon-close-btn" title="Close">
             <i data-lucide="x"></i>
@@ -178,7 +243,12 @@
       <div id="slash-dropdown"></div>
       <div id="queue-bar"></div>
       <div id="input-bar">
-        <button class="icon-btn" id="voice-btn" title="Voice input"><i data-lucide="mic"></i></button>
+        <div class="mic-orb-wrap" id="mic-orb-wrap">
+          <button class="micbubble" id="voice-btn" type="button" title="Voice input" aria-label="Voice input">
+            <canvas class="orb-canvas" id="mic-canvas" aria-hidden="true"></canvas>
+            <div class="css-orb orb" id="mic-css-orb" role="img" aria-label="Mic state"></div>
+          </button>
+        </div>
       <div id="input-wrap" style="position:relative;">
         <div id="attachment-preview"></div>
         <div id="ask-indicator"><span id="ask-indicator-label">ASK</span><span id="ask-indicator-cancel">&times;</span></div>
@@ -187,6 +257,7 @@
         <div id="plan-indicator"><span id="plan-indicator-label">PLAN</span><span id="plan-indicator-cancel">&times;</span></div>
         <textarea id="input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
       </div>
+      <button class="skip-freeze-btn" id="skip-freeze-btn" type="button"><i data-lucide="skip-forward"></i><span id="skip-freeze-label">跳过本次</span></button>
       <button class="icon-btn" id="attach-btn"><i data-lucide="paperclip"></i></button>
       <button id="send-btn"><i data-lucide="send"></i></button>
       <button id="stop-btn"><i data-lucide="square"></i></button>
@@ -310,17 +381,26 @@
         <button id="search-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>
       </div>
       <div class="search-controls">
-        <input id="search-keyword" type="text" placeholder="Keyword…" autocomplete="off">
+        <input id="search-keyword" type="text" placeholder="Keyword…" autocomplete="off"
+               role="combobox" aria-expanded="true" aria-controls="search-results">
+        <div class="search-tabs" role="tablist" aria-label="Search categories">
+          <button type="button" class="search-tab" id="search-tab-all" role="tab" aria-selected="true" data-tab="all"></button>
+          <button type="button" class="search-tab" id="search-tab-images" role="tab" aria-selected="false" data-tab="images"></button>
+          <button type="button" class="search-tab" id="search-tab-files" role="tab" aria-selected="false" data-tab="files"></button>
+          <button type="button" class="search-tab" id="search-tab-pop" role="tab" aria-selected="false" data-tab="pop"></button>
+          <button type="button" class="search-tab" id="search-tab-date" role="tab" aria-selected="false"
+                  aria-haspopup="dialog" aria-expanded="false" data-tab="date"></button>
+        </div>
         <div class="search-filters">
           <select id="search-scope" class="cfg-select"></select>
+          <select id="search-agent" class="cfg-select"></select>
           <select id="search-tool" class="cfg-select"></select>
-          <input id="search-date-from" class="cfg-input" type="date">
-          <input id="search-date-to" class="cfg-input" type="date">
-          <button id="search-go" class="cfg-btn cfg-btn-primary">Search</button>
+          <button id="search-go" class="glass-control cfg-btn cfg-btn-sm">Search</button>
         </div>
+        <div id="search-date-popover" role="dialog" hidden></div>
       </div>
-      <div id="search-status"></div>
-      <div id="search-results"></div>
+      <div id="search-status" aria-live="polite"></div>
+      <div id="search-results" role="listbox"></div>
     </div>
   </div>
   <script src="vendor/lucide.min.js"></script>

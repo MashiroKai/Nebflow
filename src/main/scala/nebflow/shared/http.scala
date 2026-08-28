@@ -20,6 +20,14 @@ object SharedBackend:
     .newBuilder()
     .followRedirects(HttpClient.Redirect.NORMAL)
     .connectTimeout(JDuration.ofSeconds(10))
+    // P1 (2026-08-25, WebSearch fetch optimization): bind the platform proxy
+    // selector EXPLICITLY. Without it the client still uses the default
+    // selector implicitly, but an explicit binding pins the behavior — a
+    // JVM launched with http(s).proxyHost/Port (or java.net.useSystemProxies)
+    // routes overseas hosts (DuckDuckGo) through the local proxy while
+    // Clash-style rule sets keep CN engines direct; nothing regresses when
+    // no proxy is configured (ProxySelector.getDefault() then returns NO_PROXY).
+    .proxy(java.net.ProxySelector.getDefault())
     .build()
 
   val instance: SyncBackend = HttpClientSyncBackend.usingClient(httpClient)

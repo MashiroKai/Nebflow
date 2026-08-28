@@ -34,25 +34,34 @@ object BackoffSupervisor:
 
   /**
    * @param childRef    the pre-spawned child actor (initial spawn done by caller)
-   * @param childSpawnFn used to re-spawn the child on restart
+   * @param childSpawnFn used to re-spawn the child on restart; receives the
+   *                     recovered messages (if any) so the child can resume
+   *                     from the crash checkpoint instead of starting fresh
    * @param childName   child actor name (for logging)
    * @param parentRef   parent agent to notify on completion / failure
    * @param description human-readable task description
    * @param agentName   child agent name
    * @param subagentId  session id
-   * @param resources   shared resources (for agentRegistry cleanup)
-   * @param initialPrompt the original prompt to re-inject after restart
+   * @param parentSessionId the parent (root) session that owns this task —
+   *                        SubAgentTaskStore keys task files by it; must match
+   *                        the id used at recordTask time or status updates
+   *                        silently write nowhere
+   * @param resources   shared resources (for agentRegistry cleanup + session
+   *                    store to recover persisted messages on restart)
+   * @param initialPrompt the original prompt to re-inject after restart (used
+   *                      as fallback when no persisted messages are found)
    * @param source       ExternalEvent source string ("delegate" or "subtask")
    * @param extraMetadata extra metadata for ExternalEvent (e.g. "kind" -> "SubTask")
    */
   def apply(
     childRef: ActorRef[AgentCommand],
-    childSpawnFn: ActorSystem => IO[ActorRef[AgentCommand]],
+    childSpawnFn: (ActorSystem, List[Message]) => IO[ActorRef[AgentCommand]],
     childName: String,
     parentRef: Option[ActorRef[AgentCommand]],
     description: String,
     agentName: String,
     subagentId: String,
+    parentSessionId: String,
     resources: SharedResources,
     initialPrompt: String,
     source: String,
@@ -64,40 +73,42 @@ object BackoffSupervisor:
     withinTimeRange: FiniteDuration = 5.minutes
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
-      ctx.watch(childRef)
-      IO(logger.info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)")).as(
-        active(
-          childRef,
-          childSpawnFn,
-          childName,
-          parentRef,
-          description,
-          agentName,
-          subagentId,
-          resources,
-          initialPrompt,
-          source,
-          extraMetadata,
-          wsSend,
-          restartCount = 0,
-          restartHistory = Nil,
-          minBackoff,
-          maxBackoff,
-          maxRestarts,
-          withinTimeRange
+      ctx.watch(childRef) *>
+        logger.info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)").as(
+          active(
+            childRef,
+            childSpawnFn,
+            childName,
+            parentRef,
+            description,
+            agentName,
+            subagentId,
+            parentSessionId,
+            resources,
+            initialPrompt,
+            source,
+            extraMetadata,
+            wsSend,
+            restartCount = 0,
+            restartHistory = Nil,
+            minBackoff,
+            maxBackoff,
+            maxRestarts,
+            withinTimeRange
+          )
         )
-      )
     }
 
   /** Active state: forwards completion/failure to parent, restarts on Terminated. */
   private def active(
     childRef: ActorRef[AgentCommand],
-    childSpawnFn: ActorSystem => IO[ActorRef[AgentCommand]],
+    childSpawnFn: (ActorSystem, List[Message]) => IO[ActorRef[AgentCommand]],
     childName: String,
     parentRef: Option[ActorRef[AgentCommand]],
     description: String,
     agentName: String,
     subagentId: String,
+    parentSessionId: String,
     resources: SharedResources,
     initialPrompt: String,
     source: String,
@@ -115,8 +126,10 @@ object BackoffSupervisor:
         event match
           case AgentEvent.Completed(_, messages) =>
             val text = extractLastAssistantText(messages)
+            // trim guard: a whitespace-only tail ("\n\n") is NOT a real output —
+            // render "(no text output)" instead of an empty-shell payload
             val payload =
-              if text.nonEmpty then s""""$description":\n$text"""
+              if text.trim.nonEmpty then s""""$description":\n${text.trim}"""
               else s""""$description" (no text output)"""
             notifyParentAndStop("completed", payload, JsonObject.empty)
 
@@ -135,6 +148,26 @@ object BackoffSupervisor:
                 "retryable" -> retryable.asJson,
                 "failureType" -> error.errorType.toString.asJson
               )
+            )
+
+          case AgentEvent.Cancelled(_, reason) =>
+            // AgentControl cancel（spec §3.2）：与自然终态同路清理——父
+            // ExternalEvent(source 保持 delegate/subtask → barrier 正确释放)
+            // + taskStore cancelled + registry 移除 + child Stop + 自停。
+            // 与 Completed/Failed 竞态：mailbox 串行，首个终态胜出，supervisor
+            // 停止后其余消息被丢弃（actor 语义），无双重通知。
+            val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
+            notifyParentAndStop(
+              "cancelled",
+              s""""$description": cancelled by Nebula via AgentControl$reasonSuffix""",
+              JsonObject(
+                "failedSessionId" -> subagentId.asJson,
+                "retryable" -> false.asJson,
+                "failureType" -> "cancelled".asJson,
+                "cancelled" -> true.asJson,
+                "reason" -> reason.asJson
+              ),
+              taskStatusOverride = Some("cancelled")
             )
 
       override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
@@ -173,27 +206,77 @@ object BackoffSupervisor:
               val notifyIO = wsSend match
                 case Some(send) =>
                   send(retryEvent).handleErrorWith(e =>
-                    IO(logger.warn(s"subagentRetry WS event failed: ${e.getMessage}"))
+                    logger.warn(s"subagentRetry WS event failed: ${e.getMessage}")
                   )
                 case None => IO.unit
 
               for
+                _ <- logger.info(
+                  s"BackoffSupervisor: child $childName crashed, restarting " +
+                    s"#$newRestartCount/$maxRestarts after ${delay}ms backoff"
+                )
                 _ <- notifyIO
                 _ <- resources.subAgentTaskStore
                   .updateStatus(
-                    "",
+                    parentSessionId,
                     subagentId,
                     "restarting",
                     retryCount = Some(newRestartCount)
                   )
-                  .handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}")))
+                  .handleErrorWith(e => logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}"))
                 _ <- IO.sleep(delay.millis)
-                _ <- resources.agentRegistry.update(_ - subagentId)
-                newChild <- childSpawnFn(ctx.system)
+                // Spec C2 (restart): registry 记录跨 respawn 刷新——先取崩溃前
+                // 记录，spawn 后以新 ref 回写。缺了这步 respawn 的 child 会从
+                // agentRegistry 消失（AgentControl list / TaskStuckWatcher 全盲）。
+                oldRecord <- resources.agentRegistry.get.map(_.get(subagentId))
+                // Crash recovery: load persisted messages from the session store
+                // so the child can resume from where it left off (断点续跑).
+                // If no messages are found (e.g. first turn crashed before any
+                // persist), fall back to re-injecting the original prompt.
+                recoveredMessages <- resources.sessionStore
+                  .loadMessagesForSession(subagentId)
+                  .handleErrorWith(e =>
+                    logger.warn(s"BackoffSupervisor: failed to load messages for $subagentId: ${e.getMessage}").as(Nil)
+                  )
+                newChild <- childSpawnFn(ctx.system, recoveredMessages)
                 _ <- ctx.watch(newChild)
-                // Re-inject original prompt with self as replyTo
-                _ <- newChild ! AgentCommand.UserInput(initialPrompt, Some(ctx.self))
-                _ <- IO(logger.info(s"BackoffSupervisor: respawned $childName, re-injected prompt"))
+                // Spec C2: 回写 registry（新 ref + supervisor 指向自己 + 活动时
+                // 间刷新）。无旧记录（ghost respawn）时按 source 重建最小条目。
+                _ <- resources.agentRegistry.update { registry =>
+                  val fallback = AgentRecord(
+                    sessionId = subagentId,
+                    ref = newChild,
+                    kind = if source == "subtask" then AgentKind.SubTask else AgentKind.Delegate,
+                    rootSessionId = parentSessionId,
+                    supervisorRef = Some(ctx.self),
+                    parentSessionId = parentSessionId
+                  )
+                  val refreshed = oldRecord
+                    .getOrElse(fallback)
+                    .copy(
+                      ref = newChild,
+                      supervisorRef = Some(ctx.self),
+                      status = AgentStatus.Idle,
+                      lastActivityMs = System.currentTimeMillis()
+                    )
+                  registry.updated(subagentId, refreshed)
+                }
+                // If we recovered messages, send a "continue" instruction so the
+                // child picks up where it left off. Otherwise re-inject the
+                // original prompt (fresh start fallback).
+                _ <- if recoveredMessages.nonEmpty then
+                  newChild ! AgentCommand.UserInput(
+                    "[system] Your previous turn was interrupted by a crash. " +
+                      "Please continue your task from where you left off.",
+                    Some(ctx.self)
+                  )
+                else
+                  newChild ! AgentCommand.UserInput(initialPrompt, Some(ctx.self))
+                _ <- logger.info(
+                  s"BackoffSupervisor: respawned $childName, " +
+                    s"recovered ${recoveredMessages.size} messages" +
+                    (if recoveredMessages.nonEmpty then " (resuming from checkpoint)" else " (re-injected original prompt)")
+                )
               yield active(
                 newChild,
                 childSpawnFn,
@@ -202,6 +285,7 @@ object BackoffSupervisor:
                 description,
                 agentName,
                 subagentId,
+                parentSessionId,
                 resources,
                 initialPrompt,
                 source,
@@ -219,40 +303,44 @@ object BackoffSupervisor:
               logger.warn(
                 s"BackoffSupervisor: child $childName exceeded maxRestarts " +
                   s"($maxRestarts in ${withinTimeRange}), giving up"
-              )
-              notifyParentAndStop(
-                "failed",
-                s""""$description": agent crashed and could not recover after $maxRestarts restarts""",
-                JsonObject(
-                  "failedSessionId" -> subagentId.asJson,
-                  "retryable" -> false.asJson,
-                  "failureType" -> "supervision-exhausted".asJson
+              ) *>
+                notifyParentAndStop(
+                  "failed",
+                  s""""$description": agent crashed and could not recover after $maxRestarts restarts""",
+                  JsonObject(
+                    "failedSessionId" -> subagentId.asJson,
+                    "retryable" -> false.asJson,
+                    "failureType" -> "supervision-exhausted".asJson
+                  )
                 )
-              )
             end if
 
       /** Notify parent via ExternalEvent, clean up registry, stop self. */
       private def notifyParentAndStop(
         eventType: String,
         payload: String,
-        failureMetadata: JsonObject
+        failureMetadata: JsonObject,
+        taskStatusOverride: Option[String] = None
       ): IO[Behavior[AgentEvent]] =
         val metadata = JsonObject(
           "description" -> description.asJson,
           "agentName" -> agentName.asJson
         ).deepMerge(extraMetadata).deepMerge(failureMetadata)
 
-        // P3.1: update task store status
-        val taskStatus = if eventType == "completed" then "completed" else "failed"
+        // P3.1: update task store status. taskStatusOverride supports terminal
+        // states beyond completed/failed (AgentControl 的 "cancelled")。
+        val taskStatus = taskStatusOverride.getOrElse(
+          if eventType == "completed" then "completed" else "failed"
+        )
         val taskUpdate = resources.subAgentTaskStore
           .updateStatus(
-            "",
+            parentSessionId,
             subagentId,
             taskStatus,
             completedAt = Some(System.currentTimeMillis()),
-            lastError = if eventType == "failed" then Some(payload) else None
+            lastError = if taskStatus != "completed" then Some(payload) else None
           )
-          .handleErrorWith(e => IO(logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}")))
+          .handleErrorWith(e => logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}"))
 
         val notify = parentRef match
           case Some(ref) =>
@@ -277,7 +365,7 @@ object BackoffSupervisor:
       .collectFirst {
         case msg if msg.role == MessageRole.Assistant => msg.textContent
       }
-      .filter(_.nonEmpty)
+      .filter(_.trim.nonEmpty)
       .getOrElse("")
 
 end BackoffSupervisor

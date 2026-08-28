@@ -48,8 +48,9 @@ hierarchical task tree. Sub-tasks inherit the parent's context.
 - **description**: What needs to be done
 - **activeForm** (optional): Present continuous form for spinner (e.g., "Fixing authentication bug")
 - **parentTaskId** (optional): Parent task ID for creating sub-tasks
+- **taskKind** (optional): `"agent"` (default — your own tracked work) or `"human"` (a reminder FOR the user, e.g. "confirm the production deploy" — the user completes it by clicking its circle in the todos panel; do NOT work it yourself and never mark it in_progress)
 
-All tasks are created with status `pending`. Use TaskUpdate to change status and manage dependencies.
+All tasks are created with status `pending`. Use TaskUpdate to change status and manage dependencies. When you fully finish a task, mark it `needs_confirmation` (the user confirms completion themselves — `completed` is reserved for the user).
 
 The current task list is always visible in your system prompt — no need to call TaskList."""
 
@@ -72,6 +73,11 @@ The current task list is always visible in your system prompt — no need to cal
         "parentTaskId" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "Parent task ID. Omit ONLY for the project root task (subject should be the project name). All work tasks MUST have a parentTaskId linking them to their project.".asJson
+        ),
+        "taskKind" -> Json.obj(
+          "type" -> "string".asJson,
+          "enum" -> Json.arr("agent".asJson, "human".asJson),
+          "description" -> "'agent' (default) = your own tracked work; 'human' = a reminder for the user to complete via the todos panel (do not work it yourself)".asJson
         )
       ),
       "required" -> Json.arr("subject".asJson, "description".asJson)
@@ -92,12 +98,13 @@ The current task list is always visible in your system prompt — no need to cal
           subject = input("subject").flatMap(_.asString).getOrElse(""),
           description = input("description").flatMap(_.asString).getOrElse(""),
           activeForm = input("activeForm").flatMap(_.asString),
-          parentTaskId = input("parentTaskId").flatMap(_.asString)
+          parentTaskId = input("parentTaskId").flatMap(_.asString),
+          taskKind = input("taskKind").flatMap(_.asString)
         )
         for
           id <- store.create(sessionId, createInput)
           _ <- TaskToolHelper.emitTaskListUpdate(store, sessionId, ctx)
-        yield Right(s"Task created: ${createInput.subject}")
+        yield Right(s"Task created: ${createInput.subject} (ID: $id)")
       case (None, _) => IO.pure(Left(ToolError("No task store available")))
       case (_, None) => IO.pure(Left(ToolError("No session ID available")))
 

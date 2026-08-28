@@ -1,6 +1,33 @@
 import state from './state.js';
-import { activeView } from './chatView.js';
 import { t, getLocale } from './i18n.js';
+
+// ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
+
+/**
+ * Viewer render context - the payload canvas.js/fileViewers.js hands to a
+ * viewer's render(). Binary viewers receive no `content` (backend omits it).
+ * @typedef {Object} ViewerContext
+ * @property {string} itemType - registry key ('code', 'markdown', 'image', ...)
+ * @property {string} [content] - text content (absent for binary files)
+ * @property {string} [absPath] - absolute path (resolve relative assets against its dir)
+ * @property {string} [fileName]
+ * @property {number} [size] - bytes
+ * @property {string} [path] - path relative to the workspace root
+ * @property {string} [rootPath] - workspace root
+ * @property {{pageStart?: number}} [anchor] - #303 C3: document-reference jump target (pdf page)
+ */
+
+/**
+ * Viewer protocol object - every module under viewers/ default-exports this
+ * shape and fileViewers.js registers it by `name`.
+ * @typedef {Object} ViewerProtocol
+ * @property {string} name - itemType this viewer handles
+ * @property {string} label - human label
+ * @property {string[]} extensions - file extensions this viewer claims
+ * @property {boolean} binary - true when the backend sends no text content
+ * @property {number} priority - higher wins on extension conflicts
+ * @property {(pane: HTMLElement, ctx: ViewerContext) => (void | Promise<void>)} render
+ */
 
 // === Lottie spinner JSON (rotating ring) ===
 export const spinnerJson = {
@@ -41,12 +68,12 @@ export function initSpinner() {
 }
 
 export function playSpinner() {
-  const id = activeView?.dom?.lottieSpinnerEl?.id;
+  const id = state.getActiveView?.()?.dom?.lottieSpinnerEl?.id;
   if (id && _spinners[id]) _spinners[id].play();
 }
 
 export function stopSpinner() {
-  const id = activeView?.dom?.lottieSpinnerEl?.id;
+  const id = state.getActiveView?.()?.dom?.lottieSpinnerEl?.id;
   if (id && _spinners[id]) _spinners[id].stop();
 }
 
@@ -55,7 +82,7 @@ export function initMarkdown() {
   marked.setOptions({ breaks: true, gfm: true, headerIds: false });
 }
 
-// === KaTeX math rendering — protect math blocks from Markdown processing ===
+// === KaTeX math rendering - protect math blocks from Markdown processing ===
 // Bounded LRU cache for rendered markdown HTML. History restore and session
 // switching re-render identical content; caching avoids repeated
 // marked.parse + KaTeX.renderToString work.
@@ -154,7 +181,7 @@ export function escapeHtml(text) {
   return div.innerHTML;
 }
 
-// === Lucide icons — subtree-scoped replacement ===
+// === Lucide icons - subtree-scoped replacement ===
 // lucide.createIcons() always scans document.querySelectorAll('[data-lucide]')
 // (full-DOM walk, 50-200ms per call on large pages). Hot paths (message
 // render, list refresh) should call createIconsIn(container) instead, which
@@ -176,8 +203,10 @@ export function createIconsIn(root) {
     const icon = lucide.icons[pascal];
     if (!icon) continue;
     const [tag, iconAttrs, children] = icon;
+    /** @type {Record<string, string>} */
     const elAttrs = {};
     for (const a of el.attributes) elAttrs[a.name] = a.value;
+    /** @type {Record<string, string>} */
     const attrs = { ...iconAttrs, 'data-lucide': name, ...elAttrs };
     const classes = ['lucide', `lucide-${name}`, ...(elAttrs.class ? elAttrs.class.split(' ') : [])]
       .map(c => c.trim()).filter(Boolean);
@@ -207,17 +236,17 @@ export function formatDiff(content) {
     // Parse hunk header to reset line counters (don't render it)
     const hm = line.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
     if (hm) { oldLine = +hm[1]; newLine = +hm[2]; return ''; }
-    // Added line — uses new file line number
+    // Added line - uses new file line number
     if (line.startsWith('+')) {
       const n = newLine++;
       return '<div class="diff-line"><span class="diff-lineno">' + n + '</span><span class="diff-content diff-add">' + esc(line) + '</span></div>';
     }
-    // Removed line — uses old file line number
+    // Removed line - uses old file line number
     if (line.startsWith('-')) {
       const n = oldLine++;
       return '<div class="diff-line"><span class="diff-lineno">' + n + '</span><span class="diff-content diff-del">' + esc(line) + '</span></div>';
     }
-    // Context line (space prefix) — both counters advance
+    // Context line (space prefix) - both counters advance
     oldLine++; newLine++;
     return '<div class="diff-line"><span class="diff-lineno">' + (oldLine - 1) + '</span><span class="diff-content">' + esc(line) + '</span></div>';
   }).filter(Boolean).join('');
@@ -247,7 +276,7 @@ export function localizeToolLabel(label) {
     return label;
   }
 
-  // Match "ToolName(args)" — captures tool name and everything inside parens
+  // Match "ToolName(args)" - captures tool name and everything inside parens
   const m = firstLine.match(/^(\w+)\((.*)\)$/s);
   if (m) {
     const toolName = m[1];
@@ -392,9 +421,10 @@ export function attachToolClick(card) {
 
 // === Scroll helpers ===
 export function smartScroll() {
-  if (!activeView) return;
-  const chat = activeView.dom.chat;
-  const snapped = activeView.stream.scrollSnapped;
+  const view = state.getActiveView ? state.getActiveView() : null;
+  if (!view) return;
+  const chat = view.dom.chat;
+  const snapped = view.stream.scrollSnapped;
   requestAnimationFrame(() => {
     const threshold = 60;
     if (snapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold) {
@@ -419,7 +449,7 @@ const EXT_TO_LANG = {
   erl:'erlang',hrl:'erlang',ex:'elixir',exs:'elixir',
   clj:'clojure',cljs:'clojure',edn:'clojure',
   proto:'protobuf',graphql:'graphql',gql:'graphql',
-  diff:'diff',patch:'diff',dockerfile:'dockerfile'
+  diff:'diff',patch:'diff'
 };
 
 export function detectLangFromLabel(label) {
@@ -510,7 +540,7 @@ window.copyCode = function(btn) {
 // === Message copy button factory ===
 // Creates a hover-revealed copy button for chat messages (user & AI).
 // `text` is the raw text to copy (plain text for user, markdown for AI).
-// Only one copy button shows the "copied" checkmark at a time — clicking a
+// Only one copy button shows the "copied" checkmark at a time - clicking a
 // new one immediately clears the previous, so the checkmark always reflects
 // the most recently copied content.
 const COPY_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
@@ -553,7 +583,7 @@ export function createMsgCopyButton(text) {
 
 /** Check whether a session/agent ID belongs to a background sub-agent
  *  (Delegate sub-agent: "delegate-<agent>-<uuid8>"; SubTask worker:
- *  "subtask-<uuid8>" — backend naming protocol). Single point of truth so
+ *  "subtask-<uuid8>" - backend naming protocol). Single point of truth so
  *  future prefixes only need one change. Used for bg-agent popup routing. */
 export function isBgAgentId(id) {
   return typeof id === 'string' && (id.startsWith('delegate-') || id.startsWith('subtask-'));

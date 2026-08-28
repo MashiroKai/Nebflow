@@ -3,10 +3,13 @@
  * Device pairing: nebflow.space login → auto-configure NebLink.
  */
 import state from './state.js';
+import { key } from './branding.js';
 import { escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
-import { openDropbox } from './dropbox.js';
+import { brand } from './brand.js';
+// NOTE: dropbox.js is dynamically imported at the click site - P2-4 cycle cut
+// (neblink <-> dropbox mutual import).
 
 /** Transient success banner shown after NebLink pairing completes. */
 function showLoginSuccessBanner(message) {
@@ -43,8 +46,8 @@ export function getNeblinkState() {
 let deviceUpdateState = {};
 let _rerender = null;
 
-function getAuthToken() {
-  return localStorage.getItem('nebflow_token') || '';
+export function getAuthToken() {
+  return localStorage.getItem(key('token')) || '';
 }
 
 // ---- Fetch status ----
@@ -129,7 +132,7 @@ export function checkPairingRedirect() {
         neblinkState.pairing = false;
         const err = data.error || '配对失败';
         neblinkState.pairError = err === 'Unauthorized'
-          ? '认证失败。请从 Nebflow 终端重新打开浏览器页面，然后重试登录。'
+          ? `认证失败。请从 ${brand.productName} 终端重新打开浏览器页面，然后重试登录。`
           : err;
       }
       _rerender?.();
@@ -163,7 +166,10 @@ export function neblinkSettingsHTML() {
       ? `<div class="neblink-error">${escapeHtml(neblinkState.pairError)}</div>` : '';
     return `<div class="neblink-login-section">
       <div class="neblink-logged-out">
-        <img class="neblink-logged-out-logo" src="logo.svg" alt="">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark.png">
+          <img class="neblink-logged-out-logo" src="css/logo-bright.png" alt="">
+        </picture>
         <div class="neblink-logged-out-text">未登录，NebLink 不可用</div>
         <div class="neblink-logged-out-hint">点击左上角头像登录</div>
       </div>
@@ -399,13 +405,14 @@ export function bindNeblinkEvents(rerender) {
   // Device name click → open device modal (all devices, including local)
   document.querySelectorAll('.dropbox-clickable').forEach(el => {
     el.addEventListener('click', () => {
-      openDropbox({
+      // Dynamic import - P2-4 cycle cut (neblink <-> dropbox).
+      import('./dropbox.js').then(({ openDropbox }) => openDropbox({
         deviceId: el.dataset.deviceId,
         deviceName: el.dataset.deviceName,
         platform: el.dataset.platform,
         userDescription: el.dataset.desc,
         isLocal: el.dataset.isLocal === '1'
-      });
+      }));
     });
   });
 }

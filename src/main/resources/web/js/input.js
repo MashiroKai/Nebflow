@@ -2,6 +2,7 @@
 // All send logic, keyboard/input events, slash commands, attachments, drag/drop, voice.
 
 import state, { LS_HISTORY_KEY } from './state.js';
+import { key } from './branding.js';
 import { activeView, setActiveView, chatViews, findViewBySessionId } from './chatView.js';
 import { sendWs } from './ws.js';
 import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble, cancelToolStreamRAF, refreshSendButtonState } from './chat.js';
@@ -12,10 +13,21 @@ import { renderTaskList } from './taskList.js';
 import { t } from './i18n.js';
 import { getLocale } from './i18n.js';
 import { renderQueueBar } from './chatQueue.js';
+import { makeReference } from './reference.js';
 import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
+import { notifyVoiceState } from './micOrb.js';
+import { showToast } from './modal.js';
 
 // ---------- Large text auto-attachment (paste detection) ----------
 const LARGE_TEXT_THRESHOLD = 1000;
+// Conversion cap (user ruling 2026-08-27, 方案①): pastes larger than this are
+// inserted inline (plain message content) instead of converting to an
+// attachment. BYTE-based because persistQueue's survival cap counts base64
+// chars (400_000); base64 inflates ×4/3, so 300_000 bytes → exactly 400_000
+// base64 chars — every converted attachment is guaranteed refresh-survivable
+// and the 400KB-2MB loss window is mathematically closed (a char-based cap
+// cannot guarantee this: CJK text is 3 bytes/char).
+const LARGE_TEXT_MAX_BYTES = 300_000;
 
 /** Show a transient banner at the top of the viewport. */
 function showAttachmentBanner(message) {
@@ -34,6 +46,13 @@ const slashCommands = {
     desc: () => t('slash.ask'),
     run: () => {
       enterAskMode();
+    }
+  },
+  '/onboarding': {
+    desc: () => t('slash.onboarding'),
+    run: () => {
+      // Replay the fixed chat-native onboarding greeting (same as first run).
+      import('./onboarding.js').then(m => m.replayOnboarding()).catch(() => {});
     }
   }
 };
@@ -596,8 +615,12 @@ export function send() {
     setTimeout(() => send(), 200);
     return;
   }
-  // LLM is busy — queue the message instead of blocking
-  if (isBusy) {
+  // LLM is busy — queue the message instead of blocking. Frozen sessions
+  // EXEMPT: a frozen agent never runs a turn, so queueing would leave the
+  // message parked forever — the whole point of freeze is that a user message
+  // WAKES the agent (spec §3.2 input.js, F7). Fall through to the normal send
+  // path below (direct WS frame, no queueMessage).
+  if (isBusy && !state.frozenSessions.has(v.sessionId)) {
     queueMessage(v, text, v.pendingAttachments);
     input.value = '';
     input.style.height = 'auto';
@@ -636,7 +659,11 @@ export function send() {
     return;
   }
   renderUserBubble(text, v.pendingAttachments);
-  saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
+  saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a => a.type === 'taskRef'
+    ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
+    : a.type === 'ref'
+      ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
+      : { type: a.type, name: a.name, preview: a.preview })});
   // Save to input history
   if (text && text !== '/clear') {
     state.inputHistory.push(text);
@@ -654,11 +681,27 @@ export function send() {
   v.historyDraft = '';
   try {
     const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    // v2 §5.2/§6.1 + B (2026-08-20): taskRefs carry taskId/sessionId/subject —
+    // 描述/产出不重复进载荷（agent 凭 taskId 定位任务，记忆里有上下文）；
+    // 用户意见 = 本帧 content（§5.4，后端落 notes）。
+    const taskRefs = (v.pendingAttachments || [])
+      .filter(a => a.type === 'taskRef')
+      .map(a => ({ taskId: a.taskId, sessionId: a.sessionId || v.sessionId, ...(a.subject ? { subject: a.subject } : {}) }));
+    // Global Reference (2026-08-25 #303): carry unified refs on the wire. Backend's
+    // processTaskReturns reads taskRefs via circe cursor downField(...).getOrElse(Nil)
+    // — unknown fields (refs) are tolerated, so this is forward-compatible.
+    const refs = (v.pendingAttachments || [])
+      .filter(a => a.type === 'ref')
+      .map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }));
     sendWs({
       content: text,
-      attachments: v.pendingAttachments.map(a => ({
-        mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
-      })),
+      ...(taskRefs.length > 0 ? { taskRefs } : {}),
+      ...(refs.length > 0 ? { refs } : {}),
+      attachments: (v.pendingAttachments || [])
+        .filter(a => a.type !== 'taskRef' && a.type !== 'ref')
+        .map(a => ({
+          mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
+        })),
       clientMessageId,
       sessionId: v.sessionId,
       chatWidth: v.dom.chat?.clientWidth || 0
@@ -714,7 +757,7 @@ export function send() {
 // ---------- Input Queue (messages typed while LLM is busy) ----------
 
 let queueCounter = 0;
-const LS_QUEUE_KEY = 'nebflow_message_queue';
+const LS_QUEUE_KEY = key('message_queue');
 
 /** Persist message queue to localStorage so it survives browser refresh. */
 function persistQueue() {
@@ -728,7 +771,20 @@ function persistQueue() {
         text: it.text,
         skillName: it.skillName || null,
         mode: it.mode || null,
-        attachments: (it.attachments || []).map(a => ({ type: a.type, name: a.name }))
+        // v2 B15: taskRef chips must survive refresh — keep taskId/sessionId
+        // (+ subject as the display name); #303: ref blocks keep their full
+        // Reference shape; file/image keep type+name only — EXCEPT pasted-text
+        // attachments, whose base64 data IS the only copy of the content (the
+        // file never existed on disk). Keep small text payloads (<=400KB
+        // base64) so drain-after-refresh still delivers the content; images
+        // stay stripped (too large for localStorage).
+        attachments: (it.attachments || []).map(a => a.type === 'taskRef'
+          ? { type: 'taskRef', taskId: a.taskId, sessionId: a.sessionId, subject: a.subject, name: a.subject }
+          : a.type === 'ref'
+            ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
+            : a.type === 'text' && typeof a.data === 'string' && a.data.length > 0 && a.data.length <= 400000
+              ? { type: a.type, mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0 }
+              : { type: a.type, name: a.name })
       }));
     }
     localStorage.setItem(LS_QUEUE_KEY, JSON.stringify(serializable));
@@ -786,10 +842,34 @@ function queueMessage(view, text, attachments, skillName, mode) {
 
 function sendImmediate(sessionId, item) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
+  const refs = (item.attachments || []).filter(a => a.type === 'ref');
+  // File/image attachments (base64 data payload) ride the same default
+  // user-message frame. Without this branch, an attachment-only queued item
+  // fell into the immediateInput branch, whose backend handler reads only
+  // `content` — with content === '' the frame hit handleUserText's empty
+  // guard and the agent never saw it (silent non-response).
+  const fileAtts = (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref');
   if (item.mode === 'compact') {
     sendWs({ type: 'command', command: 'compact', sessionId, instruction: item.text || undefined });
   } else if (item.skillName) {
     sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
+  } else if (taskRefs.length > 0 || refs.length > 0 || fileAtts.length > 0) {
+    // v2 + #303: a return/reference message must ride the default user-message
+    // branch — the backend parses taskRefs/refs only there (WebSocketRoutes
+    // §6.2); immediateInput goes through handleUserText and would drop them.
+    const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    sendWs({
+      content: item.text,
+      ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
+      ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display })) } : {}),
+      attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
+        mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
+      })),
+      clientMessageId,
+      sessionId,
+      chatWidth: activeView?.dom?.chat?.clientWidth || 0
+    });
   } else {
     sendWs({ type: 'immediateInput', content: item.text, sessionId });
   }
@@ -803,7 +883,11 @@ function sendImmediate(sessionId, item) {
       renderUserBubble(item.text, item.attachments);
     }
   }
-  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) }, sessionId);
+  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
+    ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
+    : a.type === 'ref'
+      ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
+      : { type: a.type, name: a.name, preview: a.preview }) }, sessionId);
   // Save to input history (same as normal send and drainMessageQueue)
   if (item.text) {
     state.inputHistory.push(item.text);
@@ -886,7 +970,11 @@ export function drainMessageQueue(sessionId) {
     if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
     try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {}
   }
-  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) }, sessionId);
+  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
+    ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
+    : a.type === 'ref'
+      ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
+      : { type: a.type, name: a.name, preview: a.preview }) }, sessionId);
 
   // Send as normal UserInput
   if (sessionId) state.turnExpecting[sessionId] = true;
@@ -902,9 +990,16 @@ export function drainMessageQueue(sessionId) {
     sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
   } else {
     const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    // v2 B15: queued return messages keep their taskRefs when drained.
+    // #303: unified refs ride the same default user-message frame (backend
+    // parses refs via circe cursor — tolerated for forward-compat).
+    const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
+    const refs = (item.attachments || []).filter(a => a.type === 'ref');
     sendWs({
       content: item.text,
-      attachments: (item.attachments || []).map(a => ({
+      ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
+      ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display })) } : {}),
+      attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
         mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
       })),
       clientMessageId,
@@ -1026,6 +1121,23 @@ export function injectUserMessage(text, options = {}) {
 }
 
 // ---------- Initialize all input event listeners ----------
+
+// Close the active view's slash dropdown on outside clicks. Bound ONCE at
+// module scope: popup ChatViews rebuild their input DOM on every open
+// (openStepPopup re-runs initInput each time), so a per-initInput document
+// binding would both accumulate listeners and reference stale detached
+// elements. Resolution goes through activeView — only one dropdown can be
+// open at a time (updateSlashDropdown renders into activeView.dom only).
+document.addEventListener('click', (e) => {
+  const v = activeView;
+  if (!v || !v.dom || !v.dom.input || !v.dom.slashDropdown) return;
+  if (!v.dom.input.contains(e.target) && !v.dom.slashDropdown.contains(e.target)) {
+    v.dom.slashDropdown.classList.remove('on');
+    v.slashMatches = [];
+    v.slashSelectedIndex = -1;
+  }
+});
+
 export function initInput(view) {
   const input = view.dom.input;
   const sendBtn = view.dom.sendBtn;
@@ -1081,9 +1193,15 @@ export function initInput(view) {
       // Large text paste → auto-convert to file attachment via existing mechanism
       const pastedText = e.clipboardData.getData('text/plain') || '';
       if (pastedText.length > LARGE_TEXT_THRESHOLD) {
+        const blob = new Blob([pastedText], { type: 'text/plain' });
+        if (blob.size > LARGE_TEXT_MAX_BYTES) {
+          // Above the cap: keep inline (browser default paste) + toast, never
+          // silently drop the text.
+          showToast(t('input.pasteTooLarge'));
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
-        const blob = new Blob([pastedText], { type: 'text/plain' });
         const file = new File([blob], `pasted-text-${Date.now()}.txt`, { type: 'text/plain' });
         addFileAttachment(file);
         showAttachmentBanner(`大段文本（${pastedText.length} 字符）已转为文件附件`);
@@ -1215,41 +1333,10 @@ export function initInput(view) {
     f.click();
   };
 
-  // Drag & drop + paste on document.body — only register once (primary view)
+  // Paste image support (Cmd/Ctrl+V) — primary only, unchanged.
+  // Drag & drop moved to initGlobalFileDrop() (document-level delegation
+  // covering primary + popup input bars — see #303).
   if (view.id === 'primary') {
-    let dragCounter = 0;
-    document.body.addEventListener('dragenter', (e) => {
-      if (e.dataTransfer && e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
-        dragCounter++;
-        document.body.classList.add('drag-over');
-      }
-    });
-    document.body.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    });
-    document.body.addEventListener('dragleave', (e) => {
-      if (e.dataTransfer && e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
-        dragCounter--;
-        if (dragCounter <= 0) {
-          dragCounter = 0;
-          document.body.classList.remove('drag-over');
-        }
-      }
-    });
-    document.body.addEventListener('drop', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCounter = 0;
-      document.body.classList.remove('drag-over');
-      setActiveView(chatViews.primary);
-      const files = [];
-      if (e.dataTransfer.files) {
-        for (const f of e.dataTransfer.files) files.push(f);
-      }
-      files.forEach(f => addFileAttachment(f));
-    });
-    // Paste image support (Cmd/Ctrl+V)
     document.addEventListener('paste', (e) => {
       const items = e.clipboardData && e.clipboardData.items;
       if (!items) return;
@@ -1304,8 +1391,11 @@ export function initInput(view) {
     };
   }
 
-  // Update voice UI — only the button recording state, no overlay.
+  // Update voice UI — the orb reflects the state via notifyVoiceState; the
+  // legacy .recording class is kept for any external consumers (no visual
+  // styling on the orb button itself).
   function updateVoiceUI(state, data) {
+    notifyVoiceState(state);
     switch (state) {
       case 'listening':
       case 'speaking':
@@ -1313,6 +1403,10 @@ export function initInput(view) {
         break;
       case 'error':
         voiceBtn.classList.remove('recording');
+        // Voice errors must be user-visible, not console-only (#stt-hotfix:
+        // a denied/busy mic previously produced zero on-screen feedback).
+        // data is an already-classified, i18n'd message from voiceEngine.
+        showToast(data, 'error');
         console.warn('[voice] Error:', data);
         break;
       case 'idle':
@@ -1336,7 +1430,7 @@ export function initInput(view) {
     voiceBtn.classList.add('recording');
     input.classList.add('voice-dictating');
     input.focus();
-    try { localStorage.setItem('nebflow_voice_used', '1'); } catch {}
+    try { localStorage.setItem(key('voice_used'), '1'); } catch {}
     await startDictation(makeVoiceCallbacks());
   }
 
@@ -1349,26 +1443,25 @@ export function initInput(view) {
       input.value = before + after;
       voiceInterimLen = 0;
     }
+    // Show the "processing" orb state while the captured audio transcribes
+    // (spec §9 pure-front-end addition — voiceEngine emits no processing state
+    // after stop; the follow-up onState('idle') from the engine clears it).
+    notifyVoiceState('processing');
     stopDictation();
     voiceBtn.classList.remove('recording');
     input.classList.remove('voice-dictating');
     input.focus();
   }
 
-  // Push-and-hold voice: mousedown/touchstart to start, mouseup/mouseleave/touchend to stop
-  function onVoiceStart(e) {
-    if (e.type === 'touchstart') e.preventDefault();
-    startVoice();
-  }
-  function onVoiceEnd(e) {
+  // Click-toggle voice (user ruling 2026-08-25 21:34: tap once to start, tap
+  // again to stop — replaces the old push-and-hold). Also spec §3.3.
+  function onVoiceToggle(e) {
+    if (e) e.preventDefault();
+    setActiveView(view);
     if (voiceActive) stopVoice();
+    else startVoice();
   }
-  voiceBtn.addEventListener('mousedown', onVoiceStart);
-  voiceBtn.addEventListener('touchstart', onVoiceStart, { passive: false });
-  voiceBtn.addEventListener('mouseup', onVoiceEnd);
-  voiceBtn.addEventListener('mouseleave', onVoiceEnd);
-  voiceBtn.addEventListener('touchend', onVoiceEnd);
-  voiceBtn.addEventListener('touchcancel', onVoiceEnd);
+  voiceBtn.addEventListener('click', onVoiceToggle);
 
   // Escape key stops voice recording (only register once)
   if (view.id === 'primary') {
@@ -1380,15 +1473,8 @@ export function initInput(view) {
     });
   }
 
-  // Slash dropdown input listener and document click listener
+  // Slash dropdown input listener
   input.addEventListener('input', () => { setActiveView(view); updateSlashDropdown(); });
-  document.addEventListener('click', (e) => {
-    if (!input.contains(e.target) && !slashDropdown.contains(e.target)) {
-      slashDropdown.classList.remove('on');
-      view.slashMatches = [];
-      view.slashSelectedIndex = -1;
-    }
-  });
 
   // Ask/skill indicator cancel buttons
   {
@@ -1429,4 +1515,197 @@ export function initInput(view) {
       });
     }
   }
+}
+
+// ---------- Global drag & drop onto input bars (#303) ----------
+// Event delegation on document: popup views recreate their input bar DOM on
+// every open (per-element binding would go stale — see _inputBound), so all
+// drag listeners live here and resolve the owning ChatView at event time.
+// A file dropped onto ANY input bar (main or popup) attaches to THAT bar's
+// session; drops elsewhere are ignored (no page navigation).
+const INPUT_BAR_SELECTOR = '#input-bar, .fa-input-bar';
+// #303 internal drag: explorer file rows carry this custom MIME in addition to
+// (or instead of) native 'Files' — both count as attach payloads.
+const INTERNAL_DRAG_MIME = 'application/x-nebflow-file';
+// #303 global-reference: canvas tab rows carry this MIME to produce a Reference
+// (document/file/html-element) on drop into an input bar.
+const CANVAS_DRAG_MIME = 'application/x-nebflow-ref';
+
+/**
+ * #303/global-reference: append a unified Reference to a view's
+ * pendingAttachments and re-render the attachment preview strip. Used by the
+ * explorer/canvas entry points (right-click & drag). Returns true on success.
+ * @param {Object} ref  Reference produced by makeReference()
+ * @param {{attPreviewEl?:HTMLElement, attachments?:Array, focus?:boolean}} [target]
+ */
+export function appendRefToActiveView(ref, target) {
+  const view = activeView || state.getActiveView?.();
+  if (!view || !ref) return false;
+  if (!Array.isArray(view.pendingAttachments)) view.pendingAttachments = [];
+  view.pendingAttachments.push(ref);
+  if (target && target.attPreviewEl) {
+    renderAttachmentPreview({ attPreviewEl: target.attPreviewEl, attachments: view.pendingAttachments });
+  } else if (view.dom && view.dom.attPreview) {
+    renderAttachmentPreview({ attPreviewEl: view.dom.attPreview, attachments: view.pendingAttachments });
+  }
+  if (target?.focus !== false) view.dom?.input?.focus?.();
+  return true;
+}
+
+export function initGlobalFileDrop() {
+  let dragDepth = 0;    // child-element nesting depth inside the bar
+  let activeBar = null; // currently highlighted input bar
+
+  const hasAttach = (e) => {
+    if (!e.dataTransfer) return false;
+    const types = Array.from(e.dataTransfer.types || []);
+    return types.includes('Files') || types.includes(INTERNAL_DRAG_MIME) || types.includes(CANVAS_DRAG_MIME);
+  };
+  const barOf = (e) =>
+    e.target instanceof Element ? e.target.closest(INPUT_BAR_SELECTOR) : null;
+  const clearHighlight = () => {
+    if (activeBar) activeBar.classList.remove('drag-over');
+    activeBar = null; dragDepth = 0;
+  };
+
+  document.addEventListener('dragenter', (e) => {
+    if (!hasAttach(e)) return;
+    const bar = barOf(e);
+    if (!bar) return;
+    if (bar !== activeBar) clearHighlight();
+    activeBar = bar;
+    dragDepth++;
+    bar.classList.add('drag-over');
+  });
+
+  document.addEventListener('dragover', (e) => {
+    if (!hasAttach(e)) return;     // native text drags pass through untouched
+    e.preventDefault();            // block browser default "open dropped file"
+    e.dataTransfer.dropEffect = 'copy';
+  });
+
+  // No hasFiles() check here: dataTransfer.types is unreadable during
+  // dragleave in some engines (this was the old stuck-highlight bug).
+  document.addEventListener('dragleave', () => {
+    if (!activeBar) return;
+    dragDepth--;
+    if (dragDepth <= 0) clearHighlight();
+  });
+
+  document.addEventListener('drop', (e) => {
+    if (!hasAttach(e)) return;
+    e.preventDefault();            // never navigate to the dropped file
+    const bar = barOf(e);
+    clearHighlight();
+    if (!bar) return;              // dropped outside any input bar — ignore
+    const view = Object.values(chatViews)
+      .find(v => v.mounted && v.dom && v.dom.inputBar === bar);
+    if (!view || view.dom.input?.readOnly) return; // disabled popup guard
+    setActiveView(view);
+    const target = { attPreviewEl: view.dom.attPreview,
+                     attachments: view.pendingAttachments };
+    // #303 global-reference drag routing (v1.1):
+    //   internal explorer file row (application/x-nebflow-file with path+rootPath)
+    //     → Reference @path (not an attachment upload)
+    //   canvas tab row (application/x-nebflow-ref) → Reference w/ current anchor
+    //   anything else (OS/Finder files) → attachment upload (#303 regression)
+    const internal = e.dataTransfer.getData(INTERNAL_DRAG_MIME);
+    const canvasRef = e.dataTransfer.getData(CANVAS_DRAG_MIME);
+    if (internal) {
+      try {
+        const { path, rootPath } = JSON.parse(internal);
+        if (path) {
+          const absPath = joinAbsPath(rootPath, path);
+          const name = path.split('/').pop() || path;
+          appendRefToActiveView(makeReference({
+            refType: 'file',
+            source: { kind: 'workspace', path: absPath, fileName: name, title: name },
+          }), { focus: false });
+        } else console.warn('[drop] internal drag payload missing path');
+      } catch (err) {
+        console.warn('[drop] bad internal drag payload:', err);
+      }
+    } else if (canvasRef) {
+      try {
+        const input = JSON.parse(canvasRef);
+        if (input && input.refType) appendRefToActiveView(makeReference(input), { focus: false });
+        else console.warn('[drop] canvas ref payload missing refType');
+      } catch (err) {
+        console.warn('[drop] bad canvas ref payload:', err);
+      }
+    } else {
+      // External drag (desktop files) — unchanged.
+      Array.from(e.dataTransfer.files || []).forEach(f => addFileAttachment(f, null, target));
+    }
+    view.dom.input?.focus();
+  });
+}
+
+// ---------- #303 internal drag: explorer file → attachment pipeline ----------
+// Explorer rows drop with {path, rootPath} (explorer-relative path + absolute
+// root, the same coordinates readFile/listDir use). We re-read the file through
+// the SAME channels the tree uses — /api/nf-file for media (binary never rides
+// the WS), readFile WS for text — then feed a real File object into
+// addFileAttachment, so preview chips / upload / send are byte-identical to the
+// attach-button path.
+function joinAbsPath(rootPath, path) {
+  if (!rootPath) return path;
+  return rootPath.endsWith('/') ? rootPath + path : rootPath + '/' + path;
+}
+
+async function addPathAttachment({ path, rootPath }, view, target) {
+  const name = path.split('/').pop() || path;
+  const absPath = joinAbsPath(rootPath, path);
+  const token = localStorage.getItem(key('token')) || '';
+  // Typed window alias — the one-shot readFile guard flag shared with explorer.js.
+  const win = /** @type {Window & { __internalDragReadPath: string | null }} */ (/** @type {any} */ (window));
+
+  // Phase 1: whitelisted media (images, pdf, mp4…) come back from nf-file.
+  // Non-whitelisted extensions → 400 "File type not allowed" → phase 2.
+  try {
+    const resp = await fetch(`/api/nf-file?path=${encodeURIComponent(absPath)}&token=${encodeURIComponent(token)}`);
+    if (resp.ok) {
+      const blob = await resp.blob();
+      const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+      addFileAttachment(file, null, target);
+      return;
+    }
+  } catch { /* offline/network — fall through to readFile, it surfaces the error */ }
+
+  // Phase 2: text files via readFile WS. The answer is a fileContent frame that
+  // explorer.js routes to us (window flag + 'internal-file-read' event) instead
+  // of opening a Canvas tab. One-shot guard with a timeout so a lost response
+  // never leaks the flag into a later normal file open.
+  const readDone = new Promise((resolve) => {
+    let settled = false;
+    const finish = (detail) => { if (!settled) { settled = true; resolve(detail); } };
+    const onRead = (e) => {
+      clearTimeout(timer);
+      window.removeEventListener('internal-file-read', onRead);
+      finish(e.detail);
+    };
+    const timer = setTimeout(() => {
+      window.removeEventListener('internal-file-read', onRead);
+      if (win.__internalDragReadPath === path) win.__internalDragReadPath = null;
+      finish({ error: 'timeout' });
+    }, 8000);
+    window.addEventListener('internal-file-read', onRead);
+  });
+  win.__internalDragReadPath = path;
+  // sessionId follows explorer.js's own readFile semantics (state.activeSessionId,
+  // not the drop target view's session — the file tree is session-agnostic).
+  sendWs({ type: 'readFile', sessionId: state.activeSessionId, path, rootPath: rootPath || undefined });
+  const detail = await readDone;
+  if (detail.error) {
+    showAttError(`Failed to attach ${name}: ${detail.error}`, target);
+    return;
+  }
+  if (!detail.content) {
+    // Binary non-media (zip, bin…) — readFile never sends content for these and
+    // nf-file is whitelist-only, so there is nothing to embed.
+    showAttError(`Cannot attach binary file ${name} — reference its path in the message instead`, target);
+    return;
+  }
+  const file = new File([detail.content], name, { type: 'text/plain' });
+  addFileAttachment(file, null, target);
 }

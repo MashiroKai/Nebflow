@@ -4,12 +4,14 @@
 //   • Avatar — the NebLink login entry. Tap when logged out → opens the
 //     NebLink device-flow login modal (GitHub OAuth). Tap when logged in →
 //     opens the profile page on nebflow.space in a new tab.
+//   • Side Bar panel switch buttons (Files; future panels register the same way).
 //   • (spacer)
-//   • Settings.
+//   • Teams / Flows / Agents (Canvas tabs) and Settings.
 //
-// Device management (list, rename, cross-device messaging) lives in the Settings
-// panel's NebLink section — this bar is intentionally minimal: avatar + login
-// entry only.
+// This module also owns the Side Bar panel registry: the single source of
+// truth for Side Bar visibility + the active panel. Panel buttons, the header
+// #sidebar-toggle and ⌘B all drive the same API (setSideBarCollapsed /
+// toggleSideBar) — nothing else toggles the sidebar-collapsed class.
 //
 // The bar is an independent glass card (see nav.css #activity-bar). It is NOT
 // part of the 3-column layout — order:-1 keeps it leftmost, and it
@@ -19,6 +21,9 @@ import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './
 import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow } from './neblink.js';
 import { openAgents } from './agentManager.js';
 import { createIconsIn, escapeHtml } from './utils.js';
+import { brand } from './brand.js';
+import { t } from './i18n.js';
+import { key } from './branding.js';
 
 let initialized = false;
 let statusPollTimer = null;
@@ -27,6 +32,7 @@ export function initActivityBar() {
   if (initialized) return;
   initialized = true;
 
+  initSidePanels();
   bindSettingsButton();
   bindAgentsButton();
   bindAvatar();
@@ -39,6 +45,170 @@ export function initActivityBar() {
   observeSettingsModal();
 
   if (typeof lucide !== 'undefined') createIconsIn(document.getElementById('activity-bar'));
+}
+
+// ── Side Bar panel registry ──────────────────────────────
+// State:
+//   body.sidebar-collapsed — visibility, persisted as key('sidebar_collapsed')
+//   activePanelId          — last active panel id, persisted as
+//                            key('sidebar_active_panel'); kept while collapsed
+//                            so the next expand restores it
+// Collapsed ⇔ no panel active. The inline pre-paint script in index.html
+// restores the classes before first paint; this module re-syncs on init.
+const LS_COLLAPSED = key('sidebar_collapsed');
+const LS_PANEL = key('sidebar_active_panel');
+
+/** @type {Map<string, {id: string, buttonId: string, panelId: string, i18nKey: string|undefined}>} */
+const sidePanels = new Map();
+/** Last active panel id (survives collapse so expand restores it). */
+let activePanelId = 'files';
+
+/**
+ * Register a Side Bar panel + its Activity Bar switch button.
+ * Adding a future panel is a registration — no layout code changes.
+ * @param {{id: string, buttonId: string, panelId: string, i18nKey?: string}} def
+ */
+export function registerSidePanel(def) {
+  const { id, buttonId, panelId, i18nKey } = def;
+  if (!id || sidePanels.has(id)) return;
+  sidePanels.set(id, { id, buttonId, panelId, i18nKey });
+  const btn = document.getElementById(buttonId);
+  if (!btn) return;
+  if (i18nKey) btn.title = t(i18nKey);
+  btn.addEventListener('click', () => onPanelButtonClick(id));
+}
+
+/** true when the Side Bar is collapsed (the Activity Bar stays visible). */
+export function isSideBarCollapsed() {
+  return document.body.classList.contains('sidebar-collapsed');
+}
+
+/** Collapse/expand the Side Bar. Expanding restores the last active panel. */
+export function setSideBarCollapsed(collapsed) {
+  document.body.classList.toggle('sidebar-collapsed', collapsed);
+  localStorage.setItem(LS_COLLAPSED, String(collapsed));
+  if (!collapsed) {
+    if (!sidePanels.has(activePanelId)) activePanelId = 'files';
+    localStorage.setItem(LS_PANEL, activePanelId);
+  }
+  syncPanelDom();
+}
+
+/** ⌘B / header #sidebar-toggle entry point. */
+export function toggleSideBar() {
+  setSideBarCollapsed(!isSideBarCollapsed());
+}
+
+function onPanelButtonClick(id) {
+  if (!sidePanels.has(id)) return;
+  if (!isSideBarCollapsed() && activePanelId === id) {
+    // Re-click the active icon → collapse the Side Bar (VSCode semantics).
+    setSideBarCollapsed(true);
+    return;
+  }
+  // Switch panel (instant — no width animation) and/or expand.
+  activePanelId = id;
+  localStorage.setItem(LS_PANEL, id);
+  setSideBarCollapsed(false);
+}
+
+/** Mirror state onto panel/button classes + aria-pressed. */
+function syncPanelDom() {
+  const collapsed = isSideBarCollapsed();
+  for (const p of sidePanels.values()) {
+    const on = !collapsed && p.id === activePanelId;
+    const panel = document.getElementById(p.panelId);
+    const btn = document.getElementById(p.buttonId);
+    if (panel) panel.classList.toggle('active', on);
+    if (btn) {
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+  }
+}
+
+function initSidePanels() {
+  registerSidePanel({
+    id: 'messages',
+    buttonId: 'messages-btn',
+    panelId: 'panel-messages',
+    i18nKey: 'activity.messages',
+  });
+  registerSidePanel({
+    id: 'contacts',
+    buttonId: 'contacts-btn',
+    panelId: 'panel-contacts',
+    i18nKey: 'activity.contacts',
+  });
+  registerSidePanel({
+    id: 'files',
+    buttonId: 'files-btn',
+    panelId: 'panel-sessions',
+    i18nKey: 'activity.files',
+  });
+  registerSidePanel({
+    id: 'messages',
+    buttonId: 'messages-btn',
+    panelId: 'panel-messages',
+    i18nKey: 'activity.messages',
+  });
+  registerSidePanel({
+    id: 'contacts',
+    buttonId: 'contacts-btn',
+    panelId: 'panel-contacts',
+    i18nKey: 'activity.contacts',
+  });
+  // Restore the persisted panel; unregistered ids fall back to files.
+  const stored = localStorage.getItem(LS_PANEL);
+  activePanelId = stored && sidePanels.has(stored) ? stored : 'files';
+  // Classes were already restored pre-paint by the inline script; this
+  // re-sync is authoritative for the runtime (aria-pressed included).
+  syncPanelDom();
+  // Button titles follow the language.
+  window.addEventListener('locale-changed', () => {
+    for (const p of sidePanels.values()) {
+      if (!p.i18nKey) continue;
+      const btn = document.getElementById(p.buttonId);
+      if (btn) btn.title = t(p.i18nKey);
+    }
+  });
+  bridgeExplorerTitle();
+}
+
+// explorer.js (zero-change file) owns the explorer header title: it shows the
+// root folder name when a folder is open, and the hardcoded literal
+// 'Explorer' otherwise. Bridge the no-root case to i18n: whenever the title
+// carries no root path (its title tooltip attr is empty), show the localized
+// panel name. Self-heals after every explorer.js rewrite via observer.
+function bridgeExplorerTitle() {
+  const el = document.getElementById('panel-title-explorer');
+  if (!el) return;
+  const apply = () => {
+    if (el.title) return; // a root folder name is shown — leave it
+    const localized = t('panel.explorer');
+    if (el.textContent !== localized) el.textContent = localized;
+  };
+  apply();
+  new MutationObserver(apply).observe(el, { childList: true, characterData: true, subtree: true });
+  window.addEventListener('locale-changed', apply);
+}
+
+/**
+ * Set the count badge on an Activity Bar button (friends-messaging §4 L1/L1b).
+ * 0 hides the badge; >99 shows "99+". The badge slot lives inside the button
+ * markup (`<span class="activity-badge" hidden>`).
+ * @param {string} buttonId
+ * @param {number} count
+ * @param {string} [ariaLabel] - full accessible label (already interpolated)
+ */
+export function setActivityBadge(buttonId, count, ariaLabel) {
+  const btn = document.getElementById(buttonId);
+  const badge = /** @type {HTMLElement|null} */ (btn ? btn.querySelector('.activity-badge') : null);
+  if (!badge) return;
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  badge.hidden = n === 0;
+  badge.textContent = n > 99 ? '99+' : String(n);
+  if (ariaLabel !== undefined) badge.setAttribute('aria-label', n > 0 ? ariaLabel : '');
 }
 
 // ── Settings ─────────────────────────────────────────────
@@ -82,8 +252,8 @@ function bindAvatar() {
     const st = getNeblinkState();
     if (st.pairing) return; // pairing in progress — ignore
     if (st.loggedIn) {
-      // Logged in → open the profile page on nebflow.space
-      window.open('https://nebflow.space/profile', '_blank');
+      // Logged in → open the profile page on the product domain
+      window.open(`https://${brand.domain}/profile`, '_blank');
     } else {
       // Not logged in → open the NebLink device-flow login modal (GitHub OAuth)
       showLoginModal();
@@ -165,6 +335,14 @@ function injectLoginModalStyles() {
 .login-error-msg { font-size: 13px; color: #e57373; margin-bottom: 14px; line-height: 1.5; }
 `;
   document.head.appendChild(style);
+}
+
+/**
+ * Public entry for the NebLink device-flow login modal (used by the
+ * friends/messages panels' logged-out empty states).
+ */
+export function openLoginModal() {
+  showLoginModal();
 }
 
 /**
@@ -282,6 +460,12 @@ function showLoginModal() {
 }
 
 // ── State refresh → avatar styling ───────────────────────
+// Error latch: remember avatar URLs that failed to load (e.g. GitHub avatars
+// unreachable without a proxy). Without this, the 10s refresh poll re-shows
+// the broken <img> every cycle (src unchanged → no retry → broken-image icon)
+// and the onerror fallback to the logo never sticks.
+let avatarFailedUrl = '';
+
 async function refresh() {
   await fetchNeblinkStatus();
   renderAvatar();
@@ -302,10 +486,11 @@ function renderAvatar() {
   // Logged out → show the logo.
   // Filter obviously fake/placeholder URLs
   const validAvatarUrl = avatarUrl && avatarUrl.startsWith('http') && !avatarUrl.includes('example.com') ? avatarUrl : '';
-  const showPhoto = loggedIn && validAvatarUrl;
+  const showPhoto = loggedIn && validAvatarUrl && avatarFailedUrl !== validAvatarUrl;
   if (photoEl) {
     photoEl.hidden = !showPhoto;
     photoEl.onerror = () => {
+      avatarFailedUrl = validAvatarUrl; // latch: stop re-showing the broken image
       photoEl.hidden = true;
       if (logoEl) logoEl.hidden = false;
     };

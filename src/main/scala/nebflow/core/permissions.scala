@@ -1,5 +1,6 @@
 package nebflow.core
 
+import cats.effect.IO
 import io.circe.JsonObject
 import nebflow.core.tools.BashTool
 
@@ -44,6 +45,38 @@ object SafetyMode:
     io.circe.Decoder.decodeString.map(fromString)
 
 end SafetyMode
+
+// ============================================================
+// F1 (#433): global safety mode
+//
+// The user's auto-all was only ever a single session's meta field — the
+// system had no global channel, and ~/.nebflow/permission_policy.json was
+// a dead file no code read (incident 2026-08-26). This object wires the
+// global mode from nebflow.json:
+//
+//   { "safety": { "defaultMode": "auto-all" } }
+//
+// Hot-read per access (config path resolves per call, same pattern as
+// PresetStore) — flipping the value takes effect on the next decision /
+// seeding without a restart. Missing key, unparsable file, or unknown
+// value all fall back to ConfirmEdits.
+// ============================================================
+object GlobalSafety:
+
+  /** Read `safety.defaultMode` from nebflow.json; ConfirmEdits on any miss. */
+  def defaultMode: IO[SafetyMode] =
+    IO.blocking {
+      val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+      if !os.exists(configPath) then None
+      else
+        io.circe.parser
+          .parse(os.read(configPath))
+          .toOption
+          .flatMap(_.hcursor.downField("safety").downField("defaultMode").as[String].toOption)
+    }.handleErrorWith(_ => IO.pure(None))
+      .map(_.fold(SafetyMode.ConfirmEdits)(SafetyMode.fromString))
+
+end GlobalSafety
 
 // ============================================================
 // Reversibility check — drives the confirm/auto-approve decision

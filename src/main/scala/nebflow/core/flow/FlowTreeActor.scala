@@ -8,7 +8,6 @@ import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.entity.{EntityLoader, TeamDef}
-import nebflow.core.presets.PresetStore
 import nebflow.shared.{Message, MessageRole}
 
 // ============================================================
@@ -17,7 +16,7 @@ import nebflow.shared.{Message, MessageRole}
 //
 // In the unified model, this actor only manages Team agent sessions.
 // Flow DAG execution is handled entirely by FlowDagExecutor/FlowDagRunner
-// via Delegate(flow=...).
+// via the FlowTrigger tool.
 //
 // Responsibilities:
 //   1. Mount/unmount: create/remove team agent sessions
@@ -61,6 +60,11 @@ object TeamSessionRegistry:
    * (permissionAnswer/askUserAnswer) route to Mail-activated team agents.
    * rootSessionId anchors the permission-policy bucket (P2 inheritance chain).
    * P3 removes this overload and the actorMap itself.
+   *
+   * Block 0 registration chain (supervision trio §B2): also stamps
+   * parentSessionId — a member's parent is its team Manager, the Manager's
+   * parent is the mounting root (parentForRecord). Fallback = rootSessionId
+   * so the chain is never empty for team records.
    */
   def registerActor(
     sid: String,
@@ -69,7 +73,10 @@ object TeamSessionRegistry:
     rootSessionId: String
   ): IO[Unit] =
     actorMap.update(_ + (sid -> ref)) *>
-      resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Team, rootSessionId)))
+      parentForRecord(sid).flatMap { parentOpt =>
+        resources.agentRegistry.update(_ + (sid ->
+          AgentRecord(sid, ref, AgentKind.Team, rootSessionId, parentSessionId = parentOpt.getOrElse(rootSessionId))))
+      }
 
   def unregisterActor(sid: String): IO[Unit] =
     actorMap.update(_ - sid)
@@ -86,6 +93,25 @@ object TeamSessionRegistry:
 
   def isManager(sid: String): IO[Boolean] =
     managerMap.get.map(_.values.toSet.contains(sid))
+
+  /** Block 0 registration chain (supervision trio §B2): the Manager sessionId
+    * for a team instance, if registered. */
+  def managerOf(instance: String): IO[Option[String]] =
+    managerMap.get.map(_.get(instance))
+
+  /** Block 0 registration chain: resolve the parent session for a team agent
+    * record — a MEMBER's parent is its team Manager; the MANAGER's parent is
+    * the mounting root session (parentSessionMap). Unknown session → None
+    * (callers fall back to the activating/mounting session id). */
+  def parentForRecord(sid: String): IO[Option[String]] =
+    teamOfSession(sid).flatMap {
+      case Some(inst) =>
+        managerOf(inst).flatMap {
+          case Some(mgr) if mgr != sid => IO.pure(Some(mgr))
+          case _                        => parentSessionOf(inst)
+        }
+      case None => IO.pure(None)
+    }
 
   def registerParentSession(instance: String, sid: String): IO[Unit] =
     parentSessionMap.update(_ + (instance -> sid))
@@ -316,6 +342,10 @@ object FlowTreeActor:
               _ <- sidOpt.traverse_ { sid =>
                 for
                   _ <- TeamSessionRegistry.unregisterActor(sid, cfg.resources)
+                  _ <- TeamSessionRegistry.markIdle(sid)
+                  _ = logger.info(
+                    s"team agent actor stopped: agent='${deadRef.path.name}' session=$sid — registry unregistered, busy cleared"
+                  )
                   _ <- watchedAgentsRef.update(_ - sid)
                   turnStateOpt <- TurnStateStore.load(sid)
                   _ <- turnStateOpt.filter(_.inProgress).traverse_ { ts =>
@@ -575,10 +605,17 @@ object FlowTreeActor:
           _ <- unmounted.traverse_ { teamDef =>
             (for
               _ <- createTeamAgentSessions(teamDef.name, teamDef, cfg)
-              _ <- TeamSessionRegistry.registerParentSession(teamDef.name, sid)
+              // F2-1 (#433): auto-mount does NOT registerParentSession — the
+              // parentSessionMap is a global single-writer registry and any
+              // short-lived session (e2e, tests, an accidentally opened empty
+              // session) running restoreTeams would otherwise hijack the
+              // team's root-session ownership (last-writer-wins), rerouting
+              // permission buckets, InteractionHub cards and mailbox Mail into
+              // a zombie session (incident 2026-08-26). Only EXPLICIT mounts
+              // (flows.json entries, branch above) claim parentship.
               _ <- TeamSessionRegistry.registerParentActor(sid, cfg.parentAgentRef)
               _ <- flowNamesRef.update(_ + (teamDef.name -> teamDef.name))
-              _ <- logger.info(s"Auto-mounted team '${teamDef.name}'")
+              _ <- logger.info(s"Auto-mounted team '${teamDef.name}' (no parent registration, F2-1)")
             yield ()).handleErrorWith(e =>
               logger.error(s"Failed to auto-mount team '${teamDef.name}': ${e.getMessage}").void
             )
@@ -656,19 +693,7 @@ object FlowTreeActor:
             case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
             case None => EntityLoader.loadAgent(agentName)
           _ <- entryOpt.traverse_ { entry =>
-            val agentDef =
-              val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
-              AgentDef(
-                name = entry.name,
-                description = entry.description,
-                tools = entry.tools,
-                systemPrompt = entry.systemPrompt,
-                voiceEnabled = entry.voice,
-                category = entry.category,
-                mcpServers = entry.mcpServers,
-                model = Some(resolvedModel),
-                preset = entry.preset
-              )
+            val agentDef = entry.toAgentDef
             val rootSid = cfg.sessionId.getOrElse(session.id)
             for
               policyOpt <- cfg.resources.permissionPolicies.get.map(_.get(rootSid))

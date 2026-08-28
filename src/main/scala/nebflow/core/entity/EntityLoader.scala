@@ -5,7 +5,6 @@ import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import nebflow.agent.AgentDef
 import nebflow.core.{NebflowLogger, PathUtil}
-import nebflow.core.presets.PresetStore
 
 /**
  * Loads Team/Flow/Agent definitions from disk.
@@ -199,6 +198,42 @@ object EntityLoader:
       }
     yield inferred
 
+  /**
+   * List team-local agent entries under `teams/<teamName>/agents/`.
+   *
+   * Keys cover BOTH reference forms — the directory name (how loadTeamAgent
+   * resolves) and the resolved agent.json name (how findAgentByName matches)
+   * — so team validation accepts either. Team-local agents are invisible to
+   * listAgents(); this scan is what makes them resolvable for validation.
+   */
+  def listTeamAgents(teamName: String): IO[Map[String, AgentEntry]] =
+    IO.blocking {
+      val agentsSubDir = teamsDir / teamName / "agents"
+      if !os.exists(agentsSubDir) then Map.empty[String, AgentEntry]
+      else
+        os.list(agentsSubDir)
+          .filter(os.isDir)
+          .toList
+          .flatMap { agentDir =>
+            loadAgentFromDir(agentDir).map { entry =>
+              if entry.name == agentDir.last then Map(agentDir.last -> entry)
+              else Map(agentDir.last -> entry, entry.name -> entry)
+            }
+          }
+          .foldLeft(Map.empty[String, AgentEntry])(_ ++ _)
+    }
+
+  /** Agent names declared under flows/<flowName>/agents/ — flow-local agents
+    * that loadFlowAgent resolves BEFORE falling back to the global library.
+    * #424: predefined-flow compilation (LoadTool/FlowTriggerTool) must accept
+    * these as valid, so callers merge them into the compiler's agentNames. */
+  def listFlowAgentNames(flowName: String): IO[Set[String]] =
+    IO.blocking {
+      val dir = flowsDir / flowName / "agents"
+      if !os.exists(dir) then Set.empty
+      else os.list(dir).filter(os.isDir).map(_.last).toSet
+    }
+
   /** Infer agent category from team/flow membership. */
   def classifyAgent(name: String, teams: Map[String, TeamDef], flows: Map[String, FlowDagDef]): String =
     val inTeam = teams.values.exists(t => t.lead == name || t.members.contains(name))
@@ -261,24 +296,7 @@ object EntityLoader:
                 }
                 .headOption
           }
-    yield globalOpt.orElse(teamOpt).orElse(flowOpt).map { entry =>
-      // Resolve preset/legacy model into the final AgentModelConfig.
-      // Priority: explicit preset > legacy model > default preset > global chain.
-      val (resolvedModel, _) = PresetStore().resolve(entry.preset, entry.model)
-      AgentDef(
-        name = entry.name,
-        description = entry.description,
-        tools = entry.tools,
-        systemPrompt = entry.systemPrompt,
-        voiceEnabled = entry.voice,
-        category = entry.category,
-        mcpServers = entry.mcpServers,
-        model = Some(resolvedModel),
-        preset = entry.preset,
-        skills = entry.skills,
-        flows = entry.flows
-      )
-    }
+    yield globalOpt.orElse(teamOpt).orElse(flowOpt).map(_.toAgentDef)
 
   /**
    * Find the directory path of an agent by name across all three layers.
@@ -346,15 +364,40 @@ object EntityLoader:
       os.move.over(tmp, path)
     }
 
-  /** Write `teams/<name>/team.json`. */
+  /**
+   * Write `teams/<name>/team.json`.
+   *
+   * @deprecated W3 decision (2026-08-15): the entity write path is retired —
+   *   after the flow-creator team was archived no production caller remains
+   *   (verified by grep: zero call sites in src/main). EntityLoader is
+   *   read-only now; entity files are written by their owning creation
+   *   surfaces (REST routes / user editing on disk). Do not add new callers;
+   *   slated for removal.
+   */
+  @deprecated("W3: entity write path retired — EntityLoader is read-only; teams are created via their owning surfaces", "since 2026-08-15")
   def writeTeam(team: TeamDef): IO[Unit] =
     writeJson(teamsDir / team.name / "team.json", team.asJson.noSpaces)
 
-  /** Write `flows/<name>.json`. */
+  /**
+   * Write `flows/<name>.json`.
+   *
+   * @deprecated W3 decision (2026-08-15): same retirement as [[writeTeam]] —
+   *   no production caller; flows are created/edited as flow.json files by
+   *   their owning surfaces. Do not add new callers; slated for removal.
+   */
+  @deprecated("W3: entity write path retired — EntityLoader is read-only; flows are created via their owning surfaces", "since 2026-08-15")
   def writeFlow(flow: FlowDagDef): IO[Unit] =
     writeJson(flowsDir / s"${flow.name}.json", flow.asJson.noSpaces)
 
-  /** Write `agents/<name>/agent.json` + `system.md`. */
+  /**
+   * Write `agents/<name>/agent.json` + `system.md`.
+   *
+   * @deprecated W3 decision (2026-08-15): same retirement as [[writeTeam]] —
+   *   no production caller; agent definitions are written by their owning
+   *   surfaces (AgentLibrary update methods, REST PUT endpoints). Do not add
+   *   new callers; slated for removal.
+   */
+  @deprecated("W3: entity write path retired — EntityLoader is read-only; agents are created via their owning surfaces", "since 2026-08-15")
   def writeAgent(entry: AgentEntry): IO[Unit] =
     IO.blocking {
       val dir = agentsDir / entry.name
@@ -396,16 +439,10 @@ object EntityLoader:
       .map(a => s"agent '$a' not found")
       .toList
     val badRoutes = flow.nodes.toList.flatMap { (id, node) =>
-      node.onComplete match
-        case NodeRoute.Goto(target) if !flow.nodes.contains(target) =>
-          List(s"node '$id' routes to unknown node '$target'")
-        case NodeRoute.Switch(_, cases, _) =>
-          cases.toList.flatMap {
-            case (_, NodeRoute.Goto(target)) if !flow.nodes.contains(target) =>
-              List(s"node '$id' switch case routes to unknown node '$target'")
-            case _ => Nil
-          }
-        case _ => Nil
+      FlowStructure.routeTargets(node.onComplete).collect {
+        case (target, _) if target != FlowStructure.ReturnNode && !flow.nodes.contains(target) =>
+          s"node '$id' routes to unknown node '$target'"
+      }.distinct
     }
     entryMissing ++ missingAgents.distinct ++ badRoutes
 
@@ -428,7 +465,16 @@ object EntityLoader:
     jsonParse(s).flatMap(_.as[TeamDef]).left.map(_.getMessage)
 
   private def parseFlowJson(s: String): Either[String, FlowDagDef] =
-    jsonParse(s).flatMap(_.as[FlowDagDef]).left.map(_.getMessage)
+    jsonParse(s).flatMap(_.as[FlowDagDef]).left.map(_.getMessage).flatMap { fd =>
+      // R8-P2 structural validation at load time — reject structurally broken
+      // flows (pure cycles, single nodes, uncovered joins, mid-branch returns,
+      // fanout over cap) with a clear reason instead of letting them fail at
+      // runtime in confusing ways. Agent-existence checks stay in validateFlow.
+      FlowStructure.validate(fd) match
+        case Nil   => Right(fd)
+        case errs => Left(s"invalid flow structure: ${errs.mkString("; ")}")
+      end match
+    }
 
   private def parseAgentJson(s: String): Either[String, AgentEntry] =
     jsonParse(s).flatMap(_.as[AgentEntry]).left.map(_.getMessage)

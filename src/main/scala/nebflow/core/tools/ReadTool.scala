@@ -12,17 +12,22 @@ import java.util.Base64
 object ReadTool extends Tool:
   val MAX_LINE_COUNT = 2000
   val MAX_FILE_BYTES = 512 * 1024 // 512KB — approx 128k tokens, well within context
-  val MAX_IMAGE_BYTES = 10 * 1024 * 1024 // 10MB — images can be larger than text files
+
+  // G3: image preparation logic lives in ImageInject (shared with the
+  // Mail/Delegate/SubTask attachment channel). Aliases keep the public
+  // surface stable — behavior is unchanged.
+  val MAX_IMAGE_BYTES = ImageInject.MAX_IMAGE_BYTES
+  val COMPRESS_MAX_EDGE = ImageInject.COMPRESS_MAX_EDGE
+  val COMPRESS_TRIGGER_BYTES = ImageInject.COMPRESS_TRIGGER_BYTES
+  val POST_COMPRESS_MAX_BYTES = ImageInject.POST_COMPRESS_MAX_BYTES
+  private[tools] type ImagePrep = ImageInject.ImagePrep
+  private[tools] val Prepared = ImageInject.Prepared
+  private[tools] val TooLarge = ImageInject.TooLarge
+  private[tools] def prepareImage(bytes: Array[Byte], mediaType: String, fileName: String): ImagePrep =
+    ImageInject.prepareImage(bytes, mediaType, fileName)
 
   /** Supported image extensions → MIME type mapping. */
-  private val imageExtensions: Map[String, String] = Map(
-    ".png" -> "image/png",
-    ".jpg" -> "image/jpeg",
-    ".jpeg" -> "image/jpeg",
-    ".gif" -> "image/gif",
-    ".webp" -> "image/webp",
-    ".bmp" -> "image/bmp"
-  )
+  private def imageExtensions: Map[String, String] = ImageInject.imageExtensions
 
   val name = "Read"
 
@@ -92,10 +97,7 @@ Guidelines:
 
   /** Check if a file path has a supported image extension. Returns the MIME type if so. */
   private def imageMimeType(fileName: String): Option[String] =
-    val lower = fileName.toLowerCase
-    imageExtensions.collectFirst {
-      case (ext, mime) if lower.endsWith(ext) => mime
-    }
+    ImageInject.imageMimeType(fileName)
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
@@ -122,8 +124,13 @@ Guidelines:
                 )
               )
             else
-              val sizeKb = Files.size(filePath).toDouble / 1024
-              Right(s"[image: $fileName | $mediaType | ${f"$sizeKb%.0f"}KB]")
+              val bytes = Files.readAllBytes(filePath)
+              prepareImage(bytes, mediaType, fileName) match
+                case TooLarge(detail) => Left(ToolError(detail))
+                case Prepared(_, preparedMime, note) =>
+                  val sizeKb = bytes.length.toDouble / 1024
+                  val noteStr = note.fold("")(n => s" | $n")
+                  Right(s"[image: $fileName | $preparedMime | ${f"$sizeKb%.0f"}KB$noteStr]")
           }.flatMap {
             case Right(desc) =>
               for _ <- ctx.readTracker.traverse_(_.recordRead(filePath, false))
@@ -215,8 +222,13 @@ Guidelines:
       imageMimeType(fileName).flatMap { mediaType =>
         try
           val bytes = Files.readAllBytes(filePath)
-          val base64Data = Base64.getEncoder.encodeToString(bytes)
-          Some(List(ContentBlock.Image(base64Data, mediaType)))
+          prepareImage(bytes, mediaType, fileName) match
+            // Mirror of call()'s decision — call() has already surfaced the
+            // TooLarge error, so here it degrades to no image blocks.
+            case TooLarge(_) => None
+            case Prepared(prepared, preparedMime, _) =>
+              val base64Data = Base64.getEncoder.encodeToString(prepared)
+              Some(List(ContentBlock.Image(base64Data, preparedMime)))
         catch case _: Exception => None
       }
 

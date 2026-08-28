@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.core.PathUtil
+import nebflow.core.{AtomicJson, PathUtil}
 import nebflow.shared.{*, given}
 
 // Re-export SessionMeta from shared package for backward compatibility
@@ -157,7 +157,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       // startups no-op once files are under the threshold. Errors are logged
       // inside the fiber so they never surface to the load caller.
       shrinkOversizedUiFiles
-        .handleErrorWith(e => IO(logger.warn(s"UI file shrink failed: ${e.getMessage}")).void)
+        .handleErrorWith(e => logger.warn(s"UI file shrink failed: ${e.getMessage}"))
         .start
         .void
     )
@@ -187,7 +187,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
                   saveUiMessages(id, reduced) *>
                     IO.blocking(os.size(f)).map(newSize => List((f.last, size, newSize, msgs.length, reduced.length)))
                 )
-                .handleErrorWith(e => IO(logger.warn(s"Failed to shrink ${f.last}: ${e.getMessage}")).as(Nil))
+                .handleErrorWith(e => logger.warn(s"Failed to shrink ${f.last}: ${e.getMessage}").as(Nil))
             else IO.pure(Nil)
           }
         }
@@ -335,9 +335,8 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         val id = UUID.randomUUID().toString
         val now = System.currentTimeMillis()
         val meta = SessionMeta(id, "Default Session", now, now, hasUnread = false)
-        IO.blocking {
-          os.write.over(sessionFile(id), msgs.asJson.spaces2, createFolders = true)
-        } *> indexRef.set((id, List(meta), Nil)) *> activeMessagesRef.set(msgs) *> saveIndex
+        AtomicJson.write(sessionFile(id), msgs.asJson.spaces2) *>
+          indexRef.set((id, List(meta), Nil)) *> activeMessagesRef.set(msgs) *> saveIndex
       case None =>
         createDefaultSession
     }
@@ -352,7 +351,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     val now = System.currentTimeMillis()
     val meta = SessionMeta(id, "Nebula", now, now, hasUnread = false, agentName = Some("Nebula"))
     indexRef.set((id, List(meta), Nil)) *> activeMessagesRef.set(Nil) *>
-      IO.blocking(os.write.over(sessionFile(id), "[]", createFolders = true)) *> saveIndex
+      AtomicJson.write(sessionFile(id), "[]") *> saveIndex
 
   private def sessionFile(id: String): os.Path = sessionsDir / s"$id.json"
 
@@ -369,7 +368,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       folderId match
         case Some(fid) =>
           val json = Json.obj("folderId" -> fid.asJson)
-          os.write.over(f, json.noSpaces, createFolders = true)
+          AtomicJson.writeSync(f, json.noSpaces)
         case None =>
           // Clean up sidecar when session is moved to root
           if os.exists(f) then os.remove(f)
@@ -427,14 +426,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private def saveSessionMessages(id: String, msgs: List[Message]): IO[Unit] =
     // Invalidate pending debounce entry so loadSessionMessages reads the fresh disk state.
     dirtyMsgSessions.update(_ - id) *> pendingMsgs.update(_ - id) *>
-      IO.delay(msgs.asJson.noSpaces).flatMap { jsonStr =>
-        IO.blocking {
-          val f = sessionFile(id)
-          val tmp = sessionsDir / s"$id.json.tmp.${java.util.UUID.randomUUID()}"
-          os.write.over(tmp, jsonStr, createFolders = true)
-          os.move.over(tmp, f, replaceExisting = true)
-        }
-      }
+      IO.delay(msgs.asJson.noSpaces).flatMap(jsonStr => AtomicJson.write(sessionFile(id), jsonStr))
 
   private def saveIndex: IO[Unit] =
     indexRef.get.flatMap { case (activeId, sessions, folders) =>
@@ -444,17 +436,14 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           "sessions" -> sessions.asJson,
           "folders" -> folders.asJson
         )
-        // Atomic write: use UNIQUE temp file per call to avoid concurrent move race.
-        // The old shared temp file (_index.json.tmp) caused a race when multiple
-        // flow agents called createSession → saveIndex simultaneously: one thread
-        // moved the temp file, the other's os.move failed → pipeline crash.
-        val tmpFile = sessionsDir / s"_index.json.tmp.${java.util.UUID.randomUUID()}"
-        os.write.over(tmpFile, json.spaces2, createFolders = true)
-        os.move.over(tmpFile, indexFile)
+        // Atomic rename(2) via AtomicJson — the unique temp file per call also
+        // avoids the old shared-temp race when multiple flow agents call
+        // createSession → saveIndex simultaneously.
+        AtomicJson.writeSync(indexFile, json.spaces2)
       }.handleErrorWith(e =>
-        // If even the unique-temp approach fails (extremely unlikely), log and
+        // If even the atomic write fails (extremely unlikely), log and
         // continue — the in-memory Ref is the source of truth.
-        IO.delay(logger.warn(s"saveIndex failed (non-fatal): ${e.getMessage}")).void
+        logger.warn(s"saveIndex failed (non-fatal): ${e.getMessage}")
       )
     }
 
@@ -501,6 +490,58 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
 
   def listSessions: IO[List[SessionMeta]] =
     indexRef.get.map { case (_, sessions, _) => sessions.sortBy(-_.updatedAt) }
+
+  // Patterns mirror the generators: DelegateTool.scala `delegate-<agent>-<uuid8>`,
+  // SubTaskTool.scala `subtask-<uuid8>`, FlowDagExecutor.scala
+  // `dag-<flow[:10]>-<nodeId>-<ts6>`. Greedy middles + anchored suffixes keep
+  // the parse deterministic when agent/flow/node names contain hyphens.
+  private val DelegateId = "^delegate-(.+)-[0-9a-f]{8}$".r
+  private val DagId      = "^dag-(.+)-([0-9]{6})$".r
+  private val SubtaskId  = "^subtask-[0-9a-f]{8}$".r
+
+  /** Derive (name, agentName) for an on-disk-only session from its file id. */
+  private def unindexedNameAndAgent(id: String): (String, String) =
+    id match
+      case DelegateId(agent) => (s"$agent (delegate)", agent)
+      case SubtaskId()       => (s"Subtask ${id.drop("subtask-".length)}", "")
+      case DagId(middle, _)  =>
+        // The flow/node boundary is ambiguous once both contain hyphens; taking
+        // the last segment matches the common single-segment nodeId case.
+        (s"$middle (flow)", middle.split('-').last)
+      case _                 => (id, "")
+
+  /**
+   * Search-scope session list: indexed sessions ∪ on-disk `.ui.json` files
+   * whose id is NOT in the index.
+   *
+   * Delegate / SubTask / DAG-flow sub-agent sessions write their `.ui.json`
+   * directly but never enter the index (recoverOrphans only recovers
+   * UUID-named `<id>.json` files, and their ids never match that regex), so
+   * `listSessions` — and therefore GET /api/sessions and scope=all search —
+   * could not see them even though getUiMessages reads their history fine.
+   * This per-request disk scan fills that gap for the search endpoint only:
+   * synthesized entries are never added to the index, and `listSessions`
+   * (the sidebar path) stays untouched. ~550 files make the scan cheap.
+   */
+  def listSessionsIncludeUnindexed: IO[List[SessionMeta]] =
+    listSessions.flatMap { indexed =>
+      IO.blocking {
+        val indexedIds = indexed.map(_.id).toSet
+        if !os.exists(sessionsDir) then Nil
+        else
+          os.list(sessionsDir)
+            .filter(p => os.isFile(p) && p.last.endsWith(".ui.json"))
+            .toList
+            .flatMap { f =>
+              val id = f.last.stripSuffix(".ui.json")
+              if id.nonEmpty && !indexedIds.contains(id) then
+                val mtime = os.mtime(f)
+                val (name, agent) = unindexedNameAndAgent(id)
+                List(SessionMeta(id, name, mtime, mtime, hasUnread = false, agentName = Some(agent)))
+              else Nil
+            }
+      }.map(unindexed => (indexed ++ unindexed).sortBy(-_.updatedAt))
+    }
 
   /** List folders for a given agent. Old folders (agentName == "") are visible to Nebula only. */
   def listFolders(agentName: String): IO[List[Folder]] =
@@ -745,7 +786,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
             val init = if action == "created" then saveSessionMessages(meta.id, Nil) else IO.unit
             init *>
               saveIndex *>
-              IO.delay(logger.info(s"ensureAgentSession($agentName): $action, session=${meta.id}, flushed index")) *>
+              logger.info(s"ensureAgentSession($agentName): $action, session=${meta.id}, flushed index") *>
               notifySessionChanged(meta.id)
         persist.as((meta, action != "exists"))
       }
@@ -1138,7 +1179,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
    * provided list so callers control what gets persisted.
    */
   private def writeUiMessagesToDisk(id: String, msgs: List[UiMessage]): IO[Unit] =
-    IO.blocking(os.write.over(uiFile(id), msgs.asJson.noSpaces, createFolders = true))
+    AtomicJson.write(uiFile(id), msgs.asJson.noSpaces)
 
   /**
    * Eager cache update + immediate disk write. Used by paths that need the
@@ -1312,7 +1353,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         case Some(_) => drainDirty // keep draining until empty
         case None => IO.unit
       }
-      .handleErrorWith(e => IO(logger.warn(s"UI flush failed: ${e.getMessage}")))
+      .handleErrorWith(e => logger.warn(s"UI flush failed: ${e.getMessage}"))
 
   /**
    * Drain, clear the pending-fiber slot, then re-check: if new appends marked
@@ -1364,7 +1405,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         case Some(_) => drainDirtyMsgs
         case None => IO.unit
       }
-      .handleErrorWith(e => IO(logger.warn(s"Message flush failed: ${e.getMessage}")))
+      .handleErrorWith(e => logger.warn(s"Message flush failed: ${e.getMessage}"))
 
   private def runMsgFlush(): IO[Unit] =
     msgFlushFiber.set(None) *> drainDirtyMsgs *> dirtyMsgSessions.get.flatMap { remaining =>

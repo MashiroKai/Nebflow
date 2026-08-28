@@ -1,8 +1,14 @@
 // sidebar.js — Left panel management: nav tabs, agent list, settings, session sidebar
 
 import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
+import { brand } from './brand.js';
+import { key } from './branding.js';
 import { sendWs, onMessage } from './ws.js';
-import { showAgentModal, showBatchDeleteModal } from './modal.js';
+// Lazy wrapper - P2-4 cycle cut (sidebar <-> modal): modal.js statically
+// imports sidebar.js, so this module must not statically import modal.js.
+function showBatchDeleteModalLazy() {
+  import('./modal.js').then(({ showBatchDeleteModal }) => showBatchDeleteModal());
+}
 import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn } from './utils.js';
 import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
@@ -12,7 +18,7 @@ import { chatViews, setActiveView, activeView } from './chatView.js';
 import { cleanupCardIframes } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
-import { preloadModelCapabilities, renderVisionBadge, getVision, updateVision } from './modelCapabilities.js';
+import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
 import * as presets from './presets.js';
 
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -48,12 +54,14 @@ export function showPanel(tab) {
 export function openSettingsPanel() {
   document.getElementById('settings-overlay')?.classList.add('on');
   sendWs({type: 'getConfig'});
+  sendWs({type: 'getToolResultTtl'}); // #341: fresh TTL echo every open
   renderSettings();
 }
 
 /** Close the Settings modal and stop its periodic NebLink refresh. */
 export function closeSettingsPanel() {
   document.getElementById('settings-overlay')?.classList.remove('on');
+  scheduleDraft = null;   // #334: closing the panel discards unsaved edits
   if (window._neblinkRefreshTimer) {
     clearInterval(window._neblinkRefreshTimer);
     window._neblinkRefreshTimer = null;
@@ -139,17 +147,25 @@ export function renderAgentList() {
   const list = document.getElementById('nav-agent-list');
   if (!list) return;
   list.innerHTML = '';
-  state.agentsData.forEach(a => {
+  // ⑧ Nebula (orchestrator) pinned first with a separator before the rest
+  // (entity-icons-visual-spec §3.3). Nebula always renders the orbit icon —
+  // its identity marker must stay stable, so custom avatars are ignored.
+  const ordered = [...state.agentsData].sort((a, b) =>
+    (b.name === 'Nebula' ? 1 : 0) - (a.name === 'Nebula' ? 1 : 0));
+  ordered.forEach((a, idx) => {
+    const isNebula = a.name === 'Nebula';
     const el = document.createElement('div');
     const isActive = state.selectedAgent === a.name;
-    el.className = 'nav-agent' + (isActive ? ' active' : '');
+    el.className = 'nav-agent' + (isActive ? ' active' : '') + (isNebula ? ' nav-agent-orchestrator' : '');
     const avatar = a.avatar || '';
     const displayName = a.displayName || a.name;
     el.dataset.name = a.name;
     el.title = displayName;
-    const iconHtml = avatar
-      ? `<span class="nav-agent-icon">${avatar}</span>`
-      : `<span class="nav-agent-icon agent-letter-icon">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>`;
+    const iconHtml = isNebula
+      ? `<span class="nav-agent-icon"><i data-lucide="orbit"></i></span>`
+      : avatar
+        ? `<span class="nav-agent-icon">${avatar}</span>`
+        : `<span class="nav-agent-icon agent-letter-icon">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>`;
     el.innerHTML = `${iconHtml}<span class="nav-agent-label">${escapeHtml(displayName.slice(0, 6))}</span>`;
     el.addEventListener('click', () => selectAgent(a.name));
     el.addEventListener('contextmenu', (e) => {
@@ -157,6 +173,12 @@ export function renderAgentList() {
       sendWs({type: 'getAgentSystemPrompt', name: a.name});
     });
     list.appendChild(el);
+    // Separator right after the orchestrator (only when agents follow)
+    if (isNebula && ordered.length > 1) {
+      const sep = document.createElement('div');
+      sep.className = 'nav-agent-separator';
+      list.appendChild(sep);
+    }
   });
   createIconsIn(list);
   computeAgentStates();
@@ -267,6 +289,421 @@ export function selectAgent(agentName) {
 }
 
 // ---------- Settings Panel ----------
+/**
+ * Freeze-time (work-schedule) settings block — the toggle row + the segment
+ * editor. Renders `scheduleDraft ?? state.workSchedule` — the local edit draft
+ * takes precedence over the server echo while the user is editing. F2: first
+ * enable with no saved segments defaults to one 09:00-12:00 segment.
+ *
+ * SEMANTICS (user ruling 2026-08-19 23:16): the config is the FREEZE window
+ * (non-work hours) — a BLACKLIST. Agents park INSIDE these intervals and work
+ * outside them. Segments may cross midnight (start > end, e.g. 23:00-08:00 =
+ * frozen overnight); start == end is rejected (zero-length freeze window).
+ *
+ * EXPLICIT SAVE (user ruling 2026-08-20 #334): while the user is editing, every
+ * interaction (toggle / add / remove / time input) only mutates this local
+ * draft — NOTHING is sent to the server until the explicit Save button. The
+ * freeze engine reads state.workSchedule (server truth), so an editing
+ * mid-state can never trigger a freeze. The draft survives renderSettings()
+ * re-runs (serverConfig echoes for unrelated settings would otherwise wipe
+ * in-progress edits); closing the panel discards it (same as the STT config:
+ * unsaved typing does not persist). null = no edits in flight → render the
+ * server state.
+ */
+let scheduleDraft = null;
+
+/** Snapshot the current editor state into the draft (local only, no wire). */
+function markScheduleDirty() {
+  const enabled = document.getElementById('toggle-schedule')?.classList.contains('on') ?? false;
+  scheduleDraft = { enabled, segments: collectSegments() };
+  updateScheduleActionRow();
+}
+
+/** Show/hide the save/reset action row + "unsaved edits" hint. The action row
+ *  stays visible whenever a draft exists — even when the schedule was toggled
+ *  OFF while dirty, so the user can still commit (Save) or abandon (Reset) the
+ *  disable. */
+function updateScheduleActionRow() {
+  const dirty = scheduleDraft !== null;
+  const row = document.getElementById('schedule-actions');
+  const hint = document.getElementById('schedule-dirty-hint');
+  if (row) row.style.display = dirty ? 'flex' : 'none';
+  if (hint) hint.style.display = dirty ? 'block' : 'none';
+}
+
+function renderWorkScheduleSection() {
+  const serverWs = state.workSchedule && typeof state.workSchedule === 'object'
+    ? state.workSchedule : { enabled: false, segments: [] };
+  const ws = scheduleDraft ?? serverWs;
+  const enabled = !!ws.enabled;
+  const segs = Array.isArray(ws.segments) ? ws.segments : [];
+  const segRows = segs.map((s, i) => buildSegmentRowHtml(s, i)).join('');
+  return `
+    <div class="settings-row">
+      <span class="settings-label">${t('settings.workSchedule')}</span>
+      <div class="toggle ${enabled ? 'on' : ''}" id="toggle-schedule"></div>
+    </div>
+    <div id="schedule-editor" style="display:${enabled ? 'block' : 'none'};padding:4px 0 8px;">
+      <div class="segment-list" id="segment-list">${segRows}</div>
+      <button class="cfg-btn cfg-btn-add" id="btn-add-segment">${t('settings.addSegment')}</button>
+      <div class="cfg-hint">${t('settings.workScheduleOnHint')}</div>
+    </div>
+    <!-- Dirty hint + action row live OUTSIDE #schedule-editor so they stay
+         visible even when the editor is display:none — a toggled-OFF draft
+         must remain committable (Save) / abandonable (Reset). The segments
+         themselves stay in the DOM (renderScheduleEditorRows rebuilds from
+         the draft on re-enable), so nothing is cleared on toggle-off. -->
+    <div class="cfg-hint" id="schedule-dirty-hint" style="display:${scheduleDraft !== null ? 'block' : 'none'};margin-top:6px;color:var(--color-text-muted)">${t('settings.scheduleDirtyHint')}</div>
+    <div style="display:${scheduleDraft !== null ? 'flex' : 'none'};gap:8px;margin-top:8px" id="schedule-actions">
+      <button class="cfg-btn cfg-btn-primary" id="btn-save-schedule">${t('settings.scheduleSave')}</button>
+      <button class="cfg-btn" id="btn-reset-schedule">${t('settings.scheduleReset')}</button>
+    </div>
+    <div class="cfg-hint" id="schedule-off-hint" style="display:${enabled ? 'none' : 'block'};margin-top:-2px">${t('settings.workScheduleOffHint')}</div>`;
+}
+
+/**
+ * One segment row — start/end HH:mm inputs + remove. A small sapphire hint is
+ * shown when the segment crosses midnight (start > end): the freeze window
+ * spans into the next day (blacklist semantics).
+ */
+function buildSegmentRowHtml(s, i) {
+  const crossMidnight = HHMM_RE.test(s.start) && HHMM_RE.test(s.end)
+    && toMin(s.start) > toMin(s.end);
+  return `
+    <div class="segment-row" data-seg-index="${i}">
+      <span class="seg-label">${t('settings.segmentLabel', { n: i + 1 })}</span>
+      <input class="time-input" value="${escapeHtml(s.start || '')}" data-role="start" autocomplete="off" spellcheck="false">
+      <span class="seg-label">${t('settings.segmentTo')}</span>
+      <input class="time-input" value="${escapeHtml(s.end || '')}" data-role="end" autocomplete="off" spellcheck="false">
+      ${crossMidnight ? `<span class="seg-cross-midnight">${t('settings.segmentCrossMidnight')}</span>` : ''}
+      <button class="seg-remove" title="${t('settings.removeSegment')}" aria-label="${t('settings.removeSegment')}">×</button>
+    </div>`;
+}
+
+/**
+ * STT (speech-to-text) settings block — collapsed "advanced" panel (user
+ * ruling 2026-08-20: the free browser path is the default, STT is advanced).
+ * Echoes state.stt (serverConfig). The apiKey is NEVER echoed back (backend
+ * contract: serverConfig.stt = {sttConfigured, endpoint?, model?} only), so
+ * the password input starts empty on every render — a "已配置" badge +
+ * masked placeholder carry the configured state instead. Saving sends exactly
+ * what is typed (empty apiKey = omit the field, keep the stored key); the
+ * clear button sends all-empty = clear config (back to the free browser path).
+ */
+
+/** Session-memory expand state: reopening settings within the same session
+ *  keeps the panel open; a fresh session starts collapsed (advanced option —
+ *  not persisted to storage on purpose). */
+let sttAdvanceExpanded = false;
+
+/** Tool result TTL panel — same session-memory collapse semantics as STT
+ *  advance (#341): collapsed by default, expanded state survives re-renders
+ *  but not fresh sessions. */
+let ttlAdvanceExpanded = false;
+
+/** Backend defaults — mirrors ToolResultTtlConfig.parseStrict bounds. Used
+ *  both for rendering before the first echo and for local pre-validation. */
+const TTL_DEFAULTS = { enabled: false, ttlMinutes: 60, keepRecent: 5, minChars: 2000 };
+
+/** True while a setToolResultTtl is in flight — lets the shared
+ *  configUpdateFailed handler attribute the error to THIS panel (the same
+ *  frame type is also emitted by workSchedule/STT saves, so without a guard
+ *  a non-TTL failure would toast the TTL message). */
+let ttlSavePending = false;
+const TTL_BOUNDS = {
+  ttlMinutes: { min: 1, max: 43200 },
+  keepRecent: { min: 0, max: 200 },
+  minChars: { min: 0, max: 5000000 },
+};
+
+/** Parse an integer input exactly like the backend parseStrict does — rejects
+ *  empty/non-integer/float strings (backend accepts Int JSON only). */
+function parseTtlInt(value) {
+  const s = String(value).trim();
+  if (!/^-?\d+$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/** Typed accessor for the TTL number inputs — getElementById returns
+ *  HTMLElement (no .value/.disabled), so cast once here instead of at every
+ *  call site (checkJs-clean). */
+/** @param {string} id @returns {HTMLInputElement|null} */
+function ttlInput(id) {
+  return /** @type {HTMLInputElement|null} */ (document.getElementById(id));
+}
+
+/**
+ * Tool result TTL settings block (#341 frontend tail) — collapsed advanced
+ * panel mirroring the STT advance pattern. Echoes state.toolResultTtl
+ * (fetched via getToolResultTtl; refreshed by toolResultTtl/toolResultTtlSaved
+ * frames). EXPLICIT SAVE (#334 ruling applied to all runtime-behavior config):
+ * edits stay in the DOM until the Save button; closing the panel discards
+ * them; nothing reaches the freeze engine mid-edit. enabled=false greys the
+ * three number inputs.
+ */
+function renderTtlSection() {
+  const cfg = state.toolResultTtl && typeof state.toolResultTtl === 'object'
+    ? state.toolResultTtl : TTL_DEFAULTS;
+  const enabled = !!cfg.enabled;
+  const rowHtml = (labelKey, hintKey, id, value) => `
+      <div class="cfg-form-group">
+        <label class="cfg-label" for="${id}">${t(labelKey)}</label>
+        <input class="cfg-input" id="${id}" type="number" inputmode="numeric" value="${Number(value)}" ${enabled ? '' : 'disabled'} autocomplete="off">
+        <div class="cfg-hint">${t(hintKey)}</div>
+      </div>`;
+  return `
+    <div class="settings-row stt-advance-toggle-row">
+      <button type="button" class="settings-collapse-toggle" id="ttl-advance-toggle"
+              aria-expanded="${ttlAdvanceExpanded}" aria-controls="ttl-advance-body">
+        <span class="settings-label">${t('settings.ttlAdvanceTitle')}</span>
+        <span class="settings-collapse-chevron" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div class="settings-collapse-body" id="ttl-advance-body" ${ttlAdvanceExpanded ? '' : 'hidden'}>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.ttlEnabled')}</span>
+        <div class="toggle ${enabled ? 'on' : ''}" id="toggle-ttl-enabled" role="switch" aria-checked="${enabled}" tabindex="0"></div>
+      </div>
+      <div class="cfg-hint">${t('settings.ttlEnabledHint')}</div>
+      ${rowHtml('settings.ttlMinutesLabel', 'settings.ttlMinutesHint', 'ttl-minutes', cfg.ttlMinutes ?? TTL_DEFAULTS.ttlMinutes)}
+      ${rowHtml('settings.keepRecentLabel', 'settings.keepRecentHint', 'ttl-keep-recent', cfg.keepRecent ?? TTL_DEFAULTS.keepRecent)}
+      ${rowHtml('settings.minCharsLabel', 'settings.minCharsHint', 'ttl-min-chars', cfg.minChars ?? TTL_DEFAULTS.minChars)}
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="cfg-btn cfg-btn-primary" id="btn-save-ttl">${t('settings.ttlSave')}</button>
+      </div>
+    </div>`;
+}
+
+/** Re-render just the TTL section in place after a WS echo (settings open).
+ *  Elements are rebuilt, so listeners bound by bindTtlEvents are re-attached
+ *  to fresh nodes (old ones GC) — no accumulation. */
+function refreshTtlSectionDom() {
+  const wrap = document.getElementById('ttl-section-wrap');
+  if (!wrap) return; // settings panel not open
+  wrap.innerHTML = renderTtlSection();
+  bindTtlEvents();
+}
+
+function bindTtlEvents() {
+  // Expand/collapse — session-memory state, same pattern as STT advance.
+  document.getElementById('ttl-advance-toggle')?.addEventListener('click', () => {
+    ttlAdvanceExpanded = !ttlAdvanceExpanded;
+    const body = document.getElementById('ttl-advance-body');
+    const toggle = document.getElementById('ttl-advance-toggle');
+    if (body) body.hidden = !ttlAdvanceExpanded;
+    if (toggle) toggle.setAttribute('aria-expanded', String(ttlAdvanceExpanded));
+  });
+
+  // Enabled switch — toggles the .on class and the three number inputs'
+  // disabled state in place (#341: enabled=false → inputs greyed). Local
+  // only: nothing reaches the backend until the explicit Save button (#334
+  // ruling — editing mid-states must never affect runtime behavior).
+  const sw = document.getElementById('toggle-ttl-enabled');
+  if (sw) {
+    const flip = () => {
+      const on = sw.classList.toggle('on');
+      sw.setAttribute('aria-checked', String(on));
+      ['ttl-minutes', 'ttl-keep-recent', 'ttl-min-chars'].forEach(id => {
+        const inp = ttlInput(id);
+        if (inp) inp.disabled = !on;
+      });
+    };
+    sw.addEventListener('click', flip);
+    sw.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); }
+    });
+  }
+
+  // Explicit save (#334 semantics) — local STRICT pre-validation mirrors the
+  // backend parseStrict bounds exactly (ttlMinutes 1–43200, keepRecent 0–200,
+  // minChars 0–5000000, integers only) so a typo is blocked client-side with
+  // an actionable toast instead of a round-trip to configUpdateFailed. The
+  // payload is always the FULL config (four fields mandatory — the backend
+  // replaces the whole node, there is no merge).
+  document.getElementById('btn-save-ttl')?.addEventListener('click', () => {
+    const enabled = document.getElementById('toggle-ttl-enabled')?.classList.contains('on') ?? false;
+    const values = {
+      ttlMinutes: parseTtlInt(ttlInput('ttl-minutes')?.value),
+      keepRecent: parseTtlInt(ttlInput('ttl-keep-recent')?.value),
+      minChars: parseTtlInt(ttlInput('ttl-min-chars')?.value),
+    };
+    const fieldKey = {
+      ttlMinutes: 'settings.ttlMinutesLabel',
+      keepRecent: 'settings.keepRecentLabel',
+      minChars: 'settings.minCharsLabel',
+    };
+    for (const [name, raw] of Object.entries(values)) {
+      if (raw === null) {
+        window.__showToast?.(t('settings.ttlInvalidInt', { field: t(fieldKey[name]) }), 'error');
+        return;
+      }
+      const { min, max } = TTL_BOUNDS[name];
+      if (raw < min || raw > max) {
+        window.__showToast?.(t('settings.ttlOutOfRange', { field: t(fieldKey[name]), min, max }), 'error');
+        return;
+      }
+    }
+    sendWs({
+      type: 'setToolResultTtl',
+      config: { enabled, ttlMinutes: values.ttlMinutes, keepRecent: values.keepRecent, minChars: values.minChars },
+    });
+    ttlSavePending = true; // configUpdateFailed attribution window
+  });
+}
+
+// #341 echo: getToolResultTtl response — authoritative config into state +
+// in-place refresh (no full renderSettings: unrelated drafts must survive).
+onMessage('toolResultTtl', (msg) => {
+  if (msg.config && typeof msg.config === 'object') state.toolResultTtl = msg.config;
+  refreshTtlSectionDom();
+});
+
+// #341: setToolResultTtl success — same authoritative refresh + a success
+// toast (save is NOT optimistic: the UI only confirms after the backend ack).
+onMessage('toolResultTtlSaved', (msg) => {
+  ttlSavePending = false;
+  if (msg.config && typeof msg.config === 'object') state.toolResultTtl = msg.config;
+  refreshTtlSectionDom();
+  window.__showToast?.(t('settings.ttlSaved'), 'success');
+});
+
+// configUpdateFailed has NO global consumer (main.js only handles the
+// configUpdated success flag) — surface backend validation errors as an error
+// toast here. The same frame is emitted by workSchedule/STT saves too, so
+// attribute the message to the TTL panel only while a TTL save is in flight;
+// otherwise fall back to the generic copy (chat.configUpdateFailed) so other
+// save paths never fail silently in the console.
+onMessage('configUpdateFailed', (msg) => {
+  const detail = typeof msg.message === 'string' && msg.message ? `: ${msg.message}` : '';
+  const prefix = ttlSavePending ? t('settings.ttlSaveFailed') : t('chat.configUpdateFailed');
+  ttlSavePending = false;
+  window.__showToast?.(prefix + detail, 'error');
+});
+
+function renderSttSection() {
+  const stt = state.stt && typeof state.stt === 'object' ? state.stt : {};
+  const configured = !!stt.sttConfigured;
+  const endpoint = stt.endpoint || '';
+  const model = stt.model || '';
+  const status = configured
+    ? t('settings.sttConfiguredStatus', { endpoint: escapeHtml(endpoint), model: escapeHtml(model) })
+    : t('settings.sttUnconfiguredStatus');
+  return `
+    <div class="settings-row stt-advance-toggle-row">
+      <button type="button" class="settings-collapse-toggle" id="stt-advance-toggle"
+              aria-expanded="${sttAdvanceExpanded}" aria-controls="stt-advance-body">
+        <span class="settings-label">${t('settings.sttAdvanceTitle')}</span>
+        <span class="settings-collapse-chevron" aria-hidden="true"></span>
+      </button>
+      <span class="cfg-hint stt-status" id="stt-status-hint">${status}</span>
+    </div>
+    <div class="settings-collapse-body" id="stt-advance-body" ${sttAdvanceExpanded ? '' : 'hidden'}>
+      <div class="cfg-form-group">
+        <label class="cfg-label" for="stt-endpoint">${t('settings.sttEndpoint')}</label>
+        <input class="cfg-input" id="stt-endpoint" type="text" value="${escapeHtml(endpoint)}" placeholder="https://api.example.com/v1/audio/transcriptions" autocomplete="off" spellcheck="false">
+        <label class="cfg-label" for="stt-model">${t('settings.sttModel')}</label>
+        <input class="cfg-input" id="stt-model" type="text" value="${escapeHtml(model)}" placeholder="${t('settings.sttModelPlaceholder')}" autocomplete="off" spellcheck="false">
+        <label class="cfg-label" for="stt-apikey">${t('settings.sttApiKey')}
+          ${configured ? `<span class="stt-key-configured">${t('settings.sttKeyConfigured')}</span>` : ''}
+        </label>
+        <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t(configured ? 'settings.sttApiKeyConfiguredPlaceholder' : 'settings.sttApiKeyPlaceholder')}" autocomplete="off">
+        <div class="cfg-hint">${t('settings.sttHint')}</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="cfg-btn cfg-btn-primary" id="btn-save-stt">${t('settings.sttSave')}</button>
+          <button class="cfg-btn" id="btn-clear-stt">${t('settings.sttClear')}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/**
+ * Collect segments currently in the editor (all rows, raw values).
+ */
+function collectSegments() {
+  const rows = document.querySelectorAll('#segment-list .segment-row');
+  return Array.from(rows).map(row => ({
+    start: row.querySelector('[data-role="start"]')?.value.trim() || '',
+    end: row.querySelector('[data-role="end"]')?.value.trim() || ''
+  }));
+}
+
+/** Rebuild the segment rows (used for the F2 default on first enable). */
+function renderScheduleEditorRows(segs) {
+  const list = document.getElementById('segment-list');
+  if (!list) return;
+  list.innerHTML = segs.map((s, i) => buildSegmentRowHtml(s, i)).join('');
+}
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+function toMin(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
+
+/**
+ * Blacklist validation contract (user ruling 2026-08-19 23:16): HH:mm format;
+ * start == end → rejected (zero-length freeze window is meaningless); start > end
+ * → LEGAL (crosses midnight, freeze window spans into the next day). Overlap
+ * allowed — backend takes the union.
+ * Returns null when valid, else an i18n error key resolved to text.
+ */
+function validateSegments(segs) {
+  for (const s of segs) {
+    if (!HHMM_RE.test(s.start) || !HHMM_RE.test(s.end)) return t('settings.scheduleInvalidTime');
+    const sm = toMin(s.start);
+    const em = toMin(s.end);
+    if (sm === em) return t('settings.scheduleInvalidRange');
+  }
+  return null;
+}
+
+/** In-place toggle of a row's cross-midnight hint (no rebuild → no focus loss
+ *  while the user clicks from the start input into the end input). */
+function updateSegmentRowHint(row) {
+  if (!row) return;
+  const start = row.querySelector('[data-role="start"]')?.value.trim() || '';
+  const end = row.querySelector('[data-role="end"]')?.value.trim() || '';
+  const cross = HHMM_RE.test(start) && HHMM_RE.test(end) && toMin(start) > toMin(end);
+  let hint = row.querySelector('.seg-cross-midnight');
+  if (cross && !hint) {
+    hint = document.createElement('span');
+    hint.className = 'seg-cross-midnight';
+    hint.textContent = t('settings.segmentCrossMidnight');
+    row.insertBefore(hint, row.querySelector('.seg-remove'));
+  } else if (!cross && hint) {
+    hint.remove();
+  }
+}
+
+/**
+ * Validate + persist. Local validation only guards the wire; the backend
+ * re-validates (fail-safe → disabled, configUpdateFailed on bad payload).
+ * Returns true when the frame was sent, false on validation failure — the
+ * caller keeps the draft on failure so the user can fix and retry.
+ */
+function saveWorkSchedule(enabled, segs, opts) {
+  if (enabled && (!Array.isArray(segs) || segs.length === 0)) {
+    window.__showToast?.(t('settings.scheduleEmpty'), 'error');
+    return false;
+  }
+  const err = validateSegments(segs);
+  if (err) { window.__showToast?.(err, 'error'); return false; }
+  sendWs({ type: 'setWorkSchedule', workSchedule: { enabled, segments: segs } });
+  if (opts && opts.toast) window.__showToast?.(t('settings.scheduleSaved'), 'success');
+  return true;
+}
+
+/**
+ * Nearest effort level for the persisted thinking config (#345) — used only
+ * for dropdown echo. Boundaries mirror OpenAiAdapter.budgetToEffort so the
+ * displayed level always equals what the adapter would send upstream.
+ */
+function effortFromConfig() {
+  if (!state.thinkingMode?.enabled) return 'off';
+  const b = state.thinkingMode.budgetTokens ?? 32000;
+  if (b <= 2048) return 'low';
+  if (b <= 8192) return 'medium';
+  return 'high'; // covers ≤32768 and legacy >32768 (xhigh collapsed to high)
+}
+
 export function renderSettings() {
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
@@ -274,7 +711,6 @@ export function renderSettings() {
   const providers = llm.providers || {};
   const mcpServers = state.mcpServers || [];
   const providerNames = Object.keys(providers);
-
   // Build language selector options
   const locales = getAvailableLocales();
   const localeLabels = { 'zh-CN': '中文', en: 'English' };
@@ -291,21 +727,27 @@ export function renderSettings() {
       <div class="settings-section-title">${t('settings.runtime')}</div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.thinkingMode')}</span>
-        <div class="toggle ${state.thinkingMode ? 'on' : ''}" id="toggle-thinking"></div>
+        <select class="cfg-select" id="cfg-thinking-effort" style="width:auto">
+          ${['off','low','medium','high'].map(lvl => `<option value="${lvl}"${effortFromConfig() === lvl ? ' selected' : ''}>${t('settings.thinkingEffort.' + lvl)}</option>`).join('')}
+        </select>
       </div>
-      <div class="cfg-form-group" id="thinking-budget-group" style="display:${state.thinkingMode ? 'block' : 'none'}">
-        <label class="cfg-label">${t('settings.thinkingBudget')}</label>
-        <input class="cfg-input" id="cfg-thinking-budget" type="number" min="1024" value="${state.thinkingMode?.budgetTokens ?? 32000}" autocomplete="off">
-        <div class="cfg-hint">${t('settings.thinkingBudgetHint')}</div>
-      </div>
+      <div class="cfg-hint">${t('settings.thinkingEffortHint')}</div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.llmLog')}</span>
         <div class="toggle ${state.llmLogEnabled !== false ? 'on' : ''}" id="toggle-llm-log"></div>
       </div>
+      ${renderWorkScheduleSection()}
+      ${renderSttSection()}
+      <div id="ttl-section-wrap">${renderTtlSection()}</div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.language')}</span>
         <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
       </div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.autostart')}</span>
+        <div class="toggle ${state.autostartStatus?.enabled ? 'on' : ''} ${state.autostartStatus && !state.autostartStatus.supported ? 'disabled' : ''}" id="toggle-autostart"></div>
+      </div>
+      <div class="cfg-hint" id="autostart-hint" style="display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'};margin-top:-4px">${escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported'))}</div>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.providers')}</div>
@@ -330,6 +772,7 @@ export function renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
       <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
+      <button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:8px">${t('settings.rerunOnboarding')}</button>
     </div>
     <div class="settings-section" id="json-editor-section" style="display:${state.settingsShowJson ? 'block' : 'none'}">
       <div class="config-editor-wrap">
@@ -343,7 +786,7 @@ export function renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.about')}</div>
       <div class="about-info">
-        <div>Nebflow v${state.serverVersion || '...'}</div>
+        <div>${brand.productName} v${state.serverVersion || '...'}</div>
         <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.connected ? '#4caf50' : '#f44336'}">${state.connected ? t('settings.connected') : t('settings.disconnected')}</span></div>
         <div style="margin-top:10px">
           <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>
@@ -393,6 +836,9 @@ export function renderSettings() {
 }
 
 function renderProviderCard(name, p) {
+  // Deleted providers are stored as null — render nothing instead of crashing
+  // the settings re-render (remove flow calls renderSettings synchronously).
+  if (!p) return '';
   const modelCount = (p.models || []).length;
   const modelsHtml = (p.models || []).map(m => {
     const ref = `${name}/${m.id}`;
@@ -682,25 +1128,56 @@ function showPresetModal(existing, onSaved) {
 }
 
 
-function bindSettingsEvents(content, cfg) {
-  // Thinking toggle
-  document.getElementById('toggle-thinking')?.addEventListener('click', function() {
-    this.classList.toggle('on');
-    const enabled = this.classList.contains('on');
-    const budgetEl = document.getElementById('cfg-thinking-budget');
-    const budgetVal = budgetEl ? parseInt(budgetEl.value) || 32000 : 32000;
-    state.thinkingMode = enabled ? {enabled: true, budgetTokens: budgetVal} : null;
-    sendWs({type: 'setThinking', thinking: state.thinkingMode});
-    const group = document.getElementById('thinking-budget-group');
-    if (group) group.style.display = enabled ? 'block' : 'none';
-  });
+// ---------- Autostart (开机自启动) ----------
+// Target `enabled` while an autostartSet request is in flight; null when idle.
+// The result handler compares the reported state against this to toast
+// success/failure — the toggle itself is never flipped optimistically.
+let autostartPendingSet = null;
 
-  document.getElementById('cfg-thinking-budget')?.addEventListener('change', function() {
-    const val = parseInt(this.value) || 32000;
-    if (state.thinkingMode?.enabled) {
-      state.thinkingMode = {enabled: true, budgetTokens: val};
-      sendWs({type: 'setThinking', thinking: state.thinkingMode});
+onMessage('autostartStatusResult', (msg) => {
+  state.autostartStatus = {
+    enabled: !!msg.enabled,
+    supported: msg.supported !== false,
+    reason: msg.reason || '',
+  };
+  const toggle = document.getElementById('toggle-autostart');
+  if (toggle) {
+    toggle.classList.toggle('on', state.autostartStatus.enabled);
+    toggle.classList.toggle('disabled', !state.autostartStatus.supported);
+  }
+  const hint = document.getElementById('autostart-hint');
+  if (hint) {
+    const show = !state.autostartStatus.supported;
+    hint.style.display = show ? 'block' : 'none';
+    if (show) hint.textContent = state.autostartStatus.reason || t('settings.autostartUnsupported');
+  }
+  if (autostartPendingSet !== null) {
+    if (state.autostartStatus.enabled === autostartPendingSet) {
+      window.__showToast?.(t(autostartPendingSet ? 'settings.autostartOn' : 'settings.autostartOff'), 'success');
+    } else {
+      window.__showToast?.(state.autostartStatus.reason || t('settings.autostartFailed'), 'error');
     }
+    autostartPendingSet = null;
+  }
+});
+
+
+function bindSettingsEvents(content, cfg) {
+  // Thinking effort selector (#345, user ruling 2026-08-20): OpenAI-style
+  // off/low/medium/high dropdown replaces the Anthropic numeric budget input.
+  // Levels map to budget_tokens at the same boundaries OpenAiAdapter.
+  // budgetToEffort uses (≤2048 low / ≤8192 medium / ≤32768 high), so a saved
+  // value round-trips through the adapter unchanged. Legacy numeric configs
+  // are displayed at their nearest level (no migration needed — saving
+  // rewrites the canonical number for that level).
+  const EFFORT_BUDGETS = { low: 2048, medium: 8192, high: 32768 };
+  document.getElementById('cfg-thinking-effort')?.addEventListener('change', function() {
+    if (this.value === 'off') {
+      state.thinkingMode = null;
+    } else {
+      state.thinkingMode = { enabled: true, budgetTokens: EFFORT_BUDGETS[this.value] };
+    }
+    sendWs({ type: 'setThinking', thinking: state.thinkingMode });
   });
 
   // LLM Log toggle
@@ -711,31 +1188,103 @@ function bindSettingsEvents(content, cfg) {
     sendWs({type: 'setLlmLog', enabled});
   });
 
+  // ── Work schedule (freeze) — spec §3.2 sidebar.js ──────────────────────
+  // #334: all edits go to the local draft only; Save commits to the server.
+  document.getElementById('toggle-schedule')?.addEventListener('click', function() {
+    const enabled = this.classList.toggle('on');
+    const editor = document.getElementById('schedule-editor');
+    const offHint = document.getElementById('schedule-off-hint');
+    if (editor) editor.style.display = enabled ? 'block' : 'none';
+    if (offHint) offHint.style.display = enabled ? 'none' : 'block';
+    let segs = collectSegments();
+    if (enabled && segs.length === 0) {
+      segs = [{ start: '09:00', end: '12:00' }];   // F2: default one segment (draft)
+      renderScheduleEditorRows(segs);
+    }
+    scheduleDraft = { enabled, segments: segs };
+    updateScheduleActionRow();
+  });
+
+  document.getElementById('btn-add-segment')?.addEventListener('click', () => {
+    const list = document.getElementById('segment-list');
+    if (!list) return;
+    const idx = list.children.length;
+    list.insertAdjacentHTML('beforeend', buildSegmentRowHtml({ start: '', end: '' }, idx));
+    list.querySelector(`[data-seg-index="${idx}"] [data-role="start"]`)?.focus();
+    markScheduleDirty();
+  });
+
+  // Explicit commit / abandon — #334: nothing reaches the server until Save.
+  document.getElementById('btn-save-schedule')?.addEventListener('click', () => {
+    const enabled = document.getElementById('toggle-schedule')?.classList.contains('on') ?? false;
+    const segs = collectSegments();
+    if (saveWorkSchedule(enabled, segs, { toast: true })) {
+      scheduleDraft = null;      // committed → back to server-state rendering
+      updateScheduleActionRow(); // hide action row; the serverConfig echo re-renders
+    }
+  });
+  document.getElementById('btn-reset-schedule')?.addEventListener('click', () => {
+    scheduleDraft = null;        // abandon edits → render server truth again
+    renderSettings();
+  });
+
+  // ── STT config (#295 + A1/A2) — save sends what's typed; all-empty = clear
+  // (back to the free browser path). The apiKey input is never pre-filled
+  // (server never echoes it) — the "已配置" badge + masked placeholder carry
+  // the configured state; an EMPTY key omits the field from the payload so the
+  // backend merge keeps the stored key (A2: an empty string would REPLACE
+  // stt-config.json without the key and drop the service to unconfigured).
+  function sendSttConfig(clear) {
+    const endpoint = clear ? '' : (document.getElementById('stt-endpoint')?.value.trim() || '');
+    const model = clear ? '' : (document.getElementById('stt-model')?.value.trim() || '');
+    const apiKey = clear ? '' : (document.getElementById('stt-apikey')?.value.trim() || '');
+    const allEmpty = !endpoint && !model && !apiKey;
+    // Clear = explicit all-empty (three keys, backend deletes the config file);
+    // normal save omits an empty apiKey so the backend merge keeps the stored
+    // key — never send an empty string on a partial update.
+    const sttConfig = clear
+      ? { endpoint: '', apiKey: '', model: '' }
+      : { endpoint, model, ...(apiKey ? { apiKey } : {}) };
+    sendWs({ type: 'setSttConfig', sttConfig });
+    window.__showToast?.(t(allEmpty ? 'settings.sttCleared' : 'settings.sttSaved'), 'success');
+  }
+  document.getElementById('btn-save-stt')?.addEventListener('click', () => sendSttConfig(false));
+  document.getElementById('btn-clear-stt')?.addEventListener('click', () => sendSttConfig(true));
+  // A1: collapsed advanced panel — expand/collapse (session-memory state).
+  document.getElementById('stt-advance-toggle')?.addEventListener('click', () => {
+    sttAdvanceExpanded = !sttAdvanceExpanded;
+    const body = document.getElementById('stt-advance-body');
+    const toggle = document.getElementById('stt-advance-toggle');
+    if (body) body.hidden = !sttAdvanceExpanded;
+    if (toggle) toggle.setAttribute('aria-expanded', String(sttAdvanceExpanded));
+  });
+
+  // Tool result TTL section (#341) — element-level bindings on fresh nodes.
+  bindTtlEvents();
+
   // Language selector
   document.getElementById('cfg-language')?.addEventListener('change', function() {
     setLocale(this.value);
     renderSettings();
   });
 
+  // Autostart toggle — server-authoritative: the toggle is only flipped by the
+  // autostartStatusResult response (never optimistically), so a failed enable
+  // (launchctl/schtasks error) leaves the UI showing the real state.
+  document.getElementById('toggle-autostart')?.addEventListener('click', function() {
+    const cur = state.autostartStatus;
+    if (!cur || !cur.supported || autostartPendingSet !== null) return;
+    autostartPendingSet = !cur.enabled;
+    sendWs({ type: 'autostartSet', enabled: autostartPendingSet });
+  });
+  // Refresh status every time settings render (cheap; keeps toggle in sync
+  // with CLI-side `nebflow autostart enable/disable`).
+  sendWs({ type: 'autostartStatus' });
+
   // --- Provider add/edit/remove ---
   document.getElementById('btn-add-provider')?.addEventListener('click', () => {
     showProviderModal(null, null, (name, data) => {
-      if (!state.parsedConfig) state.parsedConfig = {llm: {providers: {}, model: {default: ''}}};
-      if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}, model: {default: ''}};
-      if (!state.parsedConfig.llm.providers) state.parsedConfig.llm.providers = {};
-      if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {default: '', fallbacks: []};
-      state.parsedConfig.llm.providers[name] = data;
-      // Auto-set default model if it's empty or points to a non-existent provider
-      const currentDefault = state.parsedConfig.llm.model.default || '';
-      const defaultProvider = currentDefault.split('/')[0];
-      if (!currentDefault || !state.parsedConfig.llm.providers[defaultProvider]) {
-        const firstModel = (data.models || [])[0];
-        if (firstModel) {
-          state.parsedConfig.llm.model.default = `${name}/${firstModel.id}`;
-        }
-      }
-      state.configDirty = true;
-      flushConfigToServer();
+      saveNewProvider(name, data);
     });
   });
 
@@ -745,8 +1294,9 @@ function bindSettingsEvents(content, cfg) {
       e.stopPropagation();
       window.__showConfirm?.('Remove Provider', t('provider.removeConfirm', { name }), () => {
         state.parsedConfig.llm.providers[name] = null;
-        // Clean up model chain references to the removed provider
-        cleanModelChainForProvider(name);
+        // Preset reference cleanup on provider removal is backend-owned (#339 —
+        // the global default-model field is retired; backend auto-created
+        // presets are keyed per provider).
         state.configDirty = true;
         flushConfigToServer();
         renderSettings();
@@ -758,8 +1308,6 @@ function bindSettingsEvents(content, cfg) {
         if (newName !== name) {
           // Use null to signal explicit deletion of old name
           state.parsedConfig.llm.providers[name] = null;
-          // Update model chain references from old name to new name
-          renameProviderInModelChain(name, newName);
         }
         state.parsedConfig.llm.providers[newName] = data;
         state.configDirty = true;
@@ -786,6 +1334,13 @@ function bindSettingsEvents(content, cfg) {
     state.settingsShowJson = !state.settingsShowJson;
     const sec = document.getElementById('json-editor-section');
     if (sec) sec.style.display = state.settingsShowJson ? 'block' : 'none';
+  });
+
+  // Re-run onboarding: reset the marker to pending and reload — the boot
+  // sequence picks it up and shows the wizard (or returning-user prompt).
+  document.getElementById('btn-rerun-onboarding')?.addEventListener('click', () => {
+    sendWs({ type: 'setOnboardingState', state: 'pending' });
+    setTimeout(() => location.reload(), 300);
   });
 
   document.getElementById('btn-save-config')?.addEventListener('click', () => {
@@ -826,52 +1381,32 @@ function bindSettingsEvents(content, cfg) {
   });
 }
 
-/** Remove all references to a provider from the model chain (default + fallbacks).
- *  Must be called when a provider is deleted, otherwise backend validation fails
- *  because fallbacks point to a provider that no longer exists. */
-function cleanModelChainForProvider(providerName) {
-  if (!state.parsedConfig?.llm?.model) return;
-  const model = state.parsedConfig.llm.model;
-  const prefix = providerName + '/';
+// Delegated segment-editor listeners — bound ONCE at module scope, NOT inside
+// bindSettingsEvents. renderSettings() re-runs on every serverConfig echo while
+// the panel is open; #settings-content is a persistent container, so listeners
+// bound to it inside bindSettingsEvents would accumulate and fire N× per event
+// (duplicate setWorkSchedule saves). Delegating from document keeps exactly one
+// listener for the whole app lifetime.
+document.addEventListener('click', (e) => {
+  const settings = document.getElementById('settings-content');
+  if (!settings || !(e.target instanceof Node) || !settings.contains(e.target)) return;
+  const rm = e.target.closest('.seg-remove');
+  if (!rm) return;
+  const row = rm.closest('.segment-row');
+  if (row) row.remove();
+  settings.querySelectorAll('#segment-list .segment-row .seg-label').forEach((el, i) => {
+    el.textContent = t('settings.segmentLabel', { n: i + 1 });
+  });
+  markScheduleDirty();   // #334: local draft only — Save commits
+});
 
-  // Clear default if it points to the removed provider
-  if (model.default && model.default.startsWith(prefix)) {
-    model.default = '';
-  }
-
-  // Remove all fallbacks that reference the removed provider
-  if (model.fallbacks) {
-    model.fallbacks = model.fallbacks.filter(f => !f.startsWith(prefix));
-  }
-
-  // Auto-set a new default if possible
-  if (!model.default) {
-    const remainingProviders = state.parsedConfig.llm.providers || {};
-    const firstProvider = Object.entries(remainingProviders).find(([_, p]) => p && p.models?.length > 0);
-    if (firstProvider) {
-      const [pName, pData] = firstProvider;
-      model.default = `${pName}/${pData.models[0].id}`;
-    }
-  }
-}
-
-/** Update model chain references when a provider is renamed (default + fallbacks). */
-function renameProviderInModelChain(oldName, newName) {
-  if (!state.parsedConfig?.llm?.model) return;
-  const model = state.parsedConfig.llm.model;
-  const oldPrefix = oldName + '/';
-  const newPrefix = newName + '/';
-
-  if (model.default && model.default.startsWith(oldPrefix)) {
-    model.default = newPrefix + model.default.slice(oldPrefix.length);
-  }
-
-  if (model.fallbacks) {
-    model.fallbacks = model.fallbacks.map(f =>
-      f.startsWith(oldPrefix) ? newPrefix + f.slice(oldPrefix.length) : f
-    );
-  }
-}
+document.addEventListener('change', (e) => {
+  const settings = document.getElementById('settings-content');
+  if (!settings || !(e.target instanceof Node) || !settings.contains(e.target)) return;
+  if (!e.target.classList || !e.target.classList.contains('time-input')) return;
+  updateSegmentRowHint(e.target.closest('.segment-row'));
+  markScheduleDirty();   // #334: local draft only — Save commits
+});
 
 function flushConfigToServer() {
   const json = JSON.stringify(state.parsedConfig, null, 2);
@@ -891,14 +1426,194 @@ onMessage('error', (data) => {
   }
 });
 
+// --- Provider model-list auto-fetch (B1) ---
+// Model choices fetched for the currently open provider modal. Set on a
+// successful POST /api/provider/models; renderModelRowContent reads it so
+// both existing and newly added rows offer a dropdown instead of free text.
+// The proxy endpoint may not exist yet (404) — fetch failure degrades to
+// manual input without blocking the flow.
+// Elements are normalized to {id, contextLength} — the backend may send plain
+// strings (old contract) or objects with an optional contextLength (e.g.
+// OpenRouter exposes context_length; OpenAI/Anthropic do not).
+let providerModelChoices = null;
+
+function providerAuthHeaders() {
+  const tok = localStorage.getItem(key('token')) || '';
+  return tok ? { Authorization: `Bearer ${tok}` } : {};
+}
+
+/** Normalize one models[] element: 'id-string' | {id, contextLength?} →
+ *  {id, contextLength|null}. Unknown shapes are dropped. */
+function normalizeModelEntry(m) {
+  if (typeof m === 'string' && m) return { id: m, contextLength: null };
+  if (m && typeof m.id === 'string' && m.id) {
+    return { id: m.id, contextLength: Number.isFinite(m.contextLength) ? m.contextLength : null };
+  }
+  return null;
+}
+
+async function fetchProviderModels(baseUrl, apiKey) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    const resp = await fetch('/api/provider/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...providerAuthHeaders() },
+      body: JSON.stringify({ baseUrl, apiKey }),
+      signal: ctrl.signal,
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) return { ok: false, error: data.error || `HTTP ${resp.status}` };
+    const models = Array.isArray(data.models) ? data.models.map(normalizeModelEntry).filter(Boolean) : [];
+    return { ok: true, models };
+  } catch (e) {
+    return { ok: false, error: e.name === 'AbortError' ? 'timeout' : e.message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function contextLengthFor(id) {
+  if (!id || !providerModelChoices) return null;
+  const found = providerModelChoices.find(m => m.id === id);
+  return found && found.contextLength ? found.contextLength : null;
+}
+
+/** Fill the row's contextWindow input with the fetched contextLength — only
+ *  when the input is empty (never overwrite a user-set value). maxTokens is
+ *  intentionally not touched. */
+function fillContextIfEmpty(row) {
+  if (!row) return;
+  const sel = row.querySelector('.cfg-model-id');
+  const ctxInput = row.querySelector('.cfg-model-ctx');
+  if (!sel || !ctxInput || ctxInput.value) return;
+  const len = contextLengthFor(sel.value);
+  if (len) ctxInput.value = len;
+}
+
+function renderModelIdSelect(currentId) {
+  const opts = providerModelChoices.map(m => m.id);
+  if (currentId && !opts.includes(currentId)) opts.unshift(currentId);
+  return `<select class="cfg-select cfg-model-id">
+    <option value="" disabled ${currentId ? '' : 'selected'}>${t('provider.modelSelectPlaceholder')}</option>
+    ${opts.map(o => `<option value="${escapeHtml(o)}" ${o === currentId ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
+  </select>`;
+}
+
+/** Convert manual id inputs in existing rows to dropdowns after a successful
+ *  fetch. Current values are preserved (added as an extra option if absent
+ *  from the fetched list); empty contextWindow inputs are auto-filled from
+ *  the fetched contextLength. */
+function upgradeModelRowsToSelects(container) {
+  container.querySelectorAll('.cfg-model-row').forEach(row => {
+    const input = row.querySelector('input.cfg-model-id');
+    if (input) {
+      const current = input.value.trim();
+      const tmp = document.createElement('template');
+      tmp.innerHTML = renderModelIdSelect(current).trim();
+      input.replaceWith(tmp.content.firstChild);
+    }
+    fillContextIfEmpty(row);
+  });
+}
+
+/** Wire base URL → auto-fetch model list inside the provider modal: a fetch
+ *  button + status line above the models list, plus debounced auto-fetch on
+ *  baseUrl/apiKey change. Degrades gracefully when the proxy endpoint is
+ *  missing or the provider errors — manual input stays usable. */
+function wireProviderModelFetch() {
+  const overlay = document.getElementById('cfg-modal');
+  if (!overlay) return;
+  providerModelChoices = null;
+  const baseInput = overlay.querySelector('[data-field="baseUrl"]');
+  const keyInput = overlay.querySelector('[data-field="apiKey"]');
+  const container = overlay.querySelector('[data-field="models"]');
+  const group = container?.closest('.cfg-form-group');
+  if (!baseInput || !container || !group) return;
+
+  const statusRow = document.createElement('div');
+  statusRow.className = 'cfg-fetch-status-row';
+  statusRow.innerHTML = `<button type="button" class="cfg-fetch-models-btn">${t('provider.fetchModels')}</button><span class="cfg-fetch-status"></span>`;
+  group.insertBefore(statusRow, container);
+  const fetchBtn = statusRow.querySelector('.cfg-fetch-models-btn');
+  const status = statusRow.querySelector('.cfg-fetch-status');
+
+  let fetchGen = 0; // race guard: stale responses (older trigger) are dropped
+  async function runFetch() {
+    const baseUrl = baseInput.value.trim();
+    if (!baseUrl || !/^https?:\/\//.test(baseUrl)) {
+      status.textContent = '';
+      status.className = 'cfg-fetch-status';
+      return;
+    }
+    const gen = ++fetchGen;
+    fetchBtn.disabled = true;
+    status.textContent = t('provider.fetchingModels');
+    status.className = 'cfg-fetch-status loading';
+    const res = await fetchProviderModels(baseUrl, keyInput ? keyInput.value.trim() : '');
+    if (gen !== fetchGen || !overlay.isConnected) return;
+    fetchBtn.disabled = false;
+    if (res.ok && res.models.length > 0) {
+      providerModelChoices = res.models;
+      upgradeModelRowsToSelects(container);
+      // A successful list fetch with a non-empty key doubles as credential
+      // validation — flag the key as valid. Anonymous providers (empty key)
+      // never get this hint.
+      const hasKey = !!(keyInput && keyInput.value.trim());
+      status.textContent = t('provider.fetchModelsLoaded', { count: res.models.length })
+        + (hasKey ? ` · ${t('provider.keyValid')}` : '');
+      status.className = 'cfg-fetch-status ok';
+    } else {
+      providerModelChoices = null;
+      status.textContent = t('provider.fetchModelsFailed');
+      status.className = 'cfg-fetch-status fail';
+    }
+  }
+
+  fetchBtn.addEventListener('click', runFetch);
+  let debounceTimer = null;
+  const autoFetch = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(runFetch, 400); };
+  baseInput.addEventListener('change', autoFetch);
+  keyInput?.addEventListener('change', autoFetch);
+  // Delegated: picking a model from the dropdown auto-fills an empty
+  // contextWindow from the fetched contextLength (never overwrites).
+  container.addEventListener('change', (e) => {
+    if (e.target.matches('select.cfg-model-id')) fillContextIfEmpty(e.target.closest('.cfg-model-row'));
+  });
+}
+
 // --- Provider modal ---
+/** Persist a newly added provider: mutate parsedConfig + flush. The backend
+ *  auto-creates the first preset from a new provider — the legacy global
+ *  default-model field is retired (global-default preset semantics, #339),
+ *  so there is no frontend chain write here. Exported for the chat-native
+ *  onboarding flow (onboarding-redesign-spec §5.1) — one write path. */
+export function saveNewProvider(name, data) {
+  if (!state.parsedConfig) state.parsedConfig = {llm: {providers: {}}};
+  if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}};
+  if (!state.parsedConfig.llm.providers) state.parsedConfig.llm.providers = {};
+  state.parsedConfig.llm.providers[name] = data;
+  state.configDirty = true;
+  flushConfigToServer();
+}
+
+/**
+ * Onboarding wizard entry: run the same add-provider modal outside the
+ * settings panel. onSaved fires after the config has been flushed.
+ */
+export function openProviderWizard(onSaved) {
+  showProviderModal(null, null, (name, data) => {
+    saveNewProvider(name, data);
+    if (typeof onSaved === 'function') onSaved(name);
+  });
+}
+
 function showProviderModal(existingName, existingData, onSave) {
   const isEdit = !!existingName;
   const p = existingData || {baseUrl: '', apiKey: '', protocol: 'anthropic', models: []};
   const initialModels = p.models.length > 0 ? p.models.map(m => ({
     ...m,
-    vision: getVision(`${existingName || ''}/${m.id}`)
-  })) : [{id: '', maxTokens: 131072, contextWindow: 200000, vision: false}];
+  })) : [{id: '', maxTokens: 131072, contextWindow: 200000}];
 
   showModal({
     title: isEdit ? t('provider.edit', { name: existingName }) : t('provider.add'),
@@ -921,18 +1636,25 @@ function showProviderModal(existingName, existingData, onSave) {
       if (!isEdit && apiKey === '***') { window.__showToast?.(t('provider.keyRequired'), 'error'); return; }
       const validModels = values.models.filter(m => m.id && m.id.trim());
       if (validModels.length === 0) { window.__showToast?.(t('provider.modelRequired'), 'error'); return; }
-      // Persist vision flags to models.json via capability API
-      validModels.forEach(m => {
-        updateVision({id: `${name}/${m.id}`, capabilities: []}, m.vision);
+      // Vision is never written from this form (B1 裁定 2026-08-25): the
+      // edit-modal checkbox snapshot polluted nebflow.json ModelConfig.vision
+      // (inline outranks models.json runtime annotations). An explicit inline
+      // vision set by hand rides through untouched; new models omit the key.
+      const modelsOut = validModels.map(m => {
+        const prev = (p.models || []).find(x => x.id === m.id);
+        return prev && prev.vision !== undefined ? { ...m, vision: prev.vision } : m;
       });
       onSave(name, {
         baseUrl,
         apiKey,
         protocol: values.protocol,
-        models: validModels,
+        models: modelsOut,
       });
     }
   });
+  // baseUrl/apiKey change → auto-fetch model list (dropdown); degrades to
+  // manual input when the proxy endpoint is unavailable.
+  wireProviderModelFetch();
 }
 
 // --- Generic modal ---
@@ -940,14 +1662,7 @@ function showModal({title, fields, onConfirm}) {
   // Remove existing modal
   document.getElementById('cfg-modal')?.remove();
 
-  const overlay = document.createElement('div');
-  overlay.id = 'cfg-modal';
-  overlay.className = 'cfg-modal-overlay';
-  overlay.innerHTML = `
-    <div class="cfg-modal">
-      <div class="cfg-modal-title">${escapeHtml(title)}</div>
-      <div class="cfg-modal-body">
-        ${fields.map(f => `
+  const renderField = (f) => `
           <div class="cfg-form-group">
             <label class="cfg-label">${escapeHtml(f.label)}</label>
             ${f.type === 'select' ? `<select class="cfg-input" data-field="${f.key}" ${f.disabled ? 'disabled' : ''}>
@@ -958,9 +1673,18 @@ function showModal({title, fields, onConfirm}) {
               <button class="cfg-model-add" type="button">${t('model.add')}</button>
             </div>` :
             f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" style="-webkit-text-security:disc" ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeSvg}</button></div>` :
+            f.type === 'number' ? `<input class="cfg-input" type="number" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.min != null ? `min="${f.min}"` : ''} ${f.disabled ? 'disabled' : ''}>` :
             `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.disabled ? 'disabled' : ''}>`}
-          </div>
-        `).join('')}
+          </div>`;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'cfg-modal';
+  overlay.className = 'cfg-modal-overlay';
+  overlay.innerHTML = `
+    <div class="cfg-modal">
+      <div class="cfg-modal-title">${escapeHtml(title)}</div>
+      <div class="cfg-modal-body">
+        ${fields.map(renderField).join('')}
       </div>
       <div class="cfg-modal-actions">
         <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">${t('modal.cancel')}</button>
@@ -1015,7 +1739,6 @@ function showModal({title, fields, onConfirm}) {
           id,
           maxTokens: parseInt(row.querySelector('.cfg-model-max').value) || 131072,
           contextWindow: parseInt(row.querySelector('.cfg-model-ctx').value) || 200000,
-          vision: row.querySelector('.cfg-model-vision-cb').checked,
         });
       });
     }
@@ -1025,12 +1748,15 @@ function showModal({title, fields, onConfirm}) {
 }
 
 function renderModelRowContent(m) {
-  const id = m ? escapeHtml(m.id) : '';
+  const id = m ? m.id : '';
   const max = m ? m.maxTokens : '';
   const ctx = m ? m.contextWindow : '';
-  const visionChecked = m && m.vision ? 'checked' : '';
-  return `<input class="cfg-input cfg-model-id" type="text" value="${id}" placeholder="${t('model.idPlaceholder')}">
-<label class="cfg-model-vision-check"><input type="checkbox" class="cfg-model-vision-cb" ${visionChecked}> Vision</label>
+  const idField = providerModelChoices && providerModelChoices.length > 0
+    ? renderModelIdSelect(id)
+    : `<input class="cfg-input cfg-model-id" type="text" value="${escapeHtml(id)}" placeholder="${t('model.idPlaceholder')}">`;
+  // Vision is auto-detected at runtime (B3) and shown as a read-only badge on
+  // provider cards — no per-model control in this form (B1 裁定 2026-08-25).
+  return `${idField}
 <input class="cfg-input cfg-model-max" type="number" value="${max}" placeholder="${t('model.maxTokensPlaceholder')}">
 <input class="cfg-input cfg-model-ctx" type="number" value="${ctx}" placeholder="${t('model.contextPlaceholder')}">
 <button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;
@@ -1691,13 +2417,13 @@ function getSessionStatusClass(sessionId) {
 
 function persistMarkedUnread() {
   try {
-    localStorage.setItem('nebflow_marked_unread', JSON.stringify([...state.markedUnreadSessions]));
+    localStorage.setItem(key('marked_unread'), JSON.stringify([...state.markedUnreadSessions]));
   } catch(e) {}
 }
 
 function persistUnread() {
   try {
-    localStorage.setItem('nebflow_unread', JSON.stringify([...state.unreadSessions]));
+    localStorage.setItem(key('unread'), JSON.stringify([...state.unreadSessions]));
   } catch(e) {}
 }
 
@@ -1705,7 +2431,7 @@ export { persistUnread };
 
 function persistPinned() {
   try {
-    localStorage.setItem('nebflow_pinned', JSON.stringify([...state.pinnedSessions]));
+    localStorage.setItem(key('pinned'), JSON.stringify([...state.pinnedSessions]));
   } catch(e) {}
 }
 
@@ -1829,7 +2555,7 @@ function showBatchCtxMenu(x, y) {
   });
   menu.querySelector('[data-action="batch-delete"]').addEventListener('click', () => {
     if (state.selectedSessionIds.size > 0) {
-      showBatchDeleteModal();
+      showBatchDeleteModalLazy();
     }
     dismissCtxMenu();
   });
@@ -1947,7 +2673,7 @@ function showDeleteZone() {
     if (ids.length > 0) {
       // If already in selection mode, show batch delete confirmation
       if (state.selectedSessionIds.size > 1) {
-        showBatchDeleteModal();
+        showBatchDeleteModalLazy();
       } else {
         // Single drag — confirm delete
         const sid = ids[0];
@@ -1995,7 +2721,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Delete' && state.selectedSessionIds.size > 0) {
     e.preventDefault();
-    showBatchDeleteModal();
+    showBatchDeleteModalLazy();
   }
 });
 
@@ -2237,13 +2963,13 @@ export function createNewFolder(parentFolderId) {
 
 function persistExpandedFolders() {
   try {
-    localStorage.setItem('nebflow_expanded_folders', JSON.stringify([...state.expandedFolders]));
+    localStorage.setItem(key('expanded_folders'), JSON.stringify([...state.expandedFolders]));
   } catch(e) {}
 }
 
 function persistPinnedFolders() {
   try {
-    localStorage.setItem('nebflow_pinned_folders', JSON.stringify([...state.pinnedFolders]));
+    localStorage.setItem(key('pinned_folders'), JSON.stringify([...state.pinnedFolders]));
   } catch(e) {}
 }
 
