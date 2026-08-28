@@ -1656,6 +1656,16 @@ object AgentActor extends AgentCore with AgentSession:
                     d.complete(Left("Compaction abandoned: LLM failed during compaction")).void
                       .handleErrorWith(_ => IO.unit)
                   )
+                // F1 (2026-08-29, loop-detected report §4.1/§6): the fatal path
+                // never wrote the registry back — the last entry stayed
+                // status=Processing (written by the crashed round's loop-counter
+                // touch), so TaskStuckWatcher flagged a zombie every 30s until a
+                // human restarted the actor. Every other terminal path
+                // (turn-done :2859 / Interrupt :3638 / Stop :3650 / ResetSession
+                // :3927 / ErrorFrozen :3474) writes the registry; this was the
+                // last one missing. Idle = "no active turn" (the behavior state
+                // keeps the Error detail; the watcher only flags Processing).
+                _ <- touchRegistryActivity(resources, cleanedState.sessionId, AgentStatus.Idle)
               yield
                 val compactionWasPending = state.pendingCompaction.isDefined
                 val fatalState = cleanedState
