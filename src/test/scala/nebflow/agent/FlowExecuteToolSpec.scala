@@ -3,8 +3,11 @@ package nebflow.agent
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
+import nebflow.core.{PathUtil, tools}
 import nebflow.core.tools.{FlowExecuteTool, ToolContext, ToolError}
 import cats.effect.unsafe.implicits.global
+
+import java.nio.file.Files
 
 /**
  * #406 FlowExecuteTool validation unit tests.
@@ -15,8 +18,29 @@ import cats.effect.unsafe.implicits.global
  * actor system) is exercised by the isolated-instance E2E smoke instead —
  * the tool falls through to the "missing resources" branch here, which
  * proves validation passed before reaching the spawn gate.
+ *
+ * CI 环境无关化（2026-08-28）：agent-existence 校验读真实磁盘 agent 库
+ * （EntityLoader.listAgents → PathUtil.dataRoot/agents）。旧版隐式依赖
+ * 开发机已注册的 "Nebula" agent——CI 无此环境，E-401 先于预期错误触发。
+ * 现在 spec 自建隔离 dataRoot + stub agent（beforeAll 设置 / afterAll 还原），
+ * agent 引用校验在任何环境都过，各用例真正到达自己的校验层。
  */
 class FlowExecuteToolSpec extends FunSuite:
+
+  private var savedDataRoot: Option[os.Path] = None
+  private var isolatedRoot: os.Path = null
+
+  override def beforeAll(): Unit =
+    savedDataRoot = Some(PathUtil.dataRoot)
+    isolatedRoot = os.Path(Files.createTempDirectory("nb-flowexecute-spec"), os.pwd)
+    os.makeDir.all(isolatedRoot / "agents" / "Nebula")
+    os.write(isolatedRoot / "agents" / "Nebula" / "agent.json",
+      """{"name":"Nebula","description":"stub agent for FlowExecuteToolSpec"}""")
+    os.write(isolatedRoot / "agents" / "Nebula" / "system.md", "You are a stub.")
+    PathUtil.setDataRoot(isolatedRoot)
+
+  override def afterAll(): Unit =
+    savedDataRoot.foreach(PathUtil.setDataRoot)
 
   private val noCtx = ToolContext(projectRoot = "/tmp")
 
@@ -25,10 +49,10 @@ class FlowExecuteToolSpec extends FunSuite:
       .call(input.asObject.getOrElse(io.circe.JsonObject.empty), ctx)
       .unsafeRunSync()
 
-  /** Minimal valid DAG: planner → worker → $return. Node agents reference a
-    * real global agent ("Nebula" — the unit-test environment resolves the
-    * live agent library; a nonexistent name is covered by the unknown-agent
-    * test below). */
+  /** Minimal valid DAG: planner → worker → $return. Node agents reference
+    * the stub "Nebula" agent registered in the isolated dataRoot fixture
+    * (see beforeAll); a nonexistent name is covered by the unknown-agent
+    * test below. */
   private def validDag: Json = Json.obj(
     "prompt" -> "summarize two topics".asJson,
     "name" -> "t2".asJson,
