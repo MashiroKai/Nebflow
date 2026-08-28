@@ -15,7 +15,7 @@ import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.telemetry.TelemetryReporter
-import nebflow.core.tools.{RemoteExecutor, ToolLoader, ToolRegistry}
+import nebflow.core.tools.{FriendMessageTool, RemoteExecutor, ToolLoader, ToolRegistry}
 import nebflow.llm.*
 import nebflow.neblink.*
 import nebflow.service.{ConfigSnapshot, *}
@@ -485,6 +485,10 @@ object GatewayMain extends IOApp.Simple:
                                               wsHub.broadcast(frame)
                                             }
                                           )
+                                          // A2A 一期（#290 域 A）：SendFriendMessage 工具接线——
+                                          // 授权仅 Nebula agent.json 声明（作者特批 2026-08-28），
+                                          // 服务依赖走 RemoteExecutor.initialize 同款单例模式。
+                                          FriendMessageTool.initialize(friendService)
                                           (client, friendService)
                                         }
                                       clientWithFriends.foreach { (client, friendService) =>
