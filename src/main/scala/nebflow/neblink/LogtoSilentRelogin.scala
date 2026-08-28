@@ -28,7 +28,7 @@ object LogtoSilentRelogin:
     serverUrlOf: IO[String]
   ): IO[Option[String]] =
     refreshAndRegister(ms, discovery, gatewayPort, serverUrlOf).handleErrorWith(e =>
-      log(s"silent re-login error: ${e.getMessage}").as(None)
+      warn(s"silent re-login error: ${e.getMessage}").as(None)
     )
 
   private def refreshAndRegister(
@@ -97,17 +97,22 @@ object LogtoSilentRelogin:
                       )
                       .flatMap {
                         case Right(tok) => log("silent re-login succeeded").as(Some(tok))
-                        case Left(err)  => log(s"silent re-login persist failed: $err").as(None)
+                        case Left(err)  => warn(s"silent re-login persist failed: $err").as(None)
                       }
                   )
                 case Left(err) =>
-                  log(s"silent re-login register failed: $err").as(None)
+                  warn(s"silent re-login register failed: $err").as(None)
               }
           }
-      case Left(err) => log(s"silent re-login refresh failed: $err").as(None)
+      case Left(err) => warn(s"silent re-login refresh failed: $err").as(None)
 
   /** Production transport — same policy as LogtoDeviceFlow.jdkSend. */
   private def log(message: String): IO[Unit] =
     nebflow.core.NebflowLogger.forName("nebflow.neblink.relogin").info(s"[logto-ac] $message")
+
+  /** Failure-path logging — warn level so silent-relogin breakage surfaces in
+    * instance logs instead of hiding among routine info lines. */
+  private def warn(message: String): IO[Unit] =
+    nebflow.core.NebflowLogger.forName("nebflow.neblink.relogin").warn(s"[logto-ac] $message")
 
 end LogtoSilentRelogin
