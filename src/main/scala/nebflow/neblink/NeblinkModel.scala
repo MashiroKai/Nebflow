@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import io.circe.{Decoder, Encoder}
+import io.circe.{Decoder, Encoder, Json, JsonObject}
 import nebflow.core.PathUtil
 
 import java.util.UUID
@@ -178,20 +178,41 @@ object AgentMessagingConfig:
     yield AgentMessagingConfig(mode, perFriend, global)
   }
 
-/** Logto (OIDC provider) connection settings — a Native app (public client,
-  * no secret). */
+/** Logto (OIDC provider) connection settings — Native apps (public clients,
+  * no secret). `clientId` = the device-flow app (RFC 8628 legacy + fallback);
+  * `pkceClientId` = the Authorization Code + PKCE app (stage 2 primary
+  * login, 2026-08-28). Separate apps because the deployed Logto pins a
+  * device-flow app to the device_code grant via `isDeviceFlow` and that
+  * metadata is not editable through the Management API.
+  *
+  * Config surface (single, deliberate): decoded from
+  * `<home>/neblink/config.json` → `logto{endpoint,clientId,pkceClientId}`.
+  * There is NO reader for a nebflow.json `neblink.logto` block — entries
+  * there are inert (2026-08-28 dispatch misdirected the file once; qa
+  * fact-checked it). */
 case class LogtoConfig(
   endpoint: String,
-  clientId: String
+  clientId: String,
+  pkceClientId: Option[String] = None
 )
 
 object LogtoConfig:
-  given Encoder[LogtoConfig] = deriveEncoder
+  given Encoder[LogtoConfig] = Encoder.instance { c =>
+    val base = JsonObject(
+      "endpoint" -> c.endpoint.asJson,
+      "clientId" -> c.clientId.asJson
+    )
+    Json.fromJsonObject(
+      c.pkceClientId.fold(base)(v => base.add("pkceClientId", v.asJson))
+    )
+  }
+
   given Decoder[LogtoConfig] = Decoder.instance { c =>
     for
       endpoint <- c.downField("endpoint").as[String]
       clientId <- c.downField("clientId").as[String]
-    yield LogtoConfig(endpoint, clientId)
+      pkceClientId <- c.downField("pkceClientId").as[Option[String]]
+    yield LogtoConfig(endpoint, clientId, pkceClientId)
   }
 
 object NeblinkConfig:

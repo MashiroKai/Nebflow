@@ -358,19 +358,10 @@ final class ShellSession private (
 
   /**
    * Find Git Bash on Windows. Git for Windows is a declared dependency.
-   * We check common installation paths explicitly to avoid picking up
-   * WSL's bash.exe (C:\Windows\System32\bash.exe), which uses a different
-   * filesystem layout.
+   * Resolution chain lives on the companion (ShellSession.resolvedBashPath)
+   * so the boot-time dependency probe reads the same single source.
    */
-  private lazy val windowsBashPath: String =
-    val progFiles = sys.env.getOrElse("ProgramFiles", "C:\\Program Files")
-    val progFilesX86 = sys.env.getOrElse("ProgramFiles(x86)", "C:\\Program Files (x86)")
-    val localAppData = sys.env.getOrElse("LOCALAPPDATA", "")
-    val candidates = List(
-      s"$progFiles\\Git\\bin\\bash.exe",
-      s"$progFilesX86\\Git\\bin\\bash.exe"
-    ) ++ (if localAppData.nonEmpty then List(s"$localAppData\\Programs\\Git\\bin\\bash.exe") else Nil)
-    candidates.find(p => new File(p).exists()).getOrElse("bash")
+  private lazy val windowsBashPath: String = ShellSession.resolvedBashPath
 
   private def buildProcessBuilder(command: String, cwd: String): ProcessBuilder =
     // On Mac/Linux: bash -c "command" — straightforward.
@@ -381,7 +372,18 @@ final class ShellSession private (
     // to be mangled.
     val bashPath = if isWindows then windowsBashPath else "bash"
     val pb =
-      if isWindows then new ProcessBuilder(bashPath, "-s")
+      if isWindows then
+        // Bundled MinGit bash (Team #11): MinGit has no bin/bash.exe wrapper
+        // that would assemble the MSYS environment, so run it as a LOGIN
+        // shell (-l) — /etc/profile then builds PATH from MSYSTEM=MINGW64
+        // (mingw64/bin holds git.exe) and inherits the Windows PATH. System
+        // Git installs keep the plain form (their bin/bash.exe wrapper
+        // already does this setup).
+        if ShellSession.isBundledBash then
+          val bundled = new ProcessBuilder(bashPath, "-l", "-s")
+          bundled.environment().put("MSYSTEM", "MINGW64")
+          bundled
+        else new ProcessBuilder(bashPath, "-s")
       else new ProcessBuilder(bashPath, "-c", command)
     // Empty or invalid working directory causes failures. Fall back to user home.
     val safeCwd =
@@ -1038,6 +1040,36 @@ object ShellSession:
     Ref.unsafe[IO, Map[String, ShellSession]](Map.empty)
   // Guards concurrent get-or-create to prevent duplicate ShellSession + cleanupFiber leaks
   private val createMutex: IO[Mutex[IO]] = Mutex[IO].memoize.flatten
+
+  /**
+   * Find Git Bash on Windows. Git for Windows is a declared dependency.
+   * Common installation paths are checked explicitly to avoid picking up
+   * WSL's bash.exe (C:\Windows\System32\bash.exe), which uses a different
+   * filesystem layout.
+   *
+   * The bundled MinGit copy (msi payload <install>\app\git, version pinned
+   * by packaging/build-msi.sh) wins over system installs: deterministic,
+   * tested with the release, and zero external dependency.
+   */
+  lazy val resolvedBashPath: String =
+    val isWindows = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
+    if !isWindows then "bash"
+    else
+      val progFiles = sys.env.getOrElse("ProgramFiles", "C:\\Program Files")
+      val progFilesX86 = sys.env.getOrElse("ProgramFiles(x86)", "C:\\Program Files (x86)")
+      val localAppData = sys.env.getOrElse("LOCALAPPDATA", "")
+      val candidates =
+        nebflow.core.InstallLayout.bundledBash.toList ++
+          List(
+            s"$progFiles\\Git\\bin\\bash.exe",
+            s"$progFilesX86\\Git\\bin\\bash.exe"
+          ) ++ (if localAppData.nonEmpty then List(s"$localAppData\\Programs\\Git\\bin\\bash.exe") else Nil)
+      candidates.find(p => new File(p).exists()).getOrElse("bash")
+
+  /** True when resolvedBashPath picked the bundled MinGit copy — that one is
+    * invoked with -l + MSYSTEM=MINGW64 (see buildProcessBuilder). */
+  lazy val isBundledBash: Boolean =
+    nebflow.core.InstallLayout.bundledBash.contains(resolvedBashPath)
 
   // Best-effort cleanup of all sessions on JVM exit
   sys.addShutdownHook {
