@@ -235,6 +235,61 @@ class LoopGuardSpec extends FunSuite:
       case other                       => fail(s"expected Freeze (strongest), got $other")
   }
 
+  // ── F2（2026-08-29，loop-detected 报告 §6）：进展判定纳入验证工具成功轮 ──
+
+  test("F2: 08-28 replay — sparse-write verification work (successful Bash/Read/Grep rounds) no longer terminates at the 60 budget") {
+    // 70 rounds of successful Bash+Read+Grep (the crash shape: high-output
+    // verification, no Edit/Write in most rounds) — old counting pushed every
+    // round into the S2 budget and terminated at 61; each round now has a
+    // successful verification tool so the budget never advances.
+    var counters = LoopGuard.Counters.Empty
+    var verdict: LoopGuard.Verdict = LoopGuard.Verdict.Pass
+    for round <- 1 to 70 do
+      val events = List(
+        okEv("Bash", Json.obj("command" -> "sbt testOnly SuiteA".asJson)),
+        okEv("Read", Json.obj("file_path" -> "/logs/fulltest.log".asJson)),
+        okEv("Grep", Json.obj("pattern" -> "Suite Done".asJson, "path" -> "/logs".asJson))
+      )
+      val (c, v) = LoopGuard.evaluate(events, "t1", counters, cfg, s2Exempt = false)
+      counters = c
+      verdict = v
+    assert(!verdict.isInstanceOf[LoopGuard.Verdict.Terminate], s"verification rounds must not terminate, got $verdict")
+    assertEquals(counters.roundCount, 0)
+  }
+
+  test("F2 regression: 08-25 true loop (same-args same-failure x280) is still caught by S1") {
+    val args = Json.obj("command" -> "retry flaky step".asJson)
+    var counters = LoopGuard.Counters.Empty
+    var last: LoopGuard.Verdict = LoopGuard.Verdict.Pass
+    for _ <- 1 to 280 do
+      val (c, v) = LoopGuard.evaluate(List(failed("Bash", args, "connection reset")), "t1", counters, cfg)
+      counters = c
+      last = v
+    assert(last.isInstanceOf[LoopGuard.Verdict.Terminate], "S1 hard must terminate the true loop")
+    assert(last.asInstanceOf[LoopGuard.Verdict.Terminate].fp.nonEmpty, "S1 termination carries the fp")
+  }
+
+  test("F2 backstop: identical successful Bash repeats stop counting as progress after 3 consecutive rounds (polling loops still hit S2)") {
+    val args = Json.obj("command" -> "sleep 30 && check".asJson)
+    var counters = LoopGuard.Counters.Empty
+
+    // 3 consecutive identical successful Bash rounds = still progress.
+    for _ <- 1 to 3 do
+      val (c, v) = LoopGuard.evaluate(List(okEv("Bash", args)), "t1", counters, cfg)
+      counters = c
+      assert(!v.isInstanceOf[LoopGuard.Verdict.Terminate])
+    assertEquals(counters.roundCount, 0, "first 3 identical rounds are progress")
+
+    // 4th+ consecutive identical round stalls: 60 stalled rounds → S2 budget fires.
+    var verdict: LoopGuard.Verdict = LoopGuard.Verdict.Pass
+    for round <- 1 to 61 do
+      val (c, v) = LoopGuard.evaluate(List(okEv("Bash", args)), "t1", counters, cfg)
+      counters = c
+      verdict = v
+    assert(verdict.isInstanceOf[LoopGuard.Verdict.Terminate], s"polling loop must trip S2, got $verdict")
+    assert(verdict.toString.contains("budget"), "termination is the S2 budget verdict")
+  }
+
   test("reminderMessage renders system-reminder envelope") {
     val msg = LoopGuard.reminderMessage(LoopGuard.Verdict.Warn("something is looping"))
     assert(msg.startsWith("<system-reminder>"))
