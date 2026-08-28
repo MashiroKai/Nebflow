@@ -99,8 +99,19 @@ import FriendCodecs.{given, *}
  * Client for the NebLink Server.
  * Handles device login, periodic heartbeat, and peer discovery.
  * NebLink Server is the discovery mechanism.
+ *
+ * @param onDeviceTokenRejected Logto silent re-login hook (stage 2): invoked
+ *   when the server rejects the long-lived deviceToken (HTTP 401 on the
+ *   session exchange). Performs refresh_token → register → persist + hot-swap
+ *   and returns the NEW device token; the client swaps it in and retries the
+ *   login ONCE. None (no hook) or a None result surfaces the original error —
+ *   the frontend then prompts a fresh login.
  */
-class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
+class NeblinkClient(
+  config: NeblinkServerConfig,
+  serverPort: Int,
+  onDeviceTokenRejected: Option[IO[Option[String]]] = None
+):
   private val logger = NebflowLogger.forName("nebflow.neblink.client")
 
   // HTTP client: force HTTP/1.1 and bypass system proxy (direct LAN/WAN access).
@@ -115,6 +126,10 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
     .build()
 
   @volatile private var sessionToken: Option[String] = None
+
+  /** Active long-lived device credential — starts from config, replaced by
+    * the silent re-login hook when the server rejects the old one. */
+  @volatile private var activeDeviceToken: Option[String] = config.deviceToken
 
   /** Expose current session token for NeblinkRelayTunnel (live read on each reconnect). */
   def currentSessionToken: Option[String] = sessionToken
@@ -169,6 +184,15 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
     platform: String,
     endpoints: List[NeblinkEndpoint]
   ): IO[Either[String, List[NeblinkPeerInfo]]] =
+    doLogin(deviceId, deviceName, platform, endpoints, allowRelogin = true)
+
+  private def doLogin(
+    deviceId: String,
+    deviceName: String,
+    platform: String,
+    endpoints: List[NeblinkEndpoint],
+    allowRelogin: Boolean
+  ): IO[Either[String, List[NeblinkPeerInfo]]] =
     for
       localEndpoints <- if endpoints.isEmpty then detectLocalEndpoints else IO.pure(endpoints)
       endpointJson = localEndpoints.map { e =>
@@ -179,7 +203,7 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
         )
       }
       // Choose path + body based on whether we have a device credential.
-      (path, body) = config.deviceToken match
+      (path, body) = activeDeviceToken match
         case Some(token) =>
           (
             Protocol.DeviceApi.session,
@@ -218,9 +242,28 @@ class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
               logger
                 .warn(s"NebLink Server login decode error: ${err.getMessage}")
                 .as(Left(s"Decode error: ${err.getMessage}"))
+        // Stage 2: the server rejected the long-lived deviceToken (revoked /
+        // rotated out) — attempt ONE silent Logto re-login, then retry the
+        // session exchange with the fresh token.
+        case Left(err) if allowRelogin && isUnauthorized(err) =>
+          onDeviceTokenRejected match
+            case None => IO.pure(Left(err))
+            case Some(hook) =>
+              logger.info("Device token rejected by NebLink Server — attempting Logto silent re-login") *>
+                hook.flatMap {
+                  case Some(newToken) =>
+                    IO { activeDeviceToken = Some(newToken) } *>
+                      doLogin(deviceId, deviceName, platform, endpoints, allowRelogin = false)
+                  case None =>
+                    logger.warn("Logto silent re-login unavailable — surfacing login required").as(Left(err))
+                }
         case Left(err) => IO.pure(Left(err))
       }
     yield result
+
+  /** HTTP 401 from sendRequest's `HTTP <code>: <body>` error shape. */
+  private def isUnauthorized(err: String): Boolean =
+    err.startsWith("HTTP 401")
 
   /**
    * Send heartbeat and get updated peer list. Requires prior login.

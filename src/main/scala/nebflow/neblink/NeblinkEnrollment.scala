@@ -1,0 +1,61 @@
+package nebflow.neblink
+
+import cats.effect.IO
+import io.circe.Json
+
+/**
+  * Enrollment persistence shared by every login path (device flow poll,
+  * AC+PKCE callback, silent re-login): device.json + config update +
+  * discovery hot-swap + re-discovery + profile info. Previously private in
+  * RestApiRoutes; extracted so the silent re-login hook can run from any
+  * client construction site (RestApiRoutes completes with an HTTP context,
+  * GatewayMain's startup client does not).
+  */
+object NeblinkEnrollment:
+
+  /** Persist the EnrollResponse fields. `logtoRefresh` carries the provider
+    * refresh token (AC+PKCE / silent re-login) into device.json; `reloginHook`
+    * is wired into the hot-swapped client so IT can silent-relogin too.
+    * Returns the persisted device token. */
+  def persist(
+    ms: NeblinkService,
+    resolvedUrl: String,
+    json: Json,
+    logtoRefresh: Option[String],
+    discovery: Option[NeblinkDiscovery],
+    gatewayPort: Int,
+    reloginHook: Option[IO[Option[String]]]
+  ): IO[Either[String, String]] =
+    val deviceToken = json.hcursor.downField("deviceToken").as[String].toOption
+    val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
+    // Extract user info from neblink-server response (if available).
+    val avatarUrl = json.hcursor.downField("avatarUrl").as[Option[String]].toOption.flatten
+    // neblink-server serializes github_username as "githubUsername" (camelCase)
+    val githubLogin = json.hcursor.downField("githubUsername").as[Option[String]].toOption.flatten
+    deviceToken match
+      case Some(tok) =>
+        for
+          identity <- ms.identity
+          logtoBlock = logtoRefresh.map(rt => LogtoRefresh(rt, System.currentTimeMillis()))
+          cred = DeviceCredential(resolvedUrl, networkId, identity.deviceId, tok, logtoBlock)
+          _ <- DeviceCredential.save(cred)
+          newConfig = NeblinkServerConfig(
+            url = resolvedUrl,
+            networkId = networkId,
+            secret = "",
+            deviceToken = Some(tok)
+          )
+          _ <- ms.updateConfig(cfg => cfg.copy(enabled = true, neblinkServer = Some(newConfig)))
+          // Hot-swap the client in the discovery service. The fresh client
+          // carries the silent re-login hook (Logto refresh on 401).
+          _ <- discovery.fold(IO.unit)(d => d.setClient(Some(new NeblinkClient(newConfig, gatewayPort, onDeviceTokenRejected = reloginHook))))
+          // Trigger immediate re-discovery.
+          _ <- ms.sendSync(SyncCommand.PeerDiscovered)
+          // Persist GitHub user info (avatar + login) from server response.
+          _ <- ms.updateDeviceInfo(avatarUrl = avatarUrl, githubLogin = githubLogin)
+        yield Right(tok)
+      case None =>
+        IO.pure(Left("Server did not return a device token"))
+  end persist
+
+end NeblinkEnrollment
