@@ -157,7 +157,9 @@ final class FriendService(
         }
 
   private def doSend(friendUserId: String, body: String): IO[Either[String, String]] =
-    client.sendFriendMessage(friendUserId, body).flatMap {
+    // origin=agent：sendAsAgent 是唯一 agent 代发 choke point（#290 spec v1.1）——
+    // wire 缺 origin 时服务器缺省落 "user"，agent 消息语义（徽章/审计/限速区分）失效。
+    client.sendFriendMessage(friendUserId, body, origin = Some("agent")).flatMap {
       case Left(err) => IO.pure(Left(err))
       case Right(json) =>
         val convId = json.hcursor.get[String]("conversationId").toOption
