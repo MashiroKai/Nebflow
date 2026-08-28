@@ -27,7 +27,9 @@ object DeviceIdentity:
   given Encoder[DeviceIdentity] = deriveEncoder
   given Decoder[DeviceIdentity] = deriveDecoder
 
-  private val devicePath = PathUtil.dataRoot / "device.json"
+  // def, not val: PathUtil.dataRoot is redirectable (setDataRoot); a val would
+  // freeze the path at object-init and break per-test data roots (f1cd3709 rule).
+  private def devicePath = PathUtil.dataRoot / "device.json"
 
   private def detectPlatform: String =
     val osName = System.getProperty("os.name", "unknown").toLowerCase
@@ -258,7 +260,9 @@ object NeblinkConfig:
     yield NeblinkConfig(enabled, syncIntervalSec, neblinkServer, logto, agentMessaging)
   }
 
-  private val configPath = PathUtil.dataRoot / "neblink" / "config.json"
+  // def, not val: PathUtil.dataRoot is redirectable (setDataRoot); a val would
+  // freeze the path at object-init and break per-test data roots (f1cd3709 rule).
+  private def configPath = PathUtil.dataRoot / "neblink" / "config.json"
 
   def load: IO[NeblinkConfig] =
     IO.blocking {
@@ -348,7 +352,9 @@ end FriendCodecs
 
 /** Persists user-set peer descriptions across restarts. Stored in ~/.nebflow/peer-descriptions.json. */
 object PeerDescriptionStore:
-  private val path = PathUtil.dataRoot / "peer-descriptions.json"
+  // def, not val: PathUtil.dataRoot is redirectable (setDataRoot); a val would
+  // freeze the path at object-init and break per-test data roots (f1cd3709 rule).
+  private def path = PathUtil.dataRoot / "peer-descriptions.json"
 
   def load: IO[Map[String, String]] =
     IO.blocking {
