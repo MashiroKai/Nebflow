@@ -29,8 +29,11 @@ object Protocol:
     val register: String = "/api/device/register"
   end DeviceApi
 
-  /** Standard OIDC endpoints on the external provider (Logto), RFC 8628. */
+  /** Standard OIDC endpoints on the external provider (Logto). `authorize`
+    * serves the Authorization Code + PKCE flow (stage 2, 2026-08-28);
+    * `deviceAuth` the RFC 8628 legacy flow. */
   object LogtoOidc:
+    val authorize: String = "/oidc/auth"
     val deviceAuth: String = "/oidc/device/auth"
     val token: String = "/oidc/token"
   end LogtoOidc

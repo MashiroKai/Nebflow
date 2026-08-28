@@ -52,6 +52,9 @@ class RestApiRoutes(
 ):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.rest-api")
 
+  /** Logto AC+PKCE login single-flight state (stage 2, 2026-08-28). */
+  private val pkceLogin = PkceLoginSession.unsafe
+
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     // Health check (P2-6 layered, 2026-08-25): `providers` = per-model health
     // (up / down:<reason>), `search` = Tier 2a standalone search API health
@@ -758,6 +761,44 @@ class RestApiRoutes(
             end match
           end if
         }
+
+    // ===== Logto AC+PKCE login (stage 2, 2026-08-28) =====
+    // Contract (Manager-frozen): start 200 = {authorizeUrl}; logto not
+    // configured = 404 {error:"logto-not-configured"}; PKCE state machine
+    // exposed via /auth/state {status: idle|pending|success|error, error?}.
+
+    // Start a PKCE login: build verifier/challenge + state (in-memory,
+    // single-flight), return the hosted authorize URL for window.open.
+    case req @ POST -> Root / "neblink" / "auth" / "start" =>
+      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      else
+        neblinkService match
+          case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
+          case Some(ms) =>
+            for
+              logto <- ms.neblinkConfig.map(_.logto)
+              resp <- logto match
+                case Some(lc) if lc.pkceClientId.isDefined =>
+                  val pkceClientId = lc.pkceClientId.getOrElse("")
+                  for
+                    verifier <- LogtoAuthCode.generateVerifier
+                    challenge = LogtoAuthCode.challengeS256(verifier)
+                    state <- LogtoAuthCode.generateState
+                    _ <- pkceLogin.start(verifier, state)
+                    redirectUri = loopbackCallbackUri
+                    authorizeUrl = LogtoAuthCode.authorizeUrl(lc.endpoint, pkceClientId, redirectUri, challenge, state)
+                    r <- Ok(Json.obj("authorizeUrl" -> authorizeUrl.asJson))
+                  yield r
+                // Logto unconfigured, or configured without the AC app id —
+                // the PKCE login surface treats both as "not configured".
+                case _ => NotFound(Json.obj("error" -> "logto-not-configured".asJson))
+            yield resp
+
+    // Login-state poll for the frontend (pending while the hosted page is
+    // open; success/error sticky until the next start).
+    case req @ GET -> Root / "neblink" / "auth" / "state" =>
+      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      else pkceLogin.statusJson.flatMap(Ok(_))
 
     // Cloud session sync toggle — removed (session sync deleted)
 
@@ -2493,51 +2534,172 @@ class RestApiRoutes(
    */
   /**
     * Shared completion for BOTH device-flow paths (self-hosted token poll
-    * and Logto register): read the EnrollResponse fields, persist the
-    * credential, switch the config, hot-swap the client, and record the
-    * user's profile info.
+    * and Logto register) and the AC+PKCE callback: read the EnrollResponse
+    * fields, persist the credential, switch the config, hot-swap the client,
+    * and record the user's profile info. `logtoRefresh` carries the provider
+    * refresh token (AC+PKCE / silent re-login) into the persisted credential.
     */
   private def completeDeviceEnrollment(
     ms: NeblinkService,
     resolvedUrl: String,
-    json: Json
+    json: Json,
+    logtoRefresh: Option[String] = None
   ): IO[org.http4s.Response[IO]] =
-    val deviceToken = json.hcursor.downField("deviceToken").as[String].toOption
-    val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
-    // Extract user info from neblink-server response (if available).
-    val avatarUrl = json.hcursor.downField("avatarUrl").as[Option[String]].toOption.flatten
-    // neblink-server serializes github_username as "githubUsername" (camelCase)
-    val githubLogin = json.hcursor.downField("githubUsername").as[Option[String]].toOption.flatten
-    deviceToken match
-      case Some(tok) =>
-        for
-          identity <- ms.identity
-          cred = DeviceCredential(resolvedUrl, networkId, identity.deviceId, tok)
-          _ <- DeviceCredential.save(cred)
-          newConfig = NeblinkServerConfig(
-            url = resolvedUrl,
-            networkId = networkId,
-            secret = "",
-            deviceToken = Some(tok)
+    persistEnrollment(ms, resolvedUrl, json, logtoRefresh).flatMap {
+      case Right(_) =>
+        val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
+        Ok(
+          Json.obj(
+            "ok" -> true.asJson,
+            "networkId" -> networkId.asJson
           )
-          _ <- ms.updateConfig(cfg => cfg.copy(enabled = true, neblinkServer = Some(newConfig)))
-          // Hot-swap the client in the discovery service.
-          _ <- neblinkDiscovery
-            .fold(IO.unit)(d => d.setClient(Some(new NeblinkClient(newConfig, gatewayPort))))
-          // Trigger immediate re-discovery.
-          _ <- ms.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
-          // Persist GitHub user info (avatar + login) from server response.
-          _ <- ms.updateDeviceInfo(avatarUrl = avatarUrl, githubLogin = githubLogin)
-          r <- Ok(
-            Json.obj(
-              "ok" -> true.asJson,
-              "networkId" -> networkId.asJson
-            )
-          )
-        yield r
+        )
+      case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+    }
+
+  /** The enrollment half of completeDeviceEnrollment — delegates to
+    * NeblinkEnrollment (shared with the startup client's silent re-login
+    * hook, which has no HTTP context). Returns the persisted device token. */
+  private def persistEnrollment(
+    ms: NeblinkService,
+    resolvedUrl: String,
+    json: Json,
+    logtoRefresh: Option[String]
+  ): IO[Either[String, String]] =
+    NeblinkEnrollment.persist(
+      ms,
+      resolvedUrl,
+      json,
+      logtoRefresh,
+      neblinkDiscovery,
+      gatewayPort,
+      reloginHook = Some(LogtoSilentRelogin.make(ms, IO.pure(neblinkDiscovery), gatewayPort, neblinkServerUrl(None)))
+    )
+  end persistEnrollment
+
+  // ── Loopback callback (RFC 8252): Logto redirects the browser here after
+  // the hosted login. No gateway token — the browser carries only the
+  // provider redirect; the PKCE state parameter is the anti-CSRF check.
+
+  /** The registered loopback redirect (RFC 8252: the provider accepts ANY
+    * local port against the port-less registered URI). */
+  private def loopbackCallbackUri: String = s"http://127.0.0.1:$gatewayPort/auth/callback"
+
+  def authCallbackRoutes: HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case req @ GET -> Root / "callback" =>
+      handleAuthCallback(req.uri.query.params)
+  }
+
+  private def handleAuthCallback(query: Map[String, String]): IO[org.http4s.Response[IO]] =
+    // Provider error redirect (?error=...&error_description=...) — user
+    // denied / hosted-page failure.
+    LogtoAuthCode.parseCallbackError(query) match
+      case Some(cb) =>
+        val msg = s"${cb.error}${cb.description.fold("")(d => s": $d")}"
+        pkceLogin.fail(msg) *> htmlResponse(callbackPage(ok = false, msg), Status.BadRequest)
       case None =>
-        BadRequest(Json.obj("error" -> "Server did not return a device token".asJson))
-  end completeDeviceEnrollment
+        val code = query.getOrElse("code", "")
+        val state = query.getOrElse("state", "")
+        pkceLogin.take(state).flatMap {
+          // None = mismatch / expired / stray hit (take already set the
+          // error status for pending attempts).
+          case None =>
+            htmlResponse(
+              callbackPage(ok = false, "登录回调校验失败（state 不匹配或已过期）"),
+              Status.BadRequest
+            )
+          case Some(verifier) =>
+            neblinkService match
+              case None =>
+                pkceLogin.fail("NebLink service not initialized") *>
+                  htmlResponse(callbackPage(ok = false, "NebLink 服务未初始化"), Status.InternalServerError)
+              case Some(ms) =>
+                for
+                  logto <- ms.neblinkConfig.map(_.logto)
+                  serverUrl <- neblinkServerUrl(None)
+                  resp <- (logto, logto.flatMap(_.pkceClientId)) match
+                    case (Some(lc), Some(pkceClientId)) =>
+                      LogtoAuthCode
+                        .tokenCall(LogtoDeviceFlow.jdkSend)(
+                          LogtoAuthCode.tokenRequest(
+                            lc.endpoint,
+                            pkceClientId,
+                            loopbackCallbackUri,
+                            code,
+                            verifier
+                          )
+                        )
+                        .flatMap {
+                          case Right(tokens) =>
+                            ms.identity.flatMap { identity =>
+                              LogtoDeviceFlow
+                                .register(LogtoDeviceFlow.jdkSend)(
+                                  serverUrl,
+                                  tokens.accessToken,
+                                  identity.deviceId,
+                                  identity.deviceName,
+                                  identity.platform
+                                )
+                                .flatMap {
+                                  case Right(json) =>
+                                    completeDeviceEnrollment(ms, serverUrl, json, tokens.refreshToken).attempt
+                                      .flatMap {
+                                        case Right(r) if r.status.isSuccess =>
+                                          pkceLogin.succeed *> htmlResponse(callbackPage(ok = true, ""), Status.Ok)
+                                        case Right(_) =>
+                                          pkceLogin.fail("Enrollment failed") *>
+                                            htmlResponse(callbackPage(ok = false, "设备注册未完成"), Status.BadGateway)
+                                        case Left(e) =>
+                                          pkceLogin.fail(Option(e.getMessage).getOrElse("enrollment error")) *>
+                                            htmlResponse(
+                                              callbackPage(ok = false, Option(e.getMessage).getOrElse("登录处理失败")),
+                                              Status.InternalServerError
+                                            )
+                                      }
+                                  case Left(err) =>
+                                    pkceLogin.fail(s"register: $err") *>
+                                      htmlResponse(callbackPage(ok = false, s"设备注册失败：$err"), Status.BadGateway)
+                                }
+                            }
+                          case Left(err) =>
+                            pkceLogin.fail(s"token: $err") *>
+                              htmlResponse(callbackPage(ok = false, s"登录令牌交换失败：$err"), Status.BadRequest)
+                        }
+                    case _ =>
+                      pkceLogin.fail("logto-not-configured") *>
+                        htmlResponse(callbackPage(ok = false, "Logto 登录未配置"), Status.NotFound)
+                yield resp
+        }
+
+  /** Static loopback login result page (success + error variants). The
+    * frontend learns the outcome by polling /api/neblink/auth/state. */
+  private def callbackPage(ok: Boolean, message: String): String =
+    val headline = if ok then "登录成功，可关闭本页" else "登录失败"
+    val detail = if ok then "NebLink 账号已连接，本窗口可以关闭" else message
+    val icon = if ok then "✓" else "✕"
+    val iconColor = if ok then "#07c160" else "#d1242f"
+    s"""<!doctype html>
+       |<html lang="zh-CN"><head><meta charset="utf-8">
+       |<meta name="viewport" content="width=device-width,initial-scale=1">
+       |<title>NebLink 登录</title>
+       |<style>body{font-family:-apple-system,'Segoe UI','PingFang SC',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f6f7f9;color:#1f2328}
+       |.card{text-align:center;padding:44px 52px;border-radius:14px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.08)}
+       |.icon{color:$iconColor;font-size:42px;line-height:1;margin-bottom:10px}h1{font-size:18px;font-weight:600;margin:0 0 8px}
+       |p{color:#6a737d;font-size:13px;margin:0;max-width:320px;word-break:break-all}</style></head>
+       |<body><div class="card"><div class="icon">$icon</div><h1>$headline</h1><p>$detail</p></div></body></html>""".stripMargin
+
+  /** HTML response without circe's String-entity hijack (explicit bytes +
+    * content type + length). */
+  private def htmlResponse(markup: String, status: Status): IO[org.http4s.Response[IO]] =
+    val bytes = markup.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+    IO.pure(
+      org.http4s.Response(status = status)
+        .withHeaders(Headers(
+          `Content-Type`(MediaType.text.html, Charset.`UTF-8`),
+          org.http4s.headers.`Content-Length`.unsafeFromLong(bytes.length.toLong)
+        ))
+        .withBodyStream(Stream.emits(bytes))
+    )
 
   private def proxyPost(serverUrl: String, path: String, body: String): IO[Either[String, Json]] =
     IO.blocking {
