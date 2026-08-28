@@ -374,10 +374,18 @@ class NeblinkClient(
   def listMessages(conversationId: String, after: Long = 0L, limit: Int = 50): IO[Either[String, List[MessageSummary]]] =
     withSessionJson[List[MessageSummary]]("GET", s"/api/conversations/$conversationId/messages?after=$after&limit=$limit", "")
 
-  /** 发消息（好友寻址，服务器 get-or-create 会话）。 */
-  def sendFriendMessage(friendUserId: String, body: String): IO[Either[String, Json]] =
+  /** 发消息（好友寻址，服务器 get-or-create 会话）。
+    *
+    * `origin` 透传给服务器落库（#290 spec v1.1 wire 契约：缺省 "user"，
+    * 非法值 422）。agent 代发链（FriendService.sendAsAgent → doSend）必须
+    * 传 Some("agent")——否则 agent 发的消息被标成 user，origin 语义
+    * （前端徽章/审计/spec §7.2 限速区分）整体失效。
+    */
+  def sendFriendMessage(friendUserId: String, body: String, origin: Option[String] = None): IO[Either[String, Json]] =
     withSession { token =>
-      val payload = Json.obj("body" -> body.asJson).noSpaces
+      val payload = origin match
+        case Some(o) => Json.obj("body" -> body.asJson, "origin" -> o.asJson).noSpaces
+        case None    => Json.obj("body" -> body.asJson).noSpaces
       sendRequest("POST", s"${config.url}/api/friends/$friendUserId/messages", payload, Some(token))
         .map(_.flatMap(resp => decode[Json](resp).left.map(_.getMessage)))
     }
