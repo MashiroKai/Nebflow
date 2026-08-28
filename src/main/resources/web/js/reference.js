@@ -135,6 +135,33 @@ export function makeReference(input) {
     };
   }
 
+  // #290 A2A (addendum §3.2): friend message forward - content-bearing ref
+  // (the message body rides the payload as content.fullText, unlike the
+  // pointer refs above). Stable id pinned to the source message.
+  if (rt === 'friend-message') {
+    const content = input.content || {};
+    const fullText = String(content.fullText || '').slice(0, 4000);
+    const preview = previewOf('', content.preview || fullText, 160);
+    const friendName = src.friendName || src.friendNeblinkId || '';
+    const date = src.date || '';
+    return {
+      type: 'ref', refType: 'friend-message',
+      id: src.messageId ? `ref:fm:${src.messageId}` : nextRefId('fm'),
+      source: {
+        kind: src.kind || 'friend-message',
+        conversationId: src.conversationId || '',
+        messageId: src.messageId || '',
+        friendName,
+        friendNeblinkId: src.friendNeblinkId || '',
+        direction: src.direction === 'out' ? 'out' : 'in',
+      },
+      anchor,
+      content: { preview, fullText },
+      meta: { icon: 'message-circle', typeLabel: t('ref.typeFriendMessage'), date },
+      display: { label: t('ref.fromFriend', { name: friendName }), preview, pageBadge: date },
+    };
+  }
+
   return null;
 }
 
@@ -157,6 +184,7 @@ export function refMentionText(ref) {
     return `@${ref.source?.path || ''}${p}`;
   }
   if (ref.refType === 'html-element') return `@${ref.source?.url || ''}#${ref.anchor?.selector || ''}`;
+  if (ref.refType === 'friend-message') return `@${ref.display?.label || ref.source?.friendName || ''}`;
   return '';
 }
 
@@ -173,6 +201,7 @@ const ICONS = {
   clipboard: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>',
   code: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
   table: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="12" y1="3" x2="12" y2="21"/></svg>',
+  'message-circle': '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
 };
 function refIcon(ref) {
   return ICONS[ref.meta?.icon] || ICONS.file;
@@ -196,7 +225,76 @@ export function renderRefBlock(ref, { mode = 'input' } = {}, onRemove) {
   return renderInputRef(ref, onRemove);
 }
 
+// #290 A2A (addendum §3.4): friend-message input block - etched surface,
+// header 来自 {好友名} + date corner badge, body 2-line clamp, expand = full
+// text (content.fullText). Fixed footprint, zero new color tokens.
+function renderFriendInputRef(ref, onRemove) {
+  const wrap = document.createElement('div');
+  wrap.className = 'att-ref att-ref-fm';
+  wrap.dataset.refType = 'friend-message';
+  wrap.dataset.refId = ref.id || '';
+  const label = ref.display?.label || '';
+  wrap.setAttribute('role', 'group');
+  wrap.setAttribute('aria-label', `${t('ref.cardAria')}: ${label}`.trim());
+  wrap.title = label;
+
+  const icon = document.createElement('span');
+  icon.className = 'att-ref-icon';
+  icon.innerHTML = refIcon(ref);
+  icon.setAttribute('aria-hidden', 'true');
+
+  const body = document.createElement('span');
+  body.className = 'att-ref-fm-body';
+  const head = document.createElement('span');
+  head.className = 'att-ref-fm-head';
+  const nameEl = document.createElement('span');
+  nameEl.className = 'att-ref-fm-name';
+  nameEl.textContent = label;
+  head.appendChild(nameEl);
+  const date = ref.meta?.date || ref.display?.pageBadge || '';
+  if (date) {
+    const dateEl = document.createElement('span');
+    dateEl.className = 'att-ref-fm-date';
+    dateEl.textContent = date;
+    head.appendChild(dateEl);
+  }
+  const text = document.createElement('span');
+  text.className = 'att-ref-fm-text';
+  text.textContent = ref.content?.preview || ref.display?.preview || '';
+  body.append(head, text);
+
+  const expand = document.createElement('button');
+  expand.type = 'button';
+  expand.className = 'att-ref-expand';
+  expand.title = t('ref.expand');
+  expand.setAttribute('aria-expanded', 'false');
+  expand.innerHTML = EXPAND_SVG;
+  const fullText = ref.content?.fullText || '';
+  const toggle = (e) => {
+    if (e && e.stopPropagation) e.stopPropagation();
+    const expanded = wrap.classList.toggle('expanded');
+    expand.setAttribute('aria-expanded', String(expanded));
+    expand.title = expanded ? t('ref.collapse') : t('ref.expand');
+    expand.innerHTML = expanded ? COLLAPSE_SVG : EXPAND_SVG;
+    text.textContent = expanded ? fullText : (ref.content?.preview || '');
+  };
+  expand.addEventListener('click', toggle);
+  wrap.addEventListener('click', toggle);
+
+  const rm = document.createElement('button');
+  rm.type = 'button';
+  rm.className = 'att-ref-remove';
+  rm.textContent = '×';
+  rm.title = t('ref.remove');
+  rm.setAttribute('aria-label', t('ref.remove'));
+  rm.addEventListener('click', (e) => { e.stopPropagation(); onRemove?.(ref); });
+
+  wrap.append(icon, body, expand, rm);
+  return wrap;
+}
+
 function renderInputRef(ref, onRemove) {
+  if (ref.refType === 'friend-message') return renderFriendInputRef(ref, onRemove);
   const wrap = document.createElement('div');
   wrap.className = 'att-ref';
   wrap.dataset.refType = ref.refType || '';
@@ -273,6 +371,7 @@ function renderInputRef(ref, onRemove) {
 /** Normalized short source line for the input card meta (workspace path / url). */
 function normalizeSource(ref) {
   if (ref.refType === 'task') return '';
+  if (ref.refType === 'friend-message') return ref.source?.friendNeblinkId || '';
   if (ref.source?.url) return ref.source.url;
   const p = ref.source?.path || '';
   if (!p) return '';
@@ -423,5 +522,6 @@ function jumpRef(ref) {
     }
     return;
   }
-  // task / unknown → non-navigating record.
+  // task / friend-message / unknown → non-navigating record (the friend
+  // message content already rides the payload - there is nothing to open).
 }

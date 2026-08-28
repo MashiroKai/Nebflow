@@ -105,6 +105,15 @@
   color: var(--color-text-muted, #888);
 }
 
+/* #290 §1.2 WeChat-style blacklist: blocked friends stay visible but greyed,
+ * with a 「已拉黑」 status word on the row. */
+.fm-row.fm-blocked {
+  opacity: 0.55;
+}
+.fm-row.fm-blocked .fm-row-name {
+  color: var(--color-text-muted, #888);
+}
+
 .fm-empty {
   padding: 24px 12px;
   text-align: center;

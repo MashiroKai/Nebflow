@@ -427,6 +427,65 @@
   padding-left: 0;
   flex-basis: 100%;
 }
+
+/* ── #290 A2A 好友消息引用块（addendum §3.4）: etched 面（--glass-etched-*，
+   零新色 token）、header「来自 {好友名}」+ 日期角标、正文摘要 2 行截断、
+   ⤢ 展开显示全文（content.fullText）。定高 footprint，不随内容变长。── */
+.att-ref-fm {
+  height: auto;
+  min-height: 36px;
+  max-height: 56px;              /* header + 2 行摘要的固定 footprint */
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  align-items: flex-start;
+}
+.att-ref-fm .att-ref-icon { margin-top: 2px; }
+.att-ref-fm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.att-ref-fm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.att-ref-fm-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.att-ref-fm-date {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.att-ref-fm-text {
+  color: var(--color-text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  word-break: break-word;
+}
+.att-ref-fm.expanded {
+  max-height: 120px;
+  overflow-y: auto;
+}
+.att-ref-fm.expanded .att-ref-fm-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  color: var(--color-text);
+}
 .att-ref.expanded .att-ref-meta {
   flex-basis: 100%;
 }

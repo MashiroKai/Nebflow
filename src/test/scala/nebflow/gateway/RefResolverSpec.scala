@@ -190,6 +190,52 @@ class RefResolverSpec extends FunSuite:
     assertEquals(RefResolver.tagOf("section#main"), Some("section"))
     assertEquals(RefResolver.tagOf(""), None)
 
+  // ===== #290 A2A: friend-message (content-bearing) =====
+
+  private def fmRef(fullText: String, date: String = "2026-08-28 19:40"): Json =
+    Json.obj(
+      "refType" -> "friend-message".asJson,
+      "id" -> "ref:fm:m-1001".asJson,
+      "source" -> Json.obj(
+        "kind" -> "friend-message".asJson,
+        "conversationId" -> "c-lin".asJson,
+        "messageId" -> "m-1001".asJson,
+        "friendName" -> "林小满".asJson,
+        "friendNeblinkId" -> "lin@example.com".asJson,
+        "direction" -> "in".asJson
+      ),
+      "anchor" -> Json.obj("kind" -> "none".asJson),
+      "content" -> Json.obj(
+        "preview" -> fullText.take(160).asJson,
+        "fullText" -> fullText.asJson
+      ),
+      "meta" -> Json.obj("icon" -> "message-circle".asJson, "typeLabel" -> "好友消息".asJson, "date" -> date.asJson),
+      "display" -> Json.obj("label" -> "来自 林小满".asJson, "preview" -> fullText.take(160).asJson, "pageBadge" -> date.asJson)
+    )
+
+  test("friend-message ref injects the pinned text-layer block with the full body"):
+    val res = RefResolver.resolve(fmRef("周末的束流实验数据出来了"))
+    assertEquals(
+      res.get,
+      "[引用 · 好友消息 | 来自 林小满(lin@example.com) | 2026-08-28 19:40]\n周末的束流实验数据出来了"
+    )
+
+  test("friend-message ref keeps body newlines but strips other control chars"):
+    val res = RefResolver.resolve(fmRef("line1\nline2\tend"))
+    assert(res.get.contains("line1\nline2"))
+    assert(!res.get.contains('\t'))
+
+  test("friend-message ref without a date omits the date segment"):
+    val res = RefResolver.resolve(fmRef("hi", date = ""))
+    assertEquals(res.get, "[引用 · 好友消息 | 来自 林小满(lin@example.com)]\nhi")
+
+  test("friend-message ref with empty fullText is unresolvable (fail-open)"):
+    assert(RefResolver.resolve(fmRef("")).isEmpty)
+
+  test("friend-message fullText is capped at 4000 chars"):
+    val res = RefResolver.resolve(fmRef("x" * 5000))
+    assertEquals(res.get.split('\n').last.length, 4000)
+
   // ===== QC follow-up (#303): string hygiene + task-ref dedupe =====
 
   test("QC: title with \\n payload cannot forge a second injection line"):

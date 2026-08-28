@@ -84,7 +84,8 @@
 
 /* ── Context Menu ── */
 .explorer-context-menu,
-.canvas-tab-context-menu {
+.canvas-tab-context-menu,
+.fm-context-menu {
   position: fixed;
   z-index: 5000;
   background: var(--glass-bg, rgba(255,255,255,0.92));
@@ -97,7 +98,8 @@
   min-width: 120px;
 }
 .explorer-context-menu button,
-.canvas-tab-context-menu button {
+.canvas-tab-context-menu button,
+.fm-context-menu button {
   display: block;
   width: 100%;
   text-align: left;
@@ -112,13 +114,16 @@
   transition: background 0.1s;
 }
 .explorer-context-menu button:hover,
-.canvas-tab-context-menu button:hover {
+.canvas-tab-context-menu button:hover,
+.fm-context-menu button:hover {
   background: var(--color-hover, rgba(128,128,128,0.1));
 }
-.explorer-context-menu button.danger {
+.explorer-context-menu button.danger,
+.fm-context-menu button.danger {
   color: #e53935;
 }
-.explorer-context-menu button.danger:hover {
+.explorer-context-menu button.danger:hover,
+.fm-context-menu button.danger:hover {
   background: rgba(229,57,53,0.08);
 }
 .explorer-context-menu hr {
