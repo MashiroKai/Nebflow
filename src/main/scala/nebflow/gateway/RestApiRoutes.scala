@@ -776,7 +776,9 @@ class RestApiRoutes(
           case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
           case Some(ms) =>
             for
-              logto <- ms.neblinkConfig.map(_.logto)
+              // Embedded-default fallback: missing logto block resolves to the
+              // product's hosted auth service (fresh installs get PKCE login).
+              logto <- ms.neblinkConfig.map(_.effectiveLogto)
               resp <- logto match
                 case Some(lc) if lc.pkceClientId.isDefined =>
                   val pkceClientId = lc.pkceClientId.getOrElse("")
@@ -791,6 +793,8 @@ class RestApiRoutes(
                   yield r
                 // Logto unconfigured, or configured without the AC app id —
                 // the PKCE login surface treats both as "not configured".
+                // (Defensive: effectiveLogto always resolves via the embedded
+                // default, so this arm only fires if that invariant changes.)
                 case _ => NotFound(Json.obj("error" -> "logto-not-configured".asJson))
             yield resp
 

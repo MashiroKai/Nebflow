@@ -91,4 +91,46 @@ class NeblinkModelSpec extends CatsEffectSuite:
     assertEquals(decoded, Right(cfg), "Roundtrip should preserve all fields")
   }
 
+  // ===== Logto embedded default (2026-08-28 distribution-gap fix) =====
+
+  test("embeddedDefault carries the product hosted-auth constants") {
+    // Product infrastructure constants (public client ids) — pinned here so
+    // accidental edits surface in CI. config.json logto block can override.
+    assertEquals(LogtoConfig.embeddedDefault.endpoint, "https://auth.neblink.space")
+    assertEquals(LogtoConfig.embeddedDefault.pkceClientId, Some("csxh16cas0x03bgk6w7ej"))
+  }
+
+  test("effectiveLogto falls back to embeddedDefault when config has no logto block") {
+    val cfg = decode[NeblinkConfig]("{}")
+    assertEquals(cfg.isRight, true, "empty config object should decode")
+    val eff = cfg.map(_.effectiveLogto)
+    assertEquals(eff, Right(Some(LogtoConfig.embeddedDefault)))
+    // Exact production values, not just object equality (belt and braces).
+    eff.foreach(_.foreach { lc =>
+      assertEquals(lc.endpoint, "https://auth.neblink.space")
+      assertEquals(lc.pkceClientId, Some("csxh16cas0x03bgk6w7ej"))
+    })
+  }
+
+  test("effectiveLogto prefers an explicit logto block over the embedded default") {
+    val json =
+      """{"logto":{"endpoint":"https://my-own-logto.example","clientId":"my-dev-app","pkceClientId":"my-pkce-app"}}"""
+    val cfg = decode[NeblinkConfig](json)
+    assertEquals(cfg.isRight, true, "explicit logto block should decode")
+    val eff = cfg.map(_.effectiveLogto)
+    assertEquals(
+      eff,
+      Right(Some(LogtoConfig("https://my-own-logto.example", "my-dev-app", Some("my-pkce-app")))),
+      "explicit config.json values must win over the embedded default"
+    )
+  }
+
+  test("raw logto field stays None without a block (device-flow legacy proxy unaffected)") {
+    // The device-flow endpoints keep reading raw `logto` so their
+    // no-provider branch (neblink-server device proxy) stays reachable —
+    // only the PKCE chain gets the embedded-default fallback.
+    val cfg = decode[NeblinkConfig]("{}")
+    assertEquals(cfg.map(_.logto), Right(None))
+  }
+
 end NeblinkModelSpec
