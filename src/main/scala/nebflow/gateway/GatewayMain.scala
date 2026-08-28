@@ -199,9 +199,13 @@ object GatewayMain extends IOApp.Simple:
   )
 
   def run: IO[Unit] =
-    // Read port from config first, then kill stale processes on that port
-    GatewayConfig.load.flatMap { cfg =>
-      ensureSingleInstance(cfg.port.value) *> GatewayConfig.load.flatMap { cfg =>
+    // Team #11 ④: log which Windows toolchain pieces (Git Bash / rg)
+    // resolved at boot — missing pieces must be loud up front, not discovered
+    // later inside a failing tool call. No-op off Windows.
+    nebflow.core.WindowsDepProbe.warnIfMissing *>
+      // Read port from config first, then kill stale processes on that port
+      GatewayConfig.load.flatMap { cfg =>
+        ensureSingleInstance(cfg.port.value) *> GatewayConfig.load.flatMap { cfg =>
         // Expose resolved gateway port and PID to agent via system properties
         System.setProperty("nebflow.gateway.port", cfg.port.value.toString)
         System.setProperty("nebflow.gateway.pid", ProcessHandle.current.pid.toString)
