@@ -138,6 +138,11 @@ export default {
   // Task list cache per session
   sessionTasks: {},
 
+  // Team-domain task cache, keyed by team name (teamTaskListUpdate frames
+  // carry {team, tasks}, no sessionId). 裁定② (2026-08-30): rendered inside
+  // the Nebula session's task panel as the unified progress view.
+  teamTasks: {},
+
   // Agent panel
   agentsData: [],
   selectedAgent: null,

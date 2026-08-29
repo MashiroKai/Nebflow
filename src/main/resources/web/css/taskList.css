@@ -67,34 +67,6 @@
   color: var(--color-text-muted, #888);
 }
 
-/* Archive entry — right end of the header (§3.4), mirrors .task-toggle */
-.task-archive-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  color: var(--color-text-muted, #888);
-  transition: background 0.15s, color 0.15s;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-
-.task-archive-btn:hover {
-  background: var(--color-frame-hover);
-  color: var(--color-text, #000);
-}
-
-.task-archive-btn svg {
-  width: 13px;
-  height: 13px;
-}
-
 /* Collapsed body — use grid-template-rows for smooth height-aware animation */
 .task-body {
   display: grid;
@@ -301,26 +273,6 @@ svg.task-check-glyph {
   to   { transform: rotate(360deg); }
 }
 
-/* failed: red x in the circle slot, label dimmed (§3.3) */
-.task-failed .task-check {
-  border-color: var(--color-error);
-}
-
-.task-failed-icon {
-  display: flex;
-  color: var(--color-error);
-}
-
-.task-failed-icon svg,
-svg.task-failed-icon {
-  width: 12px;
-  height: 12px;
-}
-
-.task-failed .task-label {
-  opacity: 0.55;
-}
-
 .task-item-text {
   flex: 1;
   min-width: 0;
@@ -362,12 +314,6 @@ svg.task-failed-icon {
   font-weight: 500;
 }
 
-/* ── v2 §3/§8: needs_confirmation row — muted status word + return button.
-   No row-level decoration (克制): the three controls self-express state. ── */
-.task-needs-confirmation .task-label {
-  font-weight: 400;               /* not the in_progress 500 — awaiting user */
-}
-
 .task-status-word {
   flex-shrink: 0;
   max-width: 64px;
@@ -377,18 +323,6 @@ svg.task-failed-icon {
   font-size: 11px;
   font-weight: 400;
   color: var(--color-text-muted, #888);
-}
-
-/* v3 C29: 待确认状态词 = sapphire 族亮度变体（待办区「需要你」信号；
-   零新全局 token，局部变量级。亮 rgb(76,110,170) 5.10:1 / 暗
-   rgb(140,165,215) 5.30:1 — §15.9 对比度核验） */
-.task-needs-confirmation .task-status-word {
-  color: rgb(76, 110, 170);
-}
-@media (prefers-color-scheme: dark) {
-  .task-needs-confirmation .task-status-word {
-    color: rgb(140, 165, 215);
-  }
 }
 
 /* v3 §15.6/§15.7: 任务区相对时间（刚分/分钟/小时/天，60s textContent 直更） */
@@ -401,100 +335,6 @@ svg.task-failed-icon {
   font-size: 11px;
   font-weight: 400;
   color: var(--color-text-muted, #888);
-}
-
-/* Return button — glass-control Pattern B (base transparent, hover glass),
-   right end of the row: corner-up-left 13px + label 11px/500 */
-.task-return-btn {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 6px;
-  border: 1px solid transparent;   /* reserves hover edge — no layout shift */
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text-muted, #888);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, color 0.15s;
-}
-.task-return-btn:hover {
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  color: var(--color-text, #000);
-}
-.task-return-btn:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
-}
-.task-return-btn svg {
-  width: 13px;
-  height: 13px;
-}
-.task-ws-down .task-return-btn {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* ── 契约#1: user-cancel control — distinct from the completed circle.
-   Glass-control Pattern B (base transparent, hover glass), mirrors
-   .task-return-btn but error-tinted on hover (destructive). The leading
-   zone glyph stays square/read-only; this is a row-end action button. ── */
-.task-cancel-btn {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 6px;
-  border: 1px solid transparent;   /* reserves hover edge — no layout shift */
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text-muted, #888);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, color 0.15s;
-}
-.task-cancel-btn svg {
-  width: 13px;
-  height: 13px;
-}
-.task-cancel-btn:hover {
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  color: var(--color-error);
-}
-.task-cancel-btn:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
-}
-.task-ws-down .task-cancel-btn {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* 契约#4: optimistically-cancelling row — dim + lock (mirrors
-   .bg-task-cancelling). The cancel button shows the request state in warning
-   tint; the collapse-out follows via .task-collapsing. */
-.task-item.task-cancelling {
-  opacity: 0.65;
-  pointer-events: none;
-}
-.task-item.task-cancelling .task-cancel-btn {
-  color: var(--color-warning);
-  border-color: var(--color-warning);
 }
 
 /* New / rolled-back task slide-in from the left */
@@ -530,8 +370,7 @@ svg.task-failed-icon {
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
-  .task-toggle:hover,
-  .task-archive-btn:hover {
+  .task-toggle:hover {
     background: rgba(255,255,255,0.06);
     color: #d8dae0;
   }
@@ -556,9 +395,7 @@ svg.task-failed-icon {
     animation: none;
   }
 }
-/* ── Narrow viewport (§10 A12, 裁定 F3): tighten the header at ≤480px.
-   The archive button is NEVER hidden (archive is the only way back to
-   completed history); the stats count may shrink to ellipsis first. ── */
+/* ── Narrow viewport (§10 A12, 裁定 F3): tighten the header at ≤480px. ── */
 @media (max-width: 480px) {
   .task-header { gap: 4px; }
   .task-stats {
@@ -567,13 +404,8 @@ svg.task-failed-icon {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* v2 B13: status word may give way first, then the button label — the
-     icon stays (flex absorbs, no horizontal overflow delta vs v1) */
+  /* v2 B13: status word may give way first — flex absorbs the rest */
   .task-status-word { display: none; }
-  .task-return-btn span { display: none; }
-  .task-return-btn { padding: 2px 4px; }
-  .task-cancel-btn span { display: none; }
-  .task-cancel-btn { padding: 2px 4px; }
   /* v3 D12: 任务区相对时间在窄屏让步（信息次要，防水平溢出增量） */
   .task-last-active { display: none; }
 }

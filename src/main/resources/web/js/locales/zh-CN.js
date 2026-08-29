@@ -555,13 +555,10 @@ export default {
   'time.yesterday': '昨天',
 
   // === Task list ===
+  // 任务工具重做（2026-08-30）：进展展示语义——只显 pending+in_progress；
+  // needs_confirmation/cancel/return/archive 键随退役路径一并清除。
   'task.expand': '展开',
   'task.collapse': '收起',
-  'task.inProgress': '{count} 进行中',
-  'task.open': '{count} 待处理',
-  'task.more': '+{count} 个',
-  'task.sectionHuman': '人类待办',
-  'task.sectionAgent': 'Agent 任务',
   // v3 双区（§15.11）：待办区 / 任务区
   'task.sectionTodo': '待办',
   'task.sectionProgress': '任务',
@@ -569,20 +566,10 @@ export default {
   'task.progressEmpty': '暂无任务',
   'task.justNow': '刚刚',
   'task.pendingShort': '排队中',
-  'task.failedShort': '已失败',
   'task.statsBoth': '{todo} 待办 · {progress} 任务',
   'task.completeAria': '标记「{subject}」为完成',
   'task.inProgressShort': '进行中',
-  // Team Manager 任务面板（2026-08-25 team-manager-task-tool）
-  'task.archiveTooltip': '打开任务档案',
   'task.completeError': '标记完成失败，请重试',
-  'task.cancel': '取消',
-  'task.cancelAria': '取消「{subject}」',
-  'task.cancelled': '已取消',
-  'task.cancelling': '取消中',
-  'task.cancelError': '取消失败，请重试',
-  'task.cancelDefaultReason': '用户主动取消',
-  'task.cancelReason': '取消原因',
   'ref.cardAria': '引用',
   'ref.expand': '展开',
   'ref.collapse': '收起',
@@ -598,19 +585,6 @@ export default {
   'explorer.reference': '引用',
   'canvas.referenceCurrent': '引用当前页/选区',
   'canvas.noRef': '该标签页暂不支持引用',
-  'task.needsConfirmation': '待确认',
-  'task.returnLabel': '打回',
-  'task.returnAria': '打回「{subject}」并附上意见',
-  'task.returnError': '打回失败，请重试',
-  'task.removeTaskRef': '移除任务引用',
-    'task.statsSuffix': ' 项待办',
-  'task.archiveTitle': '任务档案',
-  'task.allProjects': '全部项目',
-  'task.uncategorized': '未分类',
-  'task.notes': '记录',
-  'task.events': '事件',
-  'task.archiveEmpty': '暂无归档任务',
-  'task.archiveError': '任务档案加载失败',
 
   // === Tool names (label first line) ===
   'tool.Read': '读取',
