@@ -129,6 +129,39 @@
   cursor: default;
 }
 
+/* 第七件 裁定④ grouping (team → member → tasks): quiet subgroup headers,
+   progressively indented. Kept below the zone-header visual weight. */
+.task-subgroup {
+  margin-top: 4px;
+}
+
+.task-subgroup-header {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 6px 2px 2px;
+  cursor: default;
+}
+
+.task-subgroup-header.task-subgroup-member {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  margin-left: 12px;
+}
+
+/* Rows indent under their grouping level: one step under a team, two under
+   a member. */
+.task-subgroup .task-item {
+  margin-left: 10px;
+}
+
+.task-member-group .task-item {
+  margin-left: 22px;
+}
+
 /* v3 dual-zone structure containers — bare by design (§15.5/§15.6 克制:
    zone differentiation comes from content, not container decoration). */
 .task-section {
@@ -253,18 +286,14 @@ svg.task-check-glyph {
   to   { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
 }
 
-/* in_progress spinner inside the same circle slot */
-.task-check-spinner {
-  width: 12px;
-  height: 12px;
+/* in_progress (第七件 裁定⑤): the spinner IS the glyph — a standalone ring
+   in the 20px slot, no surrounding box. Specificity 0,2,0 beats .task-check-box
+   (0,1,0) so the slot returns to a clean circle. */
+.task-check.task-check-spin {
   border-radius: 50%;
   border: 1.5px solid rgb(var(--sapphire) / 0.25);
   border-top-color: rgb(var(--sapphire));
   animation: spin 0.9s linear infinite;
-}
-
-.task-active .task-check {
-  border-color: rgb(var(--sapphire) / 0.4);
 }
 
 @keyframes spin {
@@ -511,7 +540,7 @@ svg.task-failed-icon {
 /* ── Reduced motion (§5 A11/A15): all animation becomes instant;
    the hover check preview stays as a static state change ── */
 @media (prefers-reduced-motion: reduce) {
-  .task-check-spinner {
+  .task-check.task-check-spin {
     animation: none;
     border-top-color: rgb(var(--sapphire) / 0.25);
   }

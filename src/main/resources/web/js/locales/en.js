@@ -566,12 +566,7 @@ export default {
   'task.statsBoth': '{todo} todos · {progress} tasks',
   'task.completeAria': 'Mark "{subject}" complete',
   'task.inProgressShort': 'In progress',
-  'task.completedShort': 'Completed',
   // Team Manager task panel (2026-08-25 team-manager-task-tool)
-  'teamTask.header': 'Tasks',
-  'teamTask.empty': 'No team tasks — Manager has not created any yet',
-  'teamTask.dependsOn': 'Depends on: {ids}',
-  'teamTask.blocksIds': 'Blocks: {ids}',
   'task.archiveTooltip': 'Open task archive',
   'task.completeError': 'Failed to mark complete, try again',
   'task.cancel': 'Cancel',
