@@ -355,6 +355,12 @@ export default {
   'mailDelivery.immediate': 'Immediate',
   'mailDelivery.queueTitle': 'Queue: processed one by one after the current task finishes',
   'mailDelivery.immediateTitle': 'Immediate: injected into the conversation right away',
+  // Mail type tag labels (protocol values stay English)
+  'mailType.INFO': 'Info',
+  'mailType.FOLLOW_UP': 'Follow-up',
+  'mailType.PARALLEL': 'Parallel',
+  'mailType.INTERRUPT': 'Interrupt',
+  'mailType.RESULT': 'Result',
   'mailFlow.noBody': '(no body)',
   'mailFlow.renderFailed': '(render failed: {msg})',
 
