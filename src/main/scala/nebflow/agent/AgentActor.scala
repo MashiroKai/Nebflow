@@ -190,25 +190,6 @@ object AgentActor extends AgentCore with AgentSession:
     * buffered cancellation) expires. 45s = mid of the approved 30-60s range.
     * The timer rides forkTurn — a turn boundary naturally cancels it and the
     * buffer degrades to the idle-cache semantics (delivered, never lost). */
-  val CancelBatchDebounceMs = 45000L
-
-  /** Cancel-batch: package buffered cancellation notices into ONE injection
-    * block. A single notice keeps the detailed pre-batch [任务取消 #id]
-    * shape; N ≥ 2 renders a compact ordered list with reasons. Append order
-    * == chronological cancel order. Pure — unit-testable. */
-  def packageCancelNotices(notices: List[AgentCommand.TaskCancelNotice]): String =
-    notices match
-      case Nil => ""
-      case single :: Nil =>
-        s"[任务取消 #${single.taskId}: ${single.subject}]\n" +
-          s"任务描述: ${single.description}\n" +
-          s"取消原因: ${single.reason}\n" +
-          "（该任务已由用户取消，处于终态。请停止与该任务相关的工作，不要继续推进；如需后续处理请另行创建任务）"
-      case many =>
-        val lines = many.map(n => s"#${n.taskId} ${n.subject} — 原因：${n.reason}")
-        s"[任务取消 ×${many.size}]（按取消时间排序）\n" +
-          lines.mkString("\n") + "\n" +
-          "（以上任务已由用户取消，处于终态。请停止与这些任务相关的工作，不要继续推进；如需后续处理请另行创建任务）"
 
   // ── v2 冻结式错误恢复（20260824_frozen-error-recovery-plan §3.3/§5.1）─────
   /** 同 reason 连续 ErrorFrozen ≥ 本值 → 进入升级链（请求父干预，不再直接 fatal）。 */
@@ -575,23 +556,8 @@ object AgentActor extends AgentCore with AgentSession:
           val injectionSource: Option[String] =
             if clientMessageId.isDefined then None
             else source.orElse(inferInjectionSource(state.sessionId, replyTo))
-          // Cancel-batch activity flush (user ruling 2026-08-26 08:33): buffered
-          // cancellations ride THIS turn as one appended block — a single turn
-          // carries both the activity and the packaged notice. Empty buffer =
-          // byte-identical message shape (zero overhead for non-root agents).
-          val cancelBlock: Option[ContentBlock] =
-            Option.when(state.cancelNotices.nonEmpty)(
-              ContentBlock.Text(AgentActor.packageCancelNotices(state.cancelNotices))
-            )
-          // NOTE: when blocks were absent the message was Left(text) — the
-          // enrich must NOT swallow the original text: it becomes the first
-          // Text block, ahead of any pre-existing blocks and the package.
-          val enrichedBlocks: Option[List[ContentBlock]] = cancelBlock match
-            case Some(cb) => Some(ContentBlock.Text(text) :: (blocks.filter(_.nonEmpty).getOrElse(Nil) :+ cb))
-            case None => blocks.filter(_.nonEmpty)
-          val stateWithFlush =
-            if cancelBlock.isDefined then stateWithWidth.copy(cancelNotices = Nil)
-            else stateWithWidth
+          val enrichedBlocks: Option[List[ContentBlock]] = blocks.filter(_.nonEmpty)
+          val stateWithFlush = stateWithWidth
           val userMsg = (enrichedBlocks match
             case Some(bl) => Message(MessageRole.User, Right(bl))
             case None => Message(MessageRole.User, Left(text))
@@ -981,31 +947,6 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery) =>
         for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery, eventType)
         yield idle(agentDef, resources, depth, parentRef, state)
-
-      // ── Cancel-batch (user ruling 2026-08-26 08:33) ──
-      case AgentCommand.TaskCancelNotice(taskId, subject, description, reason, at) =>
-        val notice = AgentCommand.TaskCancelNotice(taskId, subject, description, reason, at)
-        if agentDef.name == "Nebula" then
-          // Idle root: buffer, ZERO turns — the package rides the next
-          // activity's turn (UserInput handler enrich below).
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "cancel-notice-buffered",
-            s"task=#$taskId buffered=${state.cancelNotices.size + 1}")
-          IO.pure(idle(agentDef, resources, depth, parentRef, state.copy(cancelNotices = state.cancelNotices :+ notice)))
-        else
-          // Non-root keeps the immediate stop-work notification (pre-batch behavior).
-          val text = AgentActor.packageCancelNotices(List(notice))
-          for _ <- ctx.self ! AgentCommand.ImmediateInput(text, source = Some("task-cancel"))
-          yield idle(agentDef, resources, depth, parentRef, state)
-
-      case AgentCommand.FlushCancelNotices() =>
-        // Debounce expiry (timer started during a processing turn; the agent
-        // may since have gone idle — a work-time cancellation still injects).
-        // Idempotent: an activity-driven enrich may have emptied the buffer.
-        if state.cancelNotices.nonEmpty then
-          val text = AgentActor.packageCancelNotices(state.cancelNotices)
-          for _ <- ctx.self ! AgentCommand.ImmediateInput(text, source = Some("task-cancel"))
-          yield idle(agentDef, resources, depth, parentRef, state.copy(cancelNotices = Nil))
-        else IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       // Queued mail arriving in idle — drain immediately as a new turn.
       // Idempotent guard (#22): activation sends a head-trigger MailQueued AND
@@ -2358,41 +2299,6 @@ object AgentActor extends AgentCore with AgentSession:
           pendingImmediateInputs = state.execution.pendingImmediateInputs :+ msg
         )
         IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
-
-      // ── Cancel-batch (user ruling 2026-08-26 08:33): processing state ──
-      case AgentCommand.TaskCancelNotice(taskId, subject, description, reason, at) =>
-        val notice = AgentCommand.TaskCancelNotice(taskId, subject, description, reason, at)
-        if agentDef.name == "Nebula" then
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "cancel-notice-buffered-busy",
-            s"task=#$taskId buffered=${state.cancelNotices.size + 1}")
-          val buffered = state.copy(cancelNotices = state.cancelNotices :+ notice)
-          // Debounce: arm the flush timer (forkTurn — the turn boundary
-          // cancels it naturally, degrading to the idle-cache semantics).
-          // Every notice arms a timer; FlushCancelNotices is idempotent, and
-          // the FIRST timer to expire flushes the whole batch (fixed window).
-          ctx.forkTurn(
-            IO.sleep(AgentActor.CancelBatchDebounceMs.millis) *> IO(ctx.self ! AgentCommand.FlushCancelNotices())
-          ) *> IO.pure(processing(agentDef, resources, depth, parentRef, buffered, pending))
-        else
-          // Non-root keeps the queue-and-drain behavior (pre-batch).
-          val text = AgentActor.packageCancelNotices(List(notice))
-          val updatedExec = state.execution.copy(
-            pendingImmediateInputs = state.execution.pendingImmediateInputs :+
-              AgentCommand.ImmediateInput(text, source = Some("task-cancel"))
-          )
-          IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
-
-      case AgentCommand.FlushCancelNotices() =>
-        // Window expired mid-processing: package and queue for the turn-end
-        // drain (never interrupts the in-flight turn). Idempotent on empty.
-        if state.cancelNotices.nonEmpty then
-          val text = AgentActor.packageCancelNotices(state.cancelNotices)
-          val updatedExec = state.execution.copy(
-            pendingImmediateInputs = state.execution.pendingImmediateInputs :+
-              AgentCommand.ImmediateInput(text, source = Some("task-cancel"))
-          )
-          IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(cancelNotices = Nil, execution = updatedExec), pending))
-        else IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
       // Queued mail arriving while busy — just count; actual content is on disk
       case AgentCommand.MailQueued(item, _) =>
@@ -3798,35 +3704,6 @@ object AgentActor extends AgentCore with AgentSession:
           state.execution.copy(pendingImmediateInputs = state.execution.pendingImmediateInputs :+ msg)
         )
         IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
-
-      // ── Cancel-batch (user ruling 2026-08-26 08:33): frozen = broad idle ──
-      case AgentCommand.TaskCancelNotice(taskId, subject, description, cancelReason, at) =>
-        val notice = AgentCommand.TaskCancelNotice(taskId, subject, description, cancelReason, at)
-        if agentDef.name == "Nebula" then
-          // Buffer without waking — the resumed turn carries the package via
-          // the idle UserInput enrich (resume dispatch goes through UserInput).
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "cancel-notice-buffered-frozen",
-            s"task=#$taskId buffered=${state.cancelNotices.size + 1}")
-          val buffered = state.copy(cancelNotices = state.cancelNotices :+ notice)
-          IO.pure(frozen(agentDef, resources, depth, parentRef, buffered, replyTo, resumeAt, reason, retryCount, escalation))
-        else
-          val text = AgentActor.packageCancelNotices(List(notice))
-          val queued = state.copy(execution =
-            state.execution.copy(pendingImmediateInputs = state.execution.pendingImmediateInputs :+
-              AgentCommand.ImmediateInput(text, source = Some("task-cancel")))
-          )
-          IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
-
-      case AgentCommand.FlushCancelNotices() =>
-        // Frozen: queue the package for the post-resume turn-end drain.
-        if state.cancelNotices.nonEmpty then
-          val text = AgentActor.packageCancelNotices(state.cancelNotices)
-          val queued = state.copy(cancelNotices = Nil, execution =
-            state.execution.copy(pendingImmediateInputs = state.execution.pendingImmediateInputs :+
-              AgentCommand.ImmediateInput(text, source = Some("task-cancel")))
-          )
-          IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
-        else IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
 
       case AgentCommand.MailQueued(item, _) =>
         // 镜像 processing：计数 +1，实际内容在磁盘（MailQueueStore）。

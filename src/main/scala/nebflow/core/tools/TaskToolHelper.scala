@@ -3,35 +3,37 @@ package nebflow.core.tools
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
-import nebflow.core.task.{TaskArchive, TaskStore}
+import nebflow.core.task.TaskStore
 
-/** Shared helper for task-related tools to emit taskListUpdate events. */
+/** Shared helper for task-related tools to emit list-update events.
+  *
+  * 任务工具重做（2026-08-30）：TaskArchive/归档索引退役——事件推送保留，
+  * 增量索引刷新删除。列表一律走 listVisible（TTL 过滤后的可见集）。 */
 object TaskToolHelper:
 
   def emitTaskListUpdate(store: TaskStore, sessionId: String, ctx: ToolContext): IO[Unit] =
     ctx.wsSend match
       case Some(send) =>
-        store.list(sessionId).flatMap { tasks =>
+        store.listVisible(sessionId).flatMap { tasks =>
           val json = io.circe.Json.obj(
             "type" -> "taskListUpdate".asJson,
             "sessionId" -> sessionId.asJson,
             "tasks" -> tasks.asJson
           )
           send(json)
-        } *> refreshArchiveIndex(sessionId, ctx)
-      case None => refreshArchiveIndex(sessionId, ctx)
+        }
+      case None => IO.unit
 
-  /** Team Manager task panel event (spec §2.5, team-manager-task-tool):
+  /** Team task panel event (spec §2.5, team-manager-task-tool):
     * `{type: "teamTaskListUpdate", team, tasks}` — NO sessionId; the frontend
     * routes it to the global teams panel (ws.js entry, flowCanvas
     * onTeamTaskListUpdate mutates the in-memory team state and re-renders).
-    * Deliberately does NOT refresh the session archive index: team tasks live
-    * in their own directory and must never leak into TaskQuery's
-    * session/recent/project results (stage-3 may add a team archive). */
+    * Deliberately does NOT touch any session domain: team tasks live in their
+    * own directory and never leak into session surfaces. */
   def emitTeamTaskListUpdate(store: TaskStore, teamName: String, ctx: ToolContext): IO[Unit] =
     ctx.wsSend match
       case Some(send) =>
-        store.list(TaskStore.teamScopeKey(teamName)).flatMap { tasks =>
+        store.listVisible(TaskStore.teamScopeKey(teamName)).flatMap { tasks =>
           val json = io.circe.Json.obj(
             "type" -> "teamTaskListUpdate".asJson,
             "team" -> teamName.asJson,
@@ -40,33 +42,5 @@ object TaskToolHelper:
           send(json)
         }
       case None => IO.unit
-
-  /**
-    * C2: incremental archive-index refresh after any task mutation, joined
-    * with session folder info when a SessionStore is reachable (folderName
-    * via the existing synchronous getFolderName lookup, same pattern as the
-    * rest of SessionStore). Best-effort — failures are logged inside
-    * TaskArchive and never propagate to the tool call.
-    */
-  private def refreshArchiveIndex(sessionId: String, ctx: ToolContext): IO[Unit] =
-    val joinIO: IO[String => TaskArchive.SessionJoin] = ctx.sessionStore match
-      case Some(store) =>
-        store
-          .getSessionMeta(sessionId)
-          .map {
-            case Some(meta) =>
-              val j = TaskArchive.SessionJoin(
-                folderId = meta.folderId,
-                folderName = meta.folderId.flatMap(store.getFolderName),
-                sessionName = Some(meta.name)
-              )
-              (_: String) => j
-            case None => (_: String) => TaskArchive.Unclassified
-          }
-          .handleErrorWith(_ => IO.pure((_: String) => TaskArchive.Unclassified))
-      case None =>
-        IO.pure((_: String) => TaskArchive.Unclassified)
-
-    joinIO.flatMap(join => TaskArchive.refreshSession(sessionId, join))
 
 end TaskToolHelper

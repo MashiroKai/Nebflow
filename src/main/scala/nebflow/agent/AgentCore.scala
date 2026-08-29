@@ -38,8 +38,6 @@ private[agent] trait AgentCore:
    */
   private val NebulaExclusiveTools = AgentCore.NebulaExclusiveTools
 
-  /** Tools available to Nebula and Team Leads, but NOT workers. */
-  private val LeadLevelTools = AgentCore.LeadLevelTools
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 
@@ -512,15 +510,26 @@ private[agent] trait AgentCore:
           isRootAgent = freshDef.name == "Nebula"
           nowMs = System.currentTimeMillis()
           injectTime = isUserTurn && (isRealUserTurn || nowMs - lastTimeReminderMs >= TimeReminderMinGapMs)
-          // Tasks: Nebula only, real-user turns only. renderForPrompt returns
-          // the FULL list; the delta against the previous turn lives here
-          // (unchanged → one line; changed → +/-/~ lines; lifecycle → full).
-          taskListText <-
-            if isRootAgent && isRealUserTurn then
+          // Tasks: team 成员 only（任务工具重做 2026-08-30——任务=进展展示，
+          // Nebula 不再有任务工具、不再注入；成员 reminder 用 team scope 的
+          // 进展列表）。renderForPrompt returns the FULL list; the delta
+          // against the previous turn lives here (unchanged → one line;
+          // changed → +/-/~ lines; lifecycle → full).
+          taskTeamOpt <-
+            if isRealUserTurn then
               stateForLlm.sessionId match
-                case Some(sid) => renderTasksForTurn(resources, sid, isLifecycleRebuild)
-                case None => IO.pure("")
-            else IO.pure("")
+                case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
+                case None => IO.pure(None)
+            else IO.pure(None)
+          taskListText <-
+            (taskTeamOpt, stateForLlm.sessionId) match
+              case (Some(team), Some(_)) =>
+                renderTasksForTurn(
+                  resources,
+                  nebflow.core.task.TaskStore.teamScopeKey(team),
+                  isLifecycleRebuild
+                )
+              case _ => IO.pure("")
           // Env section text (rendered from data.sh + prompt.md) — stays in
           // systemStable only. Reminder refactor (2026-08-20): environment
           // CHANGE reminders are gone (user ruling); chatWidth was removed
@@ -1435,19 +1444,13 @@ private[agent] trait AgentCore:
       if agentDef.flows.nonEmpty then withBuiltin + "FlowTrigger" else withBuiltin - "FlowTrigger"
     val isNebula = agentDef.name == "Nebula"
     val nebulaFiltered = if isNebula then withFlowTrigger else withFlowTrigger -- NebulaExclusiveTools
-    // Team Manager task tools (2026-08-25): mechanism-layer grants — a team
-    // lead (Manager) gets the full owner set (create/update/list); Nebula
-    // gets the read-only list for oversight (no mutation tools); everyone
-    // else gets none (U2: members are not injected at all — the panel is the
-    // member-visible surface). The grant is the ONLY source: explicitly
-    // listing TeamTask* in agent.json grants nothing (the tool name IS the
-    // permission boundary, spec §2.1 — a member sneaking TeamTaskCreate into
-    // its tools list must not get it).
-    val teamTaskGrant =
-      if isTeamLead then AgentCore.TeamTaskTools
-      else if isNebula then Set("TeamTaskList")
-      else Set.empty[String]
-    val withTeamTask = (nebulaFiltered -- AgentCore.TeamTaskTools) ++ teamTaskGrant
+    // Team task tools（任务工具重做 2026-08-30）：TeamTask 三件只配 team——
+    // 注入源是 fixedToolsFor 的 category=team 分支（全体成员）。这里只做防
+    // 声明逃逸剥离：非 team agent（standalone/flow/Nebula）即使 agent.json
+    // 显式列出也不给（the tool name IS the permission boundary）。
+    val teamTaskFiltered =
+      if agentDef.category == "team" then nebulaFiltered
+      else nebulaFiltered -- AgentCore.TeamTaskTools
     // Block 1 (supervision trio §C2, 2026-08-27): AgentControl mechanism-layer
     // grant — a team lead (Manager) gains subtree-scoped control over its own
     // team (members + their sub-agents; the subtree guard in AgentControlTool
@@ -1455,11 +1458,13 @@ private[agent] trait AgentCore:
     // ONLY source: declaring AgentControl in agent.json grants nothing
     // (TeamTaskTools precedent — the tool name IS the permission boundary).
     val controlGrant = if isNebula || isTeamLead then Set("AgentControl") else Set.empty[String]
-    val withControl = (withTeamTask -- Set("AgentControl")) ++ controlGrant
-    // Task tools: available to Nebula and Team Lead, NOT workers
+    val withControl = (teamTaskFiltered -- Set("AgentControl")) ++ controlGrant
+    // Task tools: Nebula/lead 专属的 session 域 TaskCreate/TaskUpdate 已退役
+    // （任务工具重做 2026-08-30）；depth≥2 的 "*" 代理仍剥离 TeamTask*（叶子
+    // 隔离）。
     val taskFiltered = agentDef.tools match
       case List("*") =>
-        if depth >= 2 then withControl -- (LeadLevelTools ++ AgentCore.TeamTaskTools)
+        if depth >= 2 then withControl -- AgentCore.TeamTaskTools
         else withControl
       case _ =>
         withControl
@@ -1872,31 +1877,26 @@ object AgentCore:
     "Issue"
   )
 
-  /** Nebula 的 9 个编排工具（user ruling 2026-08-25 17:49：Nebula 系统固定
-    * 为 9 个编排工具）。机制层固定注入——不依赖 agent.json 声明（防面板编辑
-    * 误删导致调度器失能），同时也意味着非 Nebula agent 声明这些工具中的
-    * Nebula 专属项无效。六件基础工具同样是机制固定（2026-08-28 00:55 用户
-    * 裁定，见 BaseTools）。 */
+  /** Nebula 的 7 个编排工具（任务工具重做 2026-08-30：TaskCreate/TaskUpdate
+    * 退役——任务只配 team，Nebula 不再有任务工具；user ruling 2026-08-25
+    * 17:49 的 9 编排基数由此收缩）。机制层固定注入——不依赖 agent.json 声明
+    * （防面板编辑误删导致调度器失能），同时也意味着非 Nebula agent 声明这些
+    * 工具中的 Nebula 专属项无效。六件基础工具同样是机制固定（2026-08-28
+    * 00:55 用户裁定，见 BaseTools）。 */
   val NebulaOrchestrationTools = Set(
     "AgentControl",
-    "TaskUpdate",
     "Delegate",
     "Pop",
     "AskUserQuestion",
-    "TaskCreate",
     "Mail",
     "Schedule",
     "TransferFile"
   )
 
-  /** Team Manager task tools (2026-08-25 team-manager-task-tool): granted to
-    * team leads (Manager owner — all three) and Nebula (TeamTaskList only,
-    * read-only oversight); stripped from SubTask workers / flow nodes /
-    * depth≥2 "*" agents (same LeadLevelTools treatment). */
+  /** Team task tools（任务工具重做 2026-08-30：category=team 机制层注入
+    * 全体成员——Manager 与成员同级可用，任务=进展展示语义；不再是 lead 专属
+    * owner 集。SubTask workers / flow nodes / depth≥2 "*" agents 仍剥离）。 */
   val TeamTaskTools = Set("TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList")
-
-  /** Tools available to Nebula and Team Leads, but NOT workers. */
-  val LeadLevelTools = Set("TaskCreate", "TaskUpdate")
 
   /**
    * Base tools always available to ALL agents regardless of category.
@@ -1944,7 +1944,10 @@ object AgentCore:
    */
   def fixedToolsFor(agentDef: AgentDef): Set[String] =
     agentDef.category match
-      case "team" => BaseTools + "Mail" + "SubTask" + "FlowExecute"
+      // 任务工具重做（2026-08-30）：任务只配 team——TeamTask 三件机制层注入
+      // 全体 team 成员（照 #381 SubTask 先例；ctx.teamName 把写域钉死在
+      // 自己的 team，无跨 team 面）。
+      case "team" => BaseTools + "Mail" + "SubTask" + "FlowExecute" ++ AgentCore.TeamTaskTools
       case "flow" => BaseTools + "FlowReport"
       case _ if agentDef.name == "Nebula" =>
         // 2026-08-28 00:55 用户裁定：六件工具作为所有 agent 统一拥有的机制
