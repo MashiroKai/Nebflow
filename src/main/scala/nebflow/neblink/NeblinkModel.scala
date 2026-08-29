@@ -25,7 +25,28 @@ case class DeviceIdentity(
 
 object DeviceIdentity:
   given Encoder[DeviceIdentity] = deriveEncoder
-  given Decoder[DeviceIdentity] = deriveDecoder
+
+  /** Manual decoder: deriveDecoder does NOT honor Scala parameter defaults
+    * (circe semiauto limitation — a defaulted field is still REQUIRED on the
+    * wire). The gateway's own encoder writes every field, so gateway-written
+    * files round-trip; but any hand-written or backup-restored device.json
+    * that omits `capabilities`/`userDescription`/... silently failed the
+    * WHOLE decode -> loadOrCreate fell back to createNew() -> a fresh random
+    * identity every boot -> "403 Invalid device credential" against the
+    * server (2026-08-30 E2E finding; identity is never persisted on the
+    * decode-failure path, which kept the file looking pristine). */
+  given Decoder[DeviceIdentity] = Decoder.instance { c =>
+    for
+      deviceId <- c.downField("deviceId").as[String]
+      deviceName <- c.downField("deviceName").as[String]
+      platform <- c.downField("platform").as[String]
+      deviceSecret <- c.downField("deviceSecret").as[Option[String]].map(_.getOrElse(""))
+      capabilities <- c.downField("capabilities").as[Option[Map[String, String]]].map(_.getOrElse(Map.empty))
+      userDescription <- c.downField("userDescription").as[Option[String]].map(_.getOrElse(""))
+      avatarUrl <- c.downField("avatarUrl").as[Option[Option[String]]].map(_.flatten)
+      githubLogin <- c.downField("githubLogin").as[Option[Option[String]]].map(_.flatten)
+    yield DeviceIdentity(deviceId, deviceName, platform, deviceSecret, capabilities, userDescription, avatarUrl, githubLogin)
+  }
 
   // def, not val: PathUtil.dataRoot is redirectable (setDataRoot); a val would
   // freeze the path at object-init and break per-test data roots (f1cd3709 rule).
