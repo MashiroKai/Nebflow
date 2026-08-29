@@ -343,10 +343,12 @@ object FileTaskStore extends TaskStore:
       t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress
     ))
 
-  /** Visible = 未过 TTL 的任务（active 全显 + completed/failed 6h 内显）。
-    * 过期行在读取路径惰性消失；物理清理走 purgeExpired。 */
-  def listVisible(sessionId: String): IO[List[Task]] =
-    list(sessionId).map(_.filterNot(TaskStore.isExpired(_)))
+  /** Visible = the panel-visible set = pending + in_progress ONLY (任务工具重做
+    * 2026-08-30: 「列表只显 pending+in_progress」——completed/failed vanish from
+    * the panel the moment they finish; the 6h/2d TTL governs DISK purge, not
+    * visibility). Kept distinct from [[listActive]] only for the caller's
+    * intent-readability. */
+  def listVisible(sessionId: String): IO[List[Task]] = listActive(sessionId)
 
   /** todo-panel §7.1: mark a task completed and record WHO completed it
     * ("user" = user clicked the circle; "agent" = agent flow). Mirrors
