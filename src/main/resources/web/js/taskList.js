@@ -81,6 +81,14 @@ function sortProgress(a, b) {
   return sortByActiveDesc(a, b);
 }
 
+// ── Team grouping (第七件 裁定④, 2026-08-30) ─────────────────────────────
+// 任务区 groups team → member → tasks. ACCESSOR ISOLATION: the Backend data
+// contract (team/member attribution fields on the task-list API/WS payload)
+// hooks up HERE and nowhere else. Tasks without team attribution render
+// flat, exactly as before — zero regression for session-local tasks.
+function taskTeam(tk) { return (tk && typeof tk.team === 'string' && tk.team) || null; }
+function taskMember(tk) { return (tk && typeof tk.member === 'string' && tk.member) || null; }
+
 // ── §15.7 relative time (任务区) ─────────────────────────────────────────
 function formatLastActive(updatedAt) {
   if (!updatedAt) return '';
@@ -305,8 +313,10 @@ function buildCheck(task, row) {
   // 任务区 — square, read-only (§15.6: no hover feedback, no tab stop).
   check.classList.add('task-check-box');
   if (task.status === 'in_progress') {
+    // 第七件 裁定⑤ (2026-08-30): the spinner IS the glyph — a standalone
+    // ring, no surrounding box ("spinner 在方框中转" combo is forbidden).
+    check.classList.add('task-check-spin');
     check.setAttribute('aria-hidden', 'true');
-    check.innerHTML = '<span class="task-check-spinner"></span>';
     row.setAttribute('aria-label',
       `${task.subject || ''} — ${t('task.inProgressShort')}`.trim());
   } else if (task.status === 'failed') {
@@ -501,6 +511,15 @@ function buildGroupHeader(label, section) {
   return h;
 }
 
+/** Grouping headers (裁定④): level-1 team / level-2 member. Visual grouping
+ *  aids only — each row keeps carrying its own status via aria-label. */
+function buildSubgroupHeader(label, level) {
+  const h = document.createElement('div');
+  h.className = 'task-subgroup-header task-subgroup-' + level;
+  h.textContent = label;
+  return h;
+}
+
 /** Empty-state row (§15.5/§15.6, C27): rendered only when a single zone is
  *  empty while the panel is visible; non-interactive, aria-hidden (§15.9). */
 function buildEmpty(label) {
@@ -639,7 +658,34 @@ function redraw(visible, container, sessionId, oldById) {
   if (progress.length === 0) {
     progressSection.appendChild(buildEmpty(t('task.progressEmpty')));
   } else {
-    progress.forEach(tk => progressSection.appendChild(buildRow(tk, sessionId)));
+    // 裁定④ grouping: ungrouped (session-local) tasks flat first, then
+    // team → member → tasks. First-appearance order preserves sortProgress.
+    const ungrouped = [];
+    const teamOrder = [];
+    const byTeam = new Map(); // team → Map(member → tasks)
+    for (const tk of progress) {
+      const team = taskTeam(tk);
+      if (!team) { ungrouped.push(tk); continue; }
+      let g = byTeam.get(team);
+      if (!g) { g = new Map(); byTeam.set(team, g); teamOrder.push(team); }
+      const member = taskMember(tk) || '';
+      if (!g.has(member)) g.set(member, []);
+      g.get(member).push(tk);
+    }
+    ungrouped.forEach(tk => progressSection.appendChild(buildRow(tk, sessionId)));
+    for (const team of teamOrder) {
+      const teamEl = document.createElement('div');
+      teamEl.className = 'task-subgroup';
+      teamEl.appendChild(buildSubgroupHeader(team, 'team'));
+      for (const [member, memberTasks] of byTeam.get(team)) {
+        const memEl = document.createElement('div');
+        memEl.className = 'task-member-group';
+        if (member) memEl.appendChild(buildSubgroupHeader(member, 'member'));
+        memberTasks.forEach(tk => memEl.appendChild(buildRow(tk, sessionId)));
+        teamEl.appendChild(memEl);
+      }
+      progressSection.appendChild(teamEl);
+    }
   }
 
   inner.appendChild(todoSection);

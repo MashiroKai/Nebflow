@@ -314,51 +314,6 @@ export const FLOW_CSS = `
 }
 .team-flow-row.expanded .team-flow-chevron { transform: rotate(90deg); }
 
-/* ── Team Tasks section (2026-08-25 team-manager-task-tool) ── */
-
-.team-tasks-divider {
-  border-top: 1px dashed var(--glass-border);
-  margin: 0 14px; opacity: 0.5;
-}
-.team-tasks-section { padding: 0 14px 14px; }
-.team-tasks-header {
-  font: 600 10px -apple-system, sans-serif; color: var(--color-text-muted);
-  text-transform: uppercase; letter-spacing: 0.06em;
-  margin: 10px 0 6px;
-}
-.team-tasks { display: flex; flex-direction: column; gap: 3px; }
-.team-task-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 5px 8px; border-radius: 8px; min-width: 0;
-  transition: background 0.15s;
-}
-.team-task-row:hover { background: rgba(128, 128, 128, 0.05); }
-.task-status-badge {
-  font: 600 10px -apple-system, sans-serif; flex-shrink: 0;
-  padding: 2px 8px; border-radius: 10px; white-space: nowrap;
-  border: 1px solid var(--color-text-muted); color: var(--color-text-muted);
-}
-.task-status-badge.badge-in_progress { border-color: var(--color-primary, #07c160); color: var(--color-primary, #07c160); }
-.task-status-badge.badge-completed { border-color: var(--color-success, #4caf50); color: var(--color-success, #4caf50); }
-.task-status-badge.badge-failed { border-color: var(--color-error, #f44336); color: var(--color-error, #f44336); }
-.team-task-subject {
-  font: 500 12px -apple-system, sans-serif; color: var(--color-text);
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.team-task-time {
-  font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted);
-  flex-shrink: 0; white-space: nowrap;
-}
-.task-dep-badge {
-  font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted);
-  padding: 1px 6px; border-radius: 8px; flex-shrink: 0; white-space: nowrap;
-  background: rgba(128, 128, 128, 0.10);
-}
-.task-dep-badge.task-dep-badge-block { opacity: 0.8; }
-.team-tasks-empty {
-  font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted);
-  opacity: 0.6; padding: 2px 8px 8px;
-}
 
 /* Expanded DAG inline area */
 .team-flow-dag {
