@@ -1187,6 +1187,8 @@ onMessage('askUser', (msg, view) => {
 onMessage('askUserAnswered', (msg) => {
   closeAskUserCard(msg.sessionId, msg.requestId);
 });
+
+// F4 (#433): global actionable toast for permission cards whose target root
 // session is unreachable. Glass panel, no overlay dimming (弹窗禁令). Stack
 // top-right; removed on answer or on permissionExpired for the same root sid.
 let __permToastHost = null;
