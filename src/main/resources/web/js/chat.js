@@ -1428,7 +1428,7 @@ const ASKUSER_DRAFTS_KEY = key('askuser_drafts');
 // array and runs the same confirm path — it does not hold state. Only cards
 // rendered via renderAskUser carry an askSessionId; permission prompts /
 // slash-cmd pickers pass undefined and stay out of the registry.
-const askCardRegistry = new Map(); // sessionId → { questions, answers, shouldShow, selectOption, confirmIfReady }
+const askCardRegistry = new Map(); // sessionId → { questions, answers, shouldShow, selectOption, confirmIfReady, requestId }
 
 /** Build the inline preview slot for an option (direction C §2.1/§4.1).
  *  swatch: 1-5 color stripes filling the 56×40 slot; image: object-fit cover.
@@ -1505,9 +1505,14 @@ function clearAskDrafts(sid) {
   } catch { /* ignore */ }
 }
 
-export function showOptions(container, questions, onConfirm, doneLabel, onCancel, askSessionId) {
+export function showOptions(container, questions, onConfirm, doneLabel, onCancel, askSessionId, requestId) {
   const box = document.createElement('div');
   box.className = 'option-box';
+  // Tag the card with its requestId so the chat-input passthrough frame
+  // (askUserAnswered, author ruling 2026-08-29 23:50) can locate and lock the
+  // exact card the backend consumed. Permission prompts / onboarding pass no
+  // requestId and stay untagged.
+  if (requestId) box.dataset.requestId = requestId;
   const answers = new Array(questions.length).fill(null);
   const confirmLabel = doneLabel || t('chat.confirm');
   const saved = askSessionId ? loadAskDrafts(askSessionId) : {};
@@ -1779,7 +1784,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   // it writes the same answers[] slot and runs the same confirm path.
   if (askSessionId) {
     askCardRegistry.set(askSessionId, {
-      questions, answers, shouldShow,
+      questions, answers, shouldShow, requestId,
       selectOption(qi, label) {
         const wrapper = questionWrappers[qi];
         if (!wrapper) return;
@@ -1904,12 +1909,54 @@ export function renderAskUser(items, askSessionId, agentName, requestId) {
       }
       broadcastAskState(targetSid);
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
-    }, targetSid);
+    }, targetSid, requestId);
   } catch (e) {
     console.error('[askUser] render failed:', e);
     bubble.textContent = t('chat.failedRender');
   }
   return { type: 'askUser', items, requestId };
+}
+
+/** Lock an AskUser card that was answered via the chat input (author ruling
+ *  2026-08-29 23:50: while an AskUser card is pending, a message typed into
+ *  the input box IS the tool answer). The backend consumed the oldest pending
+ *  card for that session and broadcasts askUserAnswered{sessionId, requestId,
+ *  via:'chat-input'}; the user's text lands as a normal user bubble (same as
+ *  the card's Other path), so the card only needs the local lock treatment —
+ *  the same end-state as the confirm path, minus sending anything.
+ *  Returns true when a matching unanswered card was found and locked. */
+export function closeAskUserCard(sessionId, requestId) {
+  if (!sessionId || !requestId) return false;
+  const view = findViewBySessionId(sessionId);
+  const chat = view && view.dom && view.dom.chat;
+  if (!chat) return false;
+  const boxes = chat.querySelectorAll('.option-box[data-request-id="' + CSS.escape(requestId) + '"]');
+  for (const box of boxes) {
+    if (box.querySelector('.option-answer')) continue; // already answered/locked
+    box.querySelectorAll('.option-btn, .option-confirm, .option-cancel').forEach(el => { el.disabled = true; });
+    const confirmBtn = box.querySelector('.option-confirm');
+    const cancelBtn = box.querySelector('.option-cancel');
+    if (confirmBtn) confirmBtn.style.display = 'none';
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    const ansDiv = document.createElement('div');
+    ansDiv.className = 'option-answer';
+    ansDiv.textContent = '-> ' + t('chat.answeredViaChatInput');
+    box.appendChild(ansDiv);
+    // The registry is per-session and holds only the NEWEST card — tear down
+    // the Canvas answer channel / drafts / attention only when this frame
+    // closed that exact card, or when nothing actionable remains.
+    const entry = askCardRegistry.get(sessionId);
+    if (entry && entry.requestId === requestId) {
+      askCardRegistry.delete(sessionId);
+      clearAskDrafts(sessionId);
+      broadcastAskState(sessionId);
+    }
+    if (!chat.querySelector('.option-box:not(:has(.option-answer))')) {
+      window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId, attention: false } }));
+    }
+    return true;
+  }
+  return false;
 }
 
 // ---------- Permission prompt ----------

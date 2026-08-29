@@ -148,7 +148,7 @@ const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
   'compactStart', 'compactComplete', 'compactFailed',
   'backgroundTaskUpdate', 'taskListUpdate',
-  'askUser', 'askPermission',
+  'askUser', 'askPermission', 'askUserAnswered',
   'frozen', 'resumed', 'agentFrozen', 'agentResumed',
   'errorEscalated', // error-recovery escalation → parent/user decision card
   'taskStuck', // sub-agent management panel (2026-08-22): stuck visibility for any session
