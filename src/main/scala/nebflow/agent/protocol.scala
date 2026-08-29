@@ -54,29 +54,7 @@ object AgentCommand:
     delivery: Option[String] = None
   ) extends AgentCommand
 
-  /**
-   * Cancel-batch (user ruling 2026-08-26 08:33): the user cancelled a task
-   * owned by this session — replaces the old always-immediate [任务取消]
-   * injection for the root orchestrator. Root (Nebula) BUFFERS these:
-   * idle = no turn at all (flushed as a block on the next activity),
-   * processing = debounced window (AgentActor.CancelBatchDebounceMs) so rapid
-   * cancellations merge into ONE packaged notice. Non-root agents keep the
-   * immediate-injection behavior (converted to ImmediateInput on receipt).
-   * `at` is the cancellation epoch-millis — the package renders in cancel
-   * order (append order == chronological).
-   */
-  case class TaskCancelNotice(
-    taskId: String,
-    subject: String,
-    description: String,
-    reason: String,
-    at: Long
-  ) extends AgentCommand
 
-  /** Cancel-batch internal: debounce window expired — flush the buffered
-    * cancellation notices as ONE packaged ImmediateInput. No-op when the
-    * buffer was already flushed by an activity-driven enrich. */
-  case class FlushCancelNotices() extends AgentCommand
   case class Interrupt() extends AgentCommand
 
   case class AskUser(
@@ -1070,16 +1048,6 @@ case class AgentState(
   cachedSystemStable: Option[String],
   /** Dynamic values at the time systemStable was last built (change detection). */
   stableSnapshot: Option[SystemStableSnapshot],
-  /**
-   * Cancel-batch buffer (user ruling 2026-08-26 08:33) — TOP-LEVEL on
-   * purpose: ExecutionContext is rebuilt at every turn boundary
-   * (ExecutionContext.idle), an execution-scoped buffer would be silently
-   * wiped there. In-memory only (same lifecycle as the rest of AgentState):
-   * a restart drops un-flushed notices — acceptable, the panel's
-   * taskListUpdate already converged the visible state. Append order ==
-   * chronological cancel order.
-   */
-  cancelNotices: List[AgentCommand.TaskCancelNotice],
   /** Block 3 循环检测器计数器（supervision trio §D1）：顶层——S3 跨 turn 保留
     * （turn 边界只清 S1 与 R 连续重复计数，见 LoopGuard.evaluate 的 turnKey 判定）。 */
   loopCounters: nebflow.core.processor.LoopGuard.Counters,
@@ -1155,7 +1123,6 @@ object AgentState:
       None,
       None,
       None,
-      Nil, // cancelNotices (cancel-batch)
       nebflow.core.processor.LoopGuard.Counters.Empty,
       loopTurnKey
     )

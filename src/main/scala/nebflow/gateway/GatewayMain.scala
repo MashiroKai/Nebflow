@@ -383,7 +383,17 @@ object GatewayMain extends IOApp.Simple:
                                     hubRef =>
                                       sharedResources.interactionHubRef.set(Some(hubRef))
                                   }
-                                hubSetup *> telemetryIO.flatMap { telemetry =>
+                                // 任务 TTL 启动扫描（任务工具重做 2026-08-30）：扫
+                                // tasks/ 全目录（session+team）物理删除过期任务——
+                                // 判据=磁盘持久化的 createdAt/completedAt，重启后
+                                // 仍生效。Best-effort，永不阻塞启动。
+                                val taskTtlSweep: IO[Unit] =
+                                  FileTaskStore.purgeAllExpired().attempt.flatMap {
+                                    case Right(_) => IO.unit
+                                    case Left(e) =>
+                                      logger.warn(s"Task TTL sweep failed: ${e.getMessage}").void
+                                  }
+                                hubSetup *> taskTtlSweep *> telemetryIO.flatMap { telemetry =>
                                   val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
                                   val sessionService = new SessionService(sessionStore)
                                   val agentService = new AgentService(agentLibrary)

@@ -7,6 +7,7 @@ import io.circe.syntax.*
 import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 
 import java.time.Instant
+import scala.concurrent.duration.*
 
 import scala.collection.mutable
 
@@ -16,20 +17,9 @@ trait TaskStore:
   def list(sessionId: String): IO[List[Task]]
   def listActive(sessionId: String): IO[List[Task]]
   def listVisible(sessionId: String): IO[List[Task]]
-  def dismiss(sessionId: String, taskId: String): IO[Option[Task]]
   def renderForPrompt(sessionId: String): IO[String]
   def update(sessionId: String, taskId: String, updates: TaskUpdateInput): IO[Option[Task]]
   def complete(sessionId: String, taskId: String, by: String): IO[Option[Task]]
-  /** todo-panel v2 §2.4 (C16/C17): user returns a needs_confirmation task to
-    * in_progress with feedback. Raises IllegalStateException when the task is
-    * not awaiting confirmation or is a human todo. */
-  def `return`(sessionId: String, taskId: String, feedback: String): IO[Option[Task]]
-  /** task-cancel #35: user cancels an active agent task (pending /
-    * in_progress / needs_confirmation) → terminal `cancelled` with a durable
-    * reason. Raises IllegalStateException on human todos and on terminal
-    * sources (completed/failed/dismissed/cancelled — cancelled is idempotent
-    * no-op). Caller turns the exception into a taskError frame. */
-  def cancel(sessionId: String, taskId: String, reason: String): IO[Option[Task]]
   def delete(sessionId: String, taskId: String): IO[Boolean]
   def deleteAll(sessionId: String): IO[Unit]
 
@@ -50,6 +40,29 @@ object TaskStore:
   def isSafeTeamName(name: String): Boolean =
     name.nonEmpty && !name.contains("/") && !name.contains("\\") &&
       !name.contains("..") && !name.startsWith(".")
+
+  // ---- TTL（任务工具重做 2026-08-30）----
+  // completed/failed 过 6h 清、pending/in_progress 过 2d 清。判据=持久化的
+  // createdAt/completedAt 字段（重启后扫描磁盘数据仍生效，非内存定时器）。
+  val CompletedTtl: FiniteDuration = 6.hours
+  val ActiveTtl: FiniteDuration = 2.days
+
+  /** A task is expired under the TTL rules. Pure — used by both the
+    * read-path visibility filter and the physical purge. Tasks without a
+    * usable timestamp are never expired (conservative). */
+  def isExpired(task: Task, now: Instant = Instant.now()): Boolean =
+    def parseTs(raw: Option[String]): Option[Instant] =
+      raw.flatMap(s => scala.util.Try(Instant.parse(s)).toOption)
+    task.status match
+      case TaskStatus.Completed | TaskStatus.Failed =>
+        parseTs(task.completedAt).orElse(parseTs(task.updatedAt)) match
+          case Some(ts) => java.time.Duration.between(ts, now).toMillis >= CompletedTtl.toMillis
+          case None     => false
+      case TaskStatus.Pending | TaskStatus.InProgress =>
+        parseTs(task.createdAt) match
+          case Some(ts) => java.time.Duration.between(ts, now).toMillis >= ActiveTtl.toMillis
+          case None     => false
+  end isExpired
 end TaskStore
 
 object FileTaskStore extends TaskStore:
@@ -173,7 +186,6 @@ object FileTaskStore extends TaskStore:
     yield newId
 
     end for
-
   end create
 
   def get(sessionId: String, taskId: String): IO[Option[Task]] =
@@ -206,67 +218,10 @@ object FileTaskStore extends TaskStore:
         .map(_.filter(_ != null))
     }
 
-  // Issue #2 + todo-panel v2 §2.2: state transition validation matrix.
-  // needs_confirmation -> in_progress: user ruling 2026-08-24 (对话反馈=打回).
-  // The PANEL return (C16/C17 returnTask) is the canonical path, but when the
-  // user revises a task via DIALOGUE (no panel click) the agent must be able to
-  // take it back itself — update() additionally requires a note describing the
-  // user feedback (anti-abuse: no silent self-return without a recorded reason).
-  // task-cancel #35: cancelled is a terminal state reachable from the three
-  // active sources (pending/in_progress/needs_confirmation) — no out-edges.
+  // 任务工具重做（2026-08-30）：统一四态矩阵 pending → in_progress →
+  // completed / failed（team 域矩阵本来就是目标形态，session 域的五态矩阵、
+  // C15 确认环节、C22、human 特例全部退役）。terminal = completed/failed。
   private def isValidTransition(from: TaskStatus, to: TaskStatus): Boolean =
-    (from, to) match
-      case (TaskStatus.Pending, TaskStatus.InProgress) => true
-      case (TaskStatus.Pending, TaskStatus.NeedsConfirmation) => true // fast-complete path
-      case (TaskStatus.Pending, TaskStatus.Completed) => true
-      case (TaskStatus.Pending, TaskStatus.Failed) => true
-      case (TaskStatus.Pending, TaskStatus.Cancelled) => true // #35 user/agent cancel
-      case (TaskStatus.Pending, TaskStatus.Pending) => true // no-op
-      case (TaskStatus.InProgress, TaskStatus.NeedsConfirmation) => true // C15: the ONLY completion lane
-      case (TaskStatus.InProgress, TaskStatus.Completed) => true
-      case (TaskStatus.InProgress, TaskStatus.Failed) => true
-      case (TaskStatus.InProgress, TaskStatus.Cancelled) => true // #35
-      case (TaskStatus.InProgress, TaskStatus.InProgress) => true // no-op
-      case (TaskStatus.NeedsConfirmation, TaskStatus.InProgress) => true // 2026-08-24: agent return on dialogue feedback (note required in update())
-      case (TaskStatus.NeedsConfirmation, TaskStatus.NeedsConfirmation) => true // no-op
-      case (TaskStatus.NeedsConfirmation, TaskStatus.Completed) => true // user confirm (complete())
-      case (TaskStatus.NeedsConfirmation, TaskStatus.Dismissed) => true // user dismiss
-      case (TaskStatus.NeedsConfirmation, TaskStatus.Cancelled) => true // #35
-      case (TaskStatus.Completed, TaskStatus.Completed) => true // no-op
-      case (TaskStatus.Completed, TaskStatus.Dismissed) => true
-      case (TaskStatus.Failed, TaskStatus.Failed) => true // no-op
-      case (TaskStatus.Failed, TaskStatus.Dismissed) => true
-      case (TaskStatus.Dismissed, TaskStatus.Dismissed) => true // no-op
-      case (TaskStatus.Cancelled, TaskStatus.Cancelled) => true // no-op (idempotent re-cancel)
-      case _ => false
-
-  /** todo-panel §2.2: human tasks have no in-progress state — the user either
-    * completes them via the circle or the agent fails/dismisses them. Guards
-    * the agent path (TaskUpdate) from pushing a human reminder into its own
-    * work pipeline; the dedicated complete() path checks the plain matrix
-    * (pending/in_progress -> completed) because it records completedBy.
-    *
-    * todo-panel v2: adds C15 (agent may not reach completed directly —
-    * needs_confirmation is the only completion lane, completed is reserved
-    * for the user's confirmation) and C22 (agent may not re-judge a task
-    * failed while it is awaiting the user's ruling). */
-  private def isValidTransitionFor(task: Task, to: TaskStatus): Boolean =
-    if task.taskKind == "human" && (to == TaskStatus.InProgress || to == TaskStatus.NeedsConfirmation) then
-      false // human todos: no in-progress, no awaiting-confirmation (v2 B9)
-    else if task.status == TaskStatus.NeedsConfirmation && to == TaskStatus.Failed then
-      false // C22: no re-judging while awaiting user ruling
-    else if to == TaskStatus.Completed && task.status != TaskStatus.Completed && task.taskKind == "agent" then
-      false // C15: agent path may not complete directly (needs_confirmation only)
-    else isValidTransition(task.status, to)
-
-  /** Team-domain four-state matrix (spec §2.3, U1) — independent of the
-    * session five-state matrix: pending → {pending no-op, in_progress,
-    * completed, failed}; in_progress → {in_progress no-op, completed,
-    * failed}; completed/failed are terminal (no-op only). No
-    * needs_confirmation / dismissed / cancelled in the team domain; the
-    * Manager (owner) sets completed directly (no user-confirmation lane —
-    * C15 constrains only the session domain). */
-  private def isValidTeamTransition(from: TaskStatus, to: TaskStatus): Boolean =
     (from, to) match
       case (TaskStatus.Pending, TaskStatus.InProgress) => true
       case (TaskStatus.Pending, TaskStatus.Completed) => true
@@ -306,141 +261,96 @@ object FileTaskStore extends TaskStore:
     get(sessionId, taskId).flatMap {
       case None => IO.pure(None)
       case Some(existing) =>
-        // Dismissed tasks are "cleared" by the user — agent updates (status or
-        // otherwise) are silently accepted as no-ops so agents don't error.
-        if existing.status == TaskStatus.Dismissed then IO.pure(Some(existing))
+        val newStatus = updates.status.getOrElse(existing.status)
+        val statusValid = updates.status.isEmpty ||
+          isValidTransition(existing.status, newStatus)
+
+        if !statusValid then
+          IO.raiseError(
+            new IllegalStateException(
+              s"Invalid status transition: ${existing.status} -> $newStatus for task #$taskId"
+            )
+          )
         else
-          // Issue #2: Validate status transition — team scope uses the
-          // four-state matrix, session scope keeps the five-state matrix
-          // (C15/C22/return/cancel rules untouched).
-          val isTeamScope = TaskStore.isTeamScopeKey(sessionId)
-          val newStatus = updates.status.getOrElse(existing.status)
-          val statusValid = updates.status.isEmpty ||
-            (if isTeamScope then isValidTeamTransition(existing.status, newStatus)
-             else isValidTransitionFor(existing, newStatus))
+          val newBlocks = (existing.blocks ++ updates.addBlocks.getOrElse(Nil)).distinct
+            .filterNot(updates.removeBlocks.getOrElse(Nil).contains)
+          val newBlockedBy = (existing.blockedBy ++ updates.addBlockedBy.getOrElse(Nil)).distinct
+            .filterNot(updates.removeBlockedBy.getOrElse(Nil).contains)
 
-          if !statusValid then
-            IO.raiseError(
-              new IllegalStateException(
-                s"Invalid status transition: ${existing.status} -> $newStatus for task #$taskId"
-              )
+          val now = Instant.now().toString
+
+          // C2: completedAt = the moment the task enters a terminal state
+          // (completed/failed). Preserved once set.
+          val entersTerminal =
+            (newStatus == TaskStatus.Completed || newStatus == TaskStatus.Failed) &&
+              existing.status != TaskStatus.Completed && existing.status != TaskStatus.Failed
+          val newCompletedAt =
+            if entersTerminal then Some(now) else existing.completedAt
+
+          // C2 event stream: append one event per kind of change, cap at MaxEvents
+          val evBuilder = List.newBuilder[TaskEvent]
+          if updates.status.exists(_ != existing.status) then
+            evBuilder += TaskEvent(
+              "status",
+              Some(s"${TaskStatus.wireName(existing.status)}→${TaskStatus.wireName(newStatus)}"),
+              Some(now)
             )
-          else if
-            // Anti-abuse (2026-08-24): the agent may return a task from
-            // awaiting-ruling on DIALOGUE feedback, but must record the reason —
-            // a note describing the user feedback is mandatory. Without it the
-            // return is rejected (the panel return path is unaffected).
-            existing.status == TaskStatus.NeedsConfirmation &&
-            newStatus == TaskStatus.InProgress &&
-            !updates.note.exists(_.trim.nonEmpty)
-          then
-            IO.raiseError(
-              new IllegalStateException(
-                s"Task #$taskId is awaiting user confirmation: returning it to in_progress requires a note describing the user feedback (TaskUpdate note field)"
-              )
-            )
-          else if
-            // task-cancel #35: the agent may cancel a task (pending /
-            // in_progress / needs_confirmation) but must record the reason — a
-            // note is mandatory (anti-abuse, mirrors the return path above).
-            newStatus == TaskStatus.Cancelled &&
-            existing.status != TaskStatus.Cancelled &&
-            !updates.note.exists(_.trim.nonEmpty)
-          then
-            IO.raiseError(
-              new IllegalStateException(
-                s"Task #$taskId: cancelling a task requires a note describing the cancel reason (TaskUpdate note field)"
-              )
-            )
-          else
-            val newBlocks = (existing.blocks ++ updates.addBlocks.getOrElse(Nil)).distinct
-              .filterNot(updates.removeBlocks.getOrElse(Nil).contains)
-            val newBlockedBy = (existing.blockedBy ++ updates.addBlockedBy.getOrElse(Nil)).distinct
-              .filterNot(updates.removeBlockedBy.getOrElse(Nil).contains)
+          if updates.subject.exists(_ != existing.subject) then
+            evBuilder += TaskEvent("subject", Some(s"was: ${existing.subject.take(120)}"), Some(now))
+          if updates.description.exists(_ != existing.description) then
+            evBuilder += TaskEvent("description", Some(s"was: ${existing.description.take(120)}"), Some(now))
+          if newBlocks != existing.blocks || newBlockedBy != existing.blockedBy then
+            evBuilder += TaskEvent("dependency", Some(s"blocks=${newBlocks.mkString(",")} blockedBy=${newBlockedBy.mkString(",")}"), Some(now))
+          if updates.note.exists(_.nonEmpty) then
+            evBuilder += TaskEvent("note", updates.note.map(_.take(120)), Some(now))
+          val newEvents = (existing.events ++ evBuilder.result()).takeRight(MaxEvents)
 
-            val now = Instant.now().toString
+          // C2 notes: append-only
+          val newNotes = updates.note.filter(_.nonEmpty) match
+            case Some(content) => existing.notes :+ TaskNote(content, updates.noteLinks.getOrElse(Nil), Some(now))
+            case None          => existing.notes
 
-            // C2: completedAt = the moment the task enters a terminal state
-            // (completed, failed or cancelled — #35). Preserved once set
-            // (dismiss keeps it).
-            val newStatus2 = newStatus
-            val entersTerminal =
-              (newStatus2 == TaskStatus.Completed || newStatus2 == TaskStatus.Failed || newStatus2 == TaskStatus.Cancelled) &&
-                existing.status != TaskStatus.Completed && existing.status != TaskStatus.Failed && existing.status != TaskStatus.Cancelled
-            val newCompletedAt =
-              if entersTerminal then Some(now) else existing.completedAt
+          val updated = existing.copy(
+            subject = updates.subject.getOrElse(existing.subject),
+            description = updates.description.getOrElse(existing.description),
+            activeForm = updates.activeForm.orElse(existing.activeForm),
+            status = newStatus,
+            blocks = newBlocks,
+            blockedBy = newBlockedBy,
+            updatedAt = Some(now),
+            completedAt = newCompletedAt,
+            notes = newNotes,
+            events = newEvents
+          )
 
-            // C2 event stream: append one event per kind of change, cap at MaxEvents
-            val evBuilder = List.newBuilder[TaskEvent]
-            if updates.status.exists(_ != existing.status) then
-              evBuilder += TaskEvent(
-                "status",
-                Some(s"${TaskStatus.wireName(existing.status)}→${TaskStatus.wireName(newStatus2)}"),
-                Some(now)
-              )
-            if updates.subject.exists(_ != existing.subject) then
-              evBuilder += TaskEvent("subject", Some(s"was: ${existing.subject.take(120)}"), Some(now))
-            if updates.description.exists(_ != existing.description) then
-              evBuilder += TaskEvent("description", Some(s"was: ${existing.description.take(120)}"), Some(now))
-            if newBlocks != existing.blocks || newBlockedBy != existing.blockedBy then
-              evBuilder += TaskEvent("dependency", Some(s"blocks=${newBlocks.mkString(",")} blockedBy=${newBlockedBy.mkString(",")}"), Some(now))
-            if updates.note.exists(_.nonEmpty) then
-              evBuilder += TaskEvent("note", updates.note.map(_.take(120)), Some(now))
-            val newEvents = (existing.events ++ evBuilder.result()).takeRight(MaxEvents)
-
-            // C2 notes: append-only
-            val newNotes = updates.note.filter(_.nonEmpty) match
-              case Some(content) => existing.notes :+ TaskNote(content, updates.noteLinks.getOrElse(Nil), Some(now))
-              case None          => existing.notes
-
-            val updated = existing.copy(
-              subject = updates.subject.getOrElse(existing.subject),
-              description = updates.description.getOrElse(existing.description),
-              activeForm = updates.activeForm.orElse(existing.activeForm),
-              status = newStatus,
-              blocks = newBlocks,
-              blockedBy = newBlockedBy,
-              updatedAt = Some(now),
-              completedAt = newCompletedAt,
-              notes = newNotes,
-              events = newEvents
-            )
-
-            // Issue #3: Check for cycles after dependency changes
-            list(sessionId).flatMap { allTasks =>
-              val tasksForCheck = allTasks.filterNot(_.id == taskId) :+ updated
-              if hasCycle(tasksForCheck) then
-                IO.raiseError(
-                  new IllegalStateException(
-                    s"Dependency update for task #$taskId would create a cycle"
-                  )
+          // Issue #3: Check for cycles after dependency changes
+          list(sessionId).flatMap { allTasks =>
+            val tasksForCheck = allTasks.filterNot(_.id == taskId) :+ updated
+            if hasCycle(tasksForCheck) then
+              IO.raiseError(
+                new IllegalStateException(
+                  s"Dependency update for task #$taskId would create a cycle"
                 )
-              else writeTask(sessionId, updated).as(Some(updated))
-            }
-          end if
+              )
+            else writeTask(sessionId, updated).as(Some(updated))
+          }
+        end if
     }
 
+  /** Active = pending + in_progress（四态世界无 needs_confirmation）。 */
   def listActive(sessionId: String): IO[List[Task]] =
-    // v2 §3: needs_confirmation is NOT terminal — it still counts as "not
-    // done yet" (header activeCount = pending + in_progress + needs_confirmation).
     list(sessionId).map(_.filter(t =>
-      t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress || t.status == TaskStatus.NeedsConfirmation
+      t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress
     ))
 
+  /** Visible = 未过 TTL 的任务（active 全显 + completed/failed 6h 内显）。
+    * 过期行在读取路径惰性消失；物理清理走 purgeExpired。 */
   def listVisible(sessionId: String): IO[List[Task]] =
-    // #35: cancelled is terminal-invisible (panel hides it; it surfaces only in
-    // the archive) — same treatment as dismissed, so the authoritative
-    // taskListUpdate push converges every client's panel to an empty row.
-    list(sessionId).map(_.filter(t => t.status != TaskStatus.Dismissed && t.status != TaskStatus.Cancelled))
-
-  def dismiss(sessionId: String, taskId: String): IO[Option[Task]] =
-    update(sessionId, taskId, TaskUpdateInput(status = Some(TaskStatus.Dismissed)))
+    list(sessionId).map(_.filterNot(TaskStore.isExpired(_)))
 
   /** todo-panel §7.1: mark a task completed and record WHO completed it
     * ("user" = user clicked the circle; "agent" = agent flow). Mirrors
-    * update()'s terminal-state bookkeeping (completedAt + status event) —
-    * deliberately NOT routed through update() because TaskUpdateInput is
-    * frozen by the spec and completedBy is not an agent-settable field.
+    * update()'s terminal-state bookkeeping (completedAt + status event).
     * pending/in_progress -> completed are legal; re-completing a terminal
     * task raises IllegalStateException (caller turns it into taskError). */
   def complete(sessionId: String, taskId: String, by: String): IO[Option[Task]] =
@@ -485,24 +395,17 @@ object FileTaskStore extends TaskStore:
 
   /**
    * Render active tasks as a hierarchical text block for the per-turn tasks
-   * reminder (Nebula only). Only active (pending + in_progress +
-   * needs_confirmation) tasks are shown, with tree-style indentation.
-   * v2: needs_confirmation tasks render with a marker so the agent knows they
-   * are DONE but AWAITING USER CONFIRMATION — it must not re-work them
-   * (B10/C15/C22).
+   * reminder. Only active (pending + in_progress) tasks are shown, with
+   * tree-style indentation.
    *
    * Reminder refactor (2026-08-20, user ruling): subjects truncated to
    * [[MaxSubjectChars]]; pending lines beyond [[MaxPendingLines]] fold into a
-   * count line (in_progress / needs_confirmation always render); the
-   * instruction block (~300B) moved OUT of this render into the systemStable
-   * "Task List Protocol" section (PromptSections.tasksGuideSection) —
-   * semantics live in the cached prompt, data travels per turn.
+   * count line (in_progress always renders); the instruction block (~300B)
+   * lives in the cached prompt (PromptSections.tasksGuideSection) —
+   * semantics in the cache, data travels per turn.
    */
   def renderForPrompt(sessionId: String): IO[String] =
-    list(sessionId).map { allTasks =>
-      val active = allTasks.filter(t =>
-        t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress || t.status == TaskStatus.NeedsConfirmation
-      )
+    listActive(sessionId).map { active =>
       if active.isEmpty then ""
       else
         val byParent = active.groupBy(_.parentId)
@@ -513,8 +416,8 @@ object FileTaskStore extends TaskStore:
 
         // Pending-fold state: once the pending budget is exhausted, whole
         // all-pending subtrees fold into the count; a pending node with
-        // in_progress/needs_confirmation descendants still renders so the
-        // actionable tasks are never silently dropped.
+        // in_progress descendants still renders so the actionable tasks are
+        // never silently dropped.
         var pendingRendered = 0
         var foldedCount = 0
 
@@ -525,7 +428,6 @@ object FileTaskStore extends TaskStore:
           val indent = "  " * depth
           val statusIcon = t.status match
             case TaskStatus.InProgress => "[in_progress]"
-            case TaskStatus.NeedsConfirmation => "[needs_confirmation]"
             case TaskStatus.Pending =>
               // todo-panel §2.3: human todos are reminders FOR the user — the
               // agent must not sweep them into its own work-through loop.
@@ -554,90 +456,32 @@ object FileTaskStore extends TaskStore:
       end if
     }
 
-  /** todo-panel v2 §2.4 (C16/C17): user return — needs_confirmation back to
-    * in_progress with durable feedback. Mirrors complete()'s structure:
-    * validates against the authoritative task state, raises
-    * IllegalStateException (caller turns it into taskError) when the task is
-    * a human todo or not in needs_confirmation. On success: returnCount+1,
-    * feedback appended to notes (C20 — durable revision history), events
-    * record the return. Empty feedback is legal (bare return, §5.4) and adds
-    * no note. */
-  def `return`(sessionId: String, taskId: String, feedback: String): IO[Option[Task]] =
-    get(sessionId, taskId).flatMap {
-      case None => IO.pure(None)
-      case Some(existing) =>
-        if existing.taskKind == "human" then
-          IO.raiseError(
-            new IllegalStateException(s"Task #$taskId is a human todo — human todos have no return")
-          )
-        else if existing.status != TaskStatus.NeedsConfirmation then
-          IO.raiseError(
-            new IllegalStateException(
-              s"Invalid return: task #$taskId is ${TaskStatus.wireName(existing.status)}, " +
-                s"not needs_confirmation (only awaiting-confirmation tasks can be returned)"
-            )
-          )
-        else
-          val now = Instant.now().toString
-          val evBase = List(
-            TaskEvent("status", Some("needs_confirmation→in_progress"), Some(now)),
-            TaskEvent("returned", Some(feedback.take(120)), Some(now))
-          )
-          val updated = existing.copy(
-            status = TaskStatus.InProgress,
-            returnCount = existing.returnCount + 1,
-            updatedAt = Some(now),
-            notes = if feedback.nonEmpty then existing.notes :+ TaskNote(feedback, Nil, Some(now)) else existing.notes,
-            events = (existing.events ++ evBase).takeRight(MaxEvents)
-          )
-          writeTask(sessionId, updated).as(Some(updated))
+  // ---- TTL 物理清理（任务工具重做 2026-08-30）----
+
+  /** Physically delete expired task files in one scope. Read-path visibility
+    * already hides them (listVisible); this is the disk-hygiene half. */
+  def purgeExpired(scopeKey: String): IO[Int] =
+    list(scopeKey).flatMap { tasks =>
+      val expired = tasks.filter(TaskStore.isExpired(_))
+      expired.traverse_(t => delete(scopeKey, t.id)).as(expired.size)
     }
 
-  /** task-cancel #35: user cancels an active agent task. Mirrors complete()'s
-    * structure: validates against the authoritative state, raises
-    * IllegalStateException (caller turns it into a taskError frame) when the
-    * task is a human todo or not in a cancellable source state. Human todos
-    * are the user's own reminders — they carry the complete circle only, no
-    * cancel semantics (frontend isCancellable is agent-only, symmetric guard
-    * here). On success: status=cancelled (terminal), cancelReason persisted,
-    * completedAt stamped, a kind="cancel" note + status event recorded.
-    * Re-cancelling an already-cancelled task is an idempotent no-op (raced
-    * double-send, mirrors complete()'s re-complete path). */
-  def cancel(sessionId: String, taskId: String, reason: String): IO[Option[Task]] =
-    get(sessionId, taskId).flatMap {
-      case None => IO.pure(None)
-      case Some(existing) =>
-        if existing.taskKind == "human" then
-          IO.raiseError(
-            new IllegalStateException(s"Task #$taskId is a human todo — human todos have no cancel")
-          )
-        else if !isValidTransition(existing.status, TaskStatus.Cancelled) then
-          IO.raiseError(
-            new IllegalStateException(
-              s"Invalid cancel: task #$taskId is ${TaskStatus.wireName(existing.status)}, " +
-                s"not a cancellable active state (only pending/in_progress/needs_confirmation can be cancelled)"
-            )
-          )
-        else if existing.status == TaskStatus.Cancelled then
-          // Idempotent re-cancel (user double-send raced a list refresh):
-          // keep the original cancelReason, just return the task.
-          IO.pure(Some(existing))
-        else
-          val now = Instant.now().toString
-          val reasonStr = if reason.trim.nonEmpty then reason.trim else "cancelled by user"
-          val updated = existing.copy(
-            status = TaskStatus.Cancelled,
-            updatedAt = Some(now),
-            completedAt = Some(now),
-            cancelReason = Some(reasonStr),
-            notes = existing.notes :+ TaskNote(reasonStr, Nil, Some(now), kind = Some("cancel")),
-            events = (existing.events :+ TaskEvent(
-              "status",
-              Some(s"${TaskStatus.wireName(existing.status)}→cancelled"),
-              Some(now)
-            )).takeRight(MaxEvents)
-          )
-          writeTask(sessionId, updated).as(Some(updated))
+  /** Startup sweep across every scope directory on disk (session + team).
+    * Called once at gateway boot — the persistence half of the TTL contract
+    * (重启后扫描磁盘数据仍生效). Best-effort: never blocks startup. */
+  def purgeAllExpired(): IO[Int] =
+    IO.blocking {
+      if !os.exists(root) then Nil
+      else
+        val sessionScopes =
+          os.list(root).filter(p => os.isDir(p) && p.last != "teams").map(p => p.last)
+        val teamScopes =
+          if os.exists(root / "teams") then
+            os.list(root / "teams").filter(os.isDir(_)).map(p => s"team:${p.last}")
+          else Nil
+        (sessionScopes ++ teamScopes).toList
+    }.handleErrorWith(_ => IO.pure(Nil)).flatMap { scopes =>
+      scopes.traverse(purgeExpired).map(_.sum)
     }
 
   // Issue #10: Delete transaction ordering — cleanup references before deleting file

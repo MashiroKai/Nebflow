@@ -533,73 +533,6 @@ class WebSocketRoutes(
       if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
       else handleInject(req)
 
-    // --- Task archive (C2) ---
-    // GET /api/nf-tasks?folderId=&since=&status=&keyword=&limit=
-    // Cross-session task archive for the frontend archive view. Reads the
-    // tasks/_index.json aggregate (refreshed incrementally by task tools);
-    // folderName/group come from the index join. Empty result is 200 + [].
-    case req @ GET -> Root / "api" / "nf-tasks" =>
-      val provided = extractToken(req)
-      if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
-      else
-        val folderId = req.params.get("folderId").getOrElse("")
-        val sinceOpt = req.params.get("since").flatMap(nebflow.core.tools.TaskQueryTool.parseSince)
-        val status = req.params.get("status").getOrElse("")
-        val keyword = req.params.get("keyword").getOrElse("").toLowerCase
-        val limit = req.params.get("limit").flatMap(_.toIntOption).getOrElse(100).max(1).min(500)
-        // #37 archive gap: description/notes/events now travel on index entries.
-        // ensureUpgraded backfills a pre-#37 index once (full rebuild, real
-        // session joins); afterwards it's a cheap no-op guard.
-        val joinFor: String => IO[nebflow.core.task.TaskArchive.SessionJoin] = sid =>
-          sessionStore
-            .getSessionMeta(sid)
-            .map {
-              case Some(meta) =>
-                nebflow.core.task.TaskArchive.SessionJoin(
-                  meta.folderId,
-                  meta.folderId.flatMap(sessionStore.getFolderName),
-                  Some(meta.name)
-                )
-              case None => nebflow.core.task.TaskArchive.Unclassified
-            }
-            .handleErrorWith(_ => IO.pure(nebflow.core.task.TaskArchive.Unclassified))
-        nebflow.core.task.TaskArchive.ensureUpgraded(joinFor).flatMap { entries =>
-          val filtered = entries
-            .filter(e => folderId.isEmpty || e.folderId.contains(folderId))
-            .filter(e => status.isEmpty || e.status == status)
-            .filter(e => keyword.isEmpty || e.subject.toLowerCase.contains(keyword))
-            .filter { e =>
-              sinceOpt.forall { cutoff =>
-                val anchor = e.completedAt.orElse(e.createdAt).getOrElse("")
-                scala.util.Try(java.time.Instant.parse(anchor).toEpochMilli).toOption.exists(_ >= cutoff)
-              }
-            }
-            .sortBy(e => e.completedAt.orElse(e.updatedAt).getOrElse(""))(Ordering[String].reverse)
-            .take(limit)
-          val arr = filtered.map { e =>
-            io.circe.Json.obj(
-              "sessionId" -> e.sessionId.asJson,
-              "sessionName" -> e.sessionName.asJson,
-              "taskId" -> e.taskId.asJson,
-              "subject" -> e.subject.asJson,
-              "status" -> e.status.asJson,
-              "folderId" -> e.folderId.asJson,
-              "folderName" -> e.folderName.asJson,
-              "group" -> e.folderName.getOrElse("未分类").asJson,
-              "createdAt" -> e.createdAt.asJson,
-              "updatedAt" -> e.updatedAt.asJson,
-              "completedAt" -> e.completedAt.asJson,
-              "noteCount" -> e.noteCount.asJson,
-              "hasLinks" -> e.hasLinks.asJson,
-              "cancelReason" -> e.cancelReason.asJson,
-              "description" -> e.description.asJson,
-              "notes" -> e.notes.asJson,
-              "events" -> e.events.asJson
-            )
-          }
-          Ok(io.circe.Json.arr(arr*), org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
-        }
-
     // --- Local file serving for card iframes ---
     // GET /api/nf-file?path=xxx&token=xxx — serves whitelisted media files from disk.
     // Used by card iframes to display local images/videos/audio without base64 embedding.
@@ -1931,39 +1864,6 @@ class WebSocketRoutes(
               }
             else IO.unit
 
-          // ===== Dismiss Task (user clears completed/failed tasks) =====
-
-          case "dismissTask" =>
-            val dtSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-            val dtTaskId = parse(text).flatMap(_.hcursor.downField("taskId").as[String]).getOrElse("")
-            if dtSessionId.nonEmpty && dtTaskId.nonEmpty then
-              sharedResources.taskStore.dismiss(dtSessionId, dtTaskId).attempt.flatMap {
-                case Right(Some(_)) =>
-                  // Return updated task list (without dismissed tasks)
-                  sharedResources.taskStore.listVisible(dtSessionId).flatMap { tasks =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "taskListUpdate".asJson,
-                        "sessionId" -> dtSessionId.asJson,
-                        "tasks" -> tasks.asJson
-                      )
-                    )
-                  }
-                case Right(None) =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Task not found: $dtTaskId".asJson))
-                case Left(err) =>
-                  // IllegalStateException — active task cannot be dismissed
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "taskError".asJson,
-                      "error" -> s"Cannot dismiss: ${err.getMessage}".asJson,
-                      "taskId" -> dtTaskId.asJson
-                    )
-                  )
-              }
-            else IO.unit
-            end if
-
           // ===== Complete Task (user clicks the todos-panel circle, todo-panel §7.1) =====
 
           case "completeTask" =>
@@ -1993,50 +1893,6 @@ class WebSocketRoutes(
                       "type" -> "taskError".asJson,
                       "error" -> s"Cannot complete: ${err.getMessage}".asJson,
                       "taskId" -> ctTaskId.asJson
-                    )
-                  )
-              }
-            else IO.unit
-            end if
-
-          // ===== Cancel Task (user cancels an active agent task, task-cancel #35) =====
-          // Contract (frontend taskList.js requestCancel): frame shape
-          // {type:"cancelTask", sessionId, taskId, reason} — reason is always
-          // sent (default "Cancelled by user"/"用户主动取消"). Success →
-          // authoritative taskListUpdate (cancelled rows are filtered by
-          // listVisible AND by the frontend isVisible — double convergence);
-          // the owning session's agent is notified with a [任务取消] injection
-          // block (stop in-flight work). Failure → taskError frame
-          // {"type":"taskError","error","taskId"} — the frontend rolls the
-          // optimistically-removed row back (pendingCancel map, 契约#1).
-
-          case "cancelTask" =>
-            val ckJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val ckSessionId = ckJson.hcursor.downField("sessionId").as[String].getOrElse("")
-            val ckTaskId = ckJson.hcursor.downField("taskId").as[String].getOrElse("")
-            val ckReason = ckJson.hcursor.downField("reason").as[String].getOrElse("")
-            if ckSessionId.nonEmpty && ckTaskId.nonEmpty then
-              sharedResources.taskStore.cancel(ckSessionId, ckTaskId, ckReason).attempt.flatMap {
-                case Right(Some(task)) =>
-                  // Authoritative list push — cancelled tasks vanish from the panel.
-                  sharedResources.taskStore.listVisible(ckSessionId).flatMap { tasks =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "taskListUpdate".asJson,
-                        "sessionId" -> ckSessionId.asJson,
-                        "tasks" -> tasks.asJson
-                      )
-                    ) *> refreshTaskArchive(ckSessionId) *> notifyTaskCancelled(ckSessionId, task, ckReason)
-                  }
-                case Right(None) =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Task not found: $ckTaskId".asJson))
-                case Left(err) =>
-                  // IllegalStateException — human todo / terminal source state
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "taskError".asJson,
-                      "error" -> s"Cannot cancel: ${err.getMessage}".asJson,
-                      "taskId" -> ckTaskId.asJson
                     )
                   )
               }
@@ -3714,30 +3570,23 @@ class WebSocketRoutes(
                                 )
                               ).handleErrorWith(_ => IO.unit)
                             ) *> {
-                              // todo-panel v2 §6.2 (C16/C21): process the optional
-                              // taskRefs field BEFORE dispatching — each ref returns
-                              // a needs_confirmation task to in_progress (durable
-                              // feedback note + returnCount) and appends a
-                              // [打回任务] injection block so the session agent
-                              // (= task owner, C21) sees the revision context.
-                              // #303 D2: also routes refs[refType='task'] here
-                              // (引用=打回 v1.1).
-                              processTaskReturns(msgSessionId, content, json, blocks, wsSend).flatMap { _ =>
-                                // #303 D1: resolve non-task refs (file/document/
-                                // html-element) into [引用: …] injection blocks.
-                                processRefs(json, blocks).flatMap { _ =>
-                                  val blocksList = blocks.toList
-                                  ensureAgent(msgSessionId)(ref =>
-                                    ref ! AgentCommand
-                                      .UserInput(
-                                        content,
-                                        None,
-                                        clientMessageId,
-                                        Some(blocksList).filter(_.nonEmpty),
-                                        chatWidth
-                                      )
-                                  )
-                                }
+                              // 任务工具重做（2026-08-30）：打回语义退役——
+                              // taskRefs/refs(refType=task) 的 processTaskReturns
+                              // 路径整体移除。#303 D1: resolve non-task refs
+                              // (file/document/html-element) into [引用: …]
+                              // injection blocks; refType=task fail-open 跳过。
+                              processRefs(json, blocks).flatMap { _ =>
+                                val blocksList = blocks.toList
+                                ensureAgent(msgSessionId)(ref =>
+                                  ref ! AgentCommand
+                                    .UserInput(
+                                      content,
+                                      None,
+                                      clientMessageId,
+                                      Some(blocksList).filter(_.nonEmpty),
+                                      chatWidth
+                                    )
+                                )
                               }
                               }
                           }
@@ -3828,57 +3677,6 @@ class WebSocketRoutes(
       ) *>
       ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
 
-  /**
-    * task-cancel #35: keep the task archive index in sync after a WS-path
-    * task mutation — the tools refresh it via TaskToolHelper.emitTaskListUpdate,
-    * but WS handlers (cancelTask/completeTask/dismissTask) send their own
-    * taskListUpdate and must refresh here. Best-effort: index staleness is
-    * logged, never fails the already-successful cancel frame.
-    */
-  private def refreshTaskArchive(sessionId: String): IO[Unit] =
-    sessionStore
-      .getSessionMeta(sessionId)
-      .map {
-        case Some(meta) =>
-          val j = nebflow.core.task.TaskArchive.SessionJoin(
-            meta.folderId,
-            meta.folderId.flatMap(sessionStore.getFolderName),
-            Some(meta.name)
-          )
-          (_: String) => j
-        case None => (_: String) => nebflow.core.task.TaskArchive.Unclassified
-      }
-      .flatMap(join => nebflow.core.task.TaskArchive.refreshSession(sessionId, join))
-      .handleErrorWith(e =>
-        logger.warn(s"Task archive refresh failed for $sessionId: ${e.getMessage}") *> IO.unit
-      )
-  end refreshTaskArchive
-
-  /**
-    * task-cancel #35: notify the owning session's agent that one of its tasks
-    * was cancelled by the user — an injection block mirroring the [打回任务]
-    * return block (source="task-cancel" so the UI labels it as a system
-    * injection). The agent is expected to stop in-flight work related to the
-    * task (it is terminal now). ensureAgent spawns the root agent when the
-    * session exists but has no live agent — the same routing used for user
-    * messages. Best-effort: routing failures are logged, never fail the
-    * cancelTask frame that already succeeded.
-    */
-  private def notifyTaskCancelled(
-    sessionId: String,
-    task: nebflow.core.task.Task,
-    reason: String
-  ): IO[Unit] =
-    val reasonStr = if reason.trim.nonEmpty then reason.trim else "（未附原因）"
-    // Cancel-batch (user ruling 2026-08-26 08:33): the structured notice rides
-    // to the agent — root (Nebula) buffers (idle = zero turns, debounced
-    // while processing); non-root agents get the immediate stop-work
-    // injection (AgentActor converts the notice). Text packaging lives in
-    // AgentActor.packageCancelNotices — single source for both shapes.
-    ensureAgent(sessionId)(ref =>
-      ref ! AgentCommand.TaskCancelNotice(task.id, task.subject, task.description, reasonStr, System.currentTimeMillis())
-    )
-  end notifyTaskCancelled
 
   /**
     * 冻结「跳过本次」唯一入口（2026-08-25 22:28 裁定）：前端冻结按钮发
@@ -3960,92 +3758,12 @@ class WebSocketRoutes(
     "Movies"
   )
 
-  /** #303 D1/D2 (v1.1 引用=打回): taskId extraction tolerant of both string
-    * and number encodings (legacy taskRefs carry string; defensive for number). */
-  private def taskIdOf(c: io.circe.ACursor): String =
-    c.downField("taskId").as[String].getOrElse(c.downField("taskId").as[Long].map(_.toString).getOrElse(""))
-
-  /** todo-panel v2 §6.2 (C16/C17/C21): process the optional `taskRefs` array
-    * on a default-branch user message — the user RETURN flow. For each ref:
-    * validate the session, return the needs_confirmation task to in_progress
-    * (returnCount+1, feedback appended to notes, events recorded), and append
-    * a [打回任务] injection block built from the PRE-return snapshot (the
-    * agent's latest outcome note). Per-ref failures emit taskError frames and
-    * never block the message itself or the other refs. After processing, the
-    * authoritative task list is pushed so every panel converges.
-    *
-    * #303 D2 (v1.1 引用=打回): reads BOTH the legacy `taskRefs` shape
-    * ({taskId, sessionId} — old history/refresh path, D3 regression) AND the
-    * unified `refs` shape (refType='task' with source.taskId/source.sessionId
-    * — taskList.js requestReturn now produces this, spec §5.4). Both route to
-    * the same return flow; refType ≠ task is handled by processRefs instead. */
-  private def processTaskReturns(
-    msgSessionId: String,
-    content: String,
-    frame: io.circe.Json,
-    blocks: scala.collection.mutable.ListBuffer[ContentBlock],
-    wsSend: io.circe.Json => IO[Unit]
-  ): IO[Unit] =
-    val legacyTaskRefs: List[(String, String)] =
-      frame.hcursor.downField("taskRefs").as[List[io.circe.Json]].getOrElse(Nil)
-        .map(j => (taskIdOf(j.hcursor), j.hcursor.downField("sessionId").as[String].getOrElse(msgSessionId)))
-    val refTaskRefs: List[(String, String)] =
-      frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
-        .filter(j => j.hcursor.downField("refType").as[String].getOrElse("") == "task")
-        .map { j =>
-          val src = j.hcursor.downField("source")
-          (taskIdOf(src), src.downField("sessionId").as[String].getOrElse(msgSessionId))
-        }
-    // QC follow-up (#303): dedupe by (taskId, refSession) — a double-pushed
-    // ref for the same task must fire the return flow once (the second
-    // `return` would IllegalStateException into a spurious taskError frame).
-    val taskRefs = nebflow.gateway.RefResolver.dedupeTaskRefs(legacyTaskRefs ++ refTaskRefs)
-    if taskRefs.isEmpty then IO.unit // absent/empty — zero behavior change (v1 path)
-    else
-      def taskError(taskId: String, msg: String): IO[Unit] =
-        wsSend(io.circe.Json.obj(
-          "type" -> "taskError".asJson,
-          "error" -> msg.asJson,
-          "taskId" -> taskId.asJson
-        ))
-
-      taskRefs.traverse_ { (taskId, refSession) =>
-        if taskId.isEmpty then IO.unit
-        else if refSession != msgSessionId then
-          // §6.2a: cross-session injection guard
-          taskError(taskId, s"Cross-session task reference rejected: $taskId")
-        else
-          sharedResources.taskStore.get(msgSessionId, taskId).flatMap {
-            case None => taskError(taskId, s"Task not found: $taskId")
-            case Some(snapshot) =>
-              sharedResources.taskStore.`return`(msgSessionId, taskId, content).attempt.flatMap {
-                case Right(Some(_)) =>
-                  // Injection block from the PRE-return snapshot (§6.2c): the
-                  // last note is the agent's outcome summary, NOT the feedback.
-                  blocks += ContentBlock.Text(
-                    nebflow.core.task.Task.returnInjectionBlock(taskId, snapshot, content)
-                  )
-                  IO.unit
-                case Right(None) => IO.unit // raced delete — nothing to return
-                case Left(err) =>
-                  taskError(taskId, s"Cannot return: ${err.getMessage}")
-              }
-          }
-      } *> sharedResources.taskStore.listVisible(msgSessionId).flatMap { tasks =>
-        // §6.2 step 3: push the authoritative list so returned rows converge
-        // to in_progress on every connected client.
-        wsSend(io.circe.Json.obj(
-          "type" -> "taskListUpdate".asJson,
-          "sessionId" -> msgSessionId.asJson,
-          "tasks" -> tasks.asJson
-        ))
-      }
-
   /** #303 D1/D5: resolve unified refs (refType ≠ task) into [引用: …]
     * injection blocks appended to the user message (spec §2.3 ③). Pointer
     * semantics — source + anchor only, never content (D5, ≤ ~100 token).
-    * Task refs route to processTaskReturns (引用=打回, D2); unknown refTypes
-    * are skipped fail-open (never block the message or the other refs). */
+    * refType=task refs are gone (任务工具重做 2026-08-30, 打回退役) — they
+    * fall through as unknown and are skipped fail-open (never block the
+    * message or the other refs). */
   private def processRefs(
     frame: io.circe.Json,
     blocks: scala.collection.mutable.ListBuffer[ContentBlock]

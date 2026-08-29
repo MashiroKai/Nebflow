@@ -29,13 +29,9 @@ object ToolRegistry:
       "Pop" -> PopTool,
       // User interaction
       "AskUserQuestion" -> AskUserQuestionTool,
-      // Task management
-      "TaskCreate" -> TaskCreateTool,
-      "TaskUpdate" -> TaskUpdateTool,
-      "TaskQuery" -> TaskQueryTool,
-      // Team Manager task tools (2026-08-25 team-manager-task-tool): Manager
-      // owner (Create/Update/List) + Nebula read-only (List). Injected at the
-      // mechanism layer via buildAllowedToolSet isTeamLead / Nebula grants.
+      // Team task tools (任务工具重做 2026-08-30: 任务=进展展示，工具只配
+      // team——category=team 机制层注入全体成员；session 域 TaskCreate/Update/
+      // Query 已退役，TTL 清理见 TaskStore)
       "TeamTaskCreate" -> TeamTaskCreateTool,
       "TeamTaskUpdate" -> TeamTaskUpdateTool,
       "TeamTaskList" -> TeamTaskListTool,

@@ -4,8 +4,12 @@ import io.circe.Codec
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.generic.semiauto.deriveCodec
 
+/** 任务工具重做（2026-08-30 作者规格）：进展展示语义——四态状态机
+  * pending → in_progress → completed / failed。needs_confirmation（用户确认
+  * 环节）、dismissed、cancelled 全部移除；agent 直接标 completed，无用户
+  * 确认/打回/取消环节。历史数据自然 TTL 消化，不迁移（codec 容忍未知键）。 */
 enum TaskStatus:
-  case Pending, InProgress, NeedsConfirmation, Completed, Failed, Dismissed, Cancelled
+  case Pending, InProgress, Completed, Failed
 
 object TaskStatus:
 
@@ -18,31 +22,30 @@ object TaskStatus:
   def wireName(s: TaskStatus): String = s match
     case TaskStatus.Pending => "pending"
     case TaskStatus.InProgress => "in_progress"
-    case TaskStatus.NeedsConfirmation => "needs_confirmation"
     case TaskStatus.Completed => "completed"
     case TaskStatus.Failed => "failed"
-    case TaskStatus.Dismissed => "dismissed"
-    case TaskStatus.Cancelled => "cancelled"
 
   given Codec[TaskStatus] = io.circe.Codec.from(
     io.circe.Decoder.decodeString.emap {
       case "pending" => Right(TaskStatus.Pending)
       case "in_progress" => Right(TaskStatus.InProgress)
-      case "needs_confirmation" => Right(TaskStatus.NeedsConfirmation)
       case "completed" => Right(TaskStatus.Completed)
       case "failed" => Right(TaskStatus.Failed)
-      case "dismissed" => Right(TaskStatus.Dismissed)
-      case "cancelled" => Right(TaskStatus.Cancelled)
+      // Legacy statuses from pre-redesign data decode to their nearest living
+      // meaning instead of failing the whole file (历史数据自然 TTL 不迁移):
+      // needs_confirmation was "done, awaiting user" → completed; dismissed /
+      // cancelled were "cleared" → failed (both invisible in the four-state
+      // world; the row TTL-expires out of every view).
+      case "needs_confirmation" => Right(TaskStatus.Completed)
+      case "dismissed" => Right(TaskStatus.Failed)
+      case "cancelled" => Right(TaskStatus.Failed)
       case other => Left(s"Unknown task status: $other")
     },
     io.circe.Encoder.encodeString.contramap {
       case TaskStatus.Pending => "pending"
       case TaskStatus.InProgress => "in_progress"
-      case TaskStatus.NeedsConfirmation => "needs_confirmation"
       case TaskStatus.Completed => "completed"
       case TaskStatus.Failed => "failed"
-      case TaskStatus.Dismissed => "dismissed"
-      case TaskStatus.Cancelled => "cancelled"
     }
   )
 
@@ -58,13 +61,7 @@ end TaskStatus
 case class TaskNote(
   content: String,
   links: List[String] = Nil,
-  at: Option[String] = None,
-  /** Structured note kind (task-cancel #35): "cancel" marks a user-cancel
-    * reason note — the archive view renders it in the dedicated cancel-reason
-    * slot (when cancelReason is absent) and excludes it from the generic
-    * notes list (avoid rendering the same reason twice). Absent for legacy
-    * notes (withDefaults → None). */
-  kind: Option[String] = None
+  at: Option[String] = None
 )
 
 object TaskNote:
@@ -96,39 +93,32 @@ case class Task(
   parentId: Option[String] = None,
   blocks: List[String] = Nil,
   blockedBy: List[String] = Nil,
+  /** 创建时间（TTL 判据——pending/in_progress 超 2d 清理；持久化字段，重启后
+    * 扫描磁盘数据仍生效）。 */
   createdAt: Option[String] = None,
   updatedAt: Option[String] = None,
-  /** When the task entered a terminal state (completed/failed/cancelled).
-    * None while active. */
+  /** When the task entered a terminal state (completed/failed).
+    * None while active. TTL 判据——completed/failed 过 6h 清理。 */
   completedAt: Option[String] = None,
   notes: List[TaskNote] = Nil,
   events: List[TaskEvent] = Nil,
   /** todo-panel v1.1 §2.1: "agent" = agent-tracked (auto flow); "human" =
     * reminder for the user (user completes via todos panel circle). Defaults
-    * to "agent" so 535+ legacy JSON files need zero migration (C1). */
+    * to "agent" so legacy JSON files need zero migration (C1). 任务工具重做后
+    * 无新建 human 通道（存量自然 TTL），complete 圆圈路径保留。 */
   taskKind: String = "agent",
   /** Who completed it: "user" = user clicked the circle; "agent" = agent flow.
     * None = not completed or legacy data. */
   completedBy: Option[String] = None,
-  /** todo-panel v2 §2.4 (C17): times the user has returned this task from
-    * needs_confirmation back to in_progress. withDefaults keeps 535+ legacy
-    * JSON files zero-migration (absent key decodes to 0). */
-  returnCount: Int = 0,
-  /** task-cancel #35: why the task was cancelled. Set by the user-facing
-    * cancel() path (WS cancelTask reason) — the agent path (TaskUpdate
-    * status=cancelled) records the reason as a note instead. Absent = never
-    * cancelled (withDefaults keeps legacy files zero-migration). */
-  cancelReason: Option[String] = None,
   /** Team Manager task tool (2026-08-25, spec
-    * 20260825_team-manager-task-tool-spec.md §4.1): "session" = Nebula/user
-    * domain (legacy behavior); "team" = Manager task domain. Absent key on
-    * legacy JSON decodes to "session" (withDefaults — 535+ session tasks
-    * zero-migration, same red line as completedAt/notes/events). */
+    * 20260825_team-manager-task-tool-spec.md §4.1): "session" = legacy
+    * session domain (TTL 自然消化); "team" = team task domain. Absent key on
+    * legacy JSON decodes to "session" (withDefaults — zero-migration). */
   scope: String = "session",
   /** Team-domain tasks: the owning team name (scope=="team"). None for
     * session-domain tasks. Directory isolation is the authoritative boundary
     * (~/.nebflow/tasks/teams/<teamName>/); this field is metadata for
-    * display/archive/retrieval. */
+    * display/retrieval. */
   teamId: Option[String] = None
 )
 
@@ -140,9 +130,8 @@ object Task:
    * (notes/events, Scala default Nil) make plain semiauto deriveCodec FAIL on
    * a missing key. Configuration.default.withDefaults fills absent fields
    * from their defaults; strictDeserialization stays off so legacy unknown
-   * keys (e.g. a stray "metadata") are ignored. Same red line covers the
-   * todo-panel fields (taskKind -> "agent", completedBy -> None,
-   * returnCount -> 0).
+   * keys (returnCount/cancelReason/kind — removed by the task redesign) are
+   * ignored, and legacy files keep decoding with zero migration.
    */
   given Configuration = Configuration.default.withDefaults
   given Codec[Task] = ConfiguredCodec.derived
@@ -153,22 +142,6 @@ object Task:
   def normalizeTaskKind(raw: Option[String]): String =
     raw.map(_.trim.toLowerCase).collect { case "human" => "human" }.getOrElse("agent")
 
-  /** todo-panel v2 §6.2c (B7): the [打回任务] injection block appended to the
-    * user message when the user returns a needs_confirmation task. Built from
-    * the PRE-return snapshot — notes.last is the agent's outcome summary, not
-    * the feedback. Fixed copy (agent context, not UI — no i18n, spec §11).
-    *
-    * Payload-slim ruling (2026-08-27, same family as the 08-20 reference-block
-    * slimming): the block carries taskId + subject + the user's feedback FULL
-    * TEXT only — 任务描述/产出 are dropped (the agent owns the task context
-    * and locates the task by id; the FEEDBACK is the one field that must
-    * always reach the agent verbatim). */
-  def returnInjectionBlock(taskId: String, snapshot: Task, feedback: String): String =
-    val feedbackLine = if feedback.nonEmpty then feedback else "（未附意见）"
-    s"[打回任务 #$taskId: ${snapshot.subject}]\n" +
-      s"用户意见: $feedbackLine\n" +
-      "（该任务已回到进行中，请按用户意见修改；改完重新置 needs_confirmation 待用户确认）"
-
 end Task
 
 case class TaskCreateInput(
@@ -176,8 +149,6 @@ case class TaskCreateInput(
   description: String,
   activeForm: Option[String] = None,
   parentTaskId: Option[String] = None,
-  /** todo-panel §2.3: pass "human" to create a reminder the USER completes
-    * via the todos panel. Absent/blank/unknown -> "agent". */
   taskKind: Option[String] = None
 )
 

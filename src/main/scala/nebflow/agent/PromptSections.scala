@@ -368,11 +368,13 @@ object PromptSections:
     // Reminder refactor (2026-08-20, D6): task-list semantics are stable
     // instruction text — cached in systemStable instead of repeating with
     // every per-turn tasks reminder (~300B × every turn saved). Data (the
-    // task lines) still travels per turn as reminders; only Nebula receives
-    // them (user ruling).
+    // task lines) still travels per turn as reminders. 任务工具重做
+    // (2026-08-30): tasks are team-member progress displays — Nebula has no
+    // task tools anymore, so the guide targets team agents (Nebula 的任务
+    // reminder 注入同步移除).
     PromptSection.dynamic(
       630,
-      condition = _.agentName == "Nebula",
+      condition = _.agentCategory == "team",
       renderer = _ => tasksGuideSection
     ),
 
@@ -643,14 +645,13 @@ object PromptSections:
   private def languageBlock(lang: String): String =
     s"# Language\n" +
       s"- Respond in $lang.\n" +
-      s"- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $lang.\n" +
+      s"- When creating tasks (TeamTaskCreate), the `subject` and `activeForm` fields MUST be in $lang.\n" +
       s"- When writing to memory files (Agent/Session/User memory), all content MUST be in $lang.\n" +
       s"- All user-visible text must be in $lang."
 
-  /** Task-list semantics for the per-turn tasks reminder (Nebula only).
-    * Reminder refactor (2026-08-20, D6): migrated from the old
-    * renderForPrompt instruction header so it is cached in systemStable
-    * instead of repeating with every reminder. */
+  /** Task-list semantics for the per-turn tasks reminder (team members).
+    * 任务工具重做（2026-08-30）：四态状态机 pending → in_progress →
+    * completed / failed——agent 直接标 completed，无用户确认/打回/取消环节。 */
   val tasksGuideSection: String =
     """## Task List Protocol
       |
@@ -660,10 +661,10 @@ object PromptSections:
       |- `## Task changes` — only the added (+), changed (~), and removed (-) lines
       |
       |Semantics:
-      |- Work through tasks in order. When a task is fully done, mark it needs_confirmation (NOT completed) and attach a note with the outcome — completed is reserved for the user's confirmation.
-      |- Tasks marked [needs_confirmation] are DONE and awaiting user confirmation: do NOT work on them again. If the user returns one via the panel, a [打回任务] block tells you what to revise (it is already back in_progress). If the user revises it via DIALOGUE feedback instead, take it back yourself: TaskUpdate status=in_progress WITH a note describing the feedback (note required), then revise and re-mark needs_confirmation.
+      |- Work through tasks in order. When a task is fully done, mark it completed and attach a note with the outcome; if it cannot be finished, mark it failed with a note explaining why.
       |- Tasks marked [waiting-user] are human todos — reminders for the user, never part of your own work loop.
-      |- Subject lines are truncated (~30 chars) and pending tasks beyond the first 8 fold into a count line — use the TaskList/Task tools for full details.""".stripMargin
+      |- Tasks auto-expire: completed/failed clear after 6h, pending/in_progress after 2d — keep the list current.
+      |- Subject lines are truncated (~30 chars) and pending tasks beyond the first 8 fold into a count line — use TeamTaskList for full details.""".stripMargin
 
   /**
    * Build the conditional blocks string from the registry.
