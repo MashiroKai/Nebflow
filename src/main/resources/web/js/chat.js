@@ -1589,6 +1589,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         const isStr = typeof opt === 'string';
         const label = isStr ? opt : opt.label;
         const desc = isStr ? '' : (opt.desc || opt.description || '');
+        // Optional extra class (e.g. permission escalation options).
+        if (!isStr && typeof opt.cls === 'string' && opt.cls) btn.classList.add(opt.cls);
         if (isMulti) {
           btn.dataset.label = label;
           const preview = typeof opt === 'object' && opt !== null ? opt.preview : null;
@@ -1911,7 +1913,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId) {
 }
 
 // ---------- Permission prompt ----------
-export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession, sourceTeam, requestId) {
+export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession, sourceTeam, requestId, safetyMode) {
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
@@ -1991,18 +1993,44 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   }
 
   const allowLabel = t('chat.allow');
+  const denyLabel = t('chat.deny');
   const allowDesc = isDangerous ? t('chat.permExecCmd') : (summary || '');
+  const permOptions = [
+    { label: allowLabel, desc: allowDesc },
+    { label: denyLabel, desc: t('chat.skipTool') }
+  ];
+  /* Permission escalation chain (Backend contract a56f7437): when the card's
+     session safety mode is one step below the tool's class, offer an upgrade
+     option that approves this call AND switches the session mode:
+       confirm-edits + Write/Edit -> auto-edits; auto-edits + Bash/Curl -> auto-all.
+     Missing/unknown safetyMode (older backend) -> no upgrade option. */
+  let upgradeLabel = null;
+  let upgradeMode = null;
+  if (safetyMode === 'confirm-edits' && (toolName === 'Write' || toolName === 'Edit')) {
+    upgradeMode = 'auto-edits';
+    upgradeLabel = t('chat.permUpgradeAutoEdits');
+    permOptions.splice(1, 0, { label: upgradeLabel, desc: t('chat.permUpgradeAutoEditsDesc'), cls: 'perm-upgrade-option' });
+  } else if (safetyMode === 'auto-edits' && (toolName === 'Bash' || toolName === 'Curl')) {
+    upgradeMode = 'auto-all';
+    upgradeLabel = t('chat.permUpgradeAutoAll');
+    permOptions.splice(1, 0, { label: upgradeLabel, desc: t('chat.permUpgradeAutoAllDesc'), cls: 'perm-upgrade-option' });
+  }
   const items = [{
     question: questionText,
-    options: [
-      { label: allowLabel, desc: allowDesc },
-      { label: t('chat.deny'), desc: t('chat.skipTool') }
-    ]
+    options: permOptions
   }];
   showOptions(bubble, items, (answers) => {
-    const approved = answers[0] === allowLabel;
+    const approved = answers[0] !== denyLabel;
+    const doUpgrade = approved && upgradeMode && answers[0] === upgradeLabel ? upgradeMode : null;
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved, ...(requestId && { requestId }) }));
+      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved, ...(requestId && { requestId }), ...(doUpgrade && { upgradeMode: doUpgrade }) }));
+    }
+    if (doUpgrade) {
+      // Optimistic local mirror; the backend's session broadcast is authoritative.
+      state.safetyModes[targetSid] = doUpgrade;
+      if (doUpgrade === 'auto-all') state.bypassSessions.add(targetSid);
+      else state.bypassSessions.delete(targetSid);
+      if (state.updateSafetyToggle) state.updateSafetyToggle();
     }
     // Track answered permission: prevents re-creating interactive prompt on
     // session switch-back while tool is still executing (askPermission is still
