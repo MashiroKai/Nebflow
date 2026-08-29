@@ -2997,7 +2997,7 @@ document.getElementById('canvas-toggle-btn')?.addEventListener('click', () => {
     openCanvas();
   }
 });
-document.getElementById('teams-btn')?.addEventListener('click', () => flowCanvas.openTeams());
+document.getElementById('teams-btn')?.addEventListener('click', () => flowCanvas.openTeams({ manual: true }));
 document.getElementById('flows-btn')?.addEventListener('click', () => flowCanvas.openFlows());
 // Restore queued messages from localStorage (survives browser refresh)
 restoreQueue();
