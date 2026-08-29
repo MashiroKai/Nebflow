@@ -39,13 +39,16 @@ class DeviceCapabilitiesSpec extends CatsEffectSuite:
     assert(json.hcursor.downField("userDescription").as[String].isRight, "JSON should contain userDescription")
   }
 
-  test("DeviceIdentity old JSON without capabilities fails decode — handled by loadOrCreate migration") {
-    // deriveDecoder doesn't use default values for missing fields.
-    // This is OK: loadOrCreate catches decode failure and creates a fresh identity.
+  test("DeviceIdentity old JSON without capabilities decodes with defaults (post-81a891ad)") {
+    // The old deriveDecoder failed on missing defaulted fields, and the
+    // resulting silent createNew() assigned a fresh random identity every boot
+    // (the E2E 403 root cause). The hand-written decoder now tolerates missing
+    // defaulted fields, so legacy device.json files decode cleanly — no
+    // migration-via-failure path needed.
     val oldJson = """{"deviceId":"d","deviceName":"n","platform":"p","deviceSecret":"s"}"""
     val decoded = decode[DeviceIdentity](oldJson)
-    // Decoding fails because capabilities/userDescription are missing
-    assert(decoded.isLeft, "Old JSON without capabilities should fail to decode (handled by migration)")
+    assert(decoded.isRight, "Old JSON without capabilities should decode with defaults")
+    assertEquals(decoded.map(_.capabilities).getOrElse(Map.empty), Map.empty)
   }
 
   // ===== PeerInfo with capabilities =====

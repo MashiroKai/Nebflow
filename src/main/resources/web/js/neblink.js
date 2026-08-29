@@ -170,7 +170,7 @@ export function neblinkSettingsHTML() {
           <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark.png">
           <img class="neblink-logged-out-logo" src="css/logo-bright.png" alt="">
         </picture>
-        <div class="neblink-logged-out-text">未登录，NebLink 不可用</div>
+        <div class="neblink-logged-out-text">未登录，设备互联不可用</div>
         <div class="neblink-logged-out-hint">点击左上角头像登录</div>
       </div>
       ${pairErr}
@@ -234,7 +234,7 @@ export function neblinkSettingsHTML() {
   }).join('');
 
   const peerHint = peers.length === 0
-    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure NebLink Server is configured on both devices.'}</div>`
+    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure the device link service is configured on both devices.'}</div>`
     : '';
 
   return `

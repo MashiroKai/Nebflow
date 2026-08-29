@@ -1609,6 +1609,16 @@
   cursor: default;
   pointer-events: none;
 }
+/* Permission escalation option (safetyMode upgrade): sapphire-tinted so the
+   one-step-up path reads as distinct from plain allow/deny. */
+.option-btn.perm-upgrade-option {
+  border-color: rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.08);
+}
+.option-btn.perm-upgrade-option:hover {
+  border-color: rgb(var(--sapphire) / 0.7);
+  background: rgb(var(--sapphire) / 0.14);
+}
 /* Multi-select questions (multiple: true): checkboxes stacked vertically,
    full-width rows — stays clean at narrow chat widths (~490px). */
 .option-opts.multi {

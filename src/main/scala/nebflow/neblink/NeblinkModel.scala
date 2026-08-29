@@ -25,9 +25,32 @@ case class DeviceIdentity(
 
 object DeviceIdentity:
   given Encoder[DeviceIdentity] = deriveEncoder
-  given Decoder[DeviceIdentity] = deriveDecoder
 
-  private val devicePath = PathUtil.dataRoot / "device.json"
+  /** Manual decoder: deriveDecoder does NOT honor Scala parameter defaults
+    * (circe semiauto limitation — a defaulted field is still REQUIRED on the
+    * wire). The gateway's own encoder writes every field, so gateway-written
+    * files round-trip; but any hand-written or backup-restored device.json
+    * that omits `capabilities`/`userDescription`/... silently failed the
+    * WHOLE decode -> loadOrCreate fell back to createNew() -> a fresh random
+    * identity every boot -> "403 Invalid device credential" against the
+    * server (2026-08-30 E2E finding; identity is never persisted on the
+    * decode-failure path, which kept the file looking pristine). */
+  given Decoder[DeviceIdentity] = Decoder.instance { c =>
+    for
+      deviceId <- c.downField("deviceId").as[String]
+      deviceName <- c.downField("deviceName").as[String]
+      platform <- c.downField("platform").as[String]
+      deviceSecret <- c.downField("deviceSecret").as[Option[String]].map(_.getOrElse(""))
+      capabilities <- c.downField("capabilities").as[Option[Map[String, String]]].map(_.getOrElse(Map.empty))
+      userDescription <- c.downField("userDescription").as[Option[String]].map(_.getOrElse(""))
+      avatarUrl <- c.downField("avatarUrl").as[Option[Option[String]]].map(_.flatten)
+      githubLogin <- c.downField("githubLogin").as[Option[Option[String]]].map(_.flatten)
+    yield DeviceIdentity(deviceId, deviceName, platform, deviceSecret, capabilities, userDescription, avatarUrl, githubLogin)
+  }
+
+  // def, not val: PathUtil.dataRoot is redirectable (setDataRoot); a val would
+  // freeze the path at object-init and break per-test data roots (f1cd3709 rule).
+  private def devicePath = PathUtil.dataRoot / "device.json"
 
   private def detectPlatform: String =
     val osName = System.getProperty("os.name", "unknown").toLowerCase
@@ -149,7 +172,15 @@ case class NeblinkConfig(
   /** Agent messaging permissions (A2A 一期, spec §7.2): how the
     * SendFriendMessage tool may send on the user's behalf. */
   agentMessaging: AgentMessagingConfig = AgentMessagingConfig()
-)
+):
+  /** Login-chain resolution: an explicit `logto` block wins verbatim; a
+    * missing block falls back to `LogtoConfig.embeddedDefault` so fresh
+    * installs get the hosted PKCE login out of the box. PKCE consumers
+    * (auth/start, silent re-login) read this instead of the raw `logto`
+    * field; the legacy device-flow sites keep reading raw `logto` so their
+    * no-provider branch (neblink-server proxy) stays reachable exactly as
+    * before. */
+  def effectiveLogto: Option[LogtoConfig] = Some(logto.getOrElse(LogtoConfig.embeddedDefault))
 
 /**
  * Agent messaging permission tier (A2A 一期, spec §7.2-7.3). `mode`:
@@ -210,10 +241,33 @@ object LogtoConfig:
   given Decoder[LogtoConfig] = Decoder.instance { c =>
     for
       endpoint <- c.downField("endpoint").as[String]
-      clientId <- c.downField("clientId").as[String]
+      // Optional with empty default (mirrors the encoder + embeddedDefault):
+      // a hand-written {endpoint, pkceClientId} block must not fail the WHOLE
+      // block decode just because the legacy device-flow clientId is absent
+      // (2026-08-30 login-blocked finding — the block silently decoded to
+      // None and the PKCE callback reported "Logto 登录未配置").
+      clientId <- c.downField("clientId").as[Option[String]].map(_.getOrElse(""))
       pkceClientId <- c.downField("pkceClientId").as[Option[String]]
     yield LogtoConfig(endpoint, clientId, pkceClientId)
   }
+
+  /** Embedded default login provider: the product's own hosted auth service
+    * (production constants — public client identifiers, not secrets and not
+    * user-private knowledge; the 2026-08-19 red line targets user-specific
+    * runtime config like private gateways/keys, which this is not). This is
+    * the distribution fallback for fresh installs whose
+    * `<home>/neblink/config.json` has no `logto` block yet — without it every
+    * new user silently falls back to the legacy device-flow chain
+    * (beta.53 install-test finding, 2026-08-28). An explicit config.json
+    * `logto` block always wins (self-hosted scenarios). `clientId` is
+    * intentionally empty: the embedded default covers the PKCE login chain
+    * only; the legacy device-flow chain keeps its neblink-server proxy
+    * fallback and is scheduled for removal (beta.54). */
+  val embeddedDefault: LogtoConfig = LogtoConfig(
+    endpoint = "https://auth.neblink.space",
+    clientId = "",
+    pkceClientId = Some("csxh16cas0x03bgk6w7ej")
+  )
 
 object NeblinkConfig:
   given Encoder[NeblinkConfig] = deriveEncoder
@@ -232,7 +286,9 @@ object NeblinkConfig:
     yield NeblinkConfig(enabled, syncIntervalSec, neblinkServer, logto, agentMessaging)
   }
 
-  private val configPath = PathUtil.dataRoot / "neblink" / "config.json"
+  // def, not val: PathUtil.dataRoot is redirectable (setDataRoot); a val would
+  // freeze the path at object-init and break per-test data roots (f1cd3709 rule).
+  private def configPath = PathUtil.dataRoot / "neblink" / "config.json"
 
   def load: IO[NeblinkConfig] =
     IO.blocking {
@@ -322,7 +378,9 @@ end FriendCodecs
 
 /** Persists user-set peer descriptions across restarts. Stored in ~/.nebflow/peer-descriptions.json. */
 object PeerDescriptionStore:
-  private val path = PathUtil.dataRoot / "peer-descriptions.json"
+  // def, not val: PathUtil.dataRoot is redirectable (setDataRoot); a val would
+  // freeze the path at object-init and break per-test data roots (f1cd3709 rule).
+  private def path = PathUtil.dataRoot / "peer-descriptions.json"
 
   def load: IO[Map[String, String]] =
     IO.blocking {

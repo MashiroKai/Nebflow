@@ -5,10 +5,13 @@
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import state from './state.js';
-import { sendWs, onMessage, onReconnect, onDisconnect } from './ws.js';
+import { onMessage, onReconnect, onDisconnect } from './ws.js';
 import { getNeblinkState } from './neblink.js';
 import { setActivityBadge, openLoginModal } from './activityBar.js';
 import * as api from './friendsApi.js';
+import { makeReference } from './reference.js';
+import { appendRefToActiveView } from './input.js';
+import { showPopupMenu } from './contextMenu.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
@@ -66,7 +69,10 @@ export function fmtTime(ts) {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-function isAgentSent(m) { return !!(m && (m.agentSent === true || m.kind === 'agent')); }
+// #290: origin column (R2=A, contract-first with the Rust batch) - a message
+// is agent-sent when the server-side origin says so, or via the legacy
+// session-level markers. origin defaults to 'user' when absent.
+function isAgentSent(m) { return !!(m && (m.origin === 'agent' || m.agentSent === true || m.kind === 'agent')); }
 
 function summaryOf(conv) {
   const m = conv.lastMessage;
@@ -313,10 +319,20 @@ function bubbleEl(m, conv) {
   const wrap = el('div', `fm-msg ${out ? 'out' : 'in'}`);
   wrap.dataset.messageId = m.id;
   wrap.dataset.body = m.body || '';
+  wrap.dataset.createdAt = String(toEpochMs(m.createdAt) || '');
 
   const bubble = el('div', 'fm-msg-bubble');
   bubble.textContent = m.body || '';
   wrap.appendChild(bubble);
+
+  // #290 addendum §3.3: bubble right-click = primary desktop entry for
+  // 转发给 agent (same action as the hover/header buttons - one handler).
+  wrap.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showPopupMenu(e.clientX, e.clientY, [
+      { label: t('messages.forwardToAgent'), onClick: () => forwardBubble(wrap, conv) },
+    ]);
+  });
 
   const meta = el('div', 'fm-msg-meta');
   if (out && isAgentSent(m)) meta.appendChild(el('span', 'fm-msg-agent-badge', t('messages.agentBadge')));
@@ -361,24 +377,53 @@ function appendMessage(m) {
 }
 
 // ── Forward to agent (§3.3 R7, one-way) ──────────────────
+// #290 addendum §3 (R3=②): forward = a friend-message Reference drafted into
+// the ACTIVE chat input (pendingAttachments) - never auto-sent. The old
+// text-prefix `[来自 X] body` direct injection is removed; all three entries
+// (bubble right-click / hover button / header button) share this handler.
+// The 「已转发给 agent」 chip is stamped by the 'fm-refs-sent' event from
+// input.js when the ref actually leaves on the wire (session-level, R5).
 function forwardBubble(wrap, conv) {
   const body = wrap.dataset.body;
   if (!body) return;
-  const name = conv.friend?.name || conv.friend?.neblinkId || '';
-  sendWs({
-    type: 'ask',
-    question: `[来自 ${name}] ${body}`,
-    sessionId: state.activeSessionId,
+  const ref = makeReference({
+    refType: 'friend-message',
+    source: {
+      conversationId: conv.conversationId || '',
+      messageId: wrap.dataset.messageId || '',
+      friendName: conv.friend?.name || '',
+      friendNeblinkId: conv.friend?.neblinkId || '',
+      direction: wrap.classList.contains('out') ? 'out' : 'in',
+      date: refDate(wrap.dataset.createdAt),
+    },
+    content: { fullText: body.slice(0, 4000) },
   });
-  const id = wrap.dataset.messageId;
-  if (id) {
-    forwardedIds.add(id);
-    const meta = wrap.querySelector('.fm-msg-meta');
+  if (!ref || !appendRefToActiveView(ref)) return;
+  modalToast(t('messages.forwardToast'));
+}
+
+/** Date label for the ref meta / injection text layer: YYYY-MM-DD HH:mm. */
+function refDate(createdAtMs) {
+  const ms = Number(createdAtMs) || 0;
+  if (!ms) return '';
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// Chip stamping on actual send (input.js dispatches after sendWs).
+function onRefsSent(e) {
+  const ids = (e.detail && e.detail.messageIds) || [];
+  if (!ids.length) return;
+  for (const id of ids) forwardedIds.add(id);
+  if (!modalEls) return;
+  for (const id of ids) {
+    const wrap = modalEls.flow.querySelector(`.fm-msg[data-message-id="${CSS.escape(id)}"]`);
+    const meta = wrap && wrap.querySelector('.fm-msg-meta');
     if (meta && !meta.querySelector('.fm-msg-forwarded-badge')) {
       meta.prepend(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
     }
   }
-  modalToast(t('messages.forwardToast'));
 }
 
 let toastTimer = null;
@@ -480,6 +525,13 @@ export function initMessages() {
   initialized = true;
 
   onMessage('friend_event', onFriendEvent);
+  window.addEventListener('fm-refs-sent', onRefsSent);
+  // #290: deleting/blocking a friend (contacts panel) flips the open chat
+  // into the read-only gate - resync the friend cache and re-apply.
+  window.addEventListener('fm-friends-changed', async () => {
+    await refreshConversations();
+    if (modalEls) applyBlockState(currentConv());
+  });
   // P3 error surface — friendsApi dispatches on auth failure / network error.
   window.addEventListener('fm-auth-required', () => { openLoginModal(); });
   window.addEventListener('fm-network-error', () => { window.__showToast?.(t('messages.networkError'), 'error'); });

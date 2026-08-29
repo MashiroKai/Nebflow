@@ -93,7 +93,7 @@ class LoopGuardWiringSpec extends CatsEffectSuite:
     os.write.over(
       tmp / "data" / "nebflow.json",
       """{"supervision":{"loopGuard":{"enabled":true,"identicalFailureSoft":1,
-        |"identicalFailureHard":3,"maxToolRoundsPerTurn":60,"crossTurnFailureTurns":3,
+        |"identicalFailureHard":3,"identicalCallHard":10,"identicalTextHard":10,"crossTurnFailureTurns":3,
         |"exemptTools":[]}}}""".stripMargin.replaceAll("\n", "")
     )
 

@@ -3,7 +3,7 @@
 // TEAMS tab: Glass cards with agent tiles. Always accessible via toggle button.
 // FLOWS tab: DAG node graph with real-time progress. Auto-opens when flows run.
 
-import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab, closeTab } from './canvas.js';
+import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab, closeTab, openCanvas } from './canvas.js';
 import { FLOW_CSS } from './flowCss.js';
 import { esc, authHeaders, overlayRoot, setMailPending } from './flowHelpers.js';
 import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf, populateTileModels } from './flowTeams.js';
@@ -142,7 +142,7 @@ function renderFlowsTab() {
   // listing it here duplicated the same content in two places. Watch a live
   // run in its tab instead.
   if (flowDefs.length === 0 && runningFlows.length === 0) {
-    scroll.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">No flows defined</div></div>`;
+    scroll.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">${t('agentManager.noFlows')}</div></div>`;
   } else {
     scroll.innerHTML = defsHtml || (runningFlows.length > 0
       ? `<div class="dag-empty"><div style="font:600 13px -apple-system;color:var(--color-text-muted)">${esc(t('flow.runningInTab'))}</div></div>`
@@ -259,12 +259,19 @@ function renderFlowRunTab(instanceId) {
 
 // ── Auto-open flow-run tabs when flows start (P5) ──────────
 
-function maybeAutoOpenFlowsTab() {
+function maybeAutoOpenFlowsTab(manual) {
   if (runningFlows.length === 0) return;
   for (const f of runningFlows) {
-    if (f.status === 'running' && !dismissedFlowRuns.has(f.instanceId) && !hasTab(`flow-run-${f.instanceId}`)) {
-      openFlowRunTab(f.instanceId, f.flowName);
+    if (f.status !== 'running' || hasTab(`flow-run-${f.instanceId}`)) continue;
+    if (dismissedFlowRuns.has(f.instanceId)) {
+      // Manual sidebar click = explicit user intent: it overrides the
+      // dismissed suppression (#412 sessionStorage semantics stay for the
+      // automatic paths - reload / fetch events never re-pop a dismissed tab).
+      if (!manual) continue;
+      dismissedFlowRuns.delete(f.instanceId);
+      persistDismissedFlowRuns();
     }
+    openFlowRunTab(f.instanceId, f.flowName);
   }
 }
 
@@ -611,18 +618,27 @@ export function getRunningFlows() {
 
 export function onSessionChange() { autoRestore(); }
 
-export async function openTeams() {
+export async function openTeams(opts) {
   const btn = document.getElementById('teams-btn');
   btn?.classList.add('active');
+  /* Canvas closed + tab already exists: setActiveTab alone is invisible to
+     the user (bug 2026-08-29) - expand the panel first. Canvas already open:
+     unchanged behavior. */
+  if (!isCanvasOpen()) openCanvas();
   if (hasTab('teams')) {
     setActiveTab('teams');
   } else {
-    openTab('teams', 'Teams', { type: 'teams', closable: true });
+    openTab('teams', t('activity.teams'), { type: 'teams', closable: true });
   }
   renderTeamsTab();
   autoRestore().then(() => { if (teams.length > 0) renderTeamsTab(); });
   fetchRunningFlows().then(() => {
-    if (runningFlows.length > 0) maybeAutoOpenFlowsTab();
+    if (runningFlows.length > 0) maybeAutoOpenFlowsTab(!!(opts && opts.manual));
+    /* Manual click intent wins: a flow-run tab auto-opened by the line above
+       must not steal focus from the Teams view the user explicitly asked for
+       (also keeps the button highlight consistent with the visible tab).
+       Auto paths (boot) keep the legacy focus behavior. */
+    if (opts && opts.manual && hasTab('teams')) setActiveTab('teams');
     if (hasTab('teams')) renderTeamsTab();
   });
 }
@@ -630,10 +646,12 @@ export async function openTeams() {
 export async function openFlows() {
   const btn = document.getElementById('flows-btn');
   btn?.classList.add('active');
+  /* Same fix as openTeams: expand a closed canvas before activating the tab. */
+  if (!isCanvasOpen()) openCanvas();
   if (hasTab('flows')) {
     setActiveTab('flows');
   } else {
-    openTab('flows', 'Flows', { type: 'flow', closable: true });
+    openTab('flows', t('activity.flows'), { type: 'flow', closable: true });
   }
   await fetchFlowDefs();
   renderFlowsTab();

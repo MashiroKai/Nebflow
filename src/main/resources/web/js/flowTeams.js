@@ -270,7 +270,7 @@ export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
 
 export function renderTeamsPanel(scroll, flows, agentStatus, mailFlash, runningFlows) {
   if (flows.length === 0) {
-    scroll.innerHTML = `<div class="team-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">No active teams</div><div class="hint">Mount a team to see its agents</div></div>`;
+    scroll.innerHTML = `<div class="team-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">${t('flowTeams.noActive')}</div><div class="hint">${t('flowTeams.mountHint')}</div></div>`;
     return;
   }
 

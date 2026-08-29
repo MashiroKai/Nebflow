@@ -58,6 +58,12 @@ object InteractionHub:
               ctx.forkTurn(handleRequest(pending, rootWsSend, req)) *> IO.pure(behavior)
             case InteractionHubCommand.Answered(ans) =>
               ctx.forkTurn(handleAnswered(pending, ans)) *> IO.pure(behavior)
+            case InteractionHubCommand.AnswerViaChatInput(rootSessionId, text, reply) =>
+              // 第六件 (2026-08-30): chat-input passthrough — the gateway asks
+              // on behalf of the input box; single atomic modify = query + slot
+              // removal (P1 lesson: reply-slot lifecycle lives in ONE place).
+              ctx.forkTurn(handleChatInputAnswer(pending, rootWsSend, rootSessionId, text, reply)) *>
+                IO.pure(behavior)
         }
       IO.pure(behavior)
     }
@@ -223,6 +229,71 @@ object InteractionHub:
   private def logMissing(ans: InteractionAnswered, why: String): IO[Unit] =
     logger.warn(s"InteractionAnswered dropped: $why (requestId=${ans.requestId}, root=${ans.rootSessionId})") *> IO.unit
 
+  // ============================================================
+  // 第六件 (2026-08-30): chat-input passthrough for pending AskUser cards.
+  //
+  // One atomic modify does query + slot removal — the P1 lesson (reply-slot
+  // lifecycle) says slot state must change in exactly one place; splitting
+  // "peek" from "consume" would race a concurrent card answer. Only the
+  // OLDEST pending AskUser of this root session is consumed; permission
+  // cards are never touched (kind filter). The gateway learns the outcome
+  // via `reply`: true = card consumed (deliver as tool result), false = no
+  // pending card (fall back to normal dispatch).
+  // ============================================================
+  private def handleChatInputAnswer(
+      pending: Ref[IO, Map[String, PendingRequest]],
+      rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
+      rootSessionId: String,
+      text: String,
+      reply: cats.effect.Deferred[IO, Boolean]
+  ): IO[Unit] =
+    pending.modify { m =>
+      val candidates = m.toList
+        .collect { case (rid, p) if p.rootSessionId == rootSessionId && p.kind == InteractionKind.AskUser => (rid, p) }
+        .sortBy(_._2.createdAt)
+      // QC (2026-08-30): parity with handleAnswered's multiWarn — with several
+      // pending AskUser cards the passthrough answers the OLDEST, which may
+      // not be the card the user was looking at. Never silent about it.
+      val multiWarn =
+        if candidates.size > 1 then
+          logger.warn(
+            s"Chat-input passthrough: ${candidates.size} pending AskUser cards for rootSessionId=$rootSessionId — " +
+              "answering the OLDEST; the user should answer a specific card on the card itself (#12 parity)"
+          )
+        else IO.unit
+      candidates.headOption match
+        case Some((rid, p)) =>
+          (
+            m - rid,
+            for
+              _ <- multiWarn
+              _ <- logger.info(
+                s"Chat-input passthrough: answering pending AskUser requestId=$rid root=$rootSessionId (${text.length} chars)"
+              )
+              _ <- p.reply match
+                case InteractionReply.AskUserReply(Some(r)) =>
+                  (r ! List(text)).void.handleErrorWith(_ => IO.unit)
+                case _ => IO.unit
+              // Close the card on the frontend: the input box went through this
+              // path (not askUserAnswer), so the frontend needs the explicit
+              // signal to mark the card answered.
+              send <- rootWsSend.get
+              _ <- send.get(rootSessionId).traverse_ { ws =>
+                ws(
+                  Json.obj(
+                    "type" -> "askUserAnswered".asJson,
+                    "sessionId" -> rootSessionId.asJson,
+                    "requestId" -> rid.asJson,
+                    "via" -> "chat-input".asJson
+                  )
+                ).handleErrorWith(_ => IO.unit)
+              }
+              _ <- reply.complete(true)
+            yield ()
+          )
+        case None => (m, reply.complete(false).void)
+    }.flatten
+
   private def complete(p: PendingRequest, ans: InteractionAnswered): IO[Unit] =
     val approved = ans.payload.hcursor.downField("approved").as[Boolean].toOption
     val answers = ans.payload.hcursor.downField("answers").as[List[String]].toOption
@@ -253,3 +324,17 @@ object InteractionHubCommand:
 
   /** Gateway → hub: user answered (translated from permissionAnswer/askUserAnswer). */
   final case class Answered(ans: InteractionAnswered) extends InteractionHubCommand
+
+  /** 第六件 (2026-08-30): chat-input passthrough. The gateway detected a text
+    * message sent from the input box while an AskUser card is pending for
+    * `rootSessionId` — deliver `text` as the tool result (free-text answer).
+    * `reply` resolves true when a pending card was consumed, false when the
+    * gateway must fall back to the normal message-dispatch path. Queued
+    * messages/external events are NEVER touched (they live in the agent's own
+    * injection queue, not here) — only the newest user text flows through.
+    */
+  final case class AnswerViaChatInput(
+      rootSessionId: String,
+      text: String,
+      reply: cats.effect.Deferred[IO, Boolean]
+  ) extends InteractionHubCommand

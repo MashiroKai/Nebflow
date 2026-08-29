@@ -91,4 +91,64 @@ class NeblinkModelSpec extends CatsEffectSuite:
     assertEquals(decoded, Right(cfg), "Roundtrip should preserve all fields")
   }
 
+  // ===== Logto embedded default (2026-08-28 distribution-gap fix) =====
+
+  test("embeddedDefault carries the product hosted-auth constants") {
+    // Product infrastructure constants (public client ids) — pinned here so
+    // accidental edits surface in CI. config.json logto block can override.
+    assertEquals(LogtoConfig.embeddedDefault.endpoint, "https://auth.neblink.space")
+    assertEquals(LogtoConfig.embeddedDefault.pkceClientId, Some("csxh16cas0x03bgk6w7ej"))
+  }
+
+  test("effectiveLogto falls back to embeddedDefault when config has no logto block") {
+    val cfg = decode[NeblinkConfig]("{}")
+    assertEquals(cfg.isRight, true, "empty config object should decode")
+    val eff = cfg.map(_.effectiveLogto)
+    assertEquals(eff, Right(Some(LogtoConfig.embeddedDefault)))
+    // Exact production values, not just object equality (belt and braces).
+    eff.foreach(_.foreach { lc =>
+      assertEquals(lc.endpoint, "https://auth.neblink.space")
+      assertEquals(lc.pkceClientId, Some("csxh16cas0x03bgk6w7ej"))
+    })
+  }
+
+  test("effectiveLogto prefers an explicit logto block over the embedded default") {
+    val json =
+      """{"logto":{"endpoint":"https://my-own-logto.example","clientId":"my-dev-app","pkceClientId":"my-pkce-app"}}"""
+    val cfg = decode[NeblinkConfig](json)
+    assertEquals(cfg.isRight, true, "explicit logto block should decode")
+    val eff = cfg.map(_.effectiveLogto)
+    assertEquals(
+      eff,
+      Right(Some(LogtoConfig("https://my-own-logto.example", "my-dev-app", Some("my-pkce-app")))),
+      "explicit config.json values must win over the embedded default"
+    )
+  }
+
+  test("logto block with only endpoint + pkceClientId decodes (clientId optional)") {
+    // 2026-08-30 login-blocked root cause: the decoder required `clientId`,
+    // so a hand-written {endpoint, pkceClientId} block failed the WHOLE logto
+    // decode -> raw logto=None -> PKCE callback reported "Logto 登录未配置"
+    // even though /auth/start worked via the embedded default.
+    val json = """{"logto":{"endpoint":"https://auth.neblink.space","pkceClientId":"csxh16cas0x03bgk6w7ej"}}"""
+    val cfg = decode[NeblinkConfig](json)
+    assertEquals(cfg.isRight, true, "clientId-less logto block must decode")
+    cfg.foreach { c =>
+      assertEquals(c.logto.isDefined, true, "logto block must not silently vanish")
+      assertEquals(c.logto.map(_.clientId), Some(""))
+      assertEquals(c.logto.flatMap(_.pkceClientId), Some("csxh16cas0x03bgk6w7ej"))
+      // The PKCE callback now reads effectiveLogto — must resolve to the
+      // explicit block (endpoint + pkceClientId intact).
+      assertEquals(c.effectiveLogto, c.logto)
+    }
+  }
+
+  test("raw logto field stays None without a block (device-flow legacy proxy unaffected)") {
+    // The device-flow endpoints keep reading raw `logto` so their
+    // no-provider branch (neblink-server device proxy) stays reachable —
+    // only the PKCE chain gets the embedded-default fallback.
+    val cfg = decode[NeblinkConfig]("{}")
+    assertEquals(cfg.map(_.logto), Right(None))
+  }
+
 end NeblinkModelSpec

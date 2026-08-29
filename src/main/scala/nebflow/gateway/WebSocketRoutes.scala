@@ -255,6 +255,24 @@ class WebSocketRoutes(
     val mode = nebflow.core.SafetyMode.fromString(safetyMode)
     sharedResources.permissionPolicies.update(_ + (sessionId -> nebflow.agent.PermissionPolicy(safetyMode = mode)))
 
+  /** 递进式放行链 (2026-08-30): persist + hot-apply an escalated safety mode.
+    *
+    * Scope is aligned with the existing `setSafetyMode` WS command: session
+    * meta (persisted, restored on reconnect via seedPermissionPolicy) + the
+    * in-memory policy bucket + the agent's own copy. Order matters — the
+    * bucket (the decision source) is updated BEFORE the caller forwards the
+    * answer, so the next tool decision already sees the new mode.
+    */
+  private def applyPermissionUpgrade(sessionId: String, mode: nebflow.core.SafetyMode): IO[Unit] =
+    val modeStr = nebflow.core.SafetyMode.toString(mode)
+    for
+      _ <- sessionStore.setSafetyMode(sessionId, modeStr)
+      rootSid <- resolveRootSessionId(sessionId)
+      _ <- sharedResources.permissionPolicies.update(_ + (rootSid -> nebflow.agent.PermissionPolicy(safetyMode = mode)))
+      _ <- ensureAgent(sessionId)(ref => ref ! nebflow.agent.AgentCommand.SetSafetyMode(mode))
+      _ <- logger.info(s"Permission upgrade: session $sessionId → $modeStr (persisted + bucket + agent)")
+    yield ()
+
   /** Create and register a FlowTreeActor for a session. Fire-and-forget via .start. */
   private def initFlowTree(
     sessionId: String,
@@ -982,13 +1000,36 @@ class WebSocketRoutes(
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val permSessionId = json.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
             val requestId = json.hcursor.downField("requestId").as[String].toOption.getOrElse("")
+            val upgradeRaw = json.hcursor.downField("upgradeMode").as[String].toOption
             // #12: NEVER synthesize a deny from a malformed reply — the old
             // getOrElse(false) turned any missing/non-boolean `approved` into
             // a user-attributed denial the user never clicked.
             json.hcursor.downField("approved").as[Boolean] match
               case Right(approved) =>
-                logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
-                  forwardInteractionAnswer(requestId, permSessionId, io.circe.Json.obj("approved" -> approved.asJson))
+                // 递进式放行链 (2026-08-30): an invalid upgrade request never
+                // transforms the answer (rule #12 spirit) — log and proceed as
+                // the plain allow/deny the user actually clicked.
+                nebflow.core.PermissionUpgrade.parse(approved, upgradeRaw) match
+                  case Left(why) =>
+                    logger.warn(
+                      s"Permission answer upgradeMode IGNORED ($why) — proceeding as plain ${if approved then "allow" else "deny"} (requestId=$requestId)"
+                    ) *>
+                      forwardInteractionAnswer(requestId, permSessionId, io.circe.Json.obj("approved" -> approved.asJson))
+                  case Right(upgrade) =>
+                    val answerPayload = io.circe.Json.fromJsonObject(
+                      io.circe.JsonObject.fromIterable(
+                        Seq("approved" -> approved.asJson) ++
+                          upgrade.map(m => "upgradeMode" -> io.circe.Json.fromString(nebflow.core.SafetyMode.toString(m)))
+                      )
+                    )
+                    val upgradeIo = upgrade.fold(IO.unit)(m =>
+                      applyPermissionUpgrade(permSessionId, m).handleErrorWith { e =>
+                        logger.warn(s"Permission upgrade FAILED (proceeding as plain allow): ${e.getMessage}")
+                      }
+                    )
+                    logger.info(
+                      s"Permission answer: ${if approved then "approved" else "denied"}${upgrade.map(m => s" + upgrade→${nebflow.core.SafetyMode.toString(m)}").getOrElse("")}"
+                    ) *> upgradeIo *> forwardInteractionAnswer(requestId, permSessionId, answerPayload)
               case Left(_) =>
                 logger.warn(
                   s"Permission answer DROPPED: 'approved' missing or not a boolean (requestId=$requestId, session=$permSessionId) — a malformed reply must not become a deny (#12)"
@@ -3726,12 +3767,42 @@ class WebSocketRoutes(
     */
   private def handleUserText(sessionId: String, content: String, source: String): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
-      logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
-        sessionStore.appendUiMessages(
-          sessionId,
-          List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
-        ) *>
-        ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
+      // 第六件 QC (2026-08-30): the passthrough probe is WS-input-box ONLY —
+      // headless REST turns ("rest-turn") go straight to dispatch so a P0
+      // benchmark POST can never silently answer a pending card.
+      if !WebSocketRoutes.probesPassthrough(source) then dispatchUserText(sessionId, content, source)
+      else
+        // 第六件 (2026-08-30): if THIS session has a pending AskUser card, the
+        // input-box text is the answer — deliver it straight through as the
+        // tool result (free-text). The agent's injection queue is untouched:
+        // queued Mails/external events stay queued with the SAME length (场景②),
+        // and the user's text itself never enqueues (no ImmediateInput on this
+        // path). Miss (no pending AskUser) → normal dispatch, byte-identical
+        // behavior (场景③).
+        sharedResources.interactionHubRef.get.flatMap {
+          case Some(hub) =>
+            resolveRootSessionId(sessionId).flatMap { rootSid =>
+              Deferred[IO, Boolean].flatMap { answered =>
+                (hub ! nebflow.agent.InteractionHubCommand.AnswerViaChatInput(rootSid, content, answered)) *>
+                  // QC: bounded wait — a hub crash / swallowed forkTurn must not
+                  // park this gateway fiber forever; on timeout fall back to
+                  // the normal dispatch path (message still reaches the agent).
+                  answered.get.timeout(1.second).handleError(_ => false)
+              }.flatMap {
+                case true =>
+                  logger.info(
+                    s"User text ($source) → AskUser passthrough for session $sessionId (${content.length} chars)"
+                  ) *>
+                    // user bubble still lands (same shape as the card "Other" path)
+                    sessionStore.appendUiMessages(
+                      sessionId,
+                      List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
+                    )
+                case false => dispatchUserText(sessionId, content, source)
+              }
+            }
+          case None => dispatchUserText(sessionId, content, source)
+        }
     else
       // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
       // empty-content frame (attachments dropped), which reached this path and was
@@ -3744,6 +3815,18 @@ class WebSocketRoutes(
         s"handleUserText($source): dropped EMPTY content for session '$sessionId' — no turn dispatched (frame was sent but carried no text)"
       ) *> IO.unit
   end handleUserText
+
+  /** Normal message dispatch: user bubble + immediate injection into the
+    * agent's turn pipeline. The ONLY path that enqueues — the AskUser
+    * passthrough deliberately bypasses this (第六件, 2026-08-30).
+    */
+  private def dispatchUserText(sessionId: String, content: String, source: String): IO[Unit] =
+    logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
+      sessionStore.appendUiMessages(
+        sessionId,
+        List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
+      ) *>
+      ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
 
   /**
     * task-cancel #35: keep the task archive index in sync after a WS-path
@@ -3827,9 +3910,11 @@ class WebSocketRoutes(
   /**
     * Headless turn entry (P0 benchmark): dispatch a user text into a session
     * exactly like the WS "immediateInput"/"userMessage" cases do. Exposed for
-    * RestApiRoutes' synchronous turn endpoint.
+    * RestApiRoutes' synchronous turn endpoint. Named distinctly from the WS
+    * dispatch (QC nit, 2026-08-30): no overload shadowing, and the name says
+    * REST-deterministic — this path never probes the AskUser passthrough.
     */
-  def dispatchUserText(sessionId: String, content: String): IO[Unit] =
+  def dispatchHeadlessTurn(sessionId: String, content: String): IO[Unit] =
     handleUserText(sessionId, content, source = "rest-turn")
 
   // ============================================================
@@ -4743,6 +4828,15 @@ class WebSocketRoutes(
 end WebSocketRoutes
 
 object WebSocketRoutes:
+
+  /**
+    * 第六件 QC (2026-08-30): which input sources may probe the AskUser
+    * chat-input passthrough. ONLY the WS input-box family does — the headless
+    * REST turn entry ("rest-turn", P0 benchmark) must stay deterministic and
+    * must NEVER silently answer a pending card. Pure + testable on purpose:
+    * the gate is the whole behavioral delta of the REST fix.
+    */
+  def probesPassthrough(source: String): Boolean = source != "rest-turn"
 
   /**
     * F1 batch delete — pure, testable core for the `deletePaths` WS case.

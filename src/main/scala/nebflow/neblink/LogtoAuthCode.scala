@@ -97,7 +97,7 @@ object LogtoAuthCode:
         "client_id" -> clientId,
         "redirect_uri" -> redirectUri,
         "response_type" -> "code",
-        "scope" -> "openid offline_access",
+        "scope" -> "openid offline_access email",
         "prompt" -> "consent",
         "code_challenge" -> codeChallenge,
         "code_challenge_method" -> "S256",
@@ -135,7 +135,7 @@ object LogtoAuthCode:
         "grant_type" -> "refresh_token",
         "refresh_token" -> refreshToken,
         "client_id" -> clientId,
-        "scope" -> "openid offline_access"
+        "scope" -> "openid offline_access email"
       )
     )
 

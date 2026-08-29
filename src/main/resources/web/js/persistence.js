@@ -139,7 +139,7 @@ function sanitizeForCache(entry) {
       // #303 D4: preserve the Reference mini fields (source/anchor/meta/display)
       // so a refreshed history re-renders the reference card instead of a bare
       // [file] tag. Deep fields are small — no base64, safe for the cache.
-      ...(a.type === 'ref' ? { refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display } : {})
+      ...(a.type === 'ref' ? { refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) } : {})
     }));
   }
   return e;

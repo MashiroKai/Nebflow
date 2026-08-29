@@ -358,6 +358,14 @@ class NeblinkClient(
   def removeFriend(friendUserId: String): IO[Either[String, String]] =
     withSessionRaw("DELETE", s"/api/friends/$friendUserId", "")
 
+  /** 拉黑好友（#290 §1.2 WeChat 式黑名单；上游 upsert 到 blocked）。 */
+  def blockFriend(friendUserId: String): IO[Either[String, String]] =
+    withSessionRaw("POST", s"/api/friends/$friendUserId/block", "")
+
+  /** 移出黑名单（仅拉黑方；上游非拉黑方 403 not_blocker）。 */
+  def unblockFriend(friendUserId: String): IO[Either[String, String]] =
+    withSessionRaw("POST", s"/api/friends/$friendUserId/unblock", "")
+
   /** 会话列表（按 last_message_id 倒序，含 unreadCount）。 */
   def listConversations: IO[Either[String, List[ConversationSummary]]] =
     withSessionJson[List[ConversationSummary]]("GET", "/api/conversations", "")
@@ -366,10 +374,18 @@ class NeblinkClient(
   def listMessages(conversationId: String, after: Long = 0L, limit: Int = 50): IO[Either[String, List[MessageSummary]]] =
     withSessionJson[List[MessageSummary]]("GET", s"/api/conversations/$conversationId/messages?after=$after&limit=$limit", "")
 
-  /** 发消息（好友寻址，服务器 get-or-create 会话）。 */
-  def sendFriendMessage(friendUserId: String, body: String): IO[Either[String, Json]] =
+  /** 发消息（好友寻址，服务器 get-or-create 会话）。
+    *
+    * `origin` 透传给服务器落库（#290 spec v1.1 wire 契约：缺省 "user"，
+    * 非法值 422）。agent 代发链（FriendService.sendAsAgent → doSend）必须
+    * 传 Some("agent")——否则 agent 发的消息被标成 user，origin 语义
+    * （前端徽章/审计/spec §7.2 限速区分）整体失效。
+    */
+  def sendFriendMessage(friendUserId: String, body: String, origin: Option[String] = None): IO[Either[String, Json]] =
     withSession { token =>
-      val payload = Json.obj("body" -> body.asJson).noSpaces
+      val payload = origin match
+        case Some(o) => Json.obj("body" -> body.asJson, "origin" -> o.asJson).noSpaces
+        case None    => Json.obj("body" -> body.asJson).noSpaces
       sendRequest("POST", s"${config.url}/api/friends/$friendUserId/messages", payload, Some(token))
         .map(_.flatMap(resp => decode[Json](resp).left.map(_.getMessage)))
     }

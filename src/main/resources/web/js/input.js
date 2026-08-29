@@ -41,6 +41,11 @@ function showAttachmentBanner(message) {
 }
 
 // ---------- Slash Commands ----------
+/* SEALED / 封存待启用 (author ruling 2026-08-29 22:56): the /slash command
+   menu is sealed - '/' is treated as plain text (zero popup, no command
+   interception). Code kept intact for future re-enable:
+     localStorage.setItem('nebflow_slash.enabled', '1')  // then reload */
+const SLASH_ENABLED = () => { try { return localStorage.getItem(key('slash.enabled')) === '1'; } catch (e) { return false; } };
 const slashCommands = {
   '/ask': {
     desc: () => t('slash.ask'),
@@ -84,6 +89,7 @@ export function registerSkillCommands(skills) {
 
 // ---------- Slash Command Handler ----------
 export function handleSlash(text) {
+  if (!SLASH_ENABLED()) return false; // SEALED: '/' is plain text
   const cmd = text.trim().split(/\s/)[0];
   if (slashCommands[cmd] && slashCommands[cmd].run) {
     slashCommands[cmd].run(text);
@@ -96,6 +102,7 @@ export function handleSlash(text) {
 function updateSlashDropdown() {
   const input = activeView.dom.input;
   const text = input.value;
+  if (!SLASH_ENABLED()) { closeSlashDropdown(); return; } // SEALED
   if (!text.startsWith('/')) {
     closeSlashDropdown();
     return;
@@ -209,7 +216,7 @@ export function enterPlanMode() {
   if (activeView.stream.planMode) return;
   activeView.stream.planMode = true;
   updateInputIndicator();
-  activeView.dom.input.placeholder = 'Describe the task to plan...';
+  activeView.dom.input.placeholder = t('input.planPlaceholder');
   activeView.dom.input.focus();
 }
 
@@ -662,7 +669,7 @@ export function send() {
   saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a => a.type === 'taskRef'
     ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
     : a.type === 'ref'
-      ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
+      ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }
       : { type: a.type, name: a.name, preview: a.preview })});
   // Save to input history
   if (text && text !== '/clear') {
@@ -692,7 +699,8 @@ export function send() {
     // — unknown fields (refs) are tolerated, so this is forward-compatible.
     const refs = (v.pendingAttachments || [])
       .filter(a => a.type === 'ref')
-      .map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }));
+      .map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }));
+    notifyFriendRefsSent(refs);
     sendWs({
       content: text,
       ...(taskRefs.length > 0 ? { taskRefs } : {}),
@@ -781,7 +789,7 @@ function persistQueue() {
         attachments: (it.attachments || []).map(a => a.type === 'taskRef'
           ? { type: 'taskRef', taskId: a.taskId, sessionId: a.sessionId, subject: a.subject, name: a.subject }
           : a.type === 'ref'
-            ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
+            ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }
             : a.type === 'text' && typeof a.data === 'string' && a.data.length > 0 && a.data.length <= 400000
               ? { type: a.type, mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0 }
               : { type: a.type, name: a.name })
@@ -859,10 +867,11 @@ function sendImmediate(sessionId, item) {
     // branch — the backend parses taskRefs/refs only there (WebSocketRoutes
     // §6.2); immediateInput goes through handleUserText and would drop them.
     const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    notifyFriendRefsSent(refs);
     sendWs({
       content: item.text,
       ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
-      ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display })) } : {}),
+      ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) } : {}),
       attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
         mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
       })),
@@ -995,10 +1004,11 @@ export function drainMessageQueue(sessionId) {
     // parses refs via circe cursor — tolerated for forward-compat).
     const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
     const refs = (item.attachments || []).filter(a => a.type === 'ref');
+    notifyFriendRefsSent(refs);
     sendWs({
       content: item.text,
       ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
-      ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display })) } : {}),
+      ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) } : {}),
       attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
         mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
       })),
@@ -1530,6 +1540,20 @@ const INTERNAL_DRAG_MIME = 'application/x-nebflow-file';
 // #303 global-reference: canvas tab rows carry this MIME to produce a Reference
 // (document/file/html-element) on drop into an input bar.
 const CANVAS_DRAG_MIME = 'application/x-nebflow-ref';
+
+/**
+ * #290 A2A: notify listeners (messages.js) when friend-message refs actually
+ * leave on the wire - the 「已转发给 agent」 chip is stamped only at this point
+ * (addendum R3: drafting the ref in pendingAttachments does NOT mark it).
+ * @param {Array} refs - ref attachments about to be sent (wire shape)
+ */
+function notifyFriendRefsSent(refs) {
+  const ids = (refs || [])
+    .filter(r => r && r.refType === 'friend-message' && r.source && r.source.messageId)
+    .map(r => r.source.messageId);
+  if (ids.length === 0) return;
+  window.dispatchEvent(new CustomEvent('fm-refs-sent', { detail: { messageIds: ids } }));
+}
 
 /**
  * #303/global-reference: append a unified Reference to a view's

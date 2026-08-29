@@ -27,7 +27,7 @@ import {
   renderTool, renderToolPending, renderError, renderTimeoutNotice,
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
   renderCompactStartCard, renderCompactDoneCard, renderCompactFailCard,
-  showOptions, renderAskUser, renderPermissionPrompt,
+  showOptions, renderAskUser, renderPermissionPrompt, closeAskUserCard,
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
   appendThinkingDelta, finishThinking,
@@ -1179,6 +1179,15 @@ onMessage('askUser', (msg, view) => {
   }
 });
 
+// Chat-input passthrough (author ruling 2026-08-29 23:50): while an AskUser
+// card is pending, a message typed into the input box is consumed by the
+// backend as that tool call's answer; it then broadcasts askUserAnswered so
+// every attached client locks the card locally (same end-state as answering
+// on the card). The user's text already landed as a normal user bubble.
+onMessage('askUserAnswered', (msg) => {
+  closeAskUserCard(msg.sessionId, msg.requestId);
+});
+
 // F4 (#433): global actionable toast for permission cards whose target root
 // session is unreachable. Glass panel, no overlay dimming (弹窗禁令). Stack
 // top-right; removed on answer or on permissionExpired for the same root sid.
@@ -1256,7 +1265,7 @@ onMessage('askPermission', (msg, view) => {
     if (view) {
       // Active session: renderPermissionPrompt detects bypass, sends approval,
       // and shows the "auto-approved" badge. Let it handle everything.
-      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId);
+      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId, msg.safetyMode);
     } else {
       // Non-active session: auto-approve directly (renderPermissionPrompt is never called).
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
@@ -1278,10 +1287,10 @@ onMessage('askPermission', (msg, view) => {
   // disabled because answeredPermissions still holds this sid.
   if (sid) state.answeredPermissions.delete(sid);
   if (view) {
-    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId);
+    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId, msg.safetyMode);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId }, sid);
+    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId, safetyMode: msg.safetyMode }, sid);
   }
 });
 
@@ -1547,7 +1556,7 @@ onMessage('historyPage', (msg, view) => {
       activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.permission-pending-box')) row.remove();
       });
-      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel, lastHistMsg.sourceAgent, lastHistMsg.sourceSession, lastHistMsg.sourceTeam, lastHistMsg.requestId);
+      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel, lastHistMsg.sourceAgent, lastHistMsg.sourceSession, lastHistMsg.sourceTeam, lastHistMsg.requestId, lastHistMsg.safetyMode);
     }
 
     // Final scroll-to-bottom: after all rendering (history + streaming bubbles + pending tools)
@@ -2997,7 +3006,7 @@ document.getElementById('canvas-toggle-btn')?.addEventListener('click', () => {
     openCanvas();
   }
 });
-document.getElementById('teams-btn')?.addEventListener('click', () => flowCanvas.openTeams());
+document.getElementById('teams-btn')?.addEventListener('click', () => flowCanvas.openTeams({ manual: true }));
 document.getElementById('flows-btn')?.addEventListener('click', () => flowCanvas.openFlows());
 // Restore queued messages from localStorage (survives browser refresh)
 restoreQueue();

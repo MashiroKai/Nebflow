@@ -85,6 +85,26 @@ object RefResolver:
               .getOrElse(if url.nonEmpty then url else fileNameOf(path))
           )
           Some(s"[引用: 页面元素 · $title${anchorText(anchor)} · $loc]")
+      // #290 A2A (addendum §3.2): friend message forward - content-bearing
+      // ref (unlike the pointer refs above): content.fullText rides the
+      // payload (<=4000 chars, capped client-side; re-capped here) and is
+      // injected verbatim so the agent sees the forwarded message text.
+      // Pinned text-layer format (agent-side experience unchanged from the
+      // legacy arch §8 text-prefix form):
+      //   [引用 · 好友消息 | 来自 {friendName}({friendNeblinkId}) | {日期}]
+      //   {fullText}
+      case "friend-message" =>
+        val name = sanitize(src.downField("friendName").as[String].getOrElse(""))
+        val nl = sanitize(src.downField("friendNeblinkId").as[String].getOrElse(""))
+        val date = sanitize(ref.hcursor.downField("meta").downField("date").as[String].getOrElse(""))
+        // Body: keep newlines (legitimate message content) but strip other
+        // control chars - same anti-forgery rationale as sanitize().
+        val body = c.downField("content").downField("fullText").as[String].getOrElse("")
+          .filter(ch => ch >= ' ' || ch == '\n').take(4000)
+        if body.isEmpty then None
+        else
+          val datePart = if date.nonEmpty then s" | $date" else ""
+          Some(s"[引用 · 好友消息 | 来自 $name($nl)$datePart]\n$body")
       case _ => None // "task" → return flow (processTaskReturns); unknown → skip
 
   /** Anchor summary " · p.3–4" / " · L12–45" / " · Sheet1!A1:D10" / " · <p>"

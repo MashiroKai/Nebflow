@@ -7,6 +7,7 @@ import { esc, authHeaders } from './flowHelpers.js';
 import { renderFlowDefStatic } from './flowDag.js';
 import { FLOW_CSS } from './flowCss.js';
 import { brand } from './brand.js';
+import { t } from './i18n.js';
 
 // ── API ────────────────────────────────────────────────────
 async function fetchFlows() {
@@ -20,11 +21,11 @@ async function fetchFlows() {
 
 // ── Render ─────────────────────────────────────────────────
 export async function renderFlowList(scroll) {
-  scroll.innerHTML = '<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">Loading flows…</div></div>';
+  scroll.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">${t('flowList.loading')}</div></div>`;
   const flows = await fetchFlows();
 
   if (flows.length === 0) {
-    scroll.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">No flows defined</div><div class="hint">Create ~/${brand.homeDirName ?? '.nebflow'}/flows/&lt;name&gt;/flow.json to define a DAG pipeline</div></div>`;
+    scroll.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">${t('agentManager.noFlows')}</div><div class="hint">${t('flowList.createHint', { dir: brand.homeDirName ?? '.nebflow' })}</div></div>`;
     return;
   }
 
