@@ -157,6 +157,154 @@ class InteractionHubSpec extends CatsEffectSuite:
 
   // ---------- #12: approval link reliability ----------
 
+  // ===== 第六件 (2026-08-30): chat-input passthrough for pending AskUser =====
+
+  private def askRequest(
+      requestId: String,
+      gotAnswers: Ref[IO, Option[List[String]]],
+      rootSid: String = "root-1",
+      system: nebflow.actor.ActorSystem
+  ): IO[InteractionRequest] =
+    system
+      .spawn(
+        nebflow.actor.Behaviors.receiveMessage[List[String]] { answers =>
+          gotAnswers.set(Some(answers)).as(nebflow.actor.Behaviors.stopped)
+        },
+        s"ask-sink-$requestId"
+      )
+      .map { sink =>
+        InteractionRequest(
+          requestId = requestId,
+          kind = InteractionKind.AskUser,
+          payload = Json.obj("items" -> Json.arr(), "agentName" -> Json.fromString("Frontend")),
+          reply = InteractionReply.AskUserReply(Some(sink)),
+          rootSessionId = rootSid,
+          sourceAgent = "Frontend",
+          sourceSession = "team-abc"
+        )
+      }
+
+  test("chat-input passthrough: pending AskUser consumes text as tool result + card closes + slot removed") {
+    val system = nebflow.actor.ActorSystem("hub-passthrough-1")
+    for
+      hub <- mkHub(system)
+      sent <- Ref.of[IO, List[Json]](Nil)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
+      gotAnswers <- Ref.of[IO, Option[List[String]]](None)
+      req <- askRequest("pt-1", gotAnswers, system = system)
+      _ <- hub ! InteractionHubCommand.Request(req)
+      _ <- IO.sleep(50.millis)
+      answered <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "自由输入的回答", answered)
+      hit <- answered.get
+      answers <- gotAnswers.get
+      _ <- IO.sleep(50.millis)
+      events <- sent.get
+      _ <- system.stopAll
+    yield
+      assertEquals(hit, true) // gateway must NOT fall back to normal dispatch
+      assertEquals(answers, Some(List("自由输入的回答"))) // free-text IS the tool result
+      // frontend card-close signal broadcast with the consumed requestId
+      val close = events.find(_.hcursor.downField("type").as[String].contains("askUserAnswered")).get
+      assertEquals(close.hcursor.downField("requestId").as[String], Right("pt-1"))
+      assertEquals(close.hcursor.downField("via").as[String], Right("chat-input"))
+    end for
+  }
+
+  test("chat-input passthrough: permission cards are never consumed (kind filter)") {
+    val system = nebflow.actor.ActorSystem("hub-passthrough-2")
+    for
+      hub <- mkHub(system)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)
+      dPerm <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.Request(permRequest("pt-perm", dPerm))
+      _ <- IO.sleep(50.millis)
+      answered <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "hello", answered)
+      hit <- answered.get
+      _ <- IO.sleep(50.millis)
+      permState <- dPerm.tryGet
+      _ <- system.stopAll
+    yield
+      assertEquals(hit, false) // fall back to normal dispatch
+      assertEquals(permState, None) // permission card untouched, still answerable
+    end for
+  }
+
+  test("chat-input passthrough: no pending card → false (normal dispatch preserved)") {
+    val system = nebflow.actor.ActorSystem("hub-passthrough-3")
+    for
+      hub <- mkHub(system)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)
+      answered <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "plain message", answered)
+      hit <- answered.get
+      _ <- system.stopAll
+    yield assertEquals(hit, false)
+    end for
+  }
+
+  test("chat-input passthrough: consumes only the OLDEST AskUser — queued cards survive untouched") {
+    val system = nebflow.actor.ActorSystem("hub-passthrough-4")
+    for
+      hub <- mkHub(system)
+      sent <- Ref.of[IO, List[Json]](Nil)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
+      gotA <- Ref.of[IO, Option[List[String]]](None)
+      gotB <- Ref.of[IO, Option[List[String]]](None)
+      reqA <- askRequest("pt-old", gotA, system = system)
+      _ <- hub ! InteractionHubCommand.Request(reqA)
+      _ <- IO.sleep(30.millis)
+      reqB <- askRequest("pt-new", gotB, system = system)
+      _ <- hub ! InteractionHubCommand.Request(reqB)
+      _ <- IO.sleep(50.millis)
+      answered <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "first answer", answered)
+      hit <- answered.get
+      aAns <- gotA.get
+      _ <- IO.sleep(50.millis)
+      // 场景② invariant: the QUEUED (newer) card is untouched — still answerable
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("pt-new", "root-1", Json.obj("answers" -> Json.arr(Json.fromString("later pick"))))
+      )
+      _ <- IO.sleep(300.millis)
+      bAns <- gotB.get
+      _ <- system.stopAll
+    yield
+      assertEquals(hit, true)
+      assertEquals(aAns, Some(List("first answer"))) // oldest consumed
+      assertEquals(bAns, Some(List("later pick"))) // queued card intact
+    end for
+  }
+
+  test("chat-input passthrough: session-scoped — another root's pending card is not routed") {
+    val system = nebflow.actor.ActorSystem("hub-passthrough-5")
+    for
+      hub <- mkHub(system)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)
+      gotA <- Ref.of[IO, Option[List[String]]](None)
+      reqA <- askRequest("pt-x", gotA, rootSid = "root-other", system = system)
+      _ <- hub ! InteractionHubCommand.Request(reqA)
+      _ <- IO.sleep(50.millis)
+      answered <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "wrong window", answered)
+      hit <- answered.get
+      aAns <- gotA.get
+      _ <- IO.sleep(50.millis)
+      // the foreign card is still consumable by its own session
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("pt-x", "root-other", Json.obj("answers" -> Json.arr(Json.fromString("right window"))))
+      )
+      _ <- IO.sleep(300.millis)
+      aAns2 <- gotA.get
+      _ <- system.stopAll
+    yield
+      assertEquals(hit, false) // no cross-session routing
+      assertEquals(aAns, None)
+      assertEquals(aAns2, Some(List("right window"))) // card survived, still answerable
+    end for
+  }
+
   // 递进式放行链 (2026-08-30): escalated answers carry an extra `upgradeMode`
   // field — the hub must treat the payload exactly like a plain approval
   // (extra fields are opaque; only `approved` drives the deferred).
