@@ -929,9 +929,9 @@ function showContextMenu(x, y, path, isDir) {
   } else {
     ctxMenuEl.innerHTML = `
       ${path ? `<button data-action="reference" class="reference">${t('explorer.reference')}</button><hr>` : ''}
-      <button data-action="new-file">New File</button>
-      <button data-action="new-folder">New Folder</button>
-      ${path ? `<hr><button data-action="delete" class="danger">Delete</button>` : ''}
+      <button data-action="new-file">${t('explorer.newFile')}</button>
+      <button data-action="new-folder">${t('explorer.newFolder')}</button>
+      ${path ? `<hr><button data-action="delete" class="danger">${t('explorer.delete')}</button>` : ''}
     `;
   }
   document.body.appendChild(ctxMenuEl);

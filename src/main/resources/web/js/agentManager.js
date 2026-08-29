@@ -408,30 +408,30 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
       </div>
 
       <div class="agent-detail-section">
-        <div class="agent-detail-label">Tools</div>
+        <div class="agent-detail-label">${t('agentManager.tools')}</div>
         ${toolsHtml}
       </div>
 
       <div class="agent-detail-section">
-        <div class="agent-detail-label">Skills</div>
+        <div class="agent-detail-label">${t('agentManager.skills')}</div>
         <div class="agent-detail-sub-hint">已选 skill 的 name+description 注入此 agent 的 system prompt</div>
         <div class="agent-detail-skills-grid" id="agent-detail-skills-grid"><span class="agent-detail-chips-loading">Loading…</span></div>
       </div>
 
       <div class="agent-detail-section">
-        <div class="agent-detail-label">Flows</div>
+        <div class="agent-detail-label">${t('agentManager.flows')}</div>
         <div class="agent-detail-sub-hint">此 agent 可通过 FlowTrigger(flow=…) 触发的 flow</div>
         <div class="agent-detail-flows-grid" id="agent-detail-flows-grid"><span class="agent-detail-chips-loading">Loading…</span></div>
       </div>
 
       <div class="agent-detail-section" id="agent-detail-prompt-section">
         <div class="agent-detail-label-row">
-          <span class="agent-detail-label">System Prompt</span>
-          <button class="agent-detail-prompt-toggle" id="agent-detail-prompt-toggle" title="View source">${CODE_ICON_SVG}</button>
+          <span class="agent-detail-label">${t('agentManager.systemPrompt')}</span>
+          <button class="agent-detail-prompt-toggle" id="agent-detail-prompt-toggle" title="${t('agentManager.viewSource')}">${CODE_ICON_SVG}</button>
         </div>
         <div class="agent-detail-prompt-render canvas-md-viewer" id="agent-detail-prompt-render"></div>
         <textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}" style="display:none">${esc(prompt)}</textarea>
-        <button class="agent-detail-save-btn" id="agent-detail-save-prompt" style="display:none">Save</button>
+        <button class="agent-detail-save-btn" id="agent-detail-save-prompt" style="display:none">${t('agentManager.save')}</button>
       </div>
     </div>`;
 
@@ -462,7 +462,7 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
   const setPromptMode = (src) => {
     sourceMode = src;
     promptToggle.innerHTML = src ? EYE_ICON_SVG : CODE_ICON_SVG;
-    promptToggle.title = src ? 'View rendered' : 'View source';
+    promptToggle.title = src ? t('agentManager.viewRendered') : t('agentManager.viewSource');
     promptRender.style.display = src ? 'none' : '';
     promptEdit.style.display = src ? '' : 'none';
     saveBtn.style.display = src ? '' : 'none';

@@ -155,7 +155,7 @@ function pendingRowHtml(it) {
         ${typeTag}
         <span class="flow-mail-time">${esc(fmtRelTime(it.timestamp))}</span>
         <span class="flow-mail-expand">展开 ▾</span>
-        <button class="flow-mail-cancel" title="Remove from queue">Cancel</button>
+        <button class="flow-mail-cancel" title="${t('flowViewers.removeFromQueue')}">${t('flows.cancel')}</button>
       </div>
       <div class="flow-mail-content">${mailBodyHtml(it.message)}</div>
     </div>`;
@@ -242,12 +242,12 @@ export async function openMailbox(flowName, team = null) {
   mailboxCtx = { flowName, team };
   body.innerHTML = `
     <div class="flow-mail-section" id="flow-mail-pending-section" style="display:none">
-      <div class="flow-mail-section-title"><span class="flow-mail-pending-dot"></span>Pending <span id="flow-mail-pending-count"></span></div>
+      <div class="flow-mail-section-title"><span class="flow-mail-pending-dot"></span>${t('flowViewers.pending')} <span id="flow-mail-pending-count"></span></div>
       <div id="flow-mail-pending-list"></div>
     </div>
     <div class="flow-mail-section">
-      <div class="flow-mail-section-title">History</div>
-      <div id="flow-mail-history-list"><div class="flow-mail-empty">Loading…</div></div>
+      <div class="flow-mail-section-title">${t('flowViewers.history')}</div>
+      <div id="flow-mail-history-list"><div class="flow-mail-empty">${t('flowViewers.loading')}</div></div>
     </div>`;
   // Pending: per-session queue items, aggregated across the team's agents.
   loadPendingSection(body, team);
@@ -289,7 +289,7 @@ export async function openMailbox(flowName, team = null) {
 export async function openDefinition(flowName) {
   const body = openViewerShell(flowName);
   if (!body) return;
-  body.innerHTML = `<div class="flow-mail-empty">Loading…</div>`;
+  body.innerHTML = `<div class="flow-mail-empty">${t('flowViewers.loading')}</div>`;
   try {
     const resp = await fetch(`/api/teams/def/${encodeURIComponent(flowName)}`, { headers: authHeaders() });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -305,23 +305,23 @@ export async function openDefinition(flowName) {
 
     const agentsHtml = agents.map(a => {
       const isMgr = (a.name === managerName) || (a.extends === 'FlowManager');
-      const badge = isMgr ? `<span class="flow-agent-block-badge">manager</span>` : '';
-      const ext = a.extends ? `<span class="flow-agent-block-ext">extends ${esc(a.extends)}</span>` : '';
-      const dutyHtml = a.duty ? `<div class="flow-agent-block-field"><span class="flow-agent-block-label">Duty</span><div class="flow-agent-block-readonly">${esc(a.duty)}</div></div>` : '';
+      const badge = isMgr ? `<span class="flow-agent-block-badge">${t('flowViewers.manager')}</span>` : '';
+      const ext = a.extends ? `<span class="flow-agent-block-ext">${t('flowViewers.extends', { name: esc(a.extends) })}</span>` : '';
+      const dutyHtml = a.duty ? `<div class="flow-agent-block-field"><span class="flow-agent-block-label">${t('flowViewers.duty')}</span><div class="flow-agent-block-readonly">${esc(a.duty)}</div></div>` : '';
       const ownDesc = a.description || '';
       const inheritedDesc = globalDescOf(a.extends);
       const capabilityDesc = ownDesc || inheritedDesc;
-      const sourceLabel = ownDesc ? `自定义` : inheritedDesc ? `继承自 ${esc(a.extends)}` : `（无）`;
-      const capabilityHtml = `<div class="flow-agent-block-field"><span class="flow-agent-block-label">Capability</span><div class="flow-def-source">${esc(sourceLabel)}</div><div class="flow-agent-block-readonly">${capabilityDesc ? esc(capabilityDesc) : '<span class="flow-agent-block-empty">(空)</span>'}</div></div>`;
+      const sourceLabel = ownDesc ? t('flowViewers.sourceCustom') : inheritedDesc ? t('flowViewers.sourceInherited', { name: esc(a.extends) }) : t('flowViewers.sourceNone');
+      const capabilityHtml = `<div class="flow-agent-block-field"><span class="flow-agent-block-label">${t('flowViewers.capability')}</span><div class="flow-def-source">${esc(sourceLabel)}</div><div class="flow-agent-block-readonly">${capabilityDesc ? esc(capabilityDesc) : `<span class="flow-agent-block-empty">${t('flowViewers.empty')}</span>`}</div></div>`;
       const agentTools = a.tools || [];
-      const toolsHtml = agentTools.length > 0 ? `<div class="flow-agent-block-field"><span class="flow-agent-block-label">Tools</span><div class="flow-agent-block-readonly">${esc(agentTools.join(', '))}</div></div>` : '';
-      const sysHtml = a.systemPrompt ? `<div class="flow-agent-block-field"><span class="flow-agent-block-label">System Prompt</span><div class="flow-agent-block-readonly" style="max-height:200px;overflow-y:auto">${esc(a.systemPrompt)}</div></div>` : '';
-      const modelHtml = `<div class="flow-agent-block-field"><span class="flow-agent-block-label">Model</span><div class="flow-agent-model-container" data-agent-name="${esc(a.name)}"></div></div>`;
+      const toolsHtml = agentTools.length > 0 ? `<div class="flow-agent-block-field"><span class="flow-agent-block-label">${t('flowViewers.tools')}</span><div class="flow-agent-block-readonly">${esc(agentTools.join(', '))}</div></div>` : '';
+      const sysHtml = a.systemPrompt ? `<div class="flow-agent-block-field"><span class="flow-agent-block-label">${t('flowViewers.systemPrompt')}</span><div class="flow-agent-block-readonly" style="max-height:200px;overflow-y:auto">${esc(a.systemPrompt)}</div></div>` : '';
+      const modelHtml = `<div class="flow-agent-block-field"><span class="flow-agent-block-label">${t('flowViewers.model')}</span><div class="flow-agent-model-container" data-agent-name="${esc(a.name)}"></div></div>`;
       return `<div class="flow-agent-block${isMgr ? ' is-manager' : ''}"><div class="flow-agent-block-head"><span class="flow-agent-block-name">${esc(a.name)}</span>${badge}${ext}</div>${dutyHtml}${capabilityHtml}${toolsHtml}${modelHtml}${sysHtml}</div>`;
     });
 
-    const flowTabContent = `<div class="flow-def-tab-content active" data-tab-content="flow"><div class="flow-def-section"><h3>Team Description</h3><div class="flow-agent-block-readonly">${esc(fd.description || '')}</div></div></div>`;
-    const flowTabBtn = `<button class="flow-def-tab active" data-tab="flow">Team</button>`;
+    const flowTabContent = `<div class="flow-def-tab-content active" data-tab-content="flow"><div class="flow-def-section"><h3>${t('flowViewers.teamDescription')}</h3><div class="flow-agent-block-readonly">${esc(fd.description || '')}</div></div></div>`;
+    const flowTabBtn = `<button class="flow-def-tab active" data-tab="flow">${t('flowViewers.team')}</button>`;
     const agentTabBtns = agents.map(a => { const isMgr = (a.name === managerName) || (a.extends === 'FlowManager'); return `<button class="flow-def-tab" data-tab="${esc(a.name)}">${esc(a.name)}${isMgr ? '<span class="flow-def-tab-badge">●</span>' : ''}</button>`; }).join('');
     const agentTabContents = agents.map((a, i) => `<div class="flow-def-tab-content" data-tab-content="${esc(a.name)}">${agentsHtml[i] || ''}</div>`).join('');
 

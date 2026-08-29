@@ -124,14 +124,14 @@ function renderFlowsTab() {
   let defsHtml = '';
   if (flowDefs.length > 0) {
     defsHtml = `<div class="flow-defs-section">
-      <div class="flow-defs-header">Flow Definitions</div>
+      <div class="flow-defs-header">${t('flows.definitions')}</div>
       <div class="flow-defs-grid">
         ${flowDefs.map(fd => `
           <div class="flow-def-card" data-flow-name="${esc(fd.name)}">
             <div class="flow-def-name">${esc(fd.name)}</div>
             ${fd.description ? `<div class="flow-def-desc">${esc(fd.description)}</div>` : ''}
-            <div class="flow-def-meta">${fd.nodeCount || 0} nodes</div>
-            <button class="flow-def-view-btn" data-flow-name="${esc(fd.name)}">View DAG \u2192</button>
+            <div class="flow-def-meta">${t('flows.nodesCount', { count: fd.nodeCount || 0 })}</div>
+            <button class="flow-def-view-btn" data-flow-name="${esc(fd.name)}">${t('flows.viewDag')} \u2192</button>
           </div>
         `).join('')}
       </div>
@@ -156,7 +156,7 @@ function renderFlowsTab() {
       openTab(`flow-def-${flowName}`, `DAG: ${flowName}`, { type: 'flow', closable: true });
       const defPane = getTabPane(`flow-def-${flowName}`);
       if (defPane) {
-        defPane.innerHTML = '<div class="agent-detail-loading">Loading DAG...</div>';
+        defPane.innerHTML = '<div class="agent-detail-loading">' + t('flows.loadingDag') + '</div>';
         fetch(`/api/flow/dag/${encodeURIComponent(flowName)}`, { headers: authHeaders() })
           .then(r => r.json())
           .then(dag => renderStaticDag(defPane, dag));

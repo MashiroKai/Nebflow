@@ -31,7 +31,7 @@ export async function renderFlowList(scroll) {
 
   scroll.innerHTML = `
     <div class="flow-list-header">
-      <span class="flow-list-title">Flows</span>
+      <span class="flow-list-title">${t('flows.section')}</span>
       <span class="flow-list-count">${flows.length} defined</span>
     </div>` +
     flows.map(flowDefCardHtml).join('');
@@ -47,21 +47,21 @@ export async function renderFlowList(scroll) {
 
 function flowDefCardHtml(f) {
   const nodes = f.nodes || [];
-  const entryTag = `<span class="flow-def-entry-tag">entry: ${esc(f.entry || '')}</span>`;
+  const entryTag = `<span class="flow-def-entry-tag">${t('flows.entry', { name: esc(f.entry || '') })}</span>`;
   return `
     <div class="flow-def-card">
       <div class="flow-def-card-header">
         <span class="flow-def-card-icon">⚡</span>
         <span class="flow-def-card-name">${esc(f.name)}</span>
         <span class="flow-def-card-meta">
-          <span>${nodes.length} nodes</span>
-          <span>maxLoop ${esc(f.maxLoop ?? '∞')}</span>
+          <span>${t('flows.nodesCount', { count: nodes.length })}</span>
+          <span>${t('flows.maxLoop', { n: esc(String(f.maxLoop ?? '∞')) })}</span>
         </span>
       </div>
       <div class="flow-def-card-desc">${esc(f.description || '')}</div>
       <div class="flow-def-card-footer">
         ${entryTag}
-        <button class="flow-def-view-btn" data-flow="${esc(f.name)}" style="margin-left:auto">View DAG →</button>
+        <button class="flow-def-view-btn" data-flow="${esc(f.name)}" style="margin-left:auto">${t('flows.viewDag')} →</button>
       </div>
     </div>`;
 }
@@ -79,7 +79,7 @@ async function openFlowDefTab(name) {
   scroll.className = 'team-scroll';
   scroll.style.display = 'block';
   pane.appendChild(scroll);
-  scroll.innerHTML = '<div class="dag-empty"><div class="hint">Loading DAG…</div></div>';
+  scroll.innerHTML = `<div class="dag-empty"><div class="hint">${t('flows.loadingDag')}</div></div>`;
 
   const flows = await fetchFlows();
   const flowDef = flows.find(f => f.name === name);
