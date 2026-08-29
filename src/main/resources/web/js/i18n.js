@@ -105,7 +105,6 @@ export function applyLocaleToHtml() {
     'reminder-btn': ['title', 'header.scheduledTasks'],
     'canvas-toggle-btn': ['title', 'header.canvas'],
     'reminder-create-btn': ['title', 'header.newTask'],
-    'agent-field-label': ['text', 'agent.toolsLabel'],
     'rules-modal-title': ['text', 'rules.title'],
     'rules-modal-cancel': ['text', 'rules.cancel'],
     'rules-modal-save': ['text', 'rules.save'],
