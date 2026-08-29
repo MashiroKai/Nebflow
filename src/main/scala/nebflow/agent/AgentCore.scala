@@ -927,7 +927,7 @@ private[agent] trait AgentCore:
                   IO.pure(
                     ToolExecResult(s"Tool ${call.name} is denied by the session permission policy", isError = true)
                   )
-                case PermissionDecision.Ask => askUserPermission(call, state, permissionDeferredRef, permissionDenialsRef, callCtx)
+                case PermissionDecision.Ask => askUserPermission(call, state, resources, permissionDeferredRef, permissionDenialsRef, callCtx)
               }
           )
             .map(r => (call, r))
@@ -1120,11 +1120,20 @@ private[agent] trait AgentCore:
   private def askUserPermission(
     call: ToolCall,
     state: AgentState,
+    resources: SharedResources,
     permissionDeferredRef: Ref[IO, Option[cats.effect.Deferred[IO, Boolean]]],
     permissionDenialsRef: Ref[IO, Map[String, Int]],
     toolCtx: ToolContext
   )(using ctx: ActorContext[AgentCommand]): IO[ToolExecResult] =
-    permissionDeferredRef.modify {
+    // 递进式放行链 (2026-08-30): the card carries the session's CURRENT mode so
+    // the frontend can decide which escalation button to render (confirm-edits
+    // + Write/Edit → "upgrade to auto-edits"; auto-edits + Bash/Curl →
+    // "upgrade to auto-all"). Bucket read = same source as permissionDecision.
+    resources.permissionPolicies.get.flatMap { policies =>
+      val rootSid = Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
+      val currentMode =
+        policies.get(rootSid).map(p => nebflow.core.SafetyMode.toString(p.safetyMode)).getOrElse("confirm-edits")
+      permissionDeferredRef.modify {
       case existing @ Some(_) =>
         (existing, IO.pure(ToolExecResult("Another permission request is already pending", isError = true)))
       case None =>
@@ -1146,7 +1155,8 @@ private[agent] trait AgentCore:
               "toolName" -> call.name.asJson,
               "summary" -> summary.asJson,
               "input" -> call.input.asJson,
-              "dangerLevel" -> dangerLevel.asJson
+              "dangerLevel" -> dangerLevel.asJson,
+              "safetyMode" -> currentMode.asJson
             )
           }.flatMap { permJson =>
             // P2: every agent (root or sub-agent) sends the request straight to
@@ -1196,7 +1206,8 @@ private[agent] trait AgentCore:
             end for
           }
         )
-    }.flatten
+      }.flatten
+    }
 
   /** Send a permission request to the InteractionHub (P2), or fall back to P1 local render. */
   private def sendPermissionRequest(
