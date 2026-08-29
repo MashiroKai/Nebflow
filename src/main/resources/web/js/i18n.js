@@ -91,6 +91,32 @@ export function applyLocaleToHtml() {
     'daemon-btn': ['title', 'daemons.title'],
     'bgagent-indicator': ['title', 'subagents.indicatorTitle'],
     'flows-indicator': ['title', 'flows.indicatorTitle'],
+    // ── UI remnant localization (activity bar / explorer / header / modals) ──
+    'activity-avatar': ['title', 'activity.login'],
+    'usage-btn': ['title', 'activity.usage'],
+    'teams-btn': ['title', 'activity.teams'],
+    'flows-btn': ['title', 'activity.flows'],
+    'agents-btn': ['title', 'activity.agents'],
+    'settings-btn': ['title', 'activity.settings'],
+    'explorer-new-file-btn': ['title', 'activity.newFile'],
+    'explorer-new-folder-btn': ['title', 'activity.newFolder'],
+    'explorer-folder-btn': ['title', 'activity.openFolder'],
+    'voice-toggle-btn': ['title', 'header.voiceOutput'],
+    'reminder-btn': ['title', 'header.scheduledTasks'],
+    'canvas-toggle-btn': ['title', 'header.canvas'],
+    'reminder-create-btn': ['title', 'header.newTask'],
+    'agent-field-label': ['text', 'agent.toolsLabel'],
+    'rules-modal-title': ['text', 'rules.title'],
+    'rules-modal-cancel': ['text', 'rules.cancel'],
+    'rules-modal-save': ['text', 'rules.save'],
+    'path-picker-title': ['text', 'pathPicker.title'],
+    'path-picker-cancel': ['text', 'modal.cancel'],
+    'path-picker-clear': ['text', 'pathPicker.clear'],
+    'path-picker-select': ['text', 'pathPicker.select'],
+    'canvas-close-btn': ['title', 'modal.close'],
+    'settings-modal-close': ['title', 'modal.close'],
+    'search-modal-close': ['title', 'modal.close'],
+    'daemon-close-btn': ['title', 'modal.close'],
   };
 
   // Static elements with IDs
@@ -154,6 +180,29 @@ export function applyLocaleToHtml() {
   // and wrongly overwrite it with the background-tasks label.
   const bgHeader = document.querySelector('#bg-dropdown .bg-dropdown-header');
   if (bgHeader) bgHeader.textContent = t('header.bgTasks');
+
+  // Sub-agents dropdown header (scoped by ancestor, unlike the class-first match above)
+  const bgAgentHeader = document.querySelector('#bgagent-dropdown .bg-dropdown-header');
+  if (bgAgentHeader) bgAgentHeader.textContent = t('subagents.panelTitle');
+
+  // Running flows dropdown header
+  const flowsHeader = document.querySelector('#flows-dropdown .bg-dropdown-header');
+  if (flowsHeader) flowsHeader.textContent = t('flows.panelTitle');
+
+  // Reminder panel title (scheduled tasks)
+  const reminderPanelTitle = document.querySelector('.reminder-panel-title');
+  if (reminderPanelTitle) reminderPanelTitle.textContent = t('header.scheduledTasks');
+
+  // Bypass menu mode buttons (data-mode → i18n key)
+  const bypassModeKeys = {
+    'confirm-edits': 'bypass.confirmEdits',
+    'auto-edits': 'bypass.autoEdits',
+    'auto-all': 'bypass.autoAll',
+  };
+  document.querySelectorAll('#bypass-menu button[data-mode]').forEach(btn => {
+    const key = bypassModeKeys[btn.dataset.mode];
+    if (key) btn.textContent = t(key);
+  });
 
   // Daemon panel title (single element — precise selector, not class-first match)
   const daemonPanelTitle = document.querySelector('#daemon-panel .daemon-panel-title');
