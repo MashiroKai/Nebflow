@@ -159,7 +159,7 @@ class RestApiRoutes(
               case Some(_) =>
                 TurnEndpoint.gated(sessionId) {
                   TurnEndpoint.runTurn(
-                    wsHub, sessionStore, wsRoutes.dispatchUserText, sessionId, content, timeoutSec)
+                    wsHub, sessionStore, wsRoutes.dispatchHeadlessTurn, sessionId, content, timeoutSec)
                 }
             }
         }

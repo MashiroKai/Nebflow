@@ -3767,34 +3767,42 @@ class WebSocketRoutes(
     */
   private def handleUserText(sessionId: String, content: String, source: String): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
-      // 第六件 (2026-08-30): if THIS session has a pending AskUser card, the
-      // input-box text is the answer — deliver it straight through as the
-      // tool result (free-text). The agent's injection queue is untouched:
-      // queued Mails/external events stay queued with the SAME length (场景②),
-      // and the user's text itself never enqueues (no ImmediateInput on this
-      // path). Miss (no pending AskUser) → normal dispatch, byte-identical
-      // behavior (场景③).
-      sharedResources.interactionHubRef.get.flatMap {
-        case Some(hub) =>
-          resolveRootSessionId(sessionId).flatMap { rootSid =>
-            cats.effect.Deferred[IO, Boolean].flatMap { answered =>
-              (hub ! nebflow.agent.InteractionHubCommand.AnswerViaChatInput(rootSid, content, answered)) *>
-                answered.get
-            }.flatMap {
-              case true =>
-                logger.info(
-                  s"User text ($source) → AskUser passthrough for session $sessionId (${content.length} chars)"
-                ) *>
-                  // user bubble still lands (same shape as the card "Other" path)
-                  sessionStore.appendUiMessages(
-                    sessionId,
-                    List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
-                  )
-              case false => dispatchUserText(sessionId, content, source)
+      // 第六件 QC (2026-08-30): the passthrough probe is WS-input-box ONLY —
+      // headless REST turns ("rest-turn") go straight to dispatch so a P0
+      // benchmark POST can never silently answer a pending card.
+      if !WebSocketRoutes.probesPassthrough(source) then dispatchUserText(sessionId, content, source)
+      else
+        // 第六件 (2026-08-30): if THIS session has a pending AskUser card, the
+        // input-box text is the answer — deliver it straight through as the
+        // tool result (free-text). The agent's injection queue is untouched:
+        // queued Mails/external events stay queued with the SAME length (场景②),
+        // and the user's text itself never enqueues (no ImmediateInput on this
+        // path). Miss (no pending AskUser) → normal dispatch, byte-identical
+        // behavior (场景③).
+        sharedResources.interactionHubRef.get.flatMap {
+          case Some(hub) =>
+            resolveRootSessionId(sessionId).flatMap { rootSid =>
+              Deferred[IO, Boolean].flatMap { answered =>
+                (hub ! nebflow.agent.InteractionHubCommand.AnswerViaChatInput(rootSid, content, answered)) *>
+                  // QC: bounded wait — a hub crash / swallowed forkTurn must not
+                  // park this gateway fiber forever; on timeout fall back to
+                  // the normal dispatch path (message still reaches the agent).
+                  answered.get.timeout(1.second).handleError(_ => false)
+              }.flatMap {
+                case true =>
+                  logger.info(
+                    s"User text ($source) → AskUser passthrough for session $sessionId (${content.length} chars)"
+                  ) *>
+                    // user bubble still lands (same shape as the card "Other" path)
+                    sessionStore.appendUiMessages(
+                      sessionId,
+                      List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
+                    )
+                case false => dispatchUserText(sessionId, content, source)
+              }
             }
-          }
-        case None => dispatchUserText(sessionId, content, source)
-      }
+          case None => dispatchUserText(sessionId, content, source)
+        }
     else
       // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
       // empty-content frame (attachments dropped), which reached this path and was
@@ -3902,9 +3910,11 @@ class WebSocketRoutes(
   /**
     * Headless turn entry (P0 benchmark): dispatch a user text into a session
     * exactly like the WS "immediateInput"/"userMessage" cases do. Exposed for
-    * RestApiRoutes' synchronous turn endpoint.
+    * RestApiRoutes' synchronous turn endpoint. Named distinctly from the WS
+    * dispatch (QC nit, 2026-08-30): no overload shadowing, and the name says
+    * REST-deterministic — this path never probes the AskUser passthrough.
     */
-  def dispatchUserText(sessionId: String, content: String): IO[Unit] =
+  def dispatchHeadlessTurn(sessionId: String, content: String): IO[Unit] =
     handleUserText(sessionId, content, source = "rest-turn")
 
   // ============================================================
@@ -4818,6 +4828,15 @@ class WebSocketRoutes(
 end WebSocketRoutes
 
 object WebSocketRoutes:
+
+  /**
+    * 第六件 QC (2026-08-30): which input sources may probe the AskUser
+    * chat-input passthrough. ONLY the WS input-box family does — the headless
+    * REST turn entry ("rest-turn", P0 benchmark) must stay deterministic and
+    * must NEVER silently answer a pending card. Pure + testable on purpose:
+    * the gate is the whole behavioral delta of the REST fix.
+    */
+  def probesPassthrough(source: String): Boolean = source != "rest-turn"
 
   /**
     * F1 batch delete — pure, testable core for the `deletePaths` WS case.
