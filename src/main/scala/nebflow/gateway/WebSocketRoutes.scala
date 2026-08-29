@@ -3767,12 +3767,34 @@ class WebSocketRoutes(
     */
   private def handleUserText(sessionId: String, content: String, source: String): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
-      logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
-        sessionStore.appendUiMessages(
-          sessionId,
-          List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
-        ) *>
-        ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
+      // 第六件 (2026-08-30): if THIS session has a pending AskUser card, the
+      // input-box text is the answer — deliver it straight through as the
+      // tool result (free-text). The agent's injection queue is untouched:
+      // queued Mails/external events stay queued with the SAME length (场景②),
+      // and the user's text itself never enqueues (no ImmediateInput on this
+      // path). Miss (no pending AskUser) → normal dispatch, byte-identical
+      // behavior (场景③).
+      sharedResources.interactionHubRef.get.flatMap {
+        case Some(hub) =>
+          resolveRootSessionId(sessionId).flatMap { rootSid =>
+            cats.effect.Deferred[IO, Boolean].flatMap { answered =>
+              (hub ! nebflow.agent.InteractionHubCommand.AnswerViaChatInput(rootSid, content, answered)) *>
+                answered.get
+            }.flatMap {
+              case true =>
+                logger.info(
+                  s"User text ($source) → AskUser passthrough for session $sessionId (${content.length} chars)"
+                ) *>
+                  // user bubble still lands (same shape as the card "Other" path)
+                  sessionStore.appendUiMessages(
+                    sessionId,
+                    List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
+                  )
+              case false => dispatchUserText(sessionId, content, source)
+            }
+          }
+        case None => dispatchUserText(sessionId, content, source)
+      }
     else
       // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
       // empty-content frame (attachments dropped), which reached this path and was
@@ -3785,6 +3807,18 @@ class WebSocketRoutes(
         s"handleUserText($source): dropped EMPTY content for session '$sessionId' — no turn dispatched (frame was sent but carried no text)"
       ) *> IO.unit
   end handleUserText
+
+  /** Normal message dispatch: user bubble + immediate injection into the
+    * agent's turn pipeline. The ONLY path that enqueues — the AskUser
+    * passthrough deliberately bypasses this (第六件, 2026-08-30).
+    */
+  private def dispatchUserText(sessionId: String, content: String, source: String): IO[Unit] =
+    logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
+      sessionStore.appendUiMessages(
+        sessionId,
+        List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
+      ) *>
+      ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
 
   /**
     * task-cancel #35: keep the task archive index in sync after a WS-path
