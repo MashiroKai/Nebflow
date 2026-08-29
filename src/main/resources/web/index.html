@@ -185,9 +185,9 @@
          #header has its own backdrop-filter which creates a backdrop root, preventing
          child elements from blurring content behind the header. -->
     <div class="header-dropdown-menu" id="bypass-menu">
-      <button data-mode="confirm-edits">确认编辑</button>
-      <button data-mode="auto-edits">编辑放行</button>
-      <button data-mode="auto-all">全部放行</button>
+      <button data-mode="confirm-edits" data-i18n="bypass.confirmEdits">确认编辑</button>
+      <button data-mode="auto-edits" data-i18n="bypass.autoEdits">编辑放行</button>
+      <button data-mode="auto-all" data-i18n="bypass.autoAll">全部放行</button>
     </div>
     <div id="bgagent-dropdown" class="hidden">
       <div class="bg-dropdown-header" aria-live="polite">Sub-agents</div>
@@ -308,7 +308,7 @@
     <div id="agent-modal">
       <div id="agent-modal-title">Edit Agent</div>
       <div id="agent-modal-body">
-        <div class="agent-field-label">Tools</div>
+        <div class="agent-field-label" data-i18n="agent.toolsLabel">Tools</div>
         <div id="agent-tools-grid"></div>
         <div class="agent-field-label" data-i18n="agent.systemPrompt">System Prompt</div>
         <textarea id="agent-system-input" placeholder="System prompt (Markdown)" rows="12" spellcheck="false"></textarea>

@@ -45,7 +45,7 @@ function updateExplorerTitle() {
     titleEl.textContent = name;
     titleEl.title = explorerRoot;
   } else {
-    titleEl.textContent = 'Explorer';
+    titleEl.textContent = t('panel.explorer');
     titleEl.title = '';
   }
 }
@@ -525,7 +525,7 @@ function loadDir(path, container, depth) {
   // Loading indicator
   const loading = document.createElement('div');
   loading.className = 'explorer-loading';
-  loading.textContent = 'Loading...';
+  loading.textContent = t('explorer.loading');
   container.appendChild(loading);
 
   // Store container reference for the WS response handler
@@ -606,7 +606,7 @@ onMessage('dirListing', (msg) => {
   }
 
   if (!hasVisible) {
-    pending.container.innerHTML = '<div class="explorer-empty">Empty</div>';
+    pending.container.innerHTML = `<div class="explorer-empty">${t('explorer.empty')}</div>`;
   }
 
   // Restore expansion state: a directory reload wipes its subtree DOM, which

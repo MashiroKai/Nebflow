@@ -97,32 +97,32 @@ export function openViewerShell(title, opts = {}) {
 // ── Team Rules editor ──────────────────────────────────────
 
 export async function openRules(teamName) {
-  const footer = `<span class="flow-viewer-status" id="flow-rules-status"></span><button class="flow-viewer-save" id="flow-rules-save">Save</button>`;
-  const body = openViewerShell(`${teamName} · Rules`, { footer });
+  const footer = `<span class="flow-viewer-status" id="flow-rules-status"></span><button class="flow-viewer-save" id="flow-rules-save">${t('flowViewers.save')}</button>`;
+  const body = openViewerShell(`${teamName} · ${t('rules.title')}`, { footer });
   if (!body) return;
-  body.innerHTML = `<div class="flow-mail-empty">Loading…</div>`;
+  body.innerHTML = `<div class="flow-mail-empty">${t('flowViewers.loading')}</div>`;
   try {
     const resp = await fetch(`/api/team/rules/${encodeURIComponent(teamName)}`, { headers: authHeaders() });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     body.innerHTML = `
       <div class="flow-def-section">
-        <h3>Project Rules</h3>
-        <p style="font: 400 11px -apple-system; color: var(--color-text-muted); margin: 0 0 8px;">Injected into every team agent's system prompt at activation.</p>
+        <h3>${t('rules.title')}</h3>
+        <p style="font: 400 11px -apple-system; color: var(--color-text-muted); margin: 0 0 8px;">${t('flowViewers.rulesHint')}</p>
         <textarea class="flow-def-edit" id="flow-rules-textarea" style="min-height: 320px; font-family: ui-monospace, SFMono-Regular, monospace;">${esc(data.content || '')}</textarea>
       </div>`;
     const saveBtn = document.getElementById('flow-rules-save');
     const statusEl = document.getElementById('flow-rules-status');
     if (saveBtn) saveBtn.addEventListener('click', async () => {
       saveBtn.disabled = true;
-      if (statusEl) statusEl.textContent = 'Saving…';
+      if (statusEl) statusEl.textContent = t('flowViewers.saving');
       try {
         const text = document.getElementById('flow-rules-textarea')?.value || '';
         const r = await fetch(`/api/team/rules/${encodeURIComponent(teamName)}`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ content: text }) });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        if (statusEl) statusEl.textContent = '✓ Saved';
+        if (statusEl) statusEl.textContent = t('flowViewers.saved');
         setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
-      } catch (e) { if (statusEl) statusEl.textContent = `Save failed: ${e.message}`; }
+      } catch (e) { if (statusEl) statusEl.textContent = t('flowViewers.saveFailed', { msg: e.message }); }
       finally { saveBtn.disabled = false; }
     });
   } catch (e) { body.innerHTML = `<div class="flow-mail-empty">Failed to load: ${esc(e.message)}</div>`; }
@@ -205,7 +205,7 @@ async function loadPendingSection(body, team) {
         loadPendingSection(body, team);
       } catch (err) {
         btn.disabled = false;
-        btn.textContent = 'Retry';
+        btn.textContent = t('flowViewers.retry');
       }
     });
   });
