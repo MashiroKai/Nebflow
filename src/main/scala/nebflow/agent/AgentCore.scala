@@ -965,8 +965,7 @@ private[agent] trait AgentCore:
       // ── Block 3 循环检测器（supervision trio §D2-A，2026-08-27）────────
       // guardBatch 之后、ToolsComplete 之前的单一 choke point——一切 kind 的
       // AgentActor 工具轮都过此环。Root 例外（D3）：depth==0 的 L1 降级为
-      // L0 警告（root turn 不自动终止，错误由用户裁决）。save-turn 豁免 S2
-      // （guardSaveTurn 自有更严的 10 轮预算，裁定②双治理豁免）。
+      // L0 警告（root turn 不自动终止，错误由用户裁决）。
       loopCfg <- nebflow.core.processor.LoopGuard.loadConfig
       loopEvents = (guardedBatch ++ droppedResults).map { (call, r) =>
         nebflow.core.processor.LoopGuard.RoundEvent(
@@ -978,7 +977,6 @@ private[agent] trait AgentCore:
             r.content.startsWith(s"Tool ${call.name} is denied by the session permission policy")
         )
       }
-      saveTurnNow = state.pendingCompaction.exists(_.phase == CompactionPhase.Save)
       (loopCounters, loopVerdictRaw) = nebflow.core.processor.LoopGuard.evaluate(
         loopEvents,
         // turnKey = 逻辑 turn 纪元（loopTurnKey）——currentTurnId 是每次 dispatch
@@ -987,7 +985,8 @@ private[agent] trait AgentCore:
         state.loopTurnKey.toString,
         state.loopCounters,
         loopCfg,
-        s2Exempt = saveTurnNow
+        // R-text：本轮助手文本输出（复读检测；result.text 为该轮全文）
+        assistantText = result.text
       )
       loopVerdict = loopVerdictRaw match
         case t: nebflow.core.processor.LoopGuard.Verdict.Terminate if depth == 0 =>
@@ -1050,7 +1049,7 @@ private[agent] trait AgentCore:
               case Some(rec) =>
                 m.updated(sid, rec.copy(
                   loopStreak = loopCounters.streakCount,
-                  loopRounds = loopCounters.roundCount
+                  loopRounds = loopCounters.repeatStreak
                 ))
               case None => m
           }

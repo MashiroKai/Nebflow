@@ -1081,7 +1081,7 @@ case class AgentState(
    */
   cancelNotices: List[AgentCommand.TaskCancelNotice],
   /** Block 3 循环检测器计数器（supervision trio §D1）：顶层——S3 跨 turn 保留
-    * （turn 边界只清 S1/S2，见 LoopGuard.evaluate 的 turnKey 判定）。 */
+    * （turn 边界只清 S1 与 R 连续重复计数，见 LoopGuard.evaluate 的 turnKey 判定）。 */
   loopCounters: nebflow.core.processor.LoopGuard.Counters,
   /** Block 3：逻辑 turn 纪元（每次真实 turn 开始 +1——UserInput/ExternalEvent
     * 唤醒/Mail 激活/冻结唤醒等 dispatch 起点；ToolsComplete 续轮/retry/压缩
