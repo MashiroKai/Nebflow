@@ -240,7 +240,13 @@ function renderCard(questions, onConfirm, doneLabel) {
 }
 
 // ── Flow orchestration ───────────────────────────────────────
+/* SEALED / 封存待启用 (author ruling 2026-08-29 22:56): onboarding is sealed
+   pending complete testing - first run / new users go straight to the main
+   UI. The flag defaults OFF; code kept intact for future re-enable:
+     localStorage.setItem('nebflow.onboarding.enabled', '1')  // then reload */
+const ONBOARDING_ENABLED = () => { try { return localStorage.getItem('nebflow.onboarding.enabled') === '1'; } catch (e) { return false; } };
 export function initOnboarding(msg) {
+  if (!ONBOARDING_ENABLED()) return; // SEALED
   if (started) return;
   const ob = msg.onboarding ?? null;
   if (ob === 'done' || ob === 'skipped') return;   // S0 — never again
