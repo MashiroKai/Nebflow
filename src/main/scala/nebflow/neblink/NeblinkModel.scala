@@ -241,7 +241,12 @@ object LogtoConfig:
   given Decoder[LogtoConfig] = Decoder.instance { c =>
     for
       endpoint <- c.downField("endpoint").as[String]
-      clientId <- c.downField("clientId").as[String]
+      // Optional with empty default (mirrors the encoder + embeddedDefault):
+      // a hand-written {endpoint, pkceClientId} block must not fail the WHOLE
+      // block decode just because the legacy device-flow clientId is absent
+      // (2026-08-30 login-blocked finding — the block silently decoded to
+      // None and the PKCE callback reported "Logto 登录未配置").
+      clientId <- c.downField("clientId").as[Option[String]].map(_.getOrElse(""))
       pkceClientId <- c.downField("pkceClientId").as[Option[String]]
     yield LogtoConfig(endpoint, clientId, pkceClientId)
   }

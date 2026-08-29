@@ -125,6 +125,24 @@ class NeblinkModelSpec extends CatsEffectSuite:
     )
   }
 
+  test("logto block with only endpoint + pkceClientId decodes (clientId optional)") {
+    // 2026-08-30 login-blocked root cause: the decoder required `clientId`,
+    // so a hand-written {endpoint, pkceClientId} block failed the WHOLE logto
+    // decode -> raw logto=None -> PKCE callback reported "Logto 登录未配置"
+    // even though /auth/start worked via the embedded default.
+    val json = """{"logto":{"endpoint":"https://auth.neblink.space","pkceClientId":"csxh16cas0x03bgk6w7ej"}}"""
+    val cfg = decode[NeblinkConfig](json)
+    assertEquals(cfg.isRight, true, "clientId-less logto block must decode")
+    cfg.foreach { c =>
+      assertEquals(c.logto.isDefined, true, "logto block must not silently vanish")
+      assertEquals(c.logto.map(_.clientId), Some(""))
+      assertEquals(c.logto.flatMap(_.pkceClientId), Some("csxh16cas0x03bgk6w7ej"))
+      // The PKCE callback now reads effectiveLogto — must resolve to the
+      // explicit block (endpoint + pkceClientId intact).
+      assertEquals(c.effectiveLogto, c.logto)
+    }
+  }
+
   test("raw logto field stays None without a block (device-flow legacy proxy unaffected)") {
     // The device-flow endpoints keep reading raw `logto` so their
     // no-provider branch (neblink-server device proxy) stays reachable —
