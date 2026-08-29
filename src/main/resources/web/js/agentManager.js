@@ -4,7 +4,7 @@
 import state from './state.js';
 import { key } from './branding.js';
 import { sendWs } from './ws.js';
-import { openTab, getTabPane, hasTab, setActiveTab } from './canvas.js';
+import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas } from './canvas.js';
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import * as presets from './presets.js';
@@ -163,6 +163,9 @@ function renderAgentCard(a) {
 export function openAgents() {
   const btn = document.getElementById('agents-btn');
   btn?.classList.add('active');
+  /* Canvas closed + tab already exists: expand the panel before activating
+     (same invisible-click bug as Teams/Flows, 2026-08-29). */
+  if (!isCanvasOpen()) openCanvas();
   if (hasTab('agents')) {
     setActiveTab('agents');
   } else {
