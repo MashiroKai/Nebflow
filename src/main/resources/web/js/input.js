@@ -209,7 +209,7 @@ export function enterPlanMode() {
   if (activeView.stream.planMode) return;
   activeView.stream.planMode = true;
   updateInputIndicator();
-  activeView.dom.input.placeholder = 'Describe the task to plan...';
+  activeView.dom.input.placeholder = t('input.planPlaceholder');
   activeView.dom.input.focus();
 }
 

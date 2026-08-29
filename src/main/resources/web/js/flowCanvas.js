@@ -142,7 +142,7 @@ function renderFlowsTab() {
   // listing it here duplicated the same content in two places. Watch a live
   // run in its tab instead.
   if (flowDefs.length === 0 && runningFlows.length === 0) {
-    scroll.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">No flows defined</div></div>`;
+    scroll.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">${t('agentManager.noFlows')}</div></div>`;
   } else {
     scroll.innerHTML = defsHtml || (runningFlows.length > 0
       ? `<div class="dag-empty"><div style="font:600 13px -apple-system;color:var(--color-text-muted)">${esc(t('flow.runningInTab'))}</div></div>`
@@ -617,7 +617,7 @@ export async function openTeams() {
   if (hasTab('teams')) {
     setActiveTab('teams');
   } else {
-    openTab('teams', 'Teams', { type: 'teams', closable: true });
+    openTab('teams', t('activity.teams'), { type: 'teams', closable: true });
   }
   renderTeamsTab();
   autoRestore().then(() => { if (teams.length > 0) renderTeamsTab(); });
@@ -633,7 +633,7 @@ export async function openFlows() {
   if (hasTab('flows')) {
     setActiveTab('flows');
   } else {
-    openTab('flows', 'Flows', { type: 'flow', closable: true });
+    openTab('flows', t('activity.flows'), { type: 'flow', closable: true });
   }
   await fetchFlowDefs();
   renderFlowsTab();
