@@ -27,7 +27,7 @@ import {
   renderTool, renderToolPending, renderError, renderTimeoutNotice,
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
   renderCompactStartCard, renderCompactDoneCard, renderCompactFailCard,
-  showOptions, renderAskUser, renderPermissionPrompt,
+  showOptions, renderAskUser, renderPermissionPrompt, closeAskUserCard,
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
   appendThinkingDelta, finishThinking,
@@ -1179,7 +1179,14 @@ onMessage('askUser', (msg, view) => {
   }
 });
 
-// F4 (#433): global actionable toast for permission cards whose target root
+// Chat-input passthrough (author ruling 2026-08-29 23:50): while an AskUser
+// card is pending, a message typed into the input box is consumed by the
+// backend as that tool call's answer; it then broadcasts askUserAnswered so
+// every attached client locks the card locally (same end-state as answering
+// on the card). The user's text already landed as a normal user bubble.
+onMessage('askUserAnswered', (msg) => {
+  closeAskUserCard(msg.sessionId, msg.requestId);
+});
 // session is unreachable. Glass panel, no overlay dimming (弹窗禁令). Stack
 // top-right; removed on answer or on permissionExpired for the same root sid.
 let __permToastHost = null;

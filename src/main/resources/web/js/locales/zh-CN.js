@@ -418,6 +418,7 @@ export default {
   'chat.timeout': '响应超时',
   'chat.retry': '重试',
   'chat.confirm': '确认',
+  'chat.answeredViaChatInput': '已通过输入框回答',
   'chat.cancel': '取消',
   'chat.allow': '允许',
   'chat.deny': '拒绝',

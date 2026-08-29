@@ -413,6 +413,7 @@ export default {
   'chat.timeout': 'Response timed out',
   'chat.retry': 'Retry',
   'chat.confirm': 'Confirm',
+  'chat.answeredViaChatInput': 'Answered via chat input',
   'chat.cancel': 'Cancel',
   'chat.allow': 'Allow',
   'chat.deny': 'Deny',
