@@ -360,6 +360,12 @@ export default {
   'mailDelivery.immediate': '即时',
   'mailDelivery.queueTitle': 'Queue：排队，当前任务完成后逐条处理',
   'mailDelivery.immediateTitle': 'Immediate：即时注入到对话',
+  // Mail 类型角标（显示层中文化；协议字段值保持英文）
+  'mailType.INFO': '信息',
+  'mailType.FOLLOW_UP': '后续任务',
+  'mailType.PARALLEL': '并行',
+  'mailType.INTERRUPT': '打断',
+  'mailType.RESULT': '结果',
   'mailFlow.noBody': '（无正文）',
   'mailFlow.renderFailed': '（正文渲染失败：{msg}）',
 

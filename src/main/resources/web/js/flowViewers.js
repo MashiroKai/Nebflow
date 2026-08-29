@@ -135,7 +135,15 @@ export async function openRules(teamName) {
 let mailboxCtx = null; // { flowName, team }
 
 function pendingRowHtml(it) {
-  const typeTag = it.type ? `<span class="flow-mail-queue-tag">${esc(it.type)}</span>` : '';
+  // Mail type tag is display-localized; protocol field values stay English.
+  // Unknown values fall back to the raw type.
+  let typeLabel = it.type;
+  if (it.type) {
+    const key = 'mailType.' + it.type;
+    const translated = t(key);
+    if (translated !== key) typeLabel = translated;
+  }
+  const typeTag = it.type ? `<span class="flow-mail-queue-tag">${esc(typeLabel)}</span>` : '';
   return `
     <div class="flow-mail-row pending" data-item-id="${esc(it.id || '')}" data-sid="${esc(it.toSession || '')}">
       <div class="flow-mail-meta">
