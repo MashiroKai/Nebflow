@@ -7,7 +7,8 @@ import io.circe.{Json, JsonObject}
 import nebflow.core.task.*
 
 /**
- * Team Manager task tool — update (spec 20260825_team-manager-task-tool-spec.md
+ * Team task tool — update. 任务工具重做 (2026-08-30): injected into every team
+ * member (progress-display).
  * §2.3). Four-state team matrix (pending → in_progress → completed / failed;
  * terminal states are no-op only) — the Manager is the owner and sets
  * `completed` directly (no user-confirmation lane; C15 constrains only the
@@ -20,7 +21,7 @@ object TeamTaskUpdateTool extends Tool:
   val name = "TeamTaskUpdate"
 
   val description =
-    """Update a team task — status, dependencies, details, or notes (Manager owner).
+    """Update a team task — status, dependencies, details, or notes (任务工具重做 2026-08-30: any team member).
 ## When to Use
 - Advance team work: mark `in_progress` when a member starts, `completed` when done (attach a `note` summarizing the outcome + artifact locations), `failed` when blocked/aborted (attach a `note` with the reason).
 - Manage dependencies: `addBlockedBy` = task IDs that must finish before this one; `addBlocks` = task IDs this one blocks; `removeBlockedBy`/`removeBlocks` undo them. Circular dependencies are detected and rejected.
