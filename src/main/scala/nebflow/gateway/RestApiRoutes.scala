@@ -2632,13 +2632,19 @@ class RestApiRoutes(
             neblinkService match
               case None =>
                 pkceLogin.fail("NebLink service not initialized") *>
-                  htmlResponse(callbackPage(ok = false, "NebLink 服务未初始化"), Status.InternalServerError)
+                  htmlResponse(callbackPage(ok = false, "nebflow 服务未初始化"), Status.InternalServerError)
               case Some(ms) =>
                 for
-                  logto <- ms.neblinkConfig.map(_.logto)
+                  // Same resolution as /api/neblink/auth/start: explicit logto
+                  // block wins, otherwise the embedded production default.
+                  // The raw `_.logto` read here previously broke the PKCE
+                  // chain for fresh installs (start succeeded via the
+                  // embedded default, then the callback died with a
+                  // misleading "Logto 登录未配置" — 2026-08-30).
+                  logto <- ms.neblinkConfig.map(_.effectiveLogto)
                   serverUrl <- neblinkServerUrl(None)
-                  resp <- (logto, logto.flatMap(_.pkceClientId)) match
-                    case (Some(lc), Some(pkceClientId)) =>
+                  resp <- logto.flatMap(lc => lc.pkceClientId.map(pkce => (lc, pkce))) match
+                    case Some((lc, pkceClientId)) =>
                       LogtoAuthCode
                         .tokenCall(LogtoDeviceFlow.jdkSend)(
                           LogtoAuthCode.tokenRequest(
@@ -2686,8 +2692,15 @@ class RestApiRoutes(
                               htmlResponse(callbackPage(ok = false, s"登录令牌交换失败：$err"), Status.BadRequest)
                         }
                     case _ =>
-                      pkceLogin.fail("logto-not-configured") *>
-                        htmlResponse(callbackPage(ok = false, "Logto 登录未配置"), Status.NotFound)
+                      // With effectiveLogto this only fires when an explicit
+                      // logto block exists but lacks pkceClientId (the
+                      // embedded default carries one; a missing block falls
+                      // back to it). Name the actual misconfiguration.
+                      pkceLogin.fail("logto-pkce-client-not-configured") *>
+                        htmlResponse(
+                          callbackPage(ok = false, "Logto PKCE 未配置：logto 段缺少 pkceClientId"),
+                          Status.NotFound
+                        )
                 yield resp
         }
 
@@ -2695,13 +2708,13 @@ class RestApiRoutes(
     * frontend learns the outcome by polling /api/neblink/auth/state. */
   private def callbackPage(ok: Boolean, message: String): String =
     val headline = if ok then "登录成功，可关闭本页" else "登录失败"
-    val detail = if ok then "NebLink 账号已连接，本窗口可以关闭" else message
+    val detail = if ok then "nebflow 账号已连接，本窗口可以关闭" else message
     val icon = if ok then "✓" else "✕"
     val iconColor = if ok then "#07c160" else "#d1242f"
     s"""<!doctype html>
        |<html lang="zh-CN"><head><meta charset="utf-8">
        |<meta name="viewport" content="width=device-width,initial-scale=1">
-       |<title>NebLink 登录</title>
+       |<title>nebflow 登录</title>
        |<style>body{font-family:-apple-system,'Segoe UI','PingFang SC',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f6f7f9;color:#1f2328}
        |.card{text-align:center;padding:44px 52px;border-radius:14px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.08)}
        |.icon{color:$iconColor;font-size:42px;line-height:1;margin-bottom:10px}h1{font-size:18px;font-weight:600;margin:0 0 8px}
