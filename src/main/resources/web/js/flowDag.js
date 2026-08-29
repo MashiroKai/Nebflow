@@ -186,7 +186,7 @@ function solarEdgesSvg(rf, positions, statusOf) {
 /** Render one flow instance as a solar-system card. */
 export function dagCardHtml(rf, opts = {}) {
   const statusCls = opts.statusCls || rf.status || 'running';
-  const statusText = opts.statusText || statusCls;
+  const statusText = opts.statusText || t('flows.status.' + statusCls);
   const statusOf = opts.statusOf || (n => (n ? n.status || 'pending' : 'pending'));
 
   const { positions, width, height } = layoutDagNodes(rf);
@@ -210,12 +210,12 @@ export function dagCardHtml(rf, opts = {}) {
   // onClose, so they render exactly as before.
   const terminal = opts.onClose && (statusCls === 'completed' || statusCls === 'failed');
   const footerBtn = terminal
-    ? `<button class="dag-card-close" data-close-instance="${esc(rf.instanceId || '')}">Close</button>`
-    : (isActive ? `<button class="dag-card-cancel" data-instance-id="${esc(rf.instanceId || '')}">Cancel Flow</button>` : '');
+    ? `<button class="dag-card-close" data-close-instance="${esc(rf.instanceId || '')}">${t('flows.close')}</button>`
+    : (isActive ? `<button class="dag-card-cancel" data-instance-id="${esc(rf.instanceId || '')}">${t('flows.cancelFlow')}</button>` : '');
   const terminalBanner = terminal
     ? `<div class="solar-terminal-banner ${statusCls === 'failed' ? 'failed' : 'ok'}">
         <span class="solar-terminal-icon">${statusCls === 'failed' ? '\u2717' : '\u2713'}</span>
-        <span class="solar-terminal-text">${statusCls === 'failed' ? 'Flow failed' : 'Flow completed'}</span>
+        <span class="solar-terminal-text">${statusCls === 'failed' ? t('flows.failed') : t('flows.completed')}</span>
       </div>`
     : '';
 
@@ -241,7 +241,7 @@ export function dagCardHtml(rf, opts = {}) {
 
 export function renderFlowsPanel(scroll, runningFlows) {
   if (runningFlows.length === 0) {
-    scroll.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">No running flows</div><div class="hint">Trigger a flow via Delegate to see it here</div></div>`;
+    scroll.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">${t('flows.noRunning')}</div><div class="hint">${t('flows.noRunningHint')}</div></div>`;
     return;
   }
   scroll.innerHTML = runningFlows.map(rf => dagCardHtml(rf)).join('');
@@ -262,7 +262,7 @@ export function renderFlowRunInto(container, rf, opts) {
   const prev = container.querySelector('.solar-scroll');
   const prevLeft = prev ? prev.scrollLeft : null;
   const prevTop = prev ? prev.scrollTop : null;
-  container.innerHTML = rf ? dagCardHtml(rf, opts) : `<div class="dag-empty"><div class="hint">Flow instance not found</div></div>`;
+  container.innerHTML = rf ? dagCardHtml(rf, opts) : `<div class="dag-empty"><div class="hint">${t('flows.notFound')}</div></div>`;
   const next = container.querySelector('.solar-scroll');
   if (next && next.clientWidth > 0) {
     if (prevLeft == null) {
@@ -277,7 +277,7 @@ export function renderFlowRunInto(container, rf, opts) {
 /** Render a static flow definition preview (all nodes pending) — P6. */
 export function renderFlowDefStatic(container, flowDef) {
   if (!flowDef) {
-    container.innerHTML = `<div class="dag-empty"><div class="hint">No flow data</div></div>`;
+    container.innerHTML = `<div class="dag-empty"><div class="hint">${t('flows.noData')}</div></div>`;
     return;
   }
   const rf = {
@@ -289,7 +289,7 @@ export function renderFlowDefStatic(container, flowDef) {
     nodes: (flowDef.nodes || []).map(n => ({ ...n, status: n.status || 'pending' })),
     edges: flowDef.edges || [],
   };
-  container.innerHTML = dagCardHtml(rf, { statusCls: 'completed', statusText: 'definition' });
+  container.innerHTML = dagCardHtml(rf, { statusCls: 'completed', statusText: t('flows.status.definition') });
 }
 
 // ── Click bindings ─────────────────────────────────────────
@@ -400,7 +400,7 @@ function orbitNodeHtml(node, pos) {
 
 export function renderStellarSystem(container, runningFlows) {
   if (!runningFlows || runningFlows.length === 0) {
-    container.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">No running flows</div></div>`;
+    container.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">${t('flows.noRunning')}</div></div>`;
     return;
   }
   container.innerHTML = runningFlows.map(rf => {
@@ -411,7 +411,7 @@ export function renderStellarSystem(container, runningFlows) {
     const maxDepth = Math.max(0, ...Object.values(computeDepths(rf)));
     const svgHeight = (maxDepth + 1) * 160 + 100;
     const isActive = rf.status === 'running';
-    const cancelBtn = isActive ? `<button class="dag-card-cancel" data-instance-id="${esc(rf.instanceId || '')}">Cancel</button>` : '';
+    const cancelBtn = isActive ? `<button class="dag-card-cancel" data-instance-id="${esc(rf.instanceId || '')}">${t('flows.cancel')}</button>` : '';
     return `<div class="stellar-card" data-instance="${esc(rf.instanceId)}">
       <div class="stellar-header">
         <div class="stellar-title">${esc(rf.flowName)}</div>

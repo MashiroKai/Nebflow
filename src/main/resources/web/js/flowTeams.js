@@ -105,7 +105,7 @@ function getInlineNodes(flowName, runningFlows) {
 export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
   const agents = flow.agents || [];
   const running = agents.filter(a => statusOf(a, agentStatus) === 'running').length;
-  const summaryText = running > 0 ? `${running} running` : `${agents.length} idle`;
+  const summaryText = running > 0 ? t('flows.agentsRunning', { count: running }) : t('flows.agentsIdle', { count: agents.length });
   const summaryCls = running > 0 ? 'running' : '';
 
   // Pending mail-queue badge — sum of per-agent pending counts, hidden at 0.
@@ -116,7 +116,7 @@ export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
     const st = statusOf(a, agentStatus);
     const isManager = !!a.manager;
     const flash = a.sessionId && mailFlash.has(a.sessionId) ? ' mail-flash' : '';
-    const role = isManager ? 'manager' : st;
+    const role = isManager ? t('flows.role.manager') : t('flows.status.' + st);
     return `
       <div class="team-tile ${st}${isManager ? ' manager' : ''}${flash}"
            data-flow="${esc(flow.name)}"
@@ -160,7 +160,7 @@ export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
     flowsSectionHtml = `
       <div class="team-flows-divider"></div>
       <div class="team-flows-section">
-        <div class="team-flows-header">Flows</div>
+        <div class="team-flows-header">${t('flows.section')}</div>
         ${rowsHtml}
       </div>`;
   }
@@ -168,10 +168,10 @@ export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
   return `
     <div class="team-card">
       <div class="team-card-header">
-        <div class="team-card-title" data-flow="${esc(flow.name)}" data-act="def" title="View team definition">${esc(flow.name)}</div>
+        <div class="team-card-title" data-flow="${esc(flow.name)}" data-act="def" title="${t('flowViewers.viewTeamDef', {})}">${esc(flow.name)}</div>
         <div class="team-card-actions">
-          <button class="team-act-btn" data-act="rules" data-flow="${esc(flow.name)}" title="Team rules"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg></button>
-          <button class="team-act-btn" data-act="mailbox" data-flow="${esc(flow.name)}" title="Inbox"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>${mailBadge}</button>
+          <button class="team-act-btn" data-act="rules" data-flow="${esc(flow.name)}" title="${t('flowViewers.teamRules', {})}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg></button>
+          <button class="team-act-btn" data-act="mailbox" data-flow="${esc(flow.name)}" title="${t('flowViewers.inbox', {})}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>${mailBadge}</button>
         </div>
         <div class="team-card-summary ${summaryCls}"><span class="dot"></span>${summaryText}</div>
       </div>
