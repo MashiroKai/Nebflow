@@ -166,7 +166,7 @@ export function openAgents() {
   if (hasTab('agents')) {
     setActiveTab('agents');
   } else {
-    openTab('agents', 'Agents', { type: 'agents', closable: true });
+    openTab('agents', t('activity.agents'), { type: 'agents', closable: true });
   }
   renderAgentManager();
 }
@@ -188,11 +188,11 @@ function agentsContentEl() {
 export function renderAgentManager() {
   const content = agentsContentEl();
   if (!content) return;
-  content.innerHTML = `<div class="agent-mgr-loading">Loading...</div>`;
+  content.innerHTML = `<div class="agent-mgr-loading">${t('agentManager.loading')}</div>`;
 
   fetchAgents().then(agents => {
     if (agents.length === 0) {
-      content.innerHTML = `<div class="agent-mgr-empty">No agents configured</div>`;
+      content.innerHTML = `<div class="agent-mgr-empty">${t('agentManager.noAgents')}</div>`;
       return;
     }
 
@@ -300,7 +300,7 @@ async function openAgentDetail(name, pin = false) {
   if (!pane) return;
 
   // Loading state
-  pane.innerHTML = `<div class="agent-detail-loading">Loading...</div>`;
+  pane.innerHTML = `<div class="agent-detail-loading">${t('agentManager.loading')}</div>`;
 
   // Fetch detail + model + presets in parallel
   const [detail, model, presetData] = await Promise.all([
@@ -473,8 +473,8 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
   saveBtn?.addEventListener('click', () => {
     const text = promptEdit.value;
     sendWs({ type: 'updateAgentSystemPrompt', name, systemMd: text });
-    saveBtn.textContent = 'Saved';
-    setTimeout(() => { saveBtn.textContent = 'Save'; }, 1500);
+    saveBtn.textContent = t('agentManager.saved');
+    setTimeout(() => { saveBtn.textContent = t('agentManager.save'); }, 1500);
   });
 
   // Bind tool toggle chips — configurable tools only; fixed tools are never sent.
@@ -515,7 +515,7 @@ async function loadSkillsFlowsSection(pane, name, detail) {
   const skillsGrid = pane.querySelector('#agent-detail-skills-grid');
   if (skillsGrid) {
     if (skills.length === 0) {
-      skillsGrid.innerHTML = '<span class="agent-detail-chips-empty">No skills installed</span>';
+      skillsGrid.innerHTML = `<span class="agent-detail-chips-empty">${t('agentManager.noSkills')}</span>`;
     } else {
       skillsGrid.innerHTML = '';
       skills.forEach(s => {
@@ -539,7 +539,7 @@ async function loadSkillsFlowsSection(pane, name, detail) {
   const flowsGrid = pane.querySelector('#agent-detail-flows-grid');
   if (flowsGrid) {
     if (flows.length === 0) {
-      flowsGrid.innerHTML = '<span class="agent-detail-chips-empty">No flows defined</span>';
+      flowsGrid.innerHTML = `<span class="agent-detail-chips-empty">${t('agentManager.noFlows')}</span>`;
     } else {
       flowsGrid.innerHTML = '';
       flows.forEach(f => {
