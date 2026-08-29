@@ -2020,7 +2020,9 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     options: permOptions
   }];
   showOptions(bubble, items, (answers) => {
-    const approved = answers[0] !== denyLabel;
+    // approved only on Allow or the upgrade option (Other/custom text stays
+    // non-approving, same as the pre-escalation semantics).
+    const approved = answers[0] === allowLabel || (upgradeLabel !== null && answers[0] === upgradeLabel);
     const doUpgrade = approved && upgradeMode && answers[0] === upgradeLabel ? upgradeMode : null;
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
       state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved, ...(requestId && { requestId }), ...(doUpgrade && { upgradeMode: doUpgrade }) }));
