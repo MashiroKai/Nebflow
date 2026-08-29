@@ -3,7 +3,7 @@
 // TEAMS tab: Glass cards with agent tiles. Always accessible via toggle button.
 // FLOWS tab: DAG node graph with real-time progress. Auto-opens when flows run.
 
-import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab, closeTab, openCanvas } from './canvas.js';
+import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab, closeTab, openCanvas, registerCanvasPanelButton } from './canvas.js';
 import { FLOW_CSS } from './flowCss.js';
 import { esc, authHeaders, overlayRoot, setMailPending } from './flowHelpers.js';
 import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf, populateTileModels } from './flowTeams.js';
@@ -608,8 +608,8 @@ export function getRunningFlows() {
 export function onSessionChange() { autoRestore(); }
 
 export async function openTeams(opts) {
-  const btn = document.getElementById('teams-btn');
-  btn?.classList.add('active');
+  /* Button pressed state is owned by canvas.js registerCanvasPanelButton —
+     it strictly mirrors "this tab is the visible Canvas content". */
   /* Canvas closed + tab already exists: setActiveTab alone is invisible to
      the user (bug 2026-08-29) - expand the panel first. Canvas already open:
      unchanged behavior. */
@@ -633,8 +633,6 @@ export async function openTeams(opts) {
 }
 
 export async function openFlows() {
-  const btn = document.getElementById('flows-btn');
-  btn?.classList.add('active');
   /* Same fix as openTeams: expand a closed canvas before activating the tab. */
   if (!isCanvasOpen()) openCanvas();
   if (hasTab('flows')) {
@@ -658,28 +656,30 @@ if (typeof window !== 'undefined') {
   };
 }
 
+// Activity Bar toggle registration (author 2026-08-30 4-state machine):
+// pressed state strictly follows "this tab is the visible Canvas content".
+registerCanvasPanelButton('teams', 'teams-btn', () => openTeams({ manual: true }));
+registerCanvasPanelButton('flows', 'flows-btn', () => openFlows());
+
 document.addEventListener('canvas-tab-closed', (e) => {
   if (e.detail?.id === 'teams') {
     closeViewer();
-    document.getElementById('teams-btn')?.classList.remove('active');
   }
   else if (e.detail?.id === 'flows') {
     closeViewer();
-    document.getElementById('flows-btn')?.classList.remove('active');
   }
 });
 
 // Re-render panel tabs restored from localStorage on page load.
 // canvas.js re-creates the tab panes synchronously, then dispatches this
-// event so we can fill them with live state.
+// event so we can fill them with live state. (Pressed state is synced
+// centrally by canvas.js — restore must not light every restored button.)
 window.addEventListener('canvas-tab-restore', (e) => {
   const { id } = e.detail || {};
   if (id === 'teams') {
-    document.getElementById('teams-btn')?.classList.add('active');
     renderTeamsTab();
   }
   else if (id === 'flows') {
-    document.getElementById('flows-btn')?.classList.add('active');
     renderFlowsTab();
   }
 });

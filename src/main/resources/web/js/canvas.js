@@ -284,6 +284,7 @@ export function openCanvas(title = '') {
   const canvasTarget = computeOpenWidth();
   document.documentElement.style.setProperty('--canvas-width', canvasTarget + 'px');
   document.body.classList.add('canvas-open');
+  syncCanvasPanelButtons();
 }
 
 /** Close the canvas panel (hide visually — tabs are preserved).
@@ -309,6 +310,7 @@ export function closeCanvas() {
 
   // Remove body class — CSS animates flex-basis + opacity back to 0.
   document.body.classList.remove('canvas-open');
+  syncCanvasPanelButtons();
 
   // Tabs are preserved — closing Canvas just hides the panel visually.
   closeTimeout = setTimeout(() => {
@@ -320,6 +322,60 @@ export function closeCanvas() {
  *  @returns {boolean} */
 export function isCanvasOpen() {
   return document.body.classList.contains('canvas-open');
+}
+
+// ── Activity Bar panel buttons (Teams / Flows / Agents) ────
+// Author's 2026-08-30 spec: each button drives its Canvas tab through a
+// 4-state machine:
+//   1. tab missing              -> openFn() (creates + activates the tab)
+//   2. tab open + Canvas open + currently displayed -> closeTab (toggle off;
+//      closing the last tab keeps the existing auto-close-Canvas semantics)
+//   3. tab open + Canvas open + another tab shown   -> setActiveTab
+//   4. tab open + Canvas closed -> openCanvas + setActiveTab
+// Pressed state (.active / aria-pressed) strictly mirrors "this tab IS the
+// visible Canvas content": Canvas closed or another tab displayed -> never
+// pressed, even when the tab still exists.
+/** @type {Map<string, {buttonId: string}>} */
+const panelButtons = new Map();
+/** @type {Set<string>} buttonIds whose click handler is already bound. */
+const boundPanelButtons = new Set();
+
+/**
+ * Register an Activity Bar button as a Canvas panel toggle.
+ * @param {string} tabId    — the Canvas tab id this button controls
+ * @param {string} buttonId — the Activity Bar button element id
+ * @param {() => void} openFn — opens the panel (state 1 entry point)
+ */
+export function registerCanvasPanelButton(tabId, buttonId, openFn) {
+  if (!tabId || !buttonId || typeof openFn !== 'function') return;
+  panelButtons.set(tabId, { buttonId });
+  const btn = document.getElementById(buttonId);
+  if (btn && !boundPanelButtons.has(buttonId)) {
+    boundPanelButtons.add(buttonId);
+    btn.addEventListener('click', () => onCanvasPanelButtonClick(tabId, openFn));
+  }
+  syncCanvasPanelButtons();
+}
+
+/** @param {string} tabId @param {() => void} openFn */
+function onCanvasPanelButtonClick(tabId, openFn) {
+  if (!tabs.has(tabId)) { openFn(); return; }                       // state 1
+  if (!isCanvasOpen()) { openCanvas(); setActiveTab(tabId); return; } // state 4
+  if (activeTabId === tabId) { closeTab(tabId); return; }           // state 2 (toggle off)
+  setActiveTab(tabId);                                              // state 3
+}
+
+/** Mirror "tab is the visible Canvas content" onto the registered buttons. */
+function syncCanvasPanelButtons() {
+  if (panelButtons.size === 0) return;
+  const open = isCanvasOpen();
+  for (const [tabId, def] of panelButtons) {
+    const btn = document.getElementById(def.buttonId);
+    if (!btn) continue;
+    const on = open && tabs.has(tabId) && activeTabId === tabId;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
 }
 
 // ── Tab management ─────────────────────────────────────────
@@ -475,6 +531,7 @@ export function closeTab(id) {
         closeCanvas();
       }
     }
+    syncCanvasPanelButtons();
   };
 
   // Use transitionend if supported, fallback to timeout
@@ -566,6 +623,7 @@ export function setActiveTab(id) {
   }
   document.dispatchEvent(new CustomEvent('canvas-tab-switched', { detail: { id } }));
   persistTabs();
+  syncCanvasPanelButtons();
 
   // Live-refresh file tabs on activation (debounced, dirty-safe).
   const entry = tabs.get(id);

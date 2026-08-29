@@ -4,7 +4,7 @@
 import state from './state.js';
 import { key } from './branding.js';
 import { sendWs } from './ws.js';
-import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas } from './canvas.js';
+import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas, registerCanvasPanelButton } from './canvas.js';
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import * as presets from './presets.js';
@@ -161,8 +161,7 @@ function renderAgentCard(a) {
 
 /** Open (or focus) the Agents Canvas tab and render the agent list. */
 export function openAgents() {
-  const btn = document.getElementById('agents-btn');
-  btn?.classList.add('active');
+  /* Button pressed state is owned by canvas.js registerCanvasPanelButton. */
   /* Canvas closed + tab already exists: expand the panel before activating
      (same invisible-click bug as Teams/Flows, 2026-08-29). */
   if (!isCanvasOpen()) openCanvas();
@@ -571,16 +570,13 @@ export function isAgentsTabOpen() {
   return hasTab('agents');
 }
 
-// Keep the Activity Bar button's active state in sync with the tab lifecycle
-// (same pattern as Teams/Flows in flowCanvas.js).
-document.addEventListener('canvas-tab-closed', (e) => {
-  if (e.detail?.id === 'agents') {
-    document.getElementById('agents-btn')?.classList.remove('active');
-  }
-});
+// Activity Bar toggle registration (author 2026-08-30 4-state machine):
+// pressed state strictly follows "this tab is the visible Canvas content" —
+// synced centrally by canvas.js (open/close/switch/restore all covered).
+registerCanvasPanelButton('agents', 'agents-btn', () => openAgents());
+
 window.addEventListener('canvas-tab-restore', (e) => {
   if (e.detail?.id === 'agents') {
-    document.getElementById('agents-btn')?.classList.add('active');
     renderAgentManager();
   }
 });
