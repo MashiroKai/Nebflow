@@ -387,6 +387,15 @@ class AgentControlToolSpec extends CatsEffectSuite:
     program.guarantee(system.stopAll.attempt.void)
   }
 
+  test("F3(b): Team restart success text is honest — turn NOT auto-resumed, no checkpoint promise") {
+    val msg = AgentControlTool.teamRestartSuccessText("team-member-agent")
+    assert(msg.contains("未自动续跑"), msg)
+    assert(msg.contains("NOT auto-resumed"), msg)
+    assert(msg.contains("re-dispatch"), msg)
+    assert(!msg.contains("resumes from the last persisted checkpoint"),
+      "the misleading checkpoint claim must be gone: " + msg)
+  }
+
   test("restart without a task record (persistent delegate) is rejected") {
     val system = ActorSystem("ac-restart-persist")
     val tmp = os.temp.dir()
