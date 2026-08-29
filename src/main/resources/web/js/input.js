@@ -41,6 +41,11 @@ function showAttachmentBanner(message) {
 }
 
 // ---------- Slash Commands ----------
+/* SEALED / 封存待启用 (author ruling 2026-08-29 22:56): the /slash command
+   menu is sealed - '/' is treated as plain text (zero popup, no command
+   interception). Code kept intact for future re-enable:
+     localStorage.setItem('nebflow.slash.enabled', '1')  // then reload */
+const SLASH_ENABLED = () => { try { return localStorage.getItem(key('slash.enabled')) === '1'; } catch (e) { return false; } };
 const slashCommands = {
   '/ask': {
     desc: () => t('slash.ask'),
@@ -84,6 +89,7 @@ export function registerSkillCommands(skills) {
 
 // ---------- Slash Command Handler ----------
 export function handleSlash(text) {
+  if (!SLASH_ENABLED()) return false; // SEALED: '/' is plain text
   const cmd = text.trim().split(/\s/)[0];
   if (slashCommands[cmd] && slashCommands[cmd].run) {
     slashCommands[cmd].run(text);
@@ -96,6 +102,7 @@ export function handleSlash(text) {
 function updateSlashDropdown() {
   const input = activeView.dom.input;
   const text = input.value;
+  if (!SLASH_ENABLED()) { closeSlashDropdown(); return; } // SEALED
   if (!text.startsWith('/')) {
     closeSlashDropdown();
     return;
