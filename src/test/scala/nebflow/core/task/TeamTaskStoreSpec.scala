@@ -270,4 +270,44 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
       assert(r2.isLeft, "empty team name rejected")
       assert(r3.isLeft, "slash rejected")
 
+  test("create stamps assignee from the input (team-domain member attribution)"):
+    for
+      _ <- reset()
+      id <- store.create("team:alpha", TaskCreateInput(subject = "s", description = "d", assignee = Some("Backend")))
+      t <- store.get("team:alpha", id)
+    yield assertEquals(t.map(_.assignee), Some(Some("Backend")))
+
+  test("legacy team JSON without assignee decodes to None (zero-migration)"):
+    for
+      _ <- reset()
+      dir = tempRoot / "tasks" / "teams" / "alpha"
+      _ = os.makeDir.all(dir)
+      _ = os.write(
+        dir / "1.json",
+        """{"id":"1","subject":"legacy-team","description":"d","status":"pending","scope":"team","teamId":"alpha","blocks":[],"blockedBy":[],"events":[]}"""
+      )
+      t <- store.get("team:alpha", "1")
+    yield
+      assertEquals(t.map(_.assignee), Some(None), "absent assignee key decodes to None")
+      assertEquals(t.map(_.teamId), Some(Some("alpha")))
+
+  test("update reassigns assignee (trim), blank clears, absent keeps; event recorded on change"):
+    for
+      _ <- reset()
+      id <- store.create("team:alpha", TaskCreateInput(subject = "s", description = "d", assignee = Some("Backend")))
+      // trim on set
+      _ <- store.update("team:alpha", id, TaskUpdateInput(assignee = Some("  Frontend  ")))
+      t1 <- store.get("team:alpha", id)
+      // absent keeps
+      _ <- store.update("team:alpha", id, TaskUpdateInput(status = Some(TaskStatus.InProgress)))
+      t2 <- store.get("team:alpha", id)
+      // blank clears + event
+      _ <- store.update("team:alpha", id, TaskUpdateInput(assignee = Some(" ")))
+      t3 <- store.get("team:alpha", id)
+    yield
+      assertEquals(t1.map(_.assignee), Some(Some("Frontend")), "value is trimmed")
+      assertEquals(t2.map(_.assignee), Some(Some("Frontend")), "absent assignee keeps existing")
+      assertEquals(t3.map(_.assignee), Some(None), "blank clears")
+      assert(t3.exists(_.events.exists(_.kind == "assignee")), "reassignment recorded as an event")
+
 end TeamTaskStoreSpec

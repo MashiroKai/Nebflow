@@ -38,6 +38,7 @@ object TeamTaskUpdateTool extends Tool:
 - **status**: "pending" | "in_progress" | "completed" | "failed"
 - **addBlocks / addBlockedBy / removeBlocks / removeBlockedBy**: dependency changes (arrays of team task IDs)
 - **subject / description / activeForm**: detail edits
+- **assignee**: Reassign the responsible member (the panel's team→member→task group key). A member name sets it; an empty string clears it.
 - **note**: Append a durable outcome note (what was done, key results, commit/file paths). Recommended whenever marking completed/failed.
 - **noteLinks**: Clickable references attached to the note (file paths, URLs, task IDs).
 
@@ -105,6 +106,10 @@ Set dependency:  {"taskId": "6", "addBlockedBy": ["7"]}"""
           "type" -> "array".asJson,
           "items" -> Json.obj("type" -> "string".asJson),
           "description" -> "Clickable references attached to the note (file paths, URLs, task IDs)".asJson
+        ),
+        "assignee" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Reassign the responsible member (team→member→task group key); empty string clears it".asJson
         )
       ),
       "required" -> Json.arr("taskId".asJson)
@@ -160,7 +165,8 @@ Set dependency:  {"taskId": "6", "addBlockedBy": ["7"]}"""
                     removeBlocks = input("removeBlocks").flatMap(_.as[List[String]].toOption),
                     removeBlockedBy = input("removeBlockedBy").flatMap(_.as[List[String]].toOption),
                     note = input("note").flatMap(_.asString),
-                    noteLinks = input("noteLinks").flatMap(_.as[List[String]].toOption)
+                    noteLinks = input("noteLinks").flatMap(_.as[List[String]].toOption),
+                    assignee = input("assignee").flatMap(_.asString)
                   )
                   store
                     .update(scopeKey, rawTaskId, updates)

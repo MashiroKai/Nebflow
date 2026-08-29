@@ -119,7 +119,13 @@ case class Task(
     * session-domain tasks. Directory isolation is the authoritative boundary
     * (~/.nebflow/tasks/teams/<teamName>/); this field is metadata for
     * display/retrieval. */
-  teamId: Option[String] = None
+  teamId: Option[String] = None,
+  /** Team-domain tasks: the member responsible for this task (member
+    * attribution — 作者规格④ 三级分组 team→成员→任务 的中间键)。
+    * TeamTaskCreate 缺省 = 调用工具的成员自身（progress-display 语义：
+    * 成员自建自领）；Manager 指派时显式传目标成员名。None = session-domain
+    * 或 legacy 数据（零迁移，withDefaults）。 */
+  assignee: Option[String] = None
 )
 
 object Task:
@@ -149,7 +155,10 @@ case class TaskCreateInput(
   description: String,
   activeForm: Option[String] = None,
   parentTaskId: Option[String] = None,
-  taskKind: Option[String] = None
+  taskKind: Option[String] = None,
+  /** Team-domain attribution (2026-08-30): the member this task belongs to.
+    * Session-domain callers leave it None. */
+  assignee: Option[String] = None
 )
 
 object TaskCreateInput:
@@ -167,7 +176,10 @@ case class TaskUpdateInput(
   /** Append a durable note to the task (C2). */
   note: Option[String] = None,
   /** Links (paths/URLs/task refs) attached to the appended note. */
-  noteLinks: Option[List[String]] = None
+  noteLinks: Option[List[String]] = None,
+  /** Reassign the responsible member (team-domain attribution, 2026-08-30).
+    * Empty/blank string clears the attribution; a non-blank value sets it. */
+  assignee: Option[String] = None
 )
 
 object TaskUpdateInput:

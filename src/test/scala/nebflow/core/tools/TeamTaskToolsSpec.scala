@@ -43,6 +43,11 @@ class TeamTaskToolsSpec extends FunSuite:
       wsSend = Some(captureSend)
     )
 
+  /** Team context carrying an agent identity — the create tool defaults the
+    * assignee to the caller's name (member self-attribution). */
+  private def teamCtxAs(memberName: String, teamName: String = "alpha"): ToolContext =
+    teamCtx(teamName).copy(agentDef = Some(nebflow.agent.AgentDef(name = memberName, description = "test member")))
+
   /** Nebula-like context: no teamName — reads must pass `team` explicitly. */
   private def noTeamCtx(): ToolContext =
     lastSent = None
@@ -166,5 +171,72 @@ class TeamTaskToolsSpec extends FunSuite:
     val out = call(TeamTaskListTool, obj(), teamCtx("aaa")).toOption.get
     assert(out.contains("a-task"))
     assert(!out.contains("b-task"))
+
+  // ── member attribution (作者规格④ team→成员→任务 三级分组) ──────────
+
+  test("assignee defaults to the caller's own name (member self-attribution)"):
+    val c = call(TeamTaskCreateTool, obj("subject" -> "s".asJson, "description" -> "d".asJson), teamCtxAs("Backend"))
+    val id = c.fold(e => fail(e.message), _.split("ID: ")(1).stripSuffix(")").trim)
+    val task = FileTaskStore.get("team:alpha", id).unsafeRunSync().get
+    assertEquals(task.assignee, Some("Backend"), "missing assignee defaults to the caller itself")
+
+  test("explicit assignee wins over the caller default (Manager assigns work)"):
+    val c = call(
+      TeamTaskCreateTool,
+      obj("subject" -> "s".asJson, "description" -> "d".asJson, "assignee" -> "Frontend".asJson),
+      teamCtxAs("Manager")
+    )
+    val id = c.fold(e => fail(e.message), _.split("ID: ")(1).stripSuffix(")").trim)
+    val task = FileTaskStore.get("team:alpha", id).unsafeRunSync().get
+    assertEquals(task.assignee, Some("Frontend"), "explicit assignee overrides the caller default")
+
+  test("blank assignee input falls back to the caller default (whitespace is not a name)"):
+    val c = call(
+      TeamTaskCreateTool,
+      obj("subject" -> "s".asJson, "description" -> "d".asJson, "assignee" -> "   ".asJson),
+      teamCtxAs("Docs")
+    )
+    val id = c.fold(e => fail(e.message), _.split("ID: ")(1).stripSuffix(")").trim)
+    val task = FileTaskStore.get("team:alpha", id).unsafeRunSync().get
+    assertEquals(task.assignee, Some("Docs"))
+
+  test("no agent identity + no assignee → None (legacy/session-style contexts keep working)"):
+    val c = call(TeamTaskCreateTool, obj("subject" -> "s".asJson, "description" -> "d".asJson), teamCtx())
+    val id = c.fold(e => fail(e.message), _.split("ID: ")(1).stripSuffix(")").trim)
+    val task = FileTaskStore.get("team:alpha", id).unsafeRunSync().get
+    assertEquals(task.assignee, None)
+
+  test("TeamTaskUpdate reassigns a member; blank string clears attribution"):
+    val c = call(
+      TeamTaskCreateTool,
+      obj("subject" -> "s".asJson, "description" -> "d".asJson, "assignee" -> "Backend".asJson),
+      teamCtxAs("Manager")
+    )
+    val id = c.fold(e => fail(e.message), _.split("ID: ")(1).stripSuffix(")").trim)
+    // reassign
+    val r1 = call(TeamTaskUpdateTool, obj("taskId" -> id.asJson, "assignee" -> "Frontend".asJson), teamCtxAs("Manager"))
+    assert(r1.isRight, r1.toString)
+    val reassigned = FileTaskStore.get("team:alpha", id).unsafeRunSync().get
+    assertEquals(reassigned.assignee, Some("Frontend"))
+    // clear via blank
+    val r2 = call(TeamTaskUpdateTool, obj("taskId" -> id.asJson, "assignee" -> "".asJson), teamCtxAs("Manager"))
+    assert(r2.isRight, r2.toString)
+    val cleared = FileTaskStore.get("team:alpha", id).unsafeRunSync().get
+    assertEquals(cleared.assignee, None, "blank string clears the attribution")
+    // reassignment is recorded as an event
+    assert(cleared.events.exists(_.kind == "assignee"), s"expected an assignee event, got ${cleared.events}")
+
+  test("teamTaskListUpdate WS event carries the assignee field on each task"):
+    val c = call(
+      TeamTaskCreateTool,
+      obj("subject" -> "s".asJson, "description" -> "d".asJson, "assignee" -> "Backend".asJson),
+      teamCtxAs("Manager")
+    )
+    assert(c.isRight, c.toString)
+    val sent = lastSent.get
+    assertEquals(sent.hcursor.downField("type").as[String].toOption, Some("teamTaskListUpdate"))
+    val tasks = sent.hcursor.downField("tasks").focus.flatMap(_.asArray).get
+    val assignees = tasks.flatMap(_.hcursor.downField("assignee").as[String].toOption).toList
+    assertEquals(assignees, List("Backend"), "the panel needs assignee on every task to group team→member→task")
 
 end TeamTaskToolsSpec
