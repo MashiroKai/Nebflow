@@ -8,10 +8,11 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.PathUtil
 
-/** todo-panel v1.1 backend contract (spec ~/.nebflow/docs/Nebflow/todo-panel-spec.md):
+/** todo-panel v1.1 backend contract — adapted for 任务工具重做 (2026-08-30):
   * - §2.1 taskKind/completedBy with the withDefaults compatibility red line
-  * - §2.2 human tasks have no in_progress state (isValidTransitionFor guard)
   * - §7.1 complete(sid, taskId, by) transition semantics for the WS circle
+  *   (human-task in_progress guard and dismissed semantics retired —
+  *   four-state model: pending → in_progress → completed / failed)
   */
 class TodoPanelBackendSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-todo-panel"
@@ -62,18 +63,18 @@ class TodoPanelBackendSpec extends CatsEffectSuite:
       assertEquals(byId(j).taskKind, "agent", "unknown kinds never break the split")
       assertEquals(byId(a).taskKind, "agent", "absent defaults to agent")
 
-  // ── §2.2 human transition guard ─────────────────────────────────────
+  // ── four-state transition semantics (任务工具重做 2026-08-30) ────────
 
-  test("human task cannot be pushed to in_progress (agent path rejected)"):
+  test("human task can be pushed to in_progress (guard retired — four-state model)"):
     for
       _ <- reset()
       sid = "human-guard"
       tid <- mkTask(sid, Some("human"))
-      r <- store.update(sid, tid, TaskUpdateInput(status = Some(TaskStatus.InProgress))).attempt
+      r <- store.update(sid, tid, TaskUpdateInput(status = Some(TaskStatus.InProgress)))
       after <- store.get(sid, tid)
     yield
-      assert(r.isLeft, "human pending -> in_progress must be rejected")
-      assertEquals(after.get.status, TaskStatus.Pending, "status unchanged after rejection")
+      assert(r.isDefined, "human pending -> in_progress is now legal (guard retired)")
+      assertEquals(after.get.status, TaskStatus.InProgress)
 
   test("agent task transitions unaffected by the human guard"):
     for
@@ -117,7 +118,7 @@ class TodoPanelBackendSpec extends CatsEffectSuite:
       _ <- reset()
       sid = "c3"
       tid <- mkTask(sid, Some("agent"))
-      // v2 C15: agent reaches completed via complete() (legacy agent flow), not TaskUpdate
+      // agent marks completed directly (four-state model, no C15 gate)
       _ <- store.complete(sid, tid, by = "agent")
       r <- store.complete(sid, tid, by = "user").attempt
       after <- store.get(sid, tid)
@@ -125,20 +126,14 @@ class TodoPanelBackendSpec extends CatsEffectSuite:
       assert(r.isRight, "duplicate complete must not taskError-zombie the panel row")
       assertEquals(after.get.completedBy, Some("agent"), "original agent completion preserved")
 
-  test("complete on failed or dismissed task raises (terminal re-complete = taskError)"):
+  test("complete on failed task raises (terminal re-complete = taskError)"):
     for
       _ <- reset()
       sid = "c4"
       f <- mkTask(sid, None)
       _ <- store.update(sid, f, TaskUpdateInput(status = Some(TaskStatus.Failed)))
-      d <- mkTask(sid, None)
-      _ <- store.complete(sid, d, by = "agent")
-      _ <- store.dismiss(sid, d)
       rf <- store.complete(sid, f, by = "user").attempt
-      rd <- store.complete(sid, d, by = "user").attempt
-    yield
-      assert(rf.isLeft, "failed -> completed is illegal")
-      assert(rd.isLeft, "dismissed -> completed is illegal")
+    yield assert(rf.isLeft, "failed -> completed is illegal")
 
   test("complete on missing task returns None (not-found error frame)"):
     for

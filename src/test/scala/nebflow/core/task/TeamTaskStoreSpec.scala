@@ -115,15 +115,22 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
       assert(noop.map(_.status).contains(TaskStatus.Failed))
       assert(r1.isLeft && r2.isLeft && r3.isLeft, "failed must not transition to any non-failed state")
 
-  test("team matrix rejects session-only statuses: needs_confirmation / dismissed / cancelled"):
+  test("legacy status wire names decode leniently (任务工具重做: needs_confirmation→completed, dismissed/cancelled→failed)"):
     for
       _ <- reset()
-      key = teamKey("mtx-session-only")
-      id <- mkTeamTask("mtx-session-only")
-      r1 <- store.update(key, id, TaskUpdateInput(status = Some(TaskStatus.NeedsConfirmation))).attempt
-      r2 <- store.update(key, id, TaskUpdateInput(status = Some(TaskStatus.Dismissed))).attempt
-      r3 <- store.update(key, id, TaskUpdateInput(status = Some(TaskStatus.Cancelled))).attempt
-    yield assert(r1.isLeft && r2.isLeft && r3.isLeft, "team tasks have no needs_confirmation/dismissed/cancelled")
+      key = teamKey("legacy-decode")
+      dir = tempRoot / "tasks" / "teams" / "legacy-decode"
+      _ = os.makeDir.all(dir)
+      _ = os.write(dir / "1.json", """{"id":"1","subject":"nc","description":"d","status":"needs_confirmation","events":[]}""")
+      _ = os.write(dir / "2.json", """{"id":"2","subject":"d","description":"d","status":"dismissed","events":[]}""")
+      _ = os.write(dir / "3.json", """{"id":"3","subject":"c","description":"d","status":"cancelled","events":[]}""")
+      nc <- store.get(key, "1")
+      dm <- store.get(key, "2")
+      cx <- store.get(key, "3")
+    yield
+      assertEquals(nc.map(_.status), Some(TaskStatus.Completed), "needs_confirmation → completed")
+      assertEquals(dm.map(_.status), Some(TaskStatus.Failed), "dismissed → failed")
+      assertEquals(cx.map(_.status), Some(TaskStatus.Failed), "cancelled → failed")
 
   test("created team task carries scope=team + teamId"):
     for
@@ -232,7 +239,7 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
 
   // ── backward compat (§4.1 red line) ─────────────────────────────────
 
-  test("legacy session JSON without scope/teamId decodes to scope=session, five-state intact"):
+  test("legacy session JSON without scope/teamId decodes to scope=session, four-state intact"):
     for
       _ <- reset()
       sid = "legacy-sess"
@@ -243,10 +250,9 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
         """{"id":"1","subject":"legacy","description":"d","status":"pending","blocks":[],"blockedBy":[],"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","events":[]}"""
       )
       t <- store.get(sid, "1")
-      // five-state path still works: pending → in_progress → needs_confirmation (with note) → completed via complete()
+      // four-state path: pending → in_progress → completed (agent marks directly)
       _ <- store.update(sid, "1", TaskUpdateInput(status = Some(TaskStatus.InProgress)))
-      _ <- store.update(sid, "1", TaskUpdateInput(status = Some(TaskStatus.NeedsConfirmation), note = Some("done")))
-      _ <- store.complete(sid, "1", "user")
+      _ <- store.complete(sid, "1", "agent")
       t2 <- store.get(sid, "1")
     yield
       assertEquals(t.map(_.scope), Some("session"), "absent scope key decodes to 'session'")
