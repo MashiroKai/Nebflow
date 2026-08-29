@@ -44,7 +44,7 @@ function showAttachmentBanner(message) {
 /* SEALED / 封存待启用 (author ruling 2026-08-29 22:56): the /slash command
    menu is sealed - '/' is treated as plain text (zero popup, no command
    interception). Code kept intact for future re-enable:
-     localStorage.setItem('nebflow.slash.enabled', '1')  // then reload */
+     localStorage.setItem('nebflow_slash.enabled', '1')  // then reload */
 const SLASH_ENABLED = () => { try { return localStorage.getItem(key('slash.enabled')) === '1'; } catch (e) { return false; } };
 const slashCommands = {
   '/ask': {
