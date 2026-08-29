@@ -1,6 +1,13 @@
-// micOrb.js — Mic bubble (liquid orb) v8.2.4: edge-clean fix ("unclean
-// cutout" edge report 2026-08-28). Three surgical changes, inner material
-// (<=0.92r0) pixel-identical to v8.2.3:
+// micOrb.js — Mic bubble (liquid orb) v8.2.5: edge-resolution fix (dark-mode
+// "blocky jagged ring" user report 2026-08-29). Root cause: the backing store
+// was 48*dpr px; in environments where devicePixelRatio reports 1 (desktop
+// wrapper WebViews without HiDPI scale, or page zoom races) the 48x48 buffer
+// is stretched to ~96 physical px and the bright rim turns into blocky
+// staircase jaggies. Fix: supersampling floor of 2 (always render >=96px,
+// downscaling is smooth) capped at 3, plus live dpr tracking so browser zoom
+// changes resize the backing store instead of leaving a stale low-res buffer.
+// Shading/material palettes are untouched - v8.2.4 edge-clean optics remain.
+// v8.2.4: edge-clean fix ("unclean
 //  1) rim/fresnel light is evaluated on a CONTRACTED sphere (Rf=0.90r0) and
 //     windowed to zero by 1.00r0 - the bright rim now lives fully inside the
 //     opaque silhouette instead of straddling the alpha skirt (no bright
@@ -253,10 +260,17 @@ class OrbRenderer {
     this.canvas = canvas;
     this.opts = opts || {};
     this.reducedMotion = !!this.opts.reducedMotion;
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    /* v8.2.5: supersampling floor of 2 - in dpr=1 environments the old
+       48*dpr backing (48x48) was stretched to ~96 physical px and the rim
+       turned blocky. Render at >=96px and let the CSS downscale smooth it.
+       Cap at 3 to bound GPU cost on 3x mobile screens. */
+    this.dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
     this.size = this.opts.size || 48;
     canvas.width = Math.round(this.size * this.dpr);
     canvas.height = Math.round(this.size * this.dpr);
+    /* v8.2.5: track dpr changes (browser zoom) and resize the backing store
+       live so a stale low-res buffer never persists. */
+    this.bindDprTracking();
     /** @type {WebGLRenderingContext} */
     this.gl = /** @type {WebGLRenderingContext} */ (
       canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true })
@@ -329,6 +343,38 @@ class OrbRenderer {
     const uvLoc = gl.getAttribLocation(this.program, 'uv');
     gl.enableVertexAttribArray(uvLoc);
     gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 16, 8);
+  }
+
+  /* v8.2.5: rebuild the backing store when devicePixelRatio changes (browser
+     zoom in/out). Each listener is one-shot - the query embeds the current
+     dpr, so a change fires it and we re-arm with the new value. */
+  bindDprTracking() {
+    if (!window.matchMedia) return;
+    const arm = () => {
+      const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      const onChange = () => {
+        if (mq.removeEventListener) mq.removeEventListener('change', onChange);
+        else if (mq.removeListener) mq.removeListener(onChange);
+        this.resizeBacking();
+        arm();
+      };
+      if (mq.addEventListener) mq.addEventListener('change', onChange);
+      else if (mq.addListener) mq.addListener(onChange);
+    };
+    arm();
+  }
+
+  /* v8.2.5: recompute the supersampled dpr and resize the canvas backing
+     store; resizing clears the GL buffer so redraw one frame immediately. */
+  resizeBacking() {
+    if (!this.gl || this.failed) return;
+    const next = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
+    const w = Math.round(this.size * next);
+    if (w === this.canvas.width) return;
+    this.dpr = next;
+    this.canvas.width = w;
+    this.canvas.height = w;
+    this.drawFrame();
   }
 
   /**
