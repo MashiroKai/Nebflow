@@ -180,7 +180,8 @@ object FileTaskStore extends TaskStore:
         events = List(TaskEvent("created", None, Some(now))),
         taskKind = Task.normalizeTaskKind(input.taskKind),
         scope = scope,
-        teamId = teamId
+        teamId = teamId,
+        assignee = input.assignee
       )
       _ <- writeTask(sessionId, task)
     yield newId
@@ -287,6 +288,14 @@ object FileTaskStore extends TaskStore:
           val newCompletedAt =
             if entersTerminal then Some(now) else existing.completedAt
 
+          // Member attribution (2026-08-30): explicit reassignment — a
+          // non-blank value sets it, blank string clears it, absent = keep.
+          val newAssignee = updates.assignee match
+            case Some(raw) => raw.trim match
+              case ""    => None
+              case value => Some(value)
+            case None      => existing.assignee
+
           // C2 event stream: append one event per kind of change, cap at MaxEvents
           val evBuilder = List.newBuilder[TaskEvent]
           if updates.status.exists(_ != existing.status) then
@@ -303,6 +312,12 @@ object FileTaskStore extends TaskStore:
             evBuilder += TaskEvent("dependency", Some(s"blocks=${newBlocks.mkString(",")} blockedBy=${newBlockedBy.mkString(",")}"), Some(now))
           if updates.note.exists(_.nonEmpty) then
             evBuilder += TaskEvent("note", updates.note.map(_.take(120)), Some(now))
+          if newAssignee != existing.assignee then
+            evBuilder += TaskEvent(
+              "assignee",
+              Some(s"${existing.assignee.getOrElse("(none)")}→${newAssignee.getOrElse("(cleared)")}"),
+              Some(now)
+            )
           val newEvents = (existing.events ++ evBuilder.result()).takeRight(MaxEvents)
 
           // C2 notes: append-only
@@ -320,7 +335,8 @@ object FileTaskStore extends TaskStore:
             updatedAt = Some(now),
             completedAt = newCompletedAt,
             notes = newNotes,
-            events = newEvents
+            events = newEvents,
+            assignee = newAssignee
           )
 
           // Issue #3: Check for cycles after dependency changes
