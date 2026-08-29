@@ -3,7 +3,7 @@ package nebflow.cli
 import cats.effect.IO
 import nebflow.core.PathUtil
 
-import java.net.{HttpURLConnection, InetSocketAddress, ServerSocket}
+import java.net.{ConnectException, HttpURLConnection, InetSocketAddress, ServerSocket, Socket}
 import scala.util.{Try, Using}
 
 /** Single-instance guard (2026-08-27, hard requirement after a real
@@ -32,6 +32,14 @@ object SingleInstanceGuard:
   final case class NebflowInstance(url: String) extends PortState
   final case class ForeignOccupant(detail: String) extends PortState
 
+  /** Max time checkPort waits for TIME_WAIT sockets to drain before booting
+    * anyway (covers Linux's fixed 60s TW; macOS is 30s). Only burns when a
+    * kill-and-restart actually left TW sockets — free ports and live
+    * occupants classify instantly. */
+  val MaxDrainWaitMs: Long = 65_000L
+  private val DrainPollMs: Long = 1_000L
+  private val ConnectProbeTimeoutMs: Int = 1500
+
   /** Sync variant for callers already inside blocking context (Main's
     * pid-file fast path). None == not a live nebflow port.
     */
@@ -39,11 +47,57 @@ object SingleInstanceGuard:
     probeNebflow(port)
 
   /** Classifier inputs — host/port mirror exactly what EmberServerBuilder
-    * will bind, so "free here" == "Ember can bind here". Fail-open on
-    * unexpected errors (let Ember surface the real failure later).
+    * will bind, so "free here" == "Ember can bind here".
+    *
+    * R1 (2026-08-30, docs/Nebflow/20260830_restart-script-stability.md):
+    * a failed strict bind no longer implies a foreign occupant — a killed
+    * instance leaves its closed connections in kernel TIME_WAIT (macOS
+    * 2×MSL = 30s, Linux fixed 60s), which blocks bind but has NO listener.
+    * A TCP connect probe disambiguates: refused → TIME_WAIT only → wait out
+    * the drain window and boot (fail-open at the ceiling); accepted → live
+    * occupant → identity probe as before. The single-instance red line is
+    * untouched: real listeners still classify NebflowInstance /
+    * ForeignOccupant and still refuse a double boot.
     */
-  def checkPort(host: String, port: Int): IO[PortState] = IO.blocking {
-    val free = Try {
+  def checkPort(host: String, port: Int, drainWaitMs: Long = MaxDrainWaitMs): IO[PortState] =
+    IO.blocking {
+      probeOnce(host, port) match
+        case Right(state) => state
+        case Left(()) =>
+          // TIME_WAIT drain window: re-probe until the bind frees or a live
+          // listener appears (a concurrent watchdog restart during the wait is
+          // then classified correctly, not raced past).
+          val deadline = System.currentTimeMillis() + drainWaitMs
+          var state: Option[PortState] = None
+          while state.isEmpty && System.currentTimeMillis() < deadline do
+            Thread.sleep(DrainPollMs)
+            probeOnce(host, port) match
+              case Right(s) => state = Some(s)
+              case Left(()) => ()
+          // Fail-open at the ceiling: no live listener was ever observed, so
+          // booting and letting Ember surface a real bind error beats the
+          // false "held by another program" refuse that killed the
+          // 2026-08-30 restart.
+          state.getOrElse(PortFree)
+    }
+
+  /** One-shot classification WITHOUT the drain wait. Right(state) = decided
+    * (free or live occupant identified); Left(()) = bind blocked but no live
+    * listener — kernel TIME_WAIT sockets only. */
+  private[cli] def probeOnce(host: String, port: Int): Either[Unit, PortState] =
+    if strictBindOk(host, port) then Right(PortFree)
+    else if connectAccepted(port) then
+      Right(
+        probeNebflow(port) match
+          case Some(url) => NebflowInstance(url)
+          case None      => ForeignOccupant(s"port $port is held by another program")
+      )
+    else Left(())
+
+  /** Strict bind probe — reuse off so a wildcard bind can't pass over a
+    * live specific-address listener (the 2026-08-27 half-boot hole). */
+  private def strictBindOk(host: String, port: Int): Boolean =
+    Try {
       val ss = new ServerSocket()
       try
         // JDK ServerSocket defaults SO_REUSEADDR=true on macOS/BSD, where a
@@ -56,12 +110,19 @@ object SingleInstanceGuard:
         ss.bind(new InetSocketAddress(java.net.InetAddress.getByName(host), port), 1)
       finally ss.close()
     }.isSuccess
-    if free then PortFree
-    else
-      probeNebflow(port) match
-        case Some(url) => NebflowInstance(url)
-        case None      => ForeignOccupant(s"port $port is held by another program")
-  }
+
+  /** TCP connect probe. true = a live listener accepted the connection;
+    * false = refused/timeout → no listener (TIME_WAIT sockets at most,
+    * which refuse connections). Probes the loopback address regardless of
+    * the bind host — that is where any real occupant listens. */
+  private def connectAccepted(port: Int): Boolean =
+    Try {
+      val s = new Socket()
+      try
+        s.connect(new InetSocketAddress("127.0.0.1", port), ConnectProbeTimeoutMs)
+        true
+      finally s.close()
+    }.getOrElse(false)
 
   /** HTTP probe of the occupant's /api/health. MUST bypass the JVM system
     * proxy (local proxy 7890 otherwise swallows localhost, slow-failing the
