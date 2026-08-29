@@ -51,7 +51,7 @@ import {
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
-import { renderTaskList } from './taskList.js';
+import { renderTaskList, sessionShowsTeamTasks } from './taskList.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
@@ -2434,6 +2434,20 @@ onMessage('taskListUpdate', (msg, view) => {
   if (msg.sessionId) state.sessionTasks[msg.sessionId] = msg.tasks;
   if (view) {
     renderTaskList(msg.tasks, undefined, msg.sessionId);
+  }
+});
+
+// --- Team task list (裁定②: unified into the Nebula session task panel) ---
+// Frame shape {type, team, tasks} — NO sessionId (TaskToolHelper.
+// emitTeamTaskListUpdate); team tasks live in their own store directory and
+// never enter state.sessionTasks. taskList.js merges them into the panel
+// when the rendered session is a Nebula session (sessionShowsTeamTasks).
+onMessage('teamTaskListUpdate', (msg) => {
+  if (!msg.team) return;
+  state.teamTasks[msg.team] = Array.isArray(msg.tasks) ? msg.tasks : [];
+  const sid = state.activeSessionId;
+  if (sid && sessionShowsTeamTasks(sid)) {
+    renderTaskList(state.sessionTasks[sid] || [], undefined, sid);
   }
 });
 

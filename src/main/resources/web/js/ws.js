@@ -165,6 +165,9 @@ const STREAM_MSG_TYPES = new Set([
   'agentThinking', 'agentRetryStatus', 'agentDone',
   'treeBranchMounted', 'treeBranchUnmounted', 'treeBranchUpdated',
   'flowMail', 'flowStarted', 'flowNodesAdded', 'flowProgress', 'flowCompleted', 'teamList',
+  // 任务工具重做 (2026-08-30): team 域任务帧（{team, tasks}，无 sessionId）——
+  // 裁定② 统一进 Nebula 会话任务列表面板（taskList.js 合并渲染）。
+  'teamTaskListUpdate',
   // #308 actual model: sub-agent usageUpdate (sessionId = nodeSessionId) must
   // survive the entry filter below to reach the popup live-refresh path.
   // Without this, the event is silently dropped for non-active sessions.
@@ -269,12 +272,15 @@ let authParamFallback = false;
 let authProbePromise = null;
 let authProbeSettled = false;
 
-// Probe target: GET /api/nf-tasks - lightweight (reads the task index),
-// authenticated via extractToken (param → Authorization header → cookie), so
-// a bare same-origin fetch exercises exactly the cookie path the WS handshake
-// relies on. Verified: 403 without credentials, 200 with a valid cookie.
+// Probe target: GET /api/nf-file (no path param) — authenticated via
+// extractToken (param → Authorization header → cookie), so a bare
+// same-origin fetch exercises exactly the cookie path the WS handshake
+// relies on. Semantics: invalid cookie → 403 (fallback to token param);
+// valid cookie → 400 BadRequest (missing 'path') — the probe only branches
+// on 401/403, so 400 reads as "cookie auth works".
+// (曾用 /api/nf-tasks?limit=1 — 任务工具重做 2026-08-30 删除该路由后改此。)
 function probeCookieAuth() {
-  return fetch('/api/nf-tasks?limit=1', {
+  return fetch('/api/nf-file', {
     credentials: 'same-origin',
     cache: 'no-store',
     signal: AbortSignal.timeout(3000),

@@ -548,13 +548,11 @@ export default {
   'time.yesterday': 'Yesterday',
 
   // === Task list ===
+  // Task redesign (2026-08-30): progress-display semantics — only
+  // pending+in_progress render; needs_confirmation/cancel/return/archive
+  // keys removed with their retired paths.
   'task.expand': 'Expand',
   'task.collapse': 'Collapse',
-  'task.inProgress': '{count} in progress',
-  'task.open': '{count} open',
-  'task.more': '+{count} more',
-  'task.sectionHuman': 'Your todos',
-  'task.sectionAgent': 'Agent Tasks',
   // v3 dual-zone (§15.11): 待办区 / 任务区
   'task.sectionTodo': 'To do',
   'task.sectionProgress': 'Tasks',
@@ -562,20 +560,10 @@ export default {
   'task.progressEmpty': 'No active tasks',
   'task.justNow': 'Just now',
   'task.pendingShort': 'Queued',
-  'task.failedShort': 'Failed',
   'task.statsBoth': '{todo} todos · {progress} tasks',
   'task.completeAria': 'Mark "{subject}" complete',
   'task.inProgressShort': 'In progress',
-  // Team Manager task panel (2026-08-25 team-manager-task-tool)
-  'task.archiveTooltip': 'Open task archive',
   'task.completeError': 'Failed to mark complete, try again',
-  'task.cancel': 'Cancel',
-  'task.cancelAria': 'Cancel "{subject}"',
-  'task.cancelled': 'Cancelled',
-  'task.cancelling': 'Cancelling',
-  'task.cancelError': 'Failed to cancel, try again',
-  'task.cancelDefaultReason': 'Cancelled by user',
-  'task.cancelReason': 'Cancel reason',
   'ref.cardAria': 'Reference',
   'ref.expand': 'Expand',
   'ref.collapse': 'Collapse',
@@ -591,19 +579,6 @@ export default {
   'explorer.reference': 'Reference',
   'canvas.referenceCurrent': 'Reference current page/selection',
   'canvas.noRef': 'This tab cannot be referenced',
-  'task.needsConfirmation': 'Needs confirmation',
-  'task.returnLabel': 'Return',
-  'task.returnAria': 'Return "{subject}" with feedback',
-  'task.returnError': 'Failed to return task, try again',
-  'task.removeTaskRef': 'Remove task reference',
-    'task.statsSuffix': ' pending',
-  'task.archiveTitle': 'Task Archive',
-  'task.allProjects': 'All Projects',
-  'task.uncategorized': 'Uncategorized',
-  'task.notes': 'notes',
-  'task.events': 'Events',
-  'task.archiveEmpty': 'No archived tasks',
-  'task.archiveError': 'Failed to load task archive',
 
   // === Tool names (label first line) ===
   'tool.Read': 'Read',

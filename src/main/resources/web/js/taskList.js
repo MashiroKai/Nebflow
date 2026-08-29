@@ -1,31 +1,26 @@
 // taskList.js — Collapsible task panel (floats above the input area)
-// todo-panel-spec.md v3 dual-zone (§15): the panel splits by ACTION OWNERSHIP
-// (需要我操作 vs 只读观察), not by creator:
-//   - 待办区 (.task-section-todo): human pending + agent needs_confirmation —
-//     CIRCLE controls (clickable: complete / return), "需要你" signals
-//   - 任务区 (.task-section-progress): agent pending/in_progress/failed —
-//     SQUARE read-only icons (裁定 19:56: 任务区不用圆圈 — 圆圈暗示可点；
-//     方块 = 观察区专属，圆圈 = 操作区专属), status word + relative time
-// v2 semantics preserved: completing is optimistic (fill → collapse → remove),
-// return drafts a taskRef into the input (C16), failed sinks same-day.
+// 任务工具重做 (2026-08-30 作者规格): 进展展示语义——四态状态机
+// pending → in_progress → completed / failed。needs_confirmation / dismissed /
+// cancelled 退役：agent 直接标 completed，无用户确认/打回/取消环节。
+//   - 待办区 (.task-section-todo): human pending — CIRCLE (click: completeTask
+//     直接完成，无中间态；completed 即消失，TTL 自然清)
+//   - 任务区 (.task-section-progress): agent pending/in_progress — read-only
+//     glyphs (方块/spinner 圆环本体), status word + relative time
+// 裁定②: team 域任务统一并入 Nebula 会话的本面板（Teams 标签页任务区已删）；
+// 裁定④: 任务区三级分组 team → member → tasks（accessor 隔离挂接数据契约）。
+// v2 semantics preserved: completing is optimistic (fill → collapse → remove).
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
-import { openTaskArchive } from './taskArchive.js';
 import { sendWs, onMessage } from './ws.js';
 import state from './state.js';
 import { showToast } from './modal.js';
-import { makeReference } from './reference.js';
-import { activeView, chatViews } from './chatView.js';
 
-/** Local-calendar check (device timezone). */
-function isTodayLocal(dateStr) {
-  if (!dateStr) return false;
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return false;
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() &&
-         d.getMonth() === now.getMonth() &&
-         d.getDate() === now.getDate();
+/** 任务工具重做: visible set = pending + in_progress ONLY（「列表只显
+ *  pending+in_progress」——completed/failed 完成即消失，6h/2d TTL 管磁盘
+ *  清理不管可见性）。legacy 状态由后端解码映射（needs_confirmation→
+ *  completed 等），到不了这里。 */
+function isVisible(tk) {
+  return !!tk && (tk.status === 'pending' || tk.status === 'in_progress');
 }
 
 /** C1: missing taskKind (pre-upgrade server) defaults to 'agent'. */
@@ -33,39 +28,23 @@ function kindOf(tk) {
   return tk && tk.taskKind === 'human' ? 'human' : 'agent';
 }
 
-/** §2.2/C6 (+v2): visible set = pending + in_progress + needs_confirmation +
- *  failed same-day. Completed and dismissed rows never render in the panel. */
-function isVisible(tk) {
-  if (!tk || !tk.status) return false;
-  // cancelled is a terminal state (契约#2) — not in the active panel; it
-  // surfaces in the archive. Excluding it here is what moves a cancelled
-  // task out of the active list on the authoritative taskListUpdate push.
-  if (tk.status === 'cancelled') return false;
-  if (tk.status === 'pending' || tk.status === 'in_progress' || tk.status === 'needs_confirmation') return true;
-  if (tk.status === 'failed') return isTodayLocal(tk.createdAt);
-  return false;
-}
-
-// ── v3 dual-zone partitioning (C23) ──────────────────────────────────────
-// A task lives in exactly ONE zone at any time. 待办区 = needs user action;
-// 任务区 = read-only agent progress. Deterministic per (kind, status).
+// ── Zone partitioning ────────────────────────────────────────────────────
+// A task lives in exactly ONE zone at any time. 待办区 = needs user action
+// (human pending only — agent needs_confirmation 已退役); 任务区 = read-only
+// agent progress. Deterministic per (kind, status).
 function inTodoZone(tk) {
-  return kindOf(tk) === 'human'
-    ? tk.status === 'pending'
-    : tk.status === 'needs_confirmation';
+  return kindOf(tk) === 'human' && tk.status === 'pending';
 }
 
-/** Sort key — §15.3 data fact: updatedAt refreshed on every
- *  TaskCreate/TaskUpdate/complete/return and always Some (TaskStore.scala
- *  119/292/350/443); defensive fallback to createdAt. */
+/** Sort key: updatedAt refreshed on every mutation and always present;
+ *  defensive fallback to createdAt. */
 function taskTs(tk) {
   const raw = tk.updatedAt || tk.createdAt;
   const ms = Date.parse(raw);
   return isNaN(ms) ? 0 : ms;
 }
 
-/** C24 待办区: human sub-block pinned on top (key = createdAt, desc);
- *  agent needs_confirmation sub-block below (key = updatedAt, desc). */
+/** 待办区: human pinned by createdAt desc. */
 function sortByCreatedDesc(a, b) {
   return (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0);
 }
@@ -73,21 +52,50 @@ function sortByActiveDesc(a, b) {
   return taskTs(b) - taskTs(a);
 }
 
-/** C25 任务区: updatedAt desc; failed always sinks below active rows. */
+/** 任务区: updatedAt desc (visible set is active-only — no failed sinking). */
 function sortProgress(a, b) {
-  const af = a.status === 'failed' ? 1 : 0;
-  const bf = b.status === 'failed' ? 1 : 0;
-  if (af !== bf) return af - bf;
   return sortByActiveDesc(a, b);
 }
 
 // ── Team grouping (第七件 裁定④, 2026-08-30) ─────────────────────────────
 // 任务区 groups team → member → tasks. ACCESSOR ISOLATION: the Backend data
-// contract (team/member attribution fields on the task-list API/WS payload)
-// hooks up HERE and nowhere else. Tasks without team attribution render
-// flat, exactly as before — zero regression for session-local tasks.
-function taskTeam(tk) { return (tk && typeof tk.team === 'string' && tk.team) || null; }
+// contract hooks up HERE and nowhere else. 契约字段（feat/task-redesign
+// TaskModel）：team 归属 = `teamId`（scope=='team' 的 team 域任务携带；
+// session 域无此键）。member 归属字段契约暂未交付——accessor 预留，Backend
+// 补字段后即插即活；无归属任务平铺，零回归。
+function taskTeam(tk) { return (tk && typeof tk.teamId === 'string' && tk.teamId) || null; }
 function taskMember(tk) { return (tk && typeof tk.member === 'string' && tk.member) || null; }
+
+/** 裁定②: team 域任务（teamTaskListUpdate, 无 sessionId）统一并入 Nebula
+ *  会话的任务列表面板。Only the Nebula session shows the unified list —
+ *  member/agent sessions keep showing only their own session tasks. */
+export function sessionShowsTeamTasks(sid) {
+  if (!sid) return false;
+  const agent = state.sessionAgentMap ? state.sessionAgentMap[sid] : null;
+  return !agent || agent === 'Nebula';
+}
+
+/** Merge team-domain tasks (state.teamTasks, keyed by team) into the panel
+ *  list for Nebula sessions. Stamped copies carry teamId (grouping hook) and
+ *  a namespaced display id — team tasks live in their own store directory
+ *  with their own id space, so a bare id could collide with a session task
+ *  (row dataset/zone-diff keyed by id). Team tasks are read-only here (no
+ *  circle: completeTask is session-scoped), so the stamped id never goes
+ *  back on the wire. */
+function mergeTeamTasks(tasks, sessionId) {
+  const base = Array.isArray(tasks) ? tasks : [];
+  if (!sessionShowsTeamTasks(sessionId)) return base;
+  const teamMap = state.teamTasks || {};
+  const stamped = [];
+  for (const [team, arr] of Object.entries(teamMap)) {
+    if (!Array.isArray(arr)) continue;
+    for (const tk of arr) {
+      if (!tk) continue;
+      stamped.push({ ...tk, id: `team:${team}:${tk.id}`, teamId: tk.teamId || team });
+    }
+  }
+  return stamped.length ? base.concat(stamped) : base;
+}
 
 // ── §15.7 relative time (任务区) ─────────────────────────────────────────
 function formatLastActive(updatedAt) {
@@ -127,11 +135,6 @@ const REDUCED_MOTION = typeof matchMedia === 'function' &&
 
 /** taskId → task snapshot, for taskError rollback (§7.2). */
 const pendingComplete = new Map();
-
-/** taskId → task snapshot, for cancelTask rollback (契约#1/#3). Symmetric
- *  to pendingComplete: a taskError for an id we sent a cancel for is OURS —
- *  roll the row back (it was optimistically removed) and toast. */
-const pendingCancel = new Map();
 
 // ── Completion flow (§7.1/§7.2) ─────────────────────────────────────────
 
@@ -181,67 +184,13 @@ function requestComplete(row, task) {
   }, 180);
 }
 
-// ── Cancel flow (契约#1/#2/#4: user-cancels a task) ───────────────────────
-// The TaskUpdate state machine has no cancel; the backend adds 'cancelled'
-// (terminal). The user cancels from the panel; we send a cancelTask frame
-// (#3: the backend notifies the owning agent — frontend only consumes the
-// feedback). Optimistic removal mirrors the complete flow; a taskError for
-// an id in pendingCancel rolls the row back. The cancel reason note is
-// recorded server-side and shown in the archive (taskArchive.js).
-
-/** Only agent tasks in a cancellable active state gain the cancel control.
- *  failed is terminal-not-cancellable (state machine: cancel sources are
- *  pending/in_progress/needs_confirmation); human to-do rows keep only the
- *  complete circle — cancelling a personal to-do isn't marked "cancelled". */
-function isCancellable(task) {
-  return kindOf(task) === 'agent' &&
-    (task.status === 'pending' || task.status === 'in_progress' || task.status === 'needs_confirmation');
-}
-
-function requestCancel(row, task) {
-  if (!state.connected) return;                    // WS down → disabled (§4)
-  if (pendingCancel.has(task.id)) return;          // debounce double-click
-  pendingCancel.set(task.id, task);
-
-  sendWs({
-    type: 'cancelTask',
-    sessionId: state.activeSessionId,
-    taskId: task.id,
-    reason: t('task.cancelDefaultReason'),
-  });
-
-  const finish = () => {
-    const sid = row.dataset.sessionId || state.activeSessionId;
-    const arr = sid && state.sessionTasks ? state.sessionTasks[sid] : null;
-    const i = Array.isArray(arr) ? arr.indexOf(task) : -1;
-    if (i >= 0) arr.splice(i, 1);
-    row.remove();
-    const container = document.getElementById('task-list');
-    if (container && !container.querySelector('.task-item')) {
-      container.classList.remove('has-tasks');
-      container.innerHTML = '';
-    }
-  };
-
-  if (REDUCED_MOTION) { finish(); return; }
-
-  row.classList.add('task-cancelling');            // dim + lock the row
-  setTimeout(() => {
-    row.classList.add('task-collapsing');
-    setTimeout(finish, 230);
-  }, 180);
-}
-
 // Server-side rejection of a complete → roll back: re-insert at the sorted
 // position (render derives it), replay the entering animation, toast (§7.2).
-// The backend taskError frame is {"type":"taskError","error","taskId"} — no
-// msgType field (WebSocketRoutes.scala:1527-1532, symmetric with dismissTask).
+// The backend taskError frame is {"type":"taskError","error","taskId"}.
 // We identify completeTask failures by taskId membership in pendingComplete:
 // a taskError for an id we never sent a complete for is not ours — pass
 // through untouched (裁定 F-B1①, qa-frontend 打回修复).
-// v2: return failures (a taskRef chip in the input) remove the chip + toast
-// t('task.returnError'); the row converges via the taskListUpdate push the
-// backend always sends after processing taskRefs (§6.3).
+// 任务工具重做: cancel/return 路径退役——taskError 的唯一来源是 completeTask。
 onMessage('taskError', (msg) => {
   if (!msg.taskId) return;
   if (pendingComplete.has(msg.taskId)) {
@@ -257,22 +206,6 @@ onMessage('taskError', (msg) => {
     showToast(t('task.completeError'), 'error');
     return;
   }
-  // 契约#1: cancel rejection — roll the optimistically-removed row back, toast.
-  if (pendingCancel.has(msg.taskId)) {
-    const task = pendingCancel.get(msg.taskId);
-    pendingCancel.delete(msg.taskId);
-    const sid = msg.sessionId || state.activeSessionId;
-    const arr = sid && state.sessionTasks ? state.sessionTasks[sid] : null;
-    if (Array.isArray(arr) && !arr.includes(task)) arr.push(task);
-    const container = document.getElementById('task-list');
-    renderTaskList(arr || [], container, sid);
-    showToast(t('task.cancelError'), 'error');
-    return;
-  }
-  // v2 §6.3: return rejection — drop the taskRef chip (local only), toast.
-  if (removeTaskRefsByTaskId(msg.taskId)) {
-    showToast(t('task.returnError'), 'error');
-  }
 });
 
 // ── Row builders (§15.5/§15.6) ──────────────────────────────────────────
@@ -282,19 +215,15 @@ onMessage('taskError', (msg) => {
  *  待办区 (user action): CIRCLE — clickable (role=checkbox, Space/Enter).
  *  任务区 (read-only):   SQUARE (.task-check-box) — 裁定 19:56: circles look
  *    clickable; squares are the observer-zone glyph (原始 checkbox 方块样式).
- *    in_progress = spinner inside the square slot; failed = red x; pending =
- *    hollow square. All aria-hidden (row aria-label carries status).
+ *    in_progress = standalone spinner ring (裁定⑤); pending = hollow square.
+ *    All aria-hidden (row aria-label carries status).
  */
 function buildCheck(task, row) {
   const check = document.createElement('span');
   check.className = 'task-check';
 
   if (inTodoZone(task)) {
-    // 待办区 — circle, clickable (§9 aria: the awaiting-ruling state is
-    // carried by the row's aria-label; the status word is aria-hidden).
-    if (task.status === 'needs_confirmation') {
-      row.setAttribute('aria-label', `${task.subject || ''} — ${t('task.needsConfirmation')}`.trim());
-    }
+    // 待办区 — circle, clickable (human pending; click = completeTask 直接完成).
     check.classList.add('task-check-clickable');
     check.setAttribute('role', 'checkbox');
     check.setAttribute('aria-checked', 'false');
@@ -319,11 +248,6 @@ function buildCheck(task, row) {
     check.setAttribute('aria-hidden', 'true');
     row.setAttribute('aria-label',
       `${task.subject || ''} — ${t('task.inProgressShort')}`.trim());
-  } else if (task.status === 'failed') {
-    check.setAttribute('aria-hidden', 'true');
-    check.innerHTML = '<i data-lucide="x" class="task-failed-icon"></i>';
-    row.setAttribute('aria-label',
-      `${task.subject || ''} — ${t('task.failedShort')}`.trim());
   } else {
     // agent pending — decorative hollow square
     check.setAttribute('aria-hidden', 'true');
@@ -333,35 +257,10 @@ function buildCheck(task, row) {
   return check;
 }
 
-/** 契约#1: user-cancel control — visually distinct from the completed CIRCLE.
- *  A compact glass button (mirrors .task-return-btn) with a ban (circle-slash)
- *  icon + label, at the row's right end. The user-action-zone shape family is
- *  kept (interactive glass button, not a read-only square); the LEADING zone
- *  glyph stays square/read-only so the panel's observe-vs-act split holds.
- *  aria-hidden is NOT set (it is a real, focusable control). */
-function buildCancelBtn(task, row) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'task-cancel-btn';
-  const cancelLabel = t('task.cancelAria', { subject: task.subject || '' });
-  btn.setAttribute('aria-label', cancelLabel);
-  btn.title = cancelLabel;
-  const icon = document.createElement('i');
-  icon.dataset.lucide = 'ban';
-  const span = document.createElement('span');
-  span.textContent = t('task.cancel');
-  btn.appendChild(icon);
-  btn.appendChild(span);
-  btn.addEventListener('click', (e) => { e.stopPropagation(); requestCancel(row, task); });
-  return btn;
-}
-
 function buildRow(task, sessionId) {
   const row = document.createElement('div');
   row.className = 'task-item' +
-    (task.status === 'in_progress' ? ' task-active' : '') +
-    (task.status === 'failed' ? ' task-failed' : '') +
-    (task.status === 'needs_confirmation' ? ' task-needs-confirmation' : '');
+    (task.status === 'in_progress' ? ' task-active' : '');
   row.dataset.taskId = task.id;
   if (sessionId) row.dataset.sessionId = sessionId;
 
@@ -373,9 +272,8 @@ function buildRow(task, sessionId) {
   label.className = 'task-label';
   label.textContent = task.subject || '';
   text.appendChild(label);
-  // #37: render the description under the subject. The panel previously only
-  // rendered subject, so tasks with similar subjects were indistinguishable
-  // (the user cancelled 5 by mistake). Truncated to 2 lines; full text in title.
+  // #37: render the description under the subject so tasks with similar
+  // subjects stay distinguishable. Truncated to 2 lines; full text in title.
   const descText = (task.description || '').trim();
   if (descText) {
     row.classList.add('task-has-desc');
@@ -387,41 +285,16 @@ function buildRow(task, sessionId) {
   }
   row.appendChild(text);
 
-  if (inTodoZone(task)) {
-    // 待办区: human rows carry no status word (B9); the needs_confirmation
-    // row carries a sapphire-强调 status word (C29) + return button (v2 §3/§8).
-    if (task.status === 'needs_confirmation') {
-      const word = document.createElement('span');
-      word.className = 'task-status-word';
-      word.setAttribute('aria-hidden', 'true');
-      word.textContent = t('task.needsConfirmation');
-
-      const ret = document.createElement('button');
-      ret.className = 'task-return-btn';
-      ret.type = 'button';
-      const retLabel = t('task.returnAria', { subject: task.subject || '' });
-      ret.setAttribute('aria-label', retLabel);
-      ret.title = retLabel;
-      const icon = document.createElement('i');
-      icon.dataset.lucide = 'corner-up-left';
-      const span = document.createElement('span');
-      span.textContent = t('task.returnLabel');
-      ret.appendChild(icon);
-      ret.appendChild(span);
-      ret.addEventListener('click', () => requestReturn(task, row));
-
-      row.appendChild(word);
-      row.appendChild(ret);
-    }
-  } else {
+  if (!inTodoZone(task)) {
     // 任务区 (§15.6): status word + relative time (D6). Both aria-hidden —
     // the row's aria-label carries the status for AT users (§15.9).
+    // 待办区 (human pending) rows carry no status word (B9) — the circle
+    // self-expresses the action.
     const word = document.createElement('span');
     word.className = 'task-status-word';
     word.setAttribute('aria-hidden', 'true');
     word.textContent = t(task.status === 'in_progress'
-      ? 'task.inProgressShort'
-      : task.status === 'failed' ? 'task.failedShort' : 'task.pendingShort');
+      ? 'task.inProgressShort' : 'task.pendingShort');
 
     const time = document.createElement('span');
     time.className = 'task-last-active';
@@ -435,69 +308,7 @@ function buildRow(task, sessionId) {
     row.appendChild(word);
     if (ts) row.appendChild(time);
   }
-  // 契约#1: cancellable agent rows get an explicit cancel affordance at the
-  // right end (distinct from the completed circle). Applies in BOTH zones
-  // (needs_confirmation in 待办区, pending/in_progress in 任务区).
-  if (isCancellable(task)) row.appendChild(buildCancelBtn(task, row));
   return row;
-}
-
-// ── Return flow (v2 §5/§6.3): draft a taskRef reference into the input ──────
-// C16: clicking Return only DRAFTS — the reference chip goes into
-// #attachment-preview (reusing the file-attachment mechanism, C18); sending
-// the message is what actually returns the task. Snapshot taken at click
-// time; the backend validates against authoritative state on send (§5.1).
-// B (用户 2026-08-20 打回): 引用块精简——chip 只带任务号+标题（+实时意见预览），
-// 载荷只带 taskId/sessionId/subject；描述/产出不进引用（agent 凭 taskId
-// 定位，记忆里有任务上下文；意见 = 发送时输入框内容，§5.4 后端落 notes）。
-function requestReturn(task, row) {
-  if (!state.connected) return;                    // WS down → disabled (§4)
-  const sessionId = row.dataset.sessionId || state.activeSessionId;
-  if (!sessionId || !activeView || !Array.isArray(activeView.pendingAttachments)) return;
-  // #303 B5 (v1.1 引用=打回): produce a unified type:'ref', refType:'task'
-  // Reference (renders as an @#<id> <subject> mention block, §3.3/§3.5) instead
-  // of the legacy taskRef chip. 引用即打回 — the backend routes refs[refType
-  // == 'task'] to the return flow (spec §5.4); the legacy taskRef shape stays
-  // supported for old history/refresh (persistence). Click drafts only; send
-  // performs the return (C16).
-  const ref = makeReference({
-    refType: 'task',
-    source: { kind: 'task', taskId: task.id, sessionId, title: task.subject || '' },
-  });
-  if (!ref) return;                                 // unknown shape → bail (no ref dropped)
-  activeView.pendingAttachments.push(ref);
-  import('./chat.js').then(({ renderAttachmentPreview }) => {
-    renderAttachmentPreview(activeView);
-    if (activeView.dom && activeView.dom.input) activeView.dom.input.focus();
-  });
-}
-
-/** Remove task attachments with the given taskId from every view's pending
- *  attachments (taskError carries no sessionId — sweep is idempotent).
- *  #303 B5: matches both the legacy taskRef chip and the unified
- *  type:'ref', refType:'task' reference (source.taskId).
- *  Returns true if anything was removed. */
-function removeTaskRefsByTaskId(taskId) {
-  let removed = false;
-  const seen = new Set();
-  const isOurTaskRef = (a) =>
-    (a.type === 'taskRef' && a.taskId === taskId) ||
-    (a.type === 'ref' && a.refType === 'task' && a.source && a.source.taskId === taskId);
-  const sweep = (v) => {
-    if (!v || seen.has(v) || !Array.isArray(v.pendingAttachments)) return;
-    seen.add(v);
-    const before = v.pendingAttachments.length;
-    v.pendingAttachments = v.pendingAttachments.filter(a => !isOurTaskRef(a));
-    if (v.pendingAttachments.length !== before) {
-      removed = true;
-      import('./chat.js').then(({ renderAttachmentPreview }) => {
-        if (v.dom && v.dom.attPreview) renderAttachmentPreview(v);
-      });
-    }
-  };
-  sweep(activeView);
-  for (const v of Object.values(chatViews)) sweep(v);
-  return removed;
 }
 
 function buildGroupHeader(label, section) {
@@ -542,7 +353,9 @@ export function renderTaskList(tasks, container, sessionId) {
   if (!container) container = document.getElementById('task-list');
   if (!container) return;
 
-  const visible = (tasks || []).filter(isVisible);
+  // 裁定②: Nebula 会话的任务列表 = 统一视图——session 域任务 + team 域任务
+  // （state.teamTasks，teamTaskListUpdate 帧维护）。非 Nebula 会话不变。
+  const visible = mergeTeamTasks(tasks, sessionId).filter(isVisible);
   container.classList.toggle('has-tasks', visible.length > 0);
   container.classList.toggle('task-ws-down', !state.connected);
   ensureLastActiveTimer(visible.length > 0);
@@ -597,18 +410,18 @@ function collectZoneById(container) {
 }
 
 function redraw(visible, container, sessionId, oldById) {
-  // §15.3 C24/C25 partitioning + sorting:
-  //  待办区 = human (createdAt desc) pinned above agent needs_confirmation
-  //          (updatedAt desc); 任务区 = agent active (updatedAt desc, failed sinks).
+  // 分区 + 排序（任务工具重做：四态进展展示——无 needs_confirmation 子块、
+  // 无 failed 沉底，visible 集本就只含 pending+in_progress）:
+  //  待办区 = human pending (createdAt desc); 任务区 = agent active
+  //  (updatedAt desc), 裁定④ 三级分组 team → member → tasks 在排序之后。
   const todoHuman = visible.filter(tk => kindOf(tk) === 'human').sort(sortByCreatedDesc);
-  const todoAgent = visible.filter(tk => kindOf(tk) === 'agent' && tk.status === 'needs_confirmation').sort(sortByActiveDesc);
-  const progress = visible.filter(tk => kindOf(tk) === 'agent' && tk.status !== 'needs_confirmation').sort(sortProgress);
+  const progress = visible.filter(tk => kindOf(tk) === 'agent').sort(sortProgress);
 
   container.innerHTML = '';
   const card = document.createElement('div');
   card.className = 'task-card' + (container.dataset.collapsed === '1' ? ' collapsed' : '');
 
-  // ── Header: toggle + stats (C26 dual-segment) + archive ──
+  // ── Header: toggle + stats (C26 dual-segment) ──
   const header = document.createElement('div');
   header.className = 'task-header';
 
@@ -621,20 +434,12 @@ function redraw(visible, container, sessionId, oldById) {
   const stats = document.createElement('span');
   stats.className = 'task-stats';
   stats.textContent = t('task.statsBoth', {
-    todo: todoHuman.length + todoAgent.length,
+    todo: todoHuman.length,
     progress: progress.length,
   });
 
-  const archiveBtn = document.createElement('button');
-  archiveBtn.className = 'task-archive-btn';
-  archiveBtn.title = t('task.archiveTooltip');
-  archiveBtn.setAttribute('aria-label', t('task.archiveTooltip'));
-  archiveBtn.innerHTML = '<i data-lucide="archive"></i>';
-  archiveBtn.addEventListener('click', (e) => { e.stopPropagation(); openTaskArchive(); });
-
   header.appendChild(toggle);
   header.appendChild(stats);
-  header.appendChild(archiveBtn);
 
   // ── Body: two zones, headers constant while panel visible (C27) ──
   const body = document.createElement('div');
@@ -645,11 +450,10 @@ function redraw(visible, container, sessionId, oldById) {
   const todoSection = document.createElement('div');
   todoSection.className = 'task-section task-section-todo';
   todoSection.appendChild(buildGroupHeader(t('task.sectionTodo'), 'todo'));
-  if (todoHuman.length + todoAgent.length === 0) {
+  if (todoHuman.length === 0) {
     todoSection.appendChild(buildEmpty(t('task.todoEmpty')));
   } else {
     todoHuman.forEach(tk => todoSection.appendChild(buildRow(tk, sessionId)));
-    todoAgent.forEach(tk => todoSection.appendChild(buildRow(tk, sessionId)));
   }
 
   const progressSection = document.createElement('div');

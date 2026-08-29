@@ -151,7 +151,8 @@ function showCanvasRefMenu(x, y, entry) {
   btn.addEventListener('click', () => {
     hideCanvasRefMenu();
     // Dynamic import to avoid a static edge back into input.js (which would
-    // close the modal→taskList→taskArchive→canvas→input cycle).
+    // close the modal→taskList→canvas→input cycle — historically via
+    // taskArchive.js, removed in the 2026-08-30 task redesign).
     import('./input.js').then(({ appendRefToActiveView }) => appendRefToActiveView(ref));
   });
   menu.appendChild(btn);
