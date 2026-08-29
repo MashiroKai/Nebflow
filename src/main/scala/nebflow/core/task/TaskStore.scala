@@ -80,6 +80,27 @@ object FileTaskStore extends TaskStore:
   // Atomic high-water mark per scope (Issue #1) — keyed by scope key
   // (sessionId or "team:<name>"), so every team gets an independent id
   // sequence (spec §4.2: per-directory hwm).
+  //
+  // ⚠ LIFECYCLE NOTE (2026-08-30, hwmRef evaluation — Manager batch):
+  // `hwmRef` is PROCESS-LEVEL (object singleton, keyed by scope STRING only),
+  // while `root` above is a `def` that re-reads PathUtil.dataRoot on every
+  // call. The two lifecycles DISAGREE when dataRoot is swapped mid-process:
+  // the cached hwm for a scope survives the swap, so the NEXT create in that
+  // scope reuses the old counter even though it now writes into a different
+  // directory tree.
+  //
+  // Production is SAFE by construction: the only setDataRoot call is
+  // Main.scala:19 (--home parsing, once, before any gateway/task activity);
+  // canary runs are separate processes. There is NO mid-process root switch
+  // in the product, so this mismatch cannot fire in production.
+  //
+  // TESTS are the hazard: two suites in one JVM both calling setDataRoot
+  // share this singleton cache. If suite A pushes scope "team:X" hwm to 2,
+  // then suite B swaps tempRoot and creates in "team:X", ids start at 3, not
+  // 1 (qa FAIL 2026-08-30, batch-A member attribution). Test isolation for
+  // task ids MUST use a unique scope key per suite (e.g. team:attribution-*),
+  // never a key another suite owns. Do NOT "fix" by keying hwmRef on root —
+  // the product path never needs it (see evaluation report to Manager).
   private val hwmRef: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
 
   /** Map a scope key to its task directory:
