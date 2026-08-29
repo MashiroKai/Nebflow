@@ -157,6 +157,30 @@ class InteractionHubSpec extends CatsEffectSuite:
 
   // ---------- #12: approval link reliability ----------
 
+  // 递进式放行链 (2026-08-30): escalated answers carry an extra `upgradeMode`
+  // field — the hub must treat the payload exactly like a plain approval
+  // (extra fields are opaque; only `approved` drives the deferred).
+  test("escalated answer (payload with upgradeMode) completes like a plain approval") {
+    val system = nebflow.actor.ActorSystem("hub-test-escalate")
+    for
+      hub <- mkHub(system)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)
+      d <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.Request(permRequest("r-up", d))
+      _ <- IO.sleep(50.millis)
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered(
+          "r-up",
+          "root-1",
+          Json.obj("approved" -> Json.fromBoolean(true), "upgradeMode" -> Json.fromString("auto-edits"))
+        )
+      )
+      a <- d.get.timeout(2.seconds)
+      _ <- system.stopAll
+    yield assertEquals(a, true)
+    end for
+  }
+
   test("#12 invalid answer shape does not consume the card — deferred still completable") {
     val system = nebflow.actor.ActorSystem("hub-test")
     for

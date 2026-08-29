@@ -255,6 +255,24 @@ class WebSocketRoutes(
     val mode = nebflow.core.SafetyMode.fromString(safetyMode)
     sharedResources.permissionPolicies.update(_ + (sessionId -> nebflow.agent.PermissionPolicy(safetyMode = mode)))
 
+  /** 递进式放行链 (2026-08-30): persist + hot-apply an escalated safety mode.
+    *
+    * Scope is aligned with the existing `setSafetyMode` WS command: session
+    * meta (persisted, restored on reconnect via seedPermissionPolicy) + the
+    * in-memory policy bucket + the agent's own copy. Order matters — the
+    * bucket (the decision source) is updated BEFORE the caller forwards the
+    * answer, so the next tool decision already sees the new mode.
+    */
+  private def applyPermissionUpgrade(sessionId: String, mode: nebflow.core.SafetyMode): IO[Unit] =
+    val modeStr = nebflow.core.SafetyMode.toString(mode)
+    for
+      _ <- sessionStore.setSafetyMode(sessionId, modeStr)
+      rootSid <- resolveRootSessionId(sessionId)
+      _ <- sharedResources.permissionPolicies.update(_ + (rootSid -> nebflow.agent.PermissionPolicy(safetyMode = mode)))
+      _ <- ensureAgent(sessionId)(ref => ref ! nebflow.agent.AgentCommand.SetSafetyMode(mode))
+      _ <- logger.info(s"Permission upgrade: session $sessionId → $modeStr (persisted + bucket + agent)")
+    yield ()
+
   /** Create and register a FlowTreeActor for a session. Fire-and-forget via .start. */
   private def initFlowTree(
     sessionId: String,
@@ -982,13 +1000,36 @@ class WebSocketRoutes(
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val permSessionId = json.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
             val requestId = json.hcursor.downField("requestId").as[String].toOption.getOrElse("")
+            val upgradeRaw = json.hcursor.downField("upgradeMode").as[String].toOption
             // #12: NEVER synthesize a deny from a malformed reply — the old
             // getOrElse(false) turned any missing/non-boolean `approved` into
             // a user-attributed denial the user never clicked.
             json.hcursor.downField("approved").as[Boolean] match
               case Right(approved) =>
-                logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
-                  forwardInteractionAnswer(requestId, permSessionId, io.circe.Json.obj("approved" -> approved.asJson))
+                // 递进式放行链 (2026-08-30): an invalid upgrade request never
+                // transforms the answer (rule #12 spirit) — log and proceed as
+                // the plain allow/deny the user actually clicked.
+                nebflow.core.PermissionUpgrade.parse(approved, upgradeRaw) match
+                  case Left(why) =>
+                    logger.warn(
+                      s"Permission answer upgradeMode IGNORED ($why) — proceeding as plain ${if approved then "allow" else "deny"} (requestId=$requestId)"
+                    ) *>
+                      forwardInteractionAnswer(requestId, permSessionId, io.circe.Json.obj("approved" -> approved.asJson))
+                  case Right(upgrade) =>
+                    val answerPayload = io.circe.Json.fromJsonObject(
+                      io.circe.JsonObject.fromIterable(
+                        Seq("approved" -> approved.asJson) ++
+                          upgrade.map(m => "upgradeMode" -> io.circe.Json.fromString(nebflow.core.SafetyMode.toString(m)))
+                      )
+                    )
+                    val upgradeIo = upgrade.fold(IO.unit)(m =>
+                      applyPermissionUpgrade(permSessionId, m).handleErrorWith { e =>
+                        logger.warn(s"Permission upgrade FAILED (proceeding as plain allow): ${e.getMessage}")
+                      }
+                    )
+                    logger.info(
+                      s"Permission answer: ${if approved then "approved" else "denied"}${upgrade.map(m => s" + upgrade→${nebflow.core.SafetyMode.toString(m)}").getOrElse("")}"
+                    ) *> upgradeIo *> forwardInteractionAnswer(requestId, permSessionId, answerPayload)
               case Left(_) =>
                 logger.warn(
                   s"Permission answer DROPPED: 'approved' missing or not a boolean (requestId=$requestId, session=$permSessionId) — a malformed reply must not become a deny (#12)"
