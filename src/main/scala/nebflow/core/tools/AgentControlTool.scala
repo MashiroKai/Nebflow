@@ -343,7 +343,8 @@ When to use:
     auditLogger.info(
       s"AUDIT ts=${System.currentTimeMillis()} caller=$callerSid callerAgent=$callerAgent " +
         s"action=$action target=${rec.sessionId} targetKind=Team targetAgent=${agentNameFromSessionId(rec.sessionId)} " +
-        s"confirm=$confirm reason=\"$reason\""
+        s"confirm=$confirm reason=\"$reason\"" +
+        (if action == "restart" then " note=\"history restored; turn NOT auto-resumed\"" else "")
     )
 
   /** 审计/通知里的调用者署名：agent 名优先（Nebula/Manager），回退 session 名。 */
@@ -597,6 +598,17 @@ When to use:
             )
           )
 
+  /** F3(b) 如实化（loop-detected 报告 §6-F3，2026-08-30）：Team 成员 restart
+    * 只重建会话（持久化 history 恢复），**turn 不自动续跑**——旧文案「resumes
+    * from the last persisted checkpoint」是误导（checkpoint 续跑是 Delegate/
+    * SubTask supervisor 分支的真实机制，Team 分支没有）。 */
+  private[tools] def teamRestartSuccessText(sessionId: String): String =
+    s"Restart sent for Team member '$sessionId': stopped and re-activated from persisted history " +
+      "(parent-restart). Turn NOT auto-resumed (turn 未自动续跑) — re-dispatch the task if it should continue."
+
+  private[tools] def teamRestartDeadText(sessionId: String): String =
+    s"Team member '$sessionId' did not stop within 5s — restart aborted (no respawn to avoid double-activation)."
+
   def doRestart(
     resources: SharedResources,
     ctx: ToolContext,
@@ -623,17 +635,8 @@ When to use:
             dead <- waitDead
             refOpt <- if dead then MailTool.activateAgent(rec.sessionId, resources, system, ctx) else IO.pure(None)
           yield
-            if !dead then
-              Left(
-                ToolError(
-                  s"Team member '${rec.sessionId}' did not stop within 5s — restart aborted (no respawn to avoid double-activation)."
-                )
-              )
-            else if refOpt.isDefined then
-              Right(
-                s"Restart sent for Team member '${rec.sessionId}': stopped and re-activated from history " +
-                  "(parent-restart). Turn resumes from the last persisted checkpoint."
-              )
+            if !dead then Left(ToolError(teamRestartDeadText(rec.sessionId)))
+            else if refOpt.isDefined then Right(teamRestartSuccessText(rec.sessionId))
             else
               Left(
                 ToolError(
