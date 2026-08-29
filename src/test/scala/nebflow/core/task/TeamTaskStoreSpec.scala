@@ -270,40 +270,44 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
       assert(r2.isLeft, "empty team name rejected")
       assert(r3.isLeft, "slash rejected")
 
+  // NOTE: unique scope keys ("attribution-*") — FileTaskStore.hwmRef is a
+  // process-level per-scope cache that survives tempRoot swaps, so reusing a
+  // key owned by another suite (ToolsSpec's default team "alpha") poisons its
+  // high-water mark (qa FAIL 2026-08-30: smoke IDs shifted to #3).
   test("create stamps assignee from the input (team-domain member attribution)"):
     for
       _ <- reset()
-      id <- store.create("team:alpha", TaskCreateInput(subject = "s", description = "d", assignee = Some("Backend")))
-      t <- store.get("team:alpha", id)
+      id <- store.create("team:attribution-create", TaskCreateInput(subject = "s", description = "d", assignee = Some("Backend")))
+      t <- store.get("team:attribution-create", id)
     yield assertEquals(t.map(_.assignee), Some(Some("Backend")))
 
   test("legacy team JSON without assignee decodes to None (zero-migration)"):
     for
       _ <- reset()
-      dir = tempRoot / "tasks" / "teams" / "alpha"
+      dir = tempRoot / "tasks" / "teams" / "attribution-legacy"
       _ = os.makeDir.all(dir)
       _ = os.write(
         dir / "1.json",
-        """{"id":"1","subject":"legacy-team","description":"d","status":"pending","scope":"team","teamId":"alpha","blocks":[],"blockedBy":[],"events":[]}"""
+        """{"id":"1","subject":"legacy-team","description":"d","status":"pending","scope":"team","teamId":"attribution-legacy","blocks":[],"blockedBy":[],"events":[]}"""
       )
-      t <- store.get("team:alpha", "1")
+      t <- store.get("team:attribution-legacy", "1")
     yield
       assertEquals(t.map(_.assignee), Some(None), "absent assignee key decodes to None")
-      assertEquals(t.map(_.teamId), Some(Some("alpha")))
+      assertEquals(t.map(_.teamId), Some(Some("attribution-legacy")))
 
   test("update reassigns assignee (trim), blank clears, absent keeps; event recorded on change"):
     for
       _ <- reset()
-      id <- store.create("team:alpha", TaskCreateInput(subject = "s", description = "d", assignee = Some("Backend")))
+      id <- store.create("team:attribution-update", TaskCreateInput(subject = "s", description = "d", assignee = Some("Backend")))
       // trim on set
-      _ <- store.update("team:alpha", id, TaskUpdateInput(assignee = Some("  Frontend  ")))
-      t1 <- store.get("team:alpha", id)
+      _ <- store.update("team:attribution-update", id, TaskUpdateInput(assignee = Some("  Frontend  ")))
+      t1 <- store.get("team:attribution-update", id)
       // absent keeps
-      _ <- store.update("team:alpha", id, TaskUpdateInput(status = Some(TaskStatus.InProgress)))
-      t2 <- store.get("team:alpha", id)
+      _ <- store.update("team:attribution-update", id, TaskUpdateInput(status = Some(TaskStatus.InProgress)))
+      t2 <- store.get("team:attribution-update", id)
       // blank clears + event
-      _ <- store.update("team:alpha", id, TaskUpdateInput(assignee = Some(" ")))
-      t3 <- store.get("team:alpha", id)
+      _ <- store.update("team:attribution-update", id, TaskUpdateInput(assignee = Some(" ")))
+      t3 <- store.get("team:attribution-update", id)
     yield
       assertEquals(t1.map(_.assignee), Some(Some("Frontend")), "value is trimmed")
       assertEquals(t2.map(_.assignee), Some(Some("Frontend")), "absent assignee keeps existing")
