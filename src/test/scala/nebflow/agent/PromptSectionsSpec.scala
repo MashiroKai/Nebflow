@@ -174,16 +174,18 @@ class PromptSectionsSpec extends munit.FunSuite:
   // from the per-turn tasks reminder into a cached systemStable section.
   // ============================================================
 
-  test("Task List Protocol section is Nebula-only (2026-08-20 D6)"):
+  test("Task List Protocol section is team-category-only (2026-08-30 task redesign)"):
+    val team = buildConditionalBlocks(PromptContext(agentCategory = "team", agentName = "Backend"))
     val nebula = buildConditionalBlocks(PromptContext(agentName = "Nebula"))
-    val manager = buildConditionalBlocks(PromptContext(agentName = "Manager"))
-    assert(nebula.contains("## Task List Protocol"), "Nebula gets the task-list semantics")
-    assert(!manager.contains("## Task List Protocol"), "non-Nebula agents never see it")
-    assert(nebula.contains("needs_confirmation"), "semantics must explain the confirmation lane")
+    val standalone = buildConditionalBlocks(PromptContext(agentCategory = "standalone", agentName = "Explorer"))
+    assert(team.contains("## Task List Protocol"), "team agents get the task-list semantics")
+    assert(!nebula.contains("## Task List Protocol"), "Nebula no longer carries task semantics (tools removed)")
+    assert(!standalone.contains("## Task List Protocol"), "standalone agents never see it")
+    assert(team.contains("auto-expire"), "semantics must explain the TTL lifecycle")
 
   test("Task List Protocol orders after Language and before Skills"):
     val blocks = buildConditionalBlocks(
-      PromptContext(agentName = "Nebula", language = Some("English"), skillCatalog = "# Skills")
+      PromptContext(agentCategory = "team", agentName = "Backend", language = Some("English"), skillCatalog = "# Skills")
     )
     val protoIdx = blocks.indexOf("## Task List Protocol")
     val langIdx = blocks.indexOf("# Language")
