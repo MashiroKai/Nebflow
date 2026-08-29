@@ -73,7 +73,7 @@ export function renderQueueBar(sessionId, handlers = {}) {
     const grip = document.createElement('span');
     grip.className = 'queue-item-grip';
     grip.innerHTML = '\u22EE';
-    grip.title = 'Drag to reorder';
+    grip.title = t('chatQueue.dragReorder');
     row.appendChild(grip);
 
     // Drag events
@@ -122,10 +122,10 @@ export function renderQueueBar(sessionId, handlers = {}) {
 	    textEl.textContent = fullText;
 	    // Always allow click-to-expand — CSS truncates by container width,
 	    // not character count, so even short messages may be visually clipped.
-	    textEl.title = 'Click to expand';
+	    textEl.title = t('chatQueue.clickExpand');
 	    textEl.addEventListener('click', () => {
 		const isExpanded = row.classList.toggle('expanded');
-		textEl.title = isExpanded ? 'Click to collapse' : 'Click to expand';
+		textEl.title = isExpanded ? t('chatQueue.clickCollapse') : t('chatQueue.clickExpand');
 	    });
 	    row.appendChild(textEl);
 
