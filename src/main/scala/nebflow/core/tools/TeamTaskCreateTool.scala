@@ -6,8 +6,8 @@ import io.circe.{Json, JsonObject}
 import nebflow.core.task.*
 
 /**
- * Team Manager task tool — create (spec 20260825_team-manager-task-tool-spec.md
- * §2.2). Owner = the team's Manager (isTeamLead injection); the team name is
+ * Team task tool — create. 任务工具重做 (2026-08-30): injected into EVERY team
+ * member (progress-display semantics); the team name is
  * taken from ToolContext.teamName (team-agent spawn injection) — there is NO
  * teamName parameter, so a tool call can never write to another team (no
  * cross-team write surface, spec §2.2). Non-team contexts are hard-rejected.

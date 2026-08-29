@@ -19,12 +19,11 @@ object TeamTaskListTool extends Tool:
   val description =
     """List team tasks — read-only view of a team's work list (no mutation parameters).
 ## When to Use
-- The Manager reviews the team's work: what is pending, in progress, completed, failed.
-- Nebula (root orchestrator) inspects any team's tasks for oversight — pass `team` explicitly.
+- Review the team's progress display: what is pending, in progress, completed, failed.
 - Check dependencies (blockedBy/blocks) before dispatching new work.
 
 ## Parameters
-- **team** (optional): Team name to list. Omit when you ARE the team's Manager (your own team is inferred); Nebula and other callers must pass it explicitly.
+- **team** (optional): Team name to list. Omit to list YOUR OWN team (your team is inferred from your team context).
 - **status** (optional): Filter by exact status: "pending" | "in_progress" | "completed" | "failed". Omit to list all.
 
 ## Output
@@ -37,7 +36,7 @@ This tool is strictly read-only — team task changes happen via TeamTaskCreate/
       "properties" -> Json.obj(
         "team" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Team name to list (omit when you are that team's Manager)".asJson
+          "description" -> "Team name to list (omit to list your own team)".asJson
         ),
         "status" -> Json.obj(
           "type" -> "string".asJson,
