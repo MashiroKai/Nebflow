@@ -20,7 +20,6 @@
 
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
 import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow } from './neblink.js';
-import { openAgents } from './agentManager.js';
 import { createIconsIn, escapeHtml } from './utils.js';
 import { brand } from './brand.js';
 import { t } from './i18n.js';
@@ -35,7 +34,6 @@ export function initActivityBar() {
 
   initSidePanels();
   bindSettingsButton();
-  bindAgentsButton();
   bindAvatar();
 
   // Refresh NebLink state now and periodically (only while the page is visible)
@@ -237,13 +235,9 @@ function observeSettingsModal() {
 }
 
 // ── Agents ───────────────────────────────────────────────
-// Agents is a Canvas tab (same pattern as Teams/Flows). The button's active
-// state is synced by agentManager.js via canvas-tab-closed / restore events.
-function bindAgentsButton() {
-  const btn = document.getElementById('agents-btn');
-  if (!btn) return;
-  btn.addEventListener('click', () => openAgents());
-}
+// Agents is a Canvas tab (same pattern as Teams/Flows). Its button click and
+// pressed state are owned by canvas.js registerCanvasPanelButton (registered
+// from agentManager.js) — the 4-state toggle machine shared with Teams/Flows.
 
 // ── Avatar / login ───────────────────────────────────────
 function bindAvatar() {

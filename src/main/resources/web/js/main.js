@@ -78,6 +78,9 @@ import * as planMode from './planMode.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initLightbox } from './lightbox.js';
 import * as flowCanvas from './flowCanvas.js';
+// Side-effect import: registers the agents-btn Canvas panel toggle
+// (registerCanvasPanelButton) and the agents tab restore renderer.
+import './agentManager.js';
 import { initColResizers } from './colResizer.js';
 import { initActivityBar, toggleSideBar } from './activityBar.js';
 
@@ -3014,8 +3017,8 @@ document.getElementById('canvas-toggle-btn')?.addEventListener('click', () => {
     openCanvas();
   }
 });
-document.getElementById('teams-btn')?.addEventListener('click', () => flowCanvas.openTeams({ manual: true }));
-document.getElementById('flows-btn')?.addEventListener('click', () => flowCanvas.openFlows());
+// Teams/Flows/Agents button clicks are bound by canvas.js
+// registerCanvasPanelButton (registered from flowCanvas.js / agentManager.js).
 // Restore queued messages from localStorage (survives browser refresh)
 restoreQueue();
 // Restore Canvas tabs from localStorage (survives browser refresh).
