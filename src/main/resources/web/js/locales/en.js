@@ -51,6 +51,8 @@ export default {
   'messages.agentBadge': 'Sent by agent',
   'messages.notFriendBlocked': 'You can no longer message this contact',
   'messages.loginRequired': 'Log in to your nebflow account to use messages and contacts',
+  'login.popupBlocked': 'Popup blocked - allow popups and retry',
+  'login.openPage': 'Open login page',
   'messages.login': 'Log in',
   'messages.reconnecting': 'Connection lost, reconnecting…',
   'messages.networkError': 'Network error — please check your connection',
