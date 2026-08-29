@@ -12,10 +12,10 @@ import nebflow.core.task.{FileTaskStore, TaskStatus}
 import java.nio.file.{Files => JFiles}
 
 /**
- * Team Manager task tools (#D, spec 20260825_team-manager-task-tool-spec.md
- * §2.2/§2.3/§2.5/§3): non-team context hard rejection, create→update→list
- * smoke flow, WS teamTaskListUpdate event shape, blockedBy-at-create,
- * read-only List hard constraint, Nebula read-only via `team` param.
+ * Team task tools (任务工具重做 2026-08-30: tasks = progress display, injected
+ * into EVERY team member): non-team context hard rejection, create→update→
+ * list smoke flow, WS teamTaskListUpdate event shape, blockedBy-at-create,
+ * read-only List hard constraint, cross-team read via the `team` param.
  */
 class TeamTaskToolsSpec extends FunSuite:
 
