@@ -47,6 +47,34 @@ object SafetyMode:
 end SafetyMode
 
 // ============================================================
+// 递进式放行链 (2026-08-30): permission-card answers may carry an
+// optional `upgradeMode` — "allow this one AND switch the session to
+// <mode>". Escalation ladder: ConfirmEdits → AutoEdits → AutoAll.
+//
+// Wire contract (permissionAnswer):
+//   { approved: true, upgradeMode?: "auto-edits" | "auto-all" }
+//   — old replies without upgradeMode are byte-compatible (no upgrade).
+//   — a deny with upgradeMode is invalid: the upgrade is IGNORED (warn)
+//     and the deny proceeds unchanged (rule #12 spirit: never transform
+//     a reply into something the user did not click).
+//   — "confirm-edits" / unknown values are not escalation targets and
+//     are rejected here (route layer logs and proceeds as plain allow).
+// ============================================================
+object PermissionUpgrade:
+
+  /** Parse an escalation request off a permission-card reply. */
+  def parse(approved: Boolean, upgradeMode: Option[String]): Either[String, Option[SafetyMode]] =
+    upgradeMode match
+      case None         => Right(None)
+      case Some("auto-edits") if approved => Right(Some(SafetyMode.AutoEdits))
+      case Some("auto-all")   if approved => Right(Some(SafetyMode.AutoAll))
+      case Some(raw) if !approved =>
+        Left(s"upgradeMode '$raw' requires approved=true — deny replies must not carry an upgrade")
+      case Some(other) => Left(s"unknown upgradeMode '$other' — valid targets: auto-edits, auto-all")
+
+end PermissionUpgrade
+
+// ============================================================
 // F1 (#433): global safety mode
 //
 // The user's auto-all was only ever a single session's meta field — the
