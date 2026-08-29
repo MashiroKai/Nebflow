@@ -82,14 +82,16 @@ class TaskTtlSpec extends CatsEffectSuite:
     assert(taskExists("sess-b", "2"), "recent pending task survives")
     assert(!os.exists(tempRoot / "tasks" / "teams" / "demo" / "1.json"), "team completed task purged")
 
-  test("listVisible hides expired tasks without deleting files (lazy visibility)"):
+  test("listVisible shows pending/in_progress only — completed/failed never render (progress display)"):
     val now = Instant.now()
     val recent = now.minusSeconds(3600).toString
     val stale = now.minusSeconds(8 * 3600).toString
-    seedTask("vis-sid", "1", "completed", recent, recent)
+    seedTask("vis-sid", "1", "in_progress", recent, "")
     seedTask("vis-sid", "2", "failed", stale, stale)
+    seedTask("vis-sid", "3", "completed", recent, recent)
+    seedTask("vis-sid", "4", "pending", recent, "")
     val visible = store.listVisible("vis-sid").unsafeRunSync()
-    assertEquals(visible.map(_.id), List("1"), "expired row invisible via listVisible")
+    assertEquals(visible.map(_.id).sorted, List("1", "4"), "列表只显 pending+in_progress")
     assert(taskExists("vis-sid", "2"), "file still on disk until purge")
 
   test("purgeExpired in one scope deletes only expired rows there"):
