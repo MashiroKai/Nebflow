@@ -113,7 +113,9 @@ class ScheduleV2Spec extends CatsEffectSuite:
   // ------------------------------------------------------------------
   // Cache v2 (2026-08-11) → reminder refactor (2026-08-20 user ruling):
   //   - sessions / environment reminder types REMOVED
-  //   - tasks & schedule: root (Nebula) only; tasks needs real-user turns
+  //   - tasks: team sessions only (task redesign 2026-08-30) — gate lives
+  //     upstream in AgentCore (teamOfSession), collectAllIO includes the
+  //     reminder whenever text is non-empty; schedule: Nebula only
   //   - devices: caller supplies delta lines
   //   - time: suppressible via injectTime (system-event turns, ≥1h gap)
   // ------------------------------------------------------------------
@@ -162,7 +164,7 @@ class ScheduleV2Spec extends CatsEffectSuite:
       assert(!cats.contains("language"), cats)
       assert(cats.contains("time"), "time reminder must remain (持久化语义不受影响)")
 
-  test("collectAllIO tasks is root-only — non-Nebula agents never see the task list"):
+  test("collectAllIO tasks ride along whenever text is non-empty (gate lives upstream in AgentCore)"):
     for
       _ <- reset()
       reminders <- SystemReminders.collectAllIO(
@@ -170,13 +172,16 @@ class ScheduleV2Spec extends CatsEffectSuite:
         taskStore,
         Some("s1"),
         isRootAgent = false,
-        taskListText = "## Current Tasks (1 active)\n#1 [pending] Root-only",
+        taskListText = "## Current Tasks (1 active)\n#1 [pending] Team-scoped",
         deviceDelta = "+ Desktop-PC",
         language = Some("Chinese")
       )
     yield
       val cats = reminders.map(_.category)
-      assert(!cats.contains("tasks"), s"Manager/team/worker must NOT get the task list, got $cats")
+      // Task redesign (2026-08-30): AgentCore only renders taskListText for
+      // team-registered sessions — collectAllIO itself no longer gates on
+      // isRootAgent, so a non-root caller WITH text gets the reminder.
+      assert(cats.contains("tasks"), s"task reminder must follow the supplied text, got $cats")
       assert(cats.contains("devices"), s"devices stays for non-root agents, got $cats")
       assert(cats.contains("language"), s"language stays for non-root agents, got $cats")
       assert(cats.contains("time"), s"time stays for non-root agents, got $cats")
