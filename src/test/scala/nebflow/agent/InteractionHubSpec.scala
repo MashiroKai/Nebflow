@@ -95,7 +95,7 @@ class InteractionHubSpec extends CatsEffectSuite:
       d2 <- Deferred[IO, Boolean]
       _ <- hub ! InteractionHubCommand.Request(permRequest("r-old-1", d1))
       _ <- hub ! InteractionHubCommand.Request(permRequest("r-old-2", d2))
-      _ <- IO.sleep(50.millis)
+      _ <- IO.sleep(200.millis)
       // no requestId → FIFO by rootSessionId: completes the OLDEST (r-old-1)
       _ <- hub ! InteractionHubCommand.Answered(
         InteractionAnswered("", "root-1", Json.obj("approved" -> Json.fromBoolean(true)))
@@ -106,7 +106,7 @@ class InteractionHubSpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.Answered(
         InteractionAnswered("", "root-1", Json.obj("approved" -> Json.fromBoolean(false)))
       )
-      a2 <- d2.get
+      a2 <- d2.get.timeout(5.seconds)
       _ <- system.stopAll
     yield
       assertEquals(a1, true)
