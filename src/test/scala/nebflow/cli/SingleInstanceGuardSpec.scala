@@ -98,6 +98,74 @@ class SingleInstanceGuardSpec extends FunSuite:
     }
   }
 
+  // ============================================================
+  // R1 (2026-08-30): TIME_WAIT is NOT a foreign occupant.
+  // 20260830_restart-script-stability.md — a killed instance leaves its
+  // closed connections in kernel TIME_WAIT (macOS 2×MSL=30s); the old strict
+  // bind probe reported "port held by another program" and the restart died.
+  // Fix: connect probe disambiguates — refused → TW only → drain & boot.
+  // ============================================================
+
+  /** Build a real TIME_WAIT socket on an ephemeral port with NO listener:
+    * server accepts, closes its side FIRST (server side → TIME_WAIT on the
+    * local port), then the listener itself is closed — exactly the state a
+    * kill leaves behind (TW sockets, nothing listening). */
+  private def withTimeWaitSocket(f: Int => Unit): Unit =
+    val ss = new ServerSocket()
+    ss.bind(new InetSocketAddress("127.0.0.1", 0), 1)
+    val p = ss.getLocalPort
+    val client = new java.net.Socket("127.0.0.1", p)
+    val accepted = ss.accept()
+    accepted.close() // server-side close first → this 4-tuple's TIME_WAIT lives on port p
+    client.close()
+    ss.close()       // listener gone → only TIME_WAIT remains
+    try f(p)
+    finally () // nothing to close — both sockets are gone; TW expires on its own
+
+  test("R1: TIME_WAIT sockets classify as draining (probeOnce Left), not ForeignOccupant"):
+    withTimeWaitSocket { p =>
+      val r = SingleInstanceGuard.probeOnce("127.0.0.1", p)
+      assert(r.isLeft, s"TIME_WAIT must classify Left(draining), got $r")
+    }
+
+  test("R1: checkPort boots through TIME_WAIT (drainWaitMs=0 fail-open → PortFree)"):
+    withTimeWaitSocket { p =>
+      val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 0).unsafeRunSync()
+      assertEquals(st, SingleInstanceGuard.PortFree, "kill-and-restart must boot, not refuse")
+    }
+
+  test("R1: checkPort waits out TIME_WAIT and classifies PortFree once the bind frees"):
+    withTimeWaitSocket { p =>
+      // drainWaitMs slightly above one poll tick: the loop re-probes and
+      // either frees mid-loop (TW expired) or fails open at the ceiling —
+      // both paths end PortFree; the contract is "never ForeignOccupant".
+      val start = System.currentTimeMillis()
+      val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 1200).unsafeRunSync()
+      val elapsed = System.currentTimeMillis() - start
+      assertEquals(st, SingleInstanceGuard.PortFree)
+      // DrainPollMs = 1s — the loop must have polled at least once before
+      // failing open at the 1200ms ceiling (or the TW expired mid-loop and
+      // the strict bind freed; either way the wait actually happened).
+      assert(elapsed >= 900, s"must actually poll at least once (elapsed=$elapsed)")
+    }
+
+  test("R1 RED LINE: a live listener is NEVER drained past — real second instance still refused fast"):
+    // The single-instance guarantee: a real occupant must classify instantly
+    // (no drain wait, no fail-open) even though TIME_WAIT handling exists.
+    withSilentSocket { p =>
+      val start = System.currentTimeMillis()
+      val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 60_000).unsafeRunSync()
+      val elapsed = System.currentTimeMillis() - start
+      assert(st.isInstanceOf[SingleInstanceGuard.ForeignOccupant], s"live occupant must be refused, got $st")
+      assert(elapsed < 5_000, s"live occupant must classify instantly, not drain-wait (elapsed=$elapsed)")
+    }
+
+  test("R1 RED LINE: a live nebflow instance is focused, not drained past"):
+    withHttpServer("""{"product":"nebflow","status":"ok","version":"1.4.1"}""") { p =>
+      val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 60_000).unsafeRunSync()
+      assert(st.isInstanceOf[SingleInstanceGuard.NebflowInstance], s"got $st")
+    }
+
   test("health JSON carries the product marker") {
     // Contract side: /api/health must include "product":"nebflow" so the
     // guard's primary identification marker actually exists (RestApiRoutes).
