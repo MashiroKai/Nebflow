@@ -248,15 +248,25 @@ object InteractionHub:
       reply: cats.effect.Deferred[IO, Boolean]
   ): IO[Unit] =
     pending.modify { m =>
-      val oldest = m.toList
+      val candidates = m.toList
         .collect { case (rid, p) if p.rootSessionId == rootSessionId && p.kind == InteractionKind.AskUser => (rid, p) }
         .sortBy(_._2.createdAt)
-        .headOption
-      oldest match
+      // QC (2026-08-30): parity with handleAnswered's multiWarn — with several
+      // pending AskUser cards the passthrough answers the OLDEST, which may
+      // not be the card the user was looking at. Never silent about it.
+      val multiWarn =
+        if candidates.size > 1 then
+          logger.warn(
+            s"Chat-input passthrough: ${candidates.size} pending AskUser cards for rootSessionId=$rootSessionId — " +
+              "answering the OLDEST; the user should answer a specific card on the card itself (#12 parity)"
+          )
+        else IO.unit
+      candidates.headOption match
         case Some((rid, p)) =>
           (
             m - rid,
             for
+              _ <- multiWarn
               _ <- logger.info(
                 s"Chat-input passthrough: answering pending AskUser requestId=$rid root=$rootSessionId (${text.length} chars)"
               )
