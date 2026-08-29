@@ -51,6 +51,8 @@ export default {
   'messages.agentBadge': 'Agent 代发',
   'messages.notFriendBlocked': '对方已不是你的好友，无法发送消息',
   'messages.loginRequired': '登录 nebflow 账号后使用消息与联系人',
+  'login.popupBlocked': '弹窗被拦截，请允许后重试',
+  'login.openPage': '打开登录页',
   'messages.login': '登录',
   'messages.reconnecting': '连接已断开，正在重连…',
   'messages.networkError': '网络错误，请检查连接',

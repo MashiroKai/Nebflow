@@ -346,6 +346,60 @@ export function openLoginModal() {
   showLoginModal();
 }
 
+// ── Popup-blocker resilience ─────────────────────────────
+// Browsers only allow window.open inside the synchronous user-gesture stack.
+// The login flow must await the gateway (PKCE / device-flow start) before it
+// knows the authorize URL, so a plain window.open after the await is blocked.
+// Pattern: reserve an about:blank window synchronously in the click handler,
+// then navigate it once the URL arrives. If the reservation itself returns
+// null (blocker), fall back to a toast with a manual glass-control link.
+
+/** @type {Window|null} */
+let reservedPopup = null;
+
+/** Reserve a blank popup. Must be called synchronously in the gesture stack. */
+function reservePopup() {
+  try {
+    reservedPopup = window.open('about:blank', '_blank');
+  } catch (e) {
+    reservedPopup = null;
+  }
+  return reservedPopup;
+}
+
+/** Navigate the reserved popup to url (or close it when url is null). */
+function navigateReserved(url) {
+  const w = reservedPopup;
+  reservedPopup = null;
+  if (!w) return false;
+  try {
+    if (url) { w.location.href = url; return true; }
+    w.close();
+  } catch (e) { /* cross-origin or already closed - ignore */ }
+  return false;
+}
+
+/** Blocked fallback: toast with a manual glass-control link to url. */
+function popupBlockedFallback(url) {
+  const toast = document.createElement('div');
+  toast.className = 'nebflow-toast nebflow-toast-info';
+  const msg = document.createElement('span');
+  msg.textContent = t('login.popupBlocked');
+  const a = document.createElement('a');
+  a.className = 'glass-control nebflow-toast-link';
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = t('login.openPage');
+  toast.append(msg, a);
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 8000);
+}
+
 /**
  * Centered glass modal driving the NebLink login.
  * States: starting → waiting (PKCE browser login) → success | error, with a
@@ -428,7 +482,10 @@ function showLoginModal() {
       if (flowInfo?.authorizeUrl) window.open(flowInfo.authorizeUrl, '_blank');
       else if (flowInfo?.verificationUri) window.open(flowInfo.verificationUri, '_blank');
     });
-    modal.querySelector('#login-retry')?.addEventListener('click', () => startFlow());
+    modal.querySelector('#login-retry')?.addEventListener('click', () => {
+      reservePopup(); // synchronous gesture reservation for the retry
+      startFlow();
+    });
   };
 
   const startFlow = async () => {
@@ -453,9 +510,9 @@ function showLoginModal() {
         flowInfo = pkce;
         st.flowState = 'waiting';
         render('waiting');
-        // Auto-open the login page; the in-modal button is the fallback
-        // in case the popup was blocked.
-        window.open(pkce.authorizeUrl, '_blank');
+        // Navigate the popup reserved in the click gesture; the in-modal
+        // button stays as a second fallback if both were blocked.
+        if (!navigateReserved(pkce.authorizeUrl)) popupBlockedFallback(pkce.authorizeUrl);
         pollPkceState(onSuccess, onError);
         return;
       }
@@ -467,7 +524,9 @@ function showLoginModal() {
       st.userCode = flowInfo.userCode;
       st.flowState = 'waiting';
       render('waiting-device', { userCode: flowInfo.userCode });
-      if (flowInfo.verificationUri) window.open(flowInfo.verificationUri, '_blank');
+      if (flowInfo.verificationUri && !navigateReserved(flowInfo.verificationUri)) {
+        popupBlockedFallback(flowInfo.verificationUri);
+      }
       pollDeviceFlow(
         flowInfo.deviceCode,
         flowInfo.interval || 3,
@@ -478,10 +537,14 @@ function showLoginModal() {
     } catch (e) {
       finished = true;
       setPairing(false);
+      navigateReserved(null); // release the reserved popup on failure
       render('error', { message: e.message || '启动登录失败' });
     }
   };
 
+  // Reserve the popup synchronously inside the click gesture stack — the
+  // async startFlow below cannot open one without being blocked.
+  reservePopup();
   startFlow();
 }
 
