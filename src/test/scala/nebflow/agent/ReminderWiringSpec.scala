@@ -26,10 +26,11 @@ import scala.concurrent.duration.*
  * SystemReminders.collectAllIO semantics; these tests prove AgentCore's
  * pipeLlmCall actually passes the gating:
  *   ① system-event turns (ExternalEvent injection) inject ZERO time/tasks
- *   ② real-user turns inject time + full tasks render (first turn)
- *   ④ unchanged tasks on the next real-user turn render ONE "Tasks unchanged"
- *      line — no full re-send
- *   D6: systemStable carries the Task List Protocol section for Nebula
+ *   ② real-user turns inject time but NOT tasks for Nebula (task redesign
+ *      2026-08-30: task injection moved to team sessions; Nebula has no
+ *      task tools and its session is not team-registered)
+ *   D6 (revised): systemStable NO LONGER carries the Task List Protocol
+ *      section for Nebula (condition = agentCategory == "team")
  */
 class ReminderWiringSpec extends CatsEffectSuite:
 
@@ -105,7 +106,7 @@ class ReminderWiringSpec extends CatsEffectSuite:
   private def textOf(req: LlmRequest): String =
     req.messages.map(_.textContent).mkString("\n")
 
-  test("① system-event turn injects zero time/tasks; ② real-user turn injects both; ④ unchanged → one line"):
+  test("① system-event turn injects zero time/tasks; ② real-user turn injects time but Nebula gets NO tasks (task redesign)"):
     val system = ActorSystem("reminder-wiring")
     val tmp = os.temp.dir()
     seedNebula(tmp)
@@ -162,24 +163,20 @@ class ReminderWiringSpec extends CatsEffectSuite:
         assert(!textOf(req1).contains("Current time"), s"system-event turn must not inject time:\n${textOf(req1)}")
         assert(!textOf(req1).contains("Current Tasks"), s"system-event turn must not inject tasks:\n${textOf(req1)}")
         assert(!textOf(req1).contains("Tasks unchanged"), s"system-event turn must not inject tasks:\n${textOf(req1)}")
-        // D6: systemStable (lifecycle rebuild on turn 1) carries the protocol
+        // D6 revised (task redesign 2026-08-30): Nebula's systemStable must
+        // NOT carry the protocol section — it is team-category-only now
         req1.systemStable.foreach { s =>
-          assert(s.contains("## Task List Protocol"), s"Nebula systemStable must carry the protocol section")
+          assert(!s.contains("## Task List Protocol"), s"Nebula systemStable must not carry the protocol section (team-only):\n$s")
         }
-        // ② real-user turn: time + full render
+        // ② real-user turn: time injected, but NO tasks for Nebula — task
+        // injection moved to team-registered sessions; Nebula has no task
+        // tools and its session is not team-scoped
         assert(textOf(req2).contains("Current time"), s"real-user turn must inject time:\n${textOf(req2)}")
-        assert(textOf(req2).contains("## Current Tasks (1 active)"), s"first real-user turn renders the full list:\n${textOf(req2)}")
-        assert(textOf(req2).contains("wiring task"), s"full render carries the task line:\n${textOf(req2)}")
-        // ④ unchanged: ONE line, no full re-send
+        assert(!textOf(req2).contains("## Current Tasks"), s"task redesign: Nebula no longer gets the task reminder:\n${textOf(req2)}")
+        assert(!textOf(req2).contains("wiring task"), s"task redesign: Nebula must not see task lines:\n${textOf(req2)}")
+        // ③ next real-user turn: still no tasks
         assert(textOf(req3).contains("Current time"), s"real-user turn must inject time:\n${textOf(req3)}")
-        assert(
-          textOf(req3).contains("Tasks unchanged (1 active)"),
-          s"unchanged tasks must collapse to one line:\n${textOf(req3)}"
-        )
-        assert(
-          !textOf(req3).contains("## Current Tasks ("),
-          s"no full re-send on unchanged turns (contextMsg is request-only):\n${textOf(req3)}"
-        )
+        assert(!textOf(req3).contains("## Current Tasks"), s"task redesign: Nebula no longer gets the task reminder:\n${textOf(req3)}")
       program.unsafeRunSync()
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
@@ -187,7 +184,7 @@ class ReminderWiringSpec extends CatsEffectSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
 
-  test("② non-Nebula agent (Manager) gets zero tasks/schedule even on real-user turns"):
+  test("② unregistered Manager session gets zero tasks even on real-user turns"):
     val system = ActorSystem("reminder-wiring-mgr")
     val tmp = os.temp.dir()
     seedNebula(tmp)
@@ -232,6 +229,66 @@ class ReminderWiringSpec extends CatsEffectSuite:
         assert(!sys1.contains("## Task List Protocol"), s"Task List Protocol is Nebula-only:\n$sys1")
       program.unsafeRunSync()
     finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+
+  /** Task redesign 2026-08-30: task injection now targets team sessions.
+    * A team-registered agent (category="team") gets the full task render on
+    * its real-user turn + the Task List Protocol section in systemStable. */
+  test("③ team-registered agent gets tasks on real-user turns (task redesign)"):
+    val system = ActorSystem("reminder-wiring-team")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val sid = "wiring-team-member"
+      val teamName = "t-redesign"
+      // team-scoped task store key = "team:<name>"
+      FileTaskStore
+        .create(nebflow.core.task.TaskStore.teamScopeKey(teamName), TaskCreateInput(subject = "team task", description = "d"))
+        .unsafeRunSync()
+      val program = for
+        _ <- nebflow.core.flow.TeamSessionRegistry.clear
+        _ <- nebflow.core.flow.TeamSessionRegistry.registerSession(teamName, "Backend", sid)
+        requests <- IO.ref(List.empty[LlmRequest])
+        resources <- mkResources(system, tmp, CaptureLlm(requests))
+        memberDef = AgentDef(
+          name = "Backend",
+          description = "team member under test",
+          tools = List("Read"),
+          category = "team",
+          systemPrompt = ""
+        )
+        actorRef <- system.spawn(
+          AgentActor(
+            agentDef = memberDef,
+            resources = resources,
+            wsSend = _ => IO.unit,
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("reminder-wiring-team")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(
+          _ + (sid -> AgentRecord(sid, actorRef, AgentKind.Team, sid, None))
+        )
+        _ <- actorRef ! AgentCommand.UserInput("hello from the user", None, Some("cmid-1"))
+        _ <- waitUntil(15.seconds)(requests.get.map(_.nonEmpty))
+        req1 <- requests.get.map(_.head)
+        sys1 = req1.systemStable.getOrElse("")
+      yield
+        assert(textOf(req1).contains("Current time"), s"real-user turn injects time:\n${textOf(req1)}")
+        assert(textOf(req1).contains("## Current Tasks (1 active)"), s"team member gets the full task render:\n${textOf(req1)}")
+        assert(textOf(req1).contains("team task"), s"task line present:\n${textOf(req1)}")
+        assert(sys1.contains("## Task List Protocol"), s"team-category systemStable carries the protocol section:\n$sys1")
+      program.unsafeRunSync()
+    finally
+      nebflow.core.flow.TeamSessionRegistry.clear.unsafeRunSync()
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()

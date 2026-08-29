@@ -65,9 +65,10 @@ object SystemReminders:
    *  - time: injected on real-user turns always; on system-event turns
    *    (mail/external/skill injections) at most once per hour — the caller
    *    passes `injectTime` after checking the gap.
-   *  - tasks: Nebula (root) only, real-user turns only; the caller supplies
+   *  - tasks: team sessions only, real-user turns only (task redesign
+   *    2026-08-30 — moved from Nebula to team members); the caller supplies
    *    pre-rendered full/delta/unchanged text (change detection lives in
-   *    AgentCore). Manager/team agents query via the TaskList tool instead.
+   *    AgentCore, gated on TeamSessionRegistry.teamOfSession).
    *  - schedule: Nebula (root) only.
    *  - sessions & environment reminder types REMOVED (user ruling: sessions
    *    outdated; environment change notifications cut — only stable fields
@@ -97,7 +98,11 @@ object SystemReminders:
         reminders = (if injectTime then collectAll(isUserTurn = true) else Nil) ++
           (if isRootAgent then pendingScheduleReminder(pending) else None) ++
           devicesReminder(deviceDelta) ++
-          (if isRootAgent then tasksReminder(taskListText) else None) ++
+          // Task redesign (2026-08-30): task reminder targets team sessions, not
+          // Nebula. The caller (AgentCore) only renders taskListText when the
+          // session is team-registered, so the gate lives upstream — include the
+          // reminder whenever text is non-empty (schedule stays Nebula-only).
+          tasksReminder(taskListText) ++
           languageReminder(language)
       yield reminders
 
@@ -106,7 +111,7 @@ object SystemReminders:
     if deviceDelta.isEmpty then None
     else Some(SystemReminder("devices", s"Devices changed:\n$deviceDelta"))
 
-  /** Current task list — Nebula-only user-turn reminder, never part of systemStable.
+  /** Current task list — team-session user-turn reminder, never part of systemStable.
     * The caller (AgentCore) supplies full / delta / unchanged text. */
   private def tasksReminder(taskListText: String): Option[SystemReminder] =
     if taskListText.isEmpty then None
