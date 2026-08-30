@@ -353,12 +353,10 @@ export function renderFlowsDropdown() {
         '<div class="flows-line">' +
           '<span class="flows-name" title="' + esc(f.flowName || '') + '">' + esc(f.flowName || '') + '</span>' +
           '<span class="flows-progress">' + esc(t('flows.progress', { done, total })) + '</span>' +
-        '</div>' +
-        '<div class="flows-meta">' +
           '<span class="flows-elapsed">' + esc(elapsed) + '</span>' +
-          '<button class="flows-cancel" data-instance-id="' + esc(f.instanceId || '') + '">' + esc(t('flows.cancel')) + '</button>' +
         '</div>' +
       '</div>' +
+      '<button class="flows-cancel" data-instance-id="' + esc(f.instanceId || '') + '">' + esc(t('flows.cancel')) + '</button>' +
     '</div>';
   }).join('');
 

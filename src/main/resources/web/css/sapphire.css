@@ -19,6 +19,15 @@
   --amber-glow: 255 180 90;
   --amber-dark: 255 168 60;
 
+  /* Unified panel design (20260830 spec §6.2, author-ruled counter colors):
+     flow counter yellow; --accent-agent-light deepens the sapphire badge in
+     the light theme only (dark keeps --sapphire, 0825 frozen). Triplet form
+     so rgb(var(--token) / alpha) tint composition works like --sapphire.
+     Light flow value = the spec's fallback #7a6200 (5.39:1 over the badge
+     base — both contrast bars cleared; implementer choice per §6.2 note). */
+  --accent-flow: 122 98 0;
+  --accent-agent-light: 70 99 156;
+
   /* Glass surface — light: transparent, deep frost */
   --glass-bg: rgba(255, 255, 255, 0.55);
   --glass-blur: 24px;
@@ -49,6 +58,9 @@
     --amber: 255 168 60;
     --amber-glow: 255 190 120;
     --amber-dark: 255 168 60;
+
+    /* Unified panel spec §6.2: dark flow counter yellow #e8b73f (9.15:1). */
+    --accent-flow: 232 183 63;
 
     --glass-bg: rgba(24, 28, 38, 0.68);
     --glass-border: rgba(255, 255, 255, 0.06);
