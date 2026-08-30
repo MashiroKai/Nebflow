@@ -18,12 +18,6 @@ import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
 import { notifyVoiceState } from './micOrb.js';
 import { showToast } from './modal.js';
 
-// Voice hotkey (author ruling 2026-08-30): hold ⌘⇧S (macOS) / Ctrl+Shift+S
-// elsewhere to dictate, release to recognize + insert into the primary input.
-// initInput registers the primary view's voice controller here — the hotkey
-// dispatches to it, sharing the engine + state machine with the mic-button path.
-let voiceHotkeyCtrl = null;
-
 // ---------- Large text auto-attachment (paste detection) ----------
 const LARGE_TEXT_THRESHOLD = 1000;
 // Conversion cap (user ruling 2026-08-27, 方案①): pastes larger than this are
@@ -1469,11 +1463,6 @@ export function initInput(view) {
     input.focus();
   }
 
-  // Register the primary view's voice controller for the global hotkey
-  // (2026-08-30 author ruling): the hotkey shares this exact engine + state
-  // machine with the mic-button toggle path, so behavior is identical.
-  voiceHotkeyCtrl = { start: startVoice, stop: stopVoice, active: () => voiceActive };
-
   // Click-toggle voice (user ruling 2026-08-25 21:34: tap once to start, tap
   // again to stop — replaces the old push-and-hold). Also spec §3.3.
   function onVoiceToggle(e) {
@@ -1744,45 +1733,3 @@ async function addPathAttachment({ path, rootPath }, view, target) {
   const file = new File([detail.content], name, { type: 'text/plain' });
   addFileAttachment(file, null, target);
 }
-
-// ── Voice hotkey (author ruling 2026-08-30) ─────────────────────────────
-// Hold ⌘⇧S (macOS) / Ctrl+Shift+S (Win/Linux) to dictate; release to
-// recognize + insert. Dispatches to the primary view's voice controller
-// (registered above in initInput) so it shares the engine + state machine with
-// the mic-button toggle path. keydown preventDefault blocks the browser's
-// default Save-As / Ctrl+Shift+S; keyup is left to pass through so other
-// Ctrl/Cmd+Shift+S usage in the app is unaffected on release.
-
-/** True when the event is the voice-hotkey chord for this platform. */
-export function isVoiceHotkeyCombo(e) {
-  const isMac = /Mac|iP(hone|ad|od)/i.test(navigator.platform || '');
-  const k = (e.key || '');
-  if (k !== 's' && k !== 'S') return false;
-  return isMac ? (e.metaKey && e.shiftKey) : (e.ctrlKey && e.shiftKey);
-}
-
-/** Start dictation via the hotkey (no-op if already dictating). */
-export function startVoiceHotkey() {
-  if (voiceHotkeyCtrl && !voiceHotkeyCtrl.active()) voiceHotkeyCtrl.start();
-}
-
-/** Stop dictation via the hotkey (no-op if not dictating). */
-export function stopVoiceHotkey() {
-  if (voiceHotkeyCtrl && voiceHotkeyCtrl.active()) voiceHotkeyCtrl.stop();
-}
-
-let voiceHotkeyDown = false;
-document.addEventListener('keydown', (e) => {
-  if (!isVoiceHotkeyCombo(e)) return;
-  e.preventDefault();                      // block Save As / Ctrl+Shift+S
-  if (e.repeat) return;                    // ignore held-key repeat
-  if (voiceHotkeyDown) return;             // already started
-  voiceHotkeyDown = true;
-  startVoiceHotkey();
-});
-document.addEventListener('keyup', (e) => {
-  if (!voiceHotkeyDown) return;
-  if (e.key !== 's' && e.key !== 'S') return;   // stop on releasing S (any modifier order)
-  voiceHotkeyDown = false;
-  stopVoiceHotkey();
-});
