@@ -1823,10 +1823,14 @@ function renderBgAgentDropdown() {
     return '<div class="bg-task-row' + (rowState === 'done' ? ' done' : '') + '" role="listitem" tabindex="0" ' + clickAttr + '>' +
       '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
-        '<div class="bg-task-line">' +
+        // Meta slots (state / kind / uptime) on the FIRST line — fixed set,
+        // never wraps the name (user ruling 21: agent name is ALWAYS the
+        // second line, visually separated from the labels).
+        '<div class="bg-task-line bg-task-meta">' +
           '<span class="bg-task-state bg-state-' + rowState + '">' + escapeHtml(statusLabel) + '</span>' +
-          kindPart + namePart + retriesPart + uptimePart +
+          kindPart + retriesPart + uptimePart +
         '</div>' +
+        '<div class="bg-task-line bg-task-name-line">' + namePart + '</div>' +
         stuckPart + toolPart +
       '</div>' +
     '</div>';
