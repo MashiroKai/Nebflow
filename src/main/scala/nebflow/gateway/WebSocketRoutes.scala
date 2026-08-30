@@ -477,6 +477,8 @@ class WebSocketRoutes(
             }
           _ <- logger.info("WebSocket client connected")
           thinkingCfg <- sharedResources.thinkingConfigRef.get
+          workScheduleCfg <- sharedResources.freezeScheduleRef.get
+          skipUntil <- sharedResources.freezeSkipUntilRef.get
           sttSvc <- sttServiceRef.get
           toolsList = ToolRegistry.ALL_TOOLS.map(t =>
             io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
@@ -492,6 +494,15 @@ class WebSocketRoutes(
                   "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
                   "version" -> nebflow.Version.string.asJson,
                   "thinking" -> thinkingCfg.asJson,
+                  "workSchedule" -> workScheduleCfg.asJson,
+                  // 现象 2 契约（2026-08-30）：连接初始态即携带全局冻结状态——
+                  // 页面加载时若已在冻结窗口（且无活跃 agent 产生 frozen 事件），
+                  // 前端输入栏禁用状态机必须能直接读到当前冻结态。
+                  "freezeState" -> nebflow.core.schedule.FreezeSchedule.freezeStateNode(
+                    workScheduleCfg,
+                    skipUntil,
+                    System.currentTimeMillis()
+                  ).asJson,
                   "stt" -> SttService.serverConfigNode(sttSvc),
                   "tools" -> toolsList.asJson,
                   "mcpServers" -> mcpServers.asJson
@@ -767,6 +778,7 @@ class WebSocketRoutes(
     for
       thinkingCfg <- sharedResources.thinkingConfigRef.get
       workScheduleCfg <- sharedResources.freezeScheduleRef.get
+      skipUntil <- sharedResources.freezeSkipUntilRef.get
       sttSvc <- sttServiceRef.get
       mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
         io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
@@ -778,6 +790,15 @@ class WebSocketRoutes(
           "version" -> nebflow.Version.string.asJson,
           "thinking" -> thinkingCfg.asJson,
           "workSchedule" -> workScheduleCfg.asJson,
+          // 现象 2 契约（2026-08-30）：全局冻结态节点（enabled/frozen/skipped/
+          // nextChangeAt）——WS 连接初始态、配置热更、skipFreeze 后均随广播刷新，
+          // 前端输入栏禁用状态机以此为准（含 skip 语义，避免按 workSchedule 自行
+          // 推算时误判被跳过的窗口仍冻结）。
+          "freezeState" -> nebflow.core.schedule.FreezeSchedule.freezeStateNode(
+            workScheduleCfg,
+            skipUntil,
+            System.currentTimeMillis()
+          ).asJson,
           "stt" -> SttService.serverConfigNode(sttSvc),
           "tools" -> toolsList.asJson,
           "mcpServers" -> mcpServers.asJson
@@ -3700,7 +3721,11 @@ class WebSocketRoutes(
             s"Freeze window skipped (skipFreeze; skipUntil=${until.map(u => new java.util.Date(u).toString).getOrElse("none")})"
           ) *>
             sharedResources.freezeSkipUntilRef.set(until) *>
-            nebflow.core.processor.FreezeScheduler.scan(sharedResources)
+            nebflow.core.processor.FreezeScheduler.scan(sharedResources) *>
+            // 现象 2 契约（2026-08-30）：跳过 → 立即广播全局冻结态——前端输入栏
+            // 状态机从 serverConfig.freezeState 读 frozen=false，不等任何 agent
+            // 的 resumed 事件（无活跃 agent 时也要即时解除禁用）。
+            broadcastServerConfig
         else IO.unit
     yield ()
   end skipCurrentFreezeWindow
