@@ -164,9 +164,10 @@
   line-height: 1.4;
 }
 
-/* Circle completion control — Apple Reminders style (§6 frozen: 20×20px
-   hit area, 14px glyph, 1.5px border at 40% alpha). 待办区专属 (裁定 19:56:
-   圆圈 = 用户可操作区专属). */
+/* ── Row status glyph (纯进展可视化, #15 不再有待办): ──
+   pending  = 静态小方框 (.task-check-box, #15 更小——观感「排队/等待执行」)
+   in_progress = 独立 spinner 圆环本体 (裁定⑤; spinner 在方框中转禁).
+   All read-only (aria-hidden); row aria-label carries the status. */
 .task-check {
   flex-shrink: 0;
   width: 20px;
@@ -178,86 +179,12 @@
   justify-content: center;
 }
 
-/* 任务区专属 (裁定 19:56): square glyph — read-only observation, must NOT
-   look clickable. Same metrics, square corner. */
+/* 任务区 pending: small static square — #15 更小, 与 in_progress spinner 视觉
+   区分明确 (20px 独立 spinner vs 12px 静态小方框). */
 .task-check-box {
-  border-radius: 4px;
-}
-
-.task-check-clickable {
-  cursor: pointer;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-
-.task-check-glyph {
-  display: flex;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-/* lucide replaces the <i> with an <svg> carrying the same class — the
-   selector must target the svg itself, not a descendant. */
-svg.task-check-glyph {
-  width: 14px;
-  height: 14px;
-}
-
-/* Hover previews a faint sapphire check (§5.1) */
-.task-check-clickable:hover {
-  border-color: rgb(var(--sapphire) / 0.7);
-}
-
-.task-check-clickable:hover .task-check-glyph {
-  opacity: 0.35;
-  color: rgb(var(--sapphire));
-}
-
-.task-check-clickable:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
-}
-
-/* WS down (§4): circles visibly disabled; JS also ignores clicks */
-.task-ws-down .task-check-clickable {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.task-ws-down .task-check-clickable:hover .task-check-glyph {
-  opacity: 0;
-}
-
-/* Completing: filled sapphire + white check, brief scale pulse (§5.1) */
-.task-completing {
-  pointer-events: none;
-}
-
-.task-completing .task-check {
-  background: rgb(var(--sapphire));
-  border-color: rgb(var(--sapphire));
-  animation: task-check-fill 0.18s ease;
-}
-
-.task-completing .task-check-glyph {
-  opacity: 1;
-  color: #fff;
-}
-
-@keyframes task-check-fill {
-  0%   { transform: scale(1); }
-  50%  { transform: scale(1.18); }
-  100% { transform: scale(1); }
-}
-
-/* Collapse-out after the fill beat (§5.1, ~220ms) */
-.task-collapsing {
-  animation: task-collapse 0.22s ease forwards;
-  overflow: hidden;
-}
-
-@keyframes task-collapse {
-  from { opacity: 1; max-height: 32px; }
-  to   { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
 }
 
 /* in_progress (第七件 裁定⑤): the spinner IS the glyph — a standalone ring
@@ -313,6 +240,19 @@ svg.task-check-glyph {
   margin-top: 1px;
 }
 
+/* #15 三级分组: per-task Team · member (谁在执行). Quiet meta line under the
+   subject/desc; grouped tasks read clearly, ungrouped carry none. */
+.task-meta {
+  display: block;
+  margin-top: 1px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-muted, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .task-active .task-label {
   font-weight: 500;
 }
@@ -354,27 +294,6 @@ svg.task-check-glyph {
   to   { opacity: 1; transform: translateX(0); }
 }
 
-/* ── v3 裁定 3: 跨区移动 (任务区 → 待办区, 进行→待确认) ──
-   Old-zone row fades out (160ms), then redraw plays .task-zone-enter on the
-   new side. 克制: 只用于状态变化瞬间, 不循环不常驻. */
-.task-item.task-leaving {
-  animation: task-leave 0.16s ease forwards;
-}
-
-@keyframes task-leave {
-  from { opacity: 1; }
-  to   { opacity: 0; }
-}
-
-.task-item.task-zone-enter {
-  animation: task-zone-enter 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-@keyframes task-zone-enter {
-  from { opacity: 0; transform: translateY(-10px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   .task-toggle:hover {
@@ -383,22 +302,13 @@ svg.task-check-glyph {
   }
 }
 
-/* ── Reduced motion (§5 A11/A15): all animation becomes instant;
-   the hover check preview stays as a static state change ── */
+/* ── Reduced motion (§5 A11/A15): all animation becomes instant ── */
 @media (prefers-reduced-motion: reduce) {
   .task-check.task-check-spin {
     animation: none;
     border-top-color: rgb(var(--sapphire) / 0.25);
   }
-  .task-check-clickable,
-  .task-check-glyph {
-    transition: none;
-  }
-  .task-completing .task-check,
-  .task-collapsing,
-  .task-item.task-entering,
-  .task-item.task-leaving,
-  .task-item.task-zone-enter {
+  .task-item.task-entering {
     animation: none;
   }
 }

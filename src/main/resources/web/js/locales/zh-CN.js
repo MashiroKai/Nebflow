@@ -567,17 +567,13 @@ export default {
   // needs_confirmation/cancel/return/archive 键随退役路径一并清除。
   'task.expand': '展开',
   'task.collapse': '收起',
-  // v3 双区（§15.11）：待办区 / 任务区
-  'task.sectionTodo': '待办',
+  // #15 纯进展可视化（§15.11）：单一任务区，todo/确认键随退役路径清除。
   'task.sectionProgress': '任务',
-  'task.todoEmpty': '暂无待办',
   'task.progressEmpty': '暂无任务',
   'task.justNow': '刚刚',
   'task.pendingShort': '排队中',
-  'task.statsBoth': '{todo} 待办 · {progress} 任务',
-  'task.completeAria': '标记「{subject}」为完成',
+  'task.statsProgress': '{progress} 任务',
   'task.inProgressShort': '进行中',
-  'task.completeError': '标记完成失败，请重试',
   'ref.cardAria': '引用',
   'ref.expand': '展开',
   'ref.collapse': '收起',
