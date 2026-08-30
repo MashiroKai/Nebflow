@@ -2,6 +2,7 @@ package nebflow.core.schedule
 
 import io.circe.parser.parse
 import io.circe.syntax.*
+import cats.effect.unsafe.implicits.global
 import FreezeSchedule.given
 import munit.FunSuite
 
@@ -430,6 +431,54 @@ class FreezeScheduleSpec extends FunSuite:
     val j = node(overnight, None, at(2, 0))
     assertEquals(nodeField(j, "frozen").flatMap(_.asBoolean), Some(true))
     assertEquals(nodeField(j, "skipped").flatMap(_.asBoolean), Some(false))
+  }
+
+  // ── skip 持久化（P0 2026-08-30：skip 状态非持久化——「点跳过→刷新/重启→
+  // 输入框重新冻结」；修=独立文件 freeze-skip.json，启动恢复、到期清理）────
+
+  test("skip persist round-trip: write → load 原值; None → 删除残留") {
+    val root = os.temp.dir(prefix = "nb-skip-persist-")
+    try
+      val t = at(11, 0)
+      FreezeSchedule.persistSkip(root, Some(t)).unsafeRunSync()
+      assertEquals(FreezeSchedule.loadSkipUntil(root).unsafeRunSync(), Some(t))
+      assertEquals(os.exists(FreezeSchedule.skipPersistPath(root)), true)
+      FreezeSchedule.persistSkip(root, None).unsafeRunSync()
+      assertEquals(FreezeSchedule.loadSkipUntil(root).unsafeRunSync(), None)
+      assertEquals(os.exists(FreezeSchedule.skipPersistPath(root)), false)
+    finally os.remove.all(root)
+  }
+
+  test("skip persist: 损坏/缺失文件 → None 不炸（fail-safe 加载）") {
+    val root = os.temp.dir(prefix = "nb-skip-persist-")
+    try
+      os.write(FreezeSchedule.skipPersistPath(root), "not-json{{{")
+      assertEquals(FreezeSchedule.loadSkipUntil(root).unsafeRunSync(), None)
+    finally os.remove.all(root)
+  }
+
+  test("skip persist: load 不过滤过期——>now 判断与清理由调用方（GatewayMain）负责") {
+    // 语义钉：loadSkipUntil 返回原始值；「过期 → 丢弃+删盘」是启动加载方
+    // （t > now 判断）的职责，持久化层不隐式改变「跳过非永久」语义。
+    val root = os.temp.dir(prefix = "nb-skip-persist-")
+    try
+      val expired = at(9, 0) // 相对 at(10, 0) 已过期
+      FreezeSchedule.persistSkip(root, Some(expired)).unsafeRunSync()
+      assertEquals(FreezeSchedule.loadSkipUntil(root).unsafeRunSync(), Some(expired))
+    finally os.remove.all(root)
+  }
+
+  test("skip persist: persistSkip 写盘文件内容为 {skipUntil: epoch}") {
+    val root = os.temp.dir(prefix = "nb-skip-persist-")
+    try
+      val t = at(11, 0)
+      FreezeSchedule.persistSkip(root, Some(t)).unsafeRunSync()
+      val parsed = parse(os.read(FreezeSchedule.skipPersistPath(root))).toOption
+      assertEquals(
+        parsed.flatMap(_.hcursor.downField("skipUntil").as[Long].toOption),
+        Some(t)
+      )
+    finally os.remove.all(root)
   }
 
   // ── codec round-trip ──────────────────────────────────────

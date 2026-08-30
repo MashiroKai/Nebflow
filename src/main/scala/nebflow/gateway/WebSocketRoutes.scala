@@ -3721,7 +3721,15 @@ class WebSocketRoutes(
             s"Freeze window skipped (skipFreeze; skipUntil=${until.map(u => new java.util.Date(u).toString).getOrElse("none")})"
           ) *>
             sharedResources.freezeSkipUntilRef.set(until) *>
-            nebflow.core.processor.FreezeScheduler.scan(sharedResources) *>
+              // P0（2026-08-30）：skip 持久化——重启/刷新后重连仍可见 skipped=true
+              // （此前仅内存 Ref，后端进程重启即丢 → 输入框重新冻结）。best-effort：
+              // 写盘失败不阻塞解冻（scan/broadcast 照常），warn 留痕。
+              nebflow.core.schedule.FreezeSchedule
+                .persistSkip(nebflow.core.PathUtil.dataRoot, until)
+                .handleErrorWith(e =>
+                  logger.warn(s"Failed to persist freeze skip: ${e.getMessage}")
+                ) *>
+              nebflow.core.processor.FreezeScheduler.scan(sharedResources) *>
             // 现象 2 契约（2026-08-30）：跳过 → 立即广播全局冻结态——前端输入栏
             // 状态机从 serverConfig.freezeState 读 frozen=false，不等任何 agent
             // 的 resumed 事件（无活跃 agent 时也要即时解除禁用）。
