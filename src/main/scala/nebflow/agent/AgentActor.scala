@@ -3495,6 +3495,18 @@ object AgentActor extends AgentCore with AgentSession:
       }
     }
 
+  /** 当前冻结窗口态的下一翻转点（现象 2 契约补全 2026-08-30）：恢复/唤醒路径
+    * 发 Resumed 事件时附带——工作态 = 下一冻结开始时刻（前端展示「下一段 HH:mm
+    * 再冻结」），配置关闭/全天无翻转 = None。错误族恢复（与时间表无关）也带当前
+    * 窗口态，让前端输入栏状态机始终有权威依据。 */
+  private def currentNextChange(resources: SharedResources): IO[Option[Long]] =
+    for
+      cfg <- resources.freezeScheduleRef.get
+      skipUntil <- resources.freezeSkipUntilRef.get
+    yield nebflow.core.schedule.FreezeSchedule
+      .evalWithSkip(cfg, skipUntil, System.currentTimeMillis())
+      .nextChangeAt
+
   /** v2 错误冻结转入辅助（§3.3/§6.1 步骤 3）：transient 类 LLM 失败 → 立即
     * persist（复用 fatal 路径的 save 模式）→ enterErrorFrozen——冻结期间零 LLM
     * 调用（D2），退避到期 CheckFreezeGate 续跑（重新过 gate，天然闭环）。 */
@@ -3638,7 +3650,7 @@ object AgentActor extends AgentCore with AgentSession:
               result <-
                 if !window.frozen then
                   logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-resume", "reason=outside-freeze-segment")
-                  emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
+                  emitStream(state.wsSend, AgentStreamEvent.Resumed(window.nextChangeAt), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
                     pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo)
                 else
                   IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, window.nextChangeAt, reason, retryCount, escalation))
@@ -3658,8 +3670,10 @@ object AgentActor extends AgentCore with AgentSession:
                 "freeze-resume",
                 s"reason=${reasonStr(reason)} backoff-elapsed"
               )
-              emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
-                pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo)
+              currentNextChange(resources).flatMap { nextChange =>
+                emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
+                  pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo)
+              }
             else
               IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
 
@@ -3685,8 +3699,10 @@ object AgentActor extends AgentCore with AgentSession:
               .withMailUsedThisTurn(false)
               .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
             logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"text=${text.take(60)}")
-            emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
-              pipeLlmCall(agentDef, resources, depth, parentRef, wakeState, replyTo2, DispatchCause.UserWake)
+            currentNextChange(resources).flatMap { nextChange =>
+              emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
+                pipeLlmCall(agentDef, resources, depth, parentRef, wakeState, replyTo2, DispatchCause.UserWake)
+            }
         else
           // 系统注入（Mail/Delegate/BackoffSupervisor continue）：排队不唤醒——
           // 恢复后的 turn 结束时由 finishTurnCont drain（head 重发，idle 全量处理）。
@@ -3709,8 +3725,10 @@ object AgentActor extends AgentCore with AgentSession:
           .withAskMode(Some(question))
           .withStatus(AgentStatus.Processing)
           .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
-        emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
-          pipeLlmCall(agentDef, resources, depth, parentRef, askState, None, DispatchCause.UserWake)
+        currentNextChange(resources).flatMap { nextChange =>
+          emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
+            pipeLlmCall(agentDef, resources, depth, parentRef, askState, None, DispatchCause.UserWake)
+        }
 
       case AgentCommand.SkillActivate(skillName, input, _, skillContent, _) =>
         // 用户动作（D2）：唤醒（镜像 idle 的 SkillActivate handler）。
@@ -3723,7 +3741,9 @@ object AgentActor extends AgentCore with AgentSession:
           .withStatus(AgentStatus.Processing)
           .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
         for
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Resumed, isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None)
+          _ <- currentNextChange(resources).flatMap { nextChange =>
+            emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None)
+          }
           _ <- emitInjectedUserEvent(state.wsSend, state.sessionId, input, "skill", None)
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None, DispatchCause.UserWake)
         yield result

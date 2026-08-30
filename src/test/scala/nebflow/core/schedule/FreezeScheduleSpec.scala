@@ -383,6 +383,55 @@ class FreezeScheduleSpec extends FunSuite:
     assert(FreezeSchedule.mergeValidate(existing, parse("""not-json""").toOption.getOrElse(io.circe.Json.Null)).isLeft)
   }
 
+  // ── freezeStateNode（现象 2 契约 2026-08-30）────────────────
+
+  private def node(cfg: FreezeScheduleConfig, skipUntil: Option[Long], now: Long): io.circe.Json =
+    FreezeSchedule.freezeStateNode(cfg, skipUntil, now)
+
+  private def nodeField(j: io.circe.Json, f: String): Option[io.circe.Json] =
+    j.hcursor.downField(f).focus
+
+  test("freezeStateNode: enabled + in-window → frozen=true, nextChangeAt=窗口结束, segments 携带") {
+    val j = node(twoSegment, None, at(10, 0))
+    assertEquals(nodeField(j, "enabled").flatMap(_.asBoolean), Some(true))
+    assertEquals(nodeField(j, "frozen").flatMap(_.asBoolean), Some(true))
+    assertEquals(nodeField(j, "skipped").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "nextChangeAt").flatMap(_.asNumber).flatMap(_.toLong), Some(at(12, 0)))
+    // 段信息：与 workSchedule 一致（前端「下一段 HH:mm」展示直接读节点，无需另解析）
+    assertEquals(nodeField(j, "segments").flatMap(_.asArray).map(_.size), Some(2))
+  }
+
+  test("freezeStateNode: enabled + outside window → frozen=false, nextChangeAt=下一冻结开始") {
+    val j = node(twoSegment, None, at(13, 0))
+    assertEquals(nodeField(j, "enabled").flatMap(_.asBoolean), Some(true))
+    assertEquals(nodeField(j, "frozen").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "skipped").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "nextChangeAt").flatMap(_.asNumber).flatMap(_.toLong), Some(at(14, 0)))
+  }
+
+  test("freezeStateNode: skipped window → frozen=false, skipped=true, nextChangeAt 保持窗口结束") {
+    // skipUntil 落在窗口内 → applySkip 把 frozen 翻 false；nextChangeAt 保持 raw 窗口结束
+    val j = node(twoSegment, Some(at(11, 0)), at(10, 0))
+    assertEquals(nodeField(j, "enabled").flatMap(_.asBoolean), Some(true))
+    assertEquals(nodeField(j, "frozen").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "skipped").flatMap(_.asBoolean), Some(true))
+    assertEquals(nodeField(j, "nextChangeAt").flatMap(_.asNumber).flatMap(_.toLong), Some(at(12, 0)))
+  }
+
+  test("freezeStateNode: disabled → frozen=false, skipped=false, nextChangeAt=null") {
+    val j = node(FreezeScheduleConfig(enabled = false, segments = List(FreezeSegment("09:00", "12:00"))), None, at(10, 0))
+    assertEquals(nodeField(j, "enabled").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "frozen").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "skipped").flatMap(_.asBoolean), Some(false))
+    assertEquals(nodeField(j, "nextChangeAt").map(_.isNull), Some(true))
+  }
+
+  test("freezeStateNode: 跨午夜段 in-window → frozen=true（黑名单语义）") {
+    val j = node(overnight, None, at(2, 0))
+    assertEquals(nodeField(j, "frozen").flatMap(_.asBoolean), Some(true))
+    assertEquals(nodeField(j, "skipped").flatMap(_.asBoolean), Some(false))
+  }
+
   // ── codec round-trip ──────────────────────────────────────
 
   test("codec round-trip (incl. overnight segment)") {

@@ -510,8 +510,10 @@ enum AgentStreamEvent:
       escalation: Option[EscalationInfo] = None
   )
 
-  /** 冻结调度：恢复（出冻结段自动恢复 / 用户输入唤醒 / 交互豁免路径不会发出本事件）。 */
-  case Resumed
+  /** 冻结调度：恢复（出冻结段自动恢复 / 用户输入唤醒 / 交互豁免路径不会发出本事件）。
+    * nextChangeAt = 恢复时刻的下一翻转点（工作态 = 下一冻结开始时刻，供前端
+    * 展示「下一段 HH:mm 再冻结」；None = 无未来翻转点，如配置关闭）。 */
+  case Resumed(nextChangeAt: Option[Long] = None)
 
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json =
     // For subagent events, inject nodeSessionId so the frontend can persist
@@ -681,7 +683,10 @@ enum AgentStreamEvent:
         val base =
           if isSubagent then Json.obj("type" -> "agentFrozen".asJson, "agentId" -> agentId.asJson)
           else Json.obj("type" -> "frozen".asJson, "sessionId" -> sessionId.asJson)
-        val withResume = resumeAtMillis.fold(base)(t => base.deepMerge(Json.obj("resumeAt" -> t.asJson)))
+        // 冻结中显式布尔（现象 2 契约补全 2026-08-30）：前端输入栏禁用状态机
+        // 直接读字段而非推断事件类型——事件语义与状态字段解耦，便于统一处理。
+        val withFrozen = base.deepMerge(Json.obj("frozen" -> true.asJson))
+        val withResume = resumeAtMillis.fold(withFrozen)(t => withFrozen.deepMerge(Json.obj("resumeAt" -> t.asJson)))
         // reason 缺省='schedule'（默认参数），旧前端/旧后端双向兼容；错误族前端按 reason 区分两族视觉
         val reasonStr = reason match
           case FreezeReason.Schedule        => "schedule"
@@ -704,9 +709,14 @@ enum AgentStreamEvent:
             )
           )
         )
-      case Resumed =>
-        if isSubagent then Json.obj("type" -> "agentResumed".asJson, "agentId" -> agentId.asJson)
-        else Json.obj("type" -> "resumed".asJson, "sessionId" -> sessionId.asJson))
+      case Resumed(nextChangeAt) =>
+        val base =
+          if isSubagent then Json.obj("type" -> "agentResumed".asJson, "agentId" -> agentId.asJson)
+          else Json.obj("type" -> "resumed".asJson, "sessionId" -> sessionId.asJson)
+        // 解冻显式布尔 + 下一翻转点（None 省略，旧载荷 byte-stable）
+        val withFrozen = base.deepMerge(Json.obj("frozen" -> false.asJson))
+        nextChangeAt.fold(withFrozen)(t => withFrozen.deepMerge(Json.obj("nextChangeAt" -> t.asJson)))
+      )
   end toJson
 end AgentStreamEvent
 

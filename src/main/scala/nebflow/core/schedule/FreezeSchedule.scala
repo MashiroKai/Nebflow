@@ -173,6 +173,26 @@ object FreezeSchedule:
   def evalWithSkip(cfg: FreezeScheduleConfig, skipUntil: Option[Long], now: Long): FreezeWindow =
     applySkip(eval(cfg, now), skipUntil, now)
 
+  /** 全局冻结状态节点（现象 2 契约补全 2026-08-30）：serverConfig 广播携带，
+    * 前端输入栏禁用/冻结提示的状态机直接读它（WS 连接初始态、配置热更、skipFreeze
+    * 后均即时刷新）。字段：
+    *   enabled      — 配置是否开启
+    *   frozen       — 当前是否处于冻结窗口（含 skip 语义：被跳过的窗口 = false）
+    *   skipped      — 当前窗口是否被 skipFreeze 跳过（配置开启且窗口本应冻结）
+    *   nextChangeAt — 下一翻转点 epoch ms（工作态=下一冻结开始；None=无翻转）
+    *   segments     — 冻结段列表（供前端展示「下一段 HH:mm」，与 workSchedule 一致）
+    */
+  def freezeStateNode(cfg: FreezeScheduleConfig, skipUntil: Option[Long], now: Long): io.circe.Json =
+    val raw = eval(cfg, now)
+    val window = applySkip(raw, skipUntil, now)
+    io.circe.Json.obj(
+      "enabled" -> cfg.enabled.asJson,
+      "frozen" -> window.frozen.asJson,
+      "skipped" -> (cfg.enabled && raw.frozen && !window.frozen).asJson,
+      "nextChangeAt" -> window.nextChangeAt.asJson,
+      "segments" -> cfg.segments.asJson
+    )
+
   /** 用户消息到达时计算 skipUntil：当前冻结窗口的结束时刻（eval 的 nextChangeAt，
     * 即下一次真实翻转点）；全天冻结无翻转点（None）时兜底为下一个午夜——跳过
     * 今天剩余时段，明天照常冻结。 */
