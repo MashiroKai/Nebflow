@@ -460,6 +460,17 @@ function freezeWindowState() {
 // mic/attach/send/stop controls all get disabled; only the skip control stays
 // interactive. `disabled` (not readonly) so the inert textarea fires no keydown
 // and can never send. Un-frees by removing the attributes.
+
+// The system-freeze targets the MAIN composer (#input-bar = chatViews.primary's
+// input bar). During a sub-agent event dispatch ws.js momentarily routes the
+// module-global activeView to the popup view (or null); a freeze driven by the
+// schedule window must still free/freeze the visible main composer, so never
+// rely on the transient activeView here — resolve the primary view (which owns
+// #input-bar) with an activeView fallback for pre-boot (before primary is built).
+function freezeTargetView() {
+  if (chatViews.primary && chatViews.primary.dom && chatViews.primary.dom.inputBar) return chatViews.primary;
+  return activeView;
+}
 function setFrozenBarState(v, frozen) {
   const bar = v && v.dom && v.dom.inputBar;
   if (!bar) return;
@@ -477,7 +488,7 @@ function setFrozenBarState(v, frozen) {
 }
 
 function applyLocalFreeze() {
-  const v = activeView;
+  const v = freezeTargetView();
   const bar = v && v.dom && v.dom.inputBar;
   if (!bar || !v.sessionId) return;
   const win = freezeWindowState();
@@ -527,7 +538,7 @@ function skipCurrentFreeze() {
   sendWs({ type: 'skipFreeze' });
   // Immediate local UI unwind: un-freeze the active input bar (skip only the
   // schedule-frozen state — never the amber error-recovery family).
-  const v = activeView;
+  const v = freezeTargetView();
   const bar = v && v.dom && v.dom.inputBar;
   if (bar) {
     if (!bar.classList.contains('frozen-error')) {
@@ -559,6 +570,12 @@ onMessage('agentFrozen', (msg, view) => {
     state.sessionBgAgents[sid][aid].freezeReason = normalizeReason(msg.reason);
     if (view) renderBgAgentDropdown();
   }
+  // 现象2 fix (2026-08-30): a schedule freeze is SYSTEM-wide — when any
+  // background agent parks, the foreground input must disable too (if the
+  // schedule window is active). applyLocalFreeze reads the authoritative
+  // freezeWindowState(); outside a schedule window it's a no-op (a lone
+  // loop/error freeze of one agent must NOT disable the whole input).
+  applyLocalFreeze();
 });
 
 onMessage('agentResumed', (msg, view) => {
@@ -571,6 +588,10 @@ onMessage('agentResumed', (msg, view) => {
     state.sessionBgAgents[sid][aid].freezeReason = null;
     if (view) renderBgAgentDropdown();
   }
+  // 现象2 fix: when background agents wake, re-evaluate the foreground freeze
+  // (window may have ended, or a skip voided it — recompute so the input
+  // un-freezes immediately instead of waiting for the 60s tick).
+  applyLocalFreeze();
 });
 
 // Error-recovery escalation (frozen-error-recovery plan §5.3.2): auto-recovery
@@ -1344,6 +1365,10 @@ onMessage('sessionList', (msg, view) => {
   migrateLegacyIfNeeded();
   // Request agent list on first connect (no tab to trigger it now)
   if (!state.selectedAgent) sendWs({ type: 'listAgents' });
+  // 现象2 fix: if serverConfig (workSchedule) arrived BEFORE the active view was
+  // established, applyLocalFreeze no-oped on it. Now that the active session is
+  // set, re-evaluate so a freeze window active at boot still disables the input.
+  applyLocalFreeze();
 });
 
 // --- History pagination indicators ---
