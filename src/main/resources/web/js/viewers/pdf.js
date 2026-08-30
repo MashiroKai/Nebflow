@@ -7,7 +7,7 @@
 // pdf.js (UMD build, window.pdfjsLib) is lazy-loaded on first PDF open —
 // 320KB script + 1MB worker must not tax sessions that never open a PDF.
 
-import { getToken, escapeHtml, addElementRefToggle } from './shared.js';
+import { getToken, escapeHtml } from './shared.js';
 import { enableViewerZoom } from './zoom.js';
 
 /** @type {Promise<any>|null} */
@@ -191,10 +191,6 @@ async function viewPdf(pane, { absPath, fileName, anchor }) {
     reset: () => { scale = Math.min(Math.max(((pages.clientWidth || 600) - 32) / base.width, 0.25), 3); renderAll(); },
     attachTo: pages,
   });
-
-  // #303 C5-A3: PDF pages are canvases — no DOM to select. Disabled toggle
-  // with a title hint (capability matrix, nodom mode).
-  addElementRefToggle(pane, { mode: 'nodom' });
 }
 
 export default {

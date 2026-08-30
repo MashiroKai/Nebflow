@@ -582,8 +582,6 @@ export default {
   'ref.fromFriend': 'From {name}',
   'ref.selectElement': 'Select element',
   'ref.exitSelect': 'Exit selection',
-  'ref.selectElementNoDom': 'Element selection is not supported in this view',
-  'ref.selectElementCrossOrigin': 'Element selection is not available on this page (cross-origin)',
   'explorer.reference': 'Reference',
   'canvas.referenceCurrent': 'Reference current page/selection',
   'canvas.noRef': 'This tab cannot be referenced',

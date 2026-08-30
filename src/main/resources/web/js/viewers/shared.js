@@ -169,16 +169,16 @@ export function addSourceToggle(pane, renderFn, ctx) {
 
 /** Add a floating "select element to reference" toggle button to a viewer pane
  *  (#303 B6). Same floating-glass style and same corner as the source toggle
- *  (`.canvas-source-toggle`), seated to its left. Three availability modes per
- *  the §5.6 cross-source capability matrix (C5):
- *    - 'available':   entering/leaving element-select mode (HTML srcdoc/same-origin)
- *    - 'crossorigin': clickable but activation shows an S4 toast (cross-origin URL page)
- *    - 'nodom':       disabled with a title hint (PDF/image - no DOM to select)
+ *  (`.canvas-source-toggle`), seated to its left. Element-selection is only
+ *  offered where there is a DOM to select — the HTML viewer (srcdoc/same-origin
+ *  iframe). Other viewers (PDF/image/cross-origin URL) show no toggle: they
+ *  were the 'nodom'/'crossorigin' capability-matrix modes, removed so the
+ *  affordance is zero-trace outside HTML tabs (20260830 author ruling).
  *  @param {HTMLElement} pane — canvas tab pane
- *  @param {Object} opts — { mode, onToggle } ; onToggle(active) only for 'available'
+ *  @param {Object} opts — { onToggle } ; onToggle(active) toggles select mode
  *  @returns {HTMLButtonElement} */
 export function addElementRefToggle(pane, opts) {
-  const { mode, onToggle } = opts || {};
+  const { onToggle } = opts || {};
   pane.querySelector('.canvas-ref-select')?.remove();
   if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
 
@@ -187,30 +187,18 @@ export function addElementRefToggle(pane, opts) {
   btn.className = 'canvas-ref-select';
   btn.innerHTML = CROSSHAIR_ICON_SVG;
 
-  if (mode === 'nodom') {
-    btn.disabled = true;
-    btn.title = t('ref.selectElementNoDom');
-    btn.setAttribute('aria-pressed', 'false');
-  } else if (mode === 'crossorigin') {
-    btn.title = t('ref.selectElement');
-    btn.setAttribute('aria-pressed', 'false');
-    btn.addEventListener('click', () => {
-      window.__showToast?.(t('ref.selectElementCrossOrigin'), 'info');
-    });
-  } else {
-    btn.title = t('ref.selectElement');
-    btn.setAttribute('aria-pressed', 'false');
-    // State is DOM-class-driven (not a closure flag) so an external exit
-    // (Esc / tab switch via the viewer's state machine) stays in sync with
-    // the next click.
-    btn.addEventListener('click', () => {
-      const active = !btn.classList.contains('active');
-      btn.classList.toggle('active', active);
-      btn.setAttribute('aria-pressed', String(active));
-      btn.title = active ? t('ref.exitSelect') : t('ref.selectElement');
-      if (typeof onToggle === 'function') onToggle(active);
-    });
-  }
+  btn.title = t('ref.selectElement');
+  btn.setAttribute('aria-pressed', 'false');
+  // State is DOM-class-driven (not a closure flag) so an external exit
+  // (Esc / tab switch via the viewer's state machine) stays in sync with
+  // the next click.
+  btn.addEventListener('click', () => {
+    const active = !btn.classList.contains('active');
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+    btn.title = active ? t('ref.exitSelect') : t('ref.selectElement');
+    if (typeof onToggle === 'function') onToggle(active);
+  });
   pane.appendChild(btn);
   return btn;
 }

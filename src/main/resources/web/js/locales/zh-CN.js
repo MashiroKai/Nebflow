@@ -588,8 +588,6 @@ export default {
   'ref.fromFriend': '来自 {name}',
   'ref.selectElement': '选择元素',
   'ref.exitSelect': '退出选择',
-  'ref.selectElementNoDom': '该视图不支持元素选择',
-  'ref.selectElementCrossOrigin': '该页面不支持元素选择（跨源）',
   'explorer.reference': '引用',
   'canvas.referenceCurrent': '引用当前页/选区',
   'canvas.noRef': '该标签页暂不支持引用',
