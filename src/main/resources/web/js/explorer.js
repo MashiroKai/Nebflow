@@ -655,6 +655,23 @@ onMessage('fileContent', (msg) => {
   }
   if (msg.error) {
     console.warn('readFile error:', msg.error);
+    // F3 (2026-08-30 作者裁定 + 方案 §8.4 F3): readFile 失败不再静默丢弃——保留
+    // 「文件不可读」骨架标签（标题 + 提示），让用户可感知而非标签无声消失。
+    // 若该路径已有打开标签（后台刷新失败），canvas 端保留原内容不覆盖。
+    pendingPinned.delete(msg.path);
+    const isBackground = pendingRefresh.delete(msg.path);
+    const filePath = msg.path;
+    window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: {
+      id: `file:${filePath}`,
+      title: filePath ? filePath.split('/').pop() : filePath,
+      itemType: 'code',
+      content: '',
+      absPath: msg.absPath || filePath,
+      path: filePath,
+      error: msg.error,
+      pinned: false,
+      background: isBackground,
+    }}));
     return;
   }
   // Open in canvas

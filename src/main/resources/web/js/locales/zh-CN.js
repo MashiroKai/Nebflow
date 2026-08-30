@@ -588,6 +588,8 @@ export default {
   'explorer.reference': '引用',
   'canvas.referenceCurrent': '引用当前页/选区',
   'canvas.noRef': '该标签页暂不支持引用',
+  'canvas.unreadableTitle': '文件不可读',
+  'canvas.unreadableHint': '文件不存在或被清理，无法读取。',
 
   // === Tool names (label first line) ===
   'tool.Read': '读取',
