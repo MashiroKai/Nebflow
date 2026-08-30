@@ -569,6 +569,7 @@ export default {
   'task.pendingShort': 'Queued',
   'task.statsProgress': '{progress} tasks',
   'task.inProgressShort': 'In progress',
+  'task.globalSource': 'Nebula (global)',
   'ref.cardAria': 'Reference',
   'ref.expand': 'Expand',
   'ref.collapse': 'Collapse',

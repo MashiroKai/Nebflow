@@ -574,6 +574,7 @@ export default {
   'task.pendingShort': '排队中',
   'task.statsProgress': '{progress} 任务',
   'task.inProgressShort': '进行中',
+  'task.globalSource': 'Nebula（全局）',
   'ref.cardAria': '引用',
   'ref.expand': '展开',
   'ref.collapse': '收起',
