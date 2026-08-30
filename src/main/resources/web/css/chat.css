@@ -560,6 +560,22 @@
    inheritance from body (pre-fix it fell to the UA default black, invisible
    on the dark glass panel). Unified panel spec §2.1 L3: 13px/400. */
 .bg-task-name { color: var(--color-text); font-size: 13px; font-weight: 400; }
+/* Agent-name row — ALWAYS the second line, separated from the meta labels
+   (state/kind/uptime). Dedicated line means length-independent consistency
+   (user ruling 21: the name never collides onto the meta first line). */
+.bg-task-name-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 1px;
+}
+.bg-task-name-line .bg-task-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .bg-task-state {
   font-size: 11px;
   /* Unified panel spec §3.1: state word is L4 (400) — yields hierarchy to
