@@ -1,7 +1,9 @@
 package nebflow.core.schedule
 
+import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
+import nebflow.core.AtomicJson
 
 /**
  * 冻结调度（freeze-schedule，spec v1.2）：冻结时段模型 + 纯函数判定。
@@ -202,6 +204,36 @@ object FreezeSchedule:
       Some(
         java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate.plusDays(1).atStartOfDay(zone).toInstant.toEpochMilli
       )
+    }
+
+  // ============================================================
+  // skip 持久化（2026-08-30 P0：skip 状态非持久化——「点跳过 → 刷新/重启 →
+  // 输入框重新冻结」）。skipUntil 虽是运行时态（时间戳），但必须跨进程重启存活。
+  // 独立文件 <dataRoot>/freeze-skip.json，不与 nebflow.json 配置面交互——
+  // toggle off/on 走 setWorkSchedule（改 cfg.enabled），与 skip 天然独立不冲突。
+  // 持久化不改变「跳过非永久」语义：到期由 applySkip 的 >now 判断自然失效；
+  // 启动加载时过期值由调用方清理。内容 {"skipUntil": <epoch millis>}。
+  // ============================================================
+
+  def skipPersistPath(root: os.Path): os.Path = root / "freeze-skip.json"
+
+  /** 写盘（Some → 原子写）或删盘（None → 移除残留）。调用方 best-effort。 */
+  def persistSkip(root: os.Path, skipUntil: Option[Long]): IO[Unit] =
+    skipUntil match
+      case Some(t) => AtomicJson.write(skipPersistPath(root), Json.obj("skipUntil" -> t.asJson).noSpaces)
+      case None =>
+        IO.blocking {
+          if os.exists(skipPersistPath(root)) then os.remove(skipPersistPath(root))
+        }
+
+  /** 启动加载：读盘原始值（不过滤过期——调用方按 >now 判断）。缺失/损坏 → None。 */
+  def loadSkipUntil(root: os.Path): IO[Option[Long]] =
+    IO.blocking {
+      val p = skipPersistPath(root)
+      if os.exists(p) then
+        io.circe.parser.parse(os.read(p)).toOption
+          .flatMap(_.hcursor.downField("skipUntil").as[Long].toOption)
+      else None
     }
 
   /**

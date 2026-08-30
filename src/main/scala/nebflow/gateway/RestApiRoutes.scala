@@ -222,7 +222,22 @@ class RestApiRoutes(
       withAuth(req) {
         ConfigService.getConfig.flatMap { cfg =>
           ConfigService.isConfigured.flatMap { configured =>
-            Ok(Json.obj("config" -> cfg.asJson, "configured" -> configured.asJson))
+            // P0（2026-08-30）：freezeState 进 REST 通道——前端刷新/重连若走
+            // REST 拉配置（而非仅依赖 WS serverConfig 推送），也能读到当前
+            // 冻结态（含 skip 语义：skipped=true/frozen=false）。
+            for
+              wsCfg <- sharedResources.freezeScheduleRef.get
+              skipUntil <- sharedResources.freezeSkipUntilRef.get
+              resp <- Ok(
+                Json.obj(
+                  "config" -> cfg.asJson,
+                  "configured" -> configured.asJson,
+                  "freezeState" -> nebflow.core.schedule.FreezeSchedule
+                    .freezeStateNode(wsCfg, skipUntil, System.currentTimeMillis())
+                    .asJson
+                )
+              )
+            yield resp
           }
         }
       }

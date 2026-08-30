@@ -715,6 +715,28 @@ object GatewayMain extends IOApp.Simple:
                                                           interval = nebflow.shared.Defaults.FreezeCheckIntervalSec.seconds
                                                         )
                                                         .start
+                                                      // --- P0（2026-08-30）：skip 持久化恢复 ---
+                                                      // 重启前「跳过本次」若未到期（skipUntil > now），恢复进内存
+                                                      // ref——WS/REST 的 freezeState.skipped 随即可见，输入栏不再
+                                                      // 重新冻结；已过期则清理盘上残留（跳过非永久，下一段照常）。
+                                                      _ <- nebflow.core.schedule.FreezeSchedule
+                                                        .loadSkipUntil(nebflow.core.PathUtil.dataRoot)
+                                                        .flatMap {
+                                                          case Some(t) if t > System.currentTimeMillis() =>
+                                                            sharedResourcesWithDaemon.freezeSkipUntilRef.set(Some(t)) *>
+                                                              logger.info(
+                                                                s"Freeze skip restored from disk (skipUntil=$t)"
+                                                              )
+                                                          case Some(_) =>
+                                                            nebflow.core.schedule.FreezeSchedule
+                                                              .persistSkip(nebflow.core.PathUtil.dataRoot, None)
+                                                              .handleErrorWith(e =>
+                                                                logger.warn(
+                                                                  s"Failed to clean expired freeze skip: ${e.getMessage}"
+                                                                )
+                                                              )
+                                                          case None => IO.unit
+                                                        }
                                                       _ <-
                                                         if GatewayConfig.noBrowser ||
                                                           nebflow.core.HeadlessMode.enabled
