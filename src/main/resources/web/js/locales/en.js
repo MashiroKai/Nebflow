@@ -561,17 +561,14 @@ export default {
   // keys removed with their retired paths.
   'task.expand': 'Expand',
   'task.collapse': 'Collapse',
-  // v3 dual-zone (§15.11): 待办区 / 任务区
-  'task.sectionTodo': 'To do',
+  // #15 pure-progress visualization (§15.11): single task zone, todo/confirm
+  // keys removed with their retired paths.
   'task.sectionProgress': 'Tasks',
-  'task.todoEmpty': 'No to-dos',
   'task.progressEmpty': 'No active tasks',
   'task.justNow': 'Just now',
   'task.pendingShort': 'Queued',
-  'task.statsBoth': '{todo} todos · {progress} tasks',
-  'task.completeAria': 'Mark "{subject}" complete',
+  'task.statsProgress': '{progress} tasks',
   'task.inProgressShort': 'In progress',
-  'task.completeError': 'Failed to mark complete, try again',
   'ref.cardAria': 'Reference',
   'ref.expand': 'Expand',
   'ref.collapse': 'Collapse',

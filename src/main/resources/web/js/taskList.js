@@ -1,19 +1,18 @@
 // taskList.js — Collapsible task panel (floats above the input area)
-// 任务工具重做 (2026-08-30 作者规格): 进展展示语义——四态状态机
-// pending → in_progress → completed / failed。needs_confirmation / dismissed /
-// cancelled 退役：agent 直接标 completed，无用户确认/打回/取消环节。
-//   - 待办区 (.task-section-todo): human pending — CIRCLE (click: completeTask
-//     直接完成，无中间态；completed 即消失，TTL 自然清)
+// 任务工具重做 (2026-08-30 作者规格) + #15 补齐 (2026-08-30): 纯进展可视化
+// 四态状态机 pending → in_progress → completed / failed。needs_confirmation /
+// dismissed / cancelled / 待办 全部退役：#15 作者三条强调「不再有待办——纯 team
+// 任务进展可视化」——待办区 (.task-section-todo) 与 human pending CIRCLE
+// (completeTask 用户确认通道) 移除，无用户确认/打回/取消环节。
 //   - 任务区 (.task-section-progress): agent pending/in_progress — read-only
-//     glyphs (方块/spinner 圆环本体), status word + relative time
+//     glyphs (pending=静态小方框 / in_progress=独立 spinner), status word +
+//     relative time + team/member meta (谁在执行)
 // 裁定②: team 域任务统一并入 Nebula 会话的本面板（Teams 标签页任务区已删）；
-// 裁定④: 任务区三级分组 team → member → tasks（accessor 隔离挂接数据契约）。
-// v2 semantics preserved: completing is optimistic (fill → collapse → remove).
+// 裁定④ + #15: 三级分组 team → member → tasks（member=assignee 契约字段，
+// 每任务标注 Team+成员名）。
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
-import { sendWs, onMessage } from './ws.js';
 import state from './state.js';
-import { showToast } from './modal.js';
 
 /** 任务工具重做: visible set = pending + in_progress ONLY（「列表只显
  *  pending+in_progress」——completed/failed 完成即消失，6h/2d TTL 管磁盘
@@ -29,12 +28,8 @@ function kindOf(tk) {
 }
 
 // ── Zone partitioning ────────────────────────────────────────────────────
-// A task lives in exactly ONE zone at any time. 待办区 = needs user action
-// (human pending only — agent needs_confirmation 已退役); 任务区 = read-only
-// agent progress. Deterministic per (kind, status).
-function inTodoZone(tk) {
-  return kindOf(tk) === 'human' && tk.status === 'pending';
-}
+// #15 不再有待办——面板纯任务进展可视化，单一任务区（progress），todo/progress
+// 双区块划分退役。
 
 /** Sort key: updatedAt refreshed on every mutation and always present;
  *  defensive fallback to createdAt. */
@@ -44,10 +39,6 @@ function taskTs(tk) {
   return isNaN(ms) ? 0 : ms;
 }
 
-/** 待办区: human pinned by createdAt desc. */
-function sortByCreatedDesc(a, b) {
-  return (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0);
-}
 function sortByActiveDesc(a, b) {
   return taskTs(b) - taskTs(a);
 }
@@ -57,14 +48,14 @@ function sortProgress(a, b) {
   return sortByActiveDesc(a, b);
 }
 
-// ── Team grouping (第七件 裁定④, 2026-08-30) ─────────────────────────────
+// ── Team grouping (第七件 裁定④, 2026-08-30 + #15 补齐) ───────────────────
 // 任务区 groups team → member → tasks. ACCESSOR ISOLATION: the Backend data
-// contract hooks up HERE and nowhere else. 契约字段（feat/task-redesign
-// TaskModel）：team 归属 = `teamId`（scope=='team' 的 team 域任务携带；
-// session 域无此键）。member 归属字段契约暂未交付——accessor 预留，Backend
-// 补字段后即插即活；无归属任务平铺，零回归。
+// contract hooks up HERE and nowhere else. 契约字段（TaskModel.scala）：
+// team 归属 = `teamId`（scope=='team' 的 team 域任务携带；session 域无此键）；
+// member 归属 = `assignee`（成员责任归属——#15 修正：此前 taskMember 误读
+// `member` 字段（不存在）致三级分组的 member 层永不填充）。
 function taskTeam(tk) { return (tk && typeof tk.teamId === 'string' && tk.teamId) || null; }
-function taskMember(tk) { return (tk && typeof tk.member === 'string' && tk.member) || null; }
+function taskMember(tk) { return (tk && typeof tk.assignee === 'string' && tk.assignee) || null; }
 
 /** 裁定②: team 域任务（teamTaskListUpdate, 无 sessionId）统一并入 Nebula
  *  会话的任务列表面板。Only the Nebula session shows the unified list —
@@ -79,9 +70,8 @@ export function sessionShowsTeamTasks(sid) {
  *  list for Nebula sessions. Stamped copies carry teamId (grouping hook) and
  *  a namespaced display id — team tasks live in their own store directory
  *  with their own id space, so a bare id could collide with a session task
- *  (row dataset/zone-diff keyed by id). Team tasks are read-only here (no
- *  circle: completeTask is session-scoped), so the stamped id never goes
- *  back on the wire. */
+ *  (row dataset/zone-diff keyed by id). Team tasks are read-only here, so the
+ *  stamped id never goes back on the wire. */
 function mergeTeamTasks(tasks, sessionId) {
   const base = Array.isArray(tasks) ? tasks : [];
   if (!sessionShowsTeamTasks(sessionId)) return base;
@@ -133,123 +123,31 @@ function ensureLastActiveTimer(running) {
 const REDUCED_MOTION = typeof matchMedia === 'function' &&
   matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/** taskId → task snapshot, for taskError rollback (§7.2). */
-const pendingComplete = new Map();
-
-// ── Completion flow (§7.1/§7.2) ─────────────────────────────────────────
-
-function requestComplete(row, task) {
-  if (!state.connected) return;                    // §4: disabled while WS down
-  if (pendingComplete.has(task.id)) return;        // debounce double-click
-  pendingComplete.set(task.id, task);
-
-  sendWs({ type: 'completeTask', sessionId: state.activeSessionId, taskId: task.id });
-
-  // A4/C26: optimistic -1 on the 待办区 segment — do not wait for the server
-  // push (taskListUpdate re-render is authoritative when it arrives; rollback
-  // via taskError re-renders from restored state, self-healing).
-  const sid0 = row.dataset.sessionId || state.activeSessionId;
-  const arr0 = sid0 && state.sessionTasks ? state.sessionTasks[sid0] : null;
-  const statsEl = document.querySelector('#task-list .task-stats');
-  if (statsEl && Array.isArray(arr0)) {
-    const todoCount = arr0.filter(tk => inTodoZone(tk)).length;
-    const progressCount = arr0.filter(tk => isVisible(tk) && !inTodoZone(tk)).length;
-    statsEl.textContent = t('task.statsBoth', {
-      todo: Math.max(0, todoCount - 1),
-      progress: progressCount,
-    });
-  }
-
-  const finish = () => {
-    // Server truth arrives via taskListUpdate; drop the optimistic entry from
-    // local state so re-renders cannot resurrect it.
-    const sid = row.dataset.sessionId || state.activeSessionId;
-    const arr = sid && state.sessionTasks ? state.sessionTasks[sid] : null;
-    const i = Array.isArray(arr) ? arr.indexOf(task) : -1;
-    if (i >= 0) arr.splice(i, 1);
-    row.remove();
-    const container = document.getElementById('task-list');
-    if (container && !container.querySelector('.task-item')) {
-      container.classList.remove('has-tasks');
-      container.innerHTML = '';
-    }
-  };
-
-  if (REDUCED_MOTION) { finish(); return; }
-
-  row.classList.add('task-completing');            // fill sapphire + white check
-  setTimeout(() => {
-    row.classList.add('task-collapsing');          // height collapse ~220ms
-    setTimeout(finish, 230);
-  }, 180);
-}
-
-// Server-side rejection of a complete → roll back: re-insert at the sorted
-// position (render derives it), replay the entering animation, toast (§7.2).
-// The backend taskError frame is {"type":"taskError","error","taskId"}.
-// We identify completeTask failures by taskId membership in pendingComplete:
-// a taskError for an id we never sent a complete for is not ours — pass
-// through untouched (裁定 F-B1①, qa-frontend 打回修复).
-// 任务工具重做: cancel/return 路径退役——taskError 的唯一来源是 completeTask。
-onMessage('taskError', (msg) => {
-  if (!msg.taskId) return;
-  if (pendingComplete.has(msg.taskId)) {
-    const task = pendingComplete.get(msg.taskId);
-    pendingComplete.delete(msg.taskId);
-    const sid = msg.sessionId || state.activeSessionId;
-    const arr = sid && state.sessionTasks ? state.sessionTasks[sid] : null;
-    if (Array.isArray(arr) && !arr.includes(task)) arr.push(task);
-    const container = document.getElementById('task-list');
-    // redraw() replays the entering animation for rows absent from the old
-    // DOM (the rolled-back task was removed optimistically) — no manual class.
-    renderTaskList(arr || [], container, sid);
-    showToast(t('task.completeError'), 'error');
-    return;
-  }
-});
-
 // ── Row builders (§15.5/§15.6) ──────────────────────────────────────────
 
 /**
- * Zone-leading icon per (kind, status):
- *  待办区 (user action): CIRCLE — clickable (role=checkbox, Space/Enter).
- *  任务区 (read-only):   SQUARE (.task-check-box) — 裁定 19:56: circles look
- *    clickable; squares are the observer-zone glyph (原始 checkbox 方块样式).
- *    in_progress = standalone spinner ring (裁定⑤); pending = hollow square.
- *    All aria-hidden (row aria-label carries status).
+ * Zone-leading glyph per status (纯进展可视化 — single progress zone):
+ *  pending  = 静态小方框 (.task-check-box, #15 更小 —— 观感「排队/等待执行」)
+ *  in_progress = 独立 spinner 圆环本体 (裁定⑤; spinner 在方框中转禁).
+ *  All read-only (aria-hidden); row aria-label carries the status.
  */
 function buildCheck(task, row) {
   const check = document.createElement('span');
   check.className = 'task-check';
 
-  if (inTodoZone(task)) {
-    // 待办区 — circle, clickable (human pending; click = completeTask 直接完成).
-    check.classList.add('task-check-clickable');
-    check.setAttribute('role', 'checkbox');
-    check.setAttribute('aria-checked', 'false');
-    check.setAttribute('tabindex', '0');
-    check.setAttribute('aria-label', t('task.completeAria', { subject: task.subject || '' }));
-    // Hidden check glyph: hover previews it, .task-completing fills the circle.
-    check.innerHTML = '<i data-lucide="check" class="task-check-glyph"></i>';
-    const complete = () => requestComplete(row, task);
-    check.addEventListener('click', complete);
-    check.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); complete(); }
-    });
-    return check;
-  }
-
-  // 任务区 — square, read-only (§15.6: no hover feedback, no tab stop).
-  check.classList.add('task-check-box');
+  // 任务区 — read-only glyph (§15.6: no hover feedback, no tab stop).
+  // in_progress -> standalone spinner (base 20px); pending -> small static box.
   if (task.status === 'in_progress') {
     // 第七件 裁定⑤ (2026-08-30): the spinner IS the glyph — a standalone
     // ring, no surrounding box ("spinner 在方框中转" combo is forbidden).
+    // No .task-check-box so it keeps the base 20px slot (not the small box).
     check.classList.add('task-check-spin');
     check.setAttribute('aria-hidden', 'true');
     row.setAttribute('aria-label',
       `${task.subject || ''} — ${t('task.inProgressShort')}`.trim());
   } else {
-    // agent pending — decorative hollow square
+    // agent pending — decorative hollow small square (#15 更小)
+    check.classList.add('task-check-box');
     check.setAttribute('aria-hidden', 'true');
     row.setAttribute('aria-label',
       `${task.subject || ''} — ${t('task.pendingShort')}`.trim());
@@ -283,31 +181,39 @@ function buildRow(task, sessionId) {
     desc.title = descText;
     text.appendChild(desc);
   }
+  // #15 三级分组: annotate every task with its Team · member (谁在执行). Quiet
+  // meta line under the subject/desc; grouped tasks read clearly, and tasks
+  // without a group (session-local) carry no meta.
+  const meta = [taskTeam(task), taskMember(task)].filter(Boolean).join(' · ');
+  if (meta) {
+    row.classList.add('task-has-meta');
+    const metaEl = document.createElement('span');
+    metaEl.className = 'task-meta';
+    metaEl.setAttribute('aria-hidden', 'true');
+    metaEl.textContent = meta;
+    text.appendChild(metaEl);
+  }
   row.appendChild(text);
 
-  if (!inTodoZone(task)) {
-    // 任务区 (§15.6): status word + relative time (D6). Both aria-hidden —
-    // the row's aria-label carries the status for AT users (§15.9).
-    // 待办区 (human pending) rows carry no status word (B9) — the circle
-    // self-expresses the action.
-    const word = document.createElement('span');
-    word.className = 'task-status-word';
-    word.setAttribute('aria-hidden', 'true');
-    word.textContent = t(task.status === 'in_progress'
-      ? 'task.inProgressShort' : 'task.pendingShort');
+  // 任务区 (§15.6): status word + relative time (D6). Both aria-hidden —
+  // the row's aria-label carries the status for AT users (§15.9).
+  const word = document.createElement('span');
+  word.className = 'task-status-word';
+  word.setAttribute('aria-hidden', 'true');
+  word.textContent = t(task.status === 'in_progress'
+    ? 'task.inProgressShort' : 'task.pendingShort');
 
-    const time = document.createElement('span');
-    time.className = 'task-last-active';
-    time.setAttribute('aria-hidden', 'true');
-    const ts = task.updatedAt || task.createdAt || '';
-    if (ts) {
-      time.dataset.ts = ts;
-      time.textContent = formatLastActive(ts);
-    }
-
-    row.appendChild(word);
-    if (ts) row.appendChild(time);
+  const time = document.createElement('span');
+  time.className = 'task-last-active';
+  time.setAttribute('aria-hidden', 'true');
+  const ts = task.updatedAt || task.createdAt || '';
+  if (ts) {
+    time.dataset.ts = ts;
+    time.textContent = formatLastActive(ts);
   }
+
+  row.appendChild(word);
+  if (ts) row.appendChild(time);
   return row;
 }
 
@@ -315,7 +221,7 @@ function buildGroupHeader(label, section) {
   const h = document.createElement('div');
   // Dual class: .task-group-header is the implementation class (CSS hooks),
   // .task-section-title is the frozen spec assertion selector (§10 A6).
-  // data-section carries the zone ('todo' | 'progress') — D1 assertion hook.
+  // data-section carries the zone ('progress') — D1 assertion hook.
   h.className = 'task-group-header task-section-title';
   h.dataset.section = section;
   h.textContent = label;
@@ -331,8 +237,8 @@ function buildSubgroupHeader(label, level) {
   return h;
 }
 
-/** Empty-state row (§15.5/§15.6, C27): rendered only when a single zone is
- *  empty while the panel is visible; non-interactive, aria-hidden (§15.9). */
+/** Empty-state row (§15.5/§15.6, C27): rendered only when the panel is visible
+ *  with no visible tasks; non-interactive, aria-hidden (§15.9). */
 function buildEmpty(label) {
   const empty = document.createElement('div');
   empty.className = 'task-empty';
@@ -341,13 +247,12 @@ function buildEmpty(label) {
   return empty;
 }
 
-// ── Main render (v3 dual-zone) ──────────────────────────────────────────
+// ── Main render (v3 single-zone: pure progress) ─────────────────────────
 
 /**
  * @param {Array} tasks
  * @param {HTMLElement} [container]
- * @param {string} [sessionId] owning session — stamped onto rows so the
- *   complete/rollback path can update state.sessionTasks[sessionId]
+ * @param {string} [sessionId] owning session — stamped onto rows
  */
 export function renderTaskList(tasks, container, sessionId) {
   if (!container) container = document.getElementById('task-list');
@@ -364,64 +269,33 @@ export function renderTaskList(tasks, container, sessionId) {
     return;
   }
 
-  // 裁定 3 (跨区移动): a task whose zone changed since the last render fades
-  // out of its old zone (.task-leaving), then redraw plays a zone-enter on
-  // the new side. Ordinary updates redraw immediately (new rows get the
-  // v1 task-entering — 裁定 2 状态过渡).
+  // 裁定 3 (跨区移动) 已退役（#15 单一 progress 区，无跨区）——普通更新直接
+  // 重绘，新行带 v1 task-entering（裁定 2 状态过渡）。
   const oldById = collectZoneById(container);
-  let zoneMoved = false;
-  for (const tk of visible) {
-    const old = oldById.get(tk.id);
-    if (old !== undefined && old !== (inTodoZone(tk) ? 'todo' : 'progress')) {
-      zoneMoved = true;
-      break;
-    }
-  }
-
-  if (zoneMoved && !REDUCED_MOTION) {
-    const byId = new Map(visible.map(tk => [tk.id, tk]));
-    let leaving = 0;
-    const items = /** @type {NodeListOf<HTMLElement>} */ (container.querySelectorAll('.task-item'));
-    items.forEach((el) => {
-      const tk = byId.get(el.dataset.taskId);
-      const oldZone = el.closest('.task-section')?.classList.contains('task-section-todo') ? 'todo' : 'progress';
-      if (!tk || oldZone !== (inTodoZone(tk) ? 'todo' : 'progress')) {
-        el.classList.add('task-leaving');
-        leaving++;
-      }
-    });
-    if (leaving > 0) {
-      // Let the 160ms fade-out finish, then redraw with enter animations.
-      setTimeout(() => { redraw(visible, container, sessionId, oldById); }, 170);
-      return;
-    }
-  }
   redraw(visible, container, sessionId, oldById);
 }
 
-/** Map taskId → zone ('todo'|'progress') from the current DOM. */
+/** Map taskId → zone ('progress') from the current DOM (entry-animation
+ *  comparison only — a #15 single-zone panel always resolves 'progress'). */
 function collectZoneById(container) {
   const m = new Map();
   container.querySelectorAll('.task-item[data-task-id]').forEach((el) => {
-    const zone = el.closest('.task-section')?.classList.contains('task-section-todo') ? 'todo' : 'progress';
-    m.set(el.dataset.taskId, zone);
+    m.set(el.dataset.taskId, 'progress');
   });
   return m;
 }
 
 function redraw(visible, container, sessionId, oldById) {
-  // 分区 + 排序（任务工具重做：四态进展展示——无 needs_confirmation 子块、
-  // 无 failed 沉底，visible 集本就只含 pending+in_progress）:
-  //  待办区 = human pending (createdAt desc); 任务区 = agent active
-  //  (updatedAt desc), 裁定④ 三级分组 team → member → tasks 在排序之后。
-  const todoHuman = visible.filter(tk => kindOf(tk) === 'human').sort(sortByCreatedDesc);
+  // #15: 单一 progress 区，四态进展展示（无 todo 子块、无 failed 沉底，visible
+  // 集本就只含 pending+in_progress）: agent active (updatedAt desc), 裁定④
+  // 三级分组 team → member → tasks 在排序之后。
   const progress = visible.filter(tk => kindOf(tk) === 'agent').sort(sortProgress);
 
   container.innerHTML = '';
   const card = document.createElement('div');
   card.className = 'task-card' + (container.dataset.collapsed === '1' ? ' collapsed' : '');
 
-  // ── Header: toggle + stats (C26 dual-segment) ──
+  // ── Header: toggle + stats (C26 — #15 progress-only count) ──
   const header = document.createElement('div');
   header.className = 'task-header';
 
@@ -433,28 +307,16 @@ function redraw(visible, container, sessionId, oldById) {
 
   const stats = document.createElement('span');
   stats.className = 'task-stats';
-  stats.textContent = t('task.statsBoth', {
-    todo: todoHuman.length,
-    progress: progress.length,
-  });
+  stats.textContent = t('task.statsProgress', { progress: progress.length });
 
   header.appendChild(toggle);
   header.appendChild(stats);
 
-  // ── Body: two zones, headers constant while panel visible (C27) ──
+  // ── Body: single progress zone ──
   const body = document.createElement('div');
   body.className = 'task-body';
   const inner = document.createElement('div');
   inner.className = 'task-body-inner';
-
-  const todoSection = document.createElement('div');
-  todoSection.className = 'task-section task-section-todo';
-  todoSection.appendChild(buildGroupHeader(t('task.sectionTodo'), 'todo'));
-  if (todoHuman.length === 0) {
-    todoSection.appendChild(buildEmpty(t('task.todoEmpty')));
-  } else {
-    todoHuman.forEach(tk => todoSection.appendChild(buildRow(tk, sessionId)));
-  }
 
   const progressSection = document.createElement('div');
   progressSection.className = 'task-section task-section-progress';
@@ -462,7 +324,7 @@ function redraw(visible, container, sessionId, oldById) {
   if (progress.length === 0) {
     progressSection.appendChild(buildEmpty(t('task.progressEmpty')));
   } else {
-    // 裁定④ grouping: ungrouped (session-local) tasks flat first, then
+    // 裁定④ + #15 grouping: ungrouped (session-local) tasks flat first, then
     // team → member → tasks. First-appearance order preserves sortProgress.
     const ungrouped = [];
     const teamOrder = [];
@@ -492,7 +354,6 @@ function redraw(visible, container, sessionId, oldById) {
     }
   }
 
-  inner.appendChild(todoSection);
   inner.appendChild(progressSection);
 
   body.appendChild(inner);
@@ -510,20 +371,13 @@ function redraw(visible, container, sessionId, oldById) {
     createIconsIn(toggle);
   });
 
-  // 裁定 2/3: entry animations — brand-new rows get the v1 task-entering
-  // (创建→进行→待确认 transitions); zone-moved rows get the stronger
-  // task-zone-enter (跨区移动: appears at the new zone's top).
+  // 裁定 2: entry animation for brand-new rows.
   if (!REDUCED_MOTION) {
     const items = /** @type {NodeListOf<HTMLElement>} */ (container.querySelectorAll('.task-item'));
     items.forEach((el) => {
-      const oldZone = oldById.get(el.dataset.taskId);
-      const zone = el.closest('.task-section')?.classList.contains('task-section-todo') ? 'todo' : 'progress';
-      if (oldZone === undefined) {
+      if (!oldById.has(el.dataset.taskId)) {
         el.classList.add('task-entering');
         el.addEventListener('animationend', () => el.classList.remove('task-entering'), { once: true });
-      } else if (oldZone !== zone) {
-        el.classList.add('task-zone-enter');
-        el.addEventListener('animationend', () => el.classList.remove('task-zone-enter'), { once: true });
       }
     });
   }
