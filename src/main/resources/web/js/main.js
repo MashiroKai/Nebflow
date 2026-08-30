@@ -496,8 +496,10 @@ function applyLocalFreeze() {
   const busy = state.busySessionIds.has(v.sessionId);   // woken mid-window: working
   // A user who clicked "跳过本次" voided the current window (08-25 ruling:
   // skip is not permanent — it expires at the window end, so the next window
-  // re-freezes). skipFrozenUntil mirrors the backend freezeSkipUntilRef.
-  const skipped = win && skipFrozenUntil > Date.now();
+  // re-freezes). skipActiveForWindow() merges the in-memory mirror with the
+  // authoritative backend freezeState.skipped (which survives a reload — that
+  // mirror is lost on refresh). See skip-active note below.
+  const skipped = skipActiveForWindow(win);
   if (win && !parked && !busy && !skipped) {
     if (!bar.classList.contains('frozen')) {
       bar.classList.add('frozen');
@@ -526,6 +528,20 @@ setInterval(applyLocalFreeze, 60000);
 // have (skipCurrentFreezeWindow unfreezes all parked agents). The local mirror
 // is what makes the UI recover immediately, independent of the backend.
 let skipFrozenUntil = 0;
+
+// Is the CURRENT schedule window (win = freezeWindowState()) voided by a skip?
+// Two signals — the in-session local mirror (skipFrozenUntil, set by the button
+// click, survives immediate UI recovery) and the authoritative backend snapshot
+// (state.freezeState.skipped, survives a reload where the mirror is lost). The
+// snapshot is time-bounded by nextChangeAt (the skipped window's end) so a stale
+// skip expires when that window ends and the next schedule window re-freezes.
+function skipActiveForWindow(win) {
+  if (!win) return false;
+  if (skipFrozenUntil > Date.now()) return true;
+  const fs = state.freezeState;
+  if (fs && fs.skipped && (fs.nextChangeAt == null || fs.nextChangeAt > Date.now())) return true;
+  return false;
+}
 
 function skipCurrentFreeze() {
   // Record the window end so applyLocalFreeze won't re-freeze the rest of this
@@ -2275,6 +2291,13 @@ onMessage('serverConfig', (msg, view) => {
     if (settingsOverlay && settingsOverlay.classList.contains('on')) {
       import('./sidebar.js').then(({ renderSettings }) => renderSettings());
     }
+  }
+  // 现象 2 契约（2026-08-30）：freezeState 节点随 serverConfig 广播（WS 连接
+  // 初始态/配置热更/skipFreeze 后）。skipped 是 skip 语义的持久来源——刷新后
+  // applyLocalFreeze 靠它保持「被跳过的窗口不冻结」，而非依赖会丢失的内存镜像。
+  if (msg.freezeState !== undefined) {
+    state.freezeState = msg.freezeState;
+    applyLocalFreeze();
   }
   if (msg.stt) {
     state.stt = msg.stt;
