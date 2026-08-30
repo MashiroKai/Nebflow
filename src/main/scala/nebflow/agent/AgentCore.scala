@@ -320,6 +320,20 @@ private[agent] trait AgentCore:
       firstState = state
         .withPendingCompaction(Some(pending))
         .withMessages(state.messages :+ reminder)
+      // F3 (2026-08-30, compact-injection-shield G3): audit snapshot of the
+      // queues held back during the compaction window. Paired with the
+      // "queues-injected-after-compaction" log emitted by the completion
+      // handler — window-start counts vs injected+remaining counts prove
+      // zero loss across the window.
+      _ <- IO(logAgentEvent(
+        agentDef,
+        depth,
+        state.sessionId,
+        state.sessionName,
+        "compaction-window-start",
+        s"phase=$phase imm=${state.execution.pendingImmediateInputs.size} " +
+          s"user=${state.execution.pendingUserInputs.size} events=${state.execution.pendingEvents.size}"
+      ))
       _ <- ctx.forkTurn(preHookIO)
       _ <- ctx.forkTurn(
         emitStreamIO(

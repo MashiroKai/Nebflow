@@ -256,6 +256,10 @@ object CompactService:
       |Context compaction required — the conversation has grown too large and must be compressed.
       |Stop your current task. All tools are DISABLED for this turn. TEXT ONLY — no tool calls.
       |
+      |CRITICAL: your response TEXT must be non-empty. Write the <summary> in the text
+      |body of your reply, NOT inside the thinking/reasoning block — a response whose
+      |text is empty (thinking-only) is treated as a compaction failure and retried.
+      |
       |Your response must contain exactly two blocks:
       |
       |1. <analysis> block: organize your thoughts about the conversation (internal scratchpad).

@@ -306,6 +306,152 @@ object AgentActor extends AgentCore with AgentSession:
     // external-event injections must NOT look like user-typed messages.
     Message(MessageRole.User, Left(s"<system-reminder>\n${parts.mkString("\n\n")}\n</system-reminder>"), source = Some("external"))
 
+  // ============================================================
+  // F1 (2026-08-30, compact-injection-shield G1): unified post-compaction
+  // queue drain. Both CompactionComplete(Right) branches (resume=true
+  // auto-compaction continuation and resume=false return-to-idle) share ONE
+  // drain so queued injections accumulated during the compaction window are
+  // NEVER lost: immediate inputs + user input head + barrier-drained events
+  // all land in the very next turn.
+  // ============================================================
+
+  /** Result of [[drainQueuesAfterCompaction]]. */
+  private[agent] case class PostCompactDrain(
+    /** Messages to append to the continuation round (immediate inputs + user inputs + events). */
+    appended: List[Message],
+    /** Messages appended from immediate inputs (for per-input WS bubble emission). */
+    immMessages: List[Message],
+    /** Original immediate inputs (source/eventType/sender for emitInjectedUserEvent). */
+    injectedImms: List[AgentCommand.ImmediateInput],
+    /** Queued UserInput commands converted to messages (injected inline). */
+    userMessages: List[Message],
+    /** Original UserInput commands (source/eventType/sender for emitInjectedUserEvent). */
+    injectedUsers: List[AgentCommand.UserInput],
+    /** Queued external events injected as ONE batched reminder (None if none drained). */
+    eventMessage: Option[Message],
+    /** Number of events folded into eventMessage. */
+    eventCount: Int,
+    /** Updated execution with queues drained. */
+    exec: ExecutionContext
+  )
+
+  /** ImmediateInput → User message (blocks preferred, text fallback). */
+  private def immInputToMessage(imm: AgentCommand.ImmediateInput): Message =
+    (imm.blocks match
+      case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
+      case _ => Message(MessageRole.User, Left(imm.text))
+    ).copy(source = imm.source)
+
+  /** UserInput (AgentCommand) → User message for inline continuation injection. */
+  private def userCmdToMessage(ui: AgentCommand.UserInput): Message =
+    (ui.blocks match
+      case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
+      case _ => Message(MessageRole.User, Left(ui.text))
+    ).copy(source = ui.source)
+
+  /**
+   * F1 (2026-08-30): drain every queue that was held back during the
+   * compaction window (ToolsComplete guard keeps pendingImmediateInputs and
+   * pendingEvents untouched while a job is pending; the processing handler
+   * buffers UserInputs into pendingUserInputs). Inject ALL of it into the
+   * continuation round — immediate inputs each as their own User message
+   * (with WS bubble emission), UserInput commands inline as User messages
+   * (only replyTo-free ones — a UserInput carrying a replyTo must keep the
+   * full-metadata path so its completion target is not stranded), and ALL
+   * events batched via buildEventReminder (sub-agent barrier: Delegate/
+   * SubTask results stay held while the batch is outstanding — #25/#31).
+   * Non-UserInput commands (SkillActivate/AskQuestion/StartPlan) keep the
+   * full-metadata queue: they stay in pendingUserInputs and are forwarded
+   * by the next turn boundary drain (finishTurnCont) — never lost, only
+   * deferred.
+   */
+  private[agent] def drainQueuesAfterCompaction(compactedState: AgentState): PostCompactDrain =
+    val exec = compactedState.execution
+    val imms = exec.pendingImmediateInputs
+    val immMessages = imms.map(immInputToMessage)
+    // replyTo-free UserInput commands can be safely inlined into the
+    // continuation round; UserInputs carrying a replyTo (and non-UserInput
+    // commands) stay queued for full-metadata forwarding.
+    val (userMessages, userTail) = exec.pendingUserInputs.partitionMap {
+      case ui: AgentCommand.UserInput if ui.replyTo.isEmpty => Left((ui, userCmdToMessage(ui)))
+      case other => Right(other)
+    }
+    val (injectedUsers, userMsgs) = userMessages.unzip
+    // Full flush (2026-08-30, G1): EVERY event held during the compaction
+    // window is injected together in the continuation round — the window is a
+    // one-time flush, not the steady-state one-event-per-turn-boundary drain
+    // (drainBarrier's serial pacing). The only exception is the sub-agent
+    // barrier (#25/#31): while a parallel Delegate/SubTask batch is still
+    // outstanding, its result events stay HELD — injecting them one at a time
+    // would break the batch-injection contract. Non-subagent events
+    // (background/mail notifications) flush regardless, exactly as the
+    // steady-state drain lets them pass during an outstanding batch.
+    val (drainedEvents, remainingEvents) =
+      if exec.outstandingSubagentResults > 0 then
+        val (subtaskHeld, others) = exec.pendingEvents.partition(TurnBoundaryDrains.isSubagentResult)
+        (others, subtaskHeld)
+      else (exec.pendingEvents, Nil)
+    val eventMessage =
+      if drainedEvents.nonEmpty then Some(buildEventReminder(drainedEvents)) else None
+    val appended = immMessages ++ userMsgs ++ eventMessage.toList
+    val updatedExec = exec.copy(
+      pendingImmediateInputs = Nil,
+      pendingUserInputs = userTail,
+      pendingEvents = remainingEvents
+    )
+    PostCompactDrain(
+      appended,
+      immMessages,
+      imms,
+      userMsgs,
+      injectedUsers,
+      eventMessage,
+      drainedEvents.size,
+      updatedExec
+    )
+
+  /** WS bubble emission for every injected immediate/user input that carries a source. */
+  private def emitInjectedBubbles(
+    state: AgentState,
+    drain: PostCompactDrain
+  )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
+    val immBubbles = drain.injectedImms.traverse_ { imm =>
+      imm.source match
+        case Some(src) =>
+          emitInjectedUserEvent(
+            state.wsSend, state.sessionId, imm.text, src, imm.eventType, imm.sender, imm.senderTeam, imm.delivery
+          )
+        case None => IO.unit
+    }
+    val userBubbles = drain.injectedUsers.traverse_ { ui =>
+      ui.source match
+        case Some(src) =>
+          emitInjectedUserEvent(
+            state.wsSend, state.sessionId, ui.text, src, ui.eventType, ui.sender, ui.senderTeam, ui.delivery
+          )
+        case None => IO.unit
+    }
+    immBubbles *> userBubbles
+
+  /** F1/F3: audit log — how many queued injections landed in the continuation round. */
+  private def logPostCompactInjection(
+    agentDef: AgentDef,
+    depth: Int,
+    state: AgentState,
+    drain: PostCompactDrain
+  )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
+    IO(logAgentEvent(
+      agentDef,
+      depth,
+      state.sessionId,
+      state.sessionName,
+      "queues-injected-after-compaction",
+      s"imm=${drain.immMessages.size} user=${drain.userMessages.size} events=${drain.eventCount} " +
+        s"remainingImm=${drain.exec.pendingImmediateInputs.size} " +
+        s"remainingUser=${drain.exec.pendingUserInputs.size} " +
+        s"remainingEvents=${drain.exec.pendingEvents.size}"
+    ))
+
   /**
    * Emit a `user` WS event so the frontend renders an injected-task bubble
    * (浅蓝, source-labeled) instead of leaving the task prompt invisible.
@@ -1987,25 +2133,37 @@ object AgentActor extends AgentCore with AgentSession:
                 // Cache v2: compaction shrinks history; the cached systemStable
                 // is rebuilt on the next turn (lifecycle node).
                 .invalidateSystemStableCache
+              // F1 (2026-08-30, compact-injection-shield G1): BOTH branches now
+              // drain the held-back queues through ONE shared helper. Previously
+              // only the no-resume path drained (and only one injection per
+              // round); the resume=true auto-compaction continuation injected
+              // NOTHING, deferring queued Mail/delegate results to the next turn
+              // boundary — G1, the loss-window this batch closes.
+              val drain = drainQueuesAfterCompaction(compactedState)
               if compactionPending.exists(_.resumeAfterCompact) then
                 val stateWithInstruction = compactionPending.flatMap(_.postCompactInstruction) match
                   case Some(instruction) =>
                     compactedState.withMessages(compactedState.messages :+ Message(MessageRole.User, Left(instruction)))
                   case None => compactedState
-                ctx.forkTurn(compactEmitIO) *>
-                  pipeLlmCall(
+                val drainedState = stateWithInstruction.copy(execution =
+                  drain.exec.copy(
+                    messages = stateWithInstruction.messages ++ drain.appended
+                  )
+                ).withNextLoopTurn // Block 3：压缩后注入 = 新 turn
+                for
+                  _ <- ctx.forkTurn(compactEmitIO)
+                  _ <- logPostCompactInjection(agentDef, depth, state, drain)
+                  _ <- emitInjectedBubbles(state, drain)
+                  result <- pipeLlmCall(
                     agentDef,
                     resources,
                     depth,
                     parentRef,
-                    stateWithInstruction,
+                    drainedState,
                     compactionPending.flatMap(_.replyTo)
                   )
+                yield result
               else
-                // Drain any immediate inputs queued during compaction — inject the head
-                // and continue processing instead of silently dropping them at idle.
-                val immInputOpt = compactedState.execution.pendingImmediateInputs.headOption
-                val remainingImmInputs = compactedState.execution.pendingImmediateInputs.drop(1)
                 for
                   _ <- ctx.forkTurn(compactEmitIO)
                   _ <- ctx.forkTurn(
@@ -2016,89 +2174,47 @@ object AgentActor extends AgentCore with AgentSession:
                         )
                       )
                   )
-                  result <- immInputOpt match
-                    case Some(imm) =>
-                      logAgentEvent(
+                  result <- if drain.appended.nonEmpty then
+                    for
+                      _ <- logPostCompactInjection(agentDef, depth, state, drain)
+                      _ <- emitInjectedBubbles(state, drain)
+                      res <- pipeLlmCall(
                         agentDef,
+                        resources,
                         depth,
-                        state.sessionId,
-                        state.sessionName,
-                        "immediate-input-injected-after-compaction",
-                        s"text=${imm.text.take(60)} remaining=${remainingImmInputs.size}"
+                        parentRef,
+                        compactedState.copy(execution =
+                          drain.exec.copy(messages = compactedState.messages ++ drain.appended)
+                        ).withNextLoopTurn, // Block 3：压缩后注入 = 新 turn
+                        None
                       )
-                      val immMessage = (imm.blocks match
-                        case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-                        case _ => Message(MessageRole.User, Left(imm.text))
-                      ).copy(source = imm.source)
-                      val drainedState = compactedState.copy(execution =
-                        compactedState.execution.copy(
-                          messages = compactedState.messages :+ immMessage,
-                          pendingImmediateInputs = remainingImmInputs
-                        )
-                      ).withNextLoopTurn // Block 3：压缩后注入 = 新 turn
-                      for
-                        _ <- imm.source match
-                          case Some(src) =>
-                            emitInjectedUserEvent(
-                              state.wsSend,
-                              state.sessionId,
-                              imm.text,
-                              src,
-                              imm.eventType,
-                              imm.sender,
-                              imm.senderTeam,
-                              imm.delivery
-                            )
-                          case None => IO.unit
-                        res <- pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
-                      yield res
-                    case None =>
-                      // No immediate inputs — check pending user inputs (e.g. messages
-                      // that arrived during compaction). Forward head to self so the
-                      // idle handler processes it with full metadata; preserve the tail.
-                      state.execution.pendingUserInputs.headOption match
-                        case Some(userCmd) =>
-                          (ctx.self ! userCmd) *>
-                            IO.pure(idle(agentDef, resources, depth, parentRef,
+                    yield res
+                  else
+                    // Nothing injected inline — but deferred commands (replyTo-bearing
+                    // UserInputs and non-UserInput commands such as SkillActivate /
+                    // AskQuestion / StartPlan, held for full-metadata forwarding) may
+                    // still be parked in pendingUserInputs. Forward the head to self
+                    // so the idle handler processes it with full metadata — the
+                    // replyTo completion target must NOT be stranded — preserving the
+                    // tail for the next turn boundary drain (mirrors finishTurnCont).
+                    drain.exec.pendingUserInputs.headOption match
+                      case Some(userCmd) =>
+                        (ctx.self ! userCmd) *>
+                          IO.pure(
+                            idle(
+                              agentDef,
+                              resources,
+                              depth,
+                              parentRef,
                               compactedState.copy(execution =
-                                compactedState.execution.copy(
-                                  pendingUserInputs = state.execution.pendingUserInputs.tail
-                                )
+                                drain.exec.copy(pendingUserInputs = drain.exec.pendingUserInputs.tail)
                               )
-                            ))
-                        case None =>
-                          // No user inputs either — drain queued external events
-                          // (arrived during compaction, held back by the ToolsComplete
-                          // guard). Barrier-aware: subtask/delegate results are held
-                          // while the batch is outstanding and injected ALL together
-                          // when it completes; other events drain serially. Mirrors
-                          // finishTurn's event drain.
-                          val (drainedEvents, remainingEvents) =
-                            TurnBoundaryDrains.drainBarrier(
-                              compactedState.execution.pendingEvents,
-                              compactionPending = false,
-                              compactedState.execution.outstandingSubagentResults
                             )
-                          drainedEvents.headOption match
-                            case Some(_) =>
-                              logAgentEvent(
-                                agentDef,
-                                depth,
-                                state.sessionId,
-                                state.sessionName,
-                                "pending-events-injected-after-compaction",
-                                s"events=${drainedEvents.size} remaining=${remainingEvents.size}"
-                              )
-                              val eventMessage = buildEventReminder(drainedEvents)
-                              val drainedState = compactedState.copy(execution =
-                                compactedState.execution.copy(
-                                  messages = compactedState.messages :+ eventMessage,
-                                  pendingEvents = remainingEvents
-                                )
-                              ).withNextLoopTurn // Block 3：压缩后事件注入 = 新 turn
-                              pipeLlmCall(agentDef, resources, depth, parentRef, drainedState, None)
-                            case None =>
-                              IO.pure(idle(agentDef, resources, depth, parentRef, compactedState))
+                          )
+                      case None =>
+                        // Truly nothing queued during the window — the continuation
+                        // state (messages compacted, pendingCompaction cleared) is final.
+                        IO.pure(idle(agentDef, resources, depth, parentRef, compactedState))
                 yield result
                 end for
               end if
@@ -2518,6 +2634,25 @@ object AgentActor extends AgentCore with AgentSession:
       guardSaveTurn(agentDef, resources, depth, parentRef, state, replyTo, pending, result)
     else if state.pendingCompaction.isDefined && result.toolCalls.isEmpty && result.text.nonEmpty then
       handleCompactResponse(agentDef, resources, depth, parentRef, state, result.text)
+    else if state.pendingCompaction.exists(_.phase == CompactionPhase.Compact) && result.toolCalls.isEmpty && result.text.isEmpty then
+      // F0 (2026-08-30, compact-injection-shield Q1): a Compact-phase response
+      // with EMPTY text (thinking-only) must be treated as a compaction
+      // FAILURE, never allowed to fall through to the mail-check rung. Tools
+      // are disabled during compaction (pipeLlmCall sets tools=Some(Nil)), so
+      // the "you must call Mail" reminder loop is a deterministic dead loop —
+      // production deaths 03:29/03:41/08:45 each burned ~219K input ×2 retries
+      // before compaction-abandoned silently. handleCompactFailure increments
+      // the circuit-breaker counter, emits CompactFailed, completes the
+      // deferred waiter, and (auto-compaction) ends the turn with an honest
+      // failure instead of laundering it through the mail-reminder mechanism.
+      handleCompactFailure(
+        agentDef,
+        resources,
+        depth,
+        parentRef,
+        state,
+        "Compact phase returned no text (thinking-only response) — the summary must be written as text, not reasoning"
+      )
     else if state.pendingCompaction.isDefined && result.toolCalls.nonEmpty then
       handleCompactFailure(agentDef, resources, depth, parentRef, state, "Compact model unexpectedly called tools")
     else if state.askMode.isDefined && result.toolCalls.isEmpty then
