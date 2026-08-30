@@ -17,6 +17,7 @@
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
+import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAuth (/api/canvas-tabs)
 
 const MIN_CANVAS_WIDTH = 320;
 const MAX_CANVAS_WIDTH = 1200;
@@ -1146,7 +1147,9 @@ function scheduleServerPersist(payload) {
     serverPersistTimer = null;
     fetch(TABS_API, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      // withAuth (RestApiRoutes) only accepts Bearer/query token — NOT cookie.
+      // Without the header the PUT 403s and the service archive never persists.
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(payload),
     })
       .then((r) => { if (!r.ok) console.warn('[canvas-tabs] server persist failed:', r.status); })
@@ -1310,7 +1313,7 @@ export function restoreTabs() {
     // F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端为权威存档。无论本地是否恢复成功，
     // 都拉取服务端并合并/覆盖——这是根治 Safari 无痕/多窗口清空 localStorage 导致标签
     // 重启丢失的关键：存档介质移出浏览器、落到服务端磁盘。服务端 404/网络失败时回退本地。
-    fetch(TABS_API)
+    fetch(TABS_API, { headers: { ...authHeaders() } })
       .then((r) => (r.ok ? r.json() : null))
       .then((serverData) => {
         const parsed = parseTabsData(serverData);
