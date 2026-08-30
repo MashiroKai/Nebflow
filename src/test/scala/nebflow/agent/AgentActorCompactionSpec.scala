@@ -15,6 +15,7 @@ import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk, TokenUsage}
 
+import io.circe.parser.decode
 import scala.concurrent.duration.*
 
 /**
@@ -580,6 +581,141 @@ class AgentActorCompactionSpec extends FunSuite:
         assert(
           contTurnTexts.exists(_.contains("queued-during-compact")),
           s"continuation turn must carry the queued immediate input, got: $contTurnTexts"
+        )
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  // ============================================================
+  // F2 (2026-08-30, compact-injection-shield batch 2): queue persistence.
+  // V2-persist — enqueue writes the snapshot to disk immediately (crash
+  // mid-compaction must not lose queued injections). V2-recover — persisted
+  // queues replay into the actor at spawn (RecoverPersistedQueues) and land
+  // in the next drain (compaction continuation round).
+  // ============================================================
+
+  test("V2-persist: enqueue writes the queue snapshot to disk immediately") {
+    val system = ActorSystem("compact-persist-test")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        counter <- IO.ref(0)
+        userTexts <- IO.ref(List.empty[List[String]])
+        llm = new DelayedSummaryLlm(counter, userTexts)
+        resources <- mkResources(system, tmp, llm)
+        agentDef = AgentDef(name = "standalone-agent", description = "test", tools = List("Read"), systemPrompt = "")
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = agentDef,
+            resources = resources,
+            wsSend = _ => IO.unit,
+            depth = 0,
+            parentRef = None,
+            sessionId = Some("v2p-agent"),
+            sessionName = Some("v2p"),
+            initialMessages = List(
+              Message(MessageRole.User, Left("task")),
+              Message(MessageRole.Assistant, Left("working"))
+            )
+          ),
+          "v2p-agent"
+        )
+        // compact turn in flight (mock sleeps 300ms) → processing handler
+        // enqueues + persists to disk.
+        _ <- ref ! AgentCommand.TriggerCompaction("full", None, Some("post-compact instruction"))
+        _ <- IO.sleep(100.millis)
+        _ <- ref ! AgentCommand.ImmediateInput("queued-imm", source = Some("mail"))
+        _ <- ref ! AgentCommand.ExternalEvent("e2e", "inject", "queued-ev")
+        _ <- IO.sleep(150.millis) // enqueue handlers ran, persist done; compact still in flight (300ms)
+        file = tmp / "data" / "sessions" / "v2p-agent" / "injection-queues.json"
+        onDisk <- IO.blocking(decode[CompactionQueueStore.PersistedQueues](os.read(file)))
+      yield
+        assert(onDisk.isRight, s"injection-queues.json must exist and decode, got: $onDisk")
+        val q = onDisk.toOption.get
+        assert(q.imms.exists(_.text == "queued-imm"), s"imms must contain queued-imm, got: ${q.imms.map(_.text)}")
+        assert(
+          q.events.exists(_.payload == "queued-ev"),
+          s"events must contain queued-ev, got: ${q.events.map(_.payload)}"
+        )
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  test("V2-recover: persisted queues replay at spawn and land in the compaction continuation") {
+    val system = ActorSystem("compact-recover-test")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        // Seed disk as if a crash left queues behind mid-compaction.
+        _ <- CompactionQueueStore.save(
+          "v2r-agent",
+          CompactionQueueStore.PersistedQueues(
+            imms = List(AgentCommand.ImmediateInput("recovered-imm", source = Some("mail"))),
+            events = List(AgentCommand.ExternalEvent("e2e", "inject", "recovered-ev"))
+          )
+        )
+        counter <- IO.ref(0)
+        userTexts <- IO.ref(List.empty[List[String]])
+        llm = new DelayedSummaryLlm(counter, userTexts)
+        resources <- mkResources(system, tmp, llm)
+        agentDef = AgentDef(name = "standalone-agent", description = "test", tools = List("Read"), systemPrompt = "")
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = agentDef,
+            resources = resources,
+            wsSend = _ => IO.unit,
+            depth = 0,
+            parentRef = None,
+            sessionId = Some("v2r-agent"),
+            sessionName = Some("v2r"),
+            initialMessages = List(
+              Message(MessageRole.User, Left("task")),
+              Message(MessageRole.Assistant, Left("working"))
+            )
+          ),
+          "v2r-agent"
+        )
+        // RecoverPersistedQueues is sent to self at setup; give it time to
+        // load and merge before triggering the compaction that drains them.
+        _ <- IO.sleep(200.millis)
+        _ <- ref ! AgentCommand.TriggerCompaction("full", None, Some("post-compact instruction"))
+        _ <- {
+          def go(deadline: Long): IO[Unit] =
+            counter.get.flatMap { n =>
+              if n >= 2 then IO.unit
+              else if System.currentTimeMillis() > deadline then
+                IO.raiseError(new RuntimeException(s"continuation turn never started: count=$n"))
+              else IO.sleep(100.millis) *> go(deadline)
+            }
+          go(System.currentTimeMillis() + 5000L)
+        }
+        texts <- userTexts.get
+      yield
+        assert(texts.length >= 2, s"expected ≥2 LLM requests, got ${texts.length}")
+        val contTurnTexts = texts(1)
+        assert(
+          contTurnTexts.exists(_.contains("recovered-imm")),
+          s"continuation turn must carry the recovered immediate input, got: $contTurnTexts"
+        )
+        assert(
+          contTurnTexts.exists(_.contains("recovered-ev")),
+          s"continuation turn must carry the recovered event payload, got: $contTurnTexts"
         )
       program.unsafeRunSync()
     finally

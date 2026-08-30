@@ -365,6 +365,21 @@ object AgentActor extends AgentCore with AgentSession:
    * by the next turn boundary drain (finishTurnCont) — never lost, only
    * deferred.
    */
+  /**
+   * F2 (2026-08-30): snapshot the injection queues to disk. Called on every
+   * enqueue and every drain so a crash mid-compaction degrades to "queued
+   * injections survive the restart" instead of "silently lost". Failures are
+   * logged inside the store and never propagate — enqueue must not block.
+   */
+  private def persistQueues(sessionId: Option[String], exec: ExecutionContext): IO[Unit] =
+    sessionId match
+      case Some(sid) =>
+        CompactionQueueStore.save(
+          sid,
+          CompactionQueueStore.PersistedQueues(exec.pendingImmediateInputs, exec.pendingEvents)
+        )
+      case None => IO.unit
+
   private[agent] def drainQueuesAfterCompaction(compactedState: AgentState): PostCompactDrain =
     val exec = compactedState.execution
     val imms = exec.pendingImmediateInputs
@@ -537,7 +552,14 @@ object AgentActor extends AgentCore with AgentSession:
         "spawn",
         s"parent=${parentRef.map(_.path.name).getOrElse("-")} msgs=${initialMessages.size}"
       )(using ctx)
-      IO.pure(
+      // F2 (2026-08-30): replay persisted injection queues. Sent to self
+      // BEFORE any external delivery can enqueue — Pekko mailbox ordering
+      // guarantees this message is processed first, so a recovered entry is
+      // never re-ordered after a fresh enqueue.
+      // NOTE: `ctx.self !` returns IO[Unit] — a bare statement would be
+      // built-not-run (2026-08-30 probe: setup-time self-send silently
+      // dropped), so it MUST be sequenced into the factory's IO.
+      (ctx.self ! AgentCommand.RecoverPersistedQueues) *> IO.pure(
         idle(
           agentDef,
           resources,
@@ -1088,6 +1110,30 @@ object AgentActor extends AgentCore with AgentSession:
       case _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
           _: AgentCommand.SetPermissionDeferred =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
+
+      // F2 (2026-08-30): replay persisted injection queues after a crash.
+      // Idempotent: merges disk entries ahead of the in-memory queues (which
+      // are empty at spawn); the disk file is deleted by the drain paths once
+      // the queues are flushed, so a second replay is a no-op.
+      case AgentCommand.RecoverPersistedQueues =>
+        val sid = state.sessionId.getOrElse("")
+        CompactionQueueStore.load(sid).flatMap {
+          case Some(q) if q.imms.nonEmpty || q.events.nonEmpty =>
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "queues-recovered",
+              s"imm=${q.imms.size} events=${q.events.size}"
+            )
+            val exec = state.execution.copy(
+              pendingImmediateInputs = q.imms ++ state.execution.pendingImmediateInputs,
+              pendingEvents = q.events ++ state.execution.pendingEvents
+            )
+            IO.pure(idle(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
+          case _ => IO.pure(idle(agentDef, resources, depth, parentRef, state))
+        }
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
       case AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery) =>
@@ -2140,6 +2186,9 @@ object AgentActor extends AgentCore with AgentSession:
               // NOTHING, deferring queued Mail/delegate results to the next turn
               // boundary — G1, the loss-window this batch closes.
               val drain = drainQueuesAfterCompaction(compactedState)
+              // F2: persist the post-drain queue state (drained entries removed;
+              // deferred/barrier-held entries survive) before continuing.
+              val persistDrainIO = persistQueues(state.sessionId, drain.exec)
               if compactionPending.exists(_.resumeAfterCompact) then
                 val stateWithInstruction = compactionPending.flatMap(_.postCompactInstruction) match
                   case Some(instruction) =>
@@ -2152,6 +2201,7 @@ object AgentActor extends AgentCore with AgentSession:
                 ).withNextLoopTurn // Block 3：压缩后注入 = 新 turn
                 for
                   _ <- ctx.forkTurn(compactEmitIO)
+                  _ <- persistDrainIO
                   _ <- logPostCompactInjection(agentDef, depth, state, drain)
                   _ <- emitInjectedBubbles(state, drain)
                   result <- pipeLlmCall(
@@ -2174,6 +2224,7 @@ object AgentActor extends AgentCore with AgentSession:
                         )
                       )
                   )
+                  _ <- persistDrainIO
                   result <- if drain.appended.nonEmpty then
                     for
                       _ <- logPostCompactInjection(agentDef, depth, state, drain)
@@ -2306,7 +2357,9 @@ object AgentActor extends AgentCore with AgentSession:
             AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
             isSubagent = depth > 0,
             state.sessionId
-          ) *> IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
+          ) *> persistQueues(state.sessionId, updatedExec) *> IO.pure(
+            processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
+          )
 
       // --- AskUser from tool ---
       case AgentCommand.AskUser(requestId, items, replyToOpt) =>
@@ -2414,7 +2467,9 @@ object AgentActor extends AgentCore with AgentSession:
         val updatedExec = state.execution.copy(
           pendingImmediateInputs = state.execution.pendingImmediateInputs :+ msg
         )
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
+        persistQueues(state.sessionId, updatedExec) *> IO.pure(
+          processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
+        )
 
       // Queued mail arriving while busy — just count; actual content is on disk
       case AgentCommand.MailQueued(item, _) =>
@@ -3005,6 +3060,8 @@ object AgentActor extends AgentCore with AgentSession:
       ).withNextLoopTurn // Block 3：turn 末事件注入 = 新 turn
       for
         _ <- roundCompleteIO
+        // F2: keep the disk snapshot in sync after the drain (drained events gone).
+        _ <- persistQueues(state.sessionId, updatedState.execution)
         _ <-
           if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit
@@ -3071,6 +3128,8 @@ object AgentActor extends AgentCore with AgentSession:
         .withNextLoopTurn // Block 3：turn 末注入 = 新 turn
       for
         _ <- roundCompleteIO
+        // F2: keep the disk snapshot in sync after the drain (injected input gone).
+        _ <- persistQueues(state.sessionId, updatedState.execution)
         _ <-
           if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit
