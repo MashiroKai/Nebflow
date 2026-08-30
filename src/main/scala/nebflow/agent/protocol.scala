@@ -106,6 +106,15 @@ object AgentCommand:
 
   case class CompactionComplete(result: Either[String, List[Message]]) extends AgentCommand
 
+  /**
+   * F2 (2026-08-30, compact-injection-shield batch 2): sent to self at spawn
+   * (before any external delivery) — load the persisted injection queues
+   * (CompactionQueueStore) into the execution context. A crash mid-compaction
+   * otherwise loses every ImmediateInput/ExternalEvent queued during the
+   * window; replay restores them so the next turn injects them.
+   */
+  case object RecoverPersistedQueues extends AgentCommand
+
   case class TriggerCompaction(
     mode: String,
     replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None,
