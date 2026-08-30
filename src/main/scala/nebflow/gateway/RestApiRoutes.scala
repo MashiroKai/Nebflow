@@ -10,6 +10,8 @@ import nebflow.agent.AgentCore
 import nebflow.agent.SharedResources
 import nebflow.core.AtomicJson
 import nebflow.core.Branding
+import nebflow.core.CanvasTabs
+import nebflow.core.CanvasTabStore
 import nebflow.core.PathUtil
 import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.{EntityLoader, NodeRoute}
@@ -239,6 +241,42 @@ class RestApiRoutes(
               )
             yield resp
           }
+        }
+      }
+
+    // ── Canvas tabs 服务端持久化（F1 根治，2026-08-30）────────────────────
+    // 作者报告「JVM 重启后标签页丢失」——浏览器 localStorage 不可靠（Safari
+    // 无痕/多窗口 removeItem 竞态/清理）。服务端存档 ~/.nebflow/canvas_tabs.json
+    // 与 sessionStore 同生命周期，JVM 重启保留；前端 restoreTabs 优先拉这里。
+    // 契约（与 Frontend 同步）：GET → 200 {v:2,tabs:[...]} 或 404（无存档）；
+    // PUT body {v:2,tabs:[...]} → 200 {ok:true}；非法输入 400 / 超限 413 不落盘。
+    case req @ GET -> Root / "canvas-tabs" =>
+      withAuth(req) {
+        new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json").load().flatMap {
+          case Some(json) => Ok(json)
+          case None => NotFound(Json.obj("error" -> "no canvas tabs archive".asJson))
+        }
+      }
+
+    case req @ PUT -> Root / "canvas-tabs" =>
+      withAuth(req) {
+        // 读 body 有界：take(max+1) 后超限即 413，防大 payload 拉爆内存。
+        val maxBytes = CanvasTabs.MaxBodyBytes
+        req.body.take(maxBytes.toLong + 1).compile.toVector.flatMap { bytes =>
+          CanvasTabs.parseBody(bytes.toArray, maxBytes) match
+            case Left((status, msg)) =>
+              val st = org.http4s.Status.fromInt(status).getOrElse(Status.BadRequest)
+              IO.pure(Response[IO](status = st).withEntity(Json.obj("error" -> msg.asJson)))
+            case Right(json) =>
+              new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
+                .save(json) *> Ok(Json.obj("ok" -> true.asJson))
+                .handleErrorWith { e =>
+                  logger.error(s"canvas tabs save failed: ${e.getMessage}") *>
+                    IO.pure(
+                      Response[IO](status = Status.InternalServerError)
+                        .withEntity(Json.obj("error" -> s"save failed: ${e.getMessage}".asJson))
+                    )
+                }
         }
       }
 
