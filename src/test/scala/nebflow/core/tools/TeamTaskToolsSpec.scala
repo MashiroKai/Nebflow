@@ -226,7 +226,7 @@ class TeamTaskToolsSpec extends FunSuite:
     // reassignment is recorded as an event
     assert(cleared.events.exists(_.kind == "assignee"), s"expected an assignee event, got ${cleared.events}")
 
-  test("teamTaskListUpdate WS event carries the assignee field on each task"):
+  test("teamTaskListUpdate WS event carries teamId + assignee on each task (三级分组两字段)"):
     val c = call(
       TeamTaskCreateTool,
       obj("subject" -> "s".asJson, "description" -> "d".asJson, "assignee" -> "Backend".asJson),
@@ -236,6 +236,8 @@ class TeamTaskToolsSpec extends FunSuite:
     val sent = lastSent.get
     assertEquals(sent.hcursor.downField("type").as[String].toOption, Some("teamTaskListUpdate"))
     val tasks = sent.hcursor.downField("tasks").focus.flatMap(_.asArray).get
+    val teamIds = tasks.flatMap(_.hcursor.downField("teamId").as[String].toOption).toList
+    assertEquals(teamIds, List("alpha"), "the panel needs teamId on every task to scope the team group")
     val assignees = tasks.flatMap(_.hcursor.downField("assignee").as[String].toOption).toList
     assertEquals(assignees, List("Backend"), "the panel needs assignee on every task to group team→member→task")
 
