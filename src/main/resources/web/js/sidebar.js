@@ -684,8 +684,14 @@ function saveWorkSchedule(enabled, segs, opts) {
     window.__showToast?.(t('settings.scheduleEmpty'), 'error');
     return false;
   }
-  const err = validateSegments(segs);
-  if (err) { window.__showToast?.(err, 'error'); return false; }
+  // Segment validation only matters when the freeze is ENABLED (a broken freeze
+  // window would misbehave). When DISABLING, the segments are just preserved for
+  // later re-enable (#337/#⑪G) and must never block a pure toggle-off — e.g. a
+  // stale/in-progress segment edit must not stop the user turning the freeze off.
+  if (enabled) {
+    const err = validateSegments(segs);
+    if (err) { window.__showToast?.(err, 'error'); return false; }
+  }
   sendWs({ type: 'setWorkSchedule', workSchedule: { enabled, segments: segs } });
   if (opts && opts.toast) window.__showToast?.(t('settings.scheduleSaved'), 'success');
   return true;
@@ -1189,7 +1195,12 @@ function bindSettingsEvents(content, cfg) {
   });
 
   // ── Work schedule (freeze) — spec §3.2 sidebar.js ──────────────────────
-  // #334: all edits go to the local draft only; Save commits to the server.
+  // 作者裁定（2026-08-30, toggle 即时保存）：开关类设置变更即保存——toggle 不再
+  // 需要显示的保存按钮，更改就是保存（覆盖 #334 对 toggle 的适用；非 toggle 的
+  // 文本/数字输入仍按 #334 显式保存）。toggle 变更立即调 saveWorkSchedule →
+  // sendWs setWorkSchedule → 后端 broadcastServerConfig + FreezeScheduler.scan
+  // 立即解冻/冻结（现象1 Save 链路 S1 已实证 13/13）。段落编辑器（add/remove/
+  // 时间输入）仍是文本/数字输入 → 保留显式 Save 按钮（markScheduleDirty）。
   document.getElementById('toggle-schedule')?.addEventListener('click', function() {
     const enabled = this.classList.toggle('on');
     const editor = document.getElementById('schedule-editor');
@@ -1198,11 +1209,19 @@ function bindSettingsEvents(content, cfg) {
     if (offHint) offHint.style.display = enabled ? 'none' : 'block';
     let segs = collectSegments();
     if (enabled && segs.length === 0) {
-      segs = [{ start: '09:00', end: '12:00' }];   // F2: default one segment (draft)
+      segs = [{ start: '09:00', end: '12:00' }];   // F2: default one segment
       renderScheduleEditorRows(segs);
     }
-    scheduleDraft = { enabled, segments: segs };
-    updateScheduleActionRow();
+    // toggle 即时保存：变更即 sendWs setWorkSchedule（无需点保存按钮）。
+    if (saveWorkSchedule(enabled, segs, { toast: true })) {
+      scheduleDraft = null;      // toggle 已即时提交，无"待保存"草稿态
+      updateScheduleActionRow();
+    } else {
+      // 保存失败（enabled=true 且段落非法）→ 回滚 toggle，保持原状态。
+      this.classList.toggle('on', !enabled);
+      if (editor) editor.style.display = !enabled ? 'block' : 'none';
+      if (offHint) offHint.style.display = !enabled ? 'none' : 'block';
+    }
   });
 
   document.getElementById('btn-add-segment')?.addEventListener('click', () => {
