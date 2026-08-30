@@ -182,9 +182,15 @@ function buildRow(task, sessionId) {
     text.appendChild(desc);
   }
   // #15 三级分组: annotate every task with its Team · member (谁在执行). Quiet
-  // meta line under the subject/desc; grouped tasks read clearly, and tasks
-  // without a group (session-local) carry no meta.
-  const meta = [taskTeam(task), taskMember(task)].filter(Boolean).join(' · ');
+  // meta line under the subject/desc; grouped tasks read clearly. 无归属的全局
+  // 任务在 Nebula 统一面板标注「Nebula（全局）」来源（#16，Nebula 拍板 08-30）——
+  // 成员会话面板的无归属任务不标注（那是成员自己的任务）。
+  const team = taskTeam(task);
+  const member = taskMember(task);
+  let meta = [team, member].filter(Boolean).join(' · ');
+  // #16 全局任务来源标注: 无 team 无 assignee 的全局任务在 Nebula 统一面板
+  // （sessionShowsTeamTasks true）标注来源「Nebula（全局）」；成员会话面板不标。
+  if (!meta && sessionShowsTeamTasks(sessionId)) meta = t('task.globalSource');
   if (meta) {
     row.classList.add('task-has-meta');
     const metaEl = document.createElement('span');
