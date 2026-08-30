@@ -65,6 +65,8 @@
 
 .task-stats {
   color: var(--color-text-muted, #888);
+  /* Unified panel spec §3.3: tabular figures for the count pair. */
+  font-variant-numeric: tabular-nums;
 }
 
 /* Collapsed body — use grid-template-rows for smooth height-aware animation */
@@ -294,7 +296,8 @@ svg.task-check-glyph {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  margin-top: 1px;
+  /* Unified panel spec §2.3: two-line gap unified at 2px (was 1px). */
+  margin-top: 2px;
   font-size: 12px;
   line-height: 1.35;
   color: var(--color-text-dim);
@@ -325,15 +328,19 @@ svg.task-check-glyph {
   color: var(--color-text-muted, #888);
 }
 
-/* v3 §15.6/§15.7: 任务区相对时间（刚分/分钟/小时/天，60s textContent 直更） */
+/* v3 §15.6/§15.7: 任务区相对时间（刚分/分钟/小时/天，60s textContent 直更）。
+   Unified panel spec §2.1 L5: same time column as subagent uptime / flow
+   elapsed — 10/500 mono tabular-nums, right-aligned. */
 .task-last-active {
   flex-shrink: 0;
   max-width: 56px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
-  font-weight: 400;
+  font-size: 10px;
+  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
   color: var(--color-text-muted, #888);
 }
 

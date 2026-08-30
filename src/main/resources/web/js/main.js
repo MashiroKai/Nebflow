@@ -1784,7 +1784,7 @@ function renderBgAgentDropdown() {
       '<div class="bg-task-info">' +
         '<div class="bg-task-line">' +
           '<span class="bg-task-state bg-state-' + rowState + '">' + escapeHtml(statusLabel) + '</span>' +
-          kindPart + namePart + uptimePart + retriesPart +
+          kindPart + namePart + retriesPart + uptimePart +
         '</div>' +
         stuckPart + toolPart +
       '</div>' +

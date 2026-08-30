@@ -288,26 +288,37 @@
   /* NOTE: --sapphire is a space-separated RGB triplet — must use the modern
      rgb(... / alpha) syntax; rgba(var(--sapphire), a) is INVALID and silently
      dropped (this is why the capsule looked "gone"). */
-  background: rgb(var(--sapphire) / 0.15);
+  background: rgb(var(--accent-agent-light) / 0.15);
   /* Capsule + thin ring — the "oval ring" around the count */
   border-radius: 999px;
-  border: 1px solid rgb(var(--sapphire) / 0.35);
+  border: 1px solid rgb(var(--accent-agent-light) / 0.35);
   padding: 2px 9px;
   font-size: 12px;
-  color: rgb(var(--sapphire));
+  /* Unified panel spec §6.2 (20260830): counter hue = agent blue; light theme
+     deepened (#46639c, 5.96:1) to clear WCAG 4.5 — replaces the P0 dark-mode
+     color:var(--color-text) stopgap; the token is theme-aware and readable in
+     both themes. Dark keeps --sapphire (0825 frozen). */
+  color: rgb(var(--accent-agent-light));
   cursor: pointer;
   transition: background 0.2s;
+}
+#bgagent-indicator:hover { background: rgb(var(--accent-agent-light) / 0.25); }
+@media (prefers-color-scheme: dark) {
+  #bgagent-indicator {
+    background: rgb(var(--sapphire) / 0.15);
+    border-color: rgb(var(--sapphire) / 0.35);
+    color: rgb(var(--sapphire));
+  }
+  #bgagent-indicator:hover { background: rgb(var(--sapphire) / 0.25); }
 }
 #bgagent-indicator.hidden { display: none; }
 .bgagent-dot {
   width: 7px; height: 7px;
   border-radius: 50%;
-  background: rgb(var(--sapphire));
+  background: currentColor;
   animation: bg-pulse 1.5s ease-in-out infinite;
 }
 .bgagent-count { font-weight: 500; }
-#bgagent-indicator { color: var(--color-text); }
-#bgagent-indicator:hover { background: rgb(var(--sapphire) / 0.25); }
 
 /* ── Running flows indicator (2026-08-26 flow-complement-design §5.3) ──
    Mirrors the Sub-Agents (#bgagent-indicator) badge so the "运行中 flows"
@@ -317,24 +328,28 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  background: rgb(var(--sapphire) / 0.15);
+  /* Unified panel spec §6.2 (20260830, author ruling): flow counter hue =
+     yellow (--accent-flow triplet, dark #e8b73f / light #7a6200 fallback
+     value — see sapphire.css note), distinguishing it from the agent-blue
+     badge. Alpha tint structure (0.15/0.35, hover 0.25) unchanged. */
+  background: rgb(var(--accent-flow) / 0.15);
   border-radius: 999px;
-  border: 1px solid rgb(var(--sapphire) / 0.35);
+  border: 1px solid rgb(var(--accent-flow) / 0.35);
   padding: 2px 9px;
   font-size: 12px;
-  color: rgb(var(--sapphire));
+  color: rgb(var(--accent-flow));
   cursor: pointer;
   transition: background 0.2s;
 }
+#flows-indicator:hover { background: rgb(var(--accent-flow) / 0.25); }
 #flows-indicator.hidden { display: none; }
 .flows-dot {
   width: 7px; height: 7px;
   border-radius: 50%;
-  background: rgb(var(--sapphire));
+  background: currentColor;
   animation: bg-pulse 1.5s ease-in-out infinite;
 }
 .flows-count { font-weight: 500; }
-#flows-indicator:hover { background: rgb(var(--sapphire) / 0.25); }
 
 /* Running flows dropdown — same glass shell as #bgagent-dropdown. */
 #flows-dropdown {
@@ -388,7 +403,8 @@
   cursor: pointer;
   display: flex;
   gap: 8px;
-  align-items: flex-start;
+  align-items: center;
+  position: relative; /* anchor for the hover-revealed cancel button */
 }
 .flows-row:last-child { border-bottom: none; }
 .flows-row:hover { background: var(--color-frame-hover); }
@@ -398,35 +414,69 @@
   box-shadow: inset 2px 0 0 rgb(var(--sapphire) / 0.8);
 }
 .flows-status {
-  width: 8px; height: 8px;
+  /* Unified panel spec §3.2: 6px (align with subagent dot; 0826 had 8px). */
+  width: 6px; height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-top: 5px;
 }
 .flows-status.running { background: var(--color-success); box-shadow: 0 0 4px rgba(76,175,80,0.5); animation: bg-pulse 1.5s ease-in-out infinite; }
 .flows-status.failed { background: var(--color-error); box-shadow: 0 0 4px rgba(244,67,54,0.5); }
-.flows-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
-.flows-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Single-line row (spec §2.2/§3.2): [dot][name][progress][elapsed]; text
+   slots baseline-aligned; the dot is a row sibling so the row centers it. */
+.flows-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.flows-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap; /* spec §7 narrow viewport parity with .bg-task-line */
+}
 .flows-name {
   font-weight: 500;
-  font-size: 12px;
+  /* Unified panel spec §2.1 L3+500: 13px (0826 had 12px). */
+  font-size: 13px;
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.flows-progress { font-size: 11px; color: var(--color-text-muted); white-space: nowrap; flex-shrink: 0; }
-.flows-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--color-text-muted); }
+/* Progress joins the meta-trail slot (right-aligned, before elapsed). */
+.flows-progress { font-size: 11px; color: var(--color-text-muted); white-space: nowrap; flex-shrink: 0; margin-left: auto; font-variant-numeric: tabular-nums; }
+.flows-elapsed {
+  /* Unified panel spec §2.1 L5: same time column as subagent uptime. */
+  font-size: 10px;
+  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-frame-text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+/* Cancel: hover/focus-revealed overlay — the single-line row keeps the time
+   column flush right (A5). Absolute so it never shifts the layout; opacity
+   only = no new animation (spec §5 zero-motion discipline). */
 .flows-cancel {
-  margin-left: auto;
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
   font-size: 11px;
+  font-weight: 500;
   color: var(--color-text-muted);
-  background: none;
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 6px;
   padding: 1px 8px;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.flows-row:hover .flows-cancel,
+.flows-row:focus-within .flows-cancel,
+.flows-cancel:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 .flows-cancel:hover { border-color: var(--color-error); color: var(--color-error); }
 .flows-cancel:disabled { opacity: 0.4; cursor: default; }
@@ -499,24 +549,28 @@
 }
 .bg-task-line {
   display: flex;
-  align-items: center;
+  /* Unified panel spec §2.2: text slots (state/name/uptime) share the L3
+     first-line baseline; the status dot falls back to visual centering. */
+  align-items: baseline;
   gap: 8px;
   flex-wrap: wrap; /* narrow viewport: meta wraps to a second line, never overflows */
   min-width: 0;
 }
 /* Row primary text (name · task). Explicit theme-aware color — never rely on
    inheritance from body (pre-fix it fell to the UA default black, invisible
-   on the dark glass panel). */
-.bg-task-name { color: var(--color-text); }
+   on the dark glass panel). Unified panel spec §2.1 L3: 13px/400. */
+.bg-task-name { color: var(--color-text); font-size: 13px; font-weight: 400; }
 .bg-task-state {
   font-size: 11px;
-  font-weight: 500;
+  /* Unified panel spec §3.1: state word is L4 (400) — yields hierarchy to
+     the primary name (0825 spec had it 500; superseded by the type ramp). */
+  font-weight: 400;
   color: var(--color-frame-text-muted);
   flex-shrink: 0;
 }
 .bg-task-state.bg-state-stuck,
 .bg-task-state.bg-state-error { color: var(--color-error); }
-.bg-task-state.bg-state-frozen { color: rgb(var(--sapphire)); }
+.bg-task-state.bg-state-frozen { color: rgb(var(--accent-agent-light)); }
 .bg-task-state.bg-state-done { color: var(--color-frame-text-dim); }
 .bg-task-kind {
   font-size: 10px;
@@ -532,12 +586,22 @@
   font-size: 10px;
   color: var(--color-frame-text-muted);
   font-family: ui-monospace, SFMono-Regular, monospace;
+  /* Unified panel spec §2.1 L5: time column 500 + tabular figures. */
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
   margin-left: auto;
 }
 .bg-task-retries {
   font-size: 11px;
-  color: var(--color-frame-text-dim);
+  font-weight: 500;
+  /* Unified panel spec §3.1: chip-ify (same family as the kind chip). */
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  color: var(--color-frame-text-muted);
+  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 .bg-task-stuck {
@@ -547,8 +611,14 @@
   margin-top: 2px;
 }
 .bg-task-status.bg-status-error { background: var(--color-error); box-shadow: 0 0 4px rgba(244,67,54,0.5); }
-.bg-task-status.bg-status-frozen { background: rgb(var(--sapphire)); box-shadow: 0 0 4px rgb(var(--sapphire) / 0.4); }
+.bg-task-status.bg-status-frozen { background: rgb(var(--accent-agent-light)); box-shadow: 0 0 4px rgb(var(--accent-agent-light) / 0.4); }
 .bg-task-status.bg-status-done { background: var(--color-frame-text-muted); box-shadow: none; }
+/* Frozen is the agent-blue accent: deep sapphire in light theme (agent-light
+   token), back to the sapphire triplet in dark. Mirrors #bgagent-indicator. */
+@media (prefers-color-scheme: dark) {
+  .bg-task-state.bg-state-frozen { color: rgb(var(--sapphire)); }
+  .bg-task-status.bg-status-frozen { background: rgb(var(--sapphire)); box-shadow: 0 0 4px rgb(var(--sapphire) / 0.4); }
+}
 @media (prefers-reduced-motion: reduce) {
   .bg-task-status { animation: none !important; }
 }
@@ -617,7 +687,7 @@
 }
 .bg-task-row:hover { background: var(--color-frame-hover); }
 .bg-task-row:last-child { border-bottom: none; }
-.bg-task-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.bg-task-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .bg-task-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .bg-task-desc {
   font-size: 12px;
