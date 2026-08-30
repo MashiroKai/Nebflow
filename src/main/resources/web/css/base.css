@@ -39,6 +39,9 @@
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--color-bg);
+  /* Root text color: unstyled text (e.g. Sub-Agents row names) must inherit a
+     theme-aware value, never the UA default black (invisible on dark glass). */
+  color: var(--color-text);
   height: 100vh;
   display: flex;
   flex-direction: row;
