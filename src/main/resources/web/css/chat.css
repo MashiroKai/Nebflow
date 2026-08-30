@@ -307,6 +307,7 @@
 }
 .bgagent-count { font-weight: 500; }
 #bgagent-indicator { color: var(--color-text); }
+#bgagent-indicator:hover { background: rgb(var(--sapphire) / 0.25); }
 
 /* ── Running flows indicator (2026-08-26 flow-complement-design §5.3) ──
    Mirrors the Sub-Agents (#bgagent-indicator) badge so the "运行中 flows"
