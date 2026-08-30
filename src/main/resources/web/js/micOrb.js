@@ -157,7 +157,12 @@ const FS = [
   '  vec3 c3=adjustHue(palC,hue);',
   '  float len=length(uv);',
   '  float nEdge=snoise3(vec3(uv*0.9,t*0.4))*0.5+0.5;',
-  '  float r0=mix(0.80,0.94,nEdge);',
+  '  /* v8.2.6: orb body scaled down within a LARGER canvas (64px) so the glow',
+  '     bloom has room to fade as a gradient past the body edge without being',
+  '     clipped at the canvas boundary (v8.2.5 canvas was 48px and the body',
+  '     filled it to ~0.94uv, leaving ~4px for the bloom = hard edge). Body',
+  '     stays visually ~same px; the extra canvas is the glow field. */',
+  '  float r0=mix(0.56,0.66,nEdge);',
   '  float bodyA=1.0-smoothstep(r0,r0*1.10,len);',
   '  vec2 w=vec2(snoise3(vec3(uv*1.3+vec2(0.0,t*0.10),t*0.30)),',
   '              snoise3(vec3(uv*1.3+vec2(5.2,-t*0.08),t*0.30)));',
@@ -205,11 +210,17 @@ const FS = [
   '  float gb=dot(colNoRim,LUMA);',
   '  colNoRim=mix(colNoRim,mix(vec3(gb),colNoRim,1.42),isLight);',
   '  colNoRim=clamp(colNoRim,0.0,1.0);',
-  '  /* v8.2.4: halo glow dies inside the skirt (windowed), rgb-only */',
-  '  float halo=exp(-max(len-r0*1.02,0.0)*9.0)*(1.0-bodyA);',
-  '  float haloA=halo*0.16*(1.0-isLight)*(1.0-smoothstep(r0*0.98,r0*1.05,len));',
-  '  vec3 haloCol=mix(c1,c2,0.5)*1.15;',
-  '  vec3 outCol=mix(col,haloCol,clamp(haloA*1.5,0.0,1.0)*(1.0-bodyA));',
+  '  /* v8.2.6: gradient glow bloom (dark-only). The halo now spreads over the',
+  '     widened skirt and dims monotonically, so the background fluorescence',
+  '     fades into the panel as a smooth gradient (no hard ring - "背景荧光改为',
+  '     渐变过渡，边缘看不出硬边" user ruling 2026-08-30). A slower exp decay',
+  '     reaches further out; the window dies with the skirt and alpha stays',
+  '     sourced from colNoRim (v8.2.4) so the bloom is never a bright opaque',
+  '     ring / white-base return. */',
+  '  float halo=exp(-max(len-r0*1.02,0.0)*4.5)*(1.0-bodyA);',
+  '  float haloA=halo*0.18*(1.0-isLight)*(1.0-smoothstep(r0*1.02,r0*1.30,len));',
+  '  vec3 haloCol=mix(c1,c2,0.5)*1.12;',
+  '  vec3 outCol=mix(col,haloCol,clamp(haloA*0.9,0.0,1.0)*(1.0-bodyA));',
   '  float gg=dot(outCol,LUMA);',
   '  outCol=mix(vec3(gg),outCol,sat)*lum;',
   '  outCol=clamp(outCol,0.0,1.0);',
@@ -217,17 +228,19 @@ const FS = [
   '  colNoRim=mix(vec3(gb2),colNoRim,sat)*lum;',
   '  colNoRim=clamp(colNoRim,0.0,1.0);',
   '  float glassA=pow(clamp(max(colNoRim.r,max(colNoRim.g,colNoRim.b))*1.06,0.0,1.0),1.58);',
-  '  /* v8.2.3 white-base fix: the old falloff band (0.98r0-1.14r0) let the',
-  '     halo-lifted rim rgb bleed out as a bright ring over the glass panel',
-  '     ("white circular base" user report 2026-08-27). Tighten the alpha',
-  '     skirt so the canvas reads fully transparent past 1.05r0 - the orb',
-  '     sits directly on the frosted glass; material optics above untouched. */',
-  '  float shape=1.0-smoothstep(r0*0.96,r0*1.05,len);',
+  '  /* v8.2.6: theme-aware feathered skirt. Dark: wide bloom (0.92-1.28r0) so',
+  '     the glow fades as a gradient ("荧光渐变过渡" user ruling 2026-08-30);',
+  '     Light: softer/tighter (0.92-1.15r0) so no haze or white-base returns.',
+  '     The body edge (<=0.92r0) stays opaque (B9); the bloom is a dim, smooth',
+  '     gradient - never a bright circular ring. */',
+  '  float skirtEnd=r0*mix(1.28,1.15,isLight);',
+  '  float shape=1.0-smoothstep(r0*0.92,skirtEnd,len);',
   '  float a=clamp(glassA*shape,0.0,1.0);',
   '  a=mix(a,a*0.94,isLight);',
   '  /* v8.2.4: the light-theme inner lift is gated by shape - the bare',
   '     smoothstep stays at 1 past 0.96r0 and painted a constant +0.12 alpha',
-  '     veil across the whole canvas outside the orb (square cutout edge). */',
+  '     veil across the whole canvas outside the orb (square cutout edge). It',
+  '     now fades with the widened skirt instead of a sharp 1.05r0 cutoff. */',
   '  a=clamp(a+smoothstep(r0*0.80,r0*0.96,len)*shape*isLight*0.12,0.0,1.0);',
   '  return vec4(outCol,clamp(a,0.0,1.0));',
   '}',
@@ -265,7 +278,7 @@ class OrbRenderer {
        turned blocky. Render at >=96px and let the CSS downscale smooth it.
        Cap at 3 to bound GPU cost on 3x mobile screens. */
     this.dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
-    this.size = this.opts.size || 48;
+    this.size = this.opts.size || 64;
     canvas.width = Math.round(this.size * this.dpr);
     canvas.height = Math.round(this.size * this.dpr);
     /* v8.2.5: track dpr changes (browser zoom) and resize the backing store
@@ -564,7 +577,7 @@ class MicOrb {
     this.reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
     if (this.canvas) {
-      this.renderer = new OrbRenderer(this.canvas, { size: 48, reducedMotion: this.reduced });
+      this.renderer = new OrbRenderer(this.canvas, { size: 64, reducedMotion: this.reduced });
       this.webglOk = !this.renderer.failed;
       // WebGL context lost -> permanent CSS fallback (restored is rare; the CSS
       // orb is visually equivalent for the state colors).
