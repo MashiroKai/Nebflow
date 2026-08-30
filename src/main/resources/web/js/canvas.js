@@ -17,7 +17,6 @@
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
-import { addElementRefToggle } from './viewers/shared.js';
 
 const MIN_CANVAS_WIDTH = 320;
 const MAX_CANVAS_WIDTH = 1200;
@@ -782,10 +781,6 @@ function renderUrlPane(pane, url) {
   });
 
   pane.append(bar, iframe, hint);
-
-  // #303 C5-A1: cross-origin URL page — element selection is unavailable;
-  // the toggle stays clickable and explains via toast (S4) instead of acting.
-  addElementRefToggle(pane, { mode: 'crossorigin' });
 }
 
 /** Open a file or workspace item in a Canvas tab.

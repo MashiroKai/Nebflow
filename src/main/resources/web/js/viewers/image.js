@@ -2,7 +2,7 @@
 // Zoom: transform scale on the <img> (layout-free), wheel/keys/toolbar via the
 // shared viewers/zoom.js engine; pan via pointer drag.
 
-import { getToken, escapeHtml, formatSize, addElementRefToggle } from './shared.js';
+import { getToken, escapeHtml, formatSize } from './shared.js';
 import { enableViewerZoom } from './zoom.js';
 
 /** Image viewer — <img> served via /api/nf-file, pannable + zoomable. */
@@ -102,11 +102,6 @@ function viewImage(pane, { absPath, fileName, size }) {
       if (Math.abs(s - 1) < 0.01) fit();
       else applyScale(1, pivot);
     });
-
-    // #303 C5-A3: no DOM to select inside a raster image — disabled toggle
-    // with a title hint (capability matrix, nodom mode). Added here (not after
-    // img.src) because this onload body clears the pane before building.
-    addElementRefToggle(pane, { mode: 'nodom' });
   };
   img.src = url;
 }
