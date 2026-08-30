@@ -3073,11 +3073,13 @@ document.getElementById('canvas-toggle-btn')?.addEventListener('click', () => {
 // registerCanvasPanelButton (registered from flowCanvas.js / agentManager.js).
 // Restore queued messages from localStorage (survives browser refresh)
 restoreQueue();
-// Restore Canvas tabs from localStorage (survives browser refresh).
-// If no saved tabs (e.g. cache cleared), auto-open Teams panel.
-if (!restoreTabs()) {
-  flowCanvas.openTeams();
-}
+// Restore Canvas tabs (server persisted, falls back to localStorage).
+// If no tabs restored (local + server both empty), auto-open Teams panel.
+// F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): restoreTabs 现为异步——优先生效服务端存档，
+// 故这里用 .then 决定是否 fallback，而非旧的同步 bool 判断。
+restoreTabs().then((restored) => {
+  if (!restored) flowCanvas.openTeams();
+});
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
 initDaemons();
