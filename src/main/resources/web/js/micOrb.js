@@ -1,3 +1,9 @@
+// v8.2.10 (2026-08-30): #20 unified edge — every shading/rim sphere now uses
+// the shared wobble contour r0 (not a contracted 0.985r0/0.90r0) and the alpha
+// feather is tightened to a narrow band right at the silhouette (0.96-1.00r0).
+// This removes the internal bright rim ring + the translucent halo band beyond
+// it that together read as "layer edges" and leaked as the body wobbled.
+//
 // v8.2.8 (2026-08-30): OUTER GLOW/BLOOM RING REMOVED — the halo bloom pass and
 // the widened dark skirt are dropped so only the lit bubble body remains (user
 // report: 麦克风气泡外围那一圈光晕/荧光整个不要，只保留中间亮的气泡本体). Body
@@ -179,7 +185,15 @@ const FS = [
   '  vec3 col=mix(c3*1.22,c1*1.04,smoothstep(0.20,0.80,f1));',
   '  col=mix(col,c2,smoothstep(0.35,0.85,f1*0.5+f2*0.5)*0.55);',
   '  col+=C_ICE*pow(f2,5.0)*mix(0.38,0.30,isLight);',
-  '  float R=r0*0.985;',
+  '  /* v8.2.10 #20: unify EVERY shading/rim sphere to the shared wobble',
+  '     contour r0 (not a contracted fraction). A contracted sphere (0.985r0 /',
+  '     0.90r0) collapses the surface normal to horizontal inside the body,',
+  '     producing a ring-band brightness discontinuity that reads as a',
+  '     "separate layer" and (being a fixed fraction of the wobble radius)',
+  '     shifts as the body wiggles = the layer-edge leak. Using R=r0 for both',
+  '     the shading normal and the fresnel rim keeps every brightness feature',
+  '     on the SAME contour as the silhouette, so layers stay unified. */',
+  '  float R=r0;',
   '  float z=sqrt(max(R*R-len*len,0.0));',
   '  vec3 N=normalize(vec3(uv,z));',
   '  vec3 Ld=normalize(vec3(-0.42,0.50,0.66));',
@@ -189,13 +203,14 @@ const FS = [
   '  float core=1.0-smoothstep(0.0,r0*0.58,len);',
   '  float pulse=0.88+0.12*snoise3(vec3(uv*2.2,t*0.8));',
   '  col+=mix(c1,C_ICE,0.4)*core*pulse*mix(0.28,0.20,isLight);',
-  '  /* v8.2.4 edge-clean: rim light on a CONTRACTED sphere (Rf=0.90r0),',
-  '     windowed to zero by 1.00r0 - the bright rim sits fully inside the',
-  '     opaque silhouette instead of straddling the alpha skirt. */',
-  '  float Rf=r0*0.90;',
+  '  /* v8.2.10 #20: rim sphere unified to r0 (was r0*0.90) and its window',
+  '     tightened to the SAME band as the alpha feather (0.96r0-1.00r0), so the',
+  '     bright edge and the silhouette terminate together — no internal bright',
+  '     ring, no dim halo band beyond it. */',
+  '  float Rf=r0;',
   '  float zf=sqrt(max(Rf*Rf-len*len,0.0));',
   '  vec3 Nf=normalize(vec3(uv,zf));',
-  '  float fres=pow(1.0-clamp(Nf.z,0.0,1.0),2.4)*(1.0-smoothstep(r0*0.92,r0*1.00,len));',
+  '  float fres=pow(1.0-clamp(Nf.z,0.0,1.0),2.4)*(1.0-smoothstep(r0*0.96,r0*1.00,len));',
   '  /* alpha source: pre-rim body color (rim/halo brightening must not',
   '     inflate edge alpha through the alpha-from-rgb coupling) */',
   '  vec3 colNoRim=col;',
@@ -241,7 +256,12 @@ const FS = [
   '     body edge (r0) and follows the same wobble field, so alpha dies at the',
   '     silhouette — nothing extends past the body\'s visual edge at any phase. */',
   '  float skirtEnd=r0;',
-  '  float shape=1.0-smoothstep(r0*0.90,skirtEnd,len);',
+  '  /* v8.2.10 #20: tighten the alpha feather to a narrow band at the edge',
+  '     (0.96r0-1.00r0) instead of the wide 0.90-1.00r0 skirt. The wide band was',
+  '     a translucent halo BEYOND the bright rim that peeked out as the body',
+  '     wobbled = the "layer leak". Now the body stays opaque to ~0.96r0 and',
+  '     dies right at the silhouette (r0), same contour as the rim. */',
+  '  float shape=1.0-smoothstep(r0*0.96,skirtEnd,len);',
   '  float a=clamp(glassA*shape,0.0,1.0);',
   '  a=mix(a,a*0.94,isLight);',
   '  /* v8.2.4: the light-theme inner lift is gated by shape - the bare',
