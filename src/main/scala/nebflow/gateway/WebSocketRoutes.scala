@@ -2100,7 +2100,15 @@ class WebSocketRoutes(
             // Agent-created files (e.g. /tmp/output.svg) should always be readable.
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
             val hc = json.hcursor
-            val popFilePath = hc.downField("path").as[String].getOrElse("")
+            val popFilePathRaw = hc.downField("path").as[String].getOrElse("")
+            // Expand a leading `~` (home shorthand) to the absolute home dir —
+            // historical Pop records may store `~/...`; only the server (which
+            // knows user.home) can resolve it to an absolute path.
+            val userHome = System.getProperty("user.home", "")
+            val popFilePath =
+              if popFilePathRaw == "~" then userHome
+              else if popFilePathRaw.startsWith("~/") then userHome + popFilePathRaw.drop(1)
+              else popFilePathRaw
             if popFilePath.nonEmpty then
               (for
                 _ <- IO.raiseUnless(popFilePath.startsWith("/"))(
