@@ -262,9 +262,11 @@ object ContextRefresher:
    * Build a memory block string for system prompt injection.
    *
    * Reads memory levels and formats them into a single Markdown block:
-   *   - User memory    (~/.nebflow/User.md)                              — global
-   *   - Agent memory   (~/.nebflow/agents/<name>/memory.md)               — Nebula
-   *     or (~/.nebflow/teams/<team>/agents/<name>/memory.md)              — Team agents
+   *   - User memory    (~/.nebflow/User.md)                 — global
+   *   - Agent memory   (~/.nebflow/agents/Nebula/memory.md)  — Nebula
+   *
+   * 2026-08-31 裁定①: team agents no longer carry memory — the gate
+   * (shouldInjectMemory) only admits Nebula, so teamName is always None here.
    *
    * Only levels that exist on disk are included.
    */
