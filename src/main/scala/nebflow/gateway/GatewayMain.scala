@@ -391,7 +391,13 @@ object GatewayMain extends IOApp.Simple:
                                     case Left(e) =>
                                       logger.warn(s"Task TTL sweep failed: ${e.getMessage}").void
                                   }
-                                hubSetup *> taskTtlSweep *> telemetryIO.flatMap { telemetry =>
+                                // #28 阶段 0：Project Flow Map 终态节点 TTL 扫描
+                                // （5min 显示消失 → 移归档 + WS nodeRemoved；Node
+                                // 运行本身不设超时）。周期给所有已挂载 ProjectActor
+                                // 发 TtlTick；无项目时空转。
+                                val projectTtlScanner: IO[Unit] =
+                                  nebflow.core.project.ProjectActor.ttlScanner(30).start.void
+                                hubSetup *> taskTtlSweep *> projectTtlScanner *> telemetryIO.flatMap { telemetry =>
                                   val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
                                   val sessionService = new SessionService(sessionStore)
                                   val agentService = new AgentService(agentLibrary)
