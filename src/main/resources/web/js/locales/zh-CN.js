@@ -18,19 +18,19 @@ export default {
   'panel.explorer': '文件浏览器',
   'panel.messages': '消息',
   'panel.contacts': '联系人',
-  // #27 Project 面板 + Flow Map 视图（§3.5）
+  // #27 Project 标签页 + Flow Map 标签页（方向调整：Canvas 标签页形态，参考 team 面板）
   'project.title': '项目',
+  'project.loading': '加载项目…',
+  'project.workspace': '工作区',
   'project.openWorkspace': '在文件浏览器中打开',
   'project.openWorkspaceSoon': '打开工作区「{name}」（待后端契约）',
   'project.agentFile': 'Agent.md',
-  'project.agentFileSoon': '打开 Agent.md「{name}」（待后端契约）',
   'project.openFlowMap': '打开「{name}」的 Flow Map',
-  'project.runningCount': '当前后台运行 agent 数',
   'project.idle': '空闲',
   'project.empty': '还没有项目',
   'project.emptyHint': '通过 Nebula 创建 Project 后，这里会列出项目。',
-  'flowmap.title': 'Flow Map · 项目常驻拓扑视图',
-  'flowmap.back': '返回项目列表',
+  'flowmap.title': 'Flow Map',
+  'flowmap.cardRunning': '运行中…',
   'flowmap.loading': '加载 Flow Map…',
   'flowmap.loadFail': 'Flow Map 加载失败',
   'flowmap.empty': '暂无节点，项目空闲',
@@ -43,7 +43,7 @@ export default {
   'flowmap.noResult': '暂无结果',
   'flowmap.runningDetail': '节点运行中，完成后结果将自动保存并沿出边投递。',
   'flowmap.noResultDetail': '该节点尚未产生结果（运行中/等待/悬空）。',
-  'flowmap.close': '关闭',
+  'agentFile.hint': '此文件是项目工作区的 agent 指令（.nebflow/Agent.md），可编辑并保存。',
 
   // === Friends & messages (A2A) ===
   'contacts.searchPlaceholder': 'nebflow 号 / 邮箱',

@@ -17,7 +17,7 @@ export const API = {
   flowMap: (name) => `/api/projects/${encodeURIComponent(name)}/flowmap`,
   // 在文件浏览器中打开工作区（§3.5；后端未定，先占位）
   openWorkspace: (name) => `/api/projects/${encodeURIComponent(name)}/open`,
-  // Agent.md 查看/编辑（§3.5；后端未定，先占位）
+  // Agent.md 查看/编辑（§3.5；GET 读 / POST 存，契约未定先 mock）
   agentFile: (name) => `/api/projects/${encodeURIComponent(name)}/agent.md`,
 };
 
@@ -146,4 +146,44 @@ export function summarize(fm) {
   else if (nodes.length === 0) brief = '空闲';
   else brief = `${completed} 节点已完成`;
   return { running, failed, pending, completed, brief };
+}
+
+// ── Agent.md 读取/保存（契约后替换为真实 GET/POST）──────────
+const MOCK_AGENT_FILES = {
+  'phd-notebook': [
+    '# Agent.md',
+    '',
+    '项目级 agent 指令（phd-notebook 示例）。',
+    '- 文献调研优先走学术检索与引用链。',
+    '- 成稿前先列提纲，评审后定稿。',
+    '',
+  ].join('\n'),
+  'nebflow': [
+    '# Agent.md',
+    '',
+    'Nebflow 开发指令（示例）。',
+    '- 改动前先读 CODEBASE.md。',
+    '- 前端改动须过 verify-web-assets.mjs。',
+    '',
+  ].join('\n'),
+  'writer-blog': [
+    '# Agent.md',
+    '',
+    '技术博客写作（示例）。',
+    '- 每周一选题，短小精悍。',
+    '',
+  ].join('\n'),
+};
+
+/** 读取项目 Agent.md。契约后替换为：fetch(API.agentFile(name)).then(r=>r.text()) */
+export async function fetchAgentFile(name) {
+  await new Promise((r) => setTimeout(r, 90));
+  return MOCK_AGENT_FILES[name] || '# Agent.md\n\n（暂无内容）\n';
+}
+
+/** 保存项目 Agent.md。契约后替换为：fetch(API.agentFile(name), {method:'POST', body}) */
+export async function saveAgentFile(name, content) {
+  await new Promise((r) => setTimeout(r, 90));
+  if (MOCK_AGENT_FILES[name] !== undefined) MOCK_AGENT_FILES[name] = content;
+  return { ok: true };
 }

@@ -18,19 +18,19 @@ export default {
   'panel.explorer': 'Explorer',
   'panel.messages': 'Messages',
   'panel.contacts': 'Contacts',
-  // #27 Project panel + Flow Map view (§3.5)
+  // #27 Project tab + Flow Map tab (direction adjustment: Canvas tab form, team-panel paradigm)
   'project.title': 'Projects',
+  'project.loading': 'Loading projects…',
+  'project.workspace': 'Workspace',
   'project.openWorkspace': 'Open in file browser',
   'project.openWorkspaceSoon': 'Open workspace "{name}" (pending backend contract)',
   'project.agentFile': 'Agent.md',
-  'project.agentFileSoon': 'Open Agent.md "{name}" (pending backend contract)',
   'project.openFlowMap': 'Open "{name}" Flow Map',
-  'project.runningCount': 'Running agents in background',
   'project.idle': 'Idle',
   'project.empty': 'No projects yet',
   'project.emptyHint': 'Create a Project via Nebula to see it listed here.',
-  'flowmap.title': 'Flow Map · Project topology view',
-  'flowmap.back': 'Back to project list',
+  'flowmap.title': 'Flow Map',
+  'flowmap.cardRunning': 'Running…',
   'flowmap.loading': 'Loading Flow Map…',
   'flowmap.loadFail': 'Failed to load Flow Map',
   'flowmap.empty': 'No nodes yet — project idle',
@@ -43,7 +43,7 @@ export default {
   'flowmap.noResult': 'No result',
   'flowmap.runningDetail': 'Node is running; when it completes its result is saved and delivered along the out edge.',
   'flowmap.noResultDetail': 'This node has no result yet (running / waiting / dangling).',
-  'flowmap.close': 'Close',
+  'agentFile.hint': 'This file is the project workspace agent instructions (.nebflow/Agent.md); edit and save it.',
 
   // === Friends & messages (A2A) ===
   'contacts.searchPlaceholder': 'nebflow ID / Email',

@@ -1,25 +1,24 @@
-// flowMapView.js — Project Flow Map 视图（§3.5）。
-// 页面内导航（非弹窗非新标签页）：点击 project 进入，左上角返回回列表。
-// 复用 flow-run 面板显示设计（.solar-card / .solar-node / .solar-orbit /
-// .flow-edge 状态色+边连线），数据驱动自 §2.2 NodeList 结构。
-// 已完成节点 5 分钟后不显示（TTL 只影响显示，结果保留归档——前端隐藏≠数据删除）。
-// 点击节点卡片查看结果详情（活动/归档读取——阶段 0 mock 先显示 result 摘要）。
+// flowMapTab.js — Project Flow Map 标签页（#27 方向调整：点击 project → 标签页打开）。
+// 复用 flow-run 标签页形态 + solar-card 显示设计；关闭标签页不影响项目数据。
+// 数据驱动自 §2.2 NodeList 结构；已完成节点 TTL 倒计时到期前端隐藏（数据保留归档）。
+// 点击节点卡片打开结果详情 viewer。
 
-import { t } from './i18n.js';
-import { esc } from './flowHelpers.js';
+import { openTab, getTabPane } from './canvas.js';
 import { FLOW_CSS } from './flowCss.js';
+import { esc } from './flowHelpers.js';
+import { t } from './i18n.js';
 import { fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
 
-// 布局常量（复用 flowDag 的视觉节奏）
+// 布局常量（复用 flowDag 视觉节奏）
 const NODE_W = 150;
 const NODE_H = 108;
 const V_SPACING = 150;
 const H_SPACING = 210;
 const PAD = 70;
 
-const view = () => document.getElementById('flowmap-view');
-let currentProject = null;
 let ttlTimer = null;
+let currentProject = null;
+let currentFm = null;
 
 // ── 布局：按 out 边算深度层 ────────────────────────────────
 function layoutNodes(fm) {
@@ -32,7 +31,6 @@ function layoutNodes(fm) {
       childrenMap.get(n.id).push(n.out);
     }
   });
-
   const depth = {};
   nodes.forEach((n) => { depth[n.id] = 0; });
   const visited = new Set();
@@ -42,13 +40,11 @@ function layoutNodes(fm) {
     visited.add(id);
     (childrenMap.get(id) || []).forEach((to) => visit(to, depth[id] + 1));
   }
-  // 入口节点（无入边或入边指向不存在节点）→ 深度 0
   nodes.forEach((n) => {
     const hasIn = (n.in || []).some((x) => nodeIds.has(x));
     if (!hasIn) visit(n.id, 0);
   });
   nodes.forEach((n) => visit(n.id, depth[n.id] || 0));
-
   const atDepth = {};
   nodes.forEach((n) => {
     const d = depth[n.id] || 0;
@@ -64,7 +60,7 @@ function layoutNodes(fm) {
   const maxDepth = Math.max(0, ...Object.keys(atDepth).map(Number));
   const width = Math.max((maxAt - 1) * H_SPACING + NODE_W + PAD * 2, 360);
   const height = maxDepth * V_SPACING + PAD * 2;
-  return { positions, width, height, depth };
+  return { positions, width, height };
 }
 
 // ── 节点卡片（复用 solar 视觉）────────────────────────────
@@ -78,12 +74,11 @@ function nodeHtml(n, pos, originX) {
     : st === 'cancelled' ? '<span class="solar-node-status cancelled">—</span>' : '';
   const worktreeBadge = n.hasWorktree || n.worktree
     ? `<span class="fm-worktree-badge" title="${esc(n.worktree || '')}">wt</span>` : '';
-  // TTL 倒计时（终态节点）：只在 >0 时显示；=0 视为已过 5min 应隐藏（渲染前过滤）
   const ttl = (st === 'completed' || st === 'failed' || st === 'cancelled') && Number.isFinite(n.ttlLeftSec) && n.ttlLeftSec > 0
     ? `<span class="fm-ttl" data-ttl-node="${esc(n.id)}" data-ttl="0">${fmtTtl(n.ttlLeftSec)}</span>` : '';
   const result = n.result
     ? `<div class="fm-result-summary" title="${esc(n.result)}">${esc(n.result.slice(0, 46))}${n.result.length > 46 ? '…' : ''}</div>`
-    : (st === 'running' ? '<div class="fm-result-summary running">运行中…</div>' : '');
+    : (st === 'running' ? `<div class="fm-result-summary running">${esc(t('flowmap.cardRunning'))}</div>` : '');
   return `
     <div class="solar-node fm-node ${cls}" data-node-id="${esc(n.id)}" data-agent="${esc(n.agent)}"
          data-status="${esc(st)}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
@@ -101,8 +96,7 @@ function nodeHtml(n, pos, originX) {
 }
 
 function fmtTtl(sec) {
-  const s = Math.max(0, Math.ceil(sec));
-  return `⏱ ${s}s`;
+  return `⏱ ${Math.max(0, Math.ceil(sec))}s`;
 }
 
 // ── 边（SVG，复用 .flow-edge）─────────────────────────────
@@ -132,39 +126,6 @@ function visibleNodes(fm) {
   });
 }
 
-// ── 渲染 ─────────────────────────────────────────────────
-export function renderFlowMap(container, fm, projectName) {
-  const nodes = visibleNodes(fm);
-  const { positions, width, height } = layoutNodes(fm);
-  const nodesHtml = nodes.map((n) => nodeHtml(n, positions[n.id] || { x: 0, y: 0 }, width / 2)).join('');
-  const summary = summarizeHeader(fm);
-  container.innerHTML = `
-    <div class="flowmap-header">
-      <button id="flowmap-back" class="flowmap-back" aria-label="${esc(t('flowmap.back'))}">
-        <i data-lucide="arrow-left"></i>
-      </button>
-      <div class="flowmap-title-wrap">
-        <div class="flowmap-title">${esc(projectName)}</div>
-        <div class="flowmap-sub">${esc(t('flowmap.title'))}</div>
-      </div>
-      <div class="flowmap-summary">${summary}</div>
-    </div>
-    ${nodes.length === 0
-      ? `<div class="dag-empty"><div class="hint">${esc(t('flowmap.empty'))}</div></div>`
-      : `<div class="solar-card flowmap-card">
-          <div class="solar-scroll">
-            <div class="solar-canvas" style="width:${width}px;height:${height}px">
-              ${edgesSvg(fm, positions, width, height)}
-              ${nodesHtml}
-            </div>
-          </div>
-        </div>`}
-    <div id="flowmap-node-detail" class="flowmap-node-detail" hidden></div>`;
-  createIconsIn(container);
-  bindFlowMapClicks(container);
-  startTtlTicker(container);
-}
-
 function summarizeHeader(fm) {
   const nodes = fm?.nodes || [];
   const running = nodes.filter((n) => n.status === 'running').length;
@@ -179,39 +140,47 @@ function summarizeHeader(fm) {
   return parts.length ? parts.join(' · ') : esc(t('flowmap.idle'));
 }
 
-// ── 交互：进入 / 返回 / 节点详情 / TTL ────────────────────
+function renderFlowMap(container, fm, projectName) {
+  const nodes = visibleNodes(fm);
+  const { positions, width, height } = layoutNodes(fm);
+  const nodesHtml = nodes.map((n) => nodeHtml(n, positions[n.id] || { x: 0, y: 0 }, width / 2)).join('');
+  container.innerHTML = `
+    <div class="flowmap-card-header">
+      <div class="flowmap-card-title" title="${esc(projectName)}">${esc(projectName)}</div>
+      <div class="flowmap-summary">${summarizeHeader(fm)}</div>
+    </div>
+    ${nodes.length === 0
+      ? `<div class="dag-empty"><div class="hint">${esc(t('flowmap.empty'))}</div></div>`
+      : `<div class="solar-card flowmap-card">
+          <div class="solar-scroll">
+            <div class="solar-canvas" style="width:${width}px;height:${height}px">
+              ${edgesSvg(fm, positions, width, height)}
+              ${nodesHtml}
+            </div>
+          </div>
+        </div>`}
+    `;
+  bindFlowMapClicks(container);
+  startTtlTicker(container);
+  import('./utils.js').then(({ createIconsIn }) => createIconsIn(container));
+}
+
 function bindFlowMapClicks(container) {
-  container.querySelector('#flowmap-back')?.addEventListener('click', closeFlowMap);
   container.querySelectorAll('.fm-node').forEach((el) => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
-      openNodeDetail(el.getAttribute('data-node-id') || '', el.getAttribute('data-status') || '');
+      openNodeDetail(el.getAttribute('data-node-id') || '');
     });
   });
 }
 
-function openNodeDetail(nodeId, status) {
-  const fm = currentFm;
-  const node = fm?.nodes?.find((n) => n.id === nodeId);
+// 节点结果详情：复用 flowViewers 的 overlay viewer（clean overlay 语义）。
+function openNodeDetail(nodeId) {
+  const node = currentFm?.nodes?.find((n) => n.id === nodeId);
   if (!node) return;
-  const panel = document.getElementById('flowmap-node-detail');
-  if (!panel) return;
-  const titleText = node.result ? t('flowmap.resultTitle') : t('flowmap.noResult');
-  const body = node.result
-    ? esc(node.result)
-    : (status === 'running' ? esc(t('flowmap.runningDetail')) : esc(t('flowmap.noResultDetail')));
-  panel.innerHTML = `
-    <div class="fm-detail-card">
-      <div class="fm-detail-head">
-        <div class="fm-detail-title">${esc(node.name)}</div>
-        <button class="fm-detail-close" aria-label="${esc(t('flowmap.close'))}"><i data-lucide="x"></i></button>
-      </div>
-      <div class="fm-detail-meta">${esc(node.agent)} · ${esc(status)}${node.worktree ? ' · ' + esc(node.worktree) : ''}</div>
-      <div class="fm-detail-body">${body}</div>
-    </div>`;
-  panel.hidden = false;
-  createIconsIn(panel);
-  panel.querySelector('.fm-detail-close')?.addEventListener('click', () => { panel.hidden = true; });
+  import('./flowViewers.js').then(({ openNodeResultViewer }) => {
+    openNodeResultViewer(esc(node.name), node.agent || '', node.status || '', node.worktree || '', node.result, node.id);
+  });
 }
 
 function startTtlTicker(container) {
@@ -220,7 +189,6 @@ function startTtlTicker(container) {
   if (ttlEls.length === 0) return;
   ttlTimer = setInterval(() => {
     let dirty = false;
-    // 服务端未驱动时本地递减演示 TTL；契约后由 nodeUpdated/nodeCompleted 驱动
     (currentFm?.nodes || []).forEach((n) => {
       if ((n.status === 'completed' || n.status === 'failed' || n.status === 'cancelled') &&
           Number.isFinite(n.ttlLeftSec) && n.ttlLeftSec > 0) {
@@ -234,83 +202,70 @@ function startTtlTicker(container) {
       const n = (currentFm?.nodes || []).find((x) => x.id === id);
       if (n) el.textContent = fmtTtl(n.ttlLeftSec);
     });
-    // 若有节点到期 → 重渲（隐藏超出 TTL 的终态节点；数据保留）
-    if (dirty && currentProject) {
-      renderFlowMap(container, currentFm, currentProject);
-      // 重渲后 reload 图标（lucide）
-      createIconsIn(container);
-    }
+    if (dirty && currentProject) renderFlowMap(container, currentFm, currentProject);
   }, 1000);
 }
 
-// ── 进入 / 返回 ───────────────────────────────────────────
-export function openFlowMap(projectName) {
-  const el = view();
-  if (!el) return;
+// ── 标签页打开 / 渲染 ────────────────────────────────────
+
+export function openFlowMapTab(projectName) {
+  if (!projectName) return;
   currentProject = projectName;
-  el.hidden = false;
-  document.body.classList.add('flowmap-open');
-  const content = el.querySelector('.flowmap-content') || el;
-  content.innerHTML = `<div class="flowmap-loading">${esc(t('flowmap.loading'))}</div>`;
+  openTab(`flow-map-${projectName}`, projectName, { type: 'flow-map', closable: true, pinned: true });
+  renderFlowMapTab(projectName);
+}
+
+function renderFlowMapTab(projectName) {
+  const pane = getTabPane(`flow-map-${projectName}`);
+  if (!pane) return;
+  if (!pane.querySelector('#team-canvas-style')) {
+    pane.insertAdjacentHTML('afterbegin', FLOW_CSS);
+  }
+  const scroll = ensureScroll(pane, `flow-map-scroll-${projectName}`);
+  scroll.innerHTML = `<div class="flowmap-loading">${esc(t('flowmap.loading'))}</div>`;
   fetchFlowMap(projectName).then((fm) => {
     currentFm = fm;
-    renderFlowMap(content, fm, projectName);
+    renderFlowMap(scroll, fm, projectName);
   }).catch(() => {
-    content.innerHTML = `<div class="dag-empty"><div class="hint">${esc(t('flowmap.loadFail'))}</div></div>`;
+    scroll.innerHTML = `<div class="dag-empty"><div class="hint">${esc(t('flowmap.loadFail'))}</div></div>`;
   });
 }
 
-export function closeFlowMap() {
-  const el = view();
-  if (!el) return;
-  el.hidden = true;
-  document.body.classList.remove('flowmap-open');
-  currentProject = null;
-  currentFm = null;
-  clearInterval(ttlTimer);
-  ttlTimer = null;
-}
-
-let currentFm = null;
-
-export function initFlowMapView() {
-  // 注入 flow-run 的 DAG 视觉样式（.solar-card/.solar-node/.flow-edge 等），
-  // 让 Flow Map 复用与 flow-run 一致的显示设计。注入 head（带 guard），因为
-  // renderFlowMap 会整体覆写视图内容，注入视图内的 style 会被抹掉。
-  if (!document.getElementById('flowmap-flow-css')) {
-    const style = document.createElement('style');
-    style.id = 'flowmap-flow-css';
-    style.textContent = FLOW_CSS;
-    document.head.appendChild(style);
+function ensureScroll(pane, id) {
+  let scroll = pane.querySelector('.team-scroll');
+  if (!scroll) {
+    pane.innerHTML = '';
+    scroll = document.createElement('div');
+    scroll.className = 'team-scroll';
+    scroll.id = id;
+    pane.appendChild(scroll);
   }
-  window.addEventListener('flowmap-open', (/** @type {CustomEvent} */ e) => {
-    const project = e.detail?.project;
-    if (project) openFlowMap(project);
-  });
-  // WS 事件（契约后）：nodeCreated/nodeUpdated/nodeCompleted/nodeRemoved 驱动状态刷新
-  import('./ws.js').then(({ onMessage }) => {
-    onMessage('nodeCreated', () => refreshIfOpen());
-    onMessage('nodeUpdated', () => refreshIfOpen());
-    onMessage('nodeCompleted', () => refreshIfOpen());
-    onMessage('nodeRemoved', () => refreshIfOpen());
-  });
+  return scroll;
 }
+
+// 标签页关闭时清理 TTL 定时器（不影响项目数据，数据在 service/nodeData mock）。
+document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) => {
+  const id = e.detail?.id || '';
+  if (typeof id === 'string' && id.startsWith('flow-map-')) {
+    clearInterval(ttlTimer);
+    ttlTimer = null;
+    currentProject = null;
+    currentFm = null;
+  }
+});
 
 let refreshTimer = null;
-function refreshIfOpen() {
+export function refreshOpenFlowMap() {
   if (!currentProject) return;
-  // 防抖：多个节点事件合一次刷新
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => {
     fetchFlowMap(currentProject).then((fm) => {
       currentFm = fm;
-      const content = view()?.querySelector('.flowmap-content') || view();
-      if (content) renderFlowMap(content, fm, currentProject);
+      const pane = getTabPane(`flow-map-${currentProject}`);
+      if (pane) {
+        const scroll = ensureScroll(pane, `flow-map-scroll-${currentProject}`);
+        renderFlowMap(scroll, fm, currentProject);
+      }
     });
   }, 200);
-}
-
-// lazy import utils for createIconsIn
-function createIconsIn(root) {
-  import('./utils.js').then(({ createIconsIn }) => createIconsIn(root));
 }
