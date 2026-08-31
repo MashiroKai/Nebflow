@@ -796,6 +796,17 @@ function renderUrlPane(pane, url) {
 
 // F3 (2026-08-30 作者裁定 + 方案 §8.4 F3): 「文件不可读」骨架标签的内容渲染。
 // 用设计系统 CSS 变量，避免硬编码颜色；纯提示文案不进 Monaco 编辑器。
+// 区分两类错误：路径非法/格式错误（path must be absolute / not a regular
+// file / exceeds）vs 文件不存在或被清理（file not found）——避免「文件明明
+// 在却说被清理」的矛盾提示。
+function readErrorHint(errorMsg) {
+  const m = (errorMsg || '').toLowerCase();
+  if (m.includes('must be absolute') || m.includes('not a regular file') ||
+      m.includes('exceeds') || m.includes('path is')) {
+    return t('canvas.unreadablePathHint');
+  }
+  return t('canvas.unreadableHint');
+}
 function renderFilePlaceholder(paneEl, errorMsg, absPath) {
   paneEl.innerHTML = '';
   const wrap = document.createElement('div');
@@ -818,7 +829,7 @@ function renderFilePlaceholder(paneEl, errorMsg, absPath) {
   path.textContent = absPath || '';
   path.style.cssText = 'font-family:var(--font-mono,monospace);font-size:12px;word-break:break-all;';
   const hint = document.createElement('div');
-  hint.textContent = `${t('canvas.unreadableHint')}${errorMsg ? ' ' + errorMsg : ''}`;
+  hint.textContent = `${readErrorHint(errorMsg)}${errorMsg ? ' ' + errorMsg : ''}`;
   wrap.append(iconRow, path, hint);
   paneEl.appendChild(wrap);
 }
