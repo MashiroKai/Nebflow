@@ -6,6 +6,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
+import nebflow.core.node.NodeRunner
 import nebflow.core.presets.PresetStore
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
@@ -245,88 +246,56 @@ A task with 2+ independent parts — different file domains, or different nature
     safetyMode: String = "confirm-edits",
     rootSessionId: String = ""
   ): IO[Either[ToolError, String]] =
+    val childDepth = parentDepth + 1
+    val subtaskId = s"subtask-${java.util.UUID.randomUUID().toString.take(8)}"
+    val childWsSend = routeWsSend(wsSend, parentSessionId, subtaskId)
+    val resolvedRoot = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subtaskId)
+    val params = NodeRunner.SpawnParams(
+      agentDef = agentDef,
+      resources = resources,
+      sessionId = subtaskId,
+      sessionName = description,
+      depth = childDepth,
+      parentRef = parentRef,
+      wsSend = childWsSend,
+      projectRoot = Some(projectRoot),
+      safetyMode = safetyMode,
+      rootSessionId = resolvedRoot,
+      isSubTaskWorker = true
+    )
     for
-      readTracker <- ReadTracker.create
-      fileHistory <- FileHistory.create()
-      childDepth = parentDepth + 1
-      subtaskId = s"subtask-${java.util.UUID.randomUUID().toString.take(8)}"
-      childWsSend = routeWsSend(wsSend, parentSessionId, subtaskId)
-      workerRef <- system.spawn(
-        AgentActor(
-          agentDef = agentDef,
-          resources = resources,
-          wsSend = childWsSend,
-          depth = childDepth,
-          parentRef = parentRef,
-          sessionId = Some(subtaskId),
-          sessionName = Some(description),
-          initialMessages = Nil, // clean context — prompt is the only input
-          readTracker = Some(readTracker),
-          fileHistory = Some(fileHistory),
-          contextWindow = resources.contextWindow,
-          projectRoot = Some(projectRoot),
-          safetyMode = safetyMode,
-          rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subtaskId),
-          isSubTaskWorker = true
-        ),
-        subtaskId
-      )
+      workerRef <- NodeRunner.spawnAgentActor(system, params)
       // P2: BackoffSupervisor is the subtask adapter — auto-restarts on crash,
       // handles AgentEvent.Cancelled (AgentControl cancel path)
-      adapterRef <- system.spawn(
-        BackoffSupervisor(
-          childRef = workerRef,
-          childSpawnFn = (sys: ActorSystem, recoveredMessages: List[Message]) =>
-            sys.spawn(
-              AgentActor(
-                agentDef = agentDef,
-                resources = resources,
-                wsSend = childWsSend,
-                depth = childDepth,
-                parentRef = parentRef,
-                sessionId = Some(subtaskId),
-                sessionName = Some(description),
-                initialMessages = if recoveredMessages.nonEmpty then recoveredMessages else Nil,
-                contextWindow = resources.contextWindow,
-                projectRoot = Some(projectRoot),
-                safetyMode = safetyMode,
-                rootSessionId = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subtaskId),
-                isSubTaskWorker = true
-              ),
-              subtaskId
-            ),
-          childName = subtaskId,
-          parentRef = parentRef,
-          description = description,
-          agentName = agentDef.name,
-          subagentId = subtaskId,
-          parentSessionId = parentSessionId.getOrElse(""),
-          resources = resources,
-          initialPrompt = prompt,
-          source = "subtask",
-          extraMetadata = JsonObject("kind" -> "SubTask".asJson),
-          wsSend = Some(childWsSend)
-        ),
-        s"$subtaskId-adapter"
+      adapterRef <- NodeRunner.spawnSupervisedAdapter(
+        system = system,
+        params = params,
+        childRef = workerRef,
+        childName = subtaskId,
+        description = description,
+        agentName = agentDef.name,
+        subagentId = subtaskId,
+        parentSessionId = parentSessionId.getOrElse(""),
+        initialPrompt = prompt,
+        source = "subtask",
+        extraMetadata = JsonObject("kind" -> "SubTask".asJson),
+        wsSend = Some(childWsSend)
       )
       _ = logger.info(s"Spawned supervised sub-task worker: $subtaskId (depth=$childDepth, agent=${agentDef.name})")
       // Registered in agentRegistry (active snapshot + kind) but NOT in
       // TeamSessionRegistry/sessionMap — the worker has no Mail identity.
-      _ <- resources.agentRegistry.update(
-        _ + (
-          subtaskId -> AgentRecord(
-            subtaskId,
-            workerRef,
-            AgentKind.SubTask,
-            if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subtaskId),
-            parentRef,
-            // AgentControl：list/up/idle 列 + cancel/restart 直达 supervisor。
-            startedAt = System.currentTimeMillis(),
-            lastActivityMs = System.currentTimeMillis(),
-            supervisorRef = Some(adapterRef),
-            parentSessionId = parentSessionId.getOrElse("")
-          )
-        )
+      _ <- NodeRunner.registerAgent(
+        resources,
+        id = subtaskId,
+        ref = workerRef,
+        kind = AgentKind.SubTask,
+        rootSessionId = resolvedRoot,
+        parentRef = parentRef,
+        // AgentControl：list/up/idle 列 + cancel/restart 直达 supervisor。
+        startedAt = System.currentTimeMillis(),
+        lastActivityMs = System.currentTimeMillis(),
+        supervisorRef = Some(adapterRef),
+        parentSessionId = parentSessionId.getOrElse("")
       )
       // P3.1: persist task metadata for crash recovery
       _ <- resources.subAgentTaskStore
