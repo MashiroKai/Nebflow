@@ -65,9 +65,11 @@
     <button id="messages-btn" class="activity-btn" data-panel-btn="messages" title="Messages" aria-pressed="false"><i data-lucide="message-circle"></i><span class="activity-badge" id="messages-badge" hidden></span></button>
     <button id="contacts-btn" class="activity-btn" data-panel-btn="contacts" title="Contacts" aria-pressed="false"><i data-lucide="contact-round"></i><span class="activity-badge" id="contacts-badge" hidden></span></button>
     <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
-    <button id="projects-btn" class="activity-btn" data-panel-btn="projects" title="Projects" aria-pressed="false"><i data-lucide="folder-kanban"></i></button>
     <button id="usage-btn" class="activity-btn" title="Usage Dashboard" aria-haspopup="dialog"><i data-lucide="bar-chart-3"></i></button>
     <div class="activity-spacer"></div>
+    <!-- #27: Project 按钮取代 Team/Flow 按钮位置（阶段 3 移除旧 Team/Flow 面板）。
+         试点期旧体系仍跑：teams-btn / flows-btn 保留在后（二级过渡），主导交互是 Project。 -->
+    <button id="projects-btn" class="activity-btn" title="Projects"><i data-lucide="folder-kanban"></i></button>
     <button id="teams-btn" class="activity-btn" title="Teams"><i data-lucide="users"></i></button>
     <button id="flows-btn" class="activity-btn" title="Flows"><i data-lucide="workflow"></i></button>
     <button id="agents-btn" class="activity-btn" title="Agents"><i data-lucide="bot"></i></button>
@@ -109,12 +111,6 @@
       <div id="panel-contacts" class="panel" data-panel-id="contacts">
         <div class="panel-header"><span class="panel-title" data-i18n="panel.contacts">Contacts</span></div>
         <div id="fm-contacts-body"></div>
-      </div>
-      <div id="panel-projects" class="panel" data-panel-id="projects">
-        <div class="panel-projects-topbar">
-          <span class="panel-projects-title" data-i18n="project.title">Projects</span>
-        </div>
-        <div id="project-list" role="list"></div>
       </div>
     </div>
   </div>
@@ -272,9 +268,6 @@
       <button id="stop-btn"><i data-lucide="square"></i></button>
     </div>
   </div>
-  <!-- #27 Flow Map 视图：页面内导航覆盖层（§3.5；点击 project 进入，左上角返回）。
-       置于 #main 之内（position:relative，见 chat.css），以覆盖主内容区。 -->
-  <div id="flowmap-view" hidden></div>
   </div>
 
   <!-- Column resizer — drag to adjust main / canvas widths (only when canvas open) -->

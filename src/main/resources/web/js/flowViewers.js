@@ -73,6 +73,28 @@ export function closeViewer() {
   mailboxCtx = null;
 }
 
+// ── Node 结果详情（Flow Map 节点点击查看）──────────────────
+// 复用 openViewerShell 的 overlay 语义；结果从活动或归档读取（阶段 0 mock 显 result）。
+export function openNodeResultViewer(nodeName, agent, status, worktree, result, nodeId) {
+  const title = `${nodeName}${result ? ' · ' + t('flowmap.resultTitle') : ' · ' + t('flowmap.noResult')}`;
+  const body = openViewerShell(title);
+  if (!body) return;
+  const meta = [agent, status, worktree].filter(Boolean).map((s) => esc(s)).join(' · ');
+  const label = result ? t('flowmap.resultTitle') : t('flowmap.noResult');
+  const content = result
+    ? result
+    : (status === 'running' ? t('flowmap.runningDetail') : t('flowmap.noResultDetail'));
+  body.innerHTML = `
+    <div class="flow-def-section">
+      <div class="flow-agent-block-head"><span class="flow-agent-block-name">${esc(nodeName)}</span></div>
+      ${meta ? `<div class="flow-def-source">${meta}</div>` : ''}
+      <div class="flow-agent-block-field">
+        <span class="flow-agent-block-label">${esc(label)}</span>
+        <div class="flow-agent-block-readonly" style="max-height:420px;overflow-y:auto;white-space:pre-wrap">${esc(content)}</div>
+      </div>
+    </div>`;
+}
+
 export function openViewerShell(title, opts = {}) {
   closeViewer();
   const overlay = document.createElement('div');

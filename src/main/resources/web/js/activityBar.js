@@ -114,7 +114,6 @@ function onPanelButtonClick(id) {
 /** Mirror state onto panel/button classes + aria-pressed. */
 function syncPanelDom() {
   const collapsed = isSideBarCollapsed();
-  let shown = null;
   for (const p of sidePanels.values()) {
     const on = !collapsed && p.id === activePanelId;
     const panel = document.getElementById(p.panelId);
@@ -124,12 +123,6 @@ function syncPanelDom() {
       btn.classList.toggle('active', on);
       btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
-    if (on) shown = p;
-  }
-  // #27: 通知面板模块「该面板已激活并可见」，用于进入面板时拉取实时数据
-  // （如 Project 面板的运行中 agent 数）。
-  if (shown) {
-    window.dispatchEvent(new CustomEvent('panel-shown', { detail: { panel: shown.id } }));
   }
 }
 
@@ -151,12 +144,6 @@ function initSidePanels() {
     buttonId: 'files-btn',
     panelId: 'panel-sessions',
     i18nKey: 'activity.files',
-  });
-  registerSidePanel({
-    id: 'projects',
-    buttonId: 'projects-btn',
-    panelId: 'panel-projects',
-    i18nKey: 'activity.projects',
   });
   registerSidePanel({
     id: 'messages',
