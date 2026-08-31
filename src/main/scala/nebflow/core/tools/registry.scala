@@ -60,7 +60,14 @@ object ToolRegistry:
       // Load Team/Flow from disk (validate + mount)
       "Load" -> LoadTool,
       // Flow agent result reporting (verdict + output for DAG switch routing)
-      "FlowReport" -> FlowReportTool
+      "FlowReport" -> FlowReportTool,
+      // #28 阶段 0：Project + Node 模型工具集（分发器白名单声明；全局注册使
+      // agent.json tools 可解析）。NodeEdit/NodeList/NodeCancel = 分发器用；
+      // ProjectCreate = Nebula 用（建项目 + 工作区脚手架）。
+      "NodeEdit" -> NodeEditTool,
+      "NodeList" -> NodeListTool,
+      "NodeCancel" -> NodeCancelTool,
+      "ProjectCreate" -> ProjectCreateTool
     )
     tools.putAll(builtins.asJava)
   }

@@ -47,6 +47,9 @@ case class ToolContext(
     * hard-reject (no cross-team write surface); TeamTaskList falls back to the
     * `team` parameter for Nebula's read-only oversight. */
   teamName: Option[String] = None,
+  /** Project 上下文（#28 阶段 0）：项目分发器会话注入——Node 工具 project
+    * 参数缺省从本字段取（分发器无需每次传 project）。None = 非项目上下文。 */
+  projectName: Option[String] = None,
   /** Bash 卡死防护阈值（#391）：默认 Defaults 值，测试可注入小阈值验证
     * 自动转后台/硬超时/停滞窗口；GatewayMain 从 nebflow.json 顶层键覆写。 */
   bashConfig: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig()

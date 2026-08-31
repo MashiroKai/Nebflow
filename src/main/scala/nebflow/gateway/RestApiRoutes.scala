@@ -17,7 +17,9 @@ import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
+import nebflow.core.project.{ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.skill.SkillService
+import nebflow.core.tools.NodeTools
 // FreezeScheduleConfig encoder givens (workSchedule runtime-authoritative PATCH)
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.task.{FileTaskStore, TaskStore}
@@ -277,6 +279,36 @@ class RestApiRoutes(
                         .withEntity(Json.obj("error" -> s"save failed: ${e.getMessage}".asJson))
                     )
                 }
+        }
+      }
+
+    // ── Project + Flow Map REST（#28 阶段 0，前端 Project 面板 + Flow Map 视图数据源）──
+    // 契约（同步 Frontend，与 NodeList 工具同 shape）：
+    //   GET /api/projects → 200 {projects:[{name, workspace, agentFile, description, createdAt}]}
+    //   GET /api/projects/<name>/flow-map → 200 {nodes:[...], worktrees:[...], meta:{...}}
+    //     未挂载 → 404 {error}; 需 auth（withAuth）。
+    case req @ GET -> Root / "api" / "projects" =>
+      withAuth(req) {
+        ProjectStore.list().map { projects =>
+          Json.obj(
+            "projects" -> projects.map(p =>
+              Json.obj(
+                "name" -> p.name.asJson,
+                "workspace" -> p.workspace.asJson,
+                "agentFile" -> p.agentFile.asJson,
+                "description" -> p.description.asJson,
+                "createdAt" -> p.createdAt.asJson
+              )
+            ).asJson
+          )
+        }.flatMap(Ok(_))
+      }
+
+    case req @ GET -> Root / "api" / "projects" / name / "flow-map" =>
+      withAuth(req) {
+        ProjectRuntimeRegistry.get(name).flatMap {
+          case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+          case Some(rt) => NodeTools.buildNodeListPayload(rt).flatMap(Ok(_))
         }
       }
 
