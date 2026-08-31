@@ -396,7 +396,7 @@ object GatewayMain extends IOApp.Simple:
                                 // 运行本身不设超时）。周期给所有已挂载 ProjectActor
                                 // 发 TtlTick；无项目时空转。
                                 val projectTtlScanner: IO[Unit] =
-                                  nebflow.core.project.ProjectActor.ttlScanner(30).start.void
+                                  nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
                                 hubSetup *> taskTtlSweep *> projectTtlScanner *> telemetryIO.flatMap { telemetry =>
                                   val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
                                   val sessionService = new SessionService(sessionStore)
