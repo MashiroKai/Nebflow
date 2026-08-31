@@ -142,7 +142,11 @@ const GLOBAL_MSG_TYPES = new Set([
   'activeBgTasks', 'activeAgents',
   'mailQueued', 'mailDequeued',
   'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-history', 'dropboxError',
-  'friend_event'
+  'friend_event',
+  // Project 域节点广播（#28 0b 契约 §2）：{type,project,nodeId,node}，无 sessionId，
+  // 是全应用级广播。入 GLOBAL 使 onmessage 路由不把他们当会话内事件（不 setActiveView
+  // 为 primary），保持当前视图；多个 onMessage 订阅者（projectTab / flowMapTab）都收。
+  'nodeCreated', 'nodeUpdated', 'nodeCompleted', 'nodeRemoved',
 ]);
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',

@@ -1,11 +1,11 @@
 // agentFileViewer.js — 项目 Agent.md 查看/编辑器（#27 方向调整：像 team rules.md 一样可点击查看、可改）。
 // 复用 flowViewers 的 openViewerShell overlay + 保存语义；数据走 nodeData 的
-// fetchAgentFile / saveAgentFile（契约后替换为真实 GET/POST）。
+// fetchAgentFile / saveAgentFile（⚠️ #28 0b 契约无 agent.md REST 端点，暂用 mock；后端补后替换）。
 
 import { openViewerShell } from './flowViewers.js';
 import { esc, authHeaders } from './flowHelpers.js';
 import { t } from './i18n.js';
-import { fetchAgentFile, saveAgentFile, API } from './nodeData.js';
+import { fetchAgentFile, saveAgentFile } from './nodeData.js';
 
 export async function openAgentFile(projectName) {
   const footer = `<span class="flow-viewer-status" id="flow-agentfile-status"></span><button class="flow-viewer-save" id="flow-agentfile-save">${esc(t('flowViewers.save'))}</button>`;
@@ -14,7 +14,7 @@ export async function openAgentFile(projectName) {
   body.innerHTML = `<div class="flow-mail-empty">${esc(t('flowViewers.loading'))}</div>`;
   let content = '';
   try {
-    // 契约后：fetch(API.agentFile(projectName)) 真实读取；mock 失败回退下一行。
+    // 契约无 agent.md GET 端点：暂用 nodeData mock；后端补后替换真实读取。
     content = await fetchAgentFile(projectName);
   } catch (e) {
     content = '';

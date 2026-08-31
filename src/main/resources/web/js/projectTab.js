@@ -106,10 +106,14 @@ function bindProjectClicks(scroll) {
   });
 }
 
-/** 供 test hook / 多标签页刷新。 */
+/** 供 test hook / 多标签页刷新。节点事件突发时防抖，避免每事件重拉全部项目+flowmap。 */
+let projectsRenderTimer = null;
 export function rerenderProjectsTab() {
-  const pane = getTabPane('projects');
-  if (pane) renderProjectsInto(ensureScroll(pane));
+  clearTimeout(projectsRenderTimer);
+  projectsRenderTimer = setTimeout(() => {
+    const pane = getTabPane('projects');
+    if (pane) renderProjectsInto(ensureScroll(pane));
+  }, 200);
 }
 
 // WS 事件驱动：项目运行数变化时若 Project 标签页打开则刷新（契约后）。
