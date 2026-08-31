@@ -96,7 +96,7 @@ private[agent] trait AgentCore:
       // Cooldown: emergencyClean keeps the last N messages — if those tails
       // alone still estimate above the limit, an unthrottled guard would
       // re-fire on every dispatch of the SAME turn chain (infinite loop,
-      // found by SaveTurnGuardSpec). Re-checking is fine a minute later.
+      // found by the former SaveTurnGuardSpec P0-2). Re-checking is fine a minute later.
       val cooldownOk =
         System.currentTimeMillis() - state.lastCompactionFailureAt > EmergencyHardGuardCooldownMs
       if (reported.exists(_ > hardLimit) || estimatedNow > hardLimit) && cooldownOk then
@@ -236,19 +236,6 @@ private[agent] trait AgentCore:
     yield result)
 
   /**
-   * Whether this agent gets a save-memory turn before compaction.
-   * Precisely mirrors ContextRefresher's memory-injection condition:
-   * Nebula (depth 0) and team agents (Manager/Worker) get memory; standalone
-   * and flow agents don't — so no save turn for them (behavior unchanged).
-   */
-  protected def shouldInjectSaveReminder(agentDef: AgentDef, state: AgentState): IO[Boolean] =
-    if agentDef.name == "Nebula" then IO.pure(true)
-    else
-      state.sessionId match
-        case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid).map(_.isDefined)
-        case None => IO.pure(false)
-
-  /**
    * B5: whether this depth-1 agent is a team lead — a registered Manager
    * session, or name-based lead of any defined team (covers fork/temporary
    * sessions, same fallback as MailTool.canMailNebula). Non-lead depth-1
@@ -306,17 +293,13 @@ private[agent] trait AgentCore:
           IO(lifecycleLog.warn(s"Pre-compaction hook failed for ${agentDef.name}: ${e.getMessage}")).void
         )
 
-      // ── 2. Two-stage compaction ──
-      //    Stage 1 (Save): memory-bearing agents (Nebula + team) get a save turn
-      //    with tools available to write memory/skills; ending the turn transitions
-      //    to stage 2. Other agents go straight to stage 2 (compact) — unchanged.
+      // ── 2. Single-stage compaction ──
+      //    Memory maintenance is OUT of the compaction round (2026-08-31
+      //    redesign): compaction only compresses. Every agent goes straight
+      //    to the Compact turn (tools disabled, text-only summary).
       jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
-      saveTurn <- shouldInjectSaveReminder(agentDef, state)
-      phase = if saveTurn then CompactionPhase.Save else CompactionPhase.Compact
-      reminder =
-        if saveTurn then CompactService.buildSaveMemoryReminder(depth, isLead)
-        else CompactService.buildCompactReminder(depth, isLead)
-      pending = CompactionJob(jobId, mode, None, replyTo, resumeAfterCompact, postCompactInstruction, phase)
+      reminder = CompactService.buildCompactReminder(depth, isLead)
+      pending = CompactionJob(jobId, mode, None, replyTo, resumeAfterCompact, postCompactInstruction)
       firstState = state
         .withPendingCompaction(Some(pending))
         .withMessages(state.messages :+ reminder)
@@ -331,7 +314,7 @@ private[agent] trait AgentCore:
         state.sessionId,
         state.sessionName,
         "compaction-window-start",
-        s"phase=$phase imm=${state.execution.pendingImmediateInputs.size} " +
+        s"phase=Compact imm=${state.execution.pendingImmediateInputs.size} " +
           s"user=${state.execution.pendingUserInputs.size} events=${state.execution.pendingEvents.size}"
       ))
       _ <- ctx.forkTurn(preHookIO)
@@ -441,10 +424,8 @@ private[agent] trait AgentCore:
     maybeAutoCompact(agentDef, resources, depth, parentRef, state, replyTo, processing) match
       case Some(ioBehavior) => ioBehavior
       case None =>
-        // Phase-aware compaction: Save turn keeps tools available (memory write),
-        // Compact turn disables tools (existing behavior).
+        // Phase-aware compaction: Compact turn disables tools (existing behavior).
         val isCompactTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Compact)
-        val isSaveTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Save)
         val isAskTurn = state.askMode.isDefined
         val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker, state.isFlowNode)
         val isSubagent = depth > 0
@@ -461,9 +442,9 @@ private[agent] trait AgentCore:
             state.wsSend(AgentStreamEvent.RetryStatus(msg).toJson(ctx.self.path.name, isSubagent, sessionIdOpt))
           }
         val turnId = state.currentTurnId + 1
-        // Save turn also skips FastMicroCompact: the agent needs the full history
-        // (including old tool results) to extract durable memory entries.
-        val microResult = if isCompactTurn || isSaveTurn || isAskTurn then None else FastMicroCompact(state.messages)
+        // Compact/ask turns skip FastMicroCompact: the agent needs the full
+        // history for the summary.
+        val microResult = if isCompactTurn || isAskTurn then None else FastMicroCompact(state.messages)
         val stateForLlm = microResult match
           case Some(compacted) =>
             logAgentEvent(
@@ -655,7 +636,6 @@ private[agent] trait AgentCore:
             else Nil
           freshTools =
             if isCompactTurn then Some(Nil)
-            else if isSaveTurn then saveTurnTools(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.isFlowNode, isTeamLead)
             else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.isFlowNode, isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn)
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
@@ -669,7 +649,7 @@ private[agent] trait AgentCore:
           // 即时生效（无需重启）。
           ttlCfg <- resources.toolResultTtlRef.get
           ttlCleanedMessages =
-            if isCompactTurn || isSaveTurn || isAskTurn then None
+            if isCompactTurn || isAskTurn then None
             else ToolResultTtl.cleanRequestMessages(stateWithReminder.messages, ttlCfg)
           _ = ttlCleanedMessages.foreach { _ =>
             logAgentEvent(
@@ -690,10 +670,10 @@ private[agent] trait AgentCore:
             thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
             systemStable = Some(systemStable),
             agentModel = freshDef.model,
-            // WebSearch P0: housekeeping turns (compact/save/ask) opt out of
+            // WebSearch P0: housekeeping turns (compact/ask) opt out of
             // provider-native search injection — a server-side search tool
-            // must never leak into summarization or memory-maintenance loops.
-            searchAllowed = !(isCompactTurn || isSaveTurn || isAskTurn)
+            // must never leak into summarization loops.
+            searchAllowed = !(isCompactTurn || isAskTurn)
           )
         yield (turnCtx, request, stateWithCache)
 
@@ -1552,39 +1532,6 @@ private[agent] trait AgentCore:
           case None           => Some(td)
       else Some(td)
     })
-
-  /**
-   * Save-phase compaction tools (compaction burn-down, 2026-08-18). The save
-   * turn exists to run the memory maintenance cycle — Write/Edit on the
-   * memory files, Read for the VERIFY step — but the FULL toolset on a weak
-   * default model turns into open-ended exploration (5min+
-   * without compactComplete; qa-mini with NO tools finished in 110s). Restrict
-   * to the memory-maintenance essentials: nothing that can branch outward
-   * (no Bash/Grep/Glob/WebSearch). #438 note: the whitelist tools are
-   * mechanism-guaranteed (see impl) — they no longer rely on the six being
-   * present in the agent's own toolset.
-   */
-  protected def saveTurnTools(
-      agentDef: AgentDef,
-      depth: Int = 0,
-      isSubTaskWorker: Boolean = false,
-      isFlowNode: Boolean = false,
-      isTeamLead: Boolean = false
-  ): Option[List[ToolDefinition]] =
-    // #438: the save phase is system machinery (memory maintenance), not an
-    // agent-capability turn — its [Write, Edit, Read] whitelist is guaranteed
-    // at the mechanism layer, independent of the agent's configured tools.
-    // 2026-08-28: the six are mechanism-fixed for ALL agents again (user
-    // ruling, reverses #438) — the guarantee below is now idempotent with
-    // fixedToolsFor, kept as belt-and-suspenders against config anomalies
-    // (e.g. seeds-fallback defs, SaveTurnGuardSpec P0-1).
-    val allowed = buildToolList(agentDef, depth, isSubTaskWorker, isFlowNode, isTeamLead)
-      .getOrElse(Nil)
-      .filter(td => SaveTurnToolWhitelist.contains(td.name))
-    val guaranteed = ToolRegistry.ALL_TOOLS.filter(td => SaveTurnToolWhitelist.contains(td.name))
-    Some((allowed ++ guaranteed).distinctBy(_.name))
-
-  private val SaveTurnToolWhitelist: Set[String] = Set("Write", "Edit", "Read")
 
   protected def emitStream(
     wsSend: io.circe.Json => IO[Unit],

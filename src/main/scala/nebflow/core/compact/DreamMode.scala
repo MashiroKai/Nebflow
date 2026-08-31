@@ -1,12 +1,19 @@
 package nebflow.core.compact
 
 import cats.effect.IO
-import io.circe.Json
-import io.circe.syntax.*
 import nebflow.core.*
 import nebflow.shared.*
 
-/** Dream mode — extract durable facts from idle conversation and update memory. */
+/**
+ * Dream mode — extract durable facts from idle conversation and update memory.
+ *
+ * 2026-08-31 memory-system redesign: merged-write model. Extracted facts are
+ * merged into a STABLE `## Dream Extract` section organized by category —
+ * never appended as a new timestamped section (the old append-only behavior
+ * was the structural root cause of User.md's 54KB Dream Extract bloat: one
+ * new section per compaction, never merged). The `## 使用模式` section is no
+ * longer auto-rewritten (U11 noise source).
+ */
 object DreamMode:
   private val logger = NebflowLogger.forName("nebflow.dream")
 
@@ -31,7 +38,7 @@ object DreamMode:
       | - If nothing durable, output empty <facts></facts>
       |</system-reminder>""".stripMargin
 
-  /** Parse <facts> block from LLM response → list of fact strings. */
+  /** Parse <facts> block from LLM response → list of raw fact lines. */
   def parseResponse(text: String): List[String] =
     "(?s)<facts>(.*?)</facts>".r.findFirstMatchIn(text) match
       case Some(m) =>
@@ -43,52 +50,98 @@ object DreamMode:
           .toList
       case None => Nil
 
-  /** Append extracted facts to ~/.nebflow/User.md and update usage pattern section. */
-  def updateMemory(facts: List[String], pattern: UsagePattern): IO[Unit] = IO.blocking {
+  /** Stable header of the merged fact section — NO timestamp, so repeated
+    * extraction merges into the same section instead of appending new ones.
+    * (The old timestamped headers `## Dream Extract (2026-…)` are matched by
+    * P0 cleanup; this exact header is what the hook maintains.) */
+  val DreamSectionHeader = "## Dream Extract"
+
+  /** Category display order under the dream section. */
+  val CategoryOrder = List("USER_PREFERENCE", "ROUTING_RULE", "ENVIRONMENT", "PATTERN", "DECISION")
+
+  private val FactPattern = """FACT\s*\d+\s*:\s*\[([A-Za-z_]+)\]\s*(.*)""".r
+
+  /** Parse a single "FACT N: [CATEGORY] text" line → (category, text). */
+  def parseFact(line: String): Option[(String, String)] =
+    line.trim match
+      case FactPattern(cat, text) if text.trim.nonEmpty => Some((cat.toUpperCase, text.trim))
+      case _ => None
+
+  /**
+   * Merge extracted facts into the stable Dream Extract section, organized by
+   * category. Exact-duplicate bullets are dropped — repeated extraction cannot
+   * grow the section unboundedly. Does NOT rewrite `## 使用模式` anymore.
+   */
+  def updateMemory(facts: List[String]): IO[Unit] = IO.blocking {
     val memPath = PathUtil.dataRoot / "User.md"
     val existing = if os.exists(memPath) then os.read(memPath) else ""
-
-    val factsSection = if facts.nonEmpty then
-      val now = java.time.Instant.now().toString
-      val formatted = facts.map(f => s"- $f").mkString("\n")
-      s"\n\n## Dream Extract ($now)\n$formatted\n"
-    else ""
-
-    val patternSection = buildUsagePatternSection(pattern)
-    val updated = updateOrAppendSection(existing, "## 使用模式", patternSection) + factsSection
-    os.write.over(memPath, updated, createFolders = true)
-    logger.info(s"Dream: updated memory with ${facts.size} facts")
+    val parsed = facts.flatMap(parseFact)
+    if parsed.nonEmpty then
+      val updated = mergeFactsIntoSection(existing, parsed)
+      if updated != existing then
+        os.write.over(memPath, updated, createFolders = true)
+        logger.info(s"Dream: merged ${parsed.size} facts into $memPath")
+      else
+        logger.info(s"Dream: no new facts to merge (all duplicates of ${parsed.size} extracted)")
   }.void
 
-  private def buildUsagePatternSection(pattern: UsagePattern): String =
-    val zdt = java.time.ZonedDateTime.now()
-    val dateStr =
-      s"${zdt.getYear}-${"%02d".format(zdt.getMonthValue)}-${"%02d".format(zdt.getDayOfMonth)} ${zdt.getHour}:${"%02d".format(zdt.getMinute)}"
-    val activeHours = pattern.hourlyActivity.zipWithIndex
-      .filter(_._1 > 0.3)
-      .map(_._2)
-      .toList
-    val idleHours = pattern.hourlyActivity.zipWithIndex
-      .filter(_._1 < 0.2)
-      .map(_._2)
-      .toList
-    def fmtHour(h: Int): String = s"${"%02d".format(h)}:00"
-    s"""## 使用模式
-       |- 活跃时段：${if activeHours.nonEmpty then activeHours.map(fmtHour).mkString(", ") else "数据不足"}
-       |- 通常空闲：${if idleHours.nonEmpty then idleHours.map(fmtHour).mkString(", ") else "数据不足"}
-       |- 上次分析：$dateStr（基于 ${pattern.totalRecords} 条记录）
-       |""".stripMargin
+  /** Merge (category, text) facts into the stable Dream Extract section. */
+  private def mergeFactsIntoSection(content: String, facts: List[(String, String)]): String =
+    val byCat = facts.groupMap(_._1)(_._2)
+    val headerIdx = indexOfSection(content, DreamSectionHeader)
+    if headerIdx < 0 then
+      // No stable section yet — append a fresh one at the end.
+      content.trim + "\n\n" + renderSection(byCat) + "\n"
+    else
+      val (sectionStart, sectionEnd) = sectionBounds(content, headerIdx)
+      val existingSection = content.substring(sectionStart, sectionEnd)
+      val existingByCat = parseExistingSection(existingSection)
+      // Merge: existing bullets first, then new facts (deduped).
+      val mergedByCat = existingByCat.map { case (cat, bullets) =>
+        cat -> (bullets ++ byCat.getOrElse(cat, Nil)).distinct
+      } ++ (byCat -- existingByCat.keySet)
+      content.substring(0, sectionStart) + renderSection(mergedByCat) + content.substring(sectionEnd)
 
-  end buildUsagePatternSection
+  /** Byte index of the section header line, or -1. */
+  private def indexOfSection(content: String, header: String): Int =
+    val lines = content.linesIterator.toVector
+    lines.indexWhere(_.trim == header) match
+      case -1 => -1
+      case i =>
+        lines.take(i).foldLeft(0)((acc, l) => acc + l.length + 1)
 
-  /** Replace existing section (starting with header) or append new one. */
-  private def updateOrAppendSection(content: String, header: String, newSection: String): String =
-    val headerIdx = content.indexOf(header)
-    if headerIdx >= 0 then
-      // Find next section (## ) or end of content
-      val afterHeader = content.indexOf("\n## ", headerIdx + header.length)
-      val sectionEnd = if afterHeader >= 0 then afterHeader else content.length
-      content.substring(0, headerIdx) + newSection + content.substring(sectionEnd)
-    else content + "\n\n" + newSection
+  /** (start, end) of the section starting at headerIdx — up to the next `## ` or EOF. */
+  private def sectionBounds(content: String, headerIdx: Int): (Int, Int) =
+    val nextHeader = content.indexOf("\n## ", headerIdx + 1)
+    val end = if nextHeader >= 0 then nextHeader else content.length
+    (headerIdx, end)
+
+  /** Parse an existing dream section into category → bullets map. */
+  private def parseExistingSection(section: String): Map[String, List[String]] =
+    var current: String = ""
+    val out = scala.collection.mutable.Map.empty[String, List[String]]
+    section.linesIterator.foreach { line =>
+      val trimmed = line.trim
+      if trimmed.startsWith("### ") then
+        current = trimmed.drop(4).trim.toUpperCase
+        out.getOrElseUpdate(current, Nil)
+      else if trimmed.startsWith("- ") && current.nonEmpty then
+        out.update(current, out(current) :+ trimmed.drop(2).trim)
+      // non-bullet lines (headers, blanks) are ignored — rebuild is canonical
+    }
+    out.toMap
+
+  /** Render the dream section with per-category sub-sections in CategoryOrder. */
+  private def renderSection(byCat: Map[String, List[String]]): String =
+    val cats =
+      (CategoryOrder.filter(byCat.contains) ++ byCat.keys.toList.filterNot(CategoryOrder.contains)).distinct
+    val sb = new StringBuilder
+    sb.append(DreamSectionHeader).append("\n\n")
+    cats.foreach { cat =>
+      sb.append("### ").append(cat).append("\n")
+      byCat(cat).foreach(bullet => sb.append("- ").append(bullet).append("\n"))
+      sb.append("\n")
+    }
+    sb.toString.trim + "\n"
 
 end DreamMode
