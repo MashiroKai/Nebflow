@@ -125,13 +125,15 @@ object ProjectActor:
   )
 
   /** 全局 TTL 扫描：周期给所有已挂载 ProjectActor 发 TtlTick（GatewayMain 启动）。
-    * TTL 只管终态节点 5min 显示消失；Node 运行本身不设超时（硬约束）。 */
-  def ttlScanner(intervalSec: Int): IO[Unit] =
+    * TTL 只管终态节点 5min 显示消失；Node 运行本身不设超时（硬约束）。
+    * Bug 1 修复（QA e2e SOE）：`*> loop` 的 by-name 递归在构造期被 eager 求值 →
+    * 必须 `*> IO.defer(loop)` 显式延迟到执行期（lazy val 同样会初始化死循环）。 */
+  def ttlScanner(interval: FiniteDuration): IO[Unit] =
     def loop: IO[Unit] =
-      IO.sleep(intervalSec.seconds) *>
+      IO.sleep(interval) *>
         ProjectRuntimeRegistry.all.flatMap { rts =>
           rts.traverse_(rt => rt.actorRef.fold(IO.unit)(ref => (ref ! ProjectCommand.TtlTick).void))
-        } *> loop
+        } *> IO.defer(loop)
     loop
 
   def apply(cfg: ProjectConfig): Behavior[ProjectCommand] =

@@ -284,10 +284,13 @@ class RestApiRoutes(
 
     // ── Project + Flow Map REST（#28 阶段 0，前端 Project 面板 + Flow Map 视图数据源）──
     // 契约（同步 Frontend，与 NodeList 工具同 shape）：
-    //   GET /api/projects → 200 {projects:[{name, workspace, agentFile, description, createdAt}]}
-    //   GET /api/projects/<name>/flow-map → 200 {nodes:[...], worktrees:[...], meta:{...}}
-    //     未挂载 → 404 {error}; 需 auth（withAuth）。
-    case req @ GET -> Root / "api" / "projects" =>
+    //   GET /projects → 200 {projects:[{name, workspace, agentFile, description, createdAt}]}
+    //   GET /projects/<name>/flow-map → 200 {nodes:[...], worktrees:[...], meta:{...}}
+    //   GET/PUT /projects/<name>/agent.md → 200 {content} / {saved:true}
+    // 未挂载/不存在 → 404 {error}; 需 auth（withAuth）。
+    // 注意：routes 挂载在 Router("/api" -> ...) 下，路径必须写相对段
+    // （Root / "projects"），写 "api" 会双前缀 /api/api（QA P1②）。
+    case req @ GET -> Root / "projects" =>
       withAuth(req) {
         ProjectStore.list().map { projects =>
           Json.obj(
@@ -304,11 +307,40 @@ class RestApiRoutes(
         }.flatMap(Ok(_))
       }
 
-    case req @ GET -> Root / "api" / "projects" / name / "flow-map" =>
+    case req @ GET -> Root / "projects" / name / "flow-map" =>
       withAuth(req) {
         ProjectRuntimeRegistry.get(name).flatMap {
           case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
           case Some(rt) => NodeTools.buildNodeListPayload(rt).flatMap(Ok(_))
+        }
+      }
+
+    // GET /projects/<name>/agent.md — 项目 Agent.md 读取（#27「点击查看」；仿 team rules.md）
+    case req @ GET -> Root / "projects" / name / "agent.md" =>
+      withAuth(req) {
+        ProjectStore.load(name).flatMap {
+          case None => NotFound(Json.obj("error" -> s"project '$name' not found".asJson))
+          case Some(pd) =>
+            val p = os.Path(pd.workspace) / ".nebflow" / "Agent.md"
+            if os.exists(p) then Ok(Json.obj("content" -> os.read(p).asJson))
+            else NotFound(Json.obj("error" -> s"project '$name' has no Agent.md".asJson))
+        }
+      }
+
+    // PUT /projects/<name>/agent.md — 保存（写回工作区 .nebflow/Agent.md；仿 team rules.md）
+    case req @ PUT -> Root / "projects" / name / "agent.md" =>
+      withAuth(req) {
+        ProjectStore.load(name).flatMap {
+          case None => NotFound(Json.obj("error" -> s"project '$name' not found".asJson))
+          case Some(pd) =>
+            req.as[Json].flatMap { body =>
+              val content = body.hcursor.downField("content").as[String].getOrElse("")
+              IO.blocking {
+                val p = os.Path(pd.workspace) / ".nebflow" / "Agent.md"
+                os.makeDir.all(p / os.up)
+                AtomicJson.writeSync(p, content)
+              } *> Ok(Json.obj("saved" -> true.asJson))
+            }
         }
       }
 
