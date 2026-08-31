@@ -1,0 +1,239 @@
+/* flowMap.css — Project Flow Map 视图（§3.5）。页面内导航覆盖层，复用 flow-run 的
+   solar-card/solar-node 视觉（FLOW_CSS 已注入），此处只定义流图专属的容器与节点字段样式。 */
+
+/* 覆盖 #main 的页面内视图（#main position:relative，见 chat.css） */
+#flowmap-view {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  overflow: hidden;
+}
+
+/* 必须显式隐藏，否则 display:flex 覆盖 [hidden] 的 UA display:none，
+   导致关闭/返回时视图依然占据主区。 */
+#flowmap-view[hidden] { display: none; }
+
+body.flowmap-open #main { /* 遮罩打开时避免穿透交互（保留布局） */ }
+
+.flowmap-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.flowmap-back {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--color-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.flowmap-back:hover {
+  color: rgb(var(--sapphire) / 1);
+  border-color: rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.08);
+}
+
+.flowmap-back svg { width: 18px; height: 18px; }
+
+.flowmap-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.flowmap-title {
+  font: 600 18px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flowmap-sub {
+  font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+}
+
+.flowmap-summary {
+  margin-left: auto;
+  font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.flowmap-loading {
+  padding: 48px 24px;
+  text-align: center;
+  font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+}
+
+/* Flow Map 卡片容器（复用 .solar-card，但填满剩余空间并允许滚动） */
+.flowmap-card {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  background: var(--color-bg);
+}
+
+.flowmap-card .solar-scroll {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px;
+}
+
+/* 节点卡片（复用 .solar-node，扩展字段） */
+.fm-node {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  cursor: pointer;
+}
+
+.fm-node:hover {
+  filter: brightness(1.04);
+}
+
+.fm-node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+/* worktree 徽标：在 worktree 内工作的节点 */
+.fm-worktree-badge {
+  font: 600 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  letter-spacing: 0.02em;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgb(var(--sapphire) / 0.15);
+  color: rgb(var(--sapphire) / 1);
+  border: 1px solid rgb(var(--sapphire) / 0.3);
+  text-transform: uppercase;
+}
+
+/* TTL 倒计时（终态节点显示） */
+.fm-ttl {
+  font: 400 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  margin-left: 4px;
+}
+
+/* barrier 提示（多入边合并节点） */
+.fm-barrier-hint {
+  font: 400 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: rgb(var(--sapphire) / 0.9);
+}
+
+/* result 摘要 */
+.fm-result-summary {
+  font: 400 10px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: var(--color-frame-hover);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 132px;
+}
+
+.fm-result-summary.running {
+  color: rgb(var(--sapphire) / 0.85);
+  background: rgb(var(--sapphire) / 0.08);
+}
+
+/* 节点详情弹层（点击卡片查看结果） */
+.flowmap-node-detail {
+  position: absolute;
+  right: 20px;
+  top: 76px;
+  z-index: 40;
+}
+
+.fm-detail-card {
+  width: 380px;
+  max-width: calc(100vw - 48px);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+}
+
+.fm-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.fm-detail-title {
+  font: 600 15px/1.3 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+}
+
+.fm-detail-close {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fm-detail-close:hover { color: var(--color-text); background: var(--color-frame-hover); }
+.fm-detail-close svg { width: 15px; height: 15px; }
+
+.fm-detail-meta {
+  font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+}
+
+.fm-detail-body {
+  font: 400 12px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--color-frame-input-bg);
+}

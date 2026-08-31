@@ -58,6 +58,9 @@ import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, cl
 import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
+// #27 Project 面板 + Flow Map 视图（§3.5，试点期与旧面板并列）
+import { initProjectPanel } from './projectPanel.js';
+import { initFlowMapView } from './flowMapView.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initDaemons } from './daemons.js';
 import { initChatSearch } from './chatSearch.js';
@@ -3050,6 +3053,8 @@ initMemory();
 initExplorer();
 initCanvas();
 initColResizers();
+initProjectPanel();
+initFlowMapView();
 
 // Remove UI initialization lock — all layout setup is done.
 // Double-rAF ensures the browser has painted at least one frame with
