@@ -6,11 +6,10 @@
 //   GET /api/projects → {projects:[{name,workspace,agentFile,description,createdAt}]}
 //   GET /api/projects/<name>/flow-map → NodeList 载荷 {nodes[],worktrees[],meta}
 //     未挂载 → 404 {error}
+//   GET /api/projects/<name>/agent.md → {content}（项目不存在/无 Agent.md → 404）
+//   PUT /api/projects/<name>/agent.md → body {content} → {saved:true}（写回 .nebflow/Agent.md 原子写）
 // WS 事件广播帧 {type,project,nodeId,node}：
 //   nodeCreated / nodeUpdated / nodeCompleted / nodeRemoved
-//
-// ⚠️ #28 0b 契约未提供 agent.md REST 端点（只有 /api/projects 与 flow-map）；
-//    Agent.md 读写暂用本地 mock，待后端补充 GET/POST 后替换。
 
 import { authHeaders } from './flowHelpers.js';
 
@@ -20,6 +19,8 @@ export const API = {
   projects: '/api/projects',
   // 某项目 Flow Map 快照（契约 §3 NodeList 载荷）：GET /api/projects/<name>/flow-map；未挂载 404
   flowMap: (name) => `/api/projects/${encodeURIComponent(name)}/flow-map`,
+  // 项目 Agent.md（契约 §1）：GET 读 → {content} / PUT 存 → body {content} → {saved:true}；写回工作区 .nebflow/Agent.md
+  agentFile: (name) => `/api/projects/${encodeURIComponent(name)}/agent.md`,
 };
 
 export const NODE_WS = {
@@ -77,42 +78,24 @@ export function summarize(fm) {
   return { running, failed, pending, completed, brief };
 }
 
-// ── Agent.md 读取/保存（⚠️ 契约无 REST 端点，暂用本地 mock）──
-const MOCK_AGENT_FILES = {
-  'phd-notebook': [
-    '# Agent.md',
-    '',
-    '项目级 agent 指令（phd-notebook 示例）。',
-    '- 文献调研优先走学术检索与引用链。',
-    '- 成稿前先列提纲，评审后定稿。',
-    '',
-  ].join('\n'),
-  'nebflow': [
-    '# Agent.md',
-    '',
-    'Nebflow 开发指令（示例）。',
-    '- 改动前先读 CODEBASE.md。',
-    '- 前端改动须过 verify-web-assets.mjs。',
-    '',
-  ].join('\n'),
-  'writer-blog': [
-    '# Agent.md',
-    '',
-    '技术博客写作（示例）。',
-    '- 每周一选题，短小精悍。',
-    '',
-  ].join('\n'),
-};
+// ── Agent.md 读取/保存（契约 §1：GET / PUT /api/projects/<name>/agent.md）──
 
-/** 读取项目 Agent.md（mock；契约无 agent.md GET 端点，后端补后替换）。 */
+/** 读取项目 Agent.md。GET → {content}；404（项目不存在/无 Agent.md）返回缺省文本。 */
 export async function fetchAgentFile(name) {
-  await new Promise((r) => setTimeout(r, 90));
-  return MOCK_AGENT_FILES[name] || '# Agent.md\n\n（暂无内容）\n';
+  const r = await fetch(API.agentFile(name), { headers: authHeaders() });
+  if (r.status === 404) return '# Agent.md\n\n（暂无内容）\n';
+  if (!r.ok) throw new Error(`agent.md ${r.status}`);
+  const data = await r.json();
+  return data?.content ?? '';
 }
 
-/** 保存项目 Agent.md（mock；契约无 agent.md POST 端点，后端补后替换）。 */
+/** 保存项目 Agent.md。PUT body {content} → {saved:true}（写回工作区 .nebflow/Agent.md 原子写）。 */
 export async function saveAgentFile(name, content) {
-  await new Promise((r) => setTimeout(r, 90));
-  if (MOCK_AGENT_FILES[name] !== undefined) MOCK_AGENT_FILES[name] = content;
+  const r = await fetch(API.agentFile(name), {
+    method: 'PUT',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  if (!r.ok) throw new Error(`agent.md save ${r.status}`);
   return { ok: true };
 }
