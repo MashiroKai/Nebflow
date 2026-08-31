@@ -243,7 +243,7 @@ function ensureScroll(pane, id) {
   return scroll;
 }
 
-// 标签页关闭时清理 TTL 定时器（不影响项目数据，数据在 service/nodeData mock）。
+// 标签页关闭时清理 TTL 定时器（不影响项目数据，数据在 service/nodeData）。
 document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) => {
   const id = e.detail?.id || '';
   if (typeof id === 'string' && id.startsWith('flow-map-')) {
@@ -266,6 +266,13 @@ export function refreshOpenFlowMap() {
         const scroll = ensureScroll(pane, `flow-map-scroll-${currentProject}`);
         renderFlowMap(scroll, fm, currentProject);
       }
-    });
+    }).catch(() => { /* 刷新失败保持当前渲染；下次事件/手动开 tab 再拉 */ });
   }, 200);
 }
+
+// WS 事件驱动（契约 §2）：节点任何变更都刷新已打开的 flow-map 标签页（服务端权威快照）。
+import { onMessage } from './ws.js';
+onMessage('nodeCreated', () => refreshOpenFlowMap());
+onMessage('nodeUpdated', () => refreshOpenFlowMap());
+onMessage('nodeCompleted', () => refreshOpenFlowMap());
+onMessage('nodeRemoved', () => refreshOpenFlowMap());
