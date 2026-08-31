@@ -9,23 +9,25 @@ import munit.CatsEffectSuite
 import scala.concurrent.duration.*
 
 /**
- * #319 (2026-08-19): BashTool 取消自动超时转后台 — foreground commands run to
- * completion (or explicit timeout), no auto-background at 30s/300s.
+ * #319 (2026-08-19) + #26 (2026-08-30): BashTool 前台直跑语义——foreground
+ * commands run to completion (or explicit timeout), never auto-background.
  *
- * 旧行为：`sleep 35` 前台跑到 30s 会被 "moved to background"，返回占位消息。
- * 新行为：前台命令一直跑到完成，返回真实输出。
+ * #26 用户裁定「Bash 工具不再自动转后台，依赖卡死检测就行了，不设超时」——
+ * #391 机制 A（300s 自动转后台）已删除：前台命令一直跑到完成，返回真实输出，
+ * 无「[moved to background]」占位。卡死兜底 = TaskStuckWatcher（turn 级
+ * restart）+ 前台 no-progress ceiling（命令级停滞杀）+ 显式 timeout（若有）。
  */
 class BashToolForegroundSpec extends CatsEffectSuite:
 
-  /** sleep 35 用例需要 >30s 的框架超时（munit 默认 30s）。 */
-  override def munitIOTimeout: Duration = 90.seconds
+  /** sleep 65 用例需要 >65s 的框架超时（munit 默认 30s）。 */
+  override def munitIOTimeout: Duration = 120.seconds
 
   private def runBash(cmd: String): IO[Either[ToolError, String]] =
     val input = JsonObject(
       "command" -> cmd.asJson,
       "description" -> "BashToolForegroundSpec".asJson
     )
-    BashTool.call(input, ToolContext(projectRoot = "/tmp")).timeout(80.seconds)
+    BashTool.call(input, ToolContext(projectRoot = "/tmp")).timeout(110.seconds)
 
   test("foreground command returns real output (no auto-background)") {
     runBash("sleep 2 && echo hello-foreground").map {
@@ -40,6 +42,18 @@ class BashToolForegroundSpec extends CatsEffectSuite:
     runBash("sleep 35 && echo long-done").map {
       case Right(out) =>
         assert(out.contains("long-done"), s"should complete with real output: $out")
+        assert(!out.contains("moved to background"), s"must not auto-background: $out")
+      case Left(err) => fail(s"bash failed: ${err.message}")
+    }
+  }
+
+  test("foreground command running >60s still completes — mechanism A fully removed (#26)") {
+    // 旧 #391 机制 A：300s 阈值，此用例无法在单测时限内证明；#26 删除机制 A
+    // 后无转后台路径（静态可证），此用例验证 65s 前台长命令仍直跑完成——
+    // 覆盖「任何时长都不转后台」语义的可测下限。
+    runBash("sleep 65 && echo long-done-65").map {
+      case Right(out) =>
+        assert(out.contains("long-done-65"), s"should complete with real output: $out")
         assert(!out.contains("moved to background"), s"must not auto-background: $out")
       case Left(err) => fail(s"bash failed: ${err.message}")
     }

@@ -178,11 +178,10 @@ case class NebflowServiceConfig(
     * （键名保留前端契约，语义=冻结时段，支持跨午夜）——FreezeSchedule.load
     * fail-safe 解析（非法配置视为关闭）。updateConfig 深合并保留未提及顶层键。 */
   workSchedule: Option[io.circe.Json] = None,
-  /** Bash 卡死防护阈值（#391）：bashAutoBackgroundMs（默认 300s 转后台）、
-    * bashBackgroundHardTimeoutMs（默认 30min 硬超时起点）、bashStuckWindowSec
-    * （默认 120s 停滞窗口）、bashHealthCheckIntervalSec（默认 30s 健康检查间隔，
-    * 测试/冒烟可注入小值加速验证）。None → Defaults 值。 */
-  bashAutoBackgroundMs: Option[Long] = None,
+  /** Bash 卡死防护（#26 前台直跑）：bashBackgroundHardTimeoutMs（默认 30min
+    * 硬超时起点）、bashStuckWindowSec（默认 120s 停滞窗口）、
+    * bashHealthCheckIntervalSec（默认 30s 健康检查间隔，测试/冒烟可注入小值
+    * 加速验证）——只服务显式 run_in_background 后台任务。None → Defaults 值。 */
   bashBackgroundHardTimeoutMs: Option[Long] = None,
   bashStuckWindowSec: Option[Int] = None,
   bashHealthCheckIntervalSec: Option[Int] = None,

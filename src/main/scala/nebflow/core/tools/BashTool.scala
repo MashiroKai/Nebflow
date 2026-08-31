@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import cats.effect.{Deferred, Fiber, IO}
+import cats.effect.{Fiber, IO}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
@@ -272,7 +272,6 @@ Git safety:
     if result.contains("[Command timed out") then "Timed out"
     else if result.startsWith("[Interactive command]") then "Interactive blocked"
     else if result.startsWith("[Background job") then "Background"
-    else if result.startsWith("[Command moved to background]") then "Auto-background"
     else if result.startsWith("[Command executed successfully with no output]") then "No output"
     else
       val lines = result.split('\n').filter(_.trim.nonEmpty)
@@ -405,10 +404,10 @@ Git safety:
                     s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
                   )
                 else if ctx.isRemoteExec then
-                  // Remote-exec: run synchronously without auto-background.
-                  // The caller (another Nebflow instance via HTTP) manages the
-                  // lifecycle — a background handoff here would return a useless
-                  // "[moved to background]" message instead of the real output.
+                  // Remote-exec: run synchronously to completion and return the
+                  // real output. The caller (another Nebflow instance via HTTP)
+                  // manages the lifecycle — the call blocks until the remote
+                  // result arrives (or the remote timeout fires).
                   val remoteTimeout = explicitTimeoutMs.getOrElse(DEFAULT_TIMEOUT).millis
                   shell
                     .execute(actualCommand, remoteTimeout)
@@ -435,19 +434,20 @@ Git safety:
   end call
 
   /**
-   * Execute a command in the foreground until it completes, fails, or the
-   * auto-background threshold expires.
+   * Execute a command in the foreground until it completes or fails.
    *
-   * #391 机制 A（2026-08-25 用户裁定「5 分钟自动转后台」，恢复 #319 前骨架）：
-   * 前台命令运行超过 BashAutoBackgroundMs（默认 300s）→ 自动转后台——不杀进程、
-   * turn 释放（返回占位消息 + jobId）、完成时 makeNotifyCallback 异步通知
-   * （ExternalEvent + WS + BgTaskRegistry 注销）。转后台后与显式
-   * run_in_background 完全同构：background_job_id 查询/取消、health check、
-   * 硬超时/停滞兜底（机制 B）全覆盖。
-   * - 显式 timeout < 阈值 → 显式 timeout 先到（不转后台，watchdog 杀树）
-   * - timeout ≥ 阈值或 None → 300s 转后台（显式 timeout 仍生效：转后台后
-   *   其 watchdog 照常杀树）
-   * - sleep 类命令同样转后台（sleep-like 豁免仅保留在 no-progress/idle 语义）
+   * #26（2026-08-30 用户裁定「Bash 工具不再自动转后台，依赖卡死检测就行了，
+   * 不设超时」）：恢复前台直跑语义——#391 机制 A（5 分钟自动转后台）已推翻
+   * 删除。前台命令一直跑到结束（或显式 timeout watchdog 杀树），返回真实
+   * 输出；不产生「[Command moved to background]」占位。无显式 timeout 时不设
+   * 命令级超时（processTimeout 用 365.days 近似无限）。
+   *
+   * 卡死兜底保持：
+   * - 显式 timeout（若有）→ watchdog 杀进程树
+   * - 前台 no-progress ceiling（shell.scala #22）：10min 零输出零 CPU 且非
+   *   sleep-like → 停滞杀（命令级）
+   * - TaskStuckWatcher（turn 级）：活动桥接只刷新有进展的进程——真卡死命令
+   *   不刷新 lastActivityMs，10min 零活动 → restart 杀进程树
    *
    * 活动桥接（#319）保持：有进展（输出/CPU≥阈值/sleep-like）刷新
    * lastActivityMs——TaskStuckWatcher「有进展不判卡死」语义；#391 机制 D
@@ -462,9 +462,7 @@ Git safety:
     ctx: ToolContext,
     tailN: Option[Int] = None
   ): IO[Either[ToolError, String]] =
-    val autoBackgroundMs = ctx.bashConfig.autoBackgroundMs
-    // 显式 timeout < 自动转后台阈值 → 纯显式 timeout 路径（不转后台）。
-    val enableAutoBg = explicitTimeoutMs.forall(_ >= autoBackgroundMs)
+    // 无显式 timeout → 不设命令级超时（前台直跑语义，365.days 近似无限）。
     val processTimeout = explicitTimeoutMs.map(_.millis).getOrElse(365.days)
     val health = new JobHealth()
     // #22 (2026-08-19): a running Bash is INVISIBLE — the completion log only
@@ -484,50 +482,17 @@ Git safety:
       // Activity bridge: while the command runs, mirror process progress into
       // the agent registry so TaskStuckWatcher never kills a busy command.
       bridgeFiber <- startActivityBridge(shell, health, command, ctx)
-      jobId <- IO.randomUUID.map(_.toString.take(8))
-      resultRef <- Deferred[IO, Either[Throwable, ProcessResult]]
-      // Command fiber: run to completion, carrying the REAL result. On the
-      // auto-background path registerBackgroundJob's watcher takes it via
-      // joinWithNever, so background_job_id queries see the full output.
-      execFiber <- shell
+      result <- shell
         .execute(command, processTimeout, Some(health))
         .attempt
-        .flatTap(resultRef.complete)
-        .start
-      outcome <- IO.race(
-        resultRef.get,
-        if enableAutoBg then IO.sleep(autoBackgroundMs.millis) else IO.never[Unit]
-      )
-      _ <- bridgeFiber.cancel // 活动桥接只保前台窗口；转后台后由心跳/health check 接管
-      result <- outcome match
-        case Left(res) =>
-          // Command finished first (or explicit timeout watchdog killed the tree)
-          res match
-            case Right(pr) => IO.pure(formatResult(pr, desc, tailN))
-            case Left(e: TimeoutException) =>
-              IO.pure(Left(ToolError(s"[Command timed out after ${processTimeout.toMillis}ms]")))
-            case Left(e) => IO.pure(Left(ToolError(s"Error: ${e.getMessage}")))
-        case Right(_) =>
-          // Auto-background threshold reached: keep the process running, release
-          // the turn, and deliver the result asynchronously when it finishes.
-          val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
-          val bgDescription = desc.getOrElse(firstLine)
-          val onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN)
-          for
-            _ <- shell.registerBackgroundJob(
-              jobId,
-              execFiber,
-              command,
-              health,
-              onComplete,
-              hardTimeoutMs = ctx.bashConfig.hardTimeoutMs,
-              stuckWindowSec = ctx.bashConfig.stuckWindowSec,
-              healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec
-            )
-            _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
-          yield Right(
-            s"[Command moved to background] Job ID: $jobId\n已运行超过 ${autoBackgroundMs / 1000}s，已转后台，完成时通知"
-          )
+        .map {
+          case Right(pr) => formatResult(pr, desc, tailN)
+          case Left(e: TimeoutException) =>
+            Left(ToolError(s"[Command timed out after ${processTimeout.toMillis}ms]"))
+          case Left(e) =>
+            Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
+        }
+      _ <- bridgeFiber.cancel // 活动桥接只保命令生命周期；命令结束即停
     yield result
     end for
 
