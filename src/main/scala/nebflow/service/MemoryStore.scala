@@ -13,10 +13,13 @@ import scala.jdk.CollectionConverters.*
 /**
  * Two-level memory store backed by Markdown files.
  *
- * Levels:
- *   - User:  ~/.nebflow/User.md                              (global, all eligible agents)
- *   - Agent: ~/.nebflow/agents/{name}/memory.md               (Nebula)
- *   - Agent: ~/.nebflow/teams/{team}/agents/{name}/memory.md   (Team agents)
+ * Levels (2026-08-31 裁定① — memory is Nebula-only):
+ *   - User:  ~/.nebflow/User.md                      (global)
+ *   - Agent: ~/.nebflow/agents/Nebula/memory.md       (Nebula)
+ *
+ * Team agent memory (~/.nebflow/teams/<team>/agents/<name>/memory.md) has been
+ * removed; the read helpers below still exist so the memory modal degrades to
+ * empty for team sessions, but nothing writes team memory anymore.
  *
  * Memory files are injected into the system prompt every turn by
  * ContextRefresher.buildMemoryBlock. Agents update them directly using Edit/Write.
@@ -78,9 +81,6 @@ object MemoryStore:
   def saveAgentMemory(agentName: String, content: String): IO[Unit] =
     saveFile(agentMemoryPath(agentName), content, () => getAgentCache(agentName).invalidate)
 
-  def saveTeamAgentMemory(teamName: String, agentName: String, content: String): IO[Unit] =
-    saveFile(teamAgentMemoryPath(teamName, agentName), content, () => getTeamAgentCache(teamName, agentName).invalidate)
-
   // --- Cache invalidation ---
 
   def invalidateUserCache(): Unit =
@@ -88,9 +88,6 @@ object MemoryStore:
 
   def invalidateAgentCache(agentName: String): Unit =
     getAgentCache(agentName).invalidate.unsafeRunSync()
-
-  def invalidateTeamAgentCache(teamName: String, agentName: String): Unit =
-    getTeamAgentCache(teamName, agentName).invalidate.unsafeRunSync()
 
   // --- Preview (first non-heading, non-empty line, max 80 chars) ---
 

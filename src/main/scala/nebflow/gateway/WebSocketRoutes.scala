@@ -2948,7 +2948,9 @@ class WebSocketRoutes(
                   case "user" => MemoryStore.saveUserMemory(content)
                   case "agent" =>
                     teamName match
-                      case Some(tn) => MemoryStore.saveTeamAgentMemory(tn, agentName, content)
+                      // 2026-08-31 裁定①: team agents have no memory — refuse to
+                      // resurrect deleted team memory.md files via the modal.
+                      case Some(_) => IO.unit
                       case None => MemoryStore.saveAgentMemory(agentName, content)
                   case _ => IO.unit
                 save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))

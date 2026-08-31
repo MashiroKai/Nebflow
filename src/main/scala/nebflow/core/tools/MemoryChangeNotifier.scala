@@ -8,10 +8,12 @@ import io.circe.syntax.*
  * Detects when agent modifies memory files via Write/Edit and pushes a
  * `memoryChanged` WebSocket event so the frontend can refresh its memory panel.
  *
- * Memory files are:
+ * Memory files are (2026-08-31 裁定① — Nebula-only):
  *   - ~/.nebflow/User.md                                    (User)
- *   - ~/.nebflow/agents/<name>/memory.md                      (Nebula agent)
- *   - ~/.nebflow/teams/<team>/agents/<name>/memory.md         (Team agent)
+ *   - ~/.nebflow/agents/Nebula/memory.md                     (Nebula)
+ *
+ * Team agent memory was removed; the team path pattern below is kept only
+ * to remain a no-op guard — nothing writes those files anymore.
  */
 object MemoryChangeNotifier:
 
