@@ -361,8 +361,6 @@ object GatewayMain extends IOApp.Simple:
                                   freezeScheduleRef = freezeScheduleRef,
                                   toolResultTtlRef = toolResultTtlRef,
                                   bashResilience = nebflow.shared.BashResilienceConfig(
-                                    autoBackgroundMs = config.bashAutoBackgroundMs
-                                      .getOrElse(nebflow.shared.Defaults.BashAutoBackgroundMs),
                                     hardTimeoutMs = config.bashBackgroundHardTimeoutMs
                                       .getOrElse(nebflow.shared.Defaults.BashBackgroundHardTimeoutMs),
                                     stuckWindowSec =
