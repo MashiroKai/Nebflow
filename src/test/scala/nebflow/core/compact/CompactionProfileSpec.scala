@@ -36,9 +36,12 @@ class CompactionProfileSpec extends FunSuite:
     val managerMsg = text(CompactService.buildCompactReminder(1, isLead = true))
     assert(managerMsg.contains("FLOW MANAGER"), s"manager prompt expected: ${managerMsg.take(80)}")
 
-  test("buildSaveMemoryReminder depth 1 member uses the Worker profile"):
-    val workerMsg = text(CompactService.buildSaveMemoryReminder(1, isLead = false))
-    assert(workerMsg.contains("FLOW WORKER"), s"worker prompt expected: ${workerMsg.take(80)}")
-    val managerMsg = text(CompactService.buildSaveMemoryReminder(1, isLead = true))
-    assert(managerMsg.contains("MANAGER"), s"manager prompt expected: ${managerMsg.take(120)}")
+  test("single-stage: worker compact reminder demands full unfinished-task state"):
+    // 2026-08-31 redesign — the save turn is gone; the compact summary is the
+    // worker's ONLY recovery carrier, so it must explicitly forbid deferring
+    // state to a memory file.
+    val workerMsg = text(CompactService.buildCompactReminder(1, isLead = false))
+    assert(workerMsg.contains("NO persistent memory fallback"), s"worker prompt expected: ${workerMsg.take(80)}")
+    val managerMsg = text(CompactService.buildCompactReminder(1, isLead = true))
+    assert(managerMsg.contains("NO persistent memory fallback"), s"manager prompt expected: ${managerMsg.take(80)}")
 end CompactionProfileSpec

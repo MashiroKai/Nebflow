@@ -7,9 +7,13 @@ package nebflow.core.compact
  * They no longer control additional triggers — all extraction (memory/progress/skill)
  * happens as a pre-compaction step, not via independent timers or turn hooks.
  *
+ * 2026-08-31 memory-system redesign: only the Root profile has a hook anymore
+ * (NebulaMemoryHook, merged-write fact extraction → User.md). Manager/Worker
+ * hooks are retired — team agents have no memory to write to.
+ *
  *  - Root:    NebulaMemoryHook (fact extraction → User.md)
- *  - Manager: ManagerProgressHook (progress summary → memory.md)
- *  - Worker:  WorkerSkillHook (skill proposals → skill-proposals/)
+ *  - Manager: NoOpHook
+ *  - Worker:  NoOpHook
  *  - Legacy:  NoOpHook
  */
 enum CompactionProfile:

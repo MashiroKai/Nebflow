@@ -42,211 +42,6 @@ object CompactService:
     Message(MessageRole.User, Left(prompt))
 
   // ------------------------------------------------------------------
-  // Save-memory reminder — stage 1 of the two-stage compaction model
-  // ------------------------------------------------------------------
-
-  /**
-   * Build the save-memory reminder injected BEFORE the compact reminder
-   * (two-stage model). Tools stay available so the agent can Write/Edit
-   * durable memory and skills; ending the turn (toolCalls.isEmpty) is the
-   * completion signal that transitions to the compact stage.
-   *
-   * Only agents that receive a memory block (Nebula + team agents, mirroring
-   * ContextRefresher's injection condition) get a save turn; others go
-   * straight to compact (behavior unchanged).
-   */
-  def buildSaveMemoryReminder(depth: Int, isLead: Boolean = false): Message =
-    val profile = CompactionProfile.fromDepth(depth, isLead)
-    val prompt = profile match
-      case CompactionProfile.Worker => WorkerSaveMemoryReminder
-      case CompactionProfile.Manager => ManagerSaveMemoryReminder
-      case _ => RootSaveMemoryReminder
-    Message(MessageRole.User, Left(prompt))
-
-  /**
-   * P1-4（2026-08-22 Write-only 循环批）：save-turn 任务漂移一级 reminder。
-   * 触发条件：save 阶段模型对 memory/skill 路径集之外的文件做 Write/Edit
-   * （= 回到原任务——生产形态：/tmp/wbv-verify.mjs 24 连重写）。注入一次；
-   * 再漂移由 guardSaveTurn 强制转 Compact。要点：明确告诉模型原任务不会
-   * 丢（压缩后继续），消除「必须先做完任务」的续写压力。
-   */
-  def saveTurnDriftReminder: Message =
-    Message(
-      MessageRole.User,
-      Left(
-        """<system-reminder>
-          |The file operations above target files OUTSIDE your memory/skill paths —
-          |that is the ORIGINAL TASK, not memory maintenance.
-          |
-          |You are in the pre-compaction MEMORY SAVE phase. The original task is NOT
-          |lost: it resumes automatically after compaction completes. Its full state
-          |is preserved in the compaction summary step that follows.
-          |
-          |Do this now: finish or abandon the memory maintenance cycle using ONLY
-          |your memory files (memory.md / User.md) and skill drafts
-          |(~/.nebflow/skills/), then STOP — call no more tools and write no more
-          |text. Stopping proceeds to compaction automatically; continuing to write
-          |task files will trigger a forced transition to compaction.
-          |</system-reminder>""".stripMargin
-      )
-    )
-
-  /** Shared preamble for all save-memory profiles. */
-  private val SaveMemoryPreamble =
-    """<system-reminder>
-      |Context compaction is approaching — the conversation is about to be compressed.
-      |BEFORE compression, run the MEMORY MAINTENANCE CYCLE on your persistent memory
-      |and skills.
-      |
-      |Tools ARE AVAILABLE this turn. Use the Write or Edit tool on the memory files
-      |directly (paths and entry format are in the Memory section of your system prompt).
-      |
-      |MEMORY MAINTENANCE CYCLE — do all four steps, in order:
-      |
-      |1. RECORD — save new facts that meet the quality standard below (exactly what
-      |   to record is per your profile below).
-      |2. ORGANIZE — sort entries into the right sections, merge duplicates, fold
-      |   related entries together. Memory is a living document, not an append log.
-      |3. VERIFY — spot-check existing entries against current reality. When an entry
-      |   matters, confirm it still holds by reading the code/file/config — never
-      |   trust old memory blindly.
-      |4. CLEAR — delete entries that are outdated, wrong, readable from code, or of
-      |   no reuse value (criteria below).
-      |
-      |MEMORY QUALITY STANDARD — keep an entry ONLY if it meets ALL THREE criteria:
-      |- HARD TO OBTAIN: not recoverable with one Read/Grep/git command. Line numbers,
-      |  API signatures and implementation details are readable from code — recording
-      |  them clutters memory and goes stale. Record decision REASONS and lessons
-      |  instead: the "why" that code comments and git history hide.
-      |- REUSABLE: will matter for future similar tasks. One-off task details belong
-      |  in the compaction summary, not in memory.
-      |- CURRENT-STATE-FIRST: memory is NOT authoritative. When an entry contradicts
-      |  the code or current reality, reality wins — update or delete the entry.
-      |
-      |LANGUAGE RULE — write your memory entries in the SAME language as the user's messages.
-      |
-      |Your ONLY task this turn is to run this cycle with the Write/Edit tools.
-      |When the cycle is done, simply STOP — call no more tools and write no
-      |more text. Stopping is itself the completion signal: the system detects
-      |that you have stopped and proceeds to compaction automatically. No
-      |extra action is needed or allowed to "signal" the end — in particular,
-      |do NOT run no-op commands (e.g. `true`) and do not output filler text:
-      |a no-op command only pollutes the execution record and wastes a turn.
-      |
-      |Already-saved information does not need to be repeated in the compaction
-      |summary afterwards.
-      |""".stripMargin
-
-  /**
-   * Root agent (Nebula, depth 0) — the orchestrator.
-   *  Focus: user dynamic facts, orchestration knowledge, long-term project state.
-   */
-  private val RootSaveMemoryReminder = SaveMemoryPreamble +
-    """You are the ROOT agent (Nebula). Your profile focus is the USER and ORCHESTRATION:
-      |
-      |RECORD → ~/.nebflow/User.md (user-level, applies to all agents):
-      |- Corrections of your output or approach — record what they wanted instead
-      |- Direct instructions that skip your questions — record their default preference
-      |- Repeated working style (naming, workflow, tool choices — after 2-3 consistent observations)
-      |- Workflow preferences and environment facts (paths, ports, proxies, devices)
-      |
-      |RECORD → ~/.nebflow/agents/Nebula/memory.md:
-      |- Team/flow selection decisions and routing rules that proved effective
-      |- Cross-project patterns, division of labor between agents
-      |- Which agent handles which task type (observed capabilities)
-      |- Long-term project state that outlives this session (active branches,
-      |  pending merges, design decisions still in force)
-      |
-      |VERIFY & CLEAR — root profile:
-      |- User facts: confirm paths, ports, devices and tool configs still exist and
-      |  still match reality before keeping them — stale environment facts mislead
-      |  every agent downstream
-      |- Orchestration: confirm routing entries reference teams/flows/agents that
-      |  still exist; delete entries whose entities were removed
-      |- Project state: drop branches merged, worktrees removed, merges completed
-      |- Purge code-readable facts (line numbers, API details) you can Read anytime
-      |
-      |Skip one-off task details — they belong to the compaction summary, not memory.
-      |""".stripMargin
-
-  /**
-   * Flow Manager (depth 1) — coordinator within a project/team.
-   *  Focus: coordination state and dispatch experience so routing can resume.
-   */
-  private val ManagerSaveMemoryReminder = SaveMemoryPreamble +
-    """You are a FLOW/TEAM MANAGER. Your profile focus is COORDINATION:
-      |write to ~/.nebflow/teams/<team>/agents/<name>/memory.md (your own memory file).
-      |
-      |RECORD:
-      |1. PENDING DISPATCHES — what you still await or must send next (the resume
-      |   point after compaction)
-      |2. KEY DECISIONS & TRADE-OFFS — coordination decisions WITH their reasoning,
-      |   so you don't re-litigate them after compaction
-      |3. DISPATCH EXPERIENCE — which agents/approaches proved effective for which
-      |   task types; routing lessons reusable across flows (not one-off status reports)
-      |4. ARTIFACT LOCATIONS — files agents produced (path + what it is), so you can
-      |   point users/agents at results without re-searching
-      |5. PERIOD SELF-CHECK — count [USER-RULING] mails in your team's flow-mailbox
-      |   (~/.nebflow/sessions/*/flow-mailbox/ — Grep pattern:"[USER-RULING]") since
-      |   your last save turn, and summarize direct member-to-member collaboration
-      |   (pairing/handoff/review) in one line. Record counts and one-liners ONLY —
-      |   never full mail bodies.
-      |
-      |VERIFY & CLEAR — manager profile:
-      |- Statuses: verify done/failed claims against actual artifacts before keeping
-      |  them — an unverified "done" (agent claimed it, nothing written) is a trap
-      |  for the next session
-      |- Artifacts: confirm recorded paths still exist before keeping them
-      |- Pending: drop dispatches already resolved; keep only what is truly still awaited
-      |- Purge routine tool chatter and transient waiting states — noise, not memory
-      |
-      |Keep entries durable enough that a fresh session can resume routing without
-      |re-reading the whole log.
-      |""".stripMargin
-
-  /**
-   * Flow Worker (depth 2+) — implementation agent within a flow.
-   *  Focus: technical experience (pitfalls, effective practices, tool behavior).
-   */
-  private val WorkerSaveMemoryReminder = SaveMemoryPreamble +
-    """You are a FLOW WORKER. Your profile focus is TECHNICAL EXPERIENCE:
-      |write to ~/.nebflow/teams/<team>/agents/<name>/memory.md (your own memory file).
-      |
-      |RECORD:
-      |1. PITFALLS & FIXES — bugs you hit and how you fixed them; root cause matters
-      |   more than the exact patch. Include the decision REASON when it is not visible
-      |   in code (e.g. why a classification or default was chosen — the kind of fact
-      |   you'd only recover from git history)
-      |2. EFFECTIVE PRACTICES — approaches that worked in this domain (tests, build, layout)
-      |3. TOOL BEHAVIOR — non-obvious tool semantics you discovered (output formats,
-      |   gotchas, failure modes) that cost you time
-      |4. USER RULINGS — if the user corrected you, vetoed your work, or stated a
-      |   preference this session: record the ruling in your memory FIRST (quote their
-      |   exact words + date), THEN report it upward via Mail with the tag
-      |   "[RESULT] [USER-RULING]" (to your Manager, or to Nebula if you are the lead),
-      |   attaching the user's original words. Never let a ruling live only in this
-      |   conversation. If you already reported it in the turn it happened, just make
-      |   sure it is now in memory.
-      |5. REUSABLE CAPABILITIES — if the same kind of ruling or procedure has now been
-      |   seen 2+ times (counting across sessions) or is clearly generalizable, draft it
-      |   as a skill following the skill-creator spec: ~/.nebflow/skills/<name>/SKILL.md
-      |   (team-specific skills use a namespace dir like skills/<namespace>/<name>/,
-      |   with the user's original words quoted in an Evidence section). One skill = one
-      |   purpose; no one-off skills. Registration & subscription (agent.json skills) is
-      |   finalized at review — report the draft in a [USER-RULING] mail.
-      |
-      |VERIFY & CLEAR — worker profile:
-      |- Pitfalls: confirm the fix is still in the code before keeping the entry — a
-      |  stale "fixed" claim actively misleads (an outdated fallback classification
-      |  once led another agent to "fix" code that was already correct)
-      |- Code facts: delete entries now readable from code — line numbers, signatures,
-      |  mechanics you can Read/Grep in seconds
-      |- One-offs: drop findings that won't recur
-      |
-      |Be concise: keep only what is reusable, not full history.
-      |""".stripMargin
-
-  // ------------------------------------------------------------------
   // Profile-specific compact prompts
   // ------------------------------------------------------------------
 
@@ -339,10 +134,19 @@ object CompactService:
    * Flow Manager — coordinator within a project flow.
    *  Focus: dispatch state, agent responses, progress tracking.
    *  The "user" messages are Mail from Nebula or agent responses, not direct user input.
+   *
+   * 2026-08-31 (single-stage compaction): this summary is the ONLY recovery
+   * carrier for coordination state — the save turn and team memory are gone.
+   * Dispatch state MUST be complete enough to resume routing from a fresh
+   * context (no memory fallback).
    */
   private val ManagerCompactReminder = CompactPreamble +
     """You are a FLOW MANAGER. Your conversation consists of Mail messages (task dispatch and agent responses), not direct user chat.
       |Your summary must focus on COORDINATION STATE so you can resume routing seamlessly.
+      |
+      |IMPORTANT: you have NO persistent memory fallback after compaction — this
+      |summary is the ONLY record of your coordination state. Preserve every
+      |in-flight dispatch, awaited result, and pending decision in full.
       |
       |<summary>
       |1. Project Goal:
@@ -373,11 +177,22 @@ object CompactService:
    * Flow Worker — implementation agent within a flow.
    *  Focus: current task, files changed, outcome. Old completed tasks are irrelevant.
    *  Be CONCISE — workers don't need deep historical context.
+   *
+   * 2026-08-31 (single-stage compaction): this summary is the ONLY recovery
+   * carrier for the in-progress task — the save turn and team memory are gone.
+   * Unfinished-task state MUST be preserved in full; nothing may be deferred
+   * to a memory file that no longer exists.
    */
   private val WorkerCompactReminder = CompactPreamble +
     """You are a FLOW WORKER. Your conversation is task-focused: Mail from manager → your work → Mail result back.
       |Your summary must be CONCISE and ACTION-ORIENTED so you can resume the current task.
       |Discard details of completed previous tasks — only keep what's needed for the CURRENT task.
+      |
+      |IMPORTANT: you have NO persistent memory fallback after compaction — this
+      |summary is the ONLY record of your in-progress task. Preserve the
+      |unfinished-task state IN FULL: files touched (with line ranges), partial
+      |changes, blockers, and the exact next step. Never write "see memory" or
+      |assume anything survives outside this summary.
       |
       |<summary>
       |1. Current Task:

@@ -245,19 +245,18 @@ object ContextRefresher:
    * Memory injection gate — pure so both branches are spec-covered
    * (HeadlessModeSpec); the refreshTurn touchpoint binds HeadlessMode.enabled.
    *
-   * Headless (NEBFLOW_HEADLESS=1, benchmark mode) skips the WHOLE memory
-   * block: User/Agent memory accumulates across runs, and injecting
-   * previous-run state into a fresh benchmark session breaks determinism.
-   * With headless off the legacy gate (SubTask workers excluded; Nebula and
-   * team agents eligible) is unchanged.
+   * 2026-08-31 memory-system redesign (裁定①): ONLY Nebula carries memory.
+   * Team agents have no memory anymore (User.md + team memory.md injection
+   * removed); standalone agents never did. Headless (NEBFLOW_HEADLESS=1,
+   * benchmark mode) skips memory entirely — previous-run state must not leak
+   * into a fresh benchmark session.
    */
   def shouldInjectMemory(
     isWorker: Boolean,
-    isTeamAgent: Boolean,
     agentName: String,
     headless: Boolean = HeadlessMode.enabled
   ): Boolean =
-    !headless && !isWorker && (isTeamAgent || agentName == "Nebula")
+    !headless && !isWorker && agentName == "Nebula"
 
   /**
    * Build a memory block string for system prompt injection.
@@ -421,13 +420,11 @@ object ContextRefresher:
       teamCatalog <-
         if isWorker then IO.pure("")
         else buildTeamCatalogForSession(state.sessionId)
-      // Memory: only Nebula (standalone, name="Nebula") and team agents get memory.
-      // Team agents get memory; standalone agents (Coder/Explorer/etc) don't.
-      // SubTask workers get none — clean context, prompt is the only input.
+      // Memory: only Nebula (2026-08-31 裁定①). Team agents, standalone
+      // agents and SubTask workers get no memory block — clean context.
       // Headless (NEBFLOW_HEADLESS=1): none at all — benchmark determinism.
-      isTeamAgent = teamNameOpt.isDefined
       memoryBlock =
-        if shouldInjectMemory(isWorker, isTeamAgent, globalDef.name) then buildMemoryBlock(globalDef.name, teamNameOpt)
+        if shouldInjectMemory(isWorker, globalDef.name) then buildMemoryBlock(globalDef.name, teamNameOpt)
         else ""
     yield TurnContext(
       globalDef,

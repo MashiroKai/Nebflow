@@ -171,7 +171,8 @@ class AgentActorCompactionSpec extends FunSuite:
     AgentCommand.ExternalEvent("background", "completed", s"payload-$n")
 
   private def mkSaveJob: CompactionJob =
-    CompactionJob("job-1", "full", None, None, resumeAfterCompact = false, phase = CompactionPhase.Save)
+    // Single-stage (2026-08-31): every compaction job is a Compact turn.
+    CompactionJob("job-1", "full", None, None, resumeAfterCompact = false)
 
   test("drainHead keeps the queue intact while a compaction job is pending") {
     val evs = List(mkEvent(1), mkEvent(2), mkEvent(3))
