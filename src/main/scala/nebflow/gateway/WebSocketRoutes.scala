@@ -318,6 +318,30 @@ class WebSocketRoutes(
           case None => (agents, IO.unit)
       }.flatten
 
+  /** #38 Layer C (2026-09-01): team 成员会话删除闭环。
+    *
+    * 此前 deleteSession 只停 root agent（removeRootAgent）+ 删磁盘文件；
+    * team 成员 actor（qa-backend 等，注册于 TeamSessionRegistry.actorMap）
+    * 完全存活——state.messages 持 ~10MB，下一次活动（Mail/flow dispatch）
+    * 触发 persistIfSession 2s 防抖 → <id>.json 以 10MB 重建 → 删除复活
+    * （观测：deleteSession 后 ~12s 历史灌回）。修复：删除前停成员 actor +
+    * 清 TeamSessionRegistry 三处映射（actorMap / AgentRegistry / sessionMap）。
+    */
+  private def stopTeamSessionActors(sessionId: String): IO[Unit] =
+    for
+      actorOpt <- TeamSessionRegistry.getRunningActor(sessionId)
+      _ <- actorOpt match
+        case Some(ref) =>
+          logger.info(s"deleteSession: stopping team member actor for $sessionId")
+          IO(ref ! AgentCommand.Stop(s"session $sessionId deleted"))
+        case None => IO.unit
+      _ <- TeamSessionRegistry.unregisterActor(sessionId, sharedResources)
+      pairOpt <- TeamSessionRegistry.instanceAndAgentOfSession(sessionId)
+      _ <- pairOpt match
+        case Some((inst, agent)) => TeamSessionRegistry.unregisterAgent(inst, agent, sessionId)
+        case None                => IO.unit
+    yield ()
+
   /**
    * P2: translate a frontend interaction answer (permissionAnswer/askUserAnswer)
    * into an InteractionAnswered for the hub. New frontends attach requestId →
@@ -1546,7 +1570,7 @@ class WebSocketRoutes(
                     sessionTextBuffers.update(_ - sessionId) *>
                     sessionThinkingBuffers.update(_ - sessionId) *>
                     sessionTurnStarts.update(_ - sessionId) *>
-                    removeRootAgent(sessionId) *> sessionService
+                    stopTeamSessionActors(sessionId) *> removeRootAgent(sessionId) *> sessionService
                       .deleteSession(sessionId)
                       .flatMap { _ =>
                         sendAgentSessionListByName(wsSend, agentName)
@@ -1570,6 +1594,7 @@ class WebSocketRoutes(
                       sessionTextBuffers.update(_ - sid) *>
                         sessionThinkingBuffers.update(_ - sid) *>
                         sessionTurnStarts.update(_ - sid) *>
+                        stopTeamSessionActors(sid) *>
                         removeRootAgent(sid) *>
                         sessionService.deleteSession(sid)
                     }
