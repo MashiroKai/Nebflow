@@ -28,7 +28,10 @@ let ttlTimer = null;
 
 /** 当前打开的所有 flow-map 标签页 → [{project, pane}]（DOM 即真相，恢复后同样成立）。 */
 function openFlowMapPanes() {
-  return Array.from(document.querySelectorAll('.canvas-tab-pane[data-tab-id^="flow-map-"]'))
+  const panes = /** @type {NodeListOf<HTMLElement>} */ (
+    document.querySelectorAll('.canvas-tab-pane[data-tab-id^="flow-map-"]')
+  );
+  return Array.from(panes)
     .map((pane) => ({ project: (pane.dataset.tabId || '').slice('flow-map-'.length), pane }))
     .filter((x) => x.project);
 }
