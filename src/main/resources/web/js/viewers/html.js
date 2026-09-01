@@ -292,6 +292,35 @@ function setupElementRefSelect(pane, iframe, ctx) {
  *  scrolls internally — like a browser viewport. */
 function viewHtml(pane, { content, absPath, fileName }) {
   initCanvasThemeWatcher();
+
+  // Content-unchanged guard (mirrors markdown.js viewMarkdown). Focus/visibility
+  // refreshes re-fetch the same file and re-render every open tab; rebuilding
+  // the srcdoc iframe resets its internal scrollTop and throws the reader back
+  // to the top (bug: Canvas HTML reading position lost after image preview /
+  // on app switch). Same "unchanged never remounts" rule as the Monaco path in
+  // canvas.js openWorkspaceItem. The guard also requires a live iframe: a
+  // source-mode round trip wipes innerHTML before calling back into this
+  // function, so iframe is null there and the re-render must proceed.
+  const prevIframe = pane.querySelector('iframe[data-nf-canvas-html]');
+  if (prevIframe && /** @type {any} */ (pane)._renderedHtmlContent === content) return;
+
+  // Capture before rebuild: when content actually changed (external edit),
+  // restore the reader's position afterwards so the refresh at worst drifts
+  // but never jumps to the top. The iframe scrolls its OWN document (the
+  // srcdoc html/body has overflow:auto) — read both axes from contentDocument
+  // and re-apply them on the new frame's load below.
+  let prevScrollTop = 0;
+  let prevScrollLeft = 0;
+  if (prevIframe) {
+    try {
+      const pd = prevIframe.contentDocument;
+      if (pd) {
+        prevScrollTop = pd.documentElement.scrollTop || pd.body.scrollTop || 0;
+        prevScrollLeft = pd.documentElement.scrollLeft || pd.body.scrollLeft || 0;
+      }
+    } catch (_) { /* cross-origin guard */ }
+  }
+
   pane.innerHTML = '';
 
   // Directory of the HTML file, for resolving relative paths
@@ -358,6 +387,23 @@ function viewHtml(pane, { content, absPath, fileName }) {
   iframe.srcdoc = srcdoc;
   pane.appendChild(iframe);
 
+  // Restore the reader's position after a content-changed rebuild. The srcdoc
+  // loads asynchronously — the scroll only exists once the new document has
+  // loaded, so restore on load. Attached before the navigation-away check so a
+  // legitimate preview keeps its position; a frame that navigated to the app
+  // URL is replaced by the notice below regardless.
+  if (prevScrollTop > 0 || prevScrollLeft > 0) {
+    iframe.addEventListener('load', () => {
+      try {
+        const nd = iframe.contentDocument;
+        if (!nd) return;
+        const de = nd.documentElement;
+        if (prevScrollTop > 0) { de.scrollTop = prevScrollTop; if (nd.body) nd.body.scrollTop = prevScrollTop; }
+        if (prevScrollLeft > 0) { de.scrollLeft = prevScrollLeft; if (nd.body) nd.body.scrollLeft = prevScrollLeft; }
+      } catch (_) { /* cross-origin guard */ }
+    }, { once: true });
+  }
+
   // Navigation-away fallback: srcdoc documents inherit the app's base URL, so
   // a client-side router (slidev etc.) may navigate the frame onto the app
   // itself — the embedded-boot guard in index.html stops the recursion, and
@@ -376,6 +422,11 @@ function viewHtml(pane, { content, absPath, fileName }) {
   addSourceToggle(pane, viewHtml, { content, absPath, fileName });
   // #303 B6: element-select toggle, seated left of the source toggle.
   setupElementRefSelect(pane, iframe, { absPath, fileName });
+  // Cache the rendered content for the unchanged-guard at the top. Set after
+  // the pane is fully assembled; the guard also requires a live iframe, so a
+  // stale marker after a navigation-away replacement is harmless (no iframe →
+  // the re-render proceeds).
+  /** @type {any} */ (pane)._renderedHtmlContent = content;
 }
 
 export default {
