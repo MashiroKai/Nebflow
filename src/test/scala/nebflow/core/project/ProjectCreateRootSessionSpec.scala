@@ -85,4 +85,38 @@ class ProjectCreateRootSessionSpec extends CatsEffectSuite:
       assert(rt.get.engine.rootSessionId != "qa-backend-sid", "must NOT anchor to the mounting caller")
   }
 
+  test("idempotent mount: existing project ProjectCreate → mounts with upline rootSessionId; repeat call is stable") {
+    val ws = tempRoot / "ws-dup"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"pc-rs2-${scala.util.Random.nextInt(100000)}")
+    val res = testResources(ws)
+    val input = Json.obj(
+      "name" -> Json.fromString("root-test-dup"),
+      "workspace" -> Json.fromString(ws.toString)
+    ).asObject.get
+    val ctx = ToolContext(
+      projectRoot = ws.toString,
+      sessionId = Some("qa-backend-sid"),
+      rootSessionId = Some("nebula-root"),
+      sharedResources = Some(res),
+      actorSystem = Some(system)
+    )
+    for
+      first <- ProjectCreateTool.call(input, ctx) // 新建
+      rt1 <- ProjectRuntimeRegistry.get("root-test-dup")
+      second <- ProjectCreateTool.call(input, ctx) // 已存在 → 幂等挂载
+      rt2 <- ProjectRuntimeRegistry.get("root-test-dup")
+      third <- ProjectCreateTool.call(input, ctx) // 已挂载 → 幂等返回
+      _ <- ProjectRuntimeRegistry.unregister("root-test-dup")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(first.isRight, s"first create must succeed: $first")
+      assert(second.isRight, s"idempotent mount must succeed: $second")
+      assert(third.isRight, s"repeat call must be stable: $third")
+      assert(second.toOption.get.contains("already exists"), "idempotent path must report already-exists semantics")
+      assert(rt1.isDefined && rt2.isDefined, "project must be mounted after both calls")
+      assertEquals(rt1.get.engine.rootSessionId, "nebula-root")
+      assertEquals(rt2.get.engine.rootSessionId, "nebula-root")
+  }
+
 end ProjectCreateRootSessionSpec
