@@ -15,7 +15,6 @@ import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.project.{ProjectRuntimeRegistry, ProjectStore}
-import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.{FriendMessageTool, RemoteExecutor, ToolLoader, ToolRegistry}
 import nebflow.llm.*
 import nebflow.neblink.*
@@ -370,10 +369,6 @@ object GatewayMain extends IOApp.Simple:
                                       .getOrElse(nebflow.shared.Defaults.BgHealthCheckIntervalSec)
                                   )
                                 )
-                                // Initialize telemetry (opt-out aware, fire-and-forget on failure)
-                                val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>
-                                  logger.warn(s"Telemetry init failed: ${e.getMessage}").as(None)
-                                }
                                 // P2: spawn the global InteractionHub and publish its ref.
                                 // Every agent's permission/AskUser requests and every frontend
                                 // interaction answer route through this single actor.
@@ -420,8 +415,8 @@ object GatewayMain extends IOApp.Simple:
                                 // 发 TtlTick；无项目时空转。
                                 val projectTtlScanner: IO[Unit] =
                                   nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
-                                hubSetup *> taskTtlSweep *> startupMount *> projectTtlScanner *> telemetryIO.flatMap { telemetry =>
-                                  val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
+                                hubSetup *> taskTtlSweep *> startupMount *> projectTtlScanner *> {
+                                  val sharedResourcesLive = sharedResources
                                   val sessionService = new SessionService(sessionStore)
                                   val agentService = new AgentService(agentLibrary)
                                   val configService = ConfigService
@@ -577,7 +572,7 @@ object GatewayMain extends IOApp.Simple:
                                         nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
                                           dropboxService =>
                                             val sharedResourcesWithBridge =
-                                              sharedResourcesWithTelemetry.copy(
+                                              sharedResourcesLive.copy(
                                                 bridgeManager = Some(bridgeManager),
                                                 neblinkService = Some(neblinkService),
                                                 friendService = clientWithFriends.map(_._2),
@@ -703,10 +698,6 @@ object GatewayMain extends IOApp.Simple:
                                                       _ <- logger.info(
                                                         s"access URL: $baseUrl (token in ~/.nebflow/auth.json)"
                                                       )
-                                                      // Telemetry: app_start
-                                                      _ <- telemetry.fold(IO.unit)(
-                                                        _.record("app_start", io.circe.JsonObject.empty)
-                                                      )
                                                       // Register bridge as WsHub listener for agent events
                                                       _ <- wsHub.register(json =>
                                                         val sessionId =
@@ -812,7 +803,6 @@ object GatewayMain extends IOApp.Simple:
                                                       // FS2 streams keep burning tokens during JVM drain.
                                                       nebflow.llm.LlmInterface.cancelAllInflight() *>
                                                       neblinkClient.traverse_(_.logout) *>
-                                                      telemetry.fold(IO.unit)(_.shutdown) *>
                                                       mcpManager.stopAll() *>
                                                       releaseBackend
                                                   )
@@ -821,7 +811,7 @@ object GatewayMain extends IOApp.Simple:
                                         } // end neblinkService setup block
                                     } // end neblinkService
                                   } // end bridgeManager
-                                } // end telemetry.flatMap
+                                } // end main setup scope
                               } // end fileLockMgr
                             } // end dispatcher.use
                           } // end fileTracker
