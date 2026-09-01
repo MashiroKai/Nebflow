@@ -14,6 +14,7 @@ import nebflow.core.mcp.*
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
+import nebflow.core.project.{ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.{FriendMessageTool, RemoteExecutor, ToolLoader, ToolRegistry}
 import nebflow.llm.*
@@ -391,13 +392,35 @@ object GatewayMain extends IOApp.Simple:
                                     case Left(e) =>
                                       logger.warn(s"Task TTL sweep failed: ${e.getMessage}").void
                                   }
+                                // #37 启动自动挂载（0b 契约「阶段 1 补自动挂载」）：磁盘已有
+                                // 项目 → 幂等挂载（rootSessionId = 顶层 Nebula 主会话 id，
+                                // 启动期无会话上下文直接传顶层根）。免重启后人工重挂——
+                                // 与 ProjectCreate 幂等挂载（运行时主动路径）互补。
+                                val startupMount: IO[Unit] =
+                                  for
+                                    rootSid <- sessionStore
+                                      .listSessionsByAgent("Nebula")
+                                      .map(_.headOption.map(_.id).getOrElse(""))
+                                    projects <- ProjectStore.list()
+                                    mounted <- ProjectRuntimeRegistry.mountAll(
+                                      projects,
+                                      rootSid,
+                                      actorSystem,
+                                      sharedResources
+                                    )
+                                    _ <- if mounted > 0 then
+                                      logger.info(
+                                        s"Startup mount: $mounted project(s) mounted (rootSessionId=$rootSid)"
+                                      )
+                                    else IO.unit
+                                  yield ()
                                 // #28 阶段 0：Project Flow Map 终态节点 TTL 扫描
                                 // （5min 显示消失 → 移归档 + WS nodeRemoved；Node
                                 // 运行本身不设超时）。周期给所有已挂载 ProjectActor
                                 // 发 TtlTick；无项目时空转。
                                 val projectTtlScanner: IO[Unit] =
                                   nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
-                                hubSetup *> taskTtlSweep *> projectTtlScanner *> telemetryIO.flatMap { telemetry =>
+                                hubSetup *> taskTtlSweep *> startupMount *> projectTtlScanner *> telemetryIO.flatMap { telemetry =>
                                   val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
                                   val sessionService = new SessionService(sessionStore)
                                   val agentService = new AgentService(agentLibrary)
