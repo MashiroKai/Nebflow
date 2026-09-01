@@ -4686,9 +4686,12 @@ object WebSocketRoutes:
     * L1 rebrand: the frontend brand contract. window.__BRAND__ is the only
     * brand source web/ may read; fields are append-only across rebrand
     * batches (initial contract: productName, lowerName, domain; L3 batch 3
-    * appended homeDirName for the frontend's own legacy-path messaging).
-    * `domain` carries the placeholder value — display-only, never consumed
-    * to build a URL.
+    * appended homeDirName for the frontend's own legacy-path messaging;
+    * 2026-09-01 login-chain fix appended profileUrl — the frontend's ONLY
+    * URL input, consumed by activityBar.js to build the profile link).
+    * `domain` carries the debug value (neblink.space) or the publish value
+    * (nebflow.space via env override) — display-only, never consumed to
+    * build a URL.
     *
     * circe handles JSON string escaping; the serialized blob additionally
     * escapes the forward slash of "</" because it is inlined inside a
@@ -4700,6 +4703,7 @@ object WebSocketRoutes:
       Branding.lowerName,
       Branding.domain,
       Branding.homeDirName,
+      Branding.profileUrl,
     )};</script>"""
   end brandScriptTag
 
@@ -4709,7 +4713,8 @@ object WebSocketRoutes:
     productName: String,
     lowerName: String,
     domain: String,
-    homeDirName: String
+    homeDirName: String,
+    profileUrl: String
   ): String =
     Json
       .obj(
@@ -4717,6 +4722,7 @@ object WebSocketRoutes:
         "lowerName"   -> Json.fromString(lowerName),
         "domain"      -> Json.fromString(domain),
         "homeDirName" -> Json.fromString(homeDirName),
+        "profileUrl"  -> Json.fromString(profileUrl),
       )
       .noSpaces
       .replace("</", "<\\/")

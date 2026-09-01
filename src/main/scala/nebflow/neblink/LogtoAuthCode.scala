@@ -38,8 +38,16 @@ object LogtoAuthCode:
 
   /** Token endpoint result: the access token for registration plus the
     * refresh token (present when `offline_access` was granted). Logto
-    * rotates refresh tokens — always persist the latest value. */
-  final case class TokenResult(accessToken: String, refreshToken: Option[String])
+    * rotates refresh tokens — always persist the latest value.
+    * `picture` (2026-09-01 login-chain fix, C2): parsed from the id_token's
+    * `picture` claim when the grant carried the `profile` scope — the
+    * client-side avatar source for Logto users (Logto picture → device
+    * identity → activity bar). */
+  final case class TokenResult(
+    accessToken: String,
+    refreshToken: Option[String],
+    picture: Option[String] = None
+  )
 
   // ── PKCE primitives (pure) ──────────────────────────────────────────────
 
@@ -97,7 +105,7 @@ object LogtoAuthCode:
         "client_id" -> clientId,
         "redirect_uri" -> redirectUri,
         "response_type" -> "code",
-        "scope" -> "openid offline_access email",
+        "scope" -> "openid offline_access email profile",
         "prompt" -> "consent",
         "code_challenge" -> codeChallenge,
         "code_challenge_method" -> "S256",
@@ -135,21 +143,42 @@ object LogtoAuthCode:
         "grant_type" -> "refresh_token",
         "refresh_token" -> refreshToken,
         "client_id" -> clientId,
-        "scope" -> "openid offline_access email"
+        "scope" -> "openid offline_access email profile"
       )
     )
 
   // ── response mapping (pure) ─────────────────────────────────────────────
 
   /** Parse a token-endpoint success body. Missing refresh_token is legal
-    * (provider choice) but logged/flagged by callers. */
+    * (provider choice) but logged/flagged by callers. `picture` is extracted
+    * from the id_token's `picture` claim when present (C2, 2026-09-01). */
   def parseTokenResponse(body: String): Either[String, TokenResult] =
     for
       json <- parser.parse(body).left.map(_.message)
       c = json.hcursor
       accessToken <- c.downField("access_token").as[String].left.map(_.message)
       refreshToken = c.downField("refresh_token").as[Option[String]].toOption.flatten
-    yield TokenResult(accessToken, refreshToken)
+      idToken = c.downField("id_token").as[Option[String]].toOption.flatten
+      picture = idToken.flatMap(decodeIdTokenPicture)
+    yield TokenResult(accessToken, refreshToken, picture)
+
+  /** Decode the `picture` claim from a JWT payload (base64url, no signature
+    * check — the token response arrives over TLS from the provider's token
+    * endpoint, and the caller already exchanged the code for it; we only
+    * read a claim, never act on the token). Pure, testable. */
+  def decodeIdTokenPicture(idToken: String): Option[String] =
+    idToken.split("\\.") match
+      case parts if parts.length >= 2 =>
+        try
+          val payload = new String(
+            Base64.getUrlDecoder.decode(parts(1)),
+            StandardCharsets.UTF_8
+          )
+          parser.parse(payload).toOption
+            .flatMap(_.hcursor.downField("picture").as[Option[String]].toOption.flatten)
+            .filter(_.nonEmpty)
+        catch case _: IllegalArgumentException => None
+      case _ => None
 
   /** Parse an OAuth error redirect (callback query params). */
   def parseCallbackError(query: Map[String, String]): Option[CallbackError] =
