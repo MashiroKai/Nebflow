@@ -167,8 +167,8 @@ export function neblinkSettingsHTML() {
     return `<div class="neblink-login-section">
       <div class="neblink-logged-out">
         <picture>
-          <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark.png">
-          <img class="neblink-logged-out-logo" src="css/logo-bright.png" alt="">
+          <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark-4.png">
+          <img class="neblink-logged-out-logo" src="css/logo-bright-4.png" alt="">
         </picture>
         <div class="neblink-logged-out-text">未登录，设备互联不可用</div>
         <div class="neblink-logged-out-hint">点击左上角头像登录</div>

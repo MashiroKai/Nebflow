@@ -220,10 +220,12 @@ body.sidebar-collapsed #activity-bar {
 .activity-avatar:hover { background: var(--color-frame-hover); transform: scale(1.04); }
 .activity-avatar:active { transform: scale(0.97); }
 .activity-avatar-logo {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   object-fit: contain;
-  /* Pixel-art logo (224x224 source): keep crisp nearest-neighbor edges. */
+  /* Pixel-art logo v4 (224x224 source = 8 grid units, art block = 2 units).
+     24px keeps every art block a whole 6px, so pixelated stays even —
+     22px would split blocks into 5.5px and render ragged stems. */
   image-rendering: pixelated;
   pointer-events: none;
 }
@@ -316,7 +318,10 @@ body.sidebar-collapsed #activity-bar {
   gap: 8px; padding: 8px 0;
 }
 .neblink-logged-out-logo {
-  width: 36px; height: 30px; opacity: 0.7;
+  /* Square box on the 8-unit grid (32/8 = 4px unit, 8px art block) — the
+     source canvas is square with transparent top/bottom padding, so a
+     non-square box only wasted the contain fit. */
+  width: 32px; height: 32px; opacity: 0.7;
   object-fit: contain;
   image-rendering: pixelated;
 }
