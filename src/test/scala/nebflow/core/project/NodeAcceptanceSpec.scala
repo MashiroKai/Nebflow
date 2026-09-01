@@ -10,7 +10,7 @@ import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, MailTool, NodeEditTool, NodeListTool, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -317,6 +317,359 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       assert(r.left.exists(e => e.toLowerCase.contains("consum") || e.toLowerCase.contains("cancel")),
         s"rejection should guide NodeCancel, got: $r")
       assertEquals(s.nodes("n-a").out, Some("n-x"), "A.out must stay on consumed target X")
+  }
+
+  // ── ① 创建即运行（入口节点）────────────────────────────
+
+  test("① entry node: NodeEdit create with task (no in) starts running immediately") {
+    val ws = tempRoot / "ws-entry"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-entry-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("acc-entry", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      r <- nodeEdit(nodeInput("acc-entry", "调研-入口", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("do research"), "out" -> Json.fromString("Nebula")), ctx)
+      s1 <- rt.store.snapshot
+      // 等节点跑完（RecordingLlm 立即返回 → 很快 completed）
+      _ <- IO.sleep(3.seconds)
+      s2 <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"entry create must succeed, got: $r")
+      val n = s1.nodes.values.find(_.name == "调研-入口")
+      assert(n.isDefined, s"entry node must exist, got nodes=${s1.nodes.keySet}")
+      assert(
+        n.exists(x => x.status == NodeLifecycle.Running || x.status == NodeLifecycle.Completed || x.status == NodeLifecycle.Pending),
+        s"entry node must have started (not wiring), status=${n.map(_.status)}"
+      )
+      val done = s2.nodes.values.find(_.name == "调研-入口")
+      assert(done.exists(_.status == NodeLifecycle.Completed), s"entry node should complete, got ${done.map(_.status)}")
+      assert(done.flatMap(_.result).exists(_.nonEmpty), s"entry node result should be saved, got ${done.flatMap(_.result)}")
+  }
+
+  // ── ② 结果持久保存（完成后 result 落盘，reopen 后仍在）──
+
+  test("② result persisted: completed node result survives store reopen (restart)") {
+    val ws = tempRoot / "ws-result"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-res-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("acc-result", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      _ <- nodeEdit(nodeInput("acc-result", "调研-落盘", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("persist me"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- IO.sleep(3.seconds)
+      s1 <- rt.store.snapshot
+      n1 <- rt.store.getNode(s1.nodes.values.find(_.name == "调研-落盘").map(_.id).getOrElse(""))
+      // 模拟重启：reopen
+      store2 <- FlowMapStore.open("acc-result", ws.toString)
+      s2 <- store2.snapshot
+      n2 <- store2.getNode(s1.nodes.values.find(_.name == "调研-落盘").map(_.id).getOrElse(""))
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(n1.exists(_.status == NodeLifecycle.Completed), s"node must complete, got ${n1.map(_.status)}")
+      assert(n1.flatMap(_.result).exists(_.nonEmpty), s"result must be written to node, got ${n1.flatMap(_.result)}")
+      assertEquals(n2.flatMap(_.result), n1.flatMap(_.result), "result must survive store reopen")
+  }
+
+  // ── ③ 悬空完成 → 接线自动投递 ──────────────────────────
+
+  test("③ dangling rewire: completed node with out=null, later wired → downstream receives result (no rerun)") {
+    val ws = tempRoot / "ws-dangle"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-dng-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("acc-dangle", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // 入口节点（无 out = 悬空；task 非空 → 创建即运行）
+      _ <- nodeEdit(nodeInput("acc-dangle", "调研-悬空", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("research")), ctx)
+      _ <- IO.sleep(3.seconds)
+      s1 <- rt.store.snapshot
+      aId = s1.nodes.values.find(_.name == "调研-悬空").map(_.id).getOrElse("")
+      a <- rt.store.getNode(aId)
+      _ <- IO(assert(a.exists(_.status == NodeLifecycle.Completed), s"source must complete, got ${a.map(_.status)}"))
+      // 建下游 B（wiring），把 A 改接 out → B
+      _ <- nodeEdit(nodeInput("acc-dangle", "下游-B", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("consume"), "out" -> Json.fromString("Nebula")), ctx)
+      s2 <- rt.store.snapshot
+      bId = s2.nodes.values.find(_.name == "下游-B").map(_.id).getOrElse("")
+      r <- nodeEdit(nodeInput("acc-dangle", "调研-悬空", "out" -> Json.fromString(bId)), ctx)
+      _ <- IO.sleep(3.seconds)
+      s3 <- rt.store.snapshot
+      b <- rt.store.getNode(bId)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"dangling rewire must succeed, got: $r")
+      assert(b.exists(_.deliveredTo.contains(aId)), s"B must receive A's retained result (deliveredTo), got ${b.map(_.deliveredTo)}")
+      assert(b.exists(x => x.status == NodeLifecycle.Running || x.status == NodeLifecycle.Completed || x.status == NodeLifecycle.Pending),
+        s"B must start after receiving retained result, status=${b.map(_.status)}")
+  }
+
+  // ── ⑤ 断开（out=null 悬空化，结果保留）────────────────
+
+  test("⑤ disconnect: out=null detaches, result retained in activity, rewirable") {
+    val ws = tempRoot / "ws-disc"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-disc-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("acc-disc", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      now = System.currentTimeMillis()
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes = s.nodes ++ Map(
+          "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent",
+            status = NodeLifecycle.Completed, result = Some("kept result"), createdAt = now,
+            completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = Some("n-x")),
+          "n-x" -> NodeDef(id = "n-x", name = "X", agent = "test-agent",
+            status = NodeLifecycle.Wiring, in = List("n-a"), createdAt = now),
+          "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent",
+            status = NodeLifecycle.Wiring, createdAt = now)
+        ))
+      )
+      // A.out = null → 断开（X.in 同步移除，结果保留）
+      r <- nodeEdit(nodeInput("acc-disc", "A", "out" -> Json.Null), ctx)
+      s1 <- rt.store.snapshot
+      a <- rt.store.getNode("n-a")
+      x <- rt.store.getNode("n-x")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"disconnect must succeed, got: $r")
+      assertEquals(a.map(_.out), Some(None), "A.out must become null (dangling)")
+      assertEquals(a.flatMap(_.result), Some("kept result"), "A.result must be retained")
+      assertEquals(x.map(_.in), Some(List.empty), "old target X.in must have A removed")
+      assertEquals(x.map(_.deliveredTo), Some(List.empty), "X.deliveredTo must not contain A after detach")
+  }
+
+  // ── ⑥ DAG 环拒（NodeEdit 工具层 E2E）──────────────────
+
+  test("⑥ cycle: NodeEdit wiring A→B→A rejected at tool layer") {
+    val ws = tempRoot / "ws-cycle"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-cyc-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("acc-cycle", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      now = System.currentTimeMillis()
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes = s.nodes ++ Map(
+          "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent",
+            status = NodeLifecycle.Wiring, out = Some("n-b"), createdAt = now),
+          "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent",
+            status = NodeLifecycle.Wiring, in = List("n-a"), createdAt = now)
+        ))
+      )
+      // B.out = A → 成环（A 是 B 的传递上游）
+      r <- nodeEdit(nodeInput("acc-cycle", "B", "out" -> Json.fromString("n-a")), ctx)
+      s <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isLeft, s"A→B→A cycle must be REJECTED, got: $r")
+      assert(r.left.exists(_.toLowerCase.contains("cycle")), s"error should mention cycle, got: $r")
+      assertEquals(s.nodes("n-b").out, None, "B.out unchanged (cycle rejected before mutate)")
+      assertEquals(s.nodes("n-a").out, Some("n-b"), "A→B edge unchanged")
+  }
+
+  // ── ⑦ 1 对多拒 ───────────────────────────────────────
+
+  test("⑦ 1-to-many: NodeEdit out array rejected (single out semantics)") {
+    val ws = tempRoot / "ws-1n"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-1n-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("acc-1n", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      now = System.currentTimeMillis()
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes = s.nodes ++ Map(
+          "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent", status = NodeLifecycle.Wiring, createdAt = now),
+          "n-c" -> NodeDef(id = "n-c", name = "C", agent = "test-agent", status = NodeLifecycle.Wiring, createdAt = now)
+        ))
+      )
+      // 建 A，out = [B, C]（数组 → 1 对多拒绝）
+      r <- nodeEdit(nodeInput("acc-1n", "A", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("fanout"), "out" -> Json.arr(Json.fromString("n-b"), Json.fromString("n-c"))), ctx)
+      s <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isLeft, s"1-to-many must be REJECTED, got: $r")
+      assert(r.left.exists(_.toLowerCase.contains("1-to-many")), s"error should mention 1-to-many, got: $r")
+      assert(!s.nodes.values.exists(_.name == "A"), "A must not be created on rejection")
+  }
+
+  // ── ⑧ barrier：3 路全到才启动合并节点 ─────────────────
+
+  test("⑧ barrier: 3-way merge node starts only after ALL 3 upstreams delivered") {
+    val ws = tempRoot / "ws-barrier"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-bar-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("acc-barrier", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      now = System.currentTimeMillis()
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes = s.nodes ++ Map(
+          "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent",
+            status = NodeLifecycle.Completed, result = Some("A done"), createdAt = now,
+            completedAt = Some(now - 5000), ttlExpireAt = Some(now + 99999)),
+          "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent",
+            status = NodeLifecycle.Completed, result = Some("B done"), createdAt = now,
+            completedAt = Some(now - 4000), ttlExpireAt = Some(now + 99999)),
+          "n-c" -> NodeDef(id = "n-c", name = "C", agent = "test-agent",
+            status = NodeLifecycle.Completed, result = Some("C done"), createdAt = now,
+            completedAt = Some(now - 3000), ttlExpireAt = Some(now + 99999))
+        ))
+      )
+      // 建 M（barrier：in = [A, B, C]）→ 3 路上游已完成 → 全部投递 → M 启动
+      r <- nodeEdit(nodeInput("acc-barrier", "M", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("merge all"), "in" -> Json.arr(Json.fromString("n-a"), Json.fromString("n-b"), Json.fromString("n-c"))), ctx)
+      _ <- IO.sleep(3.seconds)
+      s <- rt.store.snapshot
+      mOpt = s.nodes.values.find(_.name == "M")
+      m2 <- mOpt.map(n => rt.store.getNode(n.id)).getOrElse(IO.pure(None))
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"barrier create must succeed, got: $r")
+      assert(mOpt.isDefined, s"M must exist, got nodes=${s.nodes.keySet}")
+      assertEquals(mOpt.map(_.in), Some(List("n-a", "n-b", "n-c")), "M.in must accumulate 3 upstreams")
+      assert(m2.exists(_.deliveredTo.toSet == Set("n-a", "n-b", "n-c")), s"M must have received all 3, got ${m2.map(_.deliveredTo)}")
+      assert(m2.exists(x => x.status == NodeLifecycle.Running || x.status == NodeLifecycle.Completed || x.status == NodeLifecycle.Pending),
+        s"M must start after all 3 arrived, status=${m2.map(_.status)}")
+  }
+
+  // ── loop detect：同 agent + 同 task 疑似重复拒 ──────────
+
+  test("⑨ loop detect: same agent + normalized task with running/completed node rejected") {
+    val ws = tempRoot / "ws-loop"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-loop-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("acc-loop", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // 第一次派发：入口节点跑起来（RecordingLlm 立即完成 → completed）
+      _ <- nodeEdit(nodeInput("acc-loop", "调研-重复", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("  调研 康普顿   成像  "), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- IO.sleep(3.seconds)
+      s1 <- rt.store.snapshot
+      _ <- IO(assert(
+        s1.nodes.values.find(_.name == "调研-重复").exists(n => n.status == NodeLifecycle.Completed || n.status == NodeLifecycle.Running),
+        s"first dispatch must run, got ${s1.nodes.values.find(_.name == "调研-重复").map(_.status)}"
+      ))
+      // 第二次派发：同 agent + 同 task（不同空白）→ loop detect 拒绝
+      r2 <- nodeEdit(nodeInput("acc-loop", "调研-重复2", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("调研 康普顿 成像"), "out" -> Json.fromString("Nebula")), ctx)
+      s2 <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r2.isLeft, s"duplicate dispatch must be REJECTED, got: $r2")
+      assert(r2.left.exists(_.contains("疑似重复派发")), s"error should mention duplicate dispatch, got: $r2")
+      assert(!s2.nodes.values.exists(_.name == "调研-重复2"), "duplicate node must not be created")
+  }
+
+  // ── ⑩ Mail → project 路由（§3.2 试点期新旧并存）─────────
+
+  test("⑩ Mail→project: mounted project name routes to ProjectActor branch (not mailNotFound)") {
+    val ws = tempRoot / "ws-mail"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-mail-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("acc-mail-route", ws, system, res) // actorRef = None
+      ctx = mkCtx(res, system, ws.toString)
+      // 已挂载 project（无 actorRef）→ 命中 project 分支：明确错误提示
+      r <- MailTool.call(Json.obj(
+        "address" -> Json.fromString("acc-mail-route"),
+        "message" -> Json.fromString("do research")
+      ).asObject.get, ctx)
+      // 未挂载名字 → 不命中 project 分支，落到原逻辑（sender 无 team → TeamOnlyRoutingError）
+      r2 <- MailTool.call(Json.obj(
+        "address" -> Json.fromString("no-such-project"),
+        "message" -> Json.fromString("x")
+      ).asObject.get, ctx)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isLeft, s"project-without-actor must give an error, got: $r")
+      assert(r.left.exists(_.message.contains("no mounted ProjectActor")),
+        s"must hit the project route branch (not mailNotFound), got: $r")
+      assert(r2.isLeft, s"unknown address must fall through to legacy routing, got: $r2")
+      assert(!r2.left.exists(_.message.contains("no mounted ProjectActor")),
+        s"unknown address must NOT hit project branch, got: $r2")
+  }
+
+  // ── ⑪ 0 文件写入（验收①）：NodeEdit 不产生任何手写文件 ──
+
+  test("⑪ zero-file-write: NodeEdit create only touches store-owned flow-map.json (no hand-written files)") {
+    val ws = tempRoot / "ws-0write"
+    os.makeDir.all(ws)
+    val nebflowDir = ws / ".nebflow"
+    os.makeDir.all(nebflowDir)
+    val system = ActorSystem(s"acc-0w-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("acc-0write", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // 基线：open 后 .nebflow/ 只有 store 首写的 flow-map.json
+      before <- IO.blocking(os.list(nebflowDir).map(_.last).toList.sorted)
+      _ <- nodeEdit(nodeInput("acc-0write", "零写入", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("write nothing"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(nodeInput("acc-0write", "零写入2", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("write nothing 2"), "out" -> Json.fromString("Nebula")), ctx)
+      after <- IO.blocking(os.list(nebflowDir).map(_.last).toList.sorted)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(before.contains("flow-map.json"), s"store first-write must exist, got $before")
+      assertEquals(after, before, s"NodeEdit must not add hand-written files, before=$before after=$after")
+  }
+
+  // ── ⑫ NodeList 快照字段完整性（分发器决策依据）─────────
+
+  test("⑫ NodeList: snapshot carries status/result summary/hasWorktree/worktrees/ttlLeftSec") {
+    val ws = tempRoot / "ws-nodelist"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-nl-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("acc-nodelist", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      now = System.currentTimeMillis()
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes = s.nodes ++ Map(
+          "n-done" -> NodeDef(id = "n-done", name = "已完成", agent = "test-agent",
+            status = NodeLifecycle.Completed, result = Some("r" * 600), createdAt = now,
+            completedAt = Some(now - 1000), ttlExpireAt = Some(now + 120000)),
+          "n-wt" -> NodeDef(id = "n-wt", name = "并行", agent = "test-agent",
+            worktree = Some("worktrees/wt-x"), status = NodeLifecycle.Running,
+            createdAt = now, startedAt = Some(now - 500))
+        ))
+      )
+      // 模拟 worktrees/wt-x 磁盘目录（NodeList 磁盘推导）
+      _ <- IO.blocking(os.makeDir.all(ws / ".nebflow" / "worktrees" / "wt-x"))
+      r <- NodeListTool.call(Json.obj("project" -> Json.fromString("acc-nodelist")).asObject.get, ctx)
+      payload <- IO.fromEither(r.left.map(e => new RuntimeException(e.message)))
+      json <- IO.fromEither(io.circe.parser.parse(payload))
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      val nodes = json.hcursor.downField("nodes").as[List[Json]].toOption.getOrElse(Nil)
+      assertEquals(nodes.size, 2, s"both nodes must appear, got $nodes")
+      val done = nodes.find(_.hcursor.get[String]("name").toOption.contains("已完成")).get
+      val doneRes = done.hcursor.downField("result").as[String].toOption.getOrElse("")
+      assert(doneRes.length <= 501 && doneRes.length >= 500, s"result must be truncated to ≤500-char summary + ellipsis, got ${doneRes.length}")
+      assertEquals(done.hcursor.downField("hasWorktree").as[Boolean].toOption, Some(false))
+      assert(done.hcursor.downField("ttlLeftSec").as[Long].toOption.exists(_ > 0), "ttlLeftSec must be present for terminal node")
+      val wt = nodes.find(_.hcursor.get[String]("name").toOption.contains("并行")).get
+      assertEquals(wt.hcursor.downField("hasWorktree").as[Boolean].toOption, Some(true))
+      assertEquals(wt.hcursor.downField("worktree").as[String].toOption, Some("worktrees/wt-x"))
+      val wts = json.hcursor.downField("worktrees").as[List[String]].toOption.getOrElse(Nil)
+      assert(wts.contains("wt-x"), s"worktrees must be disk-derived, got $wts")
   }
 
 end NodeAcceptanceSpec
