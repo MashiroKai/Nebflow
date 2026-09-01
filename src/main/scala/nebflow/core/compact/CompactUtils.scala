@@ -1,7 +1,9 @@
 package nebflow.core.compact
 
+import cats.effect.IO
+import cats.syntax.all.*
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
+import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.shared.*
 
 object CompactUtils:
@@ -10,6 +12,11 @@ object CompactUtils:
 
   // Placeholder for stripped tool results
   private val ToolResultPlaceholder = "[Output removed to free context space]"
+
+  /** Persisted-output marker — mirrors ToolResultGuard's tag so previews that
+    * were already persisted by the write-path guard are recognized as such
+    * (they are small and must NOT be re-persisted or re-stripped). */
+  private val PersistedTag = "<persisted-output>"
 
   /**
    * Emergency context cleanup — progressive, non-destructive approach.
@@ -193,6 +200,85 @@ object CompactUtils:
           )
         )
         marker +: messages
+
+  // ============================================================
+  // #38 Layer B — compact 轮输入的大结果精准剔除（2026-09-01）
+  // 单级压缩的 compact turn 之前跳过 FastMicroCompact/ToolResultTtl
+  // （"需要全量历史"）→ 大 ToolResult 在压缩路径上零剔除 → 历史 >1M
+  // 时 provider 拒绝 compact 请求 → 失败冷却刷新 → 永久死锁。
+  // 修复：喂给压缩轮的输入先剔除 >maxChars 的 ToolResult（占位符+落盘
+  // 路径），压缩轮只需全文概貌 + 路径引用，不需要大结果本体。
+  // 小结果（≤maxChars）与结构原样保留；已落盘预览（<persisted-output>）
+  // 本身体积小，不重复处理。产物形态（summary 替换历史）不动。
+  // ============================================================
+
+  /** 扫描 messages 中 >maxChars 且未落盘的 ToolResult 全文（写路径守卫
+    * 上线前的存量，或任何漏网）。返回 (toolUseId, content) 列表。 */
+  private def collectOversized(
+    messages: List[Message],
+    maxChars: Int
+  ): List[(String, String)] =
+    messages
+      .flatMap(_.content.toOption.toList.flatten)
+      .collect {
+        case ContentBlock.ToolResult(toolUseId, content, _)
+            if content.length > maxChars && !content.startsWith(PersistedTag) =>
+          (toolUseId, content)
+      }
+
+  /** 确保所有 >maxChars 且未落盘的 ToolResult 全文已写盘。落盘目录与
+    * ToolResultGuard 一致：~/.nebflow/tool-results/{sessionId}/{toolUseId}.txt。
+    * 写路径已拦住的（<persisted-output> 预览）跳过。 */
+  def persistOversizedToolResults(
+    messages: List[Message],
+    sessionId: String,
+    maxChars: Int = Defaults.DefaultMaxResultSizeChars
+  ): IO[Unit] =
+    collectOversized(messages, maxChars).traverse_ { case (toolUseId, content) =>
+      IO.blocking {
+        val dir = PathUtil.dataRoot / "tool-results" / sessionId
+        os.makeDir.all(dir)
+        val path = dir / s"$toolUseId.txt"
+        if !os.exists(path) then os.write.over(path, content)
+        logger.info(
+          s"Compaction pre-pass: persisted oversized ToolResult $toolUseId (${content.length} chars) to $path"
+        )
+      }
+    }
+
+  /** 纯函数：把 >maxChars 且未落盘的 ToolResult content 替换为占位符+落盘
+    * 路径提示。小结果、已落盘预览、非 ToolResult 块全部原样保留。 */
+  def stripOversizedToolResults(
+    messages: List[Message],
+    sessionId: String,
+    maxChars: Int = Defaults.DefaultMaxResultSizeChars
+  ): List[Message] =
+    messages.map {
+      case msg @ Message(_, Right(blocks), _, _) =>
+        val stripped = blocks.map {
+          case tr @ ContentBlock.ToolResult(toolUseId, content, _)
+              if content.length > maxChars && !content.startsWith(PersistedTag) =>
+            val path = s"${PathUtil.dataRoot / "tool-results" / sessionId / s"$toolUseId.txt"}"
+            tr.copy(
+              content =
+                s"""$PersistedTag
+                   |Output too large (${content.length} chars). Full output saved to: $path
+                   |</persisted-output>""".stripMargin
+            )
+          case other => other
+        }
+        msg.copy(content = Right(stripped))
+      case other => other
+    }
+
+  /** 压缩轮输入预处理：先补落盘（IO），再纯函数剔除。供 AgentCore 调用。 */
+  def prepareCompactionInput(
+    messages: List[Message],
+    sessionId: String,
+    maxChars: Int = Defaults.DefaultMaxResultSizeChars
+  ): IO[List[Message]] =
+    persistOversizedToolResults(messages, sessionId, maxChars)
+      .map(_ => stripOversizedToolResults(messages, sessionId, maxChars))
 
   /**
    * Read a file's content for post-compact restoration, truncated to maxChars.
