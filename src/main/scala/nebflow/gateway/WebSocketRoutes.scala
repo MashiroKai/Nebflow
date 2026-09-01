@@ -1391,7 +1391,8 @@ class WebSocketRoutes(
 
           case "setToolResultTtl" =>
             // #341 WS 尾巴：payload {type, config:{enabled,ttlMinutes,
-            // keepRecent,minChars}}（全量替换，四字段必填）。STRICT 校验（负
+            // keepRecent}}（全量替换，三字段必填；minChars 已移除，旧负载
+            // 携带该字段静默忽略）。STRICT 校验（负数/非整数/超界/缺字段 →
             // 数/非整数/超界/缺字段 → 拒绝并 warn，回 configUpdateFailed——与
             // boot 时 fail-safe load 不同：交互面必须把错误亮给用户）。
             // 成功 → nebflow.json toolResultTtl 节 read-merge + AtomicJson
@@ -1428,7 +1429,7 @@ class WebSocketRoutes(
                     sharedResources.toolResultTtlRef.set(cfg) *>
                       logger.info(
                         s"Tool result TTL set: enabled=${cfg.enabled} ttlMinutes=${cfg.ttlMinutes} " +
-                          s"keepRecent=${cfg.keepRecent} minChars=${cfg.minChars}"
+                          s"keepRecent=${cfg.keepRecent}"
                       ) *>
                       wsSend(io.circe.Json.obj(
                         "type" -> "toolResultTtlSaved".asJson,
