@@ -45,6 +45,26 @@ object ProjectRuntimeRegistry:
   def all: IO[List[ProjectRuntime]] = runtimes.get.map(_.values.toList)
   def clear: IO[Unit] = runtimes.set(Map.empty)
 
+  /** 启动自动挂载（0b 契约「阶段 1 补自动挂载」，#37 重启窗口收尾）：
+    * 磁盘已有项目 → 幂等挂载。rootSessionId = 顶层 Nebula 主会话 id
+    * （启动期无会话上下文，调用方直接传顶层根——A 修复后的 thread 语义）。
+    * 与 ProjectCreate 幂等挂载（运行时主动路径，241ef6c5）互补：
+    * 本函数管重启免人工，ProjectCreate 管运行时挂载/重挂。返回新挂载数。 */
+  def mountAll(
+    projects: List[ProjectDef],
+    rootSessionId: String,
+    system: ActorSystem,
+    resources: SharedResources
+  ): IO[Int] =
+    projects.foldLeft(IO.pure(0)) { (acc, pd) =>
+      acc.flatMap { n =>
+        get(pd.name).flatMap {
+          case Some(_) => IO.pure(n) // 已挂载跳过（启动时序无并发，防御性判断）
+          case None    => mount(pd, system, resources, None, rootSessionId).as(n + 1)
+        }
+      }
+    }
+
   /** 挂载项目：建 store + engine + spawn actor + 注册 runtime（幂等，已挂载直接返回）。 */
   def mount(
     project: ProjectDef,
