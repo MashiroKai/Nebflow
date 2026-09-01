@@ -320,6 +320,18 @@ object NodeEditTool extends Tool:
           val createIO: IO[Unit] =
             mutateIO *>
               rt.engine.emitCreated(node.copy(in = ins, out = out)) *>
+              // D1 修复（验收④b，@a4b5d184 spec 实证）：in 引用已完成上游（活动区
+              // 或归档区——findNode 兜底）→ 立即投递其结果，等同 §2.3「悬空节点
+              // out 接入下游 = 已完成节点改接」路径。归档节点活动区已消失，
+              // completeNode 的 deliverOut 不会再触发，唯一投递入口就是这里。
+              // 运行中上游不投递（barrier 等待语义——completeNode 时 deliverOut 自然投）。
+              ins.traverse_ { upId =>
+                rt.store.findNode(upId).flatMap {
+                  case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
+                    rt.engine.deliverOutTo(up, nodeId, up.result.get)
+                  case _ => IO.unit
+                }
+              } *>
               // 入口节点（task 且无 in）→ 创建即运行
               (if task.isDefined && ins.isEmpty then rt.engine.startNode(nodeId) else IO.unit)
           createIO.as(Right(
@@ -343,10 +355,31 @@ object NodeEditTool extends Tool:
     NodeTools.parseOut(outJson) match
       case Left(err) => IO.pure(Left(ToolError(err)))
       case Right(newOut) =>
-        // 守卫：out 目标已运行 → 拒绝
+        // D2 修复（验收②c，@a4b5d184 spec 实证）：旧目标已消费 → 拒绝改接。
+        // 已完成节点改投新目标时，若旧目标已启动/已完成（结果已投递、输入已消费），
+        // 改投会造成语义漂移 + 重复投递风险。保留「旧目标未启动（Wiring/Pending）→
+        // 原子改投」分支（§2.3 场景表第 3 行，②b PASS 依赖）；断开（out=null）
+        // 不投新目标，无重复投递 → 不拦截。
+        val consumedGuard: IO[Either[String, Unit]] =
+          (node.status, node.out, newOut) match
+            case (NodeLifecycle.Completed, Some(oldT), Some(_)) if oldT != "Nebula" && newOut != node.out =>
+              rt.store.findNode(oldT).map {
+                case Some(x) if x.status != NodeLifecycle.Wiring && x.status != NodeLifecycle.Pending =>
+                  Left(
+                    s"Node '${node.name}' result already delivered to '${x.name}' (status=${x.status}) — input consumed. " +
+                      s"NodeCancel it first, then rewire, then recreate the old target node."
+                  )
+                case _ => Right(())
+              }
+            case _ => IO.pure(Right(()))
+        // 守卫：新目标已运行 → 拒绝（§2.2 状态守卫）+ 旧目标已消费 → 拒绝（§2.3）
         val guard = newOut match
-          case Some(t) if t != "Nebula" => NodeTools.ensureTargetNotRunning(rt, t)
-          case _ => IO.pure(Right(()))
+          case Some(t) if t != "Nebula" =>
+            NodeTools.ensureTargetNotRunning(rt, t).flatMap {
+              case Left(err) => IO.pure(Left(err))
+              case Right(_)  => consumedGuard
+            }
+          case _ => consumedGuard
         guard.flatMap {
           case Left(err) => IO.pure(Left(ToolError(err)))
           case Right(_) =>
