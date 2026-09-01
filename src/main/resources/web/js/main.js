@@ -952,6 +952,18 @@ onMessage('usageUpdate', (msg, view) => {
 });
 
 onMessage('done', (msg, view) => {
+  // Node sessions (node-*) end with session-level 'done' (not 'agentDone') —
+  // defensive cleanup of any lingering node- row in the Sub-Agents panel
+  // (belt-and-suspenders on top of the agentStart/activeAgents source filter).
+  const doneSid = msg.sessionId;
+  if (doneSid && String(doneSid).startsWith('node-')) {
+    for (const [root, agents] of Object.entries(state.sessionBgAgents || {})) {
+      for (const [key, entry] of Object.entries(agents)) {
+        if (key === doneSid || (entry && entry.sessionId === doneSid)) delete agents[key];
+      }
+      if (Object.keys(agents).length === 0) delete state.sessionBgAgents[root];
+    }
+  }
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   // Defensive: clear attention when turn ends (in case answer callback didn't fire)
@@ -1935,6 +1947,11 @@ onMessage('agentStart', (msg, view) => {
   if (!sid) return;
   const aid = msg.agentId || msg.name;
   if (view) view.stream.activeAgentId = aid;
+  // Node sessions (node-*) are Flow Map nodes, not sub-agents — they must not
+  // appear in the Sub-Agents panel (fix: nodes end with session-level 'done',
+  // not 'agentDone', so the panel's agentDone delete path never fired → ghost
+  // rows accumulated. Filter at the source.)
+  if (aid && String(aid).startsWith('node-')) return;
   if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
   // Cross-keyspace dedupe: snapshot-restored entries (activeAgents handler)
   // key on the bare sessionId (getActiveAgents pins agentId == sessionId),
@@ -3300,6 +3317,9 @@ onMessage('activeAgents', (msg) => {
   for (const a of agents) {
     const sid = a.rootSessionId || a.sessionId;
     if (!sid || !a.agentId) continue;
+    // Node sessions (node-*) are Flow Map nodes, not sub-agents — skip in the
+    // snapshot rebuild too (same ghost-row fix as agentStart).
+    if (String(a.agentId).startsWith('node-')) continue;
     if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
     state.sessionBgAgents[sid][a.agentId] = {
       name: a.agentName || a.agentId,
