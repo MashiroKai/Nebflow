@@ -52,11 +52,13 @@ export async function fetchProjects() {
 }
 
 /** 某项目 Flow Map 快照。GET /api/projects/<name>/flow-map（需 auth）→ NodeList 载荷。
- *  未挂载（404）返回空 NodeList（dag-empty 态），其余错误上抛由调用方展示 loadFail。 */
+ *  未挂载（404）返回带 notMounted 标记的空 NodeList——调用方据此区分「项目没在跑」
+ *  与「项目在跑但没有节点」（两者旧版都渲染成"暂无节点"，无法诊断）；
+ *  其余错误上抛由调用方展示 loadFail。 */
 export async function fetchFlowMap(projectName) {
   const r = await fetch(API.flowMap(projectName), { headers: authHeaders() });
   if (r.status === 404) {
-    return { nodes: [], worktrees: [], meta: { project: projectName, updatedAt: Date.now() } };
+    return { nodes: [], worktrees: [], meta: { project: projectName, updatedAt: Date.now() }, notMounted: true };
   }
   if (!r.ok) throw new Error(`flow-map ${r.status}`);
   return await r.json();
@@ -75,7 +77,7 @@ export function summarize(fm) {
   else if (pending > 0) brief = `${pending} 节点等待`;
   else if (nodes.length === 0) brief = '空闲';
   else brief = `${completed} 节点已完成`;
-  return { running, failed, pending, completed, brief };
+  return { running, failed, pending, completed, brief, notMounted: !!fm?.notMounted };
 }
 
 // ── Agent.md 读取/保存（契约 §1：GET / PUT /api/projects/<name>/agent.md）──

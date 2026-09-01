@@ -653,3 +653,17 @@ export const FLOW_CSS = `
 .flow-def-view-btn:hover { background: rgba(91,127,191,0.08); }
 </style>
 `;
+
+/** 确保 FLOW_CSS 已存在于文档中（head 级、全局一份、幂等）。
+ *
+ *  旧做法是每个面板各往自己的 tab pane 里插一份 `<style id="team-canvas-style">`，
+ *  除了重复 id，还带来两个真实缺陷（#27 面板渲染可靠性）：
+ *   ① 恢复出来的 pane（canvas-tab-restore）若没走到渲染路径就一份样式都没有——
+ *      `.flow-viewer-overlay { pointer-events: auto }` 缺席时，overlayRoot 的内联
+ *      `pointer-events:none` 无人抵消，viewer 里的按钮整片点不到（elementFromPoint 命中 pane）；
+ *   ② 注入所在的标签页一关，`<style>` 随 pane 一起被移除，其它面板样式跟着失效。
+ *  head 注入把样式与 pane 生命周期解耦，任何面板任何时机都成立。 */
+export function ensureFlowCss() {
+  if (document.getElementById('team-canvas-style')) return;
+  document.head.insertAdjacentHTML('beforeend', FLOW_CSS);
+}
