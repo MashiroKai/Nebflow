@@ -40,8 +40,9 @@ class ProjectStoreSpec extends CatsEffectSuite:
       assertEquals(right.workspace, ws.toString)
       assert(os.exists(ProjectStore.projectJsonPath("demo")))
       assert(os.exists(ws / ".nebflow" / "Agent.md"))
-      assert(os.exists(ws / ".nebflow" / ".gitignore"))
-      assertEquals(os.read(ws / ".nebflow" / ".gitignore"), ".nebflow/\n")
+      assert(!os.exists(ws / ".nebflow" / ".gitignore"), ".gitignore must NOT be inside .nebflow/ (R6 position fix)")
+      assert(os.exists(ws / ".gitignore"), ".gitignore must be at workspace root (R6)")
+      assertEquals(os.read(ws / ".gitignore"), ".nebflow/\n")
       assertEquals(pd.map(_.name), Some("demo"))
   }
 
@@ -69,6 +70,44 @@ class ProjectStoreSpec extends CatsEffectSuite:
       all <- ProjectStore.list()
     yield
       assert(all.exists(_.name == "listme"))
+  }
+
+  test("R6: existing workspace .gitignore keeps user content and appends .nebflow/") {
+    val ws2 = tempRoot / "ws-existing-gi"
+    os.makeDir.all(ws2)
+    os.write.over(ws2 / ".gitignore", "# user rules\nnode_modules/\n") // 无尾换行
+    for
+      created <- ProjectStore.create("gi-append", ws2.toString, None, template)
+    yield
+      assert(created.isRight)
+      val content = os.read(ws2 / ".gitignore")
+      assert(content.startsWith("# user rules\nnode_modules/\n"), "user content must be preserved")
+      assert(content.contains(".nebflow/"), "must append .nebflow/")
+      assertEquals(os.read(ws2 / ".nebflow" / "Agent.md"), template)
+  }
+
+  test("R6: existing workspace .gitignore already containing .nebflow/ is not duplicated") {
+    val ws3 = tempRoot / "ws-has-gi"
+    os.makeDir.all(ws3)
+    os.write.over(ws3 / ".gitignore", "node_modules/\n.nebflow/\n")
+    for
+      created <- ProjectStore.create("gi-existing", ws3.toString, None, template)
+    yield
+      assert(created.isRight)
+      val content = os.read(ws3 / ".gitignore")
+      assertEquals(content, "node_modules/\n.nebflow/\n", "must not duplicate the .nebflow/ entry")
+  }
+
+  test("R6: fresh workspace gets root .gitignore with .nebflow/ entry") {
+    val ws4 = tempRoot / "ws-ignore-check"
+    os.makeDir.all(ws4)
+    for
+      created <- ProjectStore.create("gi-ignore-check", ws4.toString, None, template)
+    yield
+      assert(created.isRight)
+      val gi = ws4 / ".gitignore"
+      assert(os.exists(gi))
+      assertEquals(os.read(gi), ".nebflow/\n")
   }
 
 end ProjectStoreSpec
