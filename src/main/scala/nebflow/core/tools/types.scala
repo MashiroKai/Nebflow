@@ -18,6 +18,12 @@ case class ToolContext(
   contextWindow: Int = Defaults.ContextWindow,
   sessionId: Option[String] = None,
   sessionName: Option[String] = None,
+  /** 顶层根会话 id（P0 接线修复，Explorer 取证 c759e8c）：AgentState 已持有
+    * effectiveRootSessionId（spawn 时计算，非空用 rootSessionId 参数否则 sessionId），
+    * thread 进 ToolContext——ProjectCreate mount 传真正顶层而非挂载者自身，
+    * 使节点 out="Nebula" 投递到根会话而非执行者（防 qa-backend 自维持循环）。
+    * None = 非 agent 会话上下文（如 REST 直调）。 */
+  rootSessionId: Option[String] = None,
   taskStore: Option[TaskStore] = None,
   wsSend: Option[Json => IO[Unit]] = None,
   readTracker: Option[ReadTracker] = None,

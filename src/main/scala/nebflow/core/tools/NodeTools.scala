@@ -532,9 +532,14 @@ object ProjectCreateTool extends Tool:
         case Right(pd) =>
           (ctx.actorSystem, ctx.sharedResources) match
             case (Some(system), Some(res)) =>
-              ProjectRuntimeRegistry.mount(pd, system, res, ctx.wsSend, ctx.sessionId.getOrElse("default")).as(
-                Right(s"Project '$name' created (workspace $workspace) and mounted. Flow Map ready at ${pd.agentFile}.")
-              )
+              // P0 接线修复（Explorer c759e8c）：mount 传**上链 rootSessionId**（真正顶层），
+              // 非挂载者自身会话——否则 out="Nebula" 投递目标是挂载者（如 qa-backend），
+              // 节点完成消息注入执行者形成自维持循环。fallback ctx.sessionId（老调用方）。
+              ProjectRuntimeRegistry
+                .mount(pd, system, res, ctx.wsSend, ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("default"))
+                .as(
+                  Right(s"Project '$name' created (workspace $workspace) and mounted. Flow Map ready at ${pd.agentFile}.")
+                )
             case _ =>
               IO.pure(Right(s"Project '$name' created (definition written). Mount requires an agent session."))
       }

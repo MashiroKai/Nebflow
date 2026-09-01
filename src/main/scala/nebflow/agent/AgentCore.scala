@@ -876,6 +876,7 @@ private[agent] trait AgentCore:
         contextWindow = state.contextWindow,
         sessionId = state.sessionId,
         sessionName = state.sessionName,
+        rootSessionId = Some(state.rootSessionId),
         taskStore = Some(resources.taskStore),
         wsSend = Some(state.wsSend),
         readTracker = state.readTracker,

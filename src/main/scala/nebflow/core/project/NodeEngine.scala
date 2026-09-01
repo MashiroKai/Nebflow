@@ -35,7 +35,7 @@ class NodeEngine(
   resources: SharedResources,
   val wsSendFn: Json => IO[Unit],
   workspace: String,
-  rootSessionId: String,
+  val rootSessionId: String,
   /** WS 事件推送（type → payload 载体）。 */
   emitEvent: (String, String, Json) => IO[Unit]
 ):
