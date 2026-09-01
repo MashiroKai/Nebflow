@@ -4,7 +4,7 @@
 //   • Avatar — the NebLink login entry. Tap when logged out → opens the
 //     NebLink login modal (Logto OIDC, Authorization Code + PKCE; legacy
 //     device flow as fallback). Tap when logged in →
-//     opens the profile page on nebflow.space in a new tab.
+//     opens the account profile page (brand.getProfileUrl) in a new tab.
 //   • Side Bar panel switch buttons (Files; future panels register the same way).
 //   • (spacer)
 //   • Teams / Flows / Agents (Canvas tabs) and Settings.
@@ -21,7 +21,7 @@
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
 import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow } from './neblink.js';
 import { createIconsIn, escapeHtml } from './utils.js';
-import { brand } from './brand.js';
+import { getProfileUrl } from './brand.js';
 import { t } from './i18n.js';
 import { key } from './branding.js';
 
@@ -247,8 +247,13 @@ function bindAvatar() {
     const st = getNeblinkState();
     if (st.pairing) return; // pairing in progress — ignore
     if (st.loggedIn) {
-      // Logged in → open the profile page on the product domain
-      window.open(`https://${brand.domain}/profile`, '_blank');
+      // Logged in → open the account profile page. The URL comes from the
+      // brand contract (injected profileUrl, fallback in brand.js) — building
+      // it from brand.domain shipped a dead https://neblink.example/profile
+      // link, since domain is a display-only placeholder.
+      // 'noopener': the profile page must not get a window.opener handle back
+      // into the app window.
+      window.open(getProfileUrl(), '_blank', 'noopener');
     } else {
       // Not logged in → open the NebLink login modal (PKCE, device-flow fallback)
       showLoginModal();
