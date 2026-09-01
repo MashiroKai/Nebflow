@@ -48,11 +48,13 @@ object ToolResultGuard:
     else
       val tool = ToolRegistry.TOOL_MAP.get(call.name)
       val declaredMax = tool.map(_.maxResultSizeChars).getOrElse(Defaults.DefaultMaxResultSizeChars)
-      if declaredMax == Int.MaxValue then IO.pure(result)
-      else
-        val threshold = math.min(declaredMax, Defaults.DefaultMaxResultSizeChars)
-        if result.content.length <= threshold then IO.pure(result)
-        else persistAndReplace(call, result, sessionId)
+      // Int.MaxValue (a tool declaring ∞) falls back to the default cap rather
+      // than skipping the guard — no tool is exempt (2026-09-01 #38, was a
+      // full bypass for Read: single 512KB reads ~128K tokens straight into
+      // context, and re-reads of persisted tool-results doubled it).
+      val threshold = math.min(declaredMax, Defaults.DefaultMaxResultSizeChars)
+      if result.content.length <= threshold then IO.pure(result)
+      else persistAndReplace(call, result, sessionId)
 
   // ============================================================
   // Layer 2: Per-message aggregate budget
@@ -129,7 +131,8 @@ object ToolResultGuard:
 
       val sb = new StringBuilder()
       sb.append(PersistedTag).append("\n")
-      sb.append(s"Output too large ($sizeStr). Full output saved to: $path\n\n")
+      sb.append(s"Output too large ($sizeStr). Full output saved to: $path\n")
+      sb.append(s"To read the full content, Read it in chunks (≤50K chars per Read; use offset/limit to paginate).\n\n")
       sb.append(s"Preview (first ${Defaults.ToolResultPreviewSize} chars):\n")
       sb.append(preview)
       if hasMore then sb.append("\n...\n") else sb.append("\n")

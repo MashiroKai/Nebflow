@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.shared.ContentBlock
+import nebflow.shared.{ContentBlock, Defaults}
 
 import java.nio.file.{Files, Path, Paths}
 import java.util.Base64
@@ -31,8 +31,13 @@ object ReadTool extends Tool:
 
   val name = "Read"
 
-  /** Read controls its own output via the limit parameter — exempt from guard. */
-  override val maxResultSizeChars: Int = Int.MaxValue
+  /** Read output is guarded like any other tool: >50K chars → persisted to
+    * disk with a preview (ToolResultGuard). Read's own 512KB/2000-line safety
+    * limits remain as the tool-level net. For large files use offset/limit
+    * to paginate — a single Read may return at most the default cap.
+    * (2026-09-01 #38: was Int.MaxValue — exempting Read was the single biggest
+    * context-bloat vector, incl. agents re-reading persisted tool-results.) */
+  override val maxResultSizeChars: Int = Defaults.DefaultMaxResultSizeChars
 
   val description =
     """Reads a file from the local filesystem. Reading a non-existent file returns an error, which is fine.
