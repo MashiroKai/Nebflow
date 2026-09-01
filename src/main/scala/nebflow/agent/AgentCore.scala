@@ -452,7 +452,11 @@ private[agent] trait AgentCore:
           }
         val turnId = state.currentTurnId + 1
         // Compact/ask turns skip FastMicroCompact: the agent needs the full
-        // history for the summary.
+        // history for the summary. #38 Layer B (2026-09-01): oversized
+        // ToolResults are stripped BEFORE this point (startDirectCompaction
+        // runs prepareCompactionInput) — the compact input carries overview +
+        // persisted-path references, not the giant bodies, so this skip no
+        // longer risks a provider rejection on multi-MB histories.
         val microResult = if isCompactTurn || isAskTurn then None else FastMicroCompact(state.messages)
         val stateForLlm = microResult match
           case Some(compacted) =>
@@ -654,6 +658,9 @@ private[agent] trait AgentCore:
           // 落盘会话零改动（语义三分：显示/LLM 上下文/会话文件）。门控与
           // FastMicroCompact 相同的 turn 排除（压缩/存档/ask 需要全量输入）；
           // keepRecent 窗保证 turn 中途的当前结果永不被清理（构造性安全）。
+          // #38 Layer B（2026-09-01）：压缩轮的「全量输入」已由入口处的
+          // prepareCompactionInput 剔除超大 ToolResult——这里 skip 保留的是
+          // M4/M5 的规则压缩与 TTL 老化语义，不再承担防超限职责。
           // #341 WS 尾巴：配置 Ref 化——每请求读当前值，setToolResultTtl 热更
           // 即时生效（无需重启）。
           ttlCfg <- resources.toolResultTtlRef.get
