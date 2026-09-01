@@ -176,8 +176,6 @@ export default {
   'settings.ttlMinutesHint': 'Results older than this may be cleaned up (default 60)',
   'settings.keepRecentLabel': 'Keep last N results',
   'settings.keepRecentHint': 'The most recent N results are never cleaned up (default 5)',
-  'settings.minCharsLabel': 'Minimum size to clean (chars)',
-  'settings.minCharsHint': 'Results shorter than this are never cleaned up (default 2000)',
   'settings.ttlSave': 'Save cleanup config',
   'settings.ttlSaved': 'Cleanup config saved',
   'settings.ttlSaveFailed': 'Cleanup config save failed',
