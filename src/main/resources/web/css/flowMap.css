@@ -109,7 +109,9 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 132px;
+  /* 卡片内容宽 104px（124 − 左右各 10 padding）；写死 132px 会左右各溢出 4px
+     （qa minor 取证）。100% 让摘要贴着卡片内沿收边，超长照旧省略号截断。 */
+  max-width: 100%;
 }
 
 .fm-result-summary.running {
