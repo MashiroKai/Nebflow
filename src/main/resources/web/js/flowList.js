@@ -5,7 +5,7 @@
 import { openTab, getTabPane } from './canvas.js';
 import { esc, authHeaders } from './flowHelpers.js';
 import { renderFlowDefStatic } from './flowDag.js';
-import { FLOW_CSS } from './flowCss.js';
+import { ensureFlowCss } from './flowCss.js';
 import { brand } from './brand.js';
 import { t } from './i18n.js';
 
@@ -71,9 +71,7 @@ async function openFlowDefTab(name) {
   openTab(`flow-def-${name}`, name, { type: 'flow-def', closable: true, pinned: true });
   const pane = getTabPane(`flow-def-${name}`);
   if (!pane) return;
-  if (!pane.querySelector('#team-canvas-style')) {
-    pane.insertAdjacentHTML('afterbegin', FLOW_CSS);
-  }
+  ensureFlowCss();
 
   const scroll = document.createElement('div');
   scroll.className = 'team-scroll';
