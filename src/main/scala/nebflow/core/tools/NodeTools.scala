@@ -79,6 +79,24 @@ object NodeTools:
   def wouldCreateCycle(rt: ProjectRuntime, fromId: String, to: String): IO[Boolean] =
     rt.store.wouldCreateCycle(fromId, to)
 
+  /** task 文本归一化（loop detect 用）：trim + 空白折叠。 */
+  def normalizeTask(t: String): String = t.trim.replaceAll("\\s+", " ")
+
+  /** loop detect（§2.6）：同 agent + 同 task 归一化，活动区已有
+    * running/completed 节点 → 疑似重复派发（TTL 窗口内 = 活动区仍显示）。
+    * 返回匹配的节点（无则 None）。NodeEdit 创建入口节点时校验（0 spawn）。 */
+  def findDuplicateDispatch(rt: ProjectRuntime, agentName: String, task: String): IO[Option[NodeDef]] =
+    val norm = normalizeTask(task)
+    if norm.isEmpty then IO.pure(None)
+    else
+      rt.store.snapshot.map { s =>
+        s.nodes.values.find { n =>
+          n.agent == agentName &&
+          n.task.exists(t => normalizeTask(t) == norm) &&
+          (n.status == NodeLifecycle.Running || NodeLifecycle.Terminal.contains(n.status))
+        }
+      }
+
   /** NodeList 工具 / REST flow-map 端点共用的载荷（nodes/worktrees/meta，§2.2 NodeList 返回结构）。 */
   def buildNodeListPayload(rt: ProjectRuntime): IO[Json] =
     for
@@ -264,6 +282,10 @@ object NodeEditTool extends Tool:
       cycleOut <- out match
         case Some(t) if t != "Nebula" => NodeTools.wouldCreateCycle(rt, fromId = nodeId, to = t).map(Some(_))
         case _ => IO.pure(None)
+      // loop detect（§2.6）：入口节点（有 task）同 agent+task 归一化重复 → 拒
+      dup <- task match
+        case Some(t) if t.trim.nonEmpty => NodeTools.findDuplicateDispatch(rt, agentName, t)
+        case _ => IO.pure(None)
       // 校验短路（0 spawn）
       validated <-
         if inOk.exists(_.isLeft) then
@@ -274,6 +296,8 @@ object NodeEditTool extends Tool:
           IO.pure(Left(ToolError(outOk.swap.toOption.getOrElse("invalid out"))))
         else if cycleOut.exists(identity) then
           IO.pure(Left(ToolError(s"Cycle detected: out → ${out.getOrElse("")} would create a loop — DAG must stay acyclic")))
+        else if dup.isDefined then
+          IO.pure(Left(ToolError(s"疑似重复派发: agent '$agentName' already has a ${dup.get.status} node with the same task (node '${dup.get.name}'). Check NodeList before re-dispatching.")))
         else IO.pure(Right(()))
       result <- validated match
         case Left(err) => IO.pure(Left(err))

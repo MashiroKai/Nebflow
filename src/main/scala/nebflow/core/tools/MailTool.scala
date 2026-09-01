@@ -9,6 +9,7 @@ import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
+import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 
@@ -173,6 +174,28 @@ Message type (optional, default "INFO"):
   // Queue mode: persisted FIFO, drained one-per-turn
   // ============================================================
 
+  /** #28 阶段 0 §3.2：Mail(→project) 触发分发器（试点期新旧并存）。
+    * queue/immediate 两个入口共用——address 是已挂载 project → 返回
+    * Some(结果)（已处理：触发 ProjectActor.TriggerDispatcher 或挂载错误）；
+    * 非 project 名 → None（调用方继续旧路由）。Mail 仅触发、无回报——
+    * 节点结果沿 out 边投递（§2.7），不经 Mail 回传。 */
+  private def routeToProject(
+      address: String,
+      message: String,
+      ctx: ToolContext
+    ): IO[Option[Either[ToolError, String]]] =
+    ProjectRuntimeRegistry.get(address).flatMap {
+      case None => IO.pure(None)
+      case Some(rt) =>
+        rt.actorRef match
+          case None =>
+            IO.pure(Some(Left(ToolError(s"Project '$address' has no mounted ProjectActor — re-mount it"))))
+          case Some(ref) =>
+            val rootSid = ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
+            (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(message, rootSid)).void
+              .as(Some(Right(s"Project '$address' dispatcher triggered")))
+    }
+
   private[tools] def deliverQueue(
       address: String,
       message: String,
@@ -226,24 +249,34 @@ Message type (optional, default "INFO"):
           yield r
         case None =>
           for
-            senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
-            sr <- senderTeamOpt match
-              case None if address != "Nebula" =>
-                IO.pure(Left(ToolError(TeamOnlyRoutingError)))
-              case _ =>
+            // Mail(→project) 路由（#28 阶段 0，§3.2 试点期新旧并存）：
+            // project 名 → ProjectActor.TriggerDispatcher（触发分发器会话）。
+            // 团队名路由优先（旧体系照常）；project 名兜底（新体系试点）。
+            // Mail 仅做触发、无回报——节点结果沿 out 边投递（§2.7），不靠 Mail。
+            pr <- routeToProject(address, message, ctx).flatMap {
+              case Some(r) => IO.pure(r)
+              case None =>
                 for
-                  targetRes <- ctx.sharedResources match
-                    case Some(res) => TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
-                    case None      => IO.pure(Right(None))
-                  sr2 <- targetRes match
-                    case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
-                    case Right(Some(targetSid)) =>
-                      queueToSession(targetSid, address, message, mailType, imagePaths, ctx, system, senderSessionId)
-                    case Right(None) if address == "Nebula" =>
-                      queueToNebula(message, mailType, imagePaths, ctx, system, senderSessionId, address)
-                    case Right(None) => mailNotFound(address)
-                yield sr2
-          yield sr
+                  senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
+                  sr <- senderTeamOpt match
+                    case None if address != "Nebula" =>
+                      IO.pure(Left(ToolError(TeamOnlyRoutingError)))
+                    case _ =>
+                      for
+                        targetRes <- ctx.sharedResources match
+                          case Some(res) => TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
+                          case None      => IO.pure(Right(None))
+                        sr2 <- targetRes match
+                          case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
+                          case Right(Some(targetSid)) =>
+                            queueToSession(targetSid, address, message, mailType, imagePaths, ctx, system, senderSessionId)
+                          case Right(None) if address == "Nebula" =>
+                            queueToNebula(message, mailType, imagePaths, ctx, system, senderSessionId, address)
+                          case Right(None) => mailNotFound(address)
+                      yield sr2
+                yield sr
+            }
+          yield pr
     yield result
 
   /**
@@ -460,53 +493,60 @@ Message type (optional, default "INFO"):
           yield r
 
         case None =>
-          // Not a team name — short agent name. Routable only for senders
-          // with a team context (same-team priority); outside a team, only
-          // team names and "Nebula" are valid (user ruling 08-24 — the
-          // team/agent escape hatch is closed for root senders).
+          // Mail(→project) 路由（§3.2，immediate 路径对称）——先于旧 short-name 解析。
           for
-            senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
-            sr <- senderTeamOpt match
-              case None if address != "Nebula" =>
-                IO.pure(Left(ToolError(TeamOnlyRoutingError)))
-              case _ =>
+            pr <- routeToProject(address, message, ctx).flatMap {
+              case Some(r) => IO.pure(r)
+              case None =>
+                // Not a team name — short agent name. Routable only for senders
+                // with a team context (same-team priority); outside a team, only
+                // team names and "Nebula" are valid (user ruling 08-24 — the
+                // team/agent escape hatch is closed for root senders).
                 for
-                  targetRes <- ctx.sharedResources match
-                    case Some(res) => TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
-                    case None => IO.pure(Right(None))
-                  sr2 <- targetRes match
-                    case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
-                    case Right(Some(targetSid)) =>
+                  senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
+                  sr <- senderTeamOpt match
+                    case None if address != "Nebula" =>
+                      IO.pure(Left(ToolError(TeamOnlyRoutingError)))
+                    case _ =>
                       for
-                        res <- deliverToSession(targetSid, address, message, blocks, mailType, ctx, system)
-                        _ <- res match
-                          case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
-                          case Left(_) => IO.unit
-                      yield res
-                    case Right(None) =>
-                      val isNebulaTarget = address == "Nebula" || address.endsWith("/Nebula")
-                      if isNebulaTarget then
-                        for
-                          // Prefer the parent-actor route (team agents have their
-                          // parent registered at mount time). Fork/temporary sessions
-                          // have no registered parent — fall back to the Nebula root
-                          // session's actor in the unified AgentRegistry.
-                          parentActorOpt <- TeamSessionRegistry.getParentActor(senderSessionId)
-                          res <- parentActorOpt match
-                            case Some(ref) => sendMail(ref, "Nebula", message, blocks, mailType, ctx, system)
-                            case None =>
-                              ctx.sharedResources match
-                                case Some(res) =>
-                                  resolveNebulaRef(res).flatMap {
-                                    case Some(ref) => sendMail(ref, "Nebula", message, blocks, mailType, ctx, system)
-                                    case None => mailNotFound(address)
-                                  }
-                                case None => mailNotFound(address)
-                        yield res
-                      else mailNotFound(address)
-                      end if
-                yield sr2
-          yield sr
+                        targetRes <- ctx.sharedResources match
+                          case Some(res) => TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
+                          case None => IO.pure(Right(None))
+                        sr2 <- targetRes match
+                          case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
+                          case Right(Some(targetSid)) =>
+                            for
+                              res <- deliverToSession(targetSid, address, message, blocks, mailType, ctx, system)
+                              _ <- res match
+                                case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
+                                case Left(_) => IO.unit
+                            yield res
+                          case Right(None) =>
+                            val isNebulaTarget = address == "Nebula" || address.endsWith("/Nebula")
+                            if isNebulaTarget then
+                              for
+                                // Prefer the parent-actor route (team agents have their
+                                // parent registered at mount time). Fork/temporary sessions
+                                // have no registered parent — fall back to the Nebula root
+                                // session's actor in the unified AgentRegistry.
+                                parentActorOpt <- TeamSessionRegistry.getParentActor(senderSessionId)
+                                res <- parentActorOpt match
+                                  case Some(ref) => sendMail(ref, "Nebula", message, blocks, mailType, ctx, system)
+                                  case None =>
+                                    ctx.sharedResources match
+                                      case Some(res) =>
+                                        resolveNebulaRef(res).flatMap {
+                                          case Some(ref) => sendMail(ref, "Nebula", message, blocks, mailType, ctx, system)
+                                          case None => mailNotFound(address)
+                                        }
+                                      case None => mailNotFound(address)
+                              yield res
+                            else mailNotFound(address)
+                            end if
+                      yield sr2
+                yield sr
+            }
+          yield pr
     yield result
 
   /** Marker a team's rules.md can set to opt in to cross-team explicit Mail. */
