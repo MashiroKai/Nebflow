@@ -13,6 +13,7 @@ import { createIconsIn } from './utils.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
 import { appendRefToActiveView } from './input.js';
+import { showSidePanel } from './activityBar.js';
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -1068,6 +1069,29 @@ function refreshDirOf(path) {
       loadDir(dirPath, children, depth);
     }
   }
+}
+
+/**
+ * Point the file explorer at `path` and reveal it (Project card → 工作区
+ * 「在文件浏览器中打开」, §3.5).
+ *
+ * Same three steps the folder-picker callback performs (persistRoot → drop
+ * expanded state → renderTree), plus revealing the Files panel: the picker
+ * runs from inside the panel, this runs from a Canvas tab where the Side Bar
+ * may be collapsed or showing another panel. showSidePanel (not a synthetic
+ * #files-btn click) because the icon toggles the bar CLOSED when Files is
+ * already the active panel.
+ * @param {string} path — absolute workspace path
+ */
+export function openExplorerAt(path) {
+  if (!path) return;
+  persistRoot(path);
+  expandedDirs.clear();
+  loadingDirs.clear();
+  pendingLoads.clear();
+  clearSelection();
+  showSidePanel('files');
+  renderTree();
 }
 
 export function refreshExplorer(sessionId) {

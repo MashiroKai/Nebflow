@@ -116,6 +116,16 @@ function fmtTtl(sec) {
 }
 
 // ── 边（SVG，复用 .flow-edge）─────────────────────────────
+// 边的语义按 §2.7 的投递状态分三档，而不是 flow-run 的"正在流动"动画：
+//   delivered  上游 completed → 结果已沿这条边投递（实线、加重）
+//   inflight   上游 running   → 结果尚未产生（虚线行军蚁 = 等这条线出结果）
+//   idle       其余（wiring/pending 上游）→ 静止细线
+function edgeStateOf(n) {
+  if (n.status === 'completed') return 'delivered';
+  if (n.status === 'running') return 'inflight';
+  return 'idle';
+}
+
 function edgesSvg(fm, positions, width, height) {
   const nodeIds = new Set((fm?.nodes || []).map((n) => n.id));
   const paths = (fm?.nodes || []).map((n) => {
@@ -125,10 +135,10 @@ function edgesSvg(fm, positions, width, height) {
     if (!from || !to) return '';
     const x1 = from.x, y1 = from.y, x2 = to.x, y2 = to.y;
     const midY = (y1 + y2) / 2;
-    const active = n.status === 'completed';
+    const state = edgeStateOf(n);
     return `
-      <path class="flow-edge${active ? ' active' : ''}" d="M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${x1.toFixed(1)} ${midY.toFixed(1)} ${x2.toFixed(1)} ${midY.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}"/>
-      <circle class="flow-edge-arrow" cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="3"/>`;
+      <path class="flow-edge fm-edge ${state}" data-edge-state="${state}" d="M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${x1.toFixed(1)} ${midY.toFixed(1)} ${x2.toFixed(1)} ${midY.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}"/>
+      <circle class="flow-edge-arrow fm-edge-arrow ${state}" cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="3"/>`;
   }).join('');
   return `<svg class="solar-edges" width="${width}" height="${height}"><g transform="translate(${(width / 2).toFixed(1)},${PAD})">${paths}</g></svg>`;
 }

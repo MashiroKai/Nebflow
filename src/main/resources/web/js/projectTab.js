@@ -91,23 +91,26 @@ function projectCardHtml(p, summary) {
   const brief = summary?.notMounted ? t('project.notMounted') : (summary?.brief || t('project.idle'));
   const summaryCls = running > 0 ? 'running' : '';
   return `
-    <div class="team-card project-card" data-project="${esc(p.name)}">
+    <div class="team-card project-card" data-project="${esc(p.name)}" data-running="${running}">
       <div class="team-card-header">
         <div class="team-card-title" data-open-flowmap="${esc(p.name)}" title="${esc(t('project.openFlowMap', { name: p.name }))}">${esc(p.name)}</div>
-        <div class="team-card-actions">
-          <button class="team-act-btn" data-open-agent="${esc(p.name)}" title="${esc(t('project.agentFile'))}">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
-          </button>
-        </div>
         <div class="team-card-summary ${summaryCls}"><span class="dot"></span>${esc(brief)}</div>
       </div>
       <div class="project-fields">
         <div class="project-field" title="${esc(p.workspace)}">
           <span class="project-field-label">${esc(t('project.workspace'))}</span>
           <span class="project-field-value mono">${esc(p.workspace)}</span>
-          <button class="project-open-btn" data-open-workspace="${esc(p.name)}" title="${esc(t('project.openWorkspace'))}" aria-label="${esc(t('project.openWorkspace'))}"><i data-lucide="folder-open"></i></button>
+          <button class="project-open-btn" data-open-workspace="${esc(p.workspace || '')}" title="${esc(t('project.openWorkspace'))}" aria-label="${esc(t('project.openWorkspace'))}"><i data-lucide="folder-open"></i></button>
         </div>
-        ${p.description ? `<div class="project-field"><span class="project-field-value">${esc(p.description)}</span></div>` : ''}
+        <div class="project-field">
+          <span class="project-field-label">${esc(t('project.agentFileLabel'))}</span>
+          <button class="project-link-btn" data-open-agent="${esc(p.name)}">${esc(t('project.agentFileOpen'))}</button>
+        </div>
+        <div class="project-field">
+          <span class="project-field-label">${esc(t('project.runningAgents'))}</span>
+          <span class="project-field-value tabular" data-running-count="${esc(p.name)}">${running}</span>
+        </div>
+        ${p.description ? `<div class="project-field"><span class="project-field-value desc">${esc(p.description)}</span></div>` : ''}
       </div>
     </div>`;
 }
@@ -128,9 +131,16 @@ function bindProjectClicks(scroll) {
   scroll.querySelectorAll('[data-open-workspace]').forEach((el) => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
-      // 契约未定：先 toast 占位（§3.5 字段已渲染）。
-      const name = el.getAttribute('data-open-workspace') || '';
-      window.__showToast?.(t('project.openWorkspaceSoon', { name }), 'info');
+      // §3.5「在文件浏览器中打开」——把侧边栏文件浏览器的根切到工作区并展开面板。
+      // 动态 import：projectTab 是 Canvas 标签页模块，静态依赖 explorer 会把
+      // 文件树拉进项目面板的首屏加载路径（且 explorer → activityBar → ... 更容易
+      // 绕出循环依赖）。
+      const path = el.getAttribute('data-open-workspace') || '';
+      if (!path) return;
+      import('./explorer.js').then(({ openExplorerAt }) => {
+        openExplorerAt(path);
+        window.__showToast?.(t('project.workspaceOpened', { path }), 'info');
+      }).catch(() => window.__showToast?.(t('project.openWorkspaceFail'), 'error'));
     });
   });
 }

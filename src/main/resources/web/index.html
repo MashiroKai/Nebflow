@@ -71,11 +71,13 @@
     <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
     <button id="usage-btn" class="activity-btn" title="Usage Dashboard" aria-haspopup="dialog"><i data-lucide="bar-chart-3"></i></button>
     <div class="activity-spacer"></div>
-    <!-- #27: Project 按钮取代 Team/Flow 按钮位置（阶段 3 移除旧 Team/Flow 面板）。
-         试点期旧体系仍跑：teams-btn / flows-btn 保留在后（二级过渡），主导交互是 Project。 -->
+    <!-- v5 §3.5: Project 按钮取代 Team/Flow 按钮位置（取代语义，非并列）。
+         试点期旧体系仍在跑，所以旧面板不删——收进「旧面板」二级入口，阶段 3 移除。
+         teams-btn / flows-btn 保留原 id 且留在 DOM 内：canvas.js 的
+         registerCanvasPanelButton 按 id 绑定点击并同步 pressed 态，换 id 或移出
+         DOM 会让旧面板静默失联（点了没反应）。 -->
     <button id="projects-btn" class="activity-btn" title="Projects"><i data-lucide="folder-kanban"></i></button>
-    <button id="teams-btn" class="activity-btn" title="Teams"><i data-lucide="users"></i></button>
-    <button id="flows-btn" class="activity-btn" title="Flows"><i data-lucide="workflow"></i></button>
+    <button id="legacy-btn" class="activity-btn" title="Legacy panels" aria-haspopup="menu" aria-expanded="false" aria-controls="legacy-pop"><i data-lucide="archive"></i></button>
     <button id="agents-btn" class="activity-btn" title="Agents"><i data-lucide="bot"></i></button>
     <button id="settings-btn" class="activity-btn" title="Settings"><i data-lucide="settings"></i></button>
   </div>
@@ -411,6 +413,20 @@
       <div id="search-status" aria-live="polite"></div>
       <div id="search-results" role="listbox"></div>
     </div>
+  </div>
+
+  <!-- Legacy panels popover (v5 §3.5). Lives at body level, NOT inside
+       #activity-bar: the bar is a rounded glass card with overflow:hidden AND
+       a backdrop-filter — the filter makes it the containing block even for
+       position:fixed children, so a popover nested in the bar is clipped to a
+       48px column (verified: panel present in the DOM, invisible on screen).
+       activityBar.js anchors it to #legacy-btn on open.
+       teams-btn / flows-btn keep their original ids: canvas.js binds the
+       Teams/Flows panels by id, document-wide. -->
+  <div class="legacy-pop glass" id="legacy-pop" role="menu" aria-labelledby="legacy-btn" hidden>
+    <div class="legacy-pop-title" id="legacy-pop-title">Legacy panels</div>
+    <button id="teams-btn" class="legacy-item" role="menuitem" title="Teams"><i data-lucide="users"></i><span class="legacy-item-label" id="legacy-item-teams">Teams</span></button>
+    <button id="flows-btn" class="legacy-item" role="menuitem" title="Flows"><i data-lucide="workflow"></i><span class="legacy-item-label" id="legacy-item-flows">Flows</span></button>
   </div>
   <script src="vendor/lucide.min.js"></script>
   <script src="vendor/lottie.min.js"></script>
