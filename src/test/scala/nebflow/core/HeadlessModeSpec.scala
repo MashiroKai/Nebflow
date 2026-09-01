@@ -2,7 +2,6 @@ package nebflow.core
 
 import munit.CatsEffectSuite
 import nebflow.agent.ContextRefresher
-import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.AskUserQuestionTool
 
 /**
@@ -77,16 +76,4 @@ class HeadlessModeSpec extends CatsEffectSuite:
 
   test("askGuard: default binding follows the frozen HeadlessMode.enabled") {
     assertEquals(AskUserQuestionTool.askGuard().isDefined, HeadlessMode.enabled)
-  }
-
-  // ============================================================
-  // Touchpoint 3 — telemetry disabled (TelemetryReporter)
-  // ============================================================
-
-  test("TelemetryReporter.create returns None — disabled means no reporter") {
-    // isEnabled is false in the current build and NEBFLOW_HEADLESS is unset
-    // here, so create short-circuits before any client-id/queue I/O. The
-    // headless=true arm of the same gate (an additional or-condition on the
-    // frozen val) is exercised by E2E smoke, not settable in-JVM.
-    TelemetryReporter.create().map(r => assert(r.isEmpty, s"expected None, got $r"))
   }

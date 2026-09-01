@@ -14,7 +14,6 @@ import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
-import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.core.{PathUtil, *}
 import nebflow.llm.*
@@ -1514,20 +1513,12 @@ class WebSocketRoutes(
           case "switchSession" =>
             val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
             if sessionId.nonEmpty then
-              // Emit session_end for the session being left
-              sessionStore.getActiveId.flatMap { oldId =>
-                if oldId.nonEmpty && oldId != sessionId then emitSessionEnd(oldId)
-                else IO.unit
-              } *>
-                sessionService
-                  .switchSession(sessionId)
-                  .flatMap { _ =>
-                    val telStart = sharedResources.telemetry.fold(IO.unit)(
-                      _.record("session_start", io.circe.JsonObject("session_id" -> sessionId.asJson))
-                    )
-                    sendAgentSessionList(wsSend, sessionId) *>
-                      sendMemoryStatus(wsSend, sessionId) *> telStart
-                  }
+              sessionService
+                .switchSession(sessionId)
+                .flatMap { _ =>
+                  sendAgentSessionList(wsSend, sessionId) *>
+                    sendMemoryStatus(wsSend, sessionId)
+                }
                   .handleErrorWith { e =>
                     wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
                   }
@@ -1542,16 +1533,13 @@ class WebSocketRoutes(
             sessionService
               .createSession(name, agentName = agentName, folderId = folderId)
               .flatMap { meta =>
-                val tel = sharedResources.telemetry
-                val telStart =
-                  tel.fold(IO.unit)(_.record("session_start", io.circe.JsonObject("session_id" -> meta.id.asJson)))
                 // Send unified session list (all agents)
                 val sendList = agentName match
                   case Some(an) =>
                     sendAgentSessionListByName(wsSend, an)
                   case None =>
                     sessionService.sendSessionList(wsSend, "Nebula")
-                sendList *> telStart
+                sendList
               }
               .handleErrorWith { e =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
@@ -1565,10 +1553,8 @@ class WebSocketRoutes(
                 .getSessionMeta(sessionId)
                 .flatMap { metaOpt =>
                   val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                  // Emit session_end telemetry before cleanup
-                  emitSessionEnd(sessionId).handleErrorWith(_ => IO.unit) *>
-                    // Clean up text buffers for deleted session to prevent memory leak
-                    sessionTextBuffers.update(_ - sessionId) *>
+                  // Clean up text buffers for deleted session to prevent memory leak
+                  sessionTextBuffers.update(_ - sessionId) *>
                     sessionThinkingBuffers.update(_ - sessionId) *>
                     sessionTurnStarts.update(_ - sessionId) *>
                     stopTeamSessionActors(sessionId) *> removeRootAgent(sessionId) *> sessionService
@@ -3600,31 +3586,6 @@ class WebSocketRoutes(
                            )
                            .handleErrorWith(e => logger.warn(s"Failed to record user UiMessage: ${e.getMessage}"))
                        else IO.unit) *> {
-                        // Track turn count + session start time for telemetry
-                        sessionTurnCounts
-                          .update(m => m.updated(msgSessionId, m.getOrElse(msgSessionId, 0) + 1))
-                          .handleErrorWith(_ => IO.unit) *>
-                          sessionStartTimes
-                            .update { m =>
-                              if m.contains(msgSessionId) then m
-                              else m.updated(msgSessionId, System.currentTimeMillis())
-                            }
-                            .handleErrorWith(_ => IO.unit) *> {
-                            // Telemetry: message_sent (structural features only, no content)
-                            sharedResources.telemetry.fold(IO.unit)(
-                              _.record(
-                                "message_sent",
-                                JsonObject.fromIterable(
-                                  List(
-                                    "session_id" -> msgSessionId.asJson,
-                                    "prompt_length" -> content.length.asJson,
-                                    "language_hint" -> (if content.exists(_ > 0x4e00) then "chinese"
-                                                        else "english").asJson,
-                                    "has_code_block" -> content.contains("```").asJson
-                                  )
-                                )
-                              ).handleErrorWith(_ => IO.unit)
-                            ) *> {
                               // 任务工具重做（2026-08-30）：打回语义退役——
                               // taskRefs/refs(refType=task) 的 processTaskReturns
                               // 路径整体移除。#303 D1: resolve non-task refs
@@ -3643,8 +3604,6 @@ class WebSocketRoutes(
                                     )
                                 )
                               }
-                              }
-                          }
                       }
                   }
                   ) // end IO.uncancelable
@@ -3980,85 +3939,6 @@ class WebSocketRoutes(
   private val sessionTurnStarts: Ref[IO, Map[String, Long]] =
     Ref.unsafe[IO, Map[String, Long]](Map.empty)
 
-  // ---- Per-session telemetry tracking ----
-
-  /** Per-session tool call counts: sessionId -> (toolName -> count). */
-  private val sessionToolProfile: Ref[IO, Map[String, Map[String, Int]]] =
-    Ref.unsafe[IO, Map[String, Map[String, Int]]](Map.empty)
-
-  /** Per-session turn count (user messages). */
-  private val sessionTurnCounts: Ref[IO, Map[String, Int]] =
-    Ref.unsafe[IO, Map[String, Int]](Map.empty)
-
-  /** Per-session start time (first activity). */
-  private val sessionStartTimes: Ref[IO, Map[String, Long]] =
-    Ref.unsafe[IO, Map[String, Long]](Map.empty)
-
-  /** Per-session model used (last model). */
-  private val sessionModels: Ref[IO, Map[String, String]] =
-    Ref.unsafe[IO, Map[String, String]](Map.empty)
-
-  /** Per-session all models used (accumulated). */
-  private val sessionAllModels: Ref[IO, Map[String, Set[String]]] =
-    Ref.unsafe[IO, Map[String, Set[String]]](Map.empty)
-
-  /** Per-session response times in milliseconds (per turn). */
-  private val sessionResponseTimes: Ref[IO, Map[String, List[Long]]] =
-    Ref.unsafe[IO, Map[String, List[Long]]](Map.empty)
-
-  /** Record a tool call for a session's telemetry profile. */
-  private def recordToolForTelemetry(sessionId: String, toolName: String): IO[Unit] =
-    sessionToolProfile.update { m =>
-      val profile = m.getOrElse(sessionId, Map.empty)
-      m.updated(sessionId, profile.updated(toolName, profile.getOrElse(toolName, 0) + 1))
-    } *> sessionStartTimes.update { m =>
-      if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis())
-    }
-
-  /** Emit a session_end event and clean up telemetry state for a session. */
-  private def emitSessionEnd(sessionId: String): IO[Unit] =
-    sharedResources.telemetry match
-      case None => cleanupSessionTelemetry(sessionId)
-      case Some(reporter) =>
-        for
-          profile <- sessionToolProfile.get.map(_.getOrElse(sessionId, Map.empty))
-          turns <- sessionTurnCounts.get.map(_.getOrElse(sessionId, 0))
-          startTime <- sessionStartTimes.get.map(_.get(sessionId))
-          model <- sessionModels.get.map(_.get(sessionId).getOrElse(""))
-          allModels <- sessionAllModels.get.map(_.getOrElse(sessionId, Set.empty))
-          responseTimes <- sessionResponseTimes.get.map(_.getOrElse(sessionId, Nil))
-          _ <- cleanupSessionTelemetry(sessionId)
-          durationSec = startTime.map(s => (System.currentTimeMillis() - s) / 1000).getOrElse(0L)
-          inferredTask = TaskInferencer.infer(profile, turns)
-          avgResponseMs = if responseTimes.nonEmpty then responseTimes.sum / responseTimes.size else 0L
-          maxResponseMs = responseTimes.maxOption.getOrElse(0L)
-          props = JsonObject.fromIterable(
-            List(
-              "session_id" -> sessionId.asJson,
-              "duration_sec" -> durationSec.asJson,
-              "turn_count" -> turns.asJson,
-              "tool_profile" -> TaskInferencer.toolProfileJson(profile).asJson,
-              "inferred_task" -> inferredTask.asJson,
-              "model_used" -> model.asJson,
-              "models_used" -> allModels.toList.asJson,
-              "avg_response_time_ms" -> avgResponseMs.asJson,
-              "max_response_time_ms" -> maxResponseMs.asJson,
-              "response_times" -> responseTimes.asJson
-            )
-          )
-          _ <- reporter.record("session_end", props)
-          _ <- reporter.flush
-        yield ()
-
-  /** Clean up per-session telemetry tracking state. */
-  private def cleanupSessionTelemetry(sessionId: String): IO[Unit] =
-    sessionToolProfile.update(_ - sessionId) *>
-      sessionTurnCounts.update(_ - sessionId) *>
-      sessionStartTimes.update(_ - sessionId) *>
-      sessionModels.update(_ - sessionId) *>
-      sessionAllModels.update(_ - sessionId) *>
-      sessionResponseTimes.update(_ - sessionId)
-
   private def makeRecordingWsSend(
     sessionId: String,
     underlying: io.circe.Json => IO[Unit]
@@ -4094,13 +3974,7 @@ class WebSocketRoutes(
         else IO.unit
 
       case "toolStart" =>
-        val label = hc.downField("label").as[String].getOrElse("")
-        // Track tool usage for telemetry
-        val toolName = label.takeWhile(_ != '(').trim
-        val trackTool =
-          if toolName.nonEmpty then recordToolForTelemetry(sessionId, toolName).handleErrorWith(_ => IO.unit)
-          else IO.unit
-        trackTool *> sessionTurnStarts
+        sessionTurnStarts
           .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis()))
         // Flush accumulated text + thinking before tool execution, matching frontend finishAi() behavior.
         // Without this, text output before a tool call stays in the in-memory buffer and is lost
@@ -4162,32 +4036,14 @@ class WebSocketRoutes(
 
       case "done" =>
         val model = hc.downField("model").as[Option[String]].getOrElse(None)
-        // Track model for telemetry
-        val trackModel = model match
-          case Some(m) =>
-            sessionModels.update(_.updated(sessionId, m)) *>
-              sessionAllModels.update { map =>
-                val set = map.getOrElse(sessionId, Set.empty)
-                map.updated(sessionId, set + m)
-              }
-          case None => IO.unit
-        trackModel *> sessionTurnStarts
+        sessionTurnStarts
           .modify { m =>
             val start = m.getOrElse(sessionId, 0L)
             (m - sessionId, start)
           }
           .flatMap { startTime =>
             val durationMs = if startTime > 0 then Some(System.currentTimeMillis() - startTime) else None
-            // Track response time for telemetry
-            val trackResponseTime = durationMs match
-              case Some(ms) =>
-                sessionResponseTimes.update { map =>
-                  val times = map.getOrElse(sessionId, Nil)
-                  map.updated(sessionId, times :+ ms)
-                }
-              case None => IO.unit
-            trackResponseTime *>
-              sessionTextBuffers
+            sessionTextBuffers
                 .modify { m =>
                   val text = m.getOrElse(sessionId, "")
                   (m - sessionId, text)
