@@ -59,7 +59,8 @@ object ProjectStore:
     * - `projects/<name>/project.json`（定义）
     * - `<workspace>/.nebflow/Agent.md`（模板）
     * - `<workspace>/.nebflow/flow-map.json`（由 FlowMapStore 首写）
-    * - `<workspace>/.nebflow/.gitignore`（内容 `.nebflow/`，防项目 repo 污染，R6）
+    * - `<workspace>/.gitignore`（内容含 `.nebflow/`，防项目 repo 污染，R6——写 workspace 根，
+    *   git 语义：`.nebflow/` 不带前导斜杠匹配任意层级；根已有 .gitignore → 追加不覆盖）
     * 已存在 → 拒绝（防覆盖）。
     */
   def create(
@@ -90,9 +91,26 @@ object ProjectStore:
           AtomicJson.writeSync(projectJsonPath(name), pd.asJson.noSpaces)
           // 工作区 .nebflow/ 脚手架（仅缺省时写，不覆盖已有 Agent.md）
           if !os.exists(nebflowDir / "Agent.md") then os.write.over(nebflowDir / "Agent.md", agentMdTemplate)
-          if !os.exists(nebflowDir / ".gitignore") then os.write.over(nebflowDir / ".gitignore", ".nebflow/\n")
+          // R6：.gitignore 写 workspace 根（防 .nebflow/ 落项目 repo）；根已有 → 追加 .nebflow/ 行
+          writeNebflowGitignore(ws)
           Right(pd)
       }
+
+  /** R6：workspace 根 .gitignore 防项目 repo 污染（`.nebflow/` 不落 repo）。
+    * 根已有 .gitignore → 若未含 `.nebflow/` 行则追加（不覆盖用户已有内容）。
+    * 匹配 `.nebflow/` 与 `.nebflow` 两种写法（均忽略目录本身）。 */
+  private def writeNebflowGitignore(ws: os.Path): Unit =
+    val gi = ws / ".gitignore"
+    if os.exists(gi) then
+      val content = os.read(gi)
+      val hasEntry = content.linesIterator.exists { line =>
+        val t = line.trim
+        t == ".nebflow/" || t == ".nebflow"
+      }
+      if !hasEntry then
+        val sep = if content.endsWith("\n") then "" else "\n"
+        os.write.append(gi, s"$sep.nebflow/\n")
+    else os.write.over(gi, ".nebflow/\n")
 
   def delete(name: String): IO[Unit] =
     IO.blocking {
