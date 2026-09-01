@@ -60,7 +60,10 @@ export async function fetchNeblinkStatus() {
     if (!resp.ok) return;
     const data = await resp.json();
     neblinkState.loggedIn = !!data.loggedIn;
-    // Normalize local device fields to match peer field names
+    // Normalize local device fields to match peer field names.
+    // githubLogin is deliberately NOT mapped: the client is Logto-only now
+    // (login-chain unification 2026-09-01) and the field had no consumer in
+    // web/ — it only ever carried the legacy GitHub-enroll handle.
     const d = data.device;
     neblinkState.device = d ? {
       deviceId: d.id,
@@ -68,8 +71,7 @@ export async function fetchNeblinkStatus() {
       platform: d.platform,
       capabilities: d.capabilities || {},
       userDescription: d.userDescription || '',
-      avatarUrl: d.avatarUrl || '',
-      githubLogin: d.githubLogin || ''
+      avatarUrl: d.avatarUrl || ''
     } : null;
     neblinkState.peers = data.peers || [];
   } catch (e) {
