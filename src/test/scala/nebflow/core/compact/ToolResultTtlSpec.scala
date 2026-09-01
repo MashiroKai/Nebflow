@@ -22,7 +22,7 @@ import scala.concurrent.duration.*
  */
 class ToolResultTtlSpec extends FunSuite:
 
-  private val Enabled = ToolResultTtlConfig(enabled = true, ttlMinutes = 60, keepRecent = 2, minChars = 100)
+  private val Enabled = ToolResultTtlConfig(enabled = true, ttlMinutes = 60, keepRecent = 2)
 
   private def toolUse(id: String, name: String = "Read"): Message =
     Message(
@@ -58,17 +58,16 @@ class ToolResultTtlSpec extends FunSuite:
     assertEquals(ToolResultTtlConfig.load(Some(Json.Null)).enabled, false)
     assertEquals(ToolResultTtlConfig.load(Some(Json.obj("enabled" -> "yes".asJson))).enabled, false)
 
-  test("config load: valid node decodes and sanitizes"):
+  test("config load: valid node decodes and sanitizes (legacy minChars field silently ignored)"):
     val cfg = ToolResultTtlConfig.load(Some(Json.obj(
       "enabled" -> true.asJson,
       "ttlMinutes" -> 30.asJson,
       "keepRecent" -> (-3).asJson,
-      "minChars" -> 500.asJson
+      "minChars" -> 500.asJson // legacy field — must not break decode
     )))
     assertEquals(cfg.enabled, true)
     assertEquals(cfg.ttlMinutes, 30)
     assertEquals(cfg.keepRecent, 0, "negative keepRecent sanitizes to 0")
-    assertEquals(cfg.minChars, 500)
 
   // ── 验收 2：过期+超窗+超大 → 占位符 ──────────────────────────────
 
@@ -176,19 +175,26 @@ class ToolResultTtlSpec extends FunSuite:
 
   // ── 过滤维度补充 ────────────────────────────────────────────────
 
-  test("small results (below minChars) are kept"):
+  test("small results are cleaned too (no size floor — pure age ∧ window semantics)"):
+    // Author ruling 2026-09-01: minChars removed — an old, out-of-window
+    // result is replaced regardless of size.
     val h = List(
       toolUse("tu-1"), toolResult("tu-1", "tiny", Old),
       toolUse("tu-2"), toolResult("tu-2", "x" * 5000, Old),
       toolUse("tu-3"), toolResult("tu-3", "x" * 5000, Old),
       assistant(TwoHoursAgo), Message(MessageRole.User, Left("go"), timestamp = Now)
     )
-    ToolResultTtl.cleanRequestMessages(h, Enabled, Now).foreach { cleaned =>
-      val byId = cleaned.collect {
-        case Message(MessageRole.User, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
-      }.flatten.map(tr => tr.toolUseId -> tr.content).toMap
-      assertEquals(byId("tu-1"), "tiny", "small result kept")
-    }
+    ToolResultTtl.cleanRequestMessages(h, Enabled, Now) match
+      case Some(cleaned) =>
+        val byId = cleaned.collect {
+          case Message(MessageRole.User, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
+        }.flatten.map(tr => tr.toolUseId -> tr.content).toMap
+        // keepRecent=2 keeps tu-2/tu-3; tu-1 is old AND beyond the window →
+        // replaced even though it is only 4 chars (no minChars floor)
+        assert(byId("tu-1").startsWith("[Tool output archived:"), s"tiny old out-of-window result replaced: ${byId("tu-1").take(60)}")
+        assertEquals(byId("tu-2"), "x" * 5000)
+        assertEquals(byId("tu-3"), "x" * 5000)
+      case None => fail("expected cleanup to fire")
 
   test("non-compactable tool results (Mail) are out of scope"):
     val h = List(
@@ -325,43 +331,51 @@ class ToolResultTtlSpec extends FunSuite:
   private def strict(json: String): Either[String, ToolResultTtlConfig] =
     ToolResultTtlConfig.parseStrict(io.circe.parser.parse(json).toOption.get)
 
-  test("parseStrict: valid full config decodes with all four fields"):
+  test("parseStrict: valid full config decodes with all three fields"):
+    assertEquals(
+      strict("""{"enabled":true,"ttlMinutes":120,"keepRecent":3}"""),
+      Right(ToolResultTtlConfig(true, 120, 3))
+    )
+
+  test("parseStrict: legacy minChars field in payload is tolerated (extra field ignored)"):
+    // Old clients/settings may still send minChars; strict setter must not
+    // reject the payload, it just ignores the field.
     assertEquals(
       strict("""{"enabled":true,"ttlMinutes":120,"keepRecent":3,"minChars":500}"""),
-      Right(ToolResultTtlConfig(true, 120, 3, 500))
+      Right(ToolResultTtlConfig(true, 120, 3))
     )
 
   test("parseStrict: negative ttlMinutes rejected"):
-    assert(strict("""{"enabled":true,"ttlMinutes":-5,"keepRecent":3,"minChars":500}""").isLeft)
+    assert(strict("""{"enabled":true,"ttlMinutes":-5,"keepRecent":3}""").isLeft)
 
   test("parseStrict: non-integer keepRecent rejected (3.5)"):
-    assert(strict("""{"enabled":true,"ttlMinutes":60,"keepRecent":3.5,"minChars":500}""").isLeft)
+    assert(strict("""{"enabled":true,"ttlMinutes":60,"keepRecent":3.5}""").isLeft)
 
   test("parseStrict: string-encoded integer accepted (circe coercion); non-numeric string rejected"):
     // circe's Int decoder coerces "60" — acceptable leniency (decodes to the
     // same value); genuinely non-numeric strings are still rejected.
     assertEquals(
-      strict("""{"enabled":true,"ttlMinutes":"60","keepRecent":3,"minChars":500}"""),
-      Right(ToolResultTtlConfig(true, 60, 3, 500))
+      strict("""{"enabled":true,"ttlMinutes":"60","keepRecent":3}"""),
+      Right(ToolResultTtlConfig(true, 60, 3))
     )
-    assert(strict("""{"enabled":true,"ttlMinutes":"abc","keepRecent":3,"minChars":500}""").isLeft)
+    assert(strict("""{"enabled":true,"ttlMinutes":"abc","keepRecent":3}""").isLeft)
 
   test("parseStrict: missing field rejected (enabled absent)"):
-    assert(strict("""{"ttlMinutes":60,"keepRecent":3,"minChars":500}""").isLeft)
+    assert(strict("""{"ttlMinutes":60,"keepRecent":3}""").isLeft)
 
   test("parseStrict: non-boolean enabled rejected"):
-    assert(strict("""{"enabled":"yes","ttlMinutes":60,"keepRecent":3,"minChars":500}""").isLeft)
+    assert(strict("""{"enabled":"yes","ttlMinutes":60,"keepRecent":3}""").isLeft)
 
   test("parseStrict: out-of-bounds rejected (ttlMinutes > 43200, keepRecent > 200)"):
-    assert(strict("""{"enabled":true,"ttlMinutes":43201,"keepRecent":3,"minChars":500}""").isLeft)
-    assert(strict("""{"enabled":true,"ttlMinutes":60,"keepRecent":201,"minChars":500}""").isLeft)
+    assert(strict("""{"enabled":true,"ttlMinutes":43201,"keepRecent":3}""").isLeft)
+    assert(strict("""{"enabled":true,"ttlMinutes":60,"keepRecent":201}""").isLeft)
 
   test("parseStrict: boundary values accepted (1 / 43200, 0 / 200)"):
     assertEquals(
-      strict("""{"enabled":false,"ttlMinutes":1,"keepRecent":0,"minChars":0}"""),
-      Right(ToolResultTtlConfig(false, 1, 0, 0))
+      strict("""{"enabled":false,"ttlMinutes":1,"keepRecent":0}"""),
+      Right(ToolResultTtlConfig(false, 1, 0))
     )
-    assert(strict("""{"enabled":true,"ttlMinutes":43200,"keepRecent":200,"minChars":5000000}""").isRight)
+    assert(strict("""{"enabled":true,"ttlMinutes":43200,"keepRecent":200}""").isRight)
 
   test("parseStrict: non-object rejected"):
     assert(ToolResultTtlConfig.parseStrict(io.circe.Json.Null).isLeft)
@@ -372,7 +386,7 @@ class ToolResultTtlSpec extends FunSuite:
     // sanitized (e.g. ttlMinutes -5 → 1), never throw, never reject.
     assertEquals(
       ToolResultTtlConfig.load(Some(io.circe.parser.parse("""{"ttlMinutes":-5}""").toOption.get)),
-      ToolResultTtlConfig(enabled = false, ttlMinutes = 1, keepRecent = 5, minChars = 2000)
+      ToolResultTtlConfig(enabled = false, ttlMinutes = 1, keepRecent = 5)
     )
     // parseStrict (interactive setter) must NOT silently accept the same input.
     assert(strict("""{"ttlMinutes":-5}""").isLeft)
