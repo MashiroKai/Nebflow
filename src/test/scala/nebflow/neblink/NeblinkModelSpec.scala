@@ -96,7 +96,7 @@ class NeblinkModelSpec extends CatsEffectSuite:
   test("embeddedDefault carries the product hosted-auth constants") {
     // Product infrastructure constants (public client ids) — pinned here so
     // accidental edits surface in CI. config.json logto block can override.
-    assertEquals(LogtoConfig.embeddedDefault.endpoint, "https://auth.neblink.space")
+    assertEquals(LogtoConfig.embeddedDefault.endpoint, "https://auth.nebflow.space")
     assertEquals(LogtoConfig.embeddedDefault.pkceClientId, Some("csxh16cas0x03bgk6w7ej"))
   }
 
@@ -107,7 +107,7 @@ class NeblinkModelSpec extends CatsEffectSuite:
     assertEquals(eff, Right(Some(LogtoConfig.embeddedDefault)))
     // Exact production values, not just object equality (belt and braces).
     eff.foreach(_.foreach { lc =>
-      assertEquals(lc.endpoint, "https://auth.neblink.space")
+      assertEquals(lc.endpoint, "https://auth.nebflow.space")
       assertEquals(lc.pkceClientId, Some("csxh16cas0x03bgk6w7ej"))
     })
   }
@@ -130,7 +130,7 @@ class NeblinkModelSpec extends CatsEffectSuite:
     // so a hand-written {endpoint, pkceClientId} block failed the WHOLE logto
     // decode -> raw logto=None -> PKCE callback reported "Logto 登录未配置"
     // even though /auth/start worked via the embedded default.
-    val json = """{"logto":{"endpoint":"https://auth.neblink.space","pkceClientId":"csxh16cas0x03bgk6w7ej"}}"""
+    val json = """{"logto":{"endpoint":"https://auth.nebflow.space","pkceClientId":"csxh16cas0x03bgk6w7ej"}}"""
     val cfg = decode[NeblinkConfig](json)
     assertEquals(cfg.isRight, true, "clientId-less logto block must decode")
     cfg.foreach { c =>

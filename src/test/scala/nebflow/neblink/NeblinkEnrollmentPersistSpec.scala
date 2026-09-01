@@ -76,7 +76,7 @@ class NeblinkEnrollmentPersistSpec extends FunSuite:
       dir / "config.json",
       """{"enabled": true,
         | "neblinkServer": {"url":"https://old.example","networkId":"old-net","secret":"s"},
-        | "logto": {"endpoint":"https://auth.neblink.space","clientId":"c","pkceClientId":"pk"},
+        | "logto": {"endpoint":"https://auth.nebflow.space","clientId":"c","pkceClientId":"pk"},
         | "agentMessaging": {"mode":"ask"}}""".stripMargin
     )
 
@@ -103,7 +103,7 @@ class NeblinkEnrollmentPersistSpec extends FunSuite:
     // Unrelated sections survive (a wiped logto block silently drops installs
     // back to the legacy login chain — beta.53 regression class).
     val logto = cfg.hcursor.downField("logto")
-    assertEquals(logto.downField("endpoint").as[String].toOption, Some("https://auth.neblink.space"))
+    assertEquals(logto.downField("endpoint").as[String].toOption, Some("https://auth.nebflow.space"))
     assertEquals(logto.downField("pkceClientId").as[String].toOption, Some("pk"))
     assertEquals(cfg.hcursor.downField("agentMessaging").downField("mode").as[String].toOption, Some("ask"))
     // logtoRefresh round-trips into the logto block's refresh credential slot.

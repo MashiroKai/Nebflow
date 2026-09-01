@@ -264,7 +264,7 @@ object LogtoConfig:
     * only; the legacy device-flow chain keeps its neblink-server proxy
     * fallback and is scheduled for removal (beta.54). */
   val embeddedDefault: LogtoConfig = LogtoConfig(
-    endpoint = "https://auth.neblink.space",
+    endpoint = "https://auth.nebflow.space",
     clientId = "",
     pkceClientId = Some("csxh16cas0x03bgk6w7ej")
   )
