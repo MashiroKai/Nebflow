@@ -56,8 +56,18 @@
   padding: 20px;
 }
 
-/* 节点卡片（复用 .solar-node，扩展字段） */
-.fm-node { display: flex; flex-direction: column; gap: 3px; cursor: pointer; }
+/* 节点卡片（复用 .solar-node，扩展字段）
+   .solar-node 是给 flow-run 设计的固定 124×88 盒子；flow-map 的节点多了徽标行、
+   TTL、result 摘要，内容超过 88px 后 flex 子项会被压缩——实测节点名
+   (.solar-node-label) 被压成 0 高，卡片上只剩一条灰色 result 条（自验截图取证）。
+   这里把高度改成"以内容为准、不低于原高度"，并禁止子项收缩。
+   选择器写成 .solar-node.fm-node：FLOW_CSS 是运行时注入 head 的 <style>，排在
+   本文件的 <link> 之后，同特异度下后者胜——单靠 .fm-node 压不住 height:88px。 */
+.solar-node.fm-node {
+  display: flex; flex-direction: column; gap: 3px; cursor: pointer;
+  height: auto; min-height: 88px;
+}
+.fm-node > * { flex: 0 0 auto; }
 .fm-node:hover { filter: brightness(1.04); }
 
 .fm-node-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
@@ -99,7 +109,9 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 132px;
+  /* 卡片内容宽 104px（124 − 左右各 10 padding）；写死 132px 会左右各溢出 4px
+     （qa minor 取证）。100% 让摘要贴着卡片内沿收边，超长照旧省略号截断。 */
+  max-width: 100%;
 }
 
 .fm-result-summary.running {

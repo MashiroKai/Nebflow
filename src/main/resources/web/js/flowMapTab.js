@@ -4,21 +4,37 @@
 // 点击节点卡片打开结果详情 viewer。
 
 import { openTab, getTabPane } from './canvas.js';
-import { FLOW_CSS } from './flowCss.js';
+import { ensureFlowCss } from './flowCss.js';
 import { esc } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
 
 // 布局常量（复用 flowDag 视觉节奏）
+// V_SPACING 150 → 180：节点卡片改为按内容伸展后（带 result 摘要的卡片可达 ~134px），
+// 150 的层间距只剩 16px 空隙，上下卡片几乎贴住；180 恢复呼吸感。
 const NODE_W = 150;
 const NODE_H = 108;
-const V_SPACING = 150;
+const V_SPACING = 180;
 const H_SPACING = 210;
 const PAD = 70;
 
+// 每项目一份状态（原来是单例 currentProject/currentFm：开第二个 flow-map 标签页会
+// 互相顶掉，刷新恢复后 currentProject 为 null → WS 事件驱动的刷新整个失效）。
+/** @type {Map<string, any>} project → 最近一次 NodeList 快照 */
+const fmByProject = new Map();
+/** @type {Map<string, number>} project → 渲染代（丢弃过期响应） */
+const seqByProject = new Map();
 let ttlTimer = null;
-let currentProject = null;
-let currentFm = null;
+
+/** 当前打开的所有 flow-map 标签页 → [{project, pane}]（DOM 即真相，恢复后同样成立）。 */
+function openFlowMapPanes() {
+  const panes = /** @type {NodeListOf<HTMLElement>} */ (
+    document.querySelectorAll('.canvas-tab-pane[data-tab-id^="flow-map-"]')
+  );
+  return Array.from(panes)
+    .map((pane) => ({ project: (pane.dataset.tabId || '').slice('flow-map-'.length), pane }))
+    .filter((x) => x.project);
+}
 
 // ── 布局：按 out 边算深度层 ────────────────────────────────
 function layoutNodes(fm) {
@@ -141,16 +157,26 @@ function summarizeHeader(fm) {
 }
 
 function renderFlowMap(container, fm, projectName) {
+  const total = (fm?.nodes || []).length;
   const nodes = visibleNodes(fm);
   const { positions, width, height } = layoutNodes(fm);
   const nodesHtml = nodes.map((n) => nodeHtml(n, positions[n.id] || { x: 0, y: 0 }, width / 2)).join('');
+  // 空态三分（旧版一律"暂无节点，项目空闲"，把「未挂载」「TTL 已归档」两种
+  // 有数据的情况说成没数据 —— qa 取证「后端有 3 节点、视图显示暂无节点」即此）。
+  const emptyMsg = fm?.notMounted ? t('flowmap.notMounted')
+    : total > 0 ? t('flowmap.allArchived', { n: total })
+    : t('flowmap.empty');
+  const state = fm?.notMounted ? 'not-mounted' : nodes.length > 0 ? 'nodes' : total > 0 ? 'archived' : 'empty';
+  container.dataset.fmState = state;
+  container.dataset.fmVisible = String(nodes.length);
+  container.dataset.fmTotal = String(total);
   container.innerHTML = `
     <div class="flowmap-card-header">
       <div class="flowmap-card-title" title="${esc(projectName)}">${esc(projectName)}</div>
       <div class="flowmap-summary">${summarizeHeader(fm)}</div>
     </div>
     ${nodes.length === 0
-      ? `<div class="dag-empty"><div class="hint">${esc(t('flowmap.empty'))}</div></div>`
+      ? `<div class="dag-empty"><div class="hint">${esc(emptyMsg)}</div></div>`
       : `<div class="solar-card flowmap-card">
           <div class="solar-scroll">
             <div class="solar-canvas" style="width:${width}px;height:${height}px">
@@ -160,57 +186,66 @@ function renderFlowMap(container, fm, projectName) {
           </div>
         </div>`}
     `;
-  bindFlowMapClicks(container);
-  startTtlTicker(container);
+  bindFlowMapClicks(container, projectName);
+  if (nodes.some((n) => Number.isFinite(n.ttlLeftSec) && n.ttlLeftSec > 0)) startTtlTicker();
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(container));
 }
 
-function bindFlowMapClicks(container) {
+function bindFlowMapClicks(container, projectName) {
   container.querySelectorAll('.fm-node').forEach((el) => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
-      openNodeDetail(el.getAttribute('data-node-id') || '');
+      openNodeDetail(projectName, el.getAttribute('data-node-id') || '');
     });
   });
 }
 
 // 节点结果详情：复用 flowViewers 的 overlay viewer（clean overlay 语义）。
-function openNodeDetail(nodeId) {
-  const node = currentFm?.nodes?.find((n) => n.id === nodeId);
+function openNodeDetail(projectName, nodeId) {
+  const node = fmByProject.get(projectName)?.nodes?.find((n) => n.id === nodeId);
   if (!node) return;
   import('./flowViewers.js').then(({ openNodeResultViewer }) => {
     openNodeResultViewer(esc(node.name), node.agent || '', node.status || '', node.worktree || '', node.result, node.id);
   });
 }
 
-function startTtlTicker(container) {
-  clearInterval(ttlTimer);
-  const ttlEls = container.querySelectorAll('[data-ttl-node]');
-  if (ttlEls.length === 0) return;
-  ttlTimer = setInterval(() => {
+/** TTL 倒计时：一个全局 ticker 驱动所有打开的 flow-map 标签页
+ *  （旧版 interval 绑定单个 container，第二个标签页会把第一个的 ticker 顶掉）。 */
+function startTtlTicker() {
+  if (ttlTimer) return;
+  ttlTimer = setInterval(tickTtl, 1000);
+}
+
+function tickTtl() {
+  const panes = openFlowMapPanes();
+  if (panes.length === 0) { clearInterval(ttlTimer); ttlTimer = null; return; }
+  let anyTtl = false;
+  for (const { project, pane } of panes) {
+    const fm = fmByProject.get(project);
+    const scroll = pane.querySelector('.team-scroll');
+    if (!fm || !scroll) continue;
     let dirty = false;
-    (currentFm?.nodes || []).forEach((n) => {
+    (fm.nodes || []).forEach((n) => {
       if ((n.status === 'completed' || n.status === 'failed' || n.status === 'cancelled') &&
           Number.isFinite(n.ttlLeftSec) && n.ttlLeftSec > 0) {
         n.ttlLeftSec -= 1;
-        if (n.ttlLeftSec <= 0) dirty = true;
+        if (n.ttlLeftSec <= 0) dirty = true; else anyTtl = true;
       }
     });
-    const els = container.querySelectorAll('[data-ttl]');
-    els.forEach((el) => {
-      const id = el.getAttribute('data-ttl-node');
-      const n = (currentFm?.nodes || []).find((x) => x.id === id);
+    if (dirty) { renderFlowMap(scroll, fm, project); continue; }
+    scroll.querySelectorAll('[data-ttl-node]').forEach((el) => {
+      const n = (fm.nodes || []).find((x) => x.id === el.getAttribute('data-ttl-node'));
       if (n) el.textContent = fmtTtl(n.ttlLeftSec);
     });
-    if (dirty && currentProject) renderFlowMap(container, currentFm, currentProject);
-  }, 1000);
+  }
+  // 没有任何倒计时中的节点就停表——空转的 1s 定时器没有意义。
+  if (!anyTtl) { clearInterval(ttlTimer); ttlTimer = null; }
 }
 
 // ── 标签页打开 / 渲染 ────────────────────────────────────
 
 export function openFlowMapTab(projectName) {
   if (!projectName) return;
-  currentProject = projectName;
   openTab(`flow-map-${projectName}`, projectName, { type: 'flow-map', closable: true, pinned: true });
   renderFlowMapTab(projectName);
 }
@@ -218,15 +253,21 @@ export function openFlowMapTab(projectName) {
 function renderFlowMapTab(projectName) {
   const pane = getTabPane(`flow-map-${projectName}`);
   if (!pane) return;
-  if (!pane.querySelector('#team-canvas-style')) {
-    pane.insertAdjacentHTML('afterbegin', FLOW_CSS);
-  }
+  ensureFlowCss();
   const scroll = ensureScroll(pane, `flow-map-scroll-${projectName}`);
-  scroll.innerHTML = `<div class="flowmap-loading">${esc(t('flowmap.loading'))}</div>`;
+  const seq = (seqByProject.get(projectName) || 0) + 1;
+  seqByProject.set(projectName, seq);
+  if (!scroll.querySelector('.flowmap-card-header')) {
+    scroll.dataset.fmState = 'loading';
+    scroll.innerHTML = `<div class="flowmap-loading">${esc(t('flowmap.loading'))}</div>`;
+  }
   fetchFlowMap(projectName).then((fm) => {
-    currentFm = fm;
+    if (seqByProject.get(projectName) !== seq || !scroll.isConnected) return; // 过期响应丢弃
+    fmByProject.set(projectName, fm);
     renderFlowMap(scroll, fm, projectName);
   }).catch(() => {
+    if (seqByProject.get(projectName) !== seq || !scroll.isConnected) return;
+    scroll.dataset.fmState = 'error';
     scroll.innerHTML = `<div class="dag-empty"><div class="hint">${esc(t('flowmap.loadFail'))}</div></div>`;
   });
 }
@@ -243,30 +284,36 @@ function ensureScroll(pane, id) {
   return scroll;
 }
 
-// 标签页关闭时清理 TTL 定时器（不影响项目数据，数据在 service/nodeData）。
+// 标签页关闭时清理该项目的状态（不影响项目数据，数据在服务端 flow-map.json）。
 document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) => {
   const id = e.detail?.id || '';
   if (typeof id === 'string' && id.startsWith('flow-map-')) {
-    clearInterval(ttlTimer);
-    ttlTimer = null;
-    currentProject = null;
-    currentFm = null;
+    const project = id.slice('flow-map-'.length);
+    fmByProject.delete(project);
+    seqByProject.delete(project);
+    // 事件在 pane 移除之前派发，故要把正在关的这个排除掉再判断是否还有活的标签页。
+    if (openFlowMapPanes().filter((x) => x.project !== project).length === 0) {
+      clearInterval(ttlTimer);
+      ttlTimer = null;
+    }
+  }
+});
+
+// 标签页恢复：canvas.js 重建 pane 后派发 canvas-tab-restore——没有这条监听，
+// 恢复出来的 flow-map 是个空壳（无样式、无内容），且 WS 事件也刷不出来。
+window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => {
+  const id = e.detail?.id || '';
+  if (typeof id === 'string' && id.startsWith('flow-map-')) {
+    renderFlowMapTab(id.slice('flow-map-'.length));
   }
 });
 
 let refreshTimer = null;
+/** WS 事件驱动刷新：刷新所有打开的 flow-map 标签页（服务端快照为权威）。 */
 export function refreshOpenFlowMap() {
-  if (!currentProject) return;
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => {
-    fetchFlowMap(currentProject).then((fm) => {
-      currentFm = fm;
-      const pane = getTabPane(`flow-map-${currentProject}`);
-      if (pane) {
-        const scroll = ensureScroll(pane, `flow-map-scroll-${currentProject}`);
-        renderFlowMap(scroll, fm, currentProject);
-      }
-    }).catch(() => { /* 刷新失败保持当前渲染；下次事件/手动开 tab 再拉 */ });
+    openFlowMapPanes().forEach(({ project }) => renderFlowMapTab(project));
   }, 200);
 }
 

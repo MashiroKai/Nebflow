@@ -4,7 +4,7 @@
 // FLOWS tab: DAG node graph with real-time progress. Auto-opens when flows run.
 
 import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab, closeTab, openCanvas, registerCanvasPanelButton } from './canvas.js';
-import { FLOW_CSS } from './flowCss.js';
+import { ensureFlowCss } from './flowCss.js';
 import { esc, authHeaders, overlayRoot, setMailPending } from './flowHelpers.js';
 import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf, populateTileModels } from './flowTeams.js';
 import { renderFlowRunInto, renderFlowsPanel, bindDagNodeClicks, dagCardHtml, renderStellarSystem, bindStellarNodeClicks } from './flowDag.js';
@@ -75,9 +75,7 @@ async function fetchFlowDefs() {
 function renderTeamsTab() {
   const pane = getTabPane('teams');
   if (!pane) return;
-  if (!pane.querySelector('#team-canvas-style')) {
-    pane.insertAdjacentHTML('afterbegin', FLOW_CSS);
-  }
+  ensureFlowCss();
   let scroll = pane.querySelector('#team-scroll');
   if (!scroll) {
     scroll = document.createElement('div');
@@ -99,9 +97,7 @@ function renderTeamsTab() {
 function renderFlowsTab() {
   const pane = getTabPane('flows');
   if (!pane) return;
-  if (!pane.querySelector('#team-canvas-style')) {
-    pane.insertAdjacentHTML('afterbegin', FLOW_CSS);
-  }
+  ensureFlowCss();
   let scroll = pane.querySelector('#flow-scroll-flows');
   if (!scroll) {
     scroll = document.createElement('div');
@@ -167,9 +163,7 @@ function renderFlowsTab() {
 }
 
 function renderStaticDag(pane, dag) {
-  if (!pane.querySelector('#team-canvas-style')) {
-    pane.insertAdjacentHTML('afterbegin', FLOW_CSS);
-  }
+  ensureFlowCss();
   let scroll = pane.querySelector('.team-scroll');
   if (!scroll) {
     scroll = document.createElement('div');
@@ -235,9 +229,7 @@ export function openFlowRunTab(instanceId, flowName) {
 function renderFlowRunTab(instanceId) {
   const pane = getTabPane(`flow-run-${instanceId}`);
   if (!pane) return;
-  if (!pane.querySelector('#team-canvas-style')) {
-    pane.insertAdjacentHTML('afterbegin', FLOW_CSS);
-  }
+  ensureFlowCss();
   let scroll = pane.querySelector('.team-scroll');
   if (!scroll) {
     pane.innerHTML = '';
