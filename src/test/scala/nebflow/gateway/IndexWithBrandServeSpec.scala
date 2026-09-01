@@ -44,7 +44,9 @@ class IndexWithBrandServeSpec extends FunSuite:
     // the contract JSON must appear with REAL quotes in the document —
     // the hijacked encoder would emit \"productName\" instead
     assert(clue(body).contains("\"productName\":\"Nebflow\""))
-    assert(clue(body).contains("\"domain\":\"neblink.example\""))
+    assert(clue(body).contains("\"domain\":\"neblink.space\""))
+    // 2026-09-01 login-chain fix: profileUrl joins the inlined contract
+    assert(clue(body).contains("\"profileUrl\":\"https://neblink.space/profile\""))
   }
 
   test("response headers: explicit Content-Length matches body, no-cache") {

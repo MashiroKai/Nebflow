@@ -2775,6 +2775,16 @@ class RestApiRoutes(
                         .flatMap {
                           case Right(tokens) =>
                             ms.identity.flatMap { identity =>
+                              // C2 (2026-09-01 login-chain fix): id_token picture
+                              // → device identity avatarUrl immediately (Logto
+                              // users get an avatar without waiting for the
+                              // enroll response; neblink-server avatar sync is
+                              // the C1 half, this is the client-side half).
+                              val pictureWrite = tokens.picture match
+                                case Some(pic) if pic.nonEmpty =>
+                                  ms.updateDeviceInfo(avatarUrl = Some(pic))
+                                case _ => IO.unit
+                              pictureWrite *>
                               LogtoDeviceFlow
                                 .register(LogtoDeviceFlow.jdkSend)(
                                   serverUrl,
