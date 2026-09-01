@@ -10,9 +10,11 @@ import { t } from './i18n.js';
 import { fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
 
 // 布局常量（复用 flowDag 视觉节奏）
+// V_SPACING 150 → 180：节点卡片改为按内容伸展后（带 result 摘要的卡片可达 ~134px），
+// 150 的层间距只剩 16px 空隙，上下卡片几乎贴住；180 恢复呼吸感。
 const NODE_W = 150;
 const NODE_H = 108;
-const V_SPACING = 150;
+const V_SPACING = 180;
 const H_SPACING = 210;
 const PAD = 70;
 
