@@ -8,14 +8,14 @@ set -e
 PRODUCT_NAME=Nebflow
 LOWER_NAME=nebflow
 COS_BUCKET=nebflow-releases-1411212853
-GH_ORG=MashiroKai
-GH_REPO=Nebflow
 HOME_DIR=.nebflow
 CONFIG_FILE=nebflow.json
 WRAPPER_NAME=nebflow
 COS_BASE_CN="https://${COS_BUCKET}.cos.ap-nanjing.myqcloud.com"
-GH_REPO_URL="https://github.com/${GH_ORG}/${GH_REPO}"
-GH_API_URL="https://api.github.com/repos/${GH_ORG}/${GH_REPO}"
+# 仓库已转 private（#29，2026-09-01）：GitHub Releases 未认证下载 404——
+# Nebflow jar 下载/版本解析统一走 COS（单一源）。第三方依赖
+# （Homebrew/ripgrep/git-for-windows/HuggingFace 模型/favicon 连通性测试）
+# 与仓库 private 无关，仍走各自公共源。
 
 # Parse flags
 CHANNEL="stable"
@@ -27,20 +27,15 @@ for arg in "$@"; do
     esac
 done
 
-# Resolve version — COS version file first (China-friendly), GitHub API fallback
+# Resolve version — COS version file (single source; GH API private 后不可用)
 if [ "$CHANNEL" = "beta" ]; then
     echo "==> Resolving latest beta version..."
     if [ -z "$VERSION" ]; then
         BETA_TAG=$(curl -fsSL --connect-timeout 5 --max-time 10 \
             "${COS_BASE_CN}/latest-beta-version.txt" 2>/dev/null || true)
         if [ -z "$BETA_TAG" ]; then
-            BETA_TAG=$(curl -fsSL --connect-timeout 10 --max-time 15 \
-                "${GH_API_URL}/releases" \
-                2>/dev/null | grep -m1 '"tag_name".*beta' | sed 's/.*"v\(.*beta[^"]*\)".*/\1/')
-        fi
-        if [ -z "$BETA_TAG" ]; then
-            echo "ERROR: Could not find a beta release."
-            echo "       Visit ${GH_REPO_URL}/releases to check availability."
+            echo "ERROR: Could not find a beta release (COS version file unreachable)."
+            echo "       Check ${COS_BASE_CN}/latest-beta-version.txt"
             exit 1
         fi
         VERSION="$BETA_TAG"
@@ -51,13 +46,8 @@ else
         LATEST_VERSION=$(curl -fsSL --connect-timeout 5 --max-time 10 \
             "${COS_BASE_CN}/latest-version.txt" 2>/dev/null || true)
         if [ -z "$LATEST_VERSION" ]; then
-            LATEST_VERSION=$(curl -fsSL --connect-timeout 10 --max-time 15 \
-                "${GH_API_URL}/releases/latest" \
-                2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/')
-        fi
-        if [ -z "$LATEST_VERSION" ]; then
-            echo "ERROR: Could not resolve latest version."
-            echo "       Visit ${GH_REPO_URL}/releases to check availability."
+            echo "ERROR: Could not resolve latest version (COS version file unreachable)."
+            echo "       Check ${COS_BASE_CN}/latest-version.txt"
             exit 1
         fi
         VERSION="$LATEST_VERSION"
@@ -67,7 +57,6 @@ fi
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/${HOME_DIR}/bin}"
 JAR_NAME="${LOWER_NAME}-assembly-${VERSION}.jar"
 COS_URL="${COS_BASE_CN}/${JAR_NAME}"
-GH_URL="${GH_REPO_URL}/releases/download/v${VERSION}/${JAR_NAME}"
 
 echo ""
 echo "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗"
@@ -272,30 +261,12 @@ download_jar() {
     detect_region
     echo "    Region: ${REGION} (use --cn or --global to override)"
 
-    case "$REGION" in
-        cn)
-            # China: COS first (fast domestic CDN), GitHub fallback
-            if _download "${COS_URL}" "${target}"; then
-                return 0
-            fi
-            echo "       COS unavailable, trying GitHub..."
-            _download "${GH_URL}" "${target}" || {
-                echo "ERROR: Download failed from both sources."
-                exit 1
-            }
-            ;;
-        *)
-            # Global: GitHub first (fast via public release repo), COS fallback
-            if _download "${GH_URL}" "${target}"; then
-                return 0
-            fi
-            echo "       GitHub unavailable, trying COS mirror..."
-            _download "${COS_URL}" "${target}" || {
-                echo "ERROR: Download failed from both sources."
-                exit 1
-            }
-            ;;
-    esac
+    # #29: 仓库 private 后 GitHub Releases 未认证 404——COS 单一源
+    if _download "${COS_URL}" "${target}"; then
+        return 0
+    fi
+    echo "ERROR: Download failed from COS. Check ${COS_URL}"
+    exit 1
 }
 
 _download() {
