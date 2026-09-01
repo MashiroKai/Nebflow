@@ -527,14 +527,31 @@ object ProjectCreateTool extends Tool:
 - Flow Map：`$workspace/.nebflow/flow-map.json`
 - 节点规则：节点是 leaf（无记忆、无 Mail 身份、ephemeral）；结果沿 out 边投递。
 """
+      /** 挂载（新创建 + 已存在幂等共用）。ProjectRuntimeRegistry.mount 本身幂等：
+        * 已挂载 → 直接返回现有 runtime（不重建不覆盖——rootSessionId 已在首次挂载
+        * 用上链根接线；运行中重挂覆盖需重建 engine，试点期无此场景）。 */
+      def mountProject(pd: ProjectDef, created: Boolean): IO[Either[ToolError, String]] =
+        (ctx.actorSystem, ctx.sharedResources) match
+          case (Some(system), Some(res)) =>
+            // P0 接线修复（Explorer c759e8c）：mount 传**上链 rootSessionId**（真正顶层），
+            // 非挂载者自身会话——否则 out="Nebula" 投递目标是挂载者（如 qa-backend），
+            // 节点完成消息注入执行者形成自维持循环。fallback ctx.sessionId（老调用方）。
+            ProjectRuntimeRegistry
+              .mount(pd, system, res, ctx.wsSend, ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("default"))
+              .as {
+                val verb = if created then "created" else "already exists"
+                Right(s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}.")
+              }
+          case _ =>
+            IO.pure(Right(s"Project '${pd.name}' definition ready. Mount requires an agent session."))
+
       ProjectStore.create(name, workspace, description, agentMdTemplate).flatMap {
-        case Left(err) => IO.pure(Left(ToolError(err)))
-        case Right(pd) =>
-          (ctx.actorSystem, ctx.sharedResources) match
-            case (Some(system), Some(res)) =>
-              ProjectRuntimeRegistry.mount(pd, system, res, ctx.wsSend, ctx.sessionId.getOrElse("default")).as(
-                Right(s"Project '$name' created (workspace $workspace) and mounted. Flow Map ready at ${pd.agentFile}.")
-              )
-            case _ =>
-              IO.pure(Right(s"Project '$name' created (definition written). Mount requires an agent session."))
+        case Right(pd) => mountProject(pd, created = true)
+        case Left(err) =>
+          // 幂等挂载（试点重启恢复关键路径）：定义已存在 → 不重建定义、不动脚手架，
+          // 直接挂载（ProjectStore.create 防覆盖返回 Left；load 命中即已存在）。
+          ProjectStore.load(name).flatMap {
+            case Some(pd) => mountProject(pd, created = false)
+            case None => IO.pure(Left(ToolError(err)))
+          }
       }
