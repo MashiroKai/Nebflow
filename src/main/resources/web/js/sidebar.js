@@ -403,7 +403,7 @@ let ttlAdvanceExpanded = false;
 
 /** Backend defaults — mirrors ToolResultTtlConfig.parseStrict bounds. Used
  *  both for rendering before the first echo and for local pre-validation. */
-const TTL_DEFAULTS = { enabled: false, ttlMinutes: 60, keepRecent: 5, minChars: 2000 };
+const TTL_DEFAULTS = { enabled: false, ttlMinutes: 60, keepRecent: 5 };
 
 /** True while a setToolResultTtl is in flight — lets the shared
  *  configUpdateFailed handler attribute the error to THIS panel (the same
@@ -413,7 +413,6 @@ let ttlSavePending = false;
 const TTL_BOUNDS = {
   ttlMinutes: { min: 1, max: 43200 },
   keepRecent: { min: 0, max: 200 },
-  minChars: { min: 0, max: 5000000 },
 };
 
 /** Parse an integer input exactly like the backend parseStrict does — rejects
@@ -468,7 +467,6 @@ function renderTtlSection() {
       <div class="cfg-hint">${t('settings.ttlEnabledHint')}</div>
       ${rowHtml('settings.ttlMinutesLabel', 'settings.ttlMinutesHint', 'ttl-minutes', cfg.ttlMinutes ?? TTL_DEFAULTS.ttlMinutes)}
       ${rowHtml('settings.keepRecentLabel', 'settings.keepRecentHint', 'ttl-keep-recent', cfg.keepRecent ?? TTL_DEFAULTS.keepRecent)}
-      ${rowHtml('settings.minCharsLabel', 'settings.minCharsHint', 'ttl-min-chars', cfg.minChars ?? TTL_DEFAULTS.minChars)}
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="cfg-btn cfg-btn-primary" id="btn-save-ttl">${t('settings.ttlSave')}</button>
       </div>
@@ -495,7 +493,7 @@ function bindTtlEvents() {
     if (toggle) toggle.setAttribute('aria-expanded', String(ttlAdvanceExpanded));
   });
 
-  // Enabled switch — toggles the .on class and the three number inputs'
+  // Enabled switch — toggles the .on class and the two number inputs'
   // disabled state in place (#341: enabled=false → inputs greyed). Local
   // only: nothing reaches the backend until the explicit Save button (#334
   // ruling — editing mid-states must never affect runtime behavior).
@@ -504,7 +502,7 @@ function bindTtlEvents() {
     const flip = () => {
       const on = sw.classList.toggle('on');
       sw.setAttribute('aria-checked', String(on));
-      ['ttl-minutes', 'ttl-keep-recent', 'ttl-min-chars'].forEach(id => {
+      ['ttl-minutes', 'ttl-keep-recent'].forEach(id => {
         const inp = ttlInput(id);
         if (inp) inp.disabled = !on;
       });
@@ -517,21 +515,21 @@ function bindTtlEvents() {
 
   // Explicit save (#334 semantics) — local STRICT pre-validation mirrors the
   // backend parseStrict bounds exactly (ttlMinutes 1–43200, keepRecent 0–200,
-  // minChars 0–5000000, integers only) so a typo is blocked client-side with
-  // an actionable toast instead of a round-trip to configUpdateFailed. The
-  // payload is always the FULL config (four fields mandatory — the backend
-  // replaces the whole node, there is no merge).
+  // integers only) so a typo is blocked client-side with an actionable toast
+  // instead of a round-trip to configUpdateFailed. The payload is always the
+  // FULL config (three fields mandatory — the backend replaces the whole node,
+  // there is no merge). minChars was removed by author ruling 2026-09-01
+  // (over-design); the backend ignores the field if an old config still
+  // carries it.
   document.getElementById('btn-save-ttl')?.addEventListener('click', () => {
     const enabled = document.getElementById('toggle-ttl-enabled')?.classList.contains('on') ?? false;
     const values = {
       ttlMinutes: parseTtlInt(ttlInput('ttl-minutes')?.value),
       keepRecent: parseTtlInt(ttlInput('ttl-keep-recent')?.value),
-      minChars: parseTtlInt(ttlInput('ttl-min-chars')?.value),
     };
     const fieldKey = {
       ttlMinutes: 'settings.ttlMinutesLabel',
       keepRecent: 'settings.keepRecentLabel',
-      minChars: 'settings.minCharsLabel',
     };
     for (const [name, raw] of Object.entries(values)) {
       if (raw === null) {
@@ -546,7 +544,7 @@ function bindTtlEvents() {
     }
     sendWs({
       type: 'setToolResultTtl',
-      config: { enabled, ttlMinutes: values.ttlMinutes, keepRecent: values.keepRecent, minChars: values.minChars },
+      config: { enabled, ttlMinutes: values.ttlMinutes, keepRecent: values.keepRecent },
     });
     ttlSavePending = true; // configUpdateFailed attribution window
   });
