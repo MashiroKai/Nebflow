@@ -35,6 +35,7 @@ export function initActivityBar() {
   initSidePanels();
   bindSettingsButton();
   bindAvatar();
+  bindLegacyPanels();
 
   // Refresh NebLink state now and periodically (only while the page is visible)
   // so the avatar reflects logged-in / pairing state.
@@ -44,6 +45,56 @@ export function initActivityBar() {
   observeSettingsModal();
 
   if (typeof lucide !== 'undefined') createIconsIn(document.getElementById('activity-bar'));
+}
+
+// ── Legacy panels (Teams / Flows) — v5 §3.5 二级入口 ──────
+// The Project button owns the old Team/Flow slot; the legacy panels stay
+// reachable during the pilot behind one "旧面板" entry and disappear in 阶段 3.
+// The Teams/Flows buttons themselves are untouched (same ids, same
+// registerCanvasPanelButton wiring) — this only decides when they are VISIBLE,
+// so the old panels keep working exactly as before.
+function bindLegacyPanels() {
+  const btn = document.getElementById('legacy-btn');
+  const pop = document.getElementById('legacy-pop');
+  if (!btn || !pop) return;
+
+  const setOpen = (open) => {
+    if (open) anchorLegacyPop(btn, pop);
+    pop.hidden = !open;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.classList.toggle('active', open);
+  };
+  const close = () => setOpen(false);
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setOpen(pop.hidden);
+  });
+  // Selecting a legacy panel closes the popover — the panel it opens is the
+  // feedback, a popover left hanging over the Canvas is not.
+  pop.addEventListener('click', (e) => {
+    if (/** @type {HTMLElement} */ (e.target).closest('.legacy-item')) close();
+    e.stopPropagation();
+  });
+  document.addEventListener('click', () => { if (!pop.hidden) close(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) close(); });
+  window.addEventListener('resize', () => { if (!pop.hidden) anchorLegacyPop(btn, pop); });
+}
+
+/** Place the body-level popover next to its Activity Bar button, clamped to
+ *  the viewport (the bar can sit near the bottom edge on short windows). */
+function anchorLegacyPop(btn, pop) {
+  const b = btn.getBoundingClientRect();
+  // Measure while hidden: display:none has no box, so un-hide off-screen first.
+  const wasHidden = pop.hidden;
+  if (wasHidden) { pop.style.visibility = 'hidden'; pop.hidden = false; }
+  const h = pop.offsetHeight;
+  const w = pop.offsetWidth;
+  if (wasHidden) { pop.hidden = true; pop.style.visibility = ''; }
+  const top = Math.min(Math.max(8, b.top + b.height / 2 - h / 2), window.innerHeight - h - 8);
+  const left = Math.min(b.right + 10, window.innerWidth - w - 8);
+  pop.style.top = `${Math.round(top)}px`;
+  pop.style.left = `${Math.round(left)}px`;
 }
 
 // ── Side Bar panel registry ──────────────────────────────
@@ -96,6 +147,22 @@ export function setSideBarCollapsed(collapsed) {
 /** ⌘B / header #sidebar-toggle entry point. */
 export function toggleSideBar() {
   setSideBarCollapsed(!isSideBarCollapsed());
+}
+
+/**
+ * Show a Side Bar panel without the icon-button toggle semantics.
+ *
+ * onPanelButtonClick collapses the bar when you re-click the ACTIVE panel
+ * (VSCode behaviour) — correct for the icon, wrong for a programmatic
+ * "reveal this panel" (Project card → open workspace in the file explorer):
+ * revealing must never collapse the bar the user is about to read.
+ * @param {string} id — registered side panel id (e.g. 'files')
+ */
+export function showSidePanel(id) {
+  if (!sidePanels.has(id)) return;
+  activePanelId = id;
+  localStorage.setItem(LS_PANEL, id);
+  setSideBarCollapsed(false);
 }
 
 function onPanelButtonClick(id) {

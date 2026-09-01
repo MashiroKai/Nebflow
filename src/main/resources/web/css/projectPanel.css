@@ -18,7 +18,10 @@
 }
 
 .project-field-label {
-  flex: 0 0 auto;
+  /* Fixed column so the values line up: 工作区 / Agent.md / 运行中 agent are
+     different widths and a ragged left edge on the value column reads as
+     three unrelated rows instead of one field table. */
+  flex: 0 0 76px;
   font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
 }
@@ -35,6 +38,35 @@
   font-family: var(--font-mono, monospace);
   color: var(--color-text-muted);
 }
+
+/* Running-agent count: a number that ticks with WS events — tabular figures
+   keep the row from jittering when it goes 9 → 10. */
+.project-field-value.tabular {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* Description wraps instead of ellipsing — it is prose, not a path. */
+.project-field-value.desc {
+  white-space: normal;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+/* Agent.md entry — a text affordance, not another icon button: the row
+   already carries the label, so the action reads as a link. */
+.project-link-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: rgb(var(--sapphire) / 1);
+  cursor: pointer;
+  transition: opacity 150ms ease;
+}
+.project-link-btn:hover { opacity: 0.75; text-decoration: underline; }
+.project-link-btn:focus { outline: none; }
+.project-link-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: 4px; }
 
 .project-open-btn {
   flex: 0 0 auto;

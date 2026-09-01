@@ -118,3 +118,34 @@
   color: rgb(var(--sapphire) / 0.85);
   background: rgb(var(--sapphire) / 0.08);
 }
+
+/* 边的投递语义（§2.7）。flow-run 的 .flow-edge.active 是"正在流动"的行军蚁；
+   在项目图里上游 completed 意味着结果**已经**投递过去了——继续跑动画会读成
+   "还在流"。三档区分：已投递=实线加重、等待上游出结果=行军蚁、其余=静止细线。
+   写成 .flow-edge.fm-edge 提高特异度：FLOW_CSS 是运行时注入 head 的 <style>，
+   排在本文件 <link> 之后，同特异度下后者胜。 */
+.flow-edge.fm-edge.delivered {
+  stroke: rgb(var(--sapphire) / 0.75);
+  stroke-width: 2;
+  stroke-dasharray: none;
+  animation: none;
+}
+.flow-edge.fm-edge.inflight {
+  stroke: var(--color-text-muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  animation: flow-dash 1.2s linear infinite;
+  opacity: 0.7;
+}
+.flow-edge.fm-edge.idle {
+  stroke: var(--color-border);
+  stroke-width: 1.5;
+  stroke-dasharray: none;
+  animation: none;
+}
+.fm-edge-arrow.delivered { fill: rgb(var(--sapphire) / 0.75); opacity: 1; }
+.fm-edge-arrow.inflight { fill: var(--color-text-muted); opacity: 0.6; }
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-edge.fm-edge.inflight { animation: none; }
+}
