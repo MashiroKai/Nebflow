@@ -300,9 +300,18 @@ private[agent] trait AgentCore:
       jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
       reminder = CompactService.buildCompactReminder(depth, isLead)
       pending = CompactionJob(jobId, mode, None, replyTo, resumeAfterCompact, postCompactInstruction)
+      // #38 Layer B (2026-09-01): compact 轮输入先剔除超大 ToolResult（落盘
+      // 已有或在此补盘）——压缩轮只需全文概貌 + 路径引用，不需要大结果本体。
+      // 此前 compact turn 跳过 FastMicroCompact/TTL 携带全量历史，历史超
+      // provider 上限时拒绝 → 失败冷却刷新 → 永久死锁（qa-backend 失能根因之二）。
+      // 产物形态（summary 替换历史）不动，只改喂给压缩轮的输入。
+      compactionInput <- CompactUtils.prepareCompactionInput(
+        state.messages,
+        state.sessionId.getOrElse("default")
+      )
       firstState = state
         .withPendingCompaction(Some(pending))
-        .withMessages(state.messages :+ reminder)
+        .withMessages(compactionInput :+ reminder)
       // F3 (2026-08-30, compact-injection-shield G3): audit snapshot of the
       // queues held back during the compaction window. Paired with the
       // "queues-injected-after-compaction" log emitted by the completion
