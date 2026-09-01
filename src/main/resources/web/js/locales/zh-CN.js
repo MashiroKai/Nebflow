@@ -176,8 +176,6 @@ export default {
   'settings.ttlMinutesHint': '超过此时限的结果才可清理（默认 60）',
   'settings.keepRecentLabel': '保留最近 N 条',
   'settings.keepRecentHint': '最近 N 条结果永不清理（默认 5）',
-  'settings.minCharsLabel': '最小清理字符数',
-  'settings.minCharsHint': '短于此长度的结果不清理（默认 2000）',
   'settings.ttlSave': '保存清理配置',
   'settings.ttlSaved': '清理配置已保存',
   'settings.ttlSaveFailed': '清理配置保存失败',
