@@ -5,7 +5,6 @@
 Self-hosted AI coding assistant with multi-agent orchestration and cross-device collaboration.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![GitHub Release](https://img.shields.io/github/v/release/MashiroKai/Nebflow?label=stable)](https://github.com/MashiroKai/Nebflow/releases/latest)
 [![Scala](https://img.shields.io/badge/Scala-3.5.2-red.svg)](https://www.scala-lang.org/)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
 
@@ -215,7 +214,7 @@ Nebflow is actively migrating from Scala to Rust.
 ## Links
 
 - **Website:** [nebflow.space](https://nebflow.space)
-- **Releases:** [GitHub Releases](https://github.com/MashiroKai/Nebflow/releases)
+- **Downloads:** [COS release bucket](https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/)（仓库已转 private，安装/升级走 COS）
 
 ## License
 
