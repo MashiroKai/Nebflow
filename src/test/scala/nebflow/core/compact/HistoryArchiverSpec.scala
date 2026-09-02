@@ -32,10 +32,12 @@ class HistoryArchiverSpec extends CatsEffectSuite:
     io.flatMap {
       case Right(archive) =>
         IO {
+          // 2026-09-02 迁移：按会话归组 sessions/<sessionId>/compaction/（完整 sessionId，不再截短）
           assert(
-            archive.sessionDir.contains("archives/test-ses"),
-            s"sessionDir should contain short sid: ${archive.sessionDir}"
+            archive.sessionDir.contains("/test-session-abc123/compaction"),
+            s"sessionDir should be <sessionsRoot>/<sessionId>/compaction: ${archive.sessionDir}"
           )
+          assert(!archive.sessionDir.contains("/archives/"), s"legacy archives/ path must not appear: ${archive.sessionDir}")
           assert(archive.reportPath.endsWith("-report.md"), s"report should end with -report.md: ${archive.reportPath}")
           assert(archive.beforeJsonPath.endsWith("-before.json"))
           assert(archive.afterJsonPath.endsWith("-after.json"))
@@ -163,16 +165,39 @@ class HistoryArchiverSpec extends CatsEffectSuite:
     }
   }
 
-  test("archiveCompaction shortens sessionId to 8 chars in directory") {
+  test("archiveCompaction groups by full sessionId under compaction/ (no truncation)") {
     val root = os.temp.dir()
     val archiver = makeArchiver(root)
     val longSid = "12345678-1234-1234-1234-123456789abc"
     archiver.archiveCompaction(longSid, None, "A", sampleMessages, sampleMessages, "full").flatMap {
       case Right(archive) =>
         IO {
-          assert(archive.sessionDir.endsWith("/12345678"), s"dir should end with short sid: ${archive.sessionDir}")
+          assert(
+            archive.sessionDir.endsWith(s"/$longSid/compaction"),
+            s"dir should end with full sessionId + compaction: ${archive.sessionDir}"
+          )
         }
       case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
     }
+  }
+
+  test("production wiring: sessions root from PathUtil.dataRoot lands under <dataRoot>/sessions/<sid>/compaction") {
+    val tmpHome = os.temp.dir()
+    val prevRoot = nebflow.core.PathUtil.dataRoot
+    nebflow.core.PathUtil.setDataRoot(tmpHome)
+    // Mirror GatewayMain.scala's wiring expression exactly.
+    val archiver = makeArchiver(nebflow.core.PathUtil.dataRoot / "sessions")
+    archiver
+      .archiveCompaction("wiring-session-01", None, "Nebula", sampleMessages, sampleMessages, "full")
+      .flatMap {
+        case Right(archive) =>
+          IO {
+            val expected = (tmpHome / "sessions" / "wiring-session-01" / "compaction").toString
+            assert(archive.sessionDir.startsWith(expected), s"sessionDir under dataRoot sessions: ${archive.sessionDir}")
+            assert(os.exists(os.Path(archive.reportPath)))
+          }
+        case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
+      }
+      .guarantee(IO(nebflow.core.PathUtil.setDataRoot(prevRoot)))
   }
 end HistoryArchiverSpec
