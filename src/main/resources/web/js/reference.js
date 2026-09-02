@@ -190,14 +190,17 @@ export function refMentionText(ref) {
 
 // ── renderRefBlock ──────────────────────────────────────────────────────
 //
-// mode='input': 输入框引用块（§3.5）——定高 36px 单行截断、⤢ 展开 ≤72px 可滚动、
-//   ✕ 本地删除。A1-A6 断言基准。
-// mode='message': 消息内引用块（§4）——块级卡片（P1/P2 消息流使用）。
+// mode='input': 输入框引用块（§3.5 基座 + 2026-09-02 精简裁定）——单行紧凑 chip
+//   高 28px、面上仅 ①refType 类型图标 ②短标题；元信息（完整路径/页码/来源域）
+//   入 hover title tooltip 与点击 .expanded 预览行（A4 机制沿用，≤72px 可滚动）、
+//   ✕ 本地删除。A1 定高/A2 截断/A4 展开断言基准不变。
+// mode='message': 消息内引用块（§4）——块级卡片（P1/P2 消息流使用，本次未动）。
 
 const EXPAND_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
 const COLLAPSE_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
 const ICONS = {
   file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>',
+  document: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>',
   clipboard: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>',
   code: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
   table: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="12" y1="3" x2="12" y2="21"/></svg>',
@@ -293,55 +296,90 @@ function renderFriendInputRef(ref, onRemove) {
   return wrap;
 }
 
+// ── Input chip: 单行紧凑形态（2026-09-02 作者裁定「引用块标签精简——单行紧凑
+// chip、只留类型图标+短标题」）──
+// 面上只留两类元素：① refType 类型图标（来源类型一眼区分）②短标题（独有标识）。
+// 完整路径/页码范围/来源域名等元信息不在面上占位——hover 走原生 title tooltip
+// （全 app 既有 tooltip 机制），点击整卡走 .expanded 预览行（A4 机制沿用）。
+// 纯展示层：不改 makeReference 产出（display.label 等是 wire 载荷），不碰入口链路。
+
+/** refType → 面上类型图标。按来源类型字段映射（裁定①），非扩展名子型——
+ *  扩展名子型图标只用于消息内卡片（refIcon / meta.icon 路径，不在本裁定域）。 */
+function chipIcon(ref) {
+  switch (ref.refType) {
+    case 'document': return ICONS.document;
+    case 'task': return ICONS.clipboard;
+    case 'html-element': return ICONS.code;
+    default: return ICONS.file;
+  }
+}
+
+/** 短标题（裁定②）——各来源类型的独有标识，全部取自既有字段：
+ *  file→文件名；document(Canvas/页面)→标题；task→任务号+标题；
+ *  html-element→页面标题+<tag>（完整 selector 留给 tooltip/预览行）。 */
+function chipTitle(ref) {
+  const src = ref.source || {};
+  const anc = ref.anchor || {};
+  if (ref.refType === 'task') {
+    return (`#${src.taskId != null ? src.taskId : ''} ${src.title || ''}`).trim();
+  }
+  if (ref.refType === 'document') {
+    return src.title || src.fileName || (src.path || '').split('/').pop() || '';
+  }
+  if (ref.refType === 'html-element') {
+    const tag = anc.tag ? `<${anc.tag}>` : '';
+    return [src.title, tag].filter(Boolean).join(' ') || anc.selector || src.url || '';
+  }
+  return src.fileName || (src.path || '').split('/').pop() || src.title || '';
+}
+
+/** 元信息多行文本（tooltip 与 .expanded 预览行共用，信息不丢）：
+ *  行1 = 类型标签 · 完整来源（路径/URL/session）；行2 = 锚点（页码/行号/selector）；
+ *  行3 = 内容摘要（display.preview，有则附）。 */
+function chipMetaText(ref) {
+  const src = ref.source || {};
+  const anc = ref.anchor || {};
+  let sourceLine = '';
+  if (ref.refType === 'task') sourceLine = src.sessionId ? `session ${src.sessionId}` : '';
+  else sourceLine = src.url || src.path || '';
+  const lines = [[ref.meta?.typeLabel || '', sourceLine].filter(Boolean).join(' · ')];
+  if (ref.refType === 'html-element' && anc.selector) lines.push(`selector: ${anc.selector}`);
+  else if (pageBadge(anc)) lines.push(pageBadge(anc));
+  if (ref.display?.preview) lines.push(ref.display.preview);
+  return lines.filter(Boolean).join('\n');
+}
+
 function renderInputRef(ref, onRemove) {
   if (ref.refType === 'friend-message') return renderFriendInputRef(ref, onRemove);
   const wrap = document.createElement('div');
   wrap.className = 'att-ref';
   wrap.dataset.refType = ref.refType || '';
   wrap.dataset.refId = ref.id || '';
+  const title = chipTitle(ref);
   const mention = refMentionText(ref);
-  const label = ref.display?.label || mention || ref.source?.title || '';
   wrap.setAttribute('role', 'group');
-  wrap.setAttribute('aria-label', `${t('ref.cardAria')}: ${label}`.trim());
-  wrap.title = label;
+  wrap.setAttribute('aria-label', `${t('ref.cardAria')}: ${title || mention}`.trim());
+  wrap.setAttribute('aria-expanded', 'false');
+  // Hover tooltip：完整元信息（原生 title，多行；WebKit/Chromium 逐行渲染）。
+  wrap.title = [title, chipMetaText(ref)].filter(Boolean).join('\n');
 
   const icon = document.createElement('span');
   icon.className = 'att-ref-icon';
-  icon.innerHTML = refIcon(ref);
+  icon.innerHTML = chipIcon(ref);
   icon.setAttribute('aria-hidden', 'true');
 
   const body = document.createElement('span');
   body.className = 'att-ref-body';
   const labelEl = document.createElement('span');
   labelEl.className = 'att-ref-label';
-  labelEl.textContent = label;
-  const opinionEl = document.createElement('span');
-  opinionEl.className = 'att-ref-opinion';
+  labelEl.textContent = title;
+  // 元信息行：面上 display:none（裁定②），仅 .expanded 点击预览态展开。
   const metaEl = document.createElement('span');
   metaEl.className = 'att-ref-meta';
-  metaEl.textContent = [ref.display?.pageBadge, ref.meta?.typeLabel, normalizeSource(ref)].filter(Boolean).join(' · ');
-  metaEl.setAttribute('aria-hidden', 'true');
-  body.append(labelEl, opinionEl, metaEl);
+  metaEl.textContent = chipMetaText(ref);
+  body.append(labelEl, metaEl);
 
-  // ⤢ expand/collapse
-  const expand = document.createElement('button');
-  expand.type = 'button';
-  expand.className = 'att-ref-expand';
-  expand.title = t('ref.expand');
-  expand.setAttribute('aria-expanded', 'false');
-  expand.innerHTML = EXPAND_SVG;
-  expand.setAttribute('aria-hidden', 'true');
-  const toggle = (e) => {
-    if (e && e.stopPropagation) e.stopPropagation();
-    const expanded = wrap.classList.toggle('expanded');
-    expand.setAttribute('aria-expanded', String(expanded));
-    expand.title = expanded ? t('ref.collapse') : t('ref.expand');
-    expand.innerHTML = expanded ? COLLAPSE_SVG : EXPAND_SVG;
-  };
-  expand.addEventListener('click', toggle);
-  wrap.addEventListener('click', toggle);          // clicking the card head also toggles (A4)
-
-  // ✕ remove (local-only, C16 draft semantics)
+  // ✕ remove (local-only, C16 draft semantics — 删除链路不变)
   const rm = document.createElement('button');
   rm.type = 'button';
   rm.className = 'att-ref-remove';
@@ -350,21 +388,13 @@ function renderInputRef(ref, onRemove) {
   rm.setAttribute('aria-label', t('ref.remove'));
   rm.addEventListener('click', (e) => { e.stopPropagation(); onRemove?.(ref); });
 
-  wrap.append(icon, body, expand, rm);
+  // 点击整卡 = 预览开合（A4 沿用；⤢ 按钮按裁定离开标签面，cursor:pointer 提示可点）。
+  wrap.addEventListener('click', () => {
+    const expanded = wrap.classList.toggle('expanded');
+    wrap.setAttribute('aria-expanded', String(expanded));
+  });
 
-  // Live opinion preview (第一行 + 截断 ~180) — typed in the input textarea.
-  // Textarea-scoped + self-cleaning (removes itself once the card is gone —
-  // a re-render clearsinnerHTML so wrap.isConnected flips false).
-  const inputEl = wrap.closest('.input-bar')?.querySelector('textarea')
-    || document.querySelector('#input-bar textarea') || document.querySelector('textarea');
-  const syncOpinion = () => {
-    if (!wrap.isConnected) { inputEl?.removeEventListener('input', syncOpinion); return; }
-    const first = (inputEl?.value || '').split('\n')[0].trim();
-    opinionEl.textContent = first ? truncate(first, 180) : '';
-    opinionEl.classList.toggle('has-opinion', !!first);
-  };
-  syncOpinion();
-  inputEl?.addEventListener('input', syncOpinion);
+  wrap.append(icon, body, rm);
   return wrap;
 }
 
