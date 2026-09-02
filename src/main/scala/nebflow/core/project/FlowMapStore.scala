@@ -104,11 +104,17 @@ class FlowMapStore private (
       if a.nodes.nonEmpty then AtomicJson.writeSync(archivePath, a.asJson.noSpaces)
     }
 
+  /** 加载净化：历史数据存在 out 被写成**字符串** "null" 的行（parseOut 归一化修复
+    * 之前 LLM 以字符串 "null" 断开接线被当字面 target id 存盘；实证归档
+    * n-8a481bd0/n-c90d1140）。语义应为悬空 None——加载时归一，下次落盘即真 null。 */
+  private def normalizeOut(n: NodeDef): NodeDef =
+    n.copy(out = n.out.map(_.trim).filterNot(_.equalsIgnoreCase("null")).filter(_.nonEmpty))
+
   private def loadInitial(): IO[FlowMapState] =
     IO.blocking {
       if os.exists(statePath) then
         jsonParse(os.read(statePath)).flatMap(_.as[FlowMapState]) match
-          case Right(s) => s
+          case Right(s) => s.copy(nodes = s.nodes.transform((_, n) => normalizeOut(n)))
           case Left(e) =>
             logger.warnSync(s"flow-map.json corrupt: $e — starting empty")
             FlowMapState(project = project, updatedAt = System.currentTimeMillis())
@@ -119,7 +125,7 @@ class FlowMapStore private (
     IO.blocking {
       if os.exists(archivePath) then
         jsonParse(os.read(archivePath)).flatMap(_.as[FlowMapArchive]) match
-          case Right(a) => a
+          case Right(a) => a.copy(nodes = a.nodes.transform((_, n) => normalizeOut(n)))
           case Left(_) => FlowMapArchive(project = project)
       else FlowMapArchive(project = project)
     }
