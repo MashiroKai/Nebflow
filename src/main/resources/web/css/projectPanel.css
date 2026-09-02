@@ -18,7 +18,7 @@
 }
 
 .project-field-label {
-  /* Fixed column so the values line up: 工作区 / Agent.md / 运行中 agent are
+  /* Fixed column so the values line up: 工作区 / AGENTS.md / 运行中 agent are
      different widths and a ragged left edge on the value column reads as
      three unrelated rows instead of one field table. */
   flex: 0 0 76px;
@@ -53,7 +53,7 @@
   line-height: 1.5;
 }
 
-/* Agent.md entry — a text affordance, not another icon button: the row
+/* AGENTS.md entry — a text affordance, not another icon button: the row
    already carries the label, so the action reads as a link. */
 .project-link-btn {
   border: none;

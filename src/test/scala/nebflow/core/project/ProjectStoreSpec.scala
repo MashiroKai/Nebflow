@@ -8,7 +8,7 @@ import scala.concurrent.duration.*
 
 /**
  * ProjectStore 单测（#28 阶段 0，§1.1）——项目定义 + 工作区脚手架：
- * - create：projects/<name>/project.json + 工作区 .nebflow/（Agent.md + .gitignore）
+ * - create：projects/<name>/project.json + 工作区根 AGENTS.md（agent 指令模板）+ .nebflow/（.gitignore）
  * - 重复 create 拒绝（防覆盖）
  * - load 往返
  */
@@ -25,7 +25,7 @@ class ProjectStoreSpec extends CatsEffectSuite:
   os.makeDir.all(ws)
 
   private val template =
-    """# demo — Agent.md
+    """# demo — AGENTS.md
 项目级 agent 指令。
 """
 
@@ -39,7 +39,7 @@ class ProjectStoreSpec extends CatsEffectSuite:
       assertEquals(right.name, "demo")
       assertEquals(right.workspace, ws.toString)
       assert(os.exists(ProjectStore.projectJsonPath("demo")))
-      assert(os.exists(ws / ".nebflow" / "Agent.md"))
+      assert(os.exists(ws / "AGENTS.md"), "AGENTS.md template must be at workspace root")
       assert(!os.exists(ws / ".nebflow" / ".gitignore"), ".gitignore must NOT be inside .nebflow/ (R6 position fix)")
       assert(os.exists(ws / ".gitignore"), ".gitignore must be at workspace root (R6)")
       assertEquals(os.read(ws / ".gitignore"), ".nebflow/\n")
@@ -83,7 +83,7 @@ class ProjectStoreSpec extends CatsEffectSuite:
       val content = os.read(ws2 / ".gitignore")
       assert(content.startsWith("# user rules\nnode_modules/\n"), "user content must be preserved")
       assert(content.contains(".nebflow/"), "must append .nebflow/")
-      assertEquals(os.read(ws2 / ".nebflow" / "Agent.md"), template)
+      assertEquals(os.read(ws2 / "AGENTS.md"), template)
   }
 
   test("R6: existing workspace .gitignore already containing .nebflow/ is not duplicated") {

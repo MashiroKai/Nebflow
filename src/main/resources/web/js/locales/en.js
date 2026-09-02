@@ -25,8 +25,8 @@ export default {
   'project.openWorkspace': 'Open in file browser',
   'project.workspaceOpened': 'File browser switched to {path}',
   'project.openWorkspaceFail': 'Could not open the workspace',
-  'project.agentFile': 'Agent.md',
-  'project.agentFileLabel': 'Agent.md',
+  'project.agentFile': 'AGENTS.md',
+  'project.agentFileLabel': 'AGENTS.md',
   'project.agentFileOpen': 'View / edit',
   'project.runningAgents': 'Running agents',
   'project.openFlowMap': 'Open "{name}" Flow Map',
@@ -51,7 +51,7 @@ export default {
   'flowmap.noResult': 'No result',
   'flowmap.runningDetail': 'Node is running; when it completes its result is saved and delivered along the out edge.',
   'flowmap.noResultDetail': 'This node has no result yet (running / waiting / dangling).',
-  'agentFile.hint': 'This file is the project workspace agent instructions (.nebflow/Agent.md); edit and save it.',
+  'agentFile.hint': 'This file is the project workspace agent instructions (AGENTS.md at the workspace root); edit and save it.',
 
   // === Friends & messages (A2A) ===
   'contacts.searchPlaceholder': 'nebflow ID / Email',

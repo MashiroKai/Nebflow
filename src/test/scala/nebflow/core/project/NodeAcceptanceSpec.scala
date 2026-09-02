@@ -119,7 +119,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         emitEvent = (_, _, _) => IO.unit
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / ".nebflow" / "Agent.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
