@@ -8,7 +8,7 @@ import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
-import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow, bindCollapsibleToggle } from './chat.js';
+import { createDurationBadgeElement, formatHm, toggleTimeFormat, applyPopCard, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow } from './chat.js';
 import { buildTurnGroupsForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
 
@@ -143,6 +143,38 @@ function sanitizeForCache(entry) {
     }));
   }
   return e;
+}
+
+// ---------- Compaction card replay (shared by both restore paths) ----------
+// The backend persists the compaction lifecycle as System messages with an
+// i18nKey (chat.compacting / chat.compacted / chat.compactFailed) + params —
+// the SAME strings the live cards are labelled with. Rebuild the SAME
+// .compact-card component (chat.js buildCompactCardRow) instead of the old
+// flat error-card. A "compacting" entry directly followed by a terminal
+// entry is dropped: the live card morphs in place, so history renders ONE
+// final card, not two. Returns null when the entry should be skipped.
+function restoreCompactCardRow(m, next) {
+  if (m.i18nKey === 'chat.compacting') {
+    const nextIsTerminal = next && next.type === 'system'
+      && (next.i18nKey === 'chat.compacted' || next.i18nKey === 'chat.compactFailed');
+    if (nextIsTerminal) return null;
+    // Orphan "compacting" (interrupted / still running at last snapshot) —
+    // render the active spinner card, matching the live start card.
+    return buildCompactCardRow('active', t('chat.compactingCard'));
+  }
+  const p = (m.params && typeof m.params === 'object') ? m.params : {};
+  if (m.i18nKey === 'chat.compacted') {
+    return buildCompactCardRow('done', t('chat.compacted', { before: p.before ?? 0, after: p.after ?? 0, detail: p.detail || '' }));
+  }
+  return buildCompactCardRow('error', t('chat.compactFailed', { attempt: p.attempt ?? 0, maxAttempts: p.maxAttempts ?? 0 }));
+}
+
+/** The persisted user answer that follows an askUser entry (or null). The
+ *  gateway records card answers as a User message right after the askUser
+ *  entry (answers joined with '\n'); '__cancelled__' is the cancel sentinel. */
+function askUserAnswerText(msgs, i) {
+  const nextMsg = msgs[i + 1];
+  return (nextMsg && nextMsg.type === 'user' && nextMsg.text) ? nextMsg.text : null;
 }
 
 // ---------- Attachment rendering (shared by both restore paths) ----------
@@ -422,34 +454,16 @@ export function restoreFromStorage(opts = {}) {
         if (hasBody) attachToolClick(card);
       }
     } else if (m.type === 'askUser') {
+      // Same card component + lock state as the live path (see
+      // restoreFromBackendHistory) — the localStorage fallback stays in
+      // lockstep with the backend-history restore.
       const row = document.createElement('div');
       row.className = 'row ai';
       const bubble = document.createElement('div');
       bubble.className = 'bubble ai';
       row.appendChild(bubble);
       chat.appendChild(row);
-      // Inline option-box render (no showOptions import — avoids chat.js dep)
-      const box = document.createElement('div');
-      box.className = 'option-box';
-      m.items.forEach(item => {
-        const q = document.createElement('div');
-        q.className = 'option-q';
-        q.textContent = item.question;
-        box.appendChild(q);
-        const optsDiv = document.createElement('div');
-        optsDiv.className = 'option-opts';
-        (item.options || []).forEach(opt => {
-          const btn = document.createElement('button');
-          btn.className = 'option-btn';
-          const label = typeof opt === 'string' ? opt : opt.label;
-          btn.textContent = label;
-          btn.disabled = true;
-          btn.style.opacity = '0.5';
-          optsDiv.appendChild(btn);
-        });
-        box.appendChild(optsDiv);
-      });
-      bubble.appendChild(box);
+      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i));
     } else if (m.type === 'askPermission') {
       // Render as disabled permission prompt (will be replaced by interactive version if still pending)
       const row = document.createElement('div');
@@ -554,6 +568,13 @@ export function restoreFromStorage(opts = {}) {
     } else if (m.type === 'system') {
       // Skill-activated system messages are rendered as skill bubbles by the user handler above
       if (m.i18nKey === 'slash.skillActivated') return;
+      // Compaction lifecycle → same .compact-card component as the live path
+      // (parity with restoreFromBackendHistory; see restoreCompactCardRow).
+      if (m.i18nKey === 'chat.compacting' || m.i18nKey === 'chat.compacted' || m.i18nKey === 'chat.compactFailed') {
+        const compactRow = restoreCompactCardRow(m, msgs[i + 1]);
+        if (compactRow) chat.appendChild(compactRow);
+        return;
+      }
       const row = document.createElement('div');
       row.className = 'row error';
       const card = document.createElement('div');
@@ -748,41 +769,17 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         }
       }
     } else if (m.type === 'askUser') {
+      // Same card component as the live renderAskUser path (chat.js
+      // showOptions) + the terminal lock state of the live confirm/cancel
+      // paths — restored answered cards are structurally identical to live
+      // ones (question wrappers, descriptions, previews, Other input).
       const row = document.createElement('div');
       row.className = 'row ai';
       const bubble = document.createElement('div');
       bubble.className = 'bubble ai';
       row.appendChild(bubble);
       fragment.appendChild(row);
-      const box = document.createElement('div');
-      box.className = 'option-box';
-      m.items.forEach(item => {
-        const q = document.createElement('div');
-        q.className = 'option-q';
-        q.textContent = item.question;
-        box.appendChild(q);
-        const optsDiv = document.createElement('div');
-        optsDiv.className = 'option-opts';
-        (item.options || []).forEach(opt => {
-          const btn = document.createElement('button');
-          btn.className = 'option-btn';
-          const label = typeof opt === 'string' ? opt : opt.label;
-          btn.textContent = label;
-          btn.disabled = true;
-          btn.style.opacity = '0.5';
-          optsDiv.appendChild(btn);
-        });
-        box.appendChild(optsDiv);
-      });
-      bubble.appendChild(box);
-      // If the next message is a User answer (from AskUser), show it on the card
-      const nextMsg = msgs[i + 1];
-      if (nextMsg && nextMsg.type === 'user' && nextMsg.text) {
-        const ansDiv = document.createElement('div');
-        ansDiv.className = 'option-answer';
-        ansDiv.textContent = '-> ' + nextMsg.text;
-        box.appendChild(ansDiv);
-      }
+      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i));
     } else if (m.type === 'askPermission') {
       // Render as disabled permission prompt (will be replaced by interactive version if still pending)
       const row = document.createElement('div');
@@ -886,6 +883,14 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       // Skill-activated system messages are rendered as skill bubbles by the user handler above;
       // skip them here as a safety net (e.g. if the preceding user message was missing).
       if (m.i18nKey === 'slash.skillActivated') return;
+      // Compaction lifecycle → same .compact-card component as the live path.
+      // restoreCompactCardRow returns null for a "compacting" entry that the
+      // next terminal entry supersedes (the live card morphs in place).
+      if (m.i18nKey === 'chat.compacting' || m.i18nKey === 'chat.compacted' || m.i18nKey === 'chat.compactFailed') {
+        const compactRow = restoreCompactCardRow(m, msgs[i + 1]);
+        if (compactRow) fragment.appendChild(compactRow);
+        return;
+      }
       const row = document.createElement('div');
       row.className = 'row error';
       const card = document.createElement('div');
