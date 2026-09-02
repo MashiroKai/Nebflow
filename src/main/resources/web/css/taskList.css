@@ -294,6 +294,35 @@
   to   { opacity: 1; transform: translateX(0); }
 }
 
+/* ── Flow Map 节点条目（2026-09-02：节点并入任务列表面板）────────────────
+   复用任务行设计语言；仅新增三件事：终态色点徽章、状态词着色、可点击态。
+   状态色 = 应用既有状态色语义（flowCss solar / base.css 变量，亮暗同源自适应）：
+   running→primary(运行) completed→success(完成) failed→error(失败)
+   cancelled→warning(中止) wiring/pending→muted(排队/等待，与任务 pending 同)。 */
+.task-node {
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.task-node:hover { background: var(--color-frame-hover, rgba(128, 128, 128, 0.08)); }
+
+/* 终态徽章：12px 状态色圆点（替换 .task-check 的描边圆槽） */
+.task-node .task-node-dot {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 50%;
+}
+.task-node-dot-completed { background: var(--color-success, #4caf50); }
+.task-node-dot-failed { background: var(--color-error, #f44336); }
+.task-node-dot-cancelled { background: var(--color-warning, #ff9800); }
+
+/* 状态词着色（wiring/pending 保持 muted 默认） */
+.task-node-word-running { color: var(--color-primary, #07c160); }
+.task-node-word-completed { color: var(--color-success, #4caf50); }
+.task-node-word-failed { color: var(--color-error, #f44336); }
+.task-node-word-cancelled { color: var(--color-warning, #ff9800); }
+
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   .task-toggle:hover {

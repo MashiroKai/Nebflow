@@ -13,6 +13,8 @@
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import state from './state.js';
+import { onMessage, onReconnect } from './ws.js';
+import { fetchProjects, fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
 
 /** 任务工具重做: visible set = pending + in_progress ONLY（「列表只显
  *  pending+in_progress」——completed/failed 完成即消失，6h/2d TTL 管磁盘
@@ -86,6 +88,105 @@ function mergeTeamTasks(tasks, sessionId) {
   }
   return stamped.length ? base.concat(stamped) : base;
 }
+
+// ── Flow Map 节点条目（2026-09-02 作者裁定：节点作为条目并入任务列表）──────
+// 纯前端、零后端改动：数据 = WS 节点广播帧（nodeCreated/Updated/Completed/Removed，
+// 全局广播 {type, project, nodeId, node}，契约 20260901_project-node-contract §2）
+// 增量维护本地缓存 + 连接建立时 NodeList 全量快照（GET /api/projects/<n>/flow-map）
+// 对齐一次；事件驱动，无轮询。与裁定② team 任务同一并入逻辑：只在 Nebula 统一
+// 面板（sessionShowsTeamTasks）渲染。终态节点在 5min TTL 窗口内仍显示（与 Flow Map
+// 一致），到期由 nodeRemoved 移除。
+
+/** project → Map(nodeId → node)。node 附带 _wsTs（本帧落地时刻，防快照回滚）。 */
+const nodeCache = new Map();
+let nodeSnapshotLoaded = false;
+let nodeSnapshotSeq = 0;
+/** 最近一次渲染面板的会话：WS 事件到达时按它判断是否重渲（Nebula 统一面板）。 */
+let lastPanelSessionId = null;
+
+/** 节点时间戳：契约 §4 是 epoch ms 数字；容忍 ISO 字符串（旧帧兼容）。 */
+function nodeTs(n) {
+  const raw = n && (n.completedAt || n.startedAt || n.createdAt);
+  if (typeof raw === 'number') return raw;
+  const ms = Date.parse(raw);
+  return isNaN(ms) ? 0 : ms;
+}
+
+/** 终态且 ttlLeftSec 已到期（≤0）的节点不再显示——与 flowMapTab.visibleNodes 同规则。 */
+function nodeIsLive(n) {
+  const terminal = n.status === 'completed' || n.status === 'failed' || n.status === 'cancelled';
+  if (terminal && Number.isFinite(n.ttlLeftSec) && n.ttlLeftSec <= 0) return false;
+  return true;
+}
+
+/** 面板节点条目数据：全部项目的活跃节点，最近活动在前。 */
+function collectNodes() {
+  const out = [];
+  for (const [project, byId] of nodeCache) {
+    for (const n of byId.values()) {
+      if (n && n.id && nodeIsLive(n)) out.push({ node: n, project });
+    }
+  }
+  out.sort((a, b) => nodeTs(b.node) - nodeTs(a.node));
+  return out;
+}
+
+/** WS 节点事件 → 缓存增量 + 面板重渲。导出供测试直接驱动（与 ws.js 分发等价）。 */
+export function applyNodeWsEvent(msg) {
+  const project = msg && msg.project;
+  if (!project) return;
+  const type = String(msg.type || '');
+  let byId = nodeCache.get(project);
+  if (!byId) { byId = new Map(); nodeCache.set(project, byId); }
+  const node = msg.node;
+  if (type === 'nodeRemoved') {
+    byId.delete(String(msg.nodeId || (node && node.id) || ''));
+  } else if (node && node.id) {
+    byId.set(node.id, { ...node, _wsTs: Date.now() });
+  }
+  if (byId.size === 0) nodeCache.delete(project);
+  rerenderWithNodes();
+}
+
+function rerenderWithNodes() {
+  const sid = lastPanelSessionId;
+  if (!sid || !sessionShowsTeamTasks(sid)) return;
+  renderTaskList(state.sessionTasks[sid] || [], undefined, sid);
+}
+
+/** NodeList 全量快照对齐（连接建立首渲一次 + 断线重连收敛事件缺口）。逐项目容错：
+ *  单项目拉取失败不连累其他项目。防回滚：快照在途期间落地的 WS 增量（_wsTs 晚于
+ *  本次刷新起点）比快照新，保留缓存版本——否则旧快照会把已完成的节点滚回 running。 */
+async function refreshNodeSnapshot() {
+  const seq = ++nodeSnapshotSeq;
+  const fetchStart = Date.now();
+  let projects;
+  try {
+    projects = await fetchProjects();
+  } catch (_) { return; }
+  const results = await Promise.all((projects || []).map(async (p) => {
+    try { return [p.name, await fetchFlowMap(p.name)]; }
+    catch (_) { return [p.name, null]; }
+  }));
+  if (seq !== nodeSnapshotSeq) return; // 已有更新的刷新，丢弃旧结果
+  for (const [name, fm] of results) {
+    if (!fm) continue; // 网络失败保留旧缓存（对账无依据时不破坏现状）
+    const byId = nodeCache.get(name) || new Map();
+    const next = new Map();
+    for (const n of (fm.nodes || [])) {
+      if (!n || !n.id) continue;
+      const cached = byId.get(n.id);
+      next.set(n.id, (cached && (cached._wsTs || 0) > fetchStart) ? cached : { ...n });
+    }
+    if (next.size) nodeCache.set(name, next); else nodeCache.delete(name);
+  }
+  rerenderWithNodes();
+}
+
+for (const evt of ['nodeCreated', 'nodeUpdated', 'nodeCompleted', 'nodeRemoved']) {
+  onMessage(evt, applyNodeWsEvent);
+}
+onReconnect(() => { if (nodeSnapshotLoaded) refreshNodeSnapshot(); });
 
 // ── §15.7 relative time (任务区) ─────────────────────────────────────────
 function formatLastActive(updatedAt) {
@@ -223,6 +324,95 @@ function buildRow(task, sessionId) {
   return row;
 }
 
+// ── Flow Map 节点行（2026-09-02）：复用任务行设计语言 ────────────────────
+
+// 状态词全部复用现有 i18n key（零新增）：wiring→等待 / pending→排队中 /
+// running→运行中 / completed→已完成 / failed→失败 / cancelled→已取消。
+const NODE_WORD_KEY = {
+  wiring: 'flowmap.wait',
+  pending: 'task.pendingShort',
+  running: 'flowmap.run',
+  completed: 'flowmap.done',
+  failed: 'flowmap.fail',
+  cancelled: 'flows.status.cancelled',
+};
+
+/**
+ * 节点条目行：节点名 + 状态徽章 + 相对时间 + project · agent 标注。
+ * 状态徽章映射（复用任务行既有 glyph 语义 + 应用既有状态色）：
+ *   running     → .task-check-spin（与任务 in_progress 同一 spinner）
+ *   wiring/pending → .task-check-box（与任务 pending 同一静态小方框，等待色=muted）
+ *   completed/failed/cancelled → .task-node-dot-{cls} 状态色圆点（success/error/warning）
+ * 状态词按同语义着色（wiring/pending 保持 muted）。点击行 → 打开该项目 Flow Map
+ * 就地视图并高亮节点（动态 import projectTab，避免模块图静态耦合）。
+ */
+function buildNodeRow(node, project) {
+  const st = node.status || 'pending';
+  const cls = NODE_STATUS_CLS[st] || 'pending'; // wiring → pending（等待色）
+  const word = t(NODE_WORD_KEY[st] || 'task.pendingShort');
+
+  const row = document.createElement('div');
+  row.className = `task-item task-node task-node-${cls}`;
+  row.dataset.nodeKey = `${project}:${node.id}`;
+  row.dataset.project = project;
+  row.dataset.nodeId = node.id;
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-label', `${node.name || node.id} — ${word}`);
+  row.title = t('project.openFlowMap', { name: project });
+
+  const check = document.createElement('span');
+  check.className = 'task-check';
+  check.setAttribute('aria-hidden', 'true');
+  if (st === 'running') {
+    check.classList.add('task-check-spin');
+  } else if (cls === 'pending') {
+    check.classList.add('task-check-box');
+  } else {
+    check.classList.add('task-node-dot', `task-node-dot-${cls}`);
+  }
+  row.appendChild(check);
+
+  const text = document.createElement('div');
+  text.className = 'task-item-text';
+  const label = document.createElement('span');
+  label.className = 'task-label';
+  label.textContent = node.name || node.id;
+  text.appendChild(label);
+  const agent = typeof node.agent === 'string' ? node.agent : '';
+  row.classList.add('task-has-meta');
+  const metaEl = document.createElement('span');
+  metaEl.className = 'task-meta';
+  metaEl.setAttribute('aria-hidden', 'true');
+  metaEl.textContent = agent ? `${project} · ${agent}` : project;
+  text.appendChild(metaEl);
+  row.appendChild(text);
+
+  const wordEl = document.createElement('span');
+  wordEl.className = `task-status-word task-node-word-${cls}`;
+  wordEl.setAttribute('aria-hidden', 'true');
+  wordEl.textContent = word;
+  row.appendChild(wordEl);
+
+  const ms = nodeTs(node);
+  if (ms > 0) {
+    const time = document.createElement('span');
+    time.className = 'task-last-active';
+    time.setAttribute('aria-hidden', 'true');
+    // ISO 字符串进 dataset.ts——60s ticker 复用 formatLastActive（Date.parse 可解）
+    time.dataset.ts = new Date(ms).toISOString();
+    time.textContent = formatLastActive(time.dataset.ts);
+    row.appendChild(time);
+  }
+
+  row.addEventListener('click', (e) => {
+    e.stopPropagation();
+    import('./projectTab.js').then(({ openProjectFlowMapAt }) => {
+      openProjectFlowMapAt(project, node.id);
+    }).catch(() => {});
+  });
+  return row;
+}
+
 function buildGroupHeader(label, section) {
   const h = document.createElement('div');
   // Dual class: .task-group-header is the implementation class (CSS hooks),
@@ -264,13 +454,23 @@ export function renderTaskList(tasks, container, sessionId) {
   if (!container) container = document.getElementById('task-list');
   if (!container) return;
 
+  lastPanelSessionId = sessionId || null;
+  // 2026-09-02: Nebula 统一面板并入 Flow Map 节点条目（成员会话面板不显示）。
+  // 首渲全量对齐一次快照（此后事件驱动），补齐页面打开前已在跑的节点。
+  const showNodes = sessionShowsTeamTasks(sessionId);
+  if (showNodes && !nodeSnapshotLoaded) {
+    nodeSnapshotLoaded = true;
+    refreshNodeSnapshot();
+  }
+  const nodes = showNodes ? collectNodes() : [];
+
   // 裁定②: Nebula 会话的任务列表 = 统一视图——session 域任务 + team 域任务
   // （state.teamTasks，teamTaskListUpdate 帧维护）。非 Nebula 会话不变。
   const visible = mergeTeamTasks(tasks, sessionId).filter(isVisible);
-  container.classList.toggle('has-tasks', visible.length > 0);
+  container.classList.toggle('has-tasks', visible.length > 0 || nodes.length > 0);
   container.classList.toggle('task-ws-down', !state.connected);
-  ensureLastActiveTimer(visible.length > 0);
-  if (visible.length === 0) {
+  ensureLastActiveTimer(visible.length > 0 || nodes.length > 0);
+  if (visible.length === 0 && nodes.length === 0) {
     container.innerHTML = '';
     return;
   }
@@ -278,20 +478,20 @@ export function renderTaskList(tasks, container, sessionId) {
   // 裁定 3 (跨区移动) 已退役（#15 单一 progress 区，无跨区）——普通更新直接
   // 重绘，新行带 v1 task-entering（裁定 2 状态过渡）。
   const oldById = collectZoneById(container);
-  redraw(visible, container, sessionId, oldById);
+  redraw(visible, container, sessionId, oldById, nodes);
 }
 
-/** Map taskId → zone ('progress') from the current DOM (entry-animation
+/** Map taskId/nodeKey → zone ('progress') from the current DOM (entry-animation
  *  comparison only — a #15 single-zone panel always resolves 'progress'). */
 function collectZoneById(container) {
   const m = new Map();
-  container.querySelectorAll('.task-item[data-task-id]').forEach((el) => {
-    m.set(el.dataset.taskId, 'progress');
+  container.querySelectorAll('.task-item[data-task-id], .task-item[data-node-key]').forEach((el) => {
+    m.set(el.dataset.taskId || el.dataset.nodeKey, 'progress');
   });
   return m;
 }
 
-function redraw(visible, container, sessionId, oldById) {
+function redraw(visible, container, sessionId, oldById, nodes) {
   // #15: 单一 progress 区，四态进展展示（无 todo 子块、无 failed 沉底，visible
   // 集本就只含 pending+in_progress）: agent active (updatedAt desc), 裁定④
   // 三级分组 team → member → tasks 在排序之后。
@@ -361,6 +561,28 @@ function redraw(visible, container, sessionId, oldById) {
   }
 
   inner.appendChild(progressSection);
+
+  // ── Flow Map 节点条目区（2026-09-02）：按项目分组的节点行，仅在有节点时渲染。
+  // 分组头沿用 team 分组的 .task-subgroup-header 设计语言（project 之于节点 ≙
+  // team 之于任务）；空任务 + 有节点时面板仍打开，progress 区照常显示空态行。 ──
+  if (nodes && nodes.length > 0) {
+    const nodesSection = document.createElement('div');
+    nodesSection.className = 'task-section task-section-nodes';
+    nodesSection.appendChild(buildGroupHeader(t('flowmap.title'), 'nodes'));
+    const byProject = new Map();
+    for (const it of nodes) {
+      if (!byProject.has(it.project)) byProject.set(it.project, []);
+      byProject.get(it.project).push(it);
+    }
+    for (const [project, items] of byProject) {
+      const group = document.createElement('div');
+      group.className = 'task-subgroup';
+      group.appendChild(buildSubgroupHeader(project, 'team'));
+      for (const { node } of items) group.appendChild(buildNodeRow(node, project));
+      nodesSection.appendChild(group);
+    }
+    inner.appendChild(nodesSection);
+  }
 
   body.appendChild(inner);
   card.appendChild(header);

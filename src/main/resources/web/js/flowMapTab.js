@@ -694,8 +694,10 @@ export function openFlowMapTab(projectName) {
 
 /** 把某项目的 Flow Map 渲染进任意容器（projects 标签页就地视图与 legacy 标签页共用）。
  *  双代防陈旧：seq 管 fetch 对 fetch 的先后；gen 管「fetch 在途时 WS 增量已写入缓存」
- *  ——此时这份响应相对缓存是旧的，丢弃并重新对账，否则旧快照会回滚增量状态。 */
-export function renderFlowMapInto(container, projectName) {
+ *  ——此时这份响应相对缓存是旧的，丢弃并重新对账，否则旧快照会回滚增量状态。
+ *  opts.highlightNodeId：渲染完成后滚动定位并闪烁高亮该节点（任务列表节点条目
+ *  点击跳转入口，2026-09-02）。 */
+export function renderFlowMapInto(container, projectName, opts = {}) {
   if (!container) return;
   const seq = (seqByProject.get(projectName) || 0) + 1;
   seqByProject.set(projectName, seq);
@@ -713,11 +715,26 @@ export function renderFlowMapInto(container, projectName) {
     bumpGen(projectName);
     fmByProject.set(projectName, fm);
     renderFlowMap(container, fm, projectName);
+    if (opts.highlightNodeId) highlightFlowMapNode(container, projectName, opts.highlightNodeId);
   }).catch(() => {
     if (seqByProject.get(projectName) !== seq || !container.isConnected) return;
     container.dataset.fmState = 'error';
     container.innerHTML = `<div class="dag-empty"><div class="hint">${esc(t('flowmap.loadFail'))}</div></div>`;
   });
+}
+
+/** 高亮定位某节点（任务列表节点条目点击跳转）：滚动到卡片并闪烁两轮状态环。
+ *  节点不存在（已归档/视图空态）时静默——跳转本身仍然完成了（图已打开）。 */
+export function highlightFlowMapNode(container, projectName, nodeId) {
+  if (!container || !nodeId) return;
+  const el = container.querySelector(`.fm-node[data-node-id="${CSS.escape(String(nodeId))}"]`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'center' });
+  el.classList.remove('fm-node-flash');
+  void el.offsetWidth; // 强制 reflow：连续点击也能重启动画
+  el.classList.add('fm-node-flash');
+  clearTimeout(el.__fmFlashTimer);
+  el.__fmFlashTimer = setTimeout(() => el.classList.remove('fm-node-flash'), 2100);
 }
 
 function renderFlowMapTab(projectName) {

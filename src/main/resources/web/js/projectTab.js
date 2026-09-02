@@ -163,28 +163,42 @@ function bindProjectClicks(scroll) {
 /** 同标签页进入 Flow Map 视图：不新开标签页，当前 projects 标签页就地切换。
  *  pane 结构：.flowmap-nav-bar（左上角返回按钮）+ .flowmap-view-body（Flow Map 渲染体）。
  *  Flow Map 的 fetch/渲染/TTL 由 flowMapTab 负责（renderFlowMapInto），这里只管
- *  视图骨架与返回导航；body 挂 .flowmap-view-body 类供 flowMapTab 的 TTL ticker 定位。 */
-function openFlowMapInPlace(projectName) {
+ *  视图骨架与返回导航；body 挂 .flowmap-view-body 类供 flowMapTab 的 TTL ticker 定位。
+ *  highlightNodeId：渲染完成后滚动定位并高亮该节点（任务列表节点条目点击跳转）。
+ *  同项目视图已打开时走快速路径：不重建 pane DOM（轨道动画不被打断），仅重渲 + 高亮。 */
+function openFlowMapInPlace(projectName, highlightNodeId) {
   if (!projectName) return;
   openTab('projects', t('project.title'), { type: 'projects', closable: true });
   const pane = getTabPane('projects');
   if (!pane) return;
-  ensureFlowCss();
-  pane.dataset.projectsView = 'flow-map';
-  pane.dataset.flowMapProject = projectName;
-  pane.innerHTML = `
-    <div class="flowmap-nav-bar">
-      <button class="flowmap-back-btn" data-back-to-projects type="button" title="${esc(t('project.backToProjects'))}" aria-label="${esc(t('project.backToProjects'))}">
-        <i data-lucide="arrow-left"></i><span>${esc(t('project.backToProjects'))}</span>
-      </button>
-    </div>
-    <div class="flowmap-view-body" data-fm-project="${esc(projectName)}"></div>`;
-  pane.querySelector('[data-back-to-projects]').addEventListener('click', (e) => {
-    e.stopPropagation();
-    showProjectsList();
-  });
-  renderFlowMapInto(pane.querySelector('.flowmap-view-body'), projectName);
-  import('./utils.js').then(({ createIconsIn }) => createIconsIn(pane));
+  const sameView = pane.dataset.projectsView === 'flow-map'
+    && pane.dataset.flowMapProject === projectName;
+  if (!sameView) {
+    ensureFlowCss();
+    pane.dataset.projectsView = 'flow-map';
+    pane.dataset.flowMapProject = projectName;
+    pane.innerHTML = `
+      <div class="flowmap-nav-bar">
+        <button class="flowmap-back-btn" data-back-to-projects type="button" title="${esc(t('project.backToProjects'))}" aria-label="${esc(t('project.backToProjects'))}">
+          <i data-lucide="arrow-left"></i><span>${esc(t('project.backToProjects'))}</span>
+        </button>
+      </div>
+      <div class="flowmap-view-body" data-fm-project="${esc(projectName)}"></div>`;
+    pane.querySelector('[data-back-to-projects]').addEventListener('click', (e) => {
+      e.stopPropagation();
+      showProjectsList();
+    });
+    import('./utils.js').then(({ createIconsIn }) => createIconsIn(pane));
+  }
+  ensureFlowCss(); // same-view 快速路径（如 tab 恢复后直接跳转）也要保证样式在
+  renderFlowMapInto(pane.querySelector('.flowmap-view-body'), projectName,
+    { highlightNodeId: highlightNodeId || '' });
+}
+
+/** 任务列表节点条目点击跳转入口（taskList.js 动态 import）：打开（或聚焦）某项目
+ *  的 Flow Map 就地视图并高亮该节点。 */
+export function openProjectFlowMapAt(projectName, nodeId) {
+  openFlowMapInPlace(projectName, nodeId);
 }
 
 /** 返回项目列表：重置视图状态并重渲列表（projects 标签页同页切换回列表视图）。 */
