@@ -219,9 +219,17 @@ window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => 
   if (e.detail?.id === 'projects') openProjectTab();
 });
 
-// WS 事件驱动：项目运行数变化时若 Project 标签页打开则刷新（契约后）。
+// WS 事件驱动：列表视图的项目卡片（运行数/摘要）防抖刷新。Flow Map 就地视图的
+// 节点事件刷新由 flowMapTab 的增量管线负责（事件 payload 直接 diff 渲染 + 过渡
+// 动画）——这里若也全量重拉会覆盖它的 DOM、杀掉动画，故视图分流时跳过 flow-map。
 import { onMessage } from './ws.js';
-onMessage('nodeCreated', () => rerenderProjectsTab());
-onMessage('nodeUpdated', () => rerenderProjectsTab());
-onMessage('nodeCompleted', () => rerenderProjectsTab());
-onMessage('nodeRemoved', () => rerenderProjectsTab());
+function rerenderProjectsListView() {
+  const pane = getTabPane('projects');
+  if (!pane) return;
+  if (pane.dataset.projectsView === 'flow-map') return;
+  rerenderProjectsTab();
+}
+onMessage('nodeCreated', () => rerenderProjectsListView());
+onMessage('nodeUpdated', () => rerenderProjectsListView());
+onMessage('nodeCompleted', () => rerenderProjectsListView());
+onMessage('nodeRemoved', () => rerenderProjectsListView());
