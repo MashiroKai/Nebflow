@@ -89,21 +89,46 @@ object NodeTools:
         else Right(s.split(',').map(_.trim).filter(_.nonEmpty).toList)
       case Some(_) => Left("'in' must be a node id string or an array of node ids")
 
-  /** 事务内设 out 边（单权威）：旧目标 in 移除 + 新目标 in 追加 + 本节点 out 更新。 */
+  /** 事务内设 out 边（单权威）：旧目标 in 移除 + 新目标 in 追加 + 本节点 out 更新。
+    * 归档感知（fix a「新建边→归档上游」修复 20260903）：from 在归档区（活动区无）
+    * 时——活动区侧照常做旧目标 in 移除 / 新目标 in 追加，from.out 补写归档区
+    *（mutateArchive；归档节点不可复活，仅元数据保持单权威一致）；旧目标也在归档区
+    * 时其 in 不回写（归档 in 表是死数据，避免跨区二跳写）。修复前 `s.nodes(fromId)`
+    * 直接 apply → 归档 from 必 NoSuchElementException——补建 in 边指向已归档上游的
+    * 路径整体崩溃（混合 adds 时还会部分应用后中断，留下半成品接线）。 */
   def setOut(rt: ProjectRuntime, fromId: String, newOut: Option[String]): IO[Unit] =
-    rt.store.mutate { s =>
-      val from = s.nodes(fromId)
-      val oldOut = from.out
-      val afterOld = oldOut match
-        case Some(t) if t != "Nebula" =>
-          s.nodes.get(t).map(tn => s.nodes.updated(t, tn.copy(in = tn.in.filterNot(_ == fromId)))).getOrElse(s.nodes)
-        case _ => s.nodes
-      val afterNew = newOut match
-        case Some(t) if t != "Nebula" =>
-          afterOld.get(t).map(tn => afterOld.updated(t, tn.copy(in = (tn.in :+ fromId).distinct))).getOrElse(afterOld)
-        case _ => afterOld
-      s.copy(nodes = afterNew.updated(fromId, from.copy(out = newOut)))
-    }.void
+    rt.store.getNode(fromId).flatMap {
+      case Some(_) =>
+        rt.store.mutate { s =>
+          val from = s.nodes(fromId)
+          val oldOut = from.out
+          val afterOld = oldOut match
+            case Some(t) if t != "Nebula" =>
+              s.nodes.get(t).map(tn => s.nodes.updated(t, tn.copy(in = tn.in.filterNot(_ == fromId)))).getOrElse(s.nodes)
+            case _ => s.nodes
+          val afterNew = newOut match
+            case Some(t) if t != "Nebula" =>
+              afterOld.get(t).map(tn => afterOld.updated(t, tn.copy(in = (tn.in :+ fromId).distinct))).getOrElse(afterOld)
+            case _ => afterOld
+          s.copy(nodes = afterNew.updated(fromId, from.copy(out = newOut)))
+        }.void
+      case None =>
+        rt.store.findNode(fromId).flatMap {
+          case None => IO.unit // 两区皆无（并发 TTL 迁移已删）→ no-op
+          case Some(archFrom) =>
+            rt.store.mutate { s =>
+              val afterOld = archFrom.out match
+                case Some(t) if t != "Nebula" =>
+                  s.nodes.get(t).map(tn => s.nodes.updated(t, tn.copy(in = tn.in.filterNot(_ == fromId)))).getOrElse(s.nodes)
+                case _ => s.nodes
+              val afterNew = newOut match
+                case Some(t) if t != "Nebula" =>
+                  afterOld.get(t).map(tn => afterOld.updated(t, tn.copy(in = (tn.in :+ fromId).distinct))).getOrElse(afterOld)
+                case _ => afterOld
+              s.copy(nodes = afterNew)
+            } *> rt.store.mutateArchive(a => a.copy(nodes = a.nodes.updatedWith(fromId)(_.map(_.copy(out = newOut))))).void
+        }
+    }
 
   // ── 环检测（对外暴露给测试）────────────────────────────
 
