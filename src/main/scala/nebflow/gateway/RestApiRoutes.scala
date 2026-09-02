@@ -315,24 +315,26 @@ class RestApiRoutes(
         }
       }
 
-    // GET /projects/<name>/agent.md — 项目 AGENTS.md 读取（#27「点击查看」；仿 team rules.md）。
-    // 磁盘位置为工作区根 AGENTS.md（与市面 agent 指令标准统一，2026-09-02 裁定）；
-    // 旧项目仅剩 .nebflow/Agent.md 时回落读旧位置（AC-5 迁移兼容，读旧；URL 不变）。
+    // GET /projects/<name>/agent.md — 项目 agent 指令读取（#27「点击查看」；仿 team rules.md）。
+    // 优先级（2026-09-03 裁定反转）：`.nebflow/Agent.md` 存在则优先读它（slideblocks 中文指令真文件；
+    // os.exists 跟随 symlink——已迁移项目 .nebflow/Agent.md → ../AGENTS.md 经链接读到根文件同一内容，
+    // 语义不变；悬空 symlink 兜底视为不存在），缺失回落工作区根 AGENTS.md。URL 不变。
     case req @ GET -> Root / "projects" / name / "agent.md" =>
       withAuth(req) {
         ProjectStore.load(name).flatMap {
           case None => NotFound(Json.obj("error" -> s"project '$name' not found".asJson))
           case Some(pd) =>
             val ws = os.Path(pd.workspace)
-            val legacy = ws / ".nebflow" / "Agent.md" // 迁移兼容：仅旧项目工作区存在
-            val p = if os.exists(ws / "AGENTS.md") then ws / "AGENTS.md" else legacy
+            val legacy = ws / ".nebflow" / "Agent.md" // 优先位：真文件 / symlink（存在即命中）
+            val p = if os.exists(legacy) then legacy else ws / "AGENTS.md"
             if os.exists(p) then Ok(Json.obj("content" -> os.read(p).asJson))
             else NotFound(Json.obj("error" -> s"project '$name' has no AGENTS.md".asJson))
         }
       }
 
-    // PUT /projects/<name>/agent.md — 保存（写回工作区根 AGENTS.md；旧 .nebflow/Agent.md 保留不动，
-    // 下次 GET 新位置优先。仿 team rules.md）
+    // PUT /projects/<name>/agent.md — 保存（落点与 GET 优先位置一致，2026-09-03 裁定反转：
+    // `.nebflow/Agent.md` 存在→写它——真文件直写（slideblocks），symlink 经链接解析写真实目标
+    // （不替换链接本身，落点内容一致）；缺失/悬空→写工作区根 AGENTS.md。仿 team rules.md）
     case req @ PUT -> Root / "projects" / name / "agent.md" =>
       withAuth(req) {
         ProjectStore.load(name).flatMap {
@@ -341,7 +343,13 @@ class RestApiRoutes(
             req.as[Json].flatMap { body =>
               val content = body.hcursor.downField("content").as[String].getOrElse("")
               IO.blocking {
-                val p = os.Path(pd.workspace) / "AGENTS.md"
+                val ws = os.Path(pd.workspace)
+                val legacy = ws / ".nebflow" / "Agent.md"
+                val p =
+                  if !os.exists(legacy) then ws / "AGENTS.md"
+                  else if os.isLink(legacy) then
+                    os.Path(java.nio.file.Files.readSymbolicLink(legacy.toNIO), legacy / os.up)
+                  else legacy
                 os.makeDir.all(p / os.up)
                 AtomicJson.writeSync(p, content)
               } *> Ok(Json.obj("saved" -> true.asJson))
