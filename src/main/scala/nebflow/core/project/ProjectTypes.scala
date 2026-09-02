@@ -52,8 +52,9 @@ object NodeDef:
 
 /** NodeList 载荷同构的节点 JSON（NodeList 工具 / REST flow-map / WS 事件共用单一序列化点）。
   * WS 事件（nodeCreated/nodeUpdated/nodeRemoved）与快照永远同构，前端增量渲染可直接对齐
-  * 字段集：{id, name, agent, status, in, out, hasWorktree, worktree, result(≤500 字符摘要),
-  * retries, createdAt, completedAt, ttlLeftSec}。 */
+  * 字段集：{id, name, agent, skill, mcp, preset, status, in, out, hasWorktree, worktree,
+  * result(≤500 字符摘要), retries, createdAt, completedAt, ttlLeftSec}。
+  * skill/mcp/preset 为节点配置（子任务 C：Flow Map 卡片徽标与详情展示的数据源）。 */
 object NodePayload:
   def buildNodeJson(node: NodeDef, now: Long): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
@@ -61,6 +62,9 @@ object NodePayload:
       "id" -> node.id.asJson,
       "name" -> node.name.asJson,
       "agent" -> node.agent.asJson,
+      "skill" -> node.skill.asJson,
+      "mcp" -> node.mcp.asJson,
+      "preset" -> node.preset.asJson,
       "status" -> node.status.asJson,
       "in" -> node.in.asJson,
       "out" -> node.out.asJson,
