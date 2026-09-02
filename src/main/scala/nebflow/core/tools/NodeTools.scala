@@ -97,31 +97,27 @@ object NodeTools:
         }
       }
 
-  /** NodeList 工具 / REST flow-map 端点共用的载荷（nodes/worktrees/meta，§2.2 NodeList 返回结构）。 */
+  /** wiring 变更最终态事件（子任务：Flow Map 事件推送补全）：受影响节点逐一读
+    * store 发 nodeUpdated（NodeList 同构 payload）——上游 out 改指 / 旧新目标 in
+    * 增删 / 本节点 in·out 变更都从这里走，事件与 NodeList 数据源一致。
+    * 活动区已消失（TTL/归档）节点不发——归档节点不在 Flow Map 视图内。 */
+  def emitWiringUpdates(rt: ProjectRuntime, nodeIds: List[String]): IO[Unit] =
+    nodeIds.traverse_ { id =>
+      rt.store.getNode(id).flatMap {
+        case Some(n) => rt.engine.emitUpdated(n)
+        case None    => IO.unit
+      }
+    }
+
+  /** NodeList 工具 / REST flow-map 端点共用的载荷（nodes/worktrees/meta，§2.2 NodeList 返回结构）。
+    * 节点序列化统一走 NodePayload.buildNodeJson（与 WS 事件 payload 同构）。 */
   def buildNodeListPayload(rt: ProjectRuntime): IO[Json] =
     for
       s <- rt.store.snapshot
       arch <- rt.store.archiveSnapshot
     yield
       val now = System.currentTimeMillis()
-      val nodes = s.nodes.values.toList.sortBy(_.createdAt).map { n =>
-        val ttlLeft = n.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
-        Json.obj(
-          "id" -> n.id.asJson,
-          "name" -> n.name.asJson,
-          "agent" -> n.agent.asJson,
-          "status" -> n.status.asJson,
-          "in" -> n.in.asJson,
-          "out" -> n.out.asJson,
-          "hasWorktree" -> n.worktree.isDefined.asJson,
-          "worktree" -> n.worktree.asJson,
-          "result" -> n.result.map(r => if r.length > 500 then r.take(500) + "…" else r).asJson,
-          "retries" -> n.retries.asJson,
-          "createdAt" -> n.createdAt.asJson,
-          "completedAt" -> n.completedAt.asJson,
-          "ttlLeftSec" -> ttlLeft.asJson
-        )
-      }
+      val nodes = s.nodes.values.toList.sortBy(_.createdAt).map(n => NodePayload.buildNodeJson(n, now))
       val wtDir = os.Path(rt.project.workspace) / ".nebflow" / "worktrees"
       val worktrees =
         if os.exists(wtDir) then os.list(wtDir).filter(os.isDir).map(_.last).toList
@@ -342,22 +338,27 @@ object NodeEditTool extends Tool:
             withOut.copy(nodes = withOut.nodes.updated(nodeId, withOut.nodes(nodeId).copy(out = out)))
           }
           val createIO: IO[Unit] =
-            mutateIO *>
-              rt.engine.emitCreated(node.copy(in = ins, out = out)) *>
-              // D1 修复（验收④b，@a4b5d184 spec 实证）：in 引用已完成上游（活动区
-              // 或归档区——findNode 兜底）→ 立即投递其结果，等同 §2.3「悬空节点
-              // out 接入下游 = 已完成节点改接」路径。归档节点活动区已消失，
-              // completeNode 的 deliverOut 不会再触发，唯一投递入口就是这里。
-              // 运行中上游不投递（barrier 等待语义——completeNode 时 deliverOut 自然投）。
-              ins.traverse_ { upId =>
-                rt.store.findNode(upId).flatMap {
-                  case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
-                    rt.engine.deliverOutTo(up, nodeId, up.result.get)
-                  case _ => IO.unit
-                }
-              } *>
-              // 入口节点（task 且无 in）→ 创建即运行
-              (if task.isDefined && ins.isEmpty then rt.engine.startNode(nodeId) else IO.unit)
+            mutateIO.flatMap { s =>
+              // 新节点事件（NodeList 同构 payload，in/out 以 store 最终态为准）
+              rt.engine.emitCreated(s.nodes(nodeId)) *>
+                // wiring 变更事件（barrier 合并接线 §2.3）：上游 out 改指本节点 +
+                // out 目标 in 追加——此前只有 nodeCreated，改写的节点无事件（缺失补齐）
+                NodeTools.emitWiringUpdates(rt, ins ++ out.toList.filterNot(_ == "Nebula")) *>
+                // D1 修复（验收④b，@a4b5d184 spec 实证）：in 引用已完成上游（活动区
+                // 或归档区——findNode 兜底）→ 立即投递其结果，等同 §2.3「悬空节点
+                // out 接入下游 = 已完成节点改接」路径。归档节点活动区已消失，
+                // completeNode 的 deliverOut 不会再触发，唯一投递入口就是这里。
+                // 运行中上游不投递（barrier 等待语义——completeNode 时 deliverOut 自然投）。
+                ins.traverse_ { upId =>
+                  rt.store.findNode(upId).flatMap {
+                    case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
+                      rt.engine.deliverOutTo(up, nodeId, up.result.get)
+                    case _ => IO.unit
+                  }
+                } *>
+                // 入口节点（task 且无 in）→ 创建即运行
+                (if task.isDefined && ins.isEmpty then rt.engine.startNode(nodeId) else IO.unit)
+            }
           createIO.as(Right(
             s"Node '$nodename' ($nodeId) created in project '${rt.project.name}'" +
               (if task.isDefined && ins.isEmpty then " — entry node started running." else "") +
@@ -422,6 +423,15 @@ object NodeEditTool extends Tool:
                 inAdds match
                   case Left(err) => IO.pure(Left(ToolError(err)))
                   case Right(adds) =>
+                    // wiring 变更涉及节点集（最终态事件）：本节点（in/out 变更，in 追加
+                    // 也改自身 in）、in 上游（out 改指本节点）、旧 out 目标（in 移除）、
+                    // 新 out 目标（in 追加）
+                    val affected: List[String] =
+                      val fromOut =
+                        if newOut != node.out then
+                          node.out.filter(_ != "Nebula").toList ++ newOut.filter(_ != "Nebula").toList
+                        else Nil
+                      (node.id +: (adds ++ fromOut)).distinct
                     for
                       // in 追加（barrier）：每个上游 out 改指向本节点（原子改投 §2.3）
                       _ <- adds.traverse_ { upId =>
@@ -444,7 +454,9 @@ object NodeEditTool extends Tool:
                             case Some(res) => rt.engine.deliverOutTo(node, t, res)
                             case None => IO.unit
                         case _ => IO.unit
-                      _ <- rt.engine.emitUpdated(node.copy(out = newOut))
+                      // wiring 变更事件（NodeList 同构 payload，store 最终态）——此前只发
+                      // 本节点且 payload 含陈旧 in、改写的上游/新旧目标无事件（缺失补齐）
+                      _ <- NodeTools.emitWiringUpdates(rt, affected)
                     yield Right(
                       s"Node '${node.name}' updated" +
                         (newOut.map(t => s" — out → $t").getOrElse("") + (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else ""))

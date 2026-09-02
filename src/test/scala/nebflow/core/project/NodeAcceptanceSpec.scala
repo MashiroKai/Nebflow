@@ -6,8 +6,8 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.actor.{ActorRef, ActorSystem}
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
+import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, MailTool, NodeEditTool, NodeListTool, TaskTool, ToolContext}
@@ -56,6 +56,15 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+
+  /** 失败 LLM（节点失败气泡验收：非可重试异常 → fail fast → AgentEvent.Failed）。 */
+  private class FailStreamLlm extends LlmHandle[IO]:
+    def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("boom"))
+    def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+    ): Stream[IO, StreamChunk] =
+      Stream.raiseError[IO](new RuntimeException("boom"))
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -117,6 +126,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
+        projectName = name,
         emitEvent = (_, _, _) => IO.unit
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
@@ -759,6 +769,90 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       assertEquals(leadSid, Some("boss-sid"), "same-named team lead must resolve (team routing premise)")
       assert(!rMail.exists(_.contains("dispatcher triggered")), s"Mail must NOT hit project dispatcher, got: $rMail")
       assert(!rMail.exists(_.contains("no mounted ProjectActor")), s"Mail must NOT hit project branch at all, got: $rMail")
+  }
+
+  // ── Node 完成通知蓝气泡 header（NODE · 项目 · 节点 · 状态）──────
+
+  /** 注册一个记录根会话 actor（agentRegistry["nebula-root"]）——deliverToNebula
+    * 会把 ImmediateInput 投给它；测试断言该命令携带的 source/eventType/sender。 */
+  private def registerRecordingRoot(
+    system: ActorSystem,
+    res: SharedResources,
+    rec: Ref[IO, List[AgentCommand]]
+  ): IO[ActorRef[AgentCommand]] =
+    def recBehavior: Behavior[AgentCommand] =
+      Behaviors.receiveMessage[AgentCommand] { cmd =>
+        rec.update(_ :+ cmd).as(recBehavior)
+      }
+    for
+      ref <- system.spawn(recBehavior, s"recroot-${scala.util.Random.nextInt(100000)}")
+      _ <- res.agentRegistry.update(_ + ("nebula-root" -> AgentRecord("nebula-root", ref, AgentKind.Root, "nebula-root")))
+    yield ref
+
+  /** 轮询记录根 actor 直到收到 ImmediateInput 或超时（失败路径可能带一次
+    * ≥5s backoff 重试，15s 窗口兜底）。 */
+  private def pollImmediateInput(
+    rec: Ref[IO, List[AgentCommand]],
+    attempts: Int = 30,
+    interval: FiniteDuration = 500.millis
+  ): IO[Option[AgentCommand.ImmediateInput]] =
+    (1 to attempts).toList.foldLeft(IO.pure(Option.empty[AgentCommand.ImmediateInput])) { (acc, _) =>
+      acc.flatMap {
+        case some @ Some(_) => IO.pure(some)
+        case None =>
+          rec.get.flatMap { cmds =>
+            cmds.collectFirst { case i: AgentCommand.ImmediateInput => i } match
+              case some @ Some(_) => IO.pure(some)
+              case None           => IO.sleep(interval).as(None)
+          }
+      }
+    }
+
+  test("⑬ bubble completed: node out=Nebula → ImmediateInput(source=node, eventType=completed, sender='project/node')") {
+    val ws = tempRoot / "ws-bubble-c"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-bubc-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt <- mountProject("acc-bubble-c", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      rec <- Ref.of[IO, List[AgentCommand]](Nil)
+      _ <- registerRecordingRoot(system, res, rec)
+      r <- nodeEdit(nodeInput("acc-bubble-c", "调研-通知", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("bubble test"), "out" -> Json.fromString("Nebula")), ctx)
+      imm <- pollImmediateInput(rec)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"entry create must succeed, got: $r")
+      assert(imm.isDefined, s"root must receive ImmediateInput for completed node")
+      assertEquals(imm.flatMap(_.source), Some("node"))
+      assertEquals(imm.flatMap(_.eventType), Some("completed"))
+      assertEquals(imm.flatMap(_.sender), Some("acc-bubble-c/调研-通知"),
+        "sender must be '<project>/<node>' for the NODE · project · node · status header")
+      assert(imm.exists(_.text.startsWith("[Node '调研-通知' completed]")), s"text prefix, got ${imm.map(_.text.take(60))}")
+  }
+
+  test("⑬ bubble failed: node LLM failure → ImmediateInput(source=node, eventType=failed, sender='project/node')") {
+    val ws = tempRoot / "ws-bubble-f"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-bubf-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new FailStreamLlm)
+      rt <- mountProject("acc-bubble-f", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      rec <- Ref.of[IO, List[AgentCommand]](Nil)
+      _ <- registerRecordingRoot(system, res, rec)
+      r <- nodeEdit(nodeInput("acc-bubble-f", "调研-失败", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("will fail"), "out" -> Json.fromString("Nebula")), ctx)
+      imm <- pollImmediateInput(rec)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"entry create must succeed, got: $r")
+      assert(imm.isDefined, s"root must receive ImmediateInput for failed node")
+      assertEquals(imm.flatMap(_.source), Some("node"))
+      assertEquals(imm.flatMap(_.eventType), Some("failed"), "failed node must NOT carry eventType=completed")
+      assertEquals(imm.flatMap(_.sender), Some("acc-bubble-f/调研-失败"))
+      assert(imm.exists(_.text.startsWith("[Node '调研-失败' failed]")), s"text prefix, got ${imm.map(_.text.take(60))}")
   }
 
 end NodeAcceptanceSpec
