@@ -23,6 +23,29 @@ class SandboxSpec extends CatsEffectSuite:
       p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) && p.exitValue() == 0
     catch case _: Exception => false
 
+  // [verify-fix] 2026-09-03 独立验证节点：PathUtil.dataRoot 是全局可变状态——同 JVM
+  // 先跑的 suite（MailToolCheckTeamScopeSpec 等）setDataRoot 指向 /private/var/folders
+  // 下临时目录且不复位时，readExtras 的 /private/var 读面会把 dataRoot 整体纳入可读，
+  // 令 H-12①/A.8-4 的「根层拒读」断言偶发失败（全量跑 flaky，单跑稳定）。
+  // 修复：每个用例前把 dataRoot 钉到 home 下一次性目录（不在任何系统读面内），
+  // 用例后还原。生产环境 dataRoot=~/.nebflow 同样不在读面内，行为语义不变。
+  private var savedDataRoot: Option[os.Path] = None
+  private var pinnedDataRoot: Option[os.Path] = None
+
+  override def beforeEach(context: munit.BeforeEach): Unit =
+    savedDataRoot = Some(PathUtil.dataRoot)
+    val pinned = os.home / s".nb-sbx-dataroot-${System.nanoTime()}"
+    os.makeDir.all(pinned / "skills" / "fixture-skill")
+    os.write.over(pinned / "skills" / "fixture-skill" / "SKILL.md", "fixture skill body")
+    os.makeDir.all(pinned / "prompts")
+    os.makeDir.all(pinned / "docs")
+    os.makeDir.all(pinned / "agents")
+    os.write.over(pinned / "agents" / "Nebula.md", "fixture agent")
+    os.write.over(pinned / "auth.json", "\"fixture-token\"")
+    PathUtil.setDataRoot(pinned)
+    pinnedDataRoot = Some(pinned)
+    super.beforeEach(context)
+
   /** 构造以 tmpdir 为根的开启态策略（真实 canonical——macOS /tmp→/private/tmp）。 */
   private def policyIn(tmp: os.Path, cfg: SandboxConfig = SandboxConfig()): SandboxPolicy =
     SandboxPolicy.forRoot(tmp, cfg)
@@ -286,6 +309,11 @@ class SandboxSpec extends CatsEffectSuite:
   override def afterEach(context: munit.AfterEach): Unit =
     // 恢复真实后端注册（GatewayMain 语义），避免污染其他 spec
     SandboxRuntime.backend = SandboxBackend.Unavailable
+    // [verify-fix] 还原被钉住的 dataRoot（见 beforeEach 注释）
+    pinnedDataRoot.foreach(os.remove.all)
+    savedDataRoot.foreach(PathUtil.setDataRoot)
+    pinnedDataRoot = None
+    savedDataRoot = None
     super.afterEach(context)
 
   test("§A.4-4: probe 失败默认 fail-closed——Bash 报 SANDBOX_UNAVAILABLE 不执行") {
