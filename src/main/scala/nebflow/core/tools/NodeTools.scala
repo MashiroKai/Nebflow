@@ -89,21 +89,46 @@ object NodeTools:
         else Right(s.split(',').map(_.trim).filter(_.nonEmpty).toList)
       case Some(_) => Left("'in' must be a node id string or an array of node ids")
 
-  /** 事务内设 out 边（单权威）：旧目标 in 移除 + 新目标 in 追加 + 本节点 out 更新。 */
+  /** 事务内设 out 边（单权威）：旧目标 in 移除 + 新目标 in 追加 + 本节点 out 更新。
+    * 归档感知（fix a「新建边→归档上游」修复 20260903）：from 在归档区（活动区无）
+    * 时——活动区侧照常做旧目标 in 移除 / 新目标 in 追加，from.out 补写归档区
+    *（mutateArchive；归档节点不可复活，仅元数据保持单权威一致）；旧目标也在归档区
+    * 时其 in 不回写（归档 in 表是死数据，避免跨区二跳写）。修复前 `s.nodes(fromId)`
+    * 直接 apply → 归档 from 必 NoSuchElementException——补建 in 边指向已归档上游的
+    * 路径整体崩溃（混合 adds 时还会部分应用后中断，留下半成品接线）。 */
   def setOut(rt: ProjectRuntime, fromId: String, newOut: Option[String]): IO[Unit] =
-    rt.store.mutate { s =>
-      val from = s.nodes(fromId)
-      val oldOut = from.out
-      val afterOld = oldOut match
-        case Some(t) if t != "Nebula" =>
-          s.nodes.get(t).map(tn => s.nodes.updated(t, tn.copy(in = tn.in.filterNot(_ == fromId)))).getOrElse(s.nodes)
-        case _ => s.nodes
-      val afterNew = newOut match
-        case Some(t) if t != "Nebula" =>
-          afterOld.get(t).map(tn => afterOld.updated(t, tn.copy(in = (tn.in :+ fromId).distinct))).getOrElse(afterOld)
-        case _ => afterOld
-      s.copy(nodes = afterNew.updated(fromId, from.copy(out = newOut)))
-    }.void
+    rt.store.getNode(fromId).flatMap {
+      case Some(_) =>
+        rt.store.mutate { s =>
+          val from = s.nodes(fromId)
+          val oldOut = from.out
+          val afterOld = oldOut match
+            case Some(t) if t != "Nebula" =>
+              s.nodes.get(t).map(tn => s.nodes.updated(t, tn.copy(in = tn.in.filterNot(_ == fromId)))).getOrElse(s.nodes)
+            case _ => s.nodes
+          val afterNew = newOut match
+            case Some(t) if t != "Nebula" =>
+              afterOld.get(t).map(tn => afterOld.updated(t, tn.copy(in = (tn.in :+ fromId).distinct))).getOrElse(afterOld)
+            case _ => afterOld
+          s.copy(nodes = afterNew.updated(fromId, from.copy(out = newOut)))
+        }.void
+      case None =>
+        rt.store.findNode(fromId).flatMap {
+          case None => IO.unit // 两区皆无（并发 TTL 迁移已删）→ no-op
+          case Some(archFrom) =>
+            rt.store.mutate { s =>
+              val afterOld = archFrom.out match
+                case Some(t) if t != "Nebula" =>
+                  s.nodes.get(t).map(tn => s.nodes.updated(t, tn.copy(in = tn.in.filterNot(_ == fromId)))).getOrElse(s.nodes)
+                case _ => s.nodes
+              val afterNew = newOut match
+                case Some(t) if t != "Nebula" =>
+                  afterOld.get(t).map(tn => afterOld.updated(t, tn.copy(in = (tn.in :+ fromId).distinct))).getOrElse(afterOld)
+                case _ => afterOld
+              s.copy(nodes = afterNew)
+            } *> rt.store.mutateArchive(a => a.copy(nodes = a.nodes.updatedWith(fromId)(_.map(_.copy(out = newOut))))).void
+        }
+    }
 
   // ── 环检测（对外暴露给测试）────────────────────────────
 
@@ -169,9 +194,24 @@ object NodeTools:
     for
       s <- rt.store.snapshot
       arch <- rt.store.archiveSnapshot
+      // 清场 c-①（20260903 03:04 清场误杀事故复盘）：running 节点携带 liveness
+      // 字段——true = 有在飞执行 fiber（活会话，取消信号可达）；false = 无在飞
+      // fiber（死会话残留/实例重启泄漏，可经 NodeCancel / abandon 收殓）。非
+      // running 节点不带该键（wiring/pending 无会话存活概念、终态无存活可言
+      // ——语义明确）。仅快照（NodeList 工具 / REST flow-map）带；WS 事件单一
+      // 序列化点（NodePayload.buildNodeJson）不动 → 事件键集断言零影响。
+      liveness <- s.nodes.values.toList
+        .filter(_.status == NodeLifecycle.Running)
+        .traverse(n => rt.engine.isRunning(n.id).map(alive => n.id -> alive))
+        .map(_.toMap)
     yield
       val now = System.currentTimeMillis()
-      val nodes = s.nodes.values.toList.sortBy(_.createdAt).map(n => NodePayload.buildNodeJson(n, now))
+      val nodes = s.nodes.values.toList.sortBy(_.createdAt).map { n =>
+        val base = NodePayload.buildNodeJson(n, now)
+        liveness.get(n.id) match
+          case Some(alive) => base.deepMerge(Json.obj("liveness" -> Json.fromBoolean(alive)))
+          case None        => base
+      }
       val wtDir = os.Path(rt.project.workspace) / ".nebflow" / "worktrees"
       val worktrees =
         if os.exists(wtDir) then os.list(wtDir).filter(os.isDir).map(_.last).toList
@@ -205,7 +245,7 @@ object NodeEditTool extends Tool:
 - **out** (optional, single value): node id, "Nebula", or null. Single-value semantics: setting replaces the old out (rewire); arrays are rejected (1-to-many not supported); null disconnects (result retained, re-wire later auto-delivers).
 - **skill** / **mcp** / **worktree** / **preset** (optional): node configuration (worktree must exist under workspace/.nebflow/).
 - **maxRetries** (optional, default 1).
-- **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled) OR wiring/pending node → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes and the topology-cleanup exit for retired wiring/pending nodes; use NodeCancel for running nodes instead.
+- **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled), wiring/pending node, or a STALE RUNNING node whose session is dead (no live execution fiber, e.g. after an instance restart) → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes, the topology-cleanup exit for retired wiring/pending nodes, and the reaping exit for dead-session running nodes. A LIVE running node is refused (mis-kill protection) — use NodeCancel for running nodes instead.
 
 ## Semantics
 - nodename missing → create (agent required; at least one connection required — in, deps, or out; a node with task but zero connections is rejected).
@@ -277,8 +317,33 @@ object NodeEditTool extends Tool:
             s.nodes.values.find(_.name == nodename) match
               case Some(existing) => editNode(rt, existing, agent, task, abandon, inJson, depsJson, outJson, ctx)
               case None =>
-                if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
-                else createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson)
+                // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
+                // 活动区按名未命中 → 归档区按名兜底。归档节点只支持 out 改接（悬空
+                // 完成结果的补投递——「悬空节点后来被接线」的归档变体：editNode 的
+                // completed+newOut 投递分支沿 deliverOutTo 补投，barrier 随之结算）；
+                // 其余编辑域（task/agent/in/deps/配置/abandon）拒绝——归档是显示过期
+                //（TTL 满、结果保留可投递），不是重激活通道（重激活只属于 Blocked 态）。
+                // 修复前：归档名落 createNode → 同名重复节点（拓扑污染）或静默失败。
+                rt.store.archiveSnapshot.flatMap { arch =>
+                  arch.nodes.values.find(_.name == nodename) match
+                    case Some(archived) =>
+                      val forbidden =
+                        agent.isDefined || task.isDefined || skill.isDefined || mcp.isDefined ||
+                          worktree.isDefined || preset.isDefined || maxRetries.isDefined ||
+                          abandon || inJson.isDefined || depsJson.isDefined
+                      if abandon then
+                        IO.pure(Left(ToolError(s"Node '$nodename' is archived (display TTL expired) — abandon is not applicable; it already ages out of views on its own.")))
+                      else if !outJson.isDefined then
+                        IO.pure(Left(ToolError(
+                          s"Node '$nodename' is archived (display TTL expired, result retained). Only 'out' rewiring is supported for archived nodes (result re-delivery).")))
+                      else if forbidden then
+                        IO.pure(Left(ToolError(
+                          s"Node '$nodename' is archived — only 'out' rewiring is supported (result re-delivery); task/agent/in/deps/config edits are not.")))
+                      else editNode(rt, archived, agent, task, abandon, inJson, depsJson, outJson, ctx)
+                    case None =>
+                      if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
+                      else createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson)
+                }
           }
       }
 
@@ -491,19 +556,22 @@ object NodeEditTool extends Tool:
     * 清场时退役节点常是活的 wiring/pending（「悬空活节点」无处置出口），abandon 是
     * 其唯一出口（NodeCancel 仅 running）。wiring/pending 无在飞会话，无中断副作用；
     * 被退役节点的上游其后完成时 deliverOut → startNode 幂等跳过（cancelled ∈ Terminal）。
-    * running 仍排除（在飞会话，走 NodeCancel）。 */
+    *
+    * 死会话 running 收殓（清场 c-②，20260903 03:04 清场误杀事故复盘）：running 且
+    * 无在飞执行 fiber（会话死于传输中断/实例重启泄漏）→ 可收殓（cancelled + TTL）。
+    * 误杀防护（硬约束）：活 running（isRunning=true = 有在飞 fiber，取消信号可达）
+    * 绝对拒绝，只能走 NodeCancel。无复活竞态：running 节点不会被 startNode 二次
+    * spawn（入口状态幂等跳过），死会话不可能复活 → 预检后无需事务内复查 IO 信号。 */
   private def abandonNode(rt: ProjectRuntime, node: NodeDef): IO[Either[ToolError, String]] =
-    if node.status == NodeLifecycle.Running then
-      IO.pure(Left(ToolError(
-        s"Node '${node.name}' is running — abandon only accepts terminal or wiring/pending nodes. Use NodeCancel for running nodes.")))
-    else
+    def doAbandon(allowDeadRunning: Boolean): IO[Either[ToolError, String]] =
       for
         now <- IO(System.currentTimeMillis())
         s <- rt.store.mutate { st =>
           st.nodes.get(node.id) match
-            // R2：fresh 仍非 running（终态/wiring/pending）才写——并发重激活成 running
-            // 时拒写（该窗口内节点已有在飞会话，abandon 不得中断）
-            case Some(fresh) if fresh.status != NodeLifecycle.Running =>
+            // R2：fresh 仍可收殓（终态/wiring/pending；或预检过死会话的 running）
+            // 才写——并发重激活成 running 且未预检死会话时拒写（该窗口内节点已有
+            // 在飞会话，abandon 不得中断）
+            case Some(fresh) if fresh.status != NodeLifecycle.Running || allowDeadRunning =>
               st.copy(nodes = st.nodes.updated(node.id, fresh.copy(
                 status = NodeLifecycle.Cancelled,
                 completedAt = Some(now),
@@ -514,9 +582,19 @@ object NodeEditTool extends Tool:
           case Some(c) if c.status == NodeLifecycle.Cancelled =>
             rt.engine.emitUpdated(c) *>
               FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id, "abandoned",
-                s"node abandoned via NodeEdit (${node.status} → cancelled + display TTL)")
+                s"node abandoned via NodeEdit (${node.status}${if allowDeadRunning && node.status == NodeLifecycle.Running then "/dead-session" else ""} → cancelled + display TTL)")
           case _ => IO.unit
       yield Right(s"Node '${node.name}' abandoned — cancelled with display TTL (archived after TTL, result retained)")
+
+    if node.status == NodeLifecycle.Running then
+      rt.engine.isRunning(node.id).flatMap {
+        case true =>
+          IO.pure(Left(ToolError(
+            s"Node '${node.name}' is running with a live session — abandon refused (mis-kill protection: abandon accepts terminal/wiring/pending and dead-session running only). Use NodeCancel for running nodes.")))
+        case false =>
+          doAbandon(allowDeadRunning = true)
+      }
+    else doAbandon(allowDeadRunning = false)
 
   private def editNode(
     rt: ProjectRuntime,
@@ -771,13 +849,26 @@ object NodeEditTool extends Tool:
                                       // runDetached 的阻塞教训（直接调用会把工具 fiber 卡到节点终态）。
                                       _ <- if adds.nonEmpty then NodeTools.runDetached(rt, s"deliver appended upstream results + settle barrier -> ${node.id}")(
                                         for
-                                          _ <- adds.traverse_ { upId =>
-                                            rt.store.findNode(upId).flatMap {
-                                              // R1：同 create 路径——blocked 反馈串不是可投结果，显式排除
-                                              case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
-                                                rt.engine.deliverOutTo(up, node.id, up.result.get)
-                                              case _ => IO.unit
-                                            }
+                                          // 补投递完整性（fix b「已存在边+归档上游不补投递」修复
+                                          // 20260903）：不只投递本次追加上游——全部 in 上游中
+                                          // 「终态有结果而 deliveredTo 未记」的都补投（findNode
+                                          // 活动/归档兜底）。覆盖两类缺口：①边已存在但投递曾丢失
+                                          //（陈旧 out 覆盖时代的历史悬空，实证 n-219106db：两个
+                                          // 归档 completed 上游在 in 里、deliveredTo 恒空、下游
+                                          // 永久等待）；②新建边指向归档上游（fix a 路径，setOut
+                                          // 归档感知后不再崩溃）。运行中上游天然跳过（无 result，
+                                          // 等 completeNode → deliverOut 正常投）。
+                                          // R1：blocked 反馈串不是可投结果，显式排除（同 create 路径）。
+                                          _ <- rt.store.getNode(node.id).flatMap {
+                                            case Some(nFresh) =>
+                                              nFresh.in.traverse_ { upId =>
+                                                rt.store.findNode(upId).flatMap {
+                                                  case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
+                                                    rt.engine.deliverOutTo(up, node.id, up.result.get)
+                                                  case _ => IO.unit
+                                                }
+                                              }
+                                            case None => IO.unit
                                           }
                                           _ <- rt.store.getNode(node.id).flatMap {
                                             case Some(n) if n.in.nonEmpty && n.in.forall(n.deliveredTo.contains) =>
@@ -861,7 +952,7 @@ object NodeCancelTool extends Tool:
     """Cancel a running node (supervisor cancel semantics) — the dispatcher's stop-loss tool.
 ## When to Use
 - A node is mis-wired, hung, or superseded: cancel it, then rewire or recreate. Result is NOT delivered; upstream results already delivered stay buffered/archived.
-- Cancel target must be running (non-running → no-op with notice)."""
+- Cancel target must be running (non-running → no-op with notice). A running node with a live session gets a cancel signal; a STALE running node (dead session, e.g. after an instance restart) is reaped — finalized as cancelled immediately instead of a fake success."""
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
@@ -891,7 +982,14 @@ object NodeCancelTool extends Tool:
             case Some(n) if n.status != NodeLifecycle.Running =>
               IO.pure(Right(s"Node '${n.name}' is not running (status=${n.status}) — no-op"))
             case Some(n) =>
-              rt.engine.cancelNodeById(nodeId).as(Right(s"Node '${n.name}' cancel signal sent"))
+              // 清场 c-③（20260903 事故复盘）：有在飞执行 fiber → 正常取消信号（原
+              // 语义）；无在飞 fiber（会话已死/实例重启泄漏）→ 直接收殓终态化——修复
+              // 「返回成功但节点状态不落终态」的假成功（假成功下分发器以为已止损，
+              // stale running 永久滞留）。收殓内部二次复核 isRunning（防窗口竞态）。
+              rt.engine.isRunning(nodeId).flatMap {
+                case true => rt.engine.cancelNodeById(nodeId).as(Right(s"Node '${n.name}' cancel signal sent"))
+                case false => rt.engine.reapStaleRunning(nodeId).map(_.left.map(ToolError(_)))
+              }
           }
     }
 
