@@ -102,9 +102,10 @@ class NodeEventPushSpec extends CatsEffectSuite:
     Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
 
   /** NodeList 载荷节点条目的字段集（事件 payload 必须同构——与 NodePayload.buildNodeJson
-    * 单一序列化点对齐；skill/mcp/preset 为子任务 C 节点配置三字段）。 */
+    * 单一序列化点对齐；skill/mcp/preset 为子任务 C 节点配置三字段；blockCount 为
+    * blocked 反馈重入字段（§4.1，恒带）；blockedFeedback 仅 blocked 态才有 → 不入本集合）。 */
   private val NodeListKeys: Set[String] =
-    Set("id", "name", "agent", "skill", "mcp", "preset", "status", "in", "out", "hasWorktree", "worktree", "result", "retries", "createdAt", "completedAt", "ttlLeftSec")
+    Set("id", "name", "agent", "skill", "mcp", "preset", "status", "in", "out", "hasWorktree", "worktree", "result", "retries", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
 
   /** 记录 (type, nodeId) 事件的挂载。 */
   private def mountRecording(

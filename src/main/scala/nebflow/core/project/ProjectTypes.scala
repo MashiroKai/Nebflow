@@ -12,7 +12,9 @@ import io.circe.syntax.*
  * - TTL 只管显示（终态 +24h 从活动图消失），归档结果全文保留可长期接线投递
  */
 
-/** 节点生命周期（§2.1）：pending/running/completed/failed/cancelled + wiring 扩展。 */
+/** 节点生命周期（§2.1）：pending/running/completed/failed/cancelled + wiring 扩展。
+  * blocked（20260902 反馈重入设计 §1.1）：turn 正常结束但节点声明无法继续——
+  * 停止传播 + 触发重入的终态；永不过期（ttlExpireAt=None，待办语义 §1.4）。 */
 object NodeLifecycle:
   val Wiring = "wiring"
   val Pending = "pending"
@@ -20,8 +22,20 @@ object NodeLifecycle:
   val Completed = "completed"
   val Failed = "failed"
   val Cancelled = "cancelled"
+  val Blocked = "blocked"
 
-  val Terminal: Set[String] = Set(Completed, Failed, Cancelled)
+  val Terminal: Set[String] = Set(Completed, Failed, Cancelled, Blocked)
+
+/** 结构化 blocked 反馈（设计 §1.3 JSON 体）：BlockedReader 从节点最终输出解析。 */
+case class BlockedFeedback(
+  category: String, // upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other
+  detail: String,
+  suggestion: String
+)
+
+object BlockedFeedback:
+  given Configuration = Configuration.default
+  given Codec[BlockedFeedback] = ConfiguredCodec.derived
 
 /** Node 数据模型（§2.1 JSON 示例字段全量）。 */
 case class NodeDef(
@@ -40,6 +54,10 @@ case class NodeDef(
   result: Option[String] = None,
   retries: Int = 0,
   maxRetries: Int = 1,
+  /** 该节点身份累计被 blocked 轮数（防循环计数 §3.1；NodeEdit 重激活不清零）。 */
+  blockCount: Int = 0,
+  /** 最近一次 blocked 的结构化反馈（§1.4；重激活后保留供历史参照）。 */
+  blockedFeedback: Option[BlockedFeedback] = None,
   createdAt: Long,
   startedAt: Option[Long] = None,
   completedAt: Option[Long] = None,
@@ -58,7 +76,7 @@ object NodeDef:
 object NodePayload:
   def buildNodeJson(node: NodeDef, now: Long): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
-    Json.obj(
+    val baseFields = List(
       "id" -> node.id.asJson,
       "name" -> node.name.asJson,
       "agent" -> node.agent.asJson,
@@ -72,10 +90,20 @@ object NodePayload:
       "worktree" -> node.worktree.asJson,
       "result" -> node.result.map(r => if r.length > 500 then r.take(500) + "…" else r).asJson,
       "retries" -> node.retries.asJson,
+      // blocked 反馈重入（设计 §4.1）：blockCount 恒带；blockedFeedback 仅 blocked 态才有结构化体
+      "blockCount" -> node.blockCount.asJson,
       "createdAt" -> node.createdAt.asJson,
       "completedAt" -> node.completedAt.asJson,
       "ttlLeftSec" -> ttlLeft.asJson
     )
+    val feedbackFields = node.blockedFeedback.toList.map { bf =>
+      "blockedFeedback" -> Json.obj(
+        "category" -> bf.category.asJson,
+        "detail" -> bf.detail.asJson,
+        "suggestion" -> bf.suggestion.asJson
+      )
+    }
+    Json.obj((baseFields ++ feedbackFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
@@ -105,6 +133,9 @@ case class ProjectDef(
   description: Option[String] = None,
   workspace: String,
   agentFile: String,
+  /** blocked 反馈档位（设计 §7.1）：auto（默认，自动重入）| escalate-only（blocked 直接升级 Nebula）。
+    * 可选字段——存量 project.json 无此字段时反序列化默认 None → 挂载时取 auto。 */
+  feedbackMode: Option[String] = None,
   createdAt: Long
 )
 

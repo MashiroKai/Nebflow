@@ -87,10 +87,10 @@ class NodeToolsSpec extends FunSuite:
     assert(NodeTools.parseOut(Some(Json.fromString(""))).isLeft)
   }
 
-  test("NodeLifecycle: Terminal = completed/failed/cancelled, excludes running/pending/wiring") {
+  test("NodeLifecycle: Terminal = completed/failed/cancelled/blocked, excludes running/pending/wiring") {
     assertEquals(
       NodeLifecycle.Terminal,
-      Set(NodeLifecycle.Completed, NodeLifecycle.Failed, NodeLifecycle.Cancelled)
+      Set(NodeLifecycle.Completed, NodeLifecycle.Failed, NodeLifecycle.Cancelled, NodeLifecycle.Blocked)
     )
     assert(!NodeLifecycle.Terminal.contains(NodeLifecycle.Running))
     assert(!NodeLifecycle.Terminal.contains(NodeLifecycle.Pending))

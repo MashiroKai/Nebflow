@@ -92,6 +92,8 @@ object ProjectRuntimeRegistry:
               project.workspace,
               rootSessionId,
               project.name,
+              // blocked 反馈档位（§7.1）：project.json 可选字段 feedbackMode，缺省 auto
+              project.feedbackMode.getOrElse(FeedbackRouter.ModeAuto),
               emitNodeEvent(project.name, wsSend)
             )
           )
@@ -131,6 +133,9 @@ object ProjectActor:
 
   enum ProjectCommand:
     case TriggerDispatcher(taskText: String, rootSessionId: String)
+    /** blocked 反馈重入（设计 §2.2）：FeedbackRouter 裁决通过 → spawn 全新分发器会话
+      * 注入重入 prompt。无 rootSessionId 参数——重入是系统发起，用挂载时的 root。 */
+    case ReenterDispatcher(nodeId: String, feedback: BlockedFeedback, blockCount: Int)
     case CancelNode(nodeId: String)
     case TtlTick
     case Shutdown
@@ -166,11 +171,13 @@ object ProjectActor:
     loop
 
   def apply(cfg: ProjectConfig): Behavior[ProjectCommand] =
-    // 无内部状态（状态在 store/engine），保持同一 behavior 即可（InteractionHub 模式）。
+    // 无内部状态（状态在 store/engine/router），保持同一 behavior 即可（InteractionHub 模式）。
     lazy val behavior: Behavior[ProjectCommand] =
       Behaviors.receiveMessage {
         case ProjectCommand.TriggerDispatcher(taskText, rootSessionId) =>
-          spawnDispatcher(cfg, behavior, taskText, rootSessionId)
+          dispatchTask(cfg, behavior, taskText, rootSessionId)
+        case ProjectCommand.ReenterDispatcher(nodeId, feedback, blockCount) =>
+          dispatchReentry(cfg, behavior, nodeId, feedback, blockCount, cfg.rootSessionId)
         case ProjectCommand.CancelNode(nodeId) =>
           cfg.engine.cancelNodeById(nodeId).as(behavior)
         case ProjectCommand.TtlTick =>
@@ -182,7 +189,70 @@ object ProjectActor:
       }
     behavior
 
-  private def spawnDispatcher(cfg: ProjectConfig, same: Behavior[ProjectCommand], taskText: String, rootSessionId: String): IO[Behavior[ProjectCommand]] =
+  /** 新任务形态 prompt（spawnDispatcher 双形态之一，现状文案保留）。 */
+  private def newTaskPrompt(project: ProjectDef, snapshot: FlowMapState, taskText: String): String =
+    s"""你是项目「${project.name}」的任务分发器。当前 Flow Map 快照（NodeList 数据源）：
+       |```json
+       |${snapshot.asJson.noSpaces}
+       |```
+       |
+       |任务：$taskText
+       |
+       |先 NodeList 读现状，再按需用 NodeEdit 建节点/接线/改接。所有 Node 工具调用必须带 project=${project.name} 参数。无需回报——拓扑与状态已落 Flow Map。""".stripMargin
+
+  /** 重入调整形态 prompt（spawnDispatcher 双形态之二，设计 §2.2 原文照抄——
+    * 含节点名/id/blockCount/反馈三字段/Flow Map 快照注入/四动作选择/abandon 说明/「无需回报」）。 */
+  private def reentryPrompt(project: ProjectDef, snapshot: FlowMapState, node: NodeDef, feedback: BlockedFeedback, blockCount: Int): String =
+    s"""你是项目「${project.name}」的任务分发器——本轮是【节点反馈重入调整】，不是新任务。
+       |
+       |节点 ${node.name}（${node.id}）报告 blocked（第 $blockCount 轮）：
+       |  原因分类：${feedback.category}
+       |  说明：${feedback.detail}
+       |  对拓扑的建议：${feedback.suggestion}
+       |
+       |当前 Flow Map 快照（NodeList 数据源）：
+       |```json
+       |${snapshot.asJson.noSpaces}
+       |```
+       |
+       |先 NodeList 读现状（重点关注：status=blocked 节点、其下游 pending 节点），
+       |再从以下动作中选择并执行（NodeEdit / NodeCancel）：
+       |1. 任务可修 → NodeEdit 编辑该节点（改 task/agent/in/out）触发重激活（blockCount 自动 +1）；
+       |2. 任务应拆分 → 建新节点子图替换，NodeEdit abandon=true 标记旧节点放弃；
+       |3. agent 能力不匹配 → 换 agent 重建；
+       |4. 需外部条件 / 无法提出与上轮实质不同的调整 → abandon + 不重派（避免无效循环）。
+       |所有 Node 工具调用必须带 project=${project.name}。无需回报——拓扑与状态已落 Flow Map。""".stripMargin
+
+  private def dispatchTask(cfg: ProjectConfig, same: Behavior[ProjectCommand], taskText: String, rootSessionId: String): IO[Behavior[ProjectCommand]] =
+    cfg.engine.store.snapshot.flatMap { snapshot =>
+      spawnDispatcher(cfg, same, newTaskPrompt(cfg.project, snapshot, taskText), rootSessionId, "")
+    }
+
+  private def dispatchReentry(
+    cfg: ProjectConfig,
+    same: Behavior[ProjectCommand],
+    nodeId: String,
+    feedback: BlockedFeedback,
+    blockCount: Int,
+    rootSessionId: String
+  ): IO[Behavior[ProjectCommand]] =
+    cfg.engine.store.getNode(nodeId).flatMap {
+      case None =>
+        logger.warn(s"Project '${cfg.project.name}' reentry skipped — node '$nodeId' not found").as(same)
+      case Some(node) =>
+        cfg.engine.store.snapshot.flatMap { snapshot =>
+          spawnDispatcher(cfg, same, reentryPrompt(cfg.project, snapshot, node, feedback, blockCount), rootSessionId,
+            s" (reentry round $blockCount: ${node.name})")
+        }
+    }
+
+  private def spawnDispatcher(
+    cfg: ProjectConfig,
+    same: Behavior[ProjectCommand],
+    prompt: String,
+    rootSessionId: String,
+    tag: String
+  ): IO[Behavior[ProjectCommand]] =
     val project = cfg.project
     EntityLoader.loadAgent(DispatcherAgentName).flatMap {
       case None =>
@@ -191,16 +261,6 @@ object ProjectActor:
       case Some(entry) =>
         val sessionId = s"$DispatcherSessionPrefix${java.util.UUID.randomUUID().toString.take(8)}"
         for
-          snapshot <- cfg.engine.store.snapshot
-          prompt =
-            s"""你是项目「${project.name}」的任务分发器。当前 Flow Map 快照（NodeList 数据源）：
-               |```json
-               |${snapshot.asJson.noSpaces}
-               |```
-               |
-               |任务：$taskText
-               |
-               |先 NodeList 读现状，再按需用 NodeEdit 建节点/接线/改接。所有 Node 工具调用必须带 project=${project.name} 参数。无需回报——拓扑与状态已落 Flow Map。""".stripMargin
           ref <- NodeRunner.spawnAgentActor(
             cfg.system,
             NodeRunner.SpawnParams(
@@ -258,6 +318,6 @@ object ProjectActor:
             )
           )
           _ <- (ref ! AgentCommand.UserInput(text = prompt, replyTo = Some(bridgeRef))).void
-          _ <- logger.info(s"Project '${project.name}' dispatcher session spawned: $sessionId")
+          _ <- logger.info(s"Project '${project.name}' dispatcher session spawned: $sessionId$tag")
         yield same
     }
