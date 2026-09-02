@@ -3,8 +3,8 @@
 // 2026-09-02 20:59).
 //
 // Verifies:
-//   T1 默认基调/状态映射 — factory state = Neon base + the ruling-② default
-//      map, hue zeroed (no double-shift of mapped boards).
+//   T1 默认基调/状态映射 — factory state = Ocean base + the 2026-09-03
+//      default map, hue zeroed (no double-shift of mapped boards).
 //   T2 亮暗切换 — applyTheme swaps the dark/light board via setPalette and
 //      NEVER re-triggers transitionPulse (v8.2.1 F5).
 //   T3 持久化 — localStorage selection (base/map) drives boards; corrupt or
@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(HERE, '..', 'src', 'main', 'resources', 'web');
 const DOCS = join(process.env.HOME, '.nebflow', 'docs', 'Nebflow');
-const SHOT_STEM = '20260902_micorb-9state-matrix';
+const SHOT_STEM = '20260903_micorb-iceberg-9states';
 const MIME = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html' };
 
 /** Static server for the web dir + harness fixture pages. */
@@ -71,7 +71,14 @@ test.beforeEach(async ({ page }) => {
   await page.waitForFunction('window.__harnessReady === true && window.__micorbTest.ready');
 });
 
-const NEON_DARK = { a: '#3DF2F2', b: '#F05AD8', c: '#1A1A66' };
+const OCEAN_DARK   = { a: '#3FE0D0', b: '#2E86E8', c: '#063A66' };
+const AURORA_DARK  = { a: '#4BE3A0', b: '#6E7BF2', c: '#0B4A46' };
+const NEBULA_DARK  = { a: '#8FA2FF', b: '#DC7CF0', c: '#2A1E5C' };
+const NEON_DARK    = { a: '#3DF2F2', b: '#F05AD8', c: '#1A1A66' };
+const ICEBERG_DARK = { a: '#BEE9FF', b: '#3EC8E8', c: '#0A2E52' };
+const MAGMA_DARK   = { a: '#FF9A3D', b: '#F0483C', c: '#7A1220' };
+const ASH_DARK     = { a: '#B9C2D2', b: '#8D99AE', c: '#2B3242' };
+const OCEAN_LIGHT  = { a: '#1FBFBB', b: '#1F6FD0', c: '#05304F' };
 
 /** Assert snap().pal matches a hex board within 1/255. */
 async function expectBoard(page, hexes) {
@@ -85,17 +92,17 @@ async function expectBoard(page, hexes) {
 
 const LS_KEY = 'nebflow_micOrb.palette'; // key('micOrb.palette') under the fallback brand
 
-test('T1: factory defaults — Neon base + default state map, hue zeroed', async ({ page }) => {
+test('T1: factory defaults — Ocean base + default state map, hue zeroed', async ({ page }) => {
   const hexByState = {
-    idle:         NEON_DARK,
-    listening:    { a: '#3FE0D0', b: '#2E86E8', c: '#063A66' }, // ocean
+    idle:         OCEAN_DARK,   // 基调 (ruling 2026-09-03: 开箱即 Ocean)
+    listening:    AURORA_DARK,
     processing:   { a: '#FFB3A0', b: '#8FA0F5', c: '#5C3A78' }, // dawn
-    'nebula-busy':{ a: '#4BE3A0', b: '#6E7BF2', c: '#0B4A46' }, // aurora
-    'bg-agents':  { a: '#8FA2FF', b: '#DC7CF0', c: '#2A1E5C' }, // nebula
-    frozen:       { a: '#35D98A', b: '#B8E05A', c: '#0A5230' }, // emerald
-    'frozen-error': { a: '#FF9A3D', b: '#F0483C', c: '#7A1220' }, // magma
-    'mic-error':    { a: '#FF9A3D', b: '#F0483C', c: '#7A1220' }, // magma
-    offline:      { a: '#B9C2D2', b: '#8D99AE', c: '#2B3242' }, // ash
+    'nebula-busy':NEBULA_DARK,
+    'bg-agents':  NEON_DARK,
+    frozen:       ICEBERG_DARK,
+    'frozen-error': MAGMA_DARK,
+    'mic-error':    MAGMA_DARK,
+    offline:      ASH_DARK,
   };
   const webglOk = (await page.evaluate('window.__micorbTest.snap()')).webglOk;
   expect(webglOk, 'headless Chromium must provide WebGL (SwiftShader)').toBe(true);
@@ -120,20 +127,20 @@ test('T1: factory defaults — Neon base + default state map, hue zeroed', async
 });
 
 test('T2: theme switch swaps dark/light board with no transition pulse (F5)', async ({ page }) => {
-  await page.evaluate(() => window.__micorbTest.apply('listening'));
-  await expectBoard(page, { a: '#3FE0D0', b: '#2E86E8', c: '#063A66' }); // ocean dark
+  await page.evaluate(() => window.__micorbTest.apply('idle'));
+  await expectBoard(page, OCEAN_DARK); // idle → 基调 → ocean dark
   // Wait out the state-switch pulse (soft-start + decay), then flip theme.
   await page.waitForFunction('window.__micorbTest.snap().pulse < 0.001', null, { timeout: 5000 });
   await page.emulateMedia({ colorScheme: 'light' });
   await page.waitForTimeout(120); // a few rAF frames for the listener
   const snap = await page.evaluate('window.__micorbTest.snap()');
   expect(snap.pulse).toBe(0); // F5: theme switch must not re-trigger the pulse
-  await expectBoard(page, { a: '#1FBFBB', b: '#1F6FD0', c: '#05304F' }); // ocean light
+  await expectBoard(page, OCEAN_LIGHT);
   // State kept through the theme swap; back to dark restores the dark board.
-  expect(snap.state).toBe('listening');
+  expect(snap.state).toBe('idle');
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.waitForTimeout(120);
-  await expectBoard(page, { a: '#3FE0D0', b: '#2E86E8', c: '#063A66' });
+  await expectBoard(page, OCEAN_DARK);
 });
 
 test('T3: persisted selection drives boards; corrupt/unknown data falls back', async ({ page }) => {
@@ -146,20 +153,20 @@ test('T3: persisted selection drives boards; corrupt/unknown data falls back', a
   await page.evaluate(() => window.__micorbTest.apply('listening'));
   await expectBoard(page, { a: '#FFA26B', b: '#F060A0', c: '#7A2050' }); // sunset
 
-  // Corrupt JSON → full factory fallback (Neon + default map).
+  // Corrupt JSON → full factory fallback (Ocean + default map).
   await page.addInitScript(() => localStorage.setItem('nebflow_micOrb.palette', '{corrupt'));
   await page.goto(base + '/harness');
   await page.waitForFunction('window.__harnessReady === true && window.__micorbTest.ready');
-  await expectBoard(page, NEON_DARK);
+  await expectBoard(page, OCEAN_DARK);
 
   // Unknown base + unknown map value → dropped entries, defaults hold.
   await page.addInitScript((v) => localStorage.setItem('nebflow_micOrb.palette', v),
     JSON.stringify({ base: 'nope', map: { listening: 'nope', frozen: 'emerald' }, custom: { base: 'nope', dark: { a: 'zzz' } } }));
   await page.goto(base + '/harness');
   await page.waitForFunction('window.__harnessReady === true && window.__micorbTest.ready');
-  await expectBoard(page, NEON_DARK); // idle → default base
+  await expectBoard(page, OCEAN_DARK); // idle → default base (ocean)
   await page.evaluate(() => window.__micorbTest.apply('listening'));
-  await expectBoard(page, { a: '#3FE0D0', b: '#2E86E8', c: '#063A66' }); // ocean default
+  await expectBoard(page, AURORA_DARK); // aurora default
   await page.evaluate(() => window.__micorbTest.apply('frozen'));
   await expectBoard(page, { a: '#35D98A', b: '#B8E05A', c: '#0A5230' }); // valid map entry kept
 });
@@ -197,7 +204,7 @@ test('T4: appearance section — base/map/custom edits persist, live orb follows
 
   // Reset → factory defaults everywhere.
   await page.click('#orb-appearance-reset');
-  await expectBoard(page, NEON_DARK);
+  await expectBoard(page, OCEAN_DARK);
   dump = await page.evaluate('window.__micorbTest.localStorageDump()');
   expect(dump[LS_KEY]).toBeUndefined();
 
