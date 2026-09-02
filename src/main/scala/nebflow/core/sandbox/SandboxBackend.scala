@@ -69,13 +69,17 @@ object SandboxBackend:
     /** profile 缓存：key = writableRoots + hooks 拒绝路径（root 集合有限，§A.4-2）。 */
     private val profileCache = new ConcurrentHashMap[String, String]()
 
-    /** 启动 probe（§A.4-4）：只读 profile 跑 /bin/true，exit 0 才可用。 */
+    /** 启动 probe（§A.4-4）：只读 profile 跑 /bin/bash -c true，exit 0 才可用。
+      * [verify-fix] 2026-09-03 独立验证节点：原用 /bin/true，但本机（Darwin 25.4）
+      * 无 /bin/true（仅 /usr/bin/true）→ execvp ENOENT → probe 恒败 → fail-closed
+      * 拒绝一切沙箱 Bash。改用 /bin/bash -c true：与 wrap() 硬编码的执行二进制
+      * 完全一致——probe 探的正是沙箱路径真正依赖的那个文件。 */
     def probe(sandboxExecPath: String = SandboxExecPath): Boolean =
       val isMac = sys.props.getOrElse("os.name", "").toLowerCase.contains("mac")
       if !isMac then false
       else
         try
-          val pb = new ProcessBuilder(sandboxExecPath, "-p", "(version 1)(allow default)", "--", "/bin/true")
+          val pb = new ProcessBuilder(sandboxExecPath, "-p", "(version 1)(allow default)", "--", "/bin/bash", "-c", "true")
           pb.redirectInput(new java.io.File("/dev/null"))
           pb.redirectErrorStream(true)
           val proc = pb.start()
