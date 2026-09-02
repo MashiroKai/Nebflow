@@ -5,6 +5,10 @@
 
 import { openTab, getTabPane, hasTab, isCanvasOpen, setActiveTab, closeTab, openCanvas, registerCanvasPanelButton } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
+// Side-effect import: rAF orbit driver for .solar-node dots (seamless loop +
+// coast-to-endpoint + fade on completion). Watches the DOM itself; no per-tab
+// wiring needed — any pane that renders solar nodes gets animated.
+import './flowAnim.js';
 import { esc, authHeaders, overlayRoot, setMailPending } from './flowHelpers.js';
 import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf, populateTileModels } from './flowTeams.js';
 import { renderFlowRunInto, renderFlowsPanel, bindDagNodeClicks, dagCardHtml, renderStellarSystem, bindStellarNodeClicks } from './flowDag.js';
