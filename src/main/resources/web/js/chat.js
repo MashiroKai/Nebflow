@@ -1377,39 +1377,52 @@ export function renderSystemBubble(text) {
 }
 
 // ---------- Compaction status card ----------
-// Live-rendered status card for the compactStart → compactComplete/Failed
-// lifecycle: one card that morphs in place (spinning → done/failed) instead
-// of two plain notice bubbles. History restore is unchanged — the persisted
-// system text still renders as quiet notice cards after a refresh.
+// Status card for the compactStart → compactComplete/Failed lifecycle: one
+// card that morphs in place (spinning → done/failed) instead of two plain
+// notice bubbles. buildCompactCardRow is the SINGLE source of the card DOM —
+// the live lifecycle and the history-replay restore (persistence.js) both
+// build their cards through it, so a refreshed history shows the same card
+// component as the live view.
 const compactCheckSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 const compactFailSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+/** Build one compaction card row. kind: 'active' (spinner) | 'done' (check)
+ *  | 'error' (cross). label is plain text and is escaped here. startTs rides
+ *  on the card as data-start-ts (live only — replay has no start time). */
+export function buildCompactCardRow(kind, label, startTs = 0) {
+  const row = document.createElement('div');
+  row.className = 'row notice';
+  const card = document.createElement('div');
+  card.className = 'compact-card';
+  card.dataset.state = kind;
+  if (startTs) card.dataset.startTs = String(startTs);
+  const icon = kind === 'done'
+    ? `<span class="compact-card-icon ok">${compactCheckSvg}</span>`
+    : kind === 'error'
+      ? `<span class="compact-card-icon err">${compactFailSvg}</span>`
+      : '<span class="compact-card-spinner"></span>';
+  card.innerHTML = icon + `<span class="compact-card-label">${escapeHtml(label)}</span>`;
+  row.appendChild(card);
+  return row;
+}
 
 function findActiveCompactCard(view) {
   return view?.dom?.chat?.querySelector('.compact-card[data-state="active"]') || null;
 }
 
-function appendCompactCard(view, state, innerHtml, startTs) {
+function appendCompactCard(view, state, label, startTs) {
   const chat = view?.dom?.chat;
   if (!chat) return null;
-  const row = document.createElement('div');
-  row.className = 'row notice';
-  const card = document.createElement('div');
-  card.className = 'compact-card';
-  card.dataset.state = state;
-  if (startTs) card.dataset.startTs = startTs;
-  card.innerHTML = innerHtml;
-  row.appendChild(card);
+  const row = buildCompactCardRow(state, label, startTs);
   chat.appendChild(row);
   smartScroll();
-  return card;
+  return row.querySelector('.compact-card');
 }
 
 export function renderCompactStartCard(view = activeView) {
   if (!view?.dom?.chat) return;
   if (findActiveCompactCard(view)) return; // one active card at a time
-  appendCompactCard(view, 'active',
-    `<span class="compact-card-spinner"></span><span class="compact-card-label">${escapeHtml(t('chat.compactingCard'))}</span>`,
-    Date.now());
+  appendCompactCard(view, 'active', t('chat.compactingCard'), Date.now());
 }
 
 export function renderCompactDoneCard(view = activeView, { before, after, detail } = {}) {
@@ -1418,28 +1431,26 @@ export function renderCompactDoneCard(view = activeView, { before, after, detail
   const elapsed = startTs ? Math.max(1, Math.round((Date.now() - startTs) / 1000)) : 0;
   let label = t('chat.compacted', { before, after, detail: detail || '' });
   if (elapsed) label += t('chat.compactElapsed', { seconds: elapsed });
-  const inner = `<span class="compact-card-icon ok">${compactCheckSvg}</span><span class="compact-card-label">${escapeHtml(label)}</span>`;
   if (active) {
     active.dataset.state = 'done';
     delete active.dataset.startTs;
-    active.innerHTML = inner;
+    active.innerHTML = `<span class="compact-card-icon ok">${compactCheckSvg}</span><span class="compact-card-label">${escapeHtml(label)}</span>`;
   } else {
     // No active card (view was restored/switched mid-compaction) — append a
     // card directly in its final state.
-    appendCompactCard(view, 'done', inner, 0);
+    appendCompactCard(view, 'done', label, 0);
   }
   smartScroll();
 }
 
 export function renderCompactFailCard(view = activeView, text) {
   const active = findActiveCompactCard(view);
-  const inner = `<span class="compact-card-icon err">${compactFailSvg}</span><span class="compact-card-label">${escapeHtml(text)}</span>`;
   if (active) {
     active.dataset.state = 'error';
     delete active.dataset.startTs;
-    active.innerHTML = inner;
+    active.innerHTML = `<span class="compact-card-icon err">${compactFailSvg}</span><span class="compact-card-label">${escapeHtml(text)}</span>`;
   } else {
-    appendCompactCard(view, 'error', inner, 0);
+    appendCompactCard(view, 'error', text, 0);
   }
   smartScroll();
 }
@@ -1984,6 +1995,96 @@ export function closeAskUserCard(sessionId, requestId) {
     return true;
   }
   return false;
+}
+
+// ---------- AskUser history replay ----------
+/** History-replay twin of renderAskUser: rebuilds the SAME option-box card
+ *  through the SAME showOptions component (question wrappers, descriptions,
+ *  previews, Other textarea, confirm/cancel row), then applies the terminal
+ *  lock state — the exact end-state of the live confirm path — so a restored
+ *  answered card is structurally identical to the live one. persistence.js
+ *  calls this from restoreFromBackendHistory / restoreFromStorage; unanswered
+ *  trailing cards are re-rendered interactively by main.js (renderAskUser).
+ *  answerText: the persisted user answer that followed the askUser entry
+ *  (answer slots joined with '\n' by the gateway askUserAnswer recording),
+ *  or null when no answer was recorded. The '__cancelled__' sentinel
+ *  reproduces the live cancel end-state: everything disabled, buttons
+ *  visible, no answer line. */
+export function renderAskUserHistory(bubble, items, answerText) {
+  if (!Array.isArray(items) || items.length === 0) return;
+  try {
+    showOptions(bubble, items, null, null, null, undefined, undefined);
+  } catch (e) {
+    console.error('[askUser] history render failed:', e);
+    bubble.textContent = t('chat.failedRender');
+    return;
+  }
+  const box = bubble.querySelector('.option-box');
+  if (!box) return;
+  box.classList.remove('ob-fade-in'); // settled card — no creation animation on replay
+  const cancelled = answerText === '__cancelled__';
+  if (answerText && !cancelled) markAnsweredPick(box, items, answerText);
+  // Lock — same end-state as the live confirm path (confirmBtn.onclick) or
+  // cancel path (cancelBtn.onclick) depending on the recorded answer.
+  box.querySelectorAll('.option-btn, .option-confirm, .option-cancel').forEach(el => { el.disabled = true; });
+  if (!cancelled) {
+    const confirmBtn = box.querySelector('.option-confirm');
+    const cancelBtn = box.querySelector('.option-cancel');
+    if (confirmBtn) confirmBtn.style.display = 'none';
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    const ansDiv = document.createElement('div');
+    ansDiv.className = 'option-answer';
+    ansDiv.textContent = '-> ' + formatHistoryAnswer(answerText);
+    box.appendChild(ansDiv);
+  }
+}
+
+/** Mark the picked option buttons from a persisted answer string so the
+ *  restored card shows the same picked state the user left it in. Answer
+ *  slots are joined with '\n' (gateway askUserAnswer recording); a slot is a
+ *  JSON array string for multi-select questions. A slot matching no preset
+ *  label is the Other free text — restored into the textarea with the Other
+ *  button picked, exactly as the live card looked at confirm time. */
+function markAnsweredPick(box, items, answerText) {
+  const slots = answerText.split('\n');
+  const wrappers = box.querySelectorAll('.option-q-wrapper');
+  items.forEach((item, qi) => {
+    const slot = slots[qi];
+    if (slot == null || slot === '') return;
+    const wrapper = wrappers[qi];
+    if (!wrapper) return;
+    let labels = null;
+    if (slot.startsWith('[')) {
+      try { const parsed = JSON.parse(slot); if (Array.isArray(parsed)) labels = parsed; } catch { /* plain text */ }
+    }
+    const texts = labels || [slot];
+    const btns = Array.from(wrapper.querySelectorAll('.option-btn'));
+    // Preset options carry data-label (both single and multi branches); the
+    // Other button never does (multi marks it data-other, single marks nothing).
+    let matched = false;
+    let otherBtn = null;
+    btns.forEach(btn => {
+      if (btn.dataset.label === undefined) { otherBtn = btn; return; }
+      if (texts.includes(btn.dataset.label)) { btn.classList.add('picked'); matched = true; }
+    });
+    if (!matched && otherBtn) {
+      otherBtn.classList.add('picked');
+      const input = wrapper.querySelector('.option-custom-input');
+      if (input) { input.value = slot; input.style.display = ''; }
+    }
+  });
+}
+
+/** Format a persisted answer string the way the live confirm path renders
+ *  its option-answer line: multi-select slots as '[a, b]', slots joined
+ *  with ', '. */
+function formatHistoryAnswer(answerText) {
+  return (answerText || '').split('\n').filter(Boolean).map(slot => {
+    if (slot.startsWith('[')) {
+      try { const arr = JSON.parse(slot); if (Array.isArray(arr)) return '[' + arr.join(', ') + ']'; } catch { /* plain text */ }
+    }
+    return slot;
+  }).join(', ');
 }
 
 // ---------- Permission prompt ----------

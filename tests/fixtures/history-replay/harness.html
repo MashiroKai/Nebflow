@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<!-- history-replay harness.html — static test harness for the history-replay
+     card regression (AskUser cards / compaction cards).
+
+     Imports the REAL frontend render modules (chat.js / persistence.js /
+     chatView.js — no stubs, no bundling) and exposes two drivers:
+
+       window.__replay()  → restoreFromBackendHistory(fixture)  — the exact
+                            function the app runs after a browser refresh
+                            (historyPage handler → main.js).
+       window.__live()    → the exact live-render functions the app calls on
+                            WS events (renderTool / renderAskUser /
+                            renderCompactStartCard / renderCompactDoneCard /
+                            renderUserBubble).
+
+     The spec (tests/history-replay-cards.spec.mjs) serves the repo root over
+     a throwaway static server (never the 8080 host) and drives both paths
+     against the real fixture extracted from ~/.nebflow/sessions/.
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>history-replay harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    /* Minimal stand-in for the app shell: give #chat the column width the
+       real layout gives it, everything else comes from the real CSS. */
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'harness-session';
+
+    // Capture outgoing WS frames (the live AskUser confirm path sends one) —
+    // nothing must reach a real socket in this harness.
+    window.__captured = [];
+    state.ws = { readyState: 1, send: (data) => window.__captured.push(JSON.parse(data)) };
+
+    // AskUser card drafts live in localStorage keyed by session — keep runs
+    // hermetic.
+    try { localStorage.removeItem('nebflow_askuser_drafts'); } catch {}
+
+    let _fixture = null;
+    async function loadFixture() {
+      if (!_fixture) _fixture = await (await fetch('./fixture.json')).json();
+      return _fixture;
+    }
+
+    // ---- Driver 1: history replay (post-refresh path) ----
+    window.__replay = async () => {
+      const { restoreFromBackendHistory } = await import(`${WEB}/persistence.js`);
+      restoreFromBackendHistory(await loadFixture());
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    };
+
+    // ---- Driver 2: live render (WS-event path) ----
+    // Replays the events in fixture order through the same functions the
+    // onMessage handlers call. The user message that follows the askUser
+    // entry is intentionally skipped: the backend records it, but the live
+    // card-confirm path never renders a user bubble for it.
+    window.__live = async () => {
+      const chat = await import(`${WEB}/chat.js`);
+      const msgs = await loadFixture();
+      let afterAsk = false;
+      for (const m of msgs) {
+        if (m.type === 'tool') {
+          chat.renderTool(m.label, m.summary, m.content, m.isError, m.input, 'harness-session');
+        } else if (m.type === 'askUser') {
+          chat.renderAskUser(m.items, 'harness-session', null, 'harness-req');
+          afterAsk = true;
+        } else if (m.type === 'user') {
+          if (afterAsk) { afterAsk = false; continue; } // recorded answer, not a live bubble
+          chat.renderUserBubble(m.text, m.attachments, m.timestamp);
+        } else if (m.type === 'system' && m.i18nKey === 'chat.compacting') {
+          chat.renderCompactStartCard(chatViews.primary);
+        } else if (m.type === 'system' && m.i18nKey === 'chat.compacted') {
+          chat.renderCompactDoneCard(chatViews.primary, {
+            before: m.params.before, after: m.params.after, detail: m.params.detail,
+          });
+        } else if (m.type === 'ai') {
+          if (m.thinking) { chat.appendThinkingDelta(m.thinking); chat.finishThinking(); }
+          if (m.text) { chat.appendAiText(m.text); chat.finishAi(m.durationMs || 1200, m.model || 'test-model'); }
+        }
+      }
+      await new Promise(r => setTimeout(r, 50));
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>
