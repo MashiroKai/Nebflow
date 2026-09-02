@@ -63,11 +63,13 @@ object ToolRegistry:
       "FlowReport" -> FlowReportTool,
       // #28 阶段 0：Project + Node 模型工具集（分发器白名单声明；全局注册使
       // agent.json tools 可解析）。NodeEdit/NodeList/NodeCancel = 分发器用；
-      // ProjectCreate = Nebula 用（建项目 + 工作区脚手架）。
+      // ProjectCreate = Nebula 用（建项目 + 工作区脚手架）；Task = Nebula 侧
+      // 项目任务触发（阶段 2 迁移第一步，与 Mail(→project) 同内核、入口不同）。
       "NodeEdit" -> NodeEditTool,
       "NodeList" -> NodeListTool,
       "NodeCancel" -> NodeCancelTool,
-      "ProjectCreate" -> ProjectCreateTool
+      "ProjectCreate" -> ProjectCreateTool,
+      "Task" -> TaskTool
     )
     tools.putAll(builtins.asJava)
   }

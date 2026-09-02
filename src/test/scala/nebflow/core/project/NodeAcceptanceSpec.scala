@@ -6,11 +6,12 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.actor.ActorSystem
+import nebflow.actor.{ActorRef, ActorSystem}
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, MailTool, NodeEditTool, NodeListTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, MailTool, NodeEditTool, NodeListTool, TaskTool, ToolContext}
+import nebflow.core.flow.TeamSessionRegistry
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -123,7 +124,9 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
-  override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
+  override def beforeEach(context: munit.BeforeEach): Unit =
+    ProjectRuntimeRegistry.clear
+    TeamSessionRegistry.clear.unsafeRunSync()
 
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
@@ -670,6 +673,92 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       assertEquals(wt.hcursor.downField("worktree").as[String].toOption, Some("worktrees/wt-x"))
       val wts = json.hcursor.downField("worktrees").as[List[String]].toOption.getOrElse(Nil)
       assert(wts.contains("wt-x"), s"worktrees must be disk-derived, got $wts")
+  }
+
+  // ── Task 工具（阶段 2 迁移第一步：Nebula 侧项目任务触发）─────
+
+  /** 分发器 agent fixture——spawnDispatcher 依赖 EntityLoader 可加载。 */
+  private def writeDispatcherAgent(): Unit =
+    val dispDir = tempRoot / "agents" / "project-dispatcher"
+    os.makeDir.all(dispDir)
+    os.write.over(
+      dispDir / "agent.json",
+      """{"name":"project-dispatcher","description":"project task dispatcher","tools":[],"category":"standalone"}"""
+    )
+    os.write.over(dispDir / "system.md", "# project-dispatcher\n")
+
+  private def spawnProjectActor(
+      rt: ProjectRuntime,
+      system: ActorSystem,
+      res: SharedResources,
+      name: String
+    ): IO[ActorRef[ProjectActor.ProjectCommand]] =
+    system.spawn(ProjectActor(ProjectActor.ProjectConfig(rt.project, rt.engine, system, res, "nebula-root")), name)
+
+  test("Task①: Task(project, task) triggers dispatcher session (dispatcher-<uuid> spawned)") {
+    writeDispatcherAgent()
+    val ws = tempRoot / "ws-task1"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-task1-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt0 <- mountProject("acc-task1", ws, system, res)
+      ref <- spawnProjectActor(rt0, system, res, "proj-task1")
+      _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
+      ctx = mkCtx(res, system, ws.toString)
+      r <- TaskTool.call(Json.obj(
+        "project" -> Json.fromString("acc-task1"), "task" -> Json.fromString("调研 X")).asObject.get, ctx)
+      _ <- IO.sleep(3.seconds) // 等待 dispatcher spawn + agentRegistry 注册
+      reg <- res.agentRegistry.get
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.exists(_.contains("dispatcher triggered")), s"got: $r")
+      assert(reg.keys.exists(_.startsWith("dispatcher-")), s"dispatcher session must be spawned, registry=${reg.keys}")
+  }
+
+  test("Task②: unmounted project → explicit error (no registry entry)") {
+    val system = ActorSystem(s"acc-task2-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      ctx = mkCtx(res, system, tempRoot.toString)
+      r <- TaskTool.call(Json.obj(
+        "project" -> Json.fromString("no-such"), "task" -> Json.fromString("x")).asObject.get, ctx)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isLeft, s"must fail, got: $r")
+      assert(r.left.exists(_.message.contains("not mounted")), s"error must say not mounted, got: $r")
+  }
+
+  test("Task③: same-name collision — Task→project dispatcher vs Mail→team (channels distinct)") {
+    writeDispatcherAgent()
+    val ws = tempRoot / "ws-task3"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-task3-${scala.util.Random.nextInt(100000)}")
+    // 同名团队 fixture（slideblocks 场景：团队与新 project 同名，渠道区分零歧义）
+    val teamDir = tempRoot / "teams" / "slideblocks"
+    os.makeDir.all(teamDir)
+    os.write.over(teamDir / "team.json", """{"name":"slideblocks","description":"legacy team","lead":"boss","members":[]}""")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      rt0 <- mountProject("slideblocks", ws, system, res)
+      ref <- spawnProjectActor(rt0, system, res, "proj-slide")
+      _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
+      _ <- TeamSessionRegistry.registerSession("slideblocks", "boss", "boss-sid")
+      rootCtx = mkCtx(res, system, ws.toString).copy(sessionId = Some("root-sid"))
+      // Task(project=slideblocks) → project dispatcher（新渠道）
+      rTask <- TaskTool.call(Json.obj(
+        "project" -> Json.fromString("slideblocks"), "task" -> Json.fromString("做 PPT")).asObject.get, rootCtx)
+      // Mail(→slideblocks) → team（Mail 保持团队优先不翻转——immediate 全链）
+      rMail <- MailTool.call(Json.obj(
+        "address" -> Json.fromString("slideblocks"), "message" -> Json.fromString("hi")).asObject.get, rootCtx)
+      leadSid <- TeamSessionRegistry.findTeamAgent("slideblocks", "boss")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(rTask.exists(_.contains("dispatcher triggered")), s"Task must hit project dispatcher, got: $rTask")
+      // Mail 路由事实：同名团队命中（lead 可解析）→ 团队路由优先，完全不碰 project 分支
+      assertEquals(leadSid, Some("boss-sid"), "same-named team lead must resolve (team routing premise)")
+      assert(!rMail.exists(_.contains("dispatcher triggered")), s"Mail must NOT hit project dispatcher, got: $rMail")
+      assert(!rMail.exists(_.contains("no mounted ProjectActor")), s"Mail must NOT hit project branch at all, got: $rMail")
   }
 
 end NodeAcceptanceSpec
