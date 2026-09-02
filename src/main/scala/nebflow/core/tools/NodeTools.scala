@@ -590,7 +590,7 @@ object NodeEditTool extends Tool:
       rt.engine.isRunning(node.id).flatMap {
         case true =>
           IO.pure(Left(ToolError(
-            s"Node '${node.name}' is running with a live session — abandon refused (mis-kill protection). Use NodeCancel for running nodes.")))
+            s"Node '${node.name}' is running with a live session — abandon refused (mis-kill protection: abandon accepts terminal/wiring/pending and dead-session running only). Use NodeCancel for running nodes.")))
         case false =>
           doAbandon(allowDeadRunning = true)
       }
