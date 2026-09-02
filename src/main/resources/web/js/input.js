@@ -28,6 +28,15 @@ const LARGE_TEXT_THRESHOLD = 1000;
 // and the 400KB-2MB loss window is mathematically closed (a char-based cap
 // cannot guarantee this: CJK text is 3 bytes/char).
 const LARGE_TEXT_MAX_BYTES = 300_000;
+// Pure-paste inline threshold: pasting into an EMPTY (or whitespace-only)
+// input at or below this size keeps the text as the message BODY — the agent
+// receives the full content in turn 1 with zero tool calls. Above it the
+// legacy file-attachment conversion applies (rules 2/3 unchanged). Byte-based,
+// consistent with LARGE_TEXT_MAX_BYTES. 64KB = top of the sanctioned 32-64KB
+// band: covers nearly all source-file pastes, stays ~1/5 of the attachment
+// byte cap (300_000) and far under the 10MB WS frame cap, so message text,
+// drafts, input history and persisted bubbles all keep comfortable margin.
+const INLINE_PASTE_MAX_BYTES = 64 * 1024;
 
 /** Show a transient banner at the top of the viewport. */
 function showAttachmentBanner(message) {
@@ -1203,6 +1212,12 @@ export function initInput(view) {
       // Large text paste → auto-convert to file attachment via existing mechanism
       const pastedText = e.clipboardData.getData('text/plain') || '';
       if (pastedText.length > LARGE_TEXT_THRESHOLD) {
+        // Pure-paste inline: empty input + paste ≤ INLINE_PASTE_MAX_BYTES →
+        // let the browser insert the text; send() then delivers it as the
+        // message content. No attachment, no Read tool call downstream.
+        if (!input.value.trim() && new Blob([pastedText]).size <= INLINE_PASTE_MAX_BYTES) {
+          return; // browser default paste — content becomes the message body
+        }
         const blob = new Blob([pastedText], { type: 'text/plain' });
         if (blob.size > LARGE_TEXT_MAX_BYTES) {
           // Above the cap: keep inline (browser default paste) + toast, never
