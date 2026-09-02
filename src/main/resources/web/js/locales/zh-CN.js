@@ -62,6 +62,14 @@ export default {
   'flowmap.blockedDetail': '说明',
   'flowmap.blockedSuggestion': '建议',
   'flowmap.blockedRawTitle': '节点输出原文',
+  // deps 依赖连接（deps 设计 §1.4）：等待脚注 + 六档图例（输出边三态 × 依赖边三态）
+  'flowmap.waitingFor': '等待',
+  'flowmap.legend.outDelivered': '输出已投递',
+  'flowmap.legend.outWaiting': '输出等待中',
+  'flowmap.legend.outIdle': '输出未投递',
+  'flowmap.legend.depsMet': '依赖已满足',
+  'flowmap.legend.depsWaiting': '依赖等待中',
+  'flowmap.legend.depsUnmet': '依赖未满足',
   'agentFile.hint': '此文件是项目工作区根的 agent 指令（AGENTS.md），可编辑并保存。',
 
   // === Friends & messages (A2A) ===
