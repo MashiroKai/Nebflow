@@ -779,6 +779,11 @@ function normalizeMessage(m, ord) {
         tool: m.label || '',
         input: m.input,   // raw tool input (JSON string) — Pop artifacts parse from it
         text: [m.summary, m.input, m.content].filter(Boolean).join('\n'),
+        // Raw segments kept separately (#41): the chat DOM localizes tool
+        // labels/summaries, so jump-by-text must also carry the unlocalized
+        // content/summary through to the jump site to survive locale swaps.
+        summary: m.summary || '',
+        content: m.content || '',
         ts: 0,
       };
     case 'agent':
@@ -1080,6 +1085,11 @@ async function runSearch() {
           tool: m.tool || '',
           input: m.input,
           text: m.text,
+          // #41: carry the raw segments through — keyword-search results are
+          // rebuilt field-by-field here, and dropping them starved the jump
+          // site of its locale-independent candidates.
+          summary: m.summary || '',
+          content: m.content || '',
           ts: m.ts,
           ord: m.ord,
           attachments: m.attachments,
@@ -1140,6 +1150,11 @@ function wrapItem(s, viewIdx) {
     tool: m.tool || '',
     input: m.input,
     text: m.text,
+    // #41: copy the raw tool segments too — this wrapper is what the click
+    // handler actually hands to scrollToMessage; without them the jump site
+    // sees undefined candidates under every locale.
+    summary: m.summary || '',
+    content: m.content || '',
     ts: m.ts,
     ord: m.ord,
     attachments: m.attachments || [],
@@ -1451,9 +1466,21 @@ function scrollToMessage(res, st) {
   // User navigated away mid-jump — abort silently.
   if (state.activeSessionId !== res.sessionId) return;
 
-  // 1. Text-snippet match (primary, human-meaningful).
-  const snippet = stripForMatch(res.text).slice(0, 40);
-  if (snippet.length >= 4) {
+  // 1. Text-snippet match (primary, human-meaningful). Tool cards localize
+  //    label/summary at render time, so under a non-English UI the raw summary
+  //    heading the joined text never matches the DOM (#41). Try candidates in
+  //    order: content (rendered verbatim in the card body — locale-independent),
+  //    then the raw summary and the legacy joined text (keeps the English-UI
+  //    path intact). Non-tool kinds keep the single legacy snippet.
+  const candidates = res.kind === 'tool'
+    ? [res.content, res.summary, res.text]
+    : [res.text];
+  const snippets = [];
+  for (const cand of candidates) {
+    const s = stripForMatch(cand).slice(0, 40);
+    if (s.length >= 4 && !snippets.includes(s)) snippets.push(s);
+  }
+  for (const snippet of snippets) {
     const rows = chat.querySelectorAll('.row, .tool-card');
     for (const el of rows) {
       if (stripForMatch(el.textContent).includes(snippet)) { flashRow(el); return; }
