@@ -779,6 +779,11 @@ function normalizeMessage(m, ord) {
         tool: m.label || '',
         input: m.input,   // raw tool input (JSON string) — Pop artifacts parse from it
         text: [m.summary, m.input, m.content].filter(Boolean).join('\n'),
+        // Raw segments kept separately: the chat DOM localizes tool labels and
+        // summaries, so jump-by-text must also try the unlocalized input/content
+        // (rendered verbatim in the card body) to survive locale differences.
+        summary: m.summary || '',
+        content: m.content || '',
         ts: 0,
       };
     case 'agent':
@@ -1451,9 +1456,19 @@ function scrollToMessage(res, st) {
   // User navigated away mid-jump — abort silently.
   if (state.activeSessionId !== res.sessionId) return;
 
-  // 1. Text-snippet match (primary, human-meaningful).
-  const snippet = stripForMatch(res.text).slice(0, 40);
-  if (snippet.length >= 4) {
+  // 1. Text-snippet match (primary, human-meaningful). Tool cards localize
+  //    label/summary in the DOM while the search index stores the raw backend
+  //    text, so a single snippet taken from the joined text misses under a
+  //    non-English locale. Try each raw segment (summary/input/content) — the
+  //    input and content render verbatim in the card body, so those candidates
+  //    match regardless of the UI locale.
+  const snippets = [];
+  const segs = res.kind === 'tool' ? [res.summary, res.input, res.content] : [res.text];
+  for (const seg of segs) {
+    const s = stripForMatch(seg || '').slice(0, 40);
+    if (s.length >= 4 && !snippets.includes(s)) snippets.push(s);
+  }
+  for (const snippet of snippets) {
     const rows = chat.querySelectorAll('.row, .tool-card');
     for (const el of rows) {
       if (stripForMatch(el.textContent).includes(snippet)) { flashRow(el); return; }
