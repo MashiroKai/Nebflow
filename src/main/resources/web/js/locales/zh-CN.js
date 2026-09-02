@@ -54,6 +54,14 @@ export default {
   'flowmap.noResult': '暂无结果',
   'flowmap.runningDetail': '节点运行中，完成后结果将自动保存并沿出边投递。',
   'flowmap.noResultDetail': '该节点尚未产生结果（运行中/等待/悬空）。',
+  // blocked（20260902 反馈路径设计 §4.2/§4.3）：状态计数 + 详情窗结构化反馈
+  'flowmap.blocked': '已阻断',
+  'flowmap.blockedTitle': '已阻断 — 待分发器处置',
+  'flowmap.blockedRounds': '已被阻断 {n} 轮',
+  'flowmap.blockedCategory': '原因分类',
+  'flowmap.blockedDetail': '说明',
+  'flowmap.blockedSuggestion': '建议',
+  'flowmap.blockedRawTitle': '节点输出原文',
   'agentFile.hint': '此文件是项目工作区根的 agent 指令（AGENTS.md），可编辑并保存。',
 
   // === Friends & messages (A2A) ===

@@ -76,7 +76,10 @@ export function closeViewer() {
 // ── Node 结果详情（Flow Map 节点点击查看）──────────────────
 // 复用 openViewerShell 的 overlay 语义；结果从活动或归档读取（阶段 0 mock 显 result）。
 // cfg = {skill, mcp, preset}——节点配置（Flow Map 卡片上紧凑徽标，详情里全量展示）。
-export function openNodeResultViewer(nodeName, agent, status, worktree, result, nodeId, cfg = {}) {
+/** blocked = { feedback: {category, detail, suggestion} | null, count: number } | null
+ *  —— NodePayload.blockedFeedback/blockCount 透传（20260902 反馈路径设计 §4.3），
+ *  仅 status='blocked' 时由 openNodeDetail 传入。 */
+export function openNodeResultViewer(nodeName, agent, status, worktree, result, nodeId, blocked = null, cfg = {}) {
   const title = `${nodeName}${result ? ' · ' + t('flowmap.resultTitle') : ' · ' + t('flowmap.noResult')}`;
   const body = openViewerShell(title);
   if (!body) return;
@@ -88,15 +91,35 @@ export function openNodeResultViewer(nodeName, agent, status, worktree, result, 
   const content = result
     ? result
     : (status === 'running' ? t('flowmap.runningDetail') : t('flowmap.noResultDetail'));
+  // blocked 结构化渲染（§4.3）：category 标签 + detail + suggestion + 「已被阻断 N 轮」；
+  // result（后端渲染串 [blocked:<category>] <detail> — 建议: <suggestion>）折叠可展开。
+  const fb = status === 'blocked' ? (blocked?.feedback || {}) : null;
+  const blockedPanel = fb ? `
+    <div class="flow-blocked-panel">
+      <div class="flow-blocked-head">
+        <span class="flow-blocked-badge">⚑ ${esc(t('flowmap.blockedTitle'))}</span>
+        ${fb.category ? `<span class="flow-blocked-category" title="${esc(t('flowmap.blockedCategory'))}">${esc(fb.category)}</span>` : ''}
+        <span class="flow-blocked-count">${esc(t('flowmap.blockedRounds', { n: Number(blocked?.count) || 0 }))}</span>
+      </div>
+      ${fb.detail ? `<div class="flow-blocked-row"><span class="flow-blocked-label">${esc(t('flowmap.blockedDetail'))}</span><div class="flow-blocked-text">${esc(fb.detail)}</div></div>` : ''}
+      ${fb.suggestion ? `<div class="flow-blocked-row"><span class="flow-blocked-label">${esc(t('flowmap.blockedSuggestion'))}</span><div class="flow-blocked-text">${esc(fb.suggestion)}</div></div>` : ''}
+    </div>` : '';
+  const resultHtml = fb && result
+    ? `<details class="flow-blocked-raw">
+        <summary>${esc(t('flowmap.blockedRawTitle'))}</summary>
+        <div class="flow-agent-block-readonly">${esc(result)}</div>
+      </details>`
+    : `<div class="flow-agent-block-field">
+        <span class="flow-agent-block-label">${esc(label)}</span>
+        <div class="flow-agent-block-readonly" style="max-height:420px;overflow-y:auto;white-space:pre-wrap">${esc(content)}</div>
+      </div>`;
   body.innerHTML = `
     <div class="flow-def-section">
       <div class="flow-agent-block-head"><span class="flow-agent-block-name">${esc(nodeName)}</span></div>
       ${meta ? `<div class="flow-def-source">${meta}</div>` : ''}
       ${cfgParts.length ? `<div class="flow-def-source flow-node-cfg-line">${cfgParts.join('')}</div>` : ''}
-      <div class="flow-agent-block-field">
-        <span class="flow-agent-block-label">${esc(label)}</span>
-        <div class="flow-agent-block-readonly" style="max-height:420px;overflow-y:auto;white-space:pre-wrap">${esc(content)}</div>
-      </div>
+      ${blockedPanel}
+      ${resultHtml}
     </div>`;
 }
 
