@@ -49,18 +49,21 @@ object ProjectRuntimeRegistry:
     * 磁盘已有项目 → 幂等挂载。rootSessionId = 顶层 Nebula 主会话 id
     * （启动期无会话上下文，调用方直接传顶层根——A 修复后的 thread 语义）。
     * 与 ProjectCreate 幂等挂载（运行时主动路径，241ef6c5）互补：
-    * 本函数管重启免人工，ProjectCreate 管运行时挂载/重挂。返回新挂载数。 */
+    * 本函数管重启免人工，ProjectCreate 管运行时挂载/重挂。返回新挂载数。
+    * wsSend：启动期传入 wsHub.broadcast——否则 engine 的 wsSendFn 是 no-op，
+    * 节点/分发器事件永远到不了前端（#28 可观测缺口根因之一）。 */
   def mountAll(
     projects: List[ProjectDef],
     rootSessionId: String,
     system: ActorSystem,
-    resources: SharedResources
+    resources: SharedResources,
+    wsSend: Option[Json => IO[Unit]] = None
   ): IO[Int] =
     projects.foldLeft(IO.pure(0)) { (acc, pd) =>
       acc.flatMap { n =>
         get(pd.name).flatMap {
           case Some(_) => IO.pure(n) // 已挂载跳过（启动时序无并发，防御性判断）
-          case None    => mount(pd, system, resources, None, rootSessionId).as(n + 1)
+          case None    => mount(pd, system, resources, wsSend, rootSessionId).as(n + 1)
         }
       }
     }
@@ -202,7 +205,10 @@ object ProjectActor:
               sessionName = s"dispatcher/${project.name}",
               depth = 1,
               parentRef = None,
-              wsSend = cfg.engine.wsSendFn,
+              // #28 可观测接线：与节点同款路由包装——分发器事件注入
+              // rootSessionId/nodeSessionId 后在 subagent 面板可见
+              // （Processing 状态 + 工具调用过程，与 Delegate/SubTask 同标准）。
+              wsSend = NodeRunner.routeSubagentWsSend(cfg.engine.wsSendFn, rootSessionId, sessionId),
               projectRoot = Some(project.workspace),
               safetyMode = "confirm-edits",
               rootSessionId = rootSessionId,
@@ -210,7 +216,22 @@ object ProjectActor:
             )
           )
           _ <- cfg.resources.agentRegistry.update(_ + (sessionId -> AgentRecord(sessionId, ref, AgentKind.Flow, rootSessionId)))
-          _ <- (ref ! AgentCommand.UserInput(text = prompt, replyTo = None)).void
+          // 单次会话观察桥（#28 可观测收尾）：分发器 turn 完成 → 清 registry +
+          // 停 agent。此前分发器无回报（replyTo=None）→ turn 后 agent 长期 idle、
+          // registry 条目永久滞留（kind=Flow 会被 getActiveAgents 快照当运行中
+          // 幽灵行上报）。桥复用 NodeEngine 同款 bridge 模式。
+          bridgeRef <- cfg.system.spawn(
+            Behaviors.receive[AgentEvent] { (_, event) =>
+              event match
+                case AgentEvent.Completed(_, _) | AgentEvent.Failed(_, _) | AgentEvent.Cancelled(_, _) =>
+                  (cfg.resources.agentRegistry.update(_ - sessionId) *>
+                    (ref ! AgentCommand.Stop("dispatcher turn done")).void *>
+                    logger.info(s"Project '${project.name}' dispatcher session $sessionId finished — unregistered"))
+                    .as(Behaviors.stopped)
+            },
+            s"dispatchbridge-${sessionId.take(8)}"
+          )
+          _ <- (ref ! AgentCommand.UserInput(text = prompt, replyTo = Some(bridgeRef))).void
           _ <- logger.info(s"Project '${project.name}' dispatcher session spawned: $sessionId")
         yield same
     }

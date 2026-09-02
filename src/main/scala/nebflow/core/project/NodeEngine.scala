@@ -177,7 +177,11 @@ class NodeEngine(
           sessionName = nodeName,
           depth = 1,
           parentRef = None, // 节点无 Mail 身份（§硬约束）
-          wsSend = wsSendFn,
+          // #28 可观测接线：节点事件必须经路由包装注入 rootSessionId（前端
+          // sessionBgAgents 归桶键）+ nodeSessionId（popup/历史路由）——否则
+          // 子 agent 事件无法在 subagent 面板归到根会话（与 Delegate/SubTask
+          // 同一可观测性标准）。
+          wsSend = NodeRunner.routeSubagentWsSend(wsSendFn, rootSessionId, sessionId),
           projectRoot = Some(projectRoot),
           safetyMode = "confirm-edits",
           rootSessionId = rootSessionId,

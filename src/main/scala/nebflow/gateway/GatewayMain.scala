@@ -387,6 +387,14 @@ object GatewayMain extends IOApp.Simple:
                                     case Left(e) =>
                                       logger.warn(s"Task TTL sweep failed: ${e.getMessage}").void
                                   }
+                                // wsHub 提前到 startupMount 之前创建：启动挂载的项目
+                                // engine 需要持有一个真实广播 wsSend（节点/分发器 agent
+                                // 事件 + nodeUpdated/nodeCompleted 等 Flow Map 事件）。
+                                // 此前 wsHub 在挂载后才构造 → mountAll 传 None → engine
+                                // wsSendFn 为 no-op，节点/分发器事件永远到不了前端
+                                // （#28 可观测缺口根因之一）。wsHub 本身无依赖，提前
+                                // 构造零副作用（无连接时 broadcast 空转）。
+                                val wsHub = new WsHub()
                                 // #37 启动自动挂载（0b 契约「阶段 1 补自动挂载」）：磁盘已有
                                 // 项目 → 幂等挂载（rootSessionId = 顶层 Nebula 主会话 id，
                                 // 启动期无会话上下文直接传顶层根）。免重启后人工重挂——
@@ -401,7 +409,11 @@ object GatewayMain extends IOApp.Simple:
                                       projects,
                                       rootSid,
                                       actorSystem,
-                                      sharedResources
+                                      sharedResources,
+                                      // #28 可观测接线：启动挂载传入真实广播 wsSend——
+                                      // engine 的节点/分发器事件经 wsHub 到达前端 subagent
+                                      // 面板（此前 None → no-op，事件静默丢失）。
+                                      Some((json: io.circe.Json) => wsHub.broadcast(json))
                                     )
                                     _ <- if mounted > 0 then
                                       logger.info(
@@ -420,8 +432,6 @@ object GatewayMain extends IOApp.Simple:
                                   val sessionService = new SessionService(sessionStore)
                                   val agentService = new AgentService(agentLibrary)
                                   val configService = ConfigService
-
-                                  val wsHub = new WsHub()
 
                                   // --- Bridge Manager (plugins: telegram, etc.) ---
                                   val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =

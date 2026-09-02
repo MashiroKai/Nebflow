@@ -583,8 +583,14 @@ export function createMsgCopyButton(text) {
 
 /** Check whether a session/agent ID belongs to a background sub-agent
  *  (Delegate sub-agent: "delegate-<agent>-<uuid8>"; SubTask worker:
- *  "subtask-<uuid8>" - backend naming protocol). Single point of truth so
- *  future prefixes only need one change. Used for bg-agent popup routing. */
+ *  "subtask-<uuid8>"; Project node: "node-<uuid8>"; Project dispatcher:
+ *  "dispatcher-<uuid8>" - backend naming protocol). Single point of truth so
+ *  future prefixes only need one change. Used for bg-agent popup routing.
+ *  #28 可观测接线: node-/dispatcher- 会话进 subagent 面板（Processing 状态 +
+ *  工具调用过程, 与 Delegate/SubTask 同一可观测性标准）。 */
 export function isBgAgentId(id) {
-  return typeof id === 'string' && (id.startsWith('delegate-') || id.startsWith('subtask-'));
+  return typeof id === 'string' && (
+    id.startsWith('delegate-') || id.startsWith('subtask-') ||
+    id.startsWith('node-') || id.startsWith('dispatcher-')
+  );
 }

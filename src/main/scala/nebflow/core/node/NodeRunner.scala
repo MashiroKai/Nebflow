@@ -2,6 +2,7 @@ package nebflow.core.node
 
 import cats.effect.IO
 import io.circe.{Json, JsonObject}
+import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.tools.{FileHistory, ReadTracker}
@@ -88,6 +89,38 @@ object NodeRunner:
         actorName
       )
     yield ref
+
+  /** 子会话 WS 路由包装（node/dispatcher 会话进 subagent 面板的接线点，#28
+    * 可观测缺口修复）。
+    *
+    * DelegateTool.routeWsSend 为 Delegate/SubTask 注入 rootSessionId + sessionId
+    * （前端 sessionBgAgents 按 rootSessionId 归桶）+ nodeSessionId（子会话自身
+    * id，popup/历史路由）。node/dispatcher 会话此前直接透传 engine 的 wsSendFn——
+    * 事件要么到不了前端（启动挂载 wsSend=None → no-op），要么缺 rootSessionId
+    * 归属键无法归桶。本包装补齐同一契约：
+    * - rootSessionId：前端 sessionBgAgents 的归桶键（顶层根会话 id）
+    * - sessionId：缺省时注入 rootSessionId（事件路由目标视图；Delegate 同款语义）
+    * - nodeSessionId：已有则保留（toJson 已盖章自身会话），否则补子会话 id
+    */
+  def routeSubagentWsSend(
+    base: Json => IO[Unit],
+    rootSessionId: String,
+    subagentId: String
+  ): Json => IO[Unit] =
+    json =>
+      json.asObject match
+        case Some(obj) =>
+          val withRoot = obj.add("rootSessionId", rootSessionId.asJson)
+          // 已有 sessionId（如 usageUpdate 的自身会话 id）不覆盖——避免把
+          // 子会话用量写入根会话的 sessionModelInfo；仅缺省时注入路由键。
+          val withSession =
+            if obj.contains("sessionId") then withRoot
+            else withRoot.add("sessionId", rootSessionId.asJson)
+          val finalObj =
+            if obj.contains("nodeSessionId") then withSession
+            else withSession.add("nodeSessionId", subagentId.asJson)
+          base(Json.fromJsonObject(finalObj))
+        case None => base(json)
 
   /** 共享 registry 注册（AgentRecord 统一构造；默认值 = AgentRecord 默认）。 */
   def registerAgent(
