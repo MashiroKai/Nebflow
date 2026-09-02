@@ -705,26 +705,77 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     ): IO[ActorRef[ProjectActor.ProjectCommand]] =
     system.spawn(ProjectActor(ProjectActor.ProjectConfig(rt.project, rt.engine, system, res, "nebula-root")), name)
 
+  /** 门控 LLM（Task① 用）：sendStream 首段等待 gate —— 分发器 turn 保持
+    * in-flight，注册窗口确定性可观测。 */
+  private class GatedLlm(gate: cats.effect.Deferred[IO, Unit]) extends LlmHandle[IO]:
+    def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+    def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+    ): Stream[IO, StreamChunk] =
+      Stream.eval(gate.get) >> Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+
   test("Task①: Task(project, task) triggers dispatcher session (dispatcher-<uuid> spawned)") {
     writeDispatcherAgent()
     val ws = tempRoot / "ws-task1"
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-task1-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      // #28 可观测接线后分发器是「运行中注册、完成即注销」的单次会话——gate 卡住
+      // turn，注册窗口确定性可观测。
+      gate <- cats.effect.Deferred[IO, Unit]
+      res <- mkResources(system, tempRoot, new GatedLlm(gate))
       rt0 <- mountProject("acc-task1", ws, system, res)
       ref <- spawnProjectActor(rt0, system, res, "proj-task1")
       _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
       ctx = mkCtx(res, system, ws.toString)
       r <- TaskTool.call(Json.obj(
         "project" -> Json.fromString("acc-task1"), "task" -> Json.fromString("调研 X")).asObject.get, ctx)
-      _ <- IO.sleep(3.seconds) // 等待 dispatcher spawn + agentRegistry 注册
-      reg <- res.agentRegistry.get
+      // 1) 运行中必须注册（getActiveAgents 快照依赖）——agent 被 gate 卡在 turn 内，
+      //    注册条目稳定存在，轮询必命中。
+      seen <- pollRegistryFor(res.agentRegistry, _.startsWith("dispatcher-"), 100, 20.millis)
+      _ <- gate.complete(()) // 释放 turn → 完成 → bridge 注销
+      _ <- waitRegistryGone(res.agentRegistry, _.startsWith("dispatcher-"), 100, 20.millis) // 等待注销
+      regAfter <- res.agentRegistry.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r.exists(_.contains("dispatcher triggered")), s"got: $r")
-      assert(reg.keys.exists(_.startsWith("dispatcher-")), s"dispatcher session must be spawned, registry=${reg.keys}")
+      assert(seen.exists(_.nonEmpty),
+        s"dispatcher session must be registered while running (snapshot/面板可见性前提), seen: $seen")
+      assert(!regAfter.keys.exists(_.startsWith("dispatcher-")),
+        s"dispatcher must unregister after completion (ghost-row fix), still present: ${regAfter.keys}")
   }
+
+  /** 轮询 agentRegistry 直到出现满足 pred 的键或超时。返回每次采样快照。 */
+  private def pollRegistryFor(
+    registry: cats.effect.Ref[IO, Map[String, nebflow.agent.AgentRecord]],
+    pred: String => Boolean,
+    attempts: Int,
+    interval: FiniteDuration
+  ): IO[List[Set[String]]] =
+    (1 to attempts).toList.foldLeft(IO.pure(List.empty[Set[String]])) { (acc, _) =>
+      acc.flatMap { snaps =>
+        registry.get.map(_.keySet).flatMap { keys =>
+          val newSnaps = snaps :+ keys
+          if keys.exists(pred) then IO.pure(newSnaps) else IO.sleep(interval).as(newSnaps)
+        }
+      }
+    }
+
+  /** 轮询直到不再存在满足 pred 的键（等待完成注销）。 */
+  private def waitRegistryGone(
+    registry: cats.effect.Ref[IO, Map[String, nebflow.agent.AgentRecord]],
+    pred: String => Boolean,
+    attempts: Int,
+    interval: FiniteDuration
+  ): IO[Unit] =
+    (1 to attempts).toList.foldLeft(IO.unit) { (acc, _) =>
+      acc.flatMap { _ =>
+        registry.get.map(_.keySet).flatMap { keys =>
+          if keys.exists(pred) then IO.sleep(interval) else IO.unit
+        }
+      }
+    }
 
   test("Task②: unmounted project → explicit error (no registry entry)") {
     val system = ActorSystem(s"acc-task2-${scala.util.Random.nextInt(100000)}")

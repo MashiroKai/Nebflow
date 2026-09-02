@@ -952,11 +952,14 @@ onMessage('usageUpdate', (msg, view) => {
 });
 
 onMessage('done', (msg, view) => {
-  // Node sessions (node-*) end with session-level 'done' (not 'agentDone') —
-  // defensive cleanup of any lingering node- row in the Sub-Agents panel
-  // (belt-and-suspenders on top of the agentStart/activeAgents source filter).
+  // Node sessions (node-*) / dispatcher sessions (dispatcher-*) end with
+  // session-level 'done' (not 'agentDone') — parentRef=None agents finish with
+  // a session-level done (finishTurn: isSubagent = parentRef.isDefined).
+  // Cleanup of their Sub-Agents rows happens here: the agentDone delete path
+  // never fires for them. (node- rows: #28 可观测接线 now SHOWS them while
+  // Processing — cleanup still terminal; dispatcher- same contract.)
   const doneSid = msg.sessionId;
-  if (doneSid && String(doneSid).startsWith('node-')) {
+  if (doneSid && (String(doneSid).startsWith('node-') || String(doneSid).startsWith('dispatcher-'))) {
     for (const [root, agents] of Object.entries(state.sessionBgAgents || {})) {
       for (const [key, entry] of Object.entries(agents)) {
         if (key === doneSid || (entry && entry.sessionId === doneSid)) delete agents[key];
@@ -1723,6 +1726,10 @@ function bgAgentKindFromSession(sessionId) {
   if (raw.startsWith('subtask-')) return 'SubTask';
   if (raw.startsWith('dag-')) return 'Flow';
   if (raw.startsWith('ephemeral-')) return 'Ephemeral';
+  // #28 可观测接线: Project 节点/分发器后端注册为 AgentKind.Flow → 面板 kind
+  // 徽章显示 Flow（与快照 kind 一致）。
+  if (raw.startsWith('node-')) return 'Flow';
+  if (raw.startsWith('dispatcher-')) return 'Flow';
   return '';
 }
 
@@ -1947,11 +1954,12 @@ onMessage('agentStart', (msg, view) => {
   if (!sid) return;
   const aid = msg.agentId || msg.name;
   if (view) view.stream.activeAgentId = aid;
-  // Node sessions (node-*) are Flow Map nodes, not sub-agents — they must not
-  // appear in the Sub-Agents panel (fix: nodes end with session-level 'done',
-  // not 'agentDone', so the panel's agentDone delete path never fired → ghost
-  // rows accumulated. Filter at the source.)
-  if (aid && String(aid).startsWith('node-')) return;
+  // #28 可观测接线: node-*/dispatcher-* 会话（Project Flow Map 节点 / 任务分发
+  // 器）进 Sub-Agents 面板, 与 Delegate/SubTask 同一可观测性标准。旧实现在此
+  // 过滤 node-*（当时节点事件缺 rootSessionId 归属 → 行落错桶且无法清理 →
+  // 幽灵行; 根因是后端 wsSend 未接线, 已后端修复——事件带 rootSessionId,
+  // 终态行由下方 done handler 按 sessionId 清理——parentRef=None 的 agent
+  // 以会话级 done 收尾, 不走 agentDone 路径）。
   if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
   // Cross-keyspace dedupe: snapshot-restored entries (activeAgents handler)
   // key on the bare sessionId (getActiveAgents pins agentId == sessionId),
@@ -3317,9 +3325,9 @@ onMessage('activeAgents', (msg) => {
   for (const a of agents) {
     const sid = a.rootSessionId || a.sessionId;
     if (!sid || !a.agentId) continue;
-    // Node sessions (node-*) are Flow Map nodes, not sub-agents — skip in the
-    // snapshot rebuild too (same ghost-row fix as agentStart).
-    if (String(a.agentId).startsWith('node-')) continue;
+    // #28 可观测接线: 不再过滤 node-* —— 节点/分发器会话与 Delegate/SubTask
+    // 同一快照重建路径（旧 ghost-row 根因已后端修复: 事件现携带 rootSessionId,
+    // 终态由 done handler 清理, 快照只报运行中的 registry 条目）。
     if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
     state.sessionBgAgents[sid][a.agentId] = {
       name: a.agentName || a.agentId,
