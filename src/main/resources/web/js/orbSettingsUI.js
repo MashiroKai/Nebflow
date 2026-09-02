@@ -3,8 +3,8 @@
 // rulings 2026-09-02 20:59).
 //
 // Contents (task ruling):
-//   1. 基调 dropdown — the 8 presets, default Neon (ruling ③).
-//   2. 状态映射表 — 9 states × preset dropdown (8 presets + Ash); 配色=状态语言.
+//   1. 基调 dropdown — the 9 presets, default Ocean (ruling 2026-09-03).
+//   2. 状态映射表 — 9 states × preset dropdown (9 presets + Ash); 配色=状态语言.
 //   3. 自定义基调 — sparse slot overrides (a/b/c) over a source preset, per
 //      theme, with live 84px preview orb (real OrbRenderer instance) and a
 //      soft 暗纹/基色 guard hint.
