@@ -115,7 +115,7 @@ async function answerLiveCard(page) {
   await box.locator('.option-confirm').click();
 }
 
-test.describe('history replay cards — degraded baseline (git HEAD)', () => {
+test.describe('history replay cards — degraded baseline (pre-fix ref)', () => {
   test('replay path renders flat error-cards + bare disabled option box', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser, baselinePort);
     await page.evaluate(() => window.__replay());
