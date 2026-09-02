@@ -1,3 +1,28 @@
+// v8.2.12 (2026-09-02): DETERMINISTIC PREMULTIPLIED FRAME — fixes the dark
+// smudge residue around the orb in Chrome (user report 2026-09-02 16:25, dark
+// mode) and the Safari/Chrome visual divergence (Safari flat / Chrome dirty).
+// Two compounding root causes, both buffer-pipeline level (probe: after
+// decorrelating the wobble contour, the GL buffer keeps alpha≈48-240 samples
+// in the r∈[0.56,0.66] sweep annulus):
+//  1) ACCUMULATION: preserveDrawingBuffer:true + blending always on + NO
+//     per-frame clear. Every frame blended the full-screen quad ONTO the
+//     previous frame; fragments with a=0 leave dst untouched, so any pixel
+//     once painted by the wobbling body (r0 swings 0.56<->0.66, hover distorts
+//     the field up to ±0.1uv while listening) kept that color+alpha forever =
+//     a permanent mottled ring tracing the contour history.
+//  2) STRAIGHT-ALPHA BLEED: premultipliedAlpha:false meant a=0 texels carried
+//     full body RGB; the browser's downscale/composite filter mixes RGB and A
+//     separately, so dark-blue RGB from a=0 texels bleeds into edge pixels =
+//     a dirty fringe hugging the silhouette (and Blink vs WebKit composite
+//     the same stale straight-alpha buffer differently -> cross-browser
+//     divergence).
+// Fix: the shader outputs PREMULTIPLIED color (rgb*a, a), the context is
+// premultipliedAlpha:true, blending is disabled and preserveDrawingBuffer is
+// dropped — the full-screen quad overwrites every pixel each frame, so the
+// buffer holds exactly one frame (a=0 texels are exactly (0,0,0,0)), any
+// compositor (Blink/WebKit, scaled or 1:1) blends it identically, and nothing
+// outside the current silhouette can ever leak. Visual material untouched.
+//
 // v8.2.10 (2026-08-30): #20 unified edge — every shading/rim sphere now uses
 // the shared wobble contour r0 (not a contracted 0.985r0/0.90r0) and the alpha
 // feather is tightened to a narrow band right at the silhouette (0.96-1.00r0).
@@ -309,7 +334,10 @@ const FS = [
   'void main(){',
   '  vec2 fragCoord=vUv*iResolution.xy;',
   '  vec4 col=mainImage(fragCoord);',
-  '  gl_FragColor=vec4(col.rgb,col.a);',
+  '  /* v8.2.12: premultiplied output — rgb is scaled by alpha so a=0 texels',
+  '     are exactly (0,0,0,0); the compositor\'s edge filtering can no longer',
+  '     bleed body RGB past the silhouette (straight-alpha bleed fix). */',
+  '  gl_FragColor=vec4(col.rgb*col.a,col.a);',
   '}'
 ].join('\n');
 
@@ -335,9 +363,14 @@ class OrbRenderer {
        live so a stale low-res buffer never persists. */
     this.bindDprTracking();
     /** @type {WebGLRenderingContext} */
+    /* v8.2.12: premultiplied deterministic frame pipeline. The shader writes
+       (rgb*a, a); the full-screen quad overwrites every pixel every frame, so
+       no per-frame clear, no blending and no preserveDrawingBuffer are needed
+       — and none of the stale-buffer compositing quirks (Chrome residue ring,
+       WebKit/blink divergence) can occur. */
     this.gl = /** @type {WebGLRenderingContext} */ (
-      canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true })
-      || canvas.getContext('experimental-webgl', { alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true })
+      canvas.getContext('webgl', { alpha: true, premultipliedAlpha: true })
+      || canvas.getContext('experimental-webgl', { alpha: true, premultipliedAlpha: true })
     );
     if (!this.gl) { this.failed = true; return; }
     this.failed = false;
@@ -390,8 +423,8 @@ class OrbRenderer {
     this.u = {};
     ['iTime', 'iResolution', 'hue', 'hover', 'rot', 'hoverIntensity', 'isLight', 'sat', 'lum', 'timeScale', 'palA', 'palB', 'palC']
       .forEach((n) => { this.u[n] = gl.getUniformLocation(prog, n); });
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    /* v8.2.12: blending stays OFF — the quad covers the full viewport and
+       overwrites every pixel with the premultiplied frame. */
   }
 
   initBuffers() {
