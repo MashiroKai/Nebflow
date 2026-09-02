@@ -9,7 +9,7 @@ import io.circe.syntax.*
  *
  * - Node 本质 = 一个 agent 以 flow 形式组织（leaf、无 Mail 身份、无记忆、ephemeral）
  * - Flow Map = 每项目唯一：磁盘 flow-map.json（活动区 nodes + 归档区 archive）+ 内存 Ref
- * - TTL 只管显示（终态 +5min 从活动图消失），归档结果全文保留可长期接线投递
+ * - TTL 只管显示（终态 +24h 从活动图消失），归档结果全文保留可长期接线投递
  */
 
 /** 节点生命周期（§2.1）：pending/running/completed/failed/cancelled + wiring 扩展。 */
