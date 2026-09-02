@@ -352,14 +352,14 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-reactivate", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // A 入口 blocked（悬空，无 out）
+      // A 入口 blocked（out=Nebula 仅满足连接下限校验五；blocked 不结算下游，无投递副作用）
       _ <- nodeEdit(nodeInput("blk-reactivate", "react-node", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("will-block")), ctx)
+        "task" -> Json.fromString("will-block"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "react-node", Set(NodeLifecycle.Blocked))
       aId <- idOf(rt, "react-node")
-      // C 悬空完成（重激活时接为上游）
+      // C 悬空完成（重激活时接为上游；out=Nebula 仅满足连接下限）
       _ <- nodeEdit(nodeInput("blk-reactivate", "late-up", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("late-result-C")), ctx)
+        "task" -> Json.fromString("late-result-C"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "late-up", Set(NodeLifecycle.Completed))
       cId <- idOf(rt, "late-up")
       // 编辑 blocked 节点：task 实际变更 + in 追加 → 重激活
@@ -398,12 +398,12 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       (rt, events) <- mountEngineOnly("blk-abandon", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(nodeInput("blk-abandon", "abandon-node", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("will-block")), ctx)
+        "task" -> Json.fromString("will-block"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "abandon-node", Set(NodeLifecycle.Blocked))
       aId <- idOf(rt, "abandon-node")
       // running 节点 → abandon 拒绝
       _ <- nodeEdit(nodeInput("blk-abandon", "slow-node", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("slow-node")), ctx)
+        "task" -> Json.fromString("slow-node"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "slow-node", Set(NodeLifecycle.Running))
       refused <- nodeEdit(nodeInput("blk-abandon", "slow-node", "abandon" -> Json.fromBoolean(true)), ctx)
       // blocked → abandon 接受
@@ -435,9 +435,9 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-r1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // A blocked 悬空
+      // A blocked 悬空（out=Nebula 仅满足连接下限校验五；blocked 不结算，投递面无副作用）
       _ <- nodeEdit(nodeInput("blk-r1", "blk-up", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("will-block")), ctx)
+        "task" -> Json.fromString("will-block"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "blk-up", Set(NodeLifecycle.Blocked))
       aId <- idOf(rt, "blk-up")
       // create 路径：B 接 in=[A] → 不得投递/启动

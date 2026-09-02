@@ -74,16 +74,20 @@ function openFlowMapPanes() {
   return list;
 }
 
-// ── 布局：按 out 边算深度层 ────────────────────────────────
+// ── 布局：按 out 边 + deps 边算深度层 ──────────────────────
 function layoutNodes(fm) {
   const nodes = fm?.nodes || [];
   const nodeIds = new Set(nodes.map((n) => n.id));
   const childrenMap = new Map();
+  const addChild = (from, to) => {
+    if (!childrenMap.has(from)) childrenMap.set(from, []);
+    childrenMap.get(from).push(to);
+  };
   nodes.forEach((n) => {
-    if (n.out && n.out !== 'Nebula' && nodeIds.has(n.out)) {
-      if (!childrenMap.has(n.id)) childrenMap.set(n.id, []);
-      childrenMap.get(n.id).push(n.out);
-    }
+    if (n.out && n.out !== 'Nebula' && nodeIds.has(n.out)) addChild(n.id, n.out);
+    // deps 边（下游单侧持有，deps 设计 §1.4）：并入流向图（上游 → 下游），
+    // 否则纯 deps 下游被当根放第 0 层、边画成逆向
+    (n.deps || []).forEach((d) => { if (nodeIds.has(d)) addChild(d, n.id); });
   });
   const depth = {};
   nodes.forEach((n) => { depth[n.id] = 0; });
@@ -95,8 +99,9 @@ function layoutNodes(fm) {
     (childrenMap.get(id) || []).forEach((to) => visit(to, depth[id] + 1));
   }
   nodes.forEach((n) => {
-    const hasIn = (n.in || []).some((x) => nodeIds.has(x));
-    if (!hasIn) visit(n.id, 0);
+    const hasUpstream = (n.in || []).some((x) => nodeIds.has(x))
+      || (n.deps || []).some((x) => nodeIds.has(x));
+    if (!hasUpstream) visit(n.id, 0);
   });
   nodes.forEach((n) => visit(n.id, depth[n.id] || 0));
   const atDepth = {};
@@ -117,8 +122,18 @@ function layoutNodes(fm) {
   return { positions, width, height };
 }
 
+/** 上游 id → 显示名解析器（deps 设计 §1.4「wiring 节点等待谁」脚注）：
+ *  图内可见 → `名(id)`；已归档/隐藏 → `裸id✦` 诚实降级（断链诊断教训的低成本可见性）。 */
+function nameResolverOf(fm) {
+  const byId = new Map((fm?.nodes || []).map((n) => [n.id, n]));
+  return (id) => {
+    const n = byId.get(id);
+    return n ? `${n.name}(${id})` : `${id}✦`;
+  };
+}
+
 // ── 节点卡片（复用 solar 视觉）────────────────────────────
-function nodeHtml(n, pos, originX) {
+function nodeHtml(n, pos, originX, nameOf) {
   const st = n.status || 'pending';
   const cls = NODE_STATUS_CLS[st] || 'pending';
   const left = pos.x - NODE_W / 2 + originX;
@@ -134,6 +149,14 @@ function nodeHtml(n, pos, originX) {
   const result = n.result
     ? `<div class="fm-result-summary" title="${esc(n.result)}">${esc(n.result.slice(0, 46))}${n.result.length > 46 ? '…' : ''}</div>`
     : (st === 'running' ? `<div class="fm-result-summary running">${esc(t('flowmap.cardRunning'))}</div>` : '');
+  // 等待脚注（deps 设计 §1.4）：pending/wiring 且持有 in/deps → 列出全部等待对象
+  //（in = 等结果投递，deps = 等完成信号；上游已归档 → 裸 id ✦ 诚实降级）
+  const waitParts = (st === 'pending' || st === 'wiring')
+    ? [...(n.in || []), ...(n.deps || [])].map((id) => nameOf ? nameOf(id) : id)
+    : [];
+  const waitNote = waitParts.length
+    ? `<div class="fm-wait-note" title="${esc(`${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}`)}">⏳ ${esc(t('flowmap.waitingFor'))}: ${esc(waitParts.join(' · '))}</div>`
+    : '';
   return `
     <div class="solar-node fm-node ${cls}" data-node-id="${esc(n.id)}" data-agent="${esc(n.agent)}"
          data-status="${esc(st)}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
@@ -146,6 +169,7 @@ function nodeHtml(n, pos, originX) {
       <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
       <div class="solar-node-sub">${esc(n.agent)}${ttl ? ' ' + ttl : ''}</div>
       ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}
+      ${waitNote}
       ${result}
     </div>`;
 }
@@ -170,10 +194,14 @@ function edgeStateOf(n) {
 }
 
 /** 边只画在「可见」节点之间：终态到期被前端隐藏的节点不再拖出指向空位的幽灵边
- *  （旧版对全量节点画边，隐藏节点的边仍画向其占位坐标）。 */
+ *  （旧版对全量节点画边，隐藏节点的边仍画向其占位坐标）。deps 边按下游 n.deps
+ *  反向渲染（上游→下游画箭头，deps 设计 §1.4），边 id 用 `~>` 与输出边 `=>` 区分，
+ *  DOM class 加 fm-edge-deps + 三态档位；已归档/隐藏的上游不画边（等待脚注以
+ *  裸 id ✦ 诚实降级显示，诊断信息不丢）。 */
 function collectEdges(fm, positions) {
   const vis = visibleNodes(fm);
   const ids = new Set(vis.map((n) => n.id));
+  const byId = new Map(vis.map((n) => [n.id, n]));
   const edges = new Map();
   for (const n of vis) {
     if (!n.out || n.out === 'Nebula' || !ids.has(n.out)) continue;
@@ -184,7 +212,39 @@ function collectEdges(fm, positions) {
       x1: from.x, y1: from.y, x2: to.x, y2: to.y, state: edgeStateOf(n),
     });
   }
+  for (const n of vis) {
+    for (const d of n.deps || []) {
+      if (!ids.has(d)) continue;
+      const from = positions[d];
+      const to = positions[n.id];
+      if (!from || !to) continue;
+      edges.set(`${d}~>${n.id}`, {
+        x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+        state: depsEdgeStateOf(byId.get(d)),
+        kind: 'deps',
+      });
+    }
+  }
   return edges;
+}
+
+/** deps 边三态（deps 设计 §1.4 视觉三重编码之一）：CSS 另叠加虚线线型（类型编码①）
+ *  与空心小箭头（类型编码②），不依赖单一色觉通道，亮暗主题经 CSS 变量自适应。
+ *   deps-met    上游 completed → 依赖已满足（绿 --color-success）
+ *   deps-wait   上游 running   → 依赖等待（橙 --color-warning）
+ *   deps-unmet  其余（wiring/pending/failed/cancelled/blocked/归档隐藏）→ 未满足（灰 --color-border） */
+function depsEdgeStateOf(up) {
+  const st = up?.status || 'pending';
+  if (st === 'completed') return 'deps-met';
+  if (st === 'running') return 'deps-wait';
+  return 'deps-unmet';
+}
+
+/** 边 DOM class（含 deps 类型区分，applyEdgeDiff 与全量渲染共用同一拼接）。 */
+function edgeClassOf(e) {
+  return e.kind === 'deps'
+    ? { path: `flow-edge fm-edge fm-edge-deps ${e.state}`, arrow: `flow-edge-arrow fm-edge-arrow fm-edge-deps-arrow ${e.state}` }
+    : { path: `flow-edge fm-edge ${e.state}`, arrow: `flow-edge-arrow fm-edge-arrow ${e.state}` };
 }
 
 /** 贝塞尔路径（g 局部坐标）：端点插值动画与全量渲染共用同一形状函数。 */
@@ -194,10 +254,28 @@ function edgePathD(p) {
 }
 
 function edgesSvg(fm, positions, width, height) {
-  const paths = Array.from(collectEdges(fm, positions)).map(([id, e]) => `
-      <path class="flow-edge fm-edge ${e.state}" data-edge-id="${esc(id)}" d="${edgePathD(e)}"/>
-      <circle class="flow-edge-arrow fm-edge-arrow ${e.state}" data-edge-id="${esc(id)}" cx="${e.x2.toFixed(1)}" cy="${e.y2.toFixed(1)}" r="3"/>`).join('');
+  const paths = Array.from(collectEdges(fm, positions)).map(([id, e]) => {
+    const cls = edgeClassOf(e);
+    return `
+      <path class="${cls.path}" data-edge-id="${esc(id)}" d="${edgePathD(e)}"/>
+      <circle class="${cls.arrow}" data-edge-id="${esc(id)}" cx="${e.x2.toFixed(1)}" cy="${e.y2.toFixed(1)}" r="3"/>`;
+  }).join('');
   return `<svg class="solar-edges" width="${width}" height="${height}"><g transform="translate(${(width / 2).toFixed(1)},${PAD})">${paths}</g></svg>`;
+}
+
+// ── 图例（deps 设计 §1.4）：六档 = 输出边三态 × 依赖边三态，i18n 键 flowmap.legend.* ──
+function legendHtml() {
+  const item = (swatchCls, key) =>
+    `<span class="fm-legend-item"><span class="fm-legend-swatch ${swatchCls}" aria-hidden="true"></span>${esc(t(key))}</span>`;
+  return `
+    <div class="flowmap-legend" data-testid="fm-legend">
+      ${item('out delivered', 'flowmap.legend.outDelivered')}
+      ${item('out inflight', 'flowmap.legend.outWaiting')}
+      ${item('out idle', 'flowmap.legend.outIdle')}
+      ${item('deps deps-met', 'flowmap.legend.depsMet')}
+      ${item('deps deps-wait', 'flowmap.legend.depsWaiting')}
+      ${item('deps deps-unmet', 'flowmap.legend.depsUnmet')}
+    </div>`;
 }
 
 // ── 过滤：终态节点 ttlLeftSec<=0 即到期，前端隐藏（数据保留）──
@@ -387,7 +465,8 @@ function animateNodeExit(el) {
 // ══ 增量 diff 渲染 ═══════════════════════════════════════
 
 /** 节点卡片「内容」签名：参与 nodeHtml 渲染且增量期间会变化的字段。TTL 的数值
- *  刻意不入键——ticker 每秒原地改写文本，重建反而会闪。 */
+ *  刻意不入键——ticker 每秒原地改写文本，重建反而会闪。deps 段与 in barrier 提示
+ *  同款（deps 设计 §1.4）：pending/wiring 且有 deps 显示等待脚注，deps 集变化即重渲。 */
 function nodeContentKey(n) {
   if (!n) return '∅';
   const st = n.status || 'pending';
@@ -400,6 +479,7 @@ function nodeContentKey(n) {
     n.worktree || '',
     terminal && Number.isFinite(n.ttlLeftSec) && n.ttlLeftSec > 0 ? 1 : 0,
     st === 'pending' && (n.in || []).length > 1 ? (n.in || []).length : 0,
+    st === 'pending' || st === 'wiring' ? (n.deps || []).length : 0,
     n.result || '',
   ].join('|');
 }
@@ -410,9 +490,9 @@ function nodeContentKey(n) {
  *  st.el === el 继续成立，增量更新零打断、零重挂载（全量重建路径由 flowAnim 的
  *  keyed re-attach 兜底续角度）。根 class/状态属性同步替换，rAF reconcile 据此
  *  感知 running→终态并执行滑行淡出。 */
-function transplantNodeContent(el, n, pos, originX) {
+function transplantNodeContent(el, n, pos, originX, nameOf) {
   const holder = document.createElement('div');
-  holder.innerHTML = nodeHtml(n, pos, originX);
+  holder.innerHTML = nodeHtml(n, pos, originX, nameOf);
   const fresh = holder.firstElementChild;
   if (!fresh) return;
   const orbit = el.querySelector('.solar-orbit');
@@ -430,6 +510,7 @@ function applyNodeDiff(canvas, prevFm, fm, positions, width, projectName) {
   const prevById = new Map(visibleNodes(prevFm).map((n) => [n.id, n]));
   const vis = visibleNodes(fm);
   const originX = width / 2;
+  const nameOf = nameResolverOf(fm);
   const existing = new Map();
   canvas.querySelectorAll('.fm-node').forEach((el) => {
     existing.set(el.getAttribute('data-node-id'), el);
@@ -447,7 +528,7 @@ function applyNodeDiff(canvas, prevFm, fm, positions, width, projectName) {
     }
     if (!el) {
       const holder = document.createElement('div');
-      holder.innerHTML = nodeHtml(n, pos, originX);
+      holder.innerHTML = nodeHtml(n, pos, originX, nameOf);
       el = holder.firstElementChild;
       if (!el) continue;
       el.addEventListener('click', (e) => {
@@ -462,7 +543,7 @@ function applyNodeDiff(canvas, prevFm, fm, positions, width, projectName) {
     if (el.style.left !== left) el.style.left = left;
     if (el.style.top !== top) el.style.top = top;
     if (nodeContentKey(prevById.get(n.id)) !== nodeContentKey(n)) {
-      transplantNodeContent(el, n, pos, originX);
+      transplantNodeContent(el, n, pos, originX, nameOf);
     }
   }
   for (const [id, el] of existing) {
@@ -485,14 +566,15 @@ function applyEdgeDiff(g, prevEdges, edges) {
     let p = paths.get(id);
     let c = circles.get(id) || null;
     if (!p) {
+      const cls = edgeClassOf(e);
       p = document.createElementNS(SVG_NS, 'path');
-      p.setAttribute('class', `flow-edge fm-edge ${e.state}`);
+      p.setAttribute('class', cls.path);
       p.setAttribute('data-edge-id', id);
       p.setAttribute('d', edgePathD(e));
       g.appendChild(p);
       if (!c) {
         c = document.createElementNS(SVG_NS, 'circle');
-        c.setAttribute('class', `flow-edge-arrow fm-edge-arrow ${e.state}`);
+        c.setAttribute('class', cls.arrow);
         c.setAttribute('data-edge-id', id);
         c.setAttribute('cx', e.x2.toFixed(1));
         c.setAttribute('cy', e.y2.toFixed(1));
@@ -504,9 +586,11 @@ function applyEdgeDiff(g, prevEdges, edges) {
     }
     const prevE = prevEdges.get(id);
     if (prevE && prevE.state !== e.state) {
-      // 状态档位变化：颜色/线型交由 CSS transition 平滑（flowMap.css .fm-edge 过渡）
-      p.setAttribute('class', `flow-edge fm-edge ${e.state}`);
-      if (c) c.setAttribute('class', `flow-edge-arrow fm-edge-arrow ${e.state}`);
+      // 状态档位变化：颜色/线型交由 CSS transition 平滑（flowMap.css .fm-edge 过渡）；
+      // deps 类型 class 同步保留（edgeClassOf 单点拼接）
+      const cls = edgeClassOf(e);
+      p.setAttribute('class', cls.path);
+      if (c) c.setAttribute('class', cls.arrow);
     }
     const moved = !prevE || prevE.x1 !== e.x1 || prevE.y1 !== e.y1
       || prevE.x2 !== e.x2 || prevE.y2 !== e.y2;
@@ -587,7 +671,8 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
     return;
   }
   const { positions, width, height } = layoutNodes(fm);
-  const nodesHtml = nodes.map((n) => nodeHtml(n, positions[n.id] || { x: 0, y: 0 }, width / 2)).join('');
+  const nameOf = nameResolverOf(fm);
+  const nodesHtml = nodes.map((n) => nodeHtml(n, positions[n.id] || { x: 0, y: 0 }, width / 2, nameOf)).join('');
   // 空态三分（旧版一律"暂无节点，项目空闲"，把「未挂载」「TTL 已归档」两种
   // 有数据的情况说成没数据 —— qa 取证「后端有 3 节点、视图显示暂无节点」即此）。
   const emptyMsg = fm?.notMounted ? t('flowmap.notMounted')
@@ -611,6 +696,7 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
               ${nodesHtml}
             </div>
           </div>
+          ${legendHtml()}
         </div>`}
     `;
   renderedFmByContainer.set(container, fm);

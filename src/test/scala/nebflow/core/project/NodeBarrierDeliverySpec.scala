@@ -245,9 +245,9 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-d1-create", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // A 入口（无 out → 悬空完成）
+      // A 入口（悬空完成：out=Nebula 仅满足连接下限，Nebula 通知在测试环境无根会话，无断言影响）
       _ <- nodeEdit(nodeInput("bar-d1-create", "done-a", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("dangling-result-A")), ctx)
+        "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "done-a", Set(NodeLifecycle.Completed))
       aId <- idOf(rt, "done-a")
       // 新建 B 接 in=[A]（JSON 数组字符串形态，顺带回归次因 B）→ D1 自动投递 + 启动
@@ -275,9 +275,9 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-d1-edit", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // A 悬空完成
+      // A 悬空完成（out=Nebula 仅满足连接下限，校验五——测试环境无 Nebula 根会话无副作用）
       _ <- nodeEdit(nodeInput("bar-d1-edit", "done-a", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("dangling-result-A")), ctx)
+        "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "done-a", Set(NodeLifecycle.Completed))
       aId0 <- idOf(rt, "done-a")
       // 已存在 wiring 节点 W（无 task，仅 out → wiring 态）
@@ -309,9 +309,9 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-race", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // A 入口运行中（无 out → 启动时捕获的快照 out=None）
+      // A 入口运行中（out=Nebula 仅满足连接下限；启动时捕获的快照 out 将被运行中接线改写为 C）
       _ <- nodeEdit(nodeInput("bar-race", "race-a", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("race-result-A")), ctx)
+        "task" -> Json.fromString("race-result-A"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "race-a", Set(NodeLifecycle.Running))
       // A 运行中建 C 并接线 in=[A]（NodeTools.setOut 改写运行中节点的 out）
       _ <- nodeEdit(nodeInput("bar-race", "race-c", "agent" -> Json.fromString("test-agent"),
@@ -359,9 +359,9 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("bar-append", "run-r", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("running-result-R"), "out" -> Json.fromString(wId)), ctx)
-      // A 悬空完成（追加目标）
+      // A 悬空完成（out=Nebula 仅满足连接下限，校验五——追加目标）
       _ <- nodeEdit(nodeInput("bar-append", "done-a", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("done-result-A")), ctx)
+        "task" -> Json.fromString("done-result-A"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "done-a", Set(NodeLifecycle.Completed))
       aId <- idOf(rt, "done-a")
       rId <- idOf(rt, "run-r")
