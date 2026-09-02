@@ -2,9 +2,9 @@
 // shot-tasklist-nodes.cjs — 任务列表 Flow Map 节点条目视觉验收截图（亮暗双主题）。
 //
 // 自包含打桩：page.route 从磁盘服务真实前端文件（不起任何端口、不碰 8080），
-// MockWebSocket 注入真实 ws.js 分发路径。产出：
-//   ~/.nebflow/docs/Nebflow/20260902_tasklist-node-entries-dark.png
-//   ~/.nebflow/docs/Nebflow/20260902_tasklist-node-entries-light.png
+// MockWebSocket 注入真实 ws.js 分发路径。产出（v2：绿圈简约化 + team 解耦）：
+//   ~/.nebflow/docs/Nebflow/20260902_tasklist-node-entries-v2-dark.png
+//   ~/.nebflow/docs/Nebflow/20260902_tasklist-node-entries-v2-light.png
 //
 // Run: node scripts/shot-tasklist-nodes.cjs
 
@@ -96,7 +96,7 @@ const node = (over) => ({
     await page.waitForFunction(() => document.querySelectorAll('#task-list .task-node').length >= 6, null, { timeout: 8000 });
     await page.waitForTimeout(500); // 入场动画收敛
 
-    const out = join(OUT_DIR, `20260902_tasklist-node-entries-${colorScheme}.png`);
+    const out = join(OUT_DIR, `20260902_tasklist-node-entries-v2-${colorScheme}.png`);
     await panel.screenshot({ path: out });
     console.log(`saved ${out}`);
     await page.close();

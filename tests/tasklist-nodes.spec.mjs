@@ -1,13 +1,17 @@
 // tasklist-nodes.spec.mjs — 任务列表面板 Flow Map 节点条目验收（2026-09-02 作者裁定：
-// 节点作为条目显示在任务列表中，纯前端）。
+// 节点作为条目显示在任务列表中，纯前端；v2 迭代同步：绿色小圈 spinner + 简约化 +
+// team 区块解耦（.task-node-* 独立命名空间））。
 //
 // 覆盖：
-//   T1 渲染：WS 节点事件驱动的条目（节点名 + 状态徽章 + 状态词 + 相对时间 +
-//      project · agent 标注 + 项目分组头），五状态徽章映射正确
-//   T2 状态更新：nodeUpdated/nodeCompleted 原地反映（spinner → 终态色点徽章）
+//   T1 渲染：WS 节点事件驱动的条目（节点名 + 状态 glyph + 状态词 + 相对时间 +
+//      agent 标注 + 项目分组头），五状态 glyph 映射正确；v2 视觉断言（running
+//      品牌绿 12px 转动圆环、状态词 muted、行密度 13px/3px 对齐任务行、节点行
+//      不携带任务域类）
+//   T2 状态更新：nodeUpdated/nodeCompleted 原地反映（绿圈 → 终态色点）
 //   T3 移除：nodeRemoved 条目消失
 //   T4 交互：点击条目 → projects 标签页就地打开该项目 Flow Map 并高亮该节点
 //   T5 快照对齐 + 防回滚：快照在途期间的 WS 增量不被旧快照滚回
+//   T6 未知状态优雅降级：后续新状态（如 blocked）→ 中性点、无状态词、不崩
 //
 // 事件帧 = 后端契约帧 {type, project, nodeId, node}（20260901_project-node-contract
 // §2），走真实 ws.js 分发路径注入（s.ws.onmessage），前端管线全真。
@@ -127,44 +131,58 @@ test('T1 节点条目渲染：五状态徽章/状态词/时间/project·agent �
   const panel = page.locator('#task-list');
   await expect(panel).toHaveClass(/has-tasks/);
 
-  // 分区与项目分组头（节点区沿用 team 分组的 subgroup 设计语言）
-  await expect(panel.locator('.task-section-nodes .task-group-header')).toHaveText('Flow Map');
-  await expect(panel.locator('.task-subgroup-header', { hasText: 'alpha' })).toHaveCount(1);
-  await expect(panel.locator('.task-subgroup-header', { hasText: 'beta' })).toHaveCount(1);
+  // 分区与项目分组头（节点区块自有类，不依赖 team 分组类）
+  await expect(panel.locator('.task-section-nodes .task-node-section-title')).toHaveText('Flow Map');
+  await expect(panel.locator('.task-node-group-header', { hasText: 'alpha' })).toHaveCount(1);
+  await expect(panel.locator('.task-node-group-header', { hasText: 'beta' })).toHaveCount(1);
 
-  // running：spinner glyph + 运行色状态词
+  // running：品牌绿小圈（--color-primary #07C160，非任务行蓝色 sapphire）+ 12px
   const runRow = panel.locator('.task-node[data-node-key="alpha:n-run"]');
-  await expect(runRow.locator('.task-label')).toHaveText('scan-repo');
-  await expect(runRow.locator('.task-check-spin')).toHaveCount(1);
-  await expect(runRow.locator('.task-status-word')).toHaveText('运行中');
-  await expect(runRow.locator('.task-status-word')).toHaveClass(/task-node-word-running/);
-  await expect(runRow.locator('.task-meta')).toHaveText('alpha · Backend');
-  await expect(runRow.locator('.task-last-active')).not.toBeEmpty();
+  await expect(runRow.locator('.task-node-label')).toHaveText('scan-repo');
+  await expect(runRow.locator('.task-node-spin')).toHaveCount(1);
+  const spinColor = await runRow.locator('.task-node-spin')
+    .evaluate((el) => getComputedStyle(el).borderTopColor);
+  expect(spinColor).toBe('rgb(7, 193, 96)'); // #07c160 品牌绿
+  const spinSize = await runRow.locator('.task-node-spin')
+    .evaluate((el) => ({ w: el.offsetWidth, h: el.offsetHeight }));
+  expect(spinSize.w).toBe(12); // 缩小到 12px 节奏（= pending 小方框，宁小勿大）
+  expect(spinSize.h).toBe(12); // offsetWidth/Height 不含 transform——转圈中的 AABB 会随角度变大
+  await expect(runRow.locator('.task-node-word')).toHaveText('运行中');
+  const wordColor = await runRow.locator('.task-node-word')
+    .evaluate((el) => getComputedStyle(el).color);
+  expect(wordColor).not.toBe('rgb(7, 193, 96)'); // 状态词 muted（颜色信号归 glyph）
+  await expect(runRow.locator('.task-node-meta')).toHaveText('Backend'); // meta 只标 agent
+  await expect(runRow.locator('.task-node-time')).not.toBeEmpty();
+  // 行密度对齐任务行：13px 字号 + 3px 上下 padding；不携带任务域类（命名空间解耦）
+  expect(await runRow.evaluate((el) => getComputedStyle(el).fontSize)).toBe('13px');
+  expect(await runRow.evaluate((el) => getComputedStyle(el).paddingTop)).toBe('3px');
+  await expect(runRow).not.toHaveClass(/task-item/);
+  await expect(runRow).not.toHaveClass(/task-check/);
 
-  // completed：绿色徽章 + 已完成
+  // completed：绿色实心点 + 已完成
   const revRow = panel.locator('.task-node[data-node-key="alpha:n-rev"]');
   await expect(revRow.locator('.task-node-dot-completed')).toHaveCount(1);
-  await expect(revRow.locator('.task-status-word')).toHaveText('已完成');
+  await expect(revRow.locator('.task-node-word')).toHaveText('已完成');
 
-  // failed：红色徽章
+  // failed：红点
   const fixRow = panel.locator('.task-node[data-node-key="alpha:n-fix"]');
   await expect(fixRow.locator('.task-node-dot-failed')).toHaveCount(1);
-  await expect(fixRow.locator('.task-status-word')).toHaveText('失败');
+  await expect(fixRow.locator('.task-node-word')).toHaveText('失败');
 
-  // wiring：等待语义（静态小方框 + 等待词，同任务 pending 视觉）
+  // wiring：等待语义（静默小方框 + 等待词）
   const docRow = panel.locator('.task-node[data-node-key="beta:n-doc"]');
-  await expect(docRow.locator('.task-check-box')).toHaveCount(1);
-  await expect(docRow.locator('.task-status-word')).toHaveText('等待');
+  await expect(docRow.locator('.task-node-box')).toHaveCount(1);
+  await expect(docRow.locator('.task-node-word')).toHaveText('等待');
 
   // pending：排队中
   const pendRow = panel.locator('.task-node[data-node-key="beta:n-pend"]');
-  await expect(pendRow.locator('.task-check-box')).toHaveCount(1);
-  await expect(pendRow.locator('.task-status-word')).toHaveText('排队中');
+  await expect(pendRow.locator('.task-node-box')).toHaveCount(1);
+  await expect(pendRow.locator('.task-node-word')).toHaveText('排队中');
 
   expect(pageErrors).toEqual([]);
 });
 
-test('T2 状态更新原地反映：running → completed 徽章与状态词切换', async ({ page }) => {
+test('T2 状态更新原地反映：running → completed 绿圈与色点切换', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -173,7 +191,7 @@ test('T2 状态更新原地反映：running → completed 徽章与状态词切�
   await inject(page, { type: 'nodeCreated', project: 'alpha', nodeId: 'n-run', node: { ...N_RUN } });
 
   const row = page.locator('#task-list .task-node[data-node-key="alpha:n-run"]');
-  await expect(row.locator('.task-check-spin')).toHaveCount(1);
+  await expect(row.locator('.task-node-spin')).toHaveCount(1);
 
   // 节点完成（nodeCompleted 全量 payload）
   await inject(page, {
@@ -181,8 +199,8 @@ test('T2 状态更新原地反映：running → completed 徽章与状态词切�
     node: { ...N_RUN, status: 'completed', result: 'repo scanned', completedAt: Date.now(), ttlLeftSec: 300 },
   });
   await expect(row.locator('.task-node-dot-completed')).toHaveCount(1);
-  await expect(row.locator('.task-check-spin')).toHaveCount(0);
-  await expect(row.locator('.task-status-word')).toHaveText('已完成');
+  await expect(row.locator('.task-node-spin')).toHaveCount(0);
+  await expect(row.locator('.task-node-word')).toHaveText('已完成');
 
   expect(pageErrors).toEqual([]);
 });
@@ -265,12 +283,34 @@ test('T5 快照在途期间的 WS 增量不被旧快照回滚', async ({ page })
     node: { ...N_RUN, id: 'n1', status: 'completed', completedAt: Date.now(), ttlLeftSec: 300 },
   });
   const row = page.locator('#task-list .task-node[data-node-key="alpha:n1"]');
-  await expect(row.locator('.task-status-word')).toHaveText('已完成');
+  await expect(row.locator('.task-node-word')).toHaveText('已完成');
 
   // 慢快照（running）此时才落地：防回滚守卫生效，面板保持 completed
   await page.waitForTimeout(800);
   await expect(row.locator('.task-node-dot-completed')).toHaveCount(1);
-  await expect(row.locator('.task-status-word')).toHaveText('已完成');
+  await expect(row.locator('.task-node-word')).toHaveText('已完成');
+
+  expect(pageErrors).toEqual([]);
+});
+
+test('T6 未知节点状态优雅降级：中性点、无状态词、不崩', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  await renderPanel(page);
+  // 后续会有 blocked 等新状态——前端现在还不知道它，必须中性降级而非崩/空白
+  await inject(page, {
+    type: 'nodeCreated', project: 'alpha', nodeId: 'n-blocked',
+    node: nodeJson({ id: 'n-blocked', name: 'await-gate', agent: 'Backend', status: 'blocked' }),
+  });
+
+  const row = page.locator('#task-list .task-node[data-node-key="alpha:n-blocked"]');
+  await expect(row).toHaveCount(1);
+  await expect(row.locator('.task-node-label')).toHaveText('await-gate');
+  await expect(row.locator('.task-node-dot-neutral')).toHaveCount(1); // 中性默认样式
+  await expect(row.locator('.task-node-word')).toHaveCount(0); // 未知状态不出状态词
+  await expect(row.locator('.task-node-spin')).toHaveCount(0);
 
   expect(pageErrors).toEqual([]);
 });

@@ -59,6 +59,12 @@ function sortProgress(a, b) {
 function taskTeam(tk) { return (tk && typeof tk.teamId === 'string' && tk.teamId) || null; }
 function taskMember(tk) { return (tk && typeof tk.assignee === 'string' && tk.assignee) || null; }
 
+// ── [team 区块 · 退役边界] ────────────────────────────────────────────────
+// 以下至 buildEmpty() 为 team 任务域（作者 2026-09-02：team 任务后期退役）。
+// 退役时整体删除本域函数 + redraw() 的 progress 分组段 + 对应 CSS，节点区块
+// （.task-node-* 命名空间）零依赖本域。可操作清单：
+// docs/Nebflow/20260902_tasklist-team-retirement-cleanup.md
+
 /** 裁定②: team 域任务（teamTaskListUpdate, 无 sessionId）统一并入 Nebula
  *  会话的任务列表面板。Only the Nebula session shows the unified list —
  *  member/agent sessions keep showing only their own session tasks. */
@@ -90,12 +96,20 @@ function mergeTeamTasks(tasks, sessionId) {
 }
 
 // ── Flow Map 节点条目（2026-09-02 作者裁定：节点作为条目并入任务列表）──────
-// 纯前端、零后端改动：数据 = WS 节点广播帧（nodeCreated/Updated/Completed/Removed，
-// 全局广播 {type, project, nodeId, node}，契约 20260901_project-node-contract §2）
-// 增量维护本地缓存 + 连接建立时 NodeList 全量快照（GET /api/projects/<n>/flow-map）
-// 对齐一次；事件驱动，无轮询。与裁定② team 任务同一并入逻辑：只在 Nebula 统一
-// 面板（sessionShowsTeamTasks）渲染。终态节点在 5min TTL 窗口内仍显示（与 Flow Map
-// 一致），到期由 nodeRemoved 移除。
+// [节点区块 · 独立命名空间] 数据 = WS 节点广播帧（nodeCreated/Updated/Completed/
+// Removed，全局广播 {type, project, nodeId, node}，契约 20260901_project-node-contract
+// §2）增量维护本地缓存 + 连接建立时 NodeList 全量快照（GET /api/projects/<n>/flow-map）
+// 对齐一次；事件驱动，无轮询。渲染/CSS 类（.task-node-*）/判定条件全部节点自有，
+// 与上方 team 区块零交叉引用（v2 解耦，2026-09-02 作者反馈③）。终态节点在 5min
+// TTL 窗口内仍显示（与 Flow Map 一致），到期由 nodeRemoved 移除。
+
+/** 节点区块自有判定：Nebula 统一面板才显示节点条目。语义与 sessionShowsTeamTasks
+ *  相同（统一面板），但独立命名——team 退役删除其判定后节点区块不受影响。 */
+function sessionShowsNodeEntries(sid) {
+  if (!sid) return false;
+  const agent = state.sessionAgentMap ? state.sessionAgentMap[sid] : null;
+  return !agent || agent === 'Nebula';
+}
 
 /** project → Map(nodeId → node)。node 附带 _wsTs（本帧落地时刻，防快照回滚）。 */
 const nodeCache = new Map();
@@ -150,7 +164,7 @@ export function applyNodeWsEvent(msg) {
 
 function rerenderWithNodes() {
   const sid = lastPanelSessionId;
-  if (!sid || !sessionShowsTeamTasks(sid)) return;
+  if (!sid || !sessionShowsNodeEntries(sid)) return;
   renderTaskList(state.sessionTasks[sid] || [], undefined, sid);
 }
 
@@ -206,7 +220,10 @@ let lastActiveTimer = null;
 function refreshLastActive() {
   const container = document.getElementById('task-list');
   if (!container) return;
-  const els = /** @type {NodeListOf<HTMLElement>} */ (container.querySelectorAll('.task-last-active'));
+  const els = /** @type {NodeListOf<HTMLElement>} */ (
+    // 面板级 ticker 基建：同时服务任务行（.task-last-active）与节点行
+    // （.task-node-time）。team 区块退役后选择器保留节点类即可。
+    container.querySelectorAll('.task-last-active, .task-node-time'));
   els.forEach((el) => {
     const ts = el.dataset.ts;
     if (ts) el.textContent = formatLastActive(ts);
@@ -338,65 +355,78 @@ const NODE_WORD_KEY = {
 };
 
 /**
- * 节点条目行：节点名 + 状态徽章 + 相对时间 + project · agent 标注。
- * 状态徽章映射（复用任务行既有 glyph 语义 + 应用既有状态色）：
- *   running     → .task-check-spin（与任务 in_progress 同一 spinner）
- *   wiring/pending → .task-check-box（与任务 pending 同一静态小方框，等待色=muted）
- *   completed/failed/cancelled → .task-node-dot-{cls} 状态色圆点（success/error/warning）
- * 状态词按同语义着色（wiring/pending 保持 muted）。点击行 → 打开该项目 Flow Map
- * 就地视图并高亮节点（动态 import projectTab，避免模块图静态耦合）。
+ * 节点条目行（v2 简约化，2026-09-02 作者反馈）：节点名 + 状态 glyph + 状态词 +
+ * 相对时间 + agent 标注。设计规范：
+ *   - glyph 统一 12px 节奏（对齐任务行 pending 小方框，宁小勿大）；
+ *     running = 品牌绿（--color-primary）转动圆环，与 completed 静态实心绿点
+ *     （--color-success）靠形态+色相双区分。
+ *   - 状态词全部 muted（颜色信号由 glyph 独占——减装饰）。
+ *   - meta 只标 agent（project 已由分组头承载——信息减法）。
+ *   - 未知状态（后续 blocked 等新状态）优雅降级：中性半透明点、无状态词，不崩。
+ * 点击行 → 打开该项目 Flow Map 就地视图并高亮节点（动态 import projectTab，
+ * 避免模块图静态耦合）。
  */
+function buildNodeGlyph(st, cls) {
+  const g = document.createElement('span');
+  g.setAttribute('aria-hidden', 'true');
+  if (st === 'running') {
+    g.className = 'task-node-spin';
+  } else if (st === 'completed' || st === 'failed' || st === 'cancelled') {
+    g.className = `task-node-dot task-node-dot-${cls}`;
+  } else if (st === 'wiring' || st === 'pending') {
+    g.className = 'task-node-box';
+  } else {
+    g.className = 'task-node-dot task-node-dot-neutral'; // 未知状态中性降级
+  }
+  return g;
+}
+
 function buildNodeRow(node, project) {
-  const st = node.status || 'pending';
-  const cls = NODE_STATUS_CLS[st] || 'pending'; // wiring → pending（等待色）
-  const word = t(NODE_WORD_KEY[st] || 'task.pendingShort');
+  const st = String(node.status || 'pending');
+  const cls = NODE_STATUS_CLS[st] || ''; // wiring → pending（等待色）；未知 → ''
+  const wordKey = NODE_WORD_KEY[st];
 
   const row = document.createElement('div');
-  row.className = `task-item task-node task-node-${cls}`;
+  row.className = 'task-node' + (cls ? ` task-node-${cls}` : '');
   row.dataset.nodeKey = `${project}:${node.id}`;
   row.dataset.project = project;
   row.dataset.nodeId = node.id;
   row.setAttribute('role', 'button');
-  row.setAttribute('aria-label', `${node.name || node.id} — ${word}`);
+  row.setAttribute('aria-label',
+    `${node.name || node.id}${wordKey ? ` — ${t(wordKey)}` : ''}`);
   row.title = t('project.openFlowMap', { name: project });
 
-  const check = document.createElement('span');
-  check.className = 'task-check';
-  check.setAttribute('aria-hidden', 'true');
-  if (st === 'running') {
-    check.classList.add('task-check-spin');
-  } else if (cls === 'pending') {
-    check.classList.add('task-check-box');
-  } else {
-    check.classList.add('task-node-dot', `task-node-dot-${cls}`);
-  }
-  row.appendChild(check);
+  row.appendChild(buildNodeGlyph(st, cls));
 
   const text = document.createElement('div');
-  text.className = 'task-item-text';
+  text.className = 'task-node-text';
   const label = document.createElement('span');
-  label.className = 'task-label';
+  label.className = 'task-node-label';
   label.textContent = node.name || node.id;
   text.appendChild(label);
+  // project 已由分组头承载，meta 只标 agent；无 agent 不渲染（行更矮更净）。
   const agent = typeof node.agent === 'string' ? node.agent : '';
-  row.classList.add('task-has-meta');
-  const metaEl = document.createElement('span');
-  metaEl.className = 'task-meta';
-  metaEl.setAttribute('aria-hidden', 'true');
-  metaEl.textContent = agent ? `${project} · ${agent}` : project;
-  text.appendChild(metaEl);
+  if (agent) {
+    const metaEl = document.createElement('span');
+    metaEl.className = 'task-node-meta';
+    metaEl.setAttribute('aria-hidden', 'true');
+    metaEl.textContent = agent;
+    text.appendChild(metaEl);
+  }
   row.appendChild(text);
 
-  const wordEl = document.createElement('span');
-  wordEl.className = `task-status-word task-node-word-${cls}`;
-  wordEl.setAttribute('aria-hidden', 'true');
-  wordEl.textContent = word;
-  row.appendChild(wordEl);
+  if (wordKey) {
+    const wordEl = document.createElement('span');
+    wordEl.className = 'task-node-word';
+    wordEl.setAttribute('aria-hidden', 'true');
+    wordEl.textContent = t(wordKey);
+    row.appendChild(wordEl);
+  }
 
   const ms = nodeTs(node);
   if (ms > 0) {
     const time = document.createElement('span');
-    time.className = 'task-last-active';
+    time.className = 'task-node-time';
     time.setAttribute('aria-hidden', 'true');
     // ISO 字符串进 dataset.ts——60s ticker 复用 formatLastActive（Date.parse 可解）
     time.dataset.ts = new Date(ms).toISOString();
@@ -411,6 +441,34 @@ function buildNodeRow(node, project) {
     }).catch(() => {});
   });
   return row;
+}
+
+/** 节点区块分区装配（独立于 redraw 的 team 分组逻辑）：标题 + 按项目分组。
+ *  无节点返回 null（分区整体不渲染）。 */
+function buildNodeSection(nodes) {
+  if (!nodes || nodes.length === 0) return null;
+  const section = document.createElement('div');
+  section.className = 'task-section task-section-nodes';
+  const title = document.createElement('div');
+  title.className = 'task-node-section-title';
+  title.textContent = t('flowmap.title');
+  section.appendChild(title);
+  const byProject = new Map();
+  for (const it of nodes) {
+    if (!byProject.has(it.project)) byProject.set(it.project, []);
+    byProject.get(it.project).push(it);
+  }
+  for (const [project, items] of byProject) {
+    const group = document.createElement('div');
+    group.className = 'task-node-group';
+    const h = document.createElement('div');
+    h.className = 'task-node-group-header';
+    h.textContent = project;
+    group.appendChild(h);
+    for (const { node } of items) group.appendChild(buildNodeRow(node, project));
+    section.appendChild(group);
+  }
+  return section;
 }
 
 function buildGroupHeader(label, section) {
@@ -456,8 +514,9 @@ export function renderTaskList(tasks, container, sessionId) {
 
   lastPanelSessionId = sessionId || null;
   // 2026-09-02: Nebula 统一面板并入 Flow Map 节点条目（成员会话面板不显示）。
+  // 判定用节点区块自有 gate（与 team 域 sessionShowsTeamTasks 解耦）。
   // 首渲全量对齐一次快照（此后事件驱动），补齐页面打开前已在跑的节点。
-  const showNodes = sessionShowsTeamTasks(sessionId);
+  const showNodes = sessionShowsNodeEntries(sessionId);
   if (showNodes && !nodeSnapshotLoaded) {
     nodeSnapshotLoaded = true;
     refreshNodeSnapshot();
@@ -482,10 +541,11 @@ export function renderTaskList(tasks, container, sessionId) {
 }
 
 /** Map taskId/nodeKey → zone ('progress') from the current DOM (entry-animation
- *  comparison only — a #15 single-zone panel always resolves 'progress'). */
+ *  comparison only — a #15 single-zone panel always resolves 'progress').
+ *  节点行用 .task-node 类（不携带 .task-item——节点区块独立命名空间）。 */
 function collectZoneById(container) {
   const m = new Map();
-  container.querySelectorAll('.task-item[data-task-id], .task-item[data-node-key]').forEach((el) => {
+  container.querySelectorAll('.task-item[data-task-id], .task-node[data-node-key]').forEach((el) => {
     m.set(el.dataset.taskId || el.dataset.nodeKey, 'progress');
   });
   return m;
@@ -562,27 +622,11 @@ function redraw(visible, container, sessionId, oldById, nodes) {
 
   inner.appendChild(progressSection);
 
-  // ── Flow Map 节点条目区（2026-09-02）：按项目分组的节点行，仅在有节点时渲染。
-  // 分组头沿用 team 分组的 .task-subgroup-header 设计语言（project 之于节点 ≙
-  // team 之于任务）；空任务 + 有节点时面板仍打开，progress 区照常显示空态行。 ──
-  if (nodes && nodes.length > 0) {
-    const nodesSection = document.createElement('div');
-    nodesSection.className = 'task-section task-section-nodes';
-    nodesSection.appendChild(buildGroupHeader(t('flowmap.title'), 'nodes'));
-    const byProject = new Map();
-    for (const it of nodes) {
-      if (!byProject.has(it.project)) byProject.set(it.project, []);
-      byProject.get(it.project).push(it);
-    }
-    for (const [project, items] of byProject) {
-      const group = document.createElement('div');
-      group.className = 'task-subgroup';
-      group.appendChild(buildSubgroupHeader(project, 'team'));
-      for (const { node } of items) group.appendChild(buildNodeRow(node, project));
-      nodesSection.appendChild(group);
-    }
-    inner.appendChild(nodesSection);
-  }
+  // ── Flow Map 节点条目区（节点区块单一调用点）：装配在 buildNodeSection 内
+  // 全程使用 .task-node-* 命名空间，与上方 team 分组段零交叉。team 区块退役时
+  // 删除 progress 段 + 本调用点上方所有任务行代码即可，节点区不受影响。 ──
+  const nodesSection = buildNodeSection(nodes);
+  if (nodesSection) inner.appendChild(nodesSection);
 
   body.appendChild(inner);
   card.appendChild(header);
@@ -599,14 +643,16 @@ function redraw(visible, container, sessionId, oldById, nodes) {
     createIconsIn(toggle);
   });
 
-  // 裁定 2: entry animation for brand-new rows.
+  // 裁定 2: entry animation for brand-new rows. 修复：key 取 taskId || nodeKey
+  // ——旧代码只取 taskId，节点行（只有 nodeKey）每帧误判为新行反复重播入场动画。
   if (!REDUCED_MOTION) {
-    const items = /** @type {NodeListOf<HTMLElement>} */ (container.querySelectorAll('.task-item'));
+    const items = /** @type {NodeListOf<HTMLElement>} */ (
+      container.querySelectorAll('.task-item, .task-node'));
     items.forEach((el) => {
-      if (!oldById.has(el.dataset.taskId)) {
-        el.classList.add('task-entering');
-        el.addEventListener('animationend', () => el.classList.remove('task-entering'), { once: true });
-      }
+      if (oldById.has(el.dataset.taskId || el.dataset.nodeKey)) return;
+      const anim = el.classList.contains('task-node') ? 'task-node-entering' : 'task-entering';
+      el.classList.add(anim);
+      el.addEventListener('animationend', () => el.classList.remove(anim), { once: true });
     });
   }
 }
