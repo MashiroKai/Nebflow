@@ -1383,6 +1383,10 @@ export function initInput(view) {
   let voiceActive = false;
   let voiceAnchor = 0;       // position where current voice segment starts
   let voiceInterimLen = 0;   // length of interim text currently displayed
+  // Snapshot of input.value at the last voice write / user edit. The diff
+  // baseline that lets us re-anchor the live draft slot after user edits
+  // (2026-09-02 duplicate-fix; see the input listener below).
+  let voiceBaseline = '';
 
   // Shared callbacks for dictation mode.
   function makeVoiceCallbacks() {
@@ -1393,6 +1397,7 @@ export function initInput(view) {
         const after = input.value.substring(voiceAnchor + voiceInterimLen);
         input.value = before + text + after;
         voiceInterimLen = text.length;
+        voiceBaseline = input.value;
         input.focus();
         input.setSelectionRange(voiceAnchor + text.length, voiceAnchor + text.length);
         input.style.height = 'auto';
@@ -1406,6 +1411,7 @@ export function initInput(view) {
         input.value = before + insert + after;
         voiceInterimLen = 0;
         voiceAnchor = before.length + insert.length;
+        voiceBaseline = input.value;
         input.setSelectionRange(voiceAnchor, voiceAnchor);
         input.style.height = 'auto';
         input.style.height = Math.min(input.scrollHeight, 200) + 'px';
@@ -1415,6 +1421,49 @@ export function initInput(view) {
       },
     };
   }
+
+  // Keep the voice draft slot honest across user edits while the mic is live
+  // (2026-09-02 duplicate-fix). The continuous Web Speech session stays open
+  // long after the user stops talking — Chrome auto-restarts on silence — so
+  // moving the caret / deleting text between utterances shifts the value UNDER
+  // the [voiceAnchor, voiceAnchor+voiceInterimLen) arithmetic. The next
+  // interim/final then rewrote a STALE range: the same fragment landed twice,
+  // or old text resurfaced at the wrong place. Programmatic .value writes
+  // (the voice callbacks) never fire 'input', so everything reaching this
+  // listener while voiceActive is a real user edit. Cases:
+  //   1. empty slot  → the caret is the truth: next draft grows at the caret.
+  //   2. edit entirely before the slot → shift the anchor by the length delta.
+  //      Edit entirely after → anchor unchanged.
+  //   3. edit touching the draft → the machine draft is invalidated; collapse
+  //      the slot to empty at the caret. Chrome's redraft re-inserts once, at
+  //      the right place — never two copies.
+  input.addEventListener('input', () => {
+    if (!voiceActive) return;
+    if (voiceInterimLen === 0) {
+      voiceAnchor = input.selectionStart ?? input.value.length;
+    } else {
+      const oldV = voiceBaseline;
+      const newV = input.value;
+      let p = 0;
+      const min = Math.min(oldV.length, newV.length);
+      while (p < min && oldV[p] === newV[p]) p++;
+      let s = 0;
+      while (s < min - p && oldV[oldV.length - 1 - s] === newV[newV.length - 1 - s]) s++;
+      const editEndOld = oldV.length - s; // edit region in OLD coords: [p, editEndOld)
+      const delta = newV.length - oldV.length;
+      const slotEnd = voiceAnchor + voiceInterimLen;
+      if (editEndOld <= voiceAnchor) {
+        voiceAnchor += delta; // edit before the draft — draft slid by delta
+      } else if (p >= slotEnd) {
+        // edit after the draft — slot untouched
+      } else {
+        // edit inside the draft — draft invalidated
+        voiceInterimLen = 0;
+        voiceAnchor = input.selectionStart ?? input.value.length;
+      }
+    }
+    voiceBaseline = input.value;
+  });
 
   // Update voice UI — the orb reflects the state via notifyVoiceState; the
   // legacy .recording class is kept for any external consumers (no visual
@@ -1452,6 +1501,7 @@ export function initInput(view) {
         voiceAnchor++;
       }
     }
+    voiceBaseline = input.value;
     voiceBtn.classList.add('recording');
     input.classList.add('voice-dictating');
     input.focus();
@@ -1467,6 +1517,7 @@ export function initInput(view) {
       const after = input.value.substring(voiceAnchor + voiceInterimLen);
       input.value = before + after;
       voiceInterimLen = 0;
+      voiceBaseline = input.value;
     }
     // Show the "processing" orb state while the captured audio transcribes
     // (spec §9 pure-front-end addition — voiceEngine emits no processing state

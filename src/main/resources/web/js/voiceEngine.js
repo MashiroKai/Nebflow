@@ -42,17 +42,21 @@ const CLOUD_SAMPLE_RATE = 16000;
 
 let recognition = null;
 let dictating = false;
-let lastInterim = '';
-// Highest result index already committed as final in the current recognition
-// session. Web Speech's event.results is CUMULATIVE and Chrome may re-report
-// indexes that already fired (resultIndex not advancing), which made us
-// re-commit the same final — the user-visible "为什么为什么…" stutter. We skip
-// any final at an index we already committed, and reset the marker on start.
-let lastFinalIdx = -1;
 const cb = {};
 
 // Cloud recording state — one push-to-talk session at a time.
 let cloudRec = null; // { stream, ctx, processor, token, recorded }
+
+// Orphan-answer skip (2026-09-02 dup fix): when a session starts while the
+// PREVIOUS session still has a segment request on the wire (stop cut a tail,
+// its answer hasn't landed), that orphan answer must never be consumed by the
+// new session's pipeline — it would insert the old utterance into the new
+// dictation (旧段+新段一起插入) and the real answer that follows (WS is FIFO)
+// would be dropped, stalling the pipeline. The wire protocol carries no
+// request id, so we skip the FIRST consumed answer after a reset-with-orphan:
+// it is the orphan by FIFO construction. The orphan's text itself is lost
+// (same as the pre-fix drop) — the guarantee is the NEW session stays clean.
+let skipNextAnswer = false;
 
 // Streaming slice parameters (user feedback 2026-08-21: 边说边出字).
 const SEG_MIN_MS = 1500;   // never cut a segment shorter than this (time cut)
@@ -114,6 +118,14 @@ function classifyMicError(e) {
 }
 
 async function cloudStart() {
+  // An in-flight (or queued) request from a previous session means its answer
+  // is still on the wire — arm the orphan skip so the new session cannot
+  // consume it. Watchdog bounds the flag so a silent server can't make the
+  // new session swallow its own first answer forever.
+  if (segInFlight || segQueue.length) {
+    skipNextAnswer = true;
+    setTimeout(() => { skipNextAnswer = false; }, SEG_TIMEOUT_MS + 5000);
+  }
   resetStreaming(); // a fresh recording invalidates any stale pipeline state
   let stream;
   try {
@@ -307,6 +319,17 @@ function sourceTracks(stream) {
 // answer (stopping + queue drained) finalizes synchronously via onText —
 // input.js strips the interim slot on stopVoice, so only onText survives it.
 onMessage('transcription', (msg) => {
+  // First answer after a reset-with-orphan IS the orphan (WS FIFO) — whether
+  // it lands before or after the new session's first submit. Consume the skip
+  // flag on arrival so the new session's own answers are never swallowed.
+  if (skipNextAnswer) {
+    // Orphan frame — pure no-op. segInFlight still belongs to the live
+    // request (pumping the queue here would reorder the tail ahead of the
+    // live answer and finalize the utterance prematurely). The live request's
+    // real answer follows next (WS FIFO) and flows through the normal path.
+    skipNextAnswer = false;
+    return;
+  }
   if (!segInFlight) return; // stale / not ours
   segInFlight = false;
   if (segTimer) { clearTimeout(segTimer); segTimer = null; }
@@ -380,7 +403,24 @@ function bufferToBase64(buffer) {
   return btoa(binary);
 }
 
-// ── Web Speech path (unchanged) ────────────────────────────────────────
+// ── Web Speech path ───────────────────────────────────────────────────
+
+/**
+ * Retire the live recognition instance: mark it DEAD first, then abort.
+ * Chrome can deliver result/end events that were queued BEFORE abort() took
+ * effect — with the old code those stray events passed the shared `dictating`
+ * guard once the next session had started and re-committed the previous
+ * utterance's cumulative finals at the new session's anchor (the duplicate the
+ * user saw after editing between dictations). Per-instance `alive` closes that
+ * window deterministically: a retired instance can never commit or restart.
+ */
+function retireRecognition() {
+  if (!recognition) return;
+  const r = recognition;
+  recognition = null;
+  if (r.__vs) r.__vs.alive = false;
+  try { r.abort(); } catch (_) {}
+}
 
 export async function startDictation(callbacks = {}) {
   Object.assign(cb, callbacks);
@@ -396,49 +436,56 @@ export async function startDictation(callbacks = {}) {
     return;
   }
 
-  // Clean up any previous instance
-  if (recognition) {
-    try { recognition.abort(); } catch (_) {}
-    recognition = null;
-  }
+  retireRecognition(); // any previous instance must not leak into this session
 
-  recognition = new SpeechRecognitionAPI();
-  recognition.lang = getLang();
-  recognition.continuous = true;
-  recognition.interimResults = true;
+  const inst = new SpeechRecognitionAPI();
+  inst.lang = getLang();
+  inst.continuous = true;
+  inst.interimResults = true;
 
-  recognition.onstart = () => {
+  // Per-instance session state. The old module-level markers (lastFinalIdx /
+  // lastInterim) were shared across instances: an aborted instance's late
+  // event re-scanned its cumulative results with a freshly-reset final index
+  // and committed them into whatever session was active — duplication.
+  const vs = { alive: false, finalIdx: -1, interim: '' };
+  inst.__vs = vs;
+
+  inst.onstart = () => {
+    vs.alive = true;
+    vs.finalIdx = -1; // fresh result list — commit finals from index 0 again
+    vs.interim = '';
     dictating = true;
-    lastFinalIdx = -1; // fresh session — reset the final-commit marker
     cb.onState?.('listening');
   };
 
-  recognition.onaudiostart = () => {
-    cb.onState?.('listening');
+  inst.onaudiostart = () => {
+    if (vs.alive) cb.onState?.('listening');
   };
 
-  recognition.onspeechstart = () => {
-    cb.onState?.('speaking');
+  inst.onspeechstart = () => {
+    if (vs.alive) cb.onState?.('speaking');
   };
 
-  recognition.onresult = (event) => {
-    // Ignore stray events after stopDictation() (recognition was aborted).
-    if (!dictating) return;
+  inst.onresult = (event) => {
+    // Retired instance (already aborted) or post-stop stray — never commit.
+    // The `alive` flag is per-instance: it stays false even after a NEW
+    // session flips the shared `dictating` flag back on.
+    if (!vs.alive || !dictating) return;
     // event.results is a CUMULATIVE list; resultIndex may re-report slots that
     // already fired (S2: the same final committed repeatedly → "为什么为什么…")
     // and multiple non-final slots may coexist (S3: stale drafts summed into
     // "…我输…" fragments). Two mitigations:
-    //   1. Commit a final only once — skip indexes ≤ lastFinalIdx.
+    //   1. Commit a final only once — skip indexes ≤ finalIdx.
     //   2. Stream only the NEWEST (last) result as interim — never the sum.
     let interim = '';
     for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (i <= lastFinalIdx) continue; // already committed this session
+      if (i <= vs.finalIdx) continue; // already committed this session
       const result = event.results[i];
       if (result.isFinal) {
         const text = result[0].transcript.trim();
         if (text) {
-          lastFinalIdx = i;
-          lastInterim = '';
+          vs.finalIdx = i;
+          vs.interim = '';
           cb.onText?.(text);
           if (dictating) cb.onState?.('listening');
         }
@@ -449,40 +496,45 @@ export async function startDictation(callbacks = {}) {
       interim = lastRes[0].transcript;
     }
     // Track and stream interim text to UI for real-time display
-    if (interim && dictating) {
-      lastInterim = interim;
-      cb.onInterim?.(interim);
-    } else if (!interim) {
-      lastInterim = '';
+    if (interim) {
+      vs.interim = interim;
+      if (dictating) cb.onInterim?.(interim);
+    } else {
+      vs.interim = '';
     }
   };
 
-  recognition.onerror = (event) => {
+  inst.onerror = (event) => {
     const err = event.error || 'unknown';
     // 'no-speech' and 'aborted' are not real errors during dictation
     if (err === 'no-speech' || err === 'aborted') {
-      if (dictating) cb.onState?.('listening');
+      if (dictating && vs.alive) cb.onState?.('listening');
       return;
     }
     console.error('[voiceEngine] Speech recognition error:', err);
     cb.onState?.('error', err);
-    if (dictating) {
+    if (dictating && vs.alive) {
       // Try to restart after a brief error
-      try { recognition.start(); } catch (_) {}
+      try { inst.start(); } catch (_) {}
     }
   };
 
-  recognition.onend = () => {
-    // Auto-restart if still dictating (browser stops after silence)
-    if (dictating) {
-      try { recognition.start(); } catch (_) {}
-    } else {
+  inst.onend = () => {
+    // Auto-restart if still dictating (browser stops after silence). The
+    // retired-instance case is excluded by vs.alive — only the CURRENT live
+    // instance may restart, so a late 'end' from an aborted instance can
+    // never resurrect a dead session.
+    if (dictating && vs.alive) {
+      try { inst.start(); } catch (_) {}
+    } else if (!dictating) {
       cb.onState?.('idle');
     }
   };
 
+  recognition = inst;
+
   try {
-    recognition.start();
+    inst.start();
   } catch (e) {
     // If already started, ignore
     if (e.name !== 'InvalidStateError') {
@@ -501,13 +553,14 @@ export function stopDictation() {
     cloudStop();
     return;
   }
-  // Flush any pending interim text as final before stopping
-  if (lastInterim) {
-    cb.onText?.(lastInterim.trim());
-    lastInterim = '';
+  // Flush any pending interim text as final before stopping. input.js has
+  // already stripped the displayed interim slot synchronously in stopVoice —
+  // this re-inserts the final text exactly once at that slot.
+  const vs = recognition?.__vs;
+  if (vs && vs.interim) {
+    const pending = vs.interim;
+    vs.interim = '';
+    cb.onText?.(pending.trim());
   }
-  if (recognition) {
-    try { recognition.abort(); } catch (_) {}
-    recognition = null;
-  }
+  retireRecognition();
 }
