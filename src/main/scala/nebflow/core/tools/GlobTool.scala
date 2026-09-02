@@ -1,6 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import nebflow.core.sandbox.FileSandbox
 import io.circe.JsonObject
 import io.circe.syntax.*
 
@@ -65,15 +66,20 @@ object GlobTool extends Tool:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
     val rawPattern = input("pattern").flatMap(_.asString).getOrElse("")
     val pathOpt = input("path").flatMap(_.asString)
+    // 阶段 2a 沙箱（§A.2/§A.8-8）：相对路径与缺省根按节点 sandbox.root 解析——
+    // 修掉默认根=JVM user.dir 的现状；沙箱关时保持旧行为（user.dir）。
     val workDir = System.getProperty("user.dir")
+    val baseDir: os.Path =
+      if ctx.sandbox.enabled then ctx.sandbox.root
+      else os.Path(workDir)
 
     // Resolve search directory
     val (baseFromPattern, relPattern) = extractBaseDir(rawPattern)
     val explicitPath = pathOpt.map { p =>
       if p.startsWith("/") || (p.length >= 2 && p.charAt(1) == ':') then os.Path(p)
-      else nebflow.core.PathUtil.resolvePath(p, os.Path(workDir))
+      else nebflow.core.PathUtil.resolvePath(p, baseDir)
     }
-    val workDirPath = os.Path(workDir)
+    val workDirPath = baseDir
     val searchRootPath =
       if baseFromPattern.startsWith("/") || (baseFromPattern.length >= 2 && baseFromPattern.charAt(1) == ':') then
         os.Path(baseFromPattern)
@@ -82,6 +88,19 @@ object GlobTool extends Tool:
         base / baseFromPattern
       else explicitPath.getOrElse(workDirPath)
 
+    // §A.3 读闸门：搜索根 canonicalize + readableRoots contain；rg 从 canonical
+    // 根起跑（检查对象=执行对象）。rg 默认不跟随 symlink 下钻（无 --follow），
+    // 遍历逃逸由该默认承担（§A.8-4）。
+    FileSandbox.checkReadRoot(ctx, searchRootPath) match
+      case Left(err) => Left(err)
+      case Right(canonicalRoot) => runGlob(relPattern, canonicalRoot, workDir)
+  }
+
+  private def runGlob(
+    relPattern: String,
+    searchRootPath: os.Path,
+    workDir: String
+  ): Either[ToolError, String] =
     // Use ripgrep for file listing — much faster than Java NIO Files.walk
     // --no-ignore: match old behavior (Files.walk ignores .gitignore, so should we)
     // --hidden: include hidden files, consistent with GrepTool
@@ -136,6 +155,5 @@ object GlobTool extends Tool:
               output + "\n\n(Results are truncated. Consider using a more specific path or pattern.)"
             else output
           )
-    end match
-  }
+  end runGlob
 end GlobTool

@@ -54,6 +54,9 @@ object NodeRunner:
     userFacingNode: Boolean = false,
     /** actor 名字（默认 = sessionId；flow 节点用 "dagnode-<nodeId>-<sid>" 前缀）。 */
     actorName: String = "",
+    /** 阶段 2a 沙箱（§A.6）：project 节点/分发器置 true——AgentCore 从
+      * projectRoot 派生 SandboxPolicy（root=worktree 或 workspace）。 */
+    sandboxEnabled: Boolean = false,
     /** restart 重建传 false（旧 childSpawnFn 的 AgentActor 不带
       * readTracker/fileHistory，保持行为零变化）。 */
     withTracking: Boolean = true
@@ -84,7 +87,8 @@ object NodeRunner:
           isSubTaskWorker = p.isSubTaskWorker,
           isFlowNode = p.isFlowNode,
           expectsMail = p.expectsMail,
-          userFacingNode = p.userFacingNode
+          userFacingNode = p.userFacingNode,
+          sandboxEnabled = p.sandboxEnabled
         ),
         actorName
       )

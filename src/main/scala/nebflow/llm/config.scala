@@ -188,7 +188,11 @@ case class NebflowServiceConfig(
   /** 工具结果 TTL 清理（#341，docs/Nebflow/20260820_tool-result-ttl.md）：顶层
     * toolResultTtl 节原样 JSON——ToolResultTtlConfig.load fail-safe 解析（非法
     * 配置视为关闭）。默认关（enabled=false）。request-only 清理，会话文件不动。 */
-  toolResultTtl: Option[io.circe.Json] = None
+  toolResultTtl: Option[io.circe.Json] = None,
+  /** 阶段 2a 沙箱（§G.1）：顶层 sandbox 节原样 JSON——SandboxConfig.load
+    * fail-safe 解析（absent/非法 → enabled=true 默认）。enabled=false 一键回
+    * 旧行为（代码路径保留一个版本周期，§G.1 回滚）。 */
+  sandbox: Option[io.circe.Json] = None
 )
 
 object NebflowServiceConfig:

@@ -58,7 +58,12 @@ case class ToolContext(
   projectName: Option[String] = None,
   /** Bash 卡死防护阈值（#391）：默认 Defaults 值，测试可注入小阈值验证
     * 自动转后台/硬超时/停滞窗口；GatewayMain 从 nebflow.json 顶层键覆写。 */
-  bashConfig: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig()
+  bashConfig: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig(),
+  /** 阶段 2a 沙箱策略（设计文档 §A.3）：从节点 projectRoot 构造、随 spawn 传递
+    * （复用 projectRoot 传递链，AgentCore 在 ToolContext 构造点派生）。默认
+    * SandboxPolicy.off = 全部闸门旁路（旧行为，§G.1 回滚语义；存量测试零改动）。
+    * 相对路径一律以 sandbox.root 为基准解析（修掉 Glob/Grep 默认根=user.dir）。 */
+  sandbox: nebflow.core.sandbox.SandboxPolicy = nebflow.core.sandbox.SandboxPolicy.off
 )
 
 case class ToolError(message: String)
