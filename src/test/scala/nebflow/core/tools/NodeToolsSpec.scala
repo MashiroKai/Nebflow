@@ -23,8 +23,59 @@ class NodeToolsSpec extends FunSuite:
     assertEquals(NodeTools.parseOut(Some(Json.Null)), Right(None))
   }
 
+  test("parseOut: string \"null\" → disconnect (Right(None)) — LLM 断开常见写法，历史上被当字面 target id 存盘") {
+    assertEquals(NodeTools.parseOut(Some(Json.fromString("null"))), Right(None))
+    assertEquals(NodeTools.parseOut(Some(Json.fromString(" null "))), Right(None))
+    assertEquals(NodeTools.parseOut(Some(Json.fromString("NULL"))), Right(None))
+  }
+
   test("parseOut: absent → unchanged (Right(None))") {
     assertEquals(NodeTools.parseOut(None), Right(None))
+  }
+
+  // ── parseIn 宽容解析（修复次因 B，回归⑦）────────────────
+
+  test("parseIn: native JSON array accepted") {
+    assertEquals(
+      NodeTools.parseIn(Some(Json.arr(Json.fromString("n-a"), Json.fromString("n-b")))),
+      Right(List("n-a", "n-b")))
+  }
+
+  test("parseIn: JSON-array-as-string accepted (LLM 把数组整体字符串化的实证形态)") {
+    assertEquals(
+      NodeTools.parseIn(Some(Json.fromString("[\"n-a\",\"n-b\"]"))),
+      Right(List("n-a", "n-b")))
+  }
+
+  test("parseIn: comma-separated string accepted") {
+    assertEquals(
+      NodeTools.parseIn(Some(Json.fromString("n-a, n-b ,n-c"))),
+      Right(List("n-a", "n-b", "n-c")))
+  }
+
+  test("parseIn: single plain id stays single") {
+    assertEquals(NodeTools.parseIn(Some(Json.fromString("n-a"))), Right(List("n-a")))
+  }
+
+  test("parseIn: empty segments / empty strings filtered") {
+    assertEquals(NodeTools.parseIn(Some(Json.fromString("n-a,, ,n-b,"))), Right(List("n-a", "n-b")))
+    assertEquals(
+      NodeTools.parseIn(Some(Json.arr(Json.fromString("n-a"), Json.fromString(""), Json.fromString(" ")))),
+      Right(List("n-a")))
+    assertEquals(NodeTools.parseIn(Some(Json.fromString(""))), Right(Nil))
+    assertEquals(NodeTools.parseIn(Some(Json.fromString("   "))), Right(Nil))
+  }
+
+  test("parseIn: malformed JSON-array-string → clear error with raw text (不再吞成单字面 id)") {
+    val raw = "[n-a, n-b"
+    val r = NodeTools.parseIn(Some(Json.fromString(raw)))
+    assert(r.isLeft, s"malformed JSON array string must be rejected, got: $r")
+    assert(r.left.exists(_.contains(raw)), s"error must carry the raw input for diagnosis, got: $r")
+  }
+
+  test("parseIn: absent / JSON null → Nil") {
+    assertEquals(NodeTools.parseIn(None), Right(Nil))
+    assertEquals(NodeTools.parseIn(Some(Json.Null)), Right(Nil))
   }
 
   test("parseOut: array rejected (1-to-many not supported)") {

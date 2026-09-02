@@ -47,7 +47,10 @@ object NodeTools:
       case _ => Right(())
     }
 
-  /** 1 对多拒绝：out 必须是单值 string 或 null（数组 → 拒绝，§2.4）。 */
+  /** 1 对多拒绝：out 必须是单值 string 或 null（数组 → 拒绝，§2.4）。
+    * 字符串 "null"（LLM 断开时的常见写法）归一化为 None——历史实证：归档
+    * n-8a481bd0.out 被持久化成字面串 "null"，deliverOut 沿它 findNode("null")
+    * 悬空；加载侧 FlowMapStore 另有同规则净化兜底存量数据。 */
   def parseOut(outJson: Option[Json]): Either[String, Option[String]] =
     outJson match
       case None => Right(None) // 未传 out = 不改动
@@ -55,8 +58,36 @@ object NodeTools:
       case Some(j) if j.isArray => Left("'out' must be a single node id or null — 1-to-many is not supported. Create N independent entry nodes instead.")
       case Some(j) =>
         j.asString match
-          case Some(s) if s.nonEmpty => Right(Some(s))
-          case _ => Left("'out' must be a non-empty string node id, \"Nebula\", or null")
+          case Some(s) =>
+            val t = s.trim
+            if t.equalsIgnoreCase("null") then Right(None) // 字符串 "null" = 断开
+            else if t.nonEmpty then Right(Some(t))
+            else Left("'out' must be a non-empty string node id, \"Nebula\", or null")
+          case None => Left("'out' must be a non-empty string node id, \"Nebula\", or null")
+
+  /** in 参数宽容解析（修复次因 B）：三形态统一接受——
+    * ① 原生 JSON 数组 ["a","b"]；② JSON 数组字符串 "[\"a\",\"b\"]"（LLM 常见：
+    * 把数组整体字符串化）；③ 逗号串 "a,b"。元素 trim + 空段/空串过滤。
+    * 形态②解析失败 → 清晰报错附原文（绝不静默吞成单个字面 id——实证案例 1：
+    * 分发器三次接线失败均因 "[\"n-8a481bd0\",...]" 被当单 id → not found）。
+    * （原 NodeEditTool 私有方法，提为 NodeTools 公开以便单测。） */
+  def parseIn(inJson: Option[Json]): Either[String, List[String]] =
+    inJson match
+      case None => Right(Nil)
+      case Some(j) if j.isNull => Right(Nil)
+      case Some(j) if j.isArray =>
+        Right(j.asArray.getOrElse(Vector.empty).flatMap(_.asString).toList.map(_.trim).filter(_.nonEmpty))
+      case Some(j) if j.isString =>
+        val s = j.asString.getOrElse("").trim
+        if s.isEmpty then Right(Nil)
+        else if s.startsWith("[") then
+          io.circe.parser.parse(s) match
+            case Right(arr) if arr.isArray =>
+              Right(arr.asArray.getOrElse(Vector.empty).flatMap(_.asString).toList.map(_.trim).filter(_.nonEmpty))
+            case Right(_) => Left(s"'in' parses as JSON but is not an array: $s")
+            case Left(err) => Left(s"'in' looks like a JSON array but failed to parse (${err.getMessage}) — raw: $s")
+        else Right(s.split(',').map(_.trim).filter(_.nonEmpty).toList)
+      case Some(_) => Left("'in' must be a node id string or an array of node ids")
 
   /** 事务内设 out 边（单权威）：旧目标 in 移除 + 新目标 in 追加 + 本节点 out 更新。 */
   def setOut(rt: ProjectRuntime, fromId: String, newOut: Option[String]): IO[Unit] =
@@ -251,7 +282,7 @@ object NodeEditTool extends Tool:
     outJson: Option[Json]
   ): IO[Either[ToolError, String]] =
     val agentName = agent.getOrElse("")
-    val inIds = parseIn(inJson)
+    val inIds = NodeTools.parseIn(inJson)
     val outEither = NodeTools.parseOut(outJson)
     (agentName, inIds, outEither) match
       case ("", _, _) => IO.pure(Left(ToolError("New node requires 'agent'")))
@@ -449,7 +480,7 @@ object NodeEditTool extends Tool:
                 val setOutIO =
                   if newOut != node.out then NodeTools.setOut(rt, node.id, newOut)
                   else IO.unit
-                val inAdds = parseIn(inJson)
+                val inAdds = NodeTools.parseIn(inJson)
                 inAdds match
                   case Left(err) => IO.pure(Left(ToolError(err)))
                   case Right(adds) =>
@@ -463,53 +494,75 @@ object NodeEditTool extends Tool:
                         else Nil
                       (node.id +: (adds ++ fromOut)).distinct
                     for
-                      // in 追加（barrier）：每个上游 out 改指向本节点（原子改投 §2.3）
-                      _ <- adds.traverse_ { upId =>
+                      // in 追加校验先行（存在性 + 环检），全部通过才动 store——旧实现
+                      // traverse 内 raiseError 后被 handleErrorWith 吞成 Left 值丢弃，
+                      // 后续 setOutIO/mutate 照跑且工具误报成功（一并修正）
+                      inChecks <- adds.traverse { upId =>
                         NodeTools.ensureNodeExists(rt, upId).flatMap {
-                          case Left(e) => IO.raiseError(new RuntimeException(e))
+                          case Left(e) => IO.pure(Left(e): Either[String, Unit])
                           case Right(_) =>
-                            NodeTools.wouldCreateCycle(rt, upId, node.id).flatMap { cyc =>
-                              if cyc then IO.raiseError(new RuntimeException(s"Cycle detected via in from '$upId'"))
-                              else NodeTools.setOut(rt, upId, Some(node.id))
+                            NodeTools.wouldCreateCycle(rt, upId, node.id).map {
+                              case true => Left(s"Cycle detected: adding in from '$upId' would create a loop (A→B→A) — DAG must stay acyclic")
+                              case false => Right(())
                             }
                         }
-                      }.handleErrorWith { e =>
-                        IO.pure(Left(ToolError(Option(e.getMessage).getOrElse("in-rewire failed"))))
                       }
-                      _ <- setOutIO
-                      // 已完成节点改接 → 立即投递（§2.3：结果缓冲/归档 → 向新目标投递）。
-                      // 后台化（收口③）：deliverOutTo 内 startNode 同步等下游终态，
-                      // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
-                      _ <- (newOut, node.status) match
-                        case (Some(t), NodeLifecycle.Completed) =>
-                          node.result match
-                            case Some(res) =>
-                              NodeTools.runDetached(rt, s"deliver retained result ${node.id} -> $t")(
-                                rt.engine.deliverOutTo(node, t, res)
-                              )
-                            case None => IO.unit
-                        case _ => IO.unit
-                      // wiring 变更事件（NodeList 同构 payload，store 最终态）——此前只发
-                      // 本节点且 payload 含陈旧 in、改写的上游/新旧目标无事件（缺失补齐）
-                      _ <- NodeTools.emitWiringUpdates(rt, affected)
-                    yield Right(
-                      s"Node '${node.name}' updated" +
-                        (newOut.map(t => s" — out → $t").getOrElse("") + (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else ""))
-                    )
+                      inResult <-
+                        if inChecks.exists(_.isLeft) then
+                          IO.pure(Left(ToolError(inChecks.collectFirst { case Left(e) => e }.getOrElse("invalid in"))))
+                        else
+                          for
+                            // in 追加（barrier）：每个上游 out 改指向本节点（原子改投 §2.3）
+                            _ <- adds.traverse_(upId => NodeTools.setOut(rt, upId, Some(node.id)))
+                            _ <- setOutIO
+                            // 已完成节点改接 → 立即投递（§2.3：结果缓冲/归档 → 向新目标投递）。
+                            // 后台化（收口③）：deliverOutTo 内 startNode 同步等下游终态，
+                            // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
+                            _ <- (newOut, node.status) match
+                              case (Some(t), NodeLifecycle.Completed) =>
+                                node.result match
+                                  case Some(res) =>
+                                    NodeTools.runDetached(rt, s"deliver retained result ${node.id} -> $t")(
+                                      rt.engine.deliverOutTo(node, t, res)
+                                    )
+                                  case None => IO.unit
+                              case _ => IO.unit
+                            // 修复次因 A（edit 路径补 D1 等价投递 + barrier 结算复查，
+                            // create 路径见 proceed 内 D1 注释）：新追加上游中已终态且
+                            // 有结果的 → 立即投递（findNode 活动/归档兜底；含悬空完成的
+                            // 上游——其 completeNode 时 out 悬空未投，此处是唯一投递入口）；
+                            // 随后复查 barrier——deliveredTo 可能已含全部 in 上游（分批
+                            // 送达/重复接线）→ startNode。投递与结算串在同一 detached
+                            // fiber（deliverOutTo 自带结算 → startNode；复查随后命中
+                            // running/terminal 由 startNode 幂等跳过）；后台化遵循
+                            // runDetached 的阻塞教训（直接调用会把工具 fiber 卡到节点终态）。
+                            _ <- if adds.nonEmpty then NodeTools.runDetached(rt, s"deliver appended upstream results + settle barrier -> ${node.id}")(
+                              for
+                                _ <- adds.traverse_ { upId =>
+                                  rt.store.findNode(upId).flatMap {
+                                    case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
+                                      rt.engine.deliverOutTo(up, node.id, up.result.get)
+                                    case _ => IO.unit
+                                  }
+                                }
+                                _ <- rt.store.getNode(node.id).flatMap {
+                                  case Some(n) if n.in.nonEmpty && n.in.forall(n.deliveredTo.contains) =>
+                                    rt.engine.startNode(n.id)
+                                  case _ => IO.unit
+                                }
+                              yield ()
+                            )
+                            else IO.unit
+                            // wiring 变更事件（NodeList 同构 payload，store 最终态）——此前只发
+                            // 本节点且 payload 含陈旧 in、改写的上游/新旧目标无事件（缺失补齐）
+                            _ <- NodeTools.emitWiringUpdates(rt, affected)
+                          yield Right(
+                            s"Node '${node.name}' updated" +
+                              (newOut.map(t => s" — out → $t").getOrElse("") + (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else ""))
+                          )
+                    yield inResult
             }
         }
-
-  private def parseIn(inJson: Option[Json]): Either[String, List[String]] =
-    inJson match
-      case None => Right(Nil)
-      case Some(j) if j.isNull => Right(Nil)
-      case Some(j) if j.isString =>
-        val s = j.asString.getOrElse("")
-        if s.isEmpty then Right(Nil) else Right(List(s))
-      case Some(j) if j.isArray =>
-        val ids = j.asArray.getOrElse(Vector.empty).flatMap(_.asString)
-        Right(ids.toList.filter(_.nonEmpty))
-      case Some(_) => Left("'in' must be a node id string or an array of node ids")
 
 object NodeListTool extends Tool:
   val name = "NodeList"

@@ -131,7 +131,7 @@ class NodeEngine(
       agentOpt <- EntityLoader.loadAgent(node.agent)
       _ <- agentOpt match
         case None =>
-          failNode(node, s"agent '${node.agent}' not found in global library")
+          failNode(nodeId, s"agent '${node.agent}' not found in global library")
         case Some(entry) =>
           runWithAgent(node, entry, inputText)
     yield ()
@@ -144,9 +144,24 @@ class NodeEngine(
       case None => workspace
     val nodeName = node.name
     for
-      // 状态 → running + startedAt（WS nodeUpdated，NodeList 同构 payload）
-      _ <- store.mutate(s => s.copy(nodes = s.nodes.updated(nodeId, node.copy(status = NodeLifecycle.Running, startedAt = Some(System.currentTimeMillis())))))
-      _ <- emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(node.copy(status = NodeLifecycle.Running), System.currentTimeMillis()))
+      // 状态 → running + startedAt（WS nodeUpdated，NodeList 同构 payload）。
+      // 竞态修复（与终态化同族）：running 迁移落在事务内现读的 fresh 节点上——
+      // getNode 快照经 EntityLoader 加载 agent 期间可能已落后，陈旧 copy 写回会
+      // 覆盖该窗口内的接线变更；None = 节点已消失 → 中止 spawn（拒写复活垃圾行）。
+      _ <- store.mutate { s =>
+        s.nodes.get(nodeId) match
+          case Some(fresh) =>
+            s.copy(nodes = s.nodes.updated(nodeId, fresh.copy(
+              status = NodeLifecycle.Running,
+              startedAt = Some(System.currentTimeMillis()))))
+          case None => s
+      }.flatMap { s =>
+        s.nodes.get(nodeId) match
+          case Some(runningDef) =>
+            emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(runningDef, System.currentTimeMillis()))
+          case None =>
+            IO.raiseError(new RuntimeException(s"Node '$nodeName' ($nodeId) vanished before start — spawn aborted"))
+      }
       cancelSig <- Deferred[IO, Unit]
       _ <- running.update(_ + (nodeId -> cancelSig))
       resultDeferred <- Deferred[IO, Either[FailOutcome, List[Message]]]
@@ -223,57 +238,91 @@ class NodeEngine(
       _ <- system.stop(ref).handleErrorWith(_ => IO.unit)
       _ <- system.stop(bridgeRef).handleErrorWith(_ => IO.unit)
       _ <- running.update(_ - nodeId)
-      // 终态处理：写 result/status/ttl + 投递（§2.7）
+      // 终态处理：写 result/status/ttl + 投递（§2.7）——传 nodeId，终态化内部
+      // 事务内现读 fresh 节点（不沿本 fiber 启动时捕获的陈旧快照）
       _ <- eventResult match
         case Right(messages) =>
           val text = extractLastAssistantText(messages)
-          completeNode(node, text)
+          completeNode(nodeId, text)
         case Left(fo) =>
-          if fo.message.contains("cancelled") then cancelNode(node)
-          else failNode(node, fo.message)
+          if fo.message.contains("cancelled") then cancelNode(nodeId)
+          else failNode(nodeId, fo.message)
     yield ()
 
-  private def completeNode(node: NodeDef, resultText: String): IO[Unit] =
-    val now = System.currentTimeMillis()
-    val completed = node.copy(
-      status = NodeLifecycle.Completed,
-      result = Some(resultText),
-      completedAt = Some(now),
-      ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs)
-    )
+  // ── 终态化（§2.7）─────────────────────────────────────────
+  //
+  // 竞态根因修复（barrier 投递 bug 主因）：终态字段（status/result/completedAt/
+  // ttlExpireAt）一律落在 mutate 事务内现读的 fresh 节点上，绝不在启动时捕获的
+  // 陈旧快照上 copy 写回。运行期间 NodeTools.setOut 的接线改写（out/in 反向一致）
+  // 与 deliverOut 的 deliveredTo 增量都在 fresh 上原样保留；投递沿 fresh.out。
+  // 实证：n-95271231 两上游运行中被改接线 → 完成时陈旧副本回写 out=null →
+  // deliverOut 沿空 out 悬空 → 下游永久 wiring；n-ab4a884f 同理回写覆盖成 Nebula。
+  // 节点已不在活动区（被移除）→ 拒写拒投（陈旧写回会把它复活成垃圾行）。
+
+  private def completeNode(nodeId: String, resultText: String): IO[Unit] =
     for
-      _ <- store.mutate(s => s.copy(nodes = s.nodes.updated(node.id, completed)))
-      _ <- emitEvent("nodeCompleted", node.id, NodePayload.buildNodeJson(completed, now))
-      _ <- logger.info(s"Node '${node.name}' completed (result ${resultText.length} chars)")
-      _ <- deliverOut(completed, resultText)
+      now <- IO(System.currentTimeMillis())
+      s <- store.mutate { st =>
+        st.nodes.get(nodeId) match
+          case Some(fresh) =>
+            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+              status = NodeLifecycle.Completed,
+              result = Some(resultText),
+              completedAt = Some(now),
+              ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
+          case None => st
+      }
+      _ <- s.nodes.get(nodeId) match
+        case Some(completed) =>
+          emitEvent("nodeCompleted", nodeId, NodePayload.buildNodeJson(completed, now)) *>
+            logger.info(s"Node '${completed.name}' completed (result ${resultText.length} chars)") *>
+            deliverOut(completed, resultText)
+        case None =>
+          logger.warn(s"Node '$nodeId' vanished before completion — result not persisted")
     yield ()
 
-  private def failNode(node: NodeDef, err: String): IO[Unit] =
-    val now = System.currentTimeMillis()
-    val failed = node.copy(
-      status = NodeLifecycle.Failed,
-      result = Some(err),
-      completedAt = Some(now),
-      ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs)
-    )
+  private def failNode(nodeId: String, err: String): IO[Unit] =
     for
-      _ <- store.mutate(s => s.copy(nodes = s.nodes.updated(node.id, failed)))
-      _ <- emitEvent("nodeUpdated", node.id, NodePayload.buildNodeJson(failed, now))
-      _ <- logger.warn(s"Node '${node.name}' failed: ${err.take(200)}")
-      // 失败投递（§2.7）：out=Nebula → failed 消息；out=节点 → collect 结算（占位符）。
-      _ <- deliverFailed(failed, err)
+      now <- IO(System.currentTimeMillis())
+      s <- store.mutate { st =>
+        st.nodes.get(nodeId) match
+          case Some(fresh) =>
+            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+              status = NodeLifecycle.Failed,
+              result = Some(err),
+              completedAt = Some(now),
+              ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
+          case None => st
+      }
+      _ <- s.nodes.get(nodeId) match
+        case Some(failed) =>
+          emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
+            logger.warn(s"Node '${failed.name}' failed: ${err.take(200)}") *>
+            // 失败投递（§2.7）：out=Nebula → failed 消息；out=节点 → collect 结算（占位符）。
+            deliverFailed(failed, err)
+        case None =>
+          logger.warn(s"Node '$nodeId' vanished before failure finalize — error not persisted")
     yield ()
 
-  private def cancelNode(node: NodeDef): IO[Unit] =
-    val now = System.currentTimeMillis()
-    val cancelled = node.copy(
-      status = NodeLifecycle.Cancelled,
-      completedAt = Some(now),
-      ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs)
-    )
-    store.mutate(s => s.copy(nodes = s.nodes.updated(node.id, cancelled))) *>
-      emitEvent("nodeUpdated", node.id, NodePayload.buildNodeJson(cancelled, now)) *>
-      logger.info(s"Node '${node.name}' cancelled")
+  private def cancelNode(nodeId: String): IO[Unit] =
+    for
+      now <- IO(System.currentTimeMillis())
+      s <- store.mutate { st =>
+        st.nodes.get(nodeId) match
+          case Some(fresh) =>
+            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+              status = NodeLifecycle.Cancelled,
+              completedAt = Some(now),
+              ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
+          case None => st
+      }
+      _ <- s.nodes.get(nodeId) match
+        case Some(cancelled) =>
+          emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(cancelled, now)) *>
+            logger.info(s"Node '${cancelled.name}' cancelled")
+        case None =>
+          logger.warn(s"Node '$nodeId' vanished before cancel finalize — skipped")
+    yield ()
 
   // ── 投递（§2.7）─────────────────────────────────────────
 
