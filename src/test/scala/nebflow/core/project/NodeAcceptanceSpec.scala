@@ -107,6 +107,21 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
   private def nodeEdit(input: Json, ctx: ToolContext): IO[Either[String, String]] =
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
+  /** 轮询等待（收口③ 异步化配套）：NodeEdit 派发节点已在后台 fiber 推进，
+    * 断言涉及派发后果（下游启动/完成）时先等终态，不再同步可见。 */
+  private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
+      cond: IO[Boolean]
+  ): IO[Unit] =
+    def go(deadline: Long): IO[Unit] =
+      cond.flatMap {
+        case true => IO.unit
+        case false =>
+          if System.currentTimeMillis() >= deadline then
+            IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
+          else IO.sleep(every) >> go(deadline)
+      }
+    go(System.currentTimeMillis() + timeout.toMillis)
+
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
     Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
 
@@ -193,6 +208,9 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       // 显示消失后接线：NodeEdit 建 B，in 引用归档 A
       _ <- nodeEdit(nodeInput("acc-ttl-b", "B", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("consume A"), "in" -> Json.arr(Json.fromString("n-a"))), ctx)
+      // 收口③：D1 投递 + 下游启动已后台化——轮询等 B 脱离 Wiring（收到结果启动）
+      _ <- waitUntil(5.seconds)(rt.store.snapshot.map(
+        _.nodes.values.find(_.name == "B").exists(_.status != NodeLifecycle.Wiring)))
       s1 <- rt.store.snapshot
     yield
       assert(!s0.nodes.contains("n-a"), "A must be gone from activity after TTL")
@@ -362,6 +380,46 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       assert(done.flatMap(_.result).exists(_.nonEmpty), s"entry node result should be saved, got ${done.flatMap(_.result)}")
   }
 
+  // ── ①b 创建非阻塞（收口③ dispatcher 会话结束语义根因回归）──
+
+  test("①b entry node create is non-blocking: NodeEdit returns while node still runs") {
+    val ws = tempRoot / "ws-entry-async"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-entry-async-${scala.util.Random.nextInt(100000)}")
+    // 慢节点 LLM：2s 后才产出（模拟长任务）。修复前 NodeEdit 同步等它完成
+    // （startNode → runWithAgent 的 resultDeferred race）——分发器 turn 因此
+    // 挂在工具调用上直到节点跑完（实证 dispatcher-95f8434b 单 turn 56min）。
+    val nodeDelay = 2.seconds
+    class SlowLlm extends LlmHandle[IO]:
+      def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+      def sendStream(
+          req: LlmRequest,
+          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      ): Stream[IO, StreamChunk] =
+        Stream.eval(IO.sleep(nodeDelay)).drain ++ Stream(StreamChunk.TextDelta("slow ok"), StreamChunk.Done(None, None))
+    for
+      res <- mkResources(system, tempRoot, new SlowLlm)
+      rt <- mountProject("acc-entry-async", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      t0 = System.currentTimeMillis()
+      r <- nodeEdit(nodeInput("acc-entry-async", "调研-异步", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("slow research")), ctx)
+      elapsedMs = System.currentTimeMillis() - t0
+      // 等后台 fiber 跑完节点（fork 后节点独立推进）
+      _ <- IO.sleep(nodeDelay + 3.seconds)
+      s <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"entry create must succeed, got: $r")
+      assert(
+        elapsedMs < nodeDelay.toMillis,
+        s"NodeEdit must return without blocking on the node run (async contract): took ${elapsedMs}ms, node needs ${nodeDelay.toMillis}ms"
+      )
+      val n = s.nodes.values.find(_.name == "调研-异步")
+      assert(n.exists(_.status == NodeLifecycle.Completed), s"node must complete in background after create, got ${n.map(_.status)}")
+      assert(n.flatMap(_.result).exists(_.contains("slow ok")), s"node result must be captured, got ${n.flatMap(_.result)}")
+  }
+
   // ── ② 结果持久保存（完成后 result 落盘，reopen 后仍在）──
 
   test("② result persisted: completed node result survives store reopen (restart)") {
@@ -409,6 +467,10 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       // 建下游 B（wiring），把 A 改接 out → B
       _ <- nodeEdit(nodeInput("acc-dangle", "下游-B", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("consume"), "out" -> Json.fromString("Nebula")), ctx)
+      // 收口③：B 入口节点已后台启动——等它完成（RecordingLlm 即答）再改接，
+      // 复现旧同步实现的隐式时序（create 阻塞至 B 完成 → 改接目标非 running）
+      _ <- waitUntil(5.seconds)(rt.store.snapshot.map(
+        _.nodes.values.find(_.name == "下游-B").exists(_.status == NodeLifecycle.Completed)))
       s2 <- rt.store.snapshot
       bId = s2.nodes.values.find(_.name == "下游-B").map(_.id).getOrElse("")
       r <- nodeEdit(nodeInput("acc-dangle", "调研-悬空", "out" -> Json.fromString(bId)), ctx)
@@ -636,6 +698,11 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         "task" -> Json.fromString("write nothing"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- nodeEdit(nodeInput("acc-0write", "零写入2", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("write nothing 2"), "out" -> Json.fromString("Nebula")), ctx)
+      // 收口③：节点派发已后台化——等两个节点都终态（store 原子写 .tmp 落定）
+      // 再列目录，否则瞬时 flow-map.json.tmp.<uuid> 会污染「仅 flow-map.json」断言
+      _ <- waitUntil(5.seconds)(rt.store.snapshot.map(s =>
+        s.nodes.values.filter(n => Set("零写入", "零写入2").contains(n.name))
+          .forall(n => NodeLifecycle.Terminal.contains(n.status))))
       after <- IO.blocking(os.list(nebflowDir).map(_.last).toList.sorted)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield

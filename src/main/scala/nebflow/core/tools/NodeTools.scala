@@ -109,6 +109,27 @@ object NodeTools:
       }
     }
 
+  /** 节点运行后台化（收口③：dispatcher 会话结束语义修复）。
+    *
+    * startNode/deliverOutTo 会同步等待节点终态（runWithAgent 的 resultDeferred
+    * race 无超时，下游链条投递也在该 fiber 顺序推进）。NodeEdit 工具若在分发器
+    * turn 的工具 fiber 里直接调用，turn 会被阻塞整个节点运行期（实证
+    * dispatcher-95f8434b：诊断节点 35min + 修复节点 19min，单 turn 56min）：
+    * 期间零 lastActivity 更新 → TaskStuckWatcher 误判卡死；入口节点被串行化
+    * （建 A 等 A 完才建 B）；「节点建完/接线完成」后分发器会话仍 Processing
+    * 挂起。fork 到独立 fiber 后工具立即返回——NodeEdit 文档契约「async,
+    * non-blocking」的落地。节点失败已在 fiber 内落 store（failNode），此处仅
+    * 兜底记日志；分发器取消/结束不影响已派发节点（节点由 NodeCancel 独立管理）。 */
+  def runDetached(rt: ProjectRuntime, what: String)(io: IO[Unit]): IO[Unit] =
+    io
+      .handleErrorWith(e =>
+        logger.error(
+          s"[${rt.project.name}] detached node run '$what' failed: ${Option(e.getMessage).getOrElse(e.toString)}"
+        )
+      )
+      .start
+      .void
+
   /** NodeList 工具 / REST flow-map 端点共用的载荷（nodes/worktrees/meta，§2.2 NodeList 返回结构）。
     * 节点序列化统一走 NodePayload.buildNodeJson（与 WS 事件 payload 同构）。 */
   def buildNodeListPayload(rt: ProjectRuntime): IO[Json] =
@@ -349,15 +370,24 @@ object NodeEditTool extends Tool:
                 // out 接入下游 = 已完成节点改接」路径。归档节点活动区已消失，
                 // completeNode 的 deliverOut 不会再触发，唯一投递入口就是这里。
                 // 运行中上游不投递（barrier 等待语义——completeNode 时 deliverOut 自然投）。
-                ins.traverse_ { upId =>
-                  rt.store.findNode(upId).flatMap {
-                    case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
-                      rt.engine.deliverOutTo(up, nodeId, up.result.get)
-                    case _ => IO.unit
+                // 后台化（收口③）：deliverOutTo 内 startNode 同步等下游节点终态，
+                // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
+                NodeTools.runDetached(rt, s"deliver retained upstream results -> $nodeId")(
+                  ins.traverse_ { upId =>
+                    rt.store.findNode(upId).flatMap {
+                      case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
+                        rt.engine.deliverOutTo(up, nodeId, up.result.get)
+                      case _ => IO.unit
+                    }
                   }
-                } *>
-                // 入口节点（task 且无 in）→ 创建即运行
-                (if task.isDefined && ins.isEmpty then rt.engine.startNode(nodeId) else IO.unit)
+                ) *>
+                // 入口节点（task 且无 in）→ 创建即运行。后台化（收口③根因修复）：
+                // startNode 同步等节点整个任务跑完，直接调用会把分发器 turn 卡在
+                // NodeEdit 上直到节点完成（实测单 turn 56min），违背工具契约
+                // 「async, non-blocking」。
+                (if task.isDefined && ins.isEmpty then
+                   NodeTools.runDetached(rt, s"start entry node $nodeId")(rt.engine.startNode(nodeId))
+                 else IO.unit)
             }
           createIO.as(Right(
             s"Node '$nodename' ($nodeId) created in project '${rt.project.name}'" +
@@ -447,11 +477,16 @@ object NodeEditTool extends Tool:
                         IO.pure(Left(ToolError(Option(e.getMessage).getOrElse("in-rewire failed"))))
                       }
                       _ <- setOutIO
-                      // 已完成节点改接 → 立即投递（§2.3：结果缓冲/归档 → 向新目标投递）
+                      // 已完成节点改接 → 立即投递（§2.3：结果缓冲/归档 → 向新目标投递）。
+                      // 后台化（收口③）：deliverOutTo 内 startNode 同步等下游终态，
+                      // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
                       _ <- (newOut, node.status) match
                         case (Some(t), NodeLifecycle.Completed) =>
                           node.result match
-                            case Some(res) => rt.engine.deliverOutTo(node, t, res)
+                            case Some(res) =>
+                              NodeTools.runDetached(rt, s"deliver retained result ${node.id} -> $t")(
+                                rt.engine.deliverOutTo(node, t, res)
+                              )
                             case None => IO.unit
                         case _ => IO.unit
                       // wiring 变更事件（NodeList 同构 payload，store 最终态）——此前只发
