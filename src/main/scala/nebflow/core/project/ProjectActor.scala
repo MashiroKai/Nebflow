@@ -277,7 +277,11 @@ object ProjectActor:
               projectRoot = Some(project.workspace),
               safetyMode = "confirm-edits",
               rootSessionId = rootSessionId,
-              isFlowNode = true
+              isFlowNode = true,
+              // 阶段 2a 沙箱（H-5①）：分发器 root=project workspace——worktree
+              // 天然建在 <workspace>/.nebflow/ 内，git worktree add 写主仓 .git
+              // 亦在界内。
+              sandboxEnabled = true
             )
           )
           // 单次会话观察桥（#28 可观测收尾）：分发器 turn 完成 → 清 registry +

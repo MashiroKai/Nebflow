@@ -2,6 +2,7 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.core.sandbox.FileSandbox
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
@@ -150,35 +151,35 @@ Example edits[0]: {"old_string": "val a = 1", "new_string": "val a = 2"}"""
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
-    if !nebflow.core.PathUtil.isAbsolute(filePathStr) then
-      IO.pure(Left(ToolError(s"Path must be absolute, got: $filePathStr")))
-    else
-      val filePath = Paths.get(filePathStr)
-      if filePath.toString.endsWith(".ipynb") then
-        IO.pure(Left(ToolError("File is a Jupyter Notebook. Use the NotebookEdit tool to edit this file.")))
-      else
-        parseEdits(input) match
-          case Left(err) => IO.pure(Left(err))
-          case Right(edits) =>
-            // Snapshot file before editing (if it exists, with agent identity)
-            val snapshot = ctx.fileHistory.traverse_(_.snapshot(filePath, ctx.mailboxAddress))
-            val editIO = (snapshot *> IO.blocking(doMultiEdit(filePath, edits)))
-              .handleErrorWith { e =>
-                val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-                multiEditLogger.warn(s"Error multi-editing file $filePath: ${e.getClass.getSimpleName}: $msg") *>
-                  IO.pure(Left(ToolError(s"Error editing file: $msg")))
+    // 阶段 2a 沙箱（§A.3）：写闸门——fresh canonical 路径执行。沙箱关时旧行为。
+    FileSandbox.checkWrite(ctx, filePathStr) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(filePath) =>
+        if filePath.toString.endsWith(".ipynb") then
+          IO.pure(Left(ToolError("File is a Jupyter Notebook. Use the NotebookEdit tool to edit this file.")))
+        else
+          parseEdits(input) match
+            case Left(err) => IO.pure(Left(err))
+            case Right(edits) =>
+              // Snapshot file before editing (if it exists, with agent identity)
+              val snapshot = ctx.fileHistory.traverse_(_.snapshot(filePath, ctx.mailboxAddress))
+              val editIO = (snapshot *> IO.blocking(doMultiEdit(filePath, edits)))
+                .handleErrorWith { e =>
+                  val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+                  multiEditLogger.warn(s"Error multi-editing file $filePath: ${e.getClass.getSimpleName}: $msg") *>
+                    IO.pure(Left(ToolError(s"Error editing file: $msg")))
+                }
+              val lockedEdit = ctx.fileLockManager match
+                case Some(lm) => lm.withWriteLock(filePath)(editIO)
+                case None => editIO
+              lockedEdit.flatMap {
+                case Right(result) =>
+                  val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
+                    ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString)) *>
+                    MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
+                  record.as(Right(result))
+                case left => IO.pure(left)
               }
-            val lockedEdit = ctx.fileLockManager match
-              case Some(lm) => lm.withWriteLock(filePath)(editIO)
-              case None => editIO
-            lockedEdit.flatMap {
-              case Right(result) =>
-                val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
-                  ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString)) *>
-                  MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
-                record.as(Right(result))
-              case left => IO.pure(left)
-            }
   end call
 
   // ---------------------------------------------------------------------------

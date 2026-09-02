@@ -217,7 +217,10 @@ class NodeEngine(
           projectRoot = Some(projectRoot),
           safetyMode = "confirm-edits",
           rootSessionId = rootSessionId,
-          isFlowNode = true // leaf 剥离（与 flow 节点一致：无 Node 工具/展示类）
+          isFlowNode = true, // leaf 剥离（与 flow 节点一致：无 Node 工具/展示类）
+          // 阶段 2a 沙箱（§A.6）：dev/修复节点 root=<workspace>/.nebflow/<wt>、
+          // merge 节点 root=workspace——物理隔离，最小权限。
+          sandboxEnabled = true
         )
       )
       // 卡死处置接线（与 ProjectActor 分发器注册同款）：supervisorRef=bridgeRef

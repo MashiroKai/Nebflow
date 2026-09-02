@@ -65,7 +65,11 @@ final class ShellSession private (
   private val cleanupFiber: Fiber[IO, Throwable, Unit],
   private val lastAccessed: Ref[IO, Long],
   private val isAlive: Ref[IO, Boolean],
-  private val lifecycleMutex: Mutex[IO]
+  private val lifecycleMutex: Mutex[IO],
+  /** 阶段 2a 沙箱（§A.4）：会话持有的策略——BashSeatbelt 包装 + 初 cwd 的依据。
+    * None/off = 旧行为（初 cwd=user.dir，无包装）。会话内不可变（root 会话级
+    * 不可变，§A.2）。 */
+  private val sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None
 ):
 
   private val SessionTTL = 30.minutes.toMillis
@@ -312,7 +316,7 @@ final class ShellSession private (
     // argument parser, causing commands with quotes, &&, ||, or newlines
     // to be mangled.
     val bashPath = if isWindows then windowsBashPath else "bash"
-    val pb =
+    val plain: ProcessBuilder =
       if isWindows then
         // Bundled MinGit bash (Team #11): MinGit has no bin/bash.exe wrapper
         // that would assemble the MSYS environment, so run it as a LOGIN
@@ -326,6 +330,17 @@ final class ShellSession private (
           bundled
         else new ProcessBuilder(bashPath, "-s")
       else new ProcessBuilder(bashPath, "-c", command)
+    // 阶段 2a 沙箱（§A.4-3）：macOS 上经 Seatbelt 包装——/usr/bin/sandbox-exec
+    // 硬编码绝对路径 + /bin/bash（防 PATH 注入），策略随 fork/exec 传播到全部
+    // 子进程树。后端不可用（probe 失败）时 wrap=None → 裸跑：fail-closed 拦截
+    // 在 BashTool 入口（SANDBOX_UNAVAILABLE），显式降级时带 [unsandboxed] 前缀，
+    // 均不会静默走到这里。
+    val pb: ProcessBuilder =
+      if !isWindows && sandbox.exists(_.enabled) then
+        nebflow.core.sandbox.SandboxRuntime.current.wrap(List("bash", "-c", command), sandbox.get) match
+          case Some(wrapped) => new ProcessBuilder(wrapped*)
+          case None => plain
+      else plain
     // Empty or invalid working directory causes failures. Fall back to user home.
     val safeCwd =
       if cwd == null || cwd.isEmpty || !new File(cwd).exists() then
@@ -1001,13 +1016,17 @@ object ShellSession:
     sessions.get.flatMap(s => s.values.toList.traverse_(_.kill())).unsafeRunAndForget()
   }
 
-  def forSession(sessionId: String, initialDir: Option[String] = None): IO[ShellSession] =
-    createMutex.flatMap(_.lock.surround(doGetOrCreate(sessionId, initialDir)))
+  def forSession(
+    sessionId: String,
+    initialDir: Option[String] = None,
+    sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None
+  ): IO[ShellSession] =
+    createMutex.flatMap(_.lock.surround(doGetOrCreate(sessionId, initialDir, sandbox)))
 
-  private  def doGetOrCreate(sessionId: String, initialDir: Option[String]): IO[ShellSession] =
+  private  def doGetOrCreate(sessionId: String, initialDir: Option[String], sandbox: Option[nebflow.core.sandbox.SandboxPolicy]): IO[ShellSession] =
     def replace(old: ShellSession): IO[ShellSession] =
       old.cancelCleanupFiber() *> old.kill() *> sessions.update(_ - sessionId) *>
-        ShellSession.create(sessionId, initialDir).flatMap { newS =>
+        ShellSession.create(sessionId, initialDir, sandbox).flatMap { newS =>
           sessions.update(_ + (sessionId -> newS)).as(newS)
         }
     sessions.get.flatMap { m =>
@@ -1027,7 +1046,7 @@ object ShellSession:
               }
           }
         case None =>
-          ShellSession.create(sessionId, initialDir).flatMap { newS =>
+          ShellSession.create(sessionId, initialDir, sandbox).flatMap { newS =>
             sessions.update(_ + (sessionId -> newS)).as(newS)
           }
     }
@@ -1062,7 +1081,11 @@ object ShellSession:
       }.flatten
     }
 
-  private[tools] def create(sessionId: String, initialDir: Option[String] = None): IO[ShellSession] =
+  private[tools] def create(
+    sessionId: String,
+    initialDir: Option[String] = None,
+    sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None
+  ): IO[ShellSession] =
     for
       dirRef <- Ref.of[IO, String](
         initialDir.getOrElse {
@@ -1079,7 +1102,7 @@ object ShellSession:
       accessRef <- Clock[IO].realTime.map(_.toMillis).flatMap(Ref.of[IO, Long])
       aliveRef <- Ref.of[IO, Boolean](true)
       mutex <- Mutex[IO]
-    yield new ShellSession(sessionId, dirRef, jobsRef, procsRef, fiber, accessRef, aliveRef, mutex)
+    yield new ShellSession(sessionId, dirRef, jobsRef, procsRef, fiber, accessRef, aliveRef, mutex, sandbox)
 
   private def startCleanupFiber(jobsRef: Ref[IO, Map[String, BackgroundJob]]): IO[Fiber[IO, Throwable, Unit]] =
     def loop: IO[Unit] =
