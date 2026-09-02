@@ -2008,22 +2008,7 @@ class WebSocketRoutes(
                 _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
                   new RuntimeException("path outside project root")
                 )
-                entries <- IO.blocking {
-                  if os.exists(basePath) && os.isDir(basePath) then
-                    os.list(basePath)
-                      .sortBy { p =>
-                        (if os.isDir(p) then 0 else 1, p.last.toLowerCase)
-                      }
-                      .map { p =>
-                        val isDir = os.isDir(p)
-                        io.circe.Json.obj(
-                          "name" -> p.last.asJson,
-                          "type" -> (if isDir then "dir" else "file").asJson,
-                          "size" -> (if !isDir then os.size(p) else 0L).asJson
-                        )
-                      }
-                  else Nil
-                }
+                entries <- IO.blocking(WebSocketRoutes.listDirEntries(basePath))
               yield (basePath.toString, entries))
                 .flatMap { case (resolvedPath, entries) =>
                   wsSend(
@@ -4525,6 +4510,42 @@ object WebSocketRoutes:
       else if canonicalBase == canonicalRoot then Left("cannot delete project root")
       else Right(basePath)
     catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
+
+  /**
+   * Explorer listDir — pure, testable listing core with per-entry fault
+   * isolation (2026-09-02). The bare os.isDir/os.size calls used to throw out
+   * of the whole listing when a directory contained a dangling symlink (e.g.
+   * project .nebflow/flowmap-anim → worktrees/flowmap-anim whose target is
+   * gone): one bad entry produced dirListing{error} and the frontend rendered
+   * the directory as un-openable. Now each entry stats independently — a
+   * stat failure degrades THAT entry to type=file, size=0, broken=true
+   * (readFile on it already fails gracefully via fileContent{error}; the
+   * extra `broken` field is optional and today's frontend simply ignores it).
+   * os.isDir keeps its followLinks semantics; dirs sort first, then name —
+   * ordering identical to the pre-fix implementation.
+   */
+  private[gateway] def listDirEntries(basePath: os.Path): Seq[Json] =
+    if os.exists(basePath) && os.isDir(basePath) then
+      os.list(basePath)
+        .map { p =>
+          val stat = scala.util.Try {
+            val isDir = os.isDir(p)
+            if isDir then (isDir, 0L) else (isDir, os.size(p))
+          }.toOption
+          stat match
+            case Some((isDir, size)) => (p.last, isDir, size, false)
+            case None                => (p.last, false, 0L, true)
+        }
+        .sortBy { case (name, isDir, _, _) => (if isDir then 0 else 1, name.toLowerCase) }
+        .map { case (name, isDir, size, broken) =>
+          io.circe.Json.obj(
+            "name"   -> name.asJson,
+            "type"   -> (if isDir then "dir" else "file").asJson,
+            "size"   -> size.asJson,
+            "broken" -> broken.asJson
+          )
+        }
+    else Nil
 
   /**
    * Resolve + guard + perform one move (mirror of movePath's checks).
