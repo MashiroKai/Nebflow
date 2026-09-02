@@ -133,7 +133,7 @@ const STATE_BY_KEY = {};
 for (const s of STATES) STATE_BY_KEY[s.k] = s;
 
 /* v8.2.2 palette table; v8.3.0 demoted to a FALLBACK: the shipped default
-   look is the Neon 基调 (orbPresets.DEFAULT_BASE, ruling ③). PAL_DEFAULT only
+   look is the Ocean 基调 (orbPresets.DEFAULT_BASE, ruling 2026-09-03). PAL_DEFAULT only
    seeds the renderer before the first resolution and guards resolution
    failures — the visible boards all come from orbPresets. */
 const PAL_DEFAULT = { a: [0.471, 0.627, 0.863], b: [0.549, 0.490, 0.839], c: [0.200, 0.251, 0.502] };
