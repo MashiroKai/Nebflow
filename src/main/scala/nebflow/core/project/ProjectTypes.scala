@@ -49,6 +49,12 @@ case class NodeDef(
   task: Option[String] = None,
   in: List[String] = Nil,
   out: Option[String] = None,
+  /** 依赖连接（deps 设计 §1.1，主文档 20260902_flowmap-engine-evolution-design.md）：
+    * 下游单侧持有、不回写上游（上游不知道自己被依赖——「不用其输出」的结构体现）。
+    * 语义 = 只等上游完成信号（status==completed），不投递上游结果——下游输入 =
+    * 自身 task（自足）；failed/cancelled/blocked ∉ completed → 不触发，下游保持
+    * pending/wiring 可见。旧 flow-map.json 无此键 → withDefaults 解码为 Nil（零迁移）。 */
+  deps: List[String] = Nil,
   deliveredTo: List[String] = Nil,
   status: String = NodeLifecycle.Wiring,
   result: Option[String] = None,
@@ -72,7 +78,8 @@ object NodeDef:
   * WS 事件（nodeCreated/nodeUpdated/nodeRemoved）与快照永远同构，前端增量渲染可直接对齐
   * 字段集：{id, name, agent, skill, mcp, preset, status, in, out, hasWorktree, worktree,
   * result(≤500 字符摘要), retries, createdAt, completedAt, ttlLeftSec}。
-  * skill/mcp/preset 为节点配置（子任务 C：Flow Map 卡片徽标与详情展示的数据源）。 */
+  * skill/mcp/preset 为节点配置（子任务 C：Flow Map 卡片徽标与详情展示的数据源）。
+  * deps 为条件字段（非 Nil 才带，与 blockedFeedback 同构——见下方 depsFields 注释）。 */
 object NodePayload:
   def buildNodeJson(node: NodeDef, now: Long): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
@@ -96,14 +103,18 @@ object NodePayload:
       "completedAt" -> node.completedAt.asJson,
       "ttlLeftSec" -> ttlLeft.asJson
     )
-    val feedbackFields = node.blockedFeedback.toList.map { bf =>
-      "blockedFeedback" -> Json.obj(
-        "category" -> bf.category.asJson,
-        "detail" -> bf.detail.asJson,
-        "suggestion" -> bf.suggestion.asJson
-      )
-    }
-    Json.obj((baseFields ++ feedbackFields)*)
+      val feedbackFields = node.blockedFeedback.toList.map { bf =>
+        "blockedFeedback" -> Json.obj(
+          "category" -> bf.category.asJson,
+          "detail" -> bf.detail.asJson,
+          "suggestion" -> bf.suggestion.asJson
+        )
+      }
+      // deps 条件序列化（deps 设计 §1.1；与 blockedFeedback 条件字段同构）：
+      // 非 Nil 才带——NodeEventPushSpec 的 NodeListKeys 字段集断言零改动（无 deps
+      // 的节点 payload 字段集不变），前端增量渲染对缺键天然兼容。
+      val depsFields = if node.deps.nonEmpty then List("deps" -> node.deps.asJson) else Nil
+      Json.obj((baseFields ++ depsFields ++ feedbackFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(

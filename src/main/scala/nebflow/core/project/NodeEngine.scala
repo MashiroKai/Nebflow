@@ -109,6 +109,13 @@ class NodeEngine(
               }
         yield ()
 
+  /** deps 满足判定（deps 设计 §1.3）：声明式状态查询（幂等、零记账），非 deliveredTo
+    * 式事件累计。findNode 归档兜底——TTL 归档不影响「完成」事实（归档上游可触发，
+    * 与 D1「归档 completed 上游是唯一投递入口」先例一致）。deps 为空 → 恒满足。 */
+  def depsSatisfied(node: NodeDef): IO[Boolean] =
+    node.deps.traverse(store.findNode)
+      .map(_.forall(_.exists(_.status == NodeLifecycle.Completed)))
+
   /** 启动节点（§2.1 创建即运行：入口节点由 NodeEdit 调；下游由投递 barrier 归零调）。 */
   def startNode(nodeId: String): IO[Unit] =
     store.getNode(nodeId).flatMap {
@@ -119,13 +126,29 @@ class NodeEngine(
           case NodeLifecycle.Running | NodeLifecycle.Completed | NodeLifecycle.Failed | NodeLifecycle.Cancelled | NodeLifecycle.Blocked =>
             IO.unit // 已终态/运行中，幂等跳过
           case _ =>
-            // 防御：wiring 空节点（无 task 无 in）不空跑（防浪费 token）
-            if node.status == NodeLifecycle.Wiring && node.task.isEmpty && node.in.isEmpty then IO.unit
-            else
-              buildInput(node).flatMap { input =>
-                spawnAndRun(node, input)
-              }
-    }
+            // deps 闸门（deps 设计 §1.3，单权威）：全部 deps 上游 completed 才放行。
+            // 单闸门自动保护全部启动入口（deliverOut/deliverOutTo/D1 补投递/重激活链/
+            // 入口启动/settleDeps）——任何绕过 deps 的启动都被拦在最后一关。
+            // failed/cancelled/blocked ∉ completed → 不触发，下游保持 pending/wiring 可见。
+            depsSatisfied(node).flatMap {
+              case false => IO.unit
+              case true =>
+                // in barrier 归零检查（deps 设计 §1.3「in 未归零都会静默返回」）：新调用方
+                // settleDeps 直调 startNode 不再经 deliverOut 的 barrier 归零前置——闸门内
+                // 补上这层，混合同持 in+deps 的下游只在两种等待都满足时才启动。既有全部
+                // 调用方（deliverOut/deliverOutTo/deliverFailed/D1 链/入口启动）本就在
+                // barrier 归零后才调（入口 in=Nil 平凡归零），检查对它们恒真、零行为变化。
+                if node.in.exists(up => !node.deliveredTo.contains(up)) then IO.unit
+                else
+                  // 防御：wiring 空节点（无 task 无 in 无 deps）不空跑（防浪费 token）。
+                  // 裁定①后降级为纵深防御：零连接主责在 NodeEdit 校验五/六，此处只兜
+                  // 历史遗留数据（校验生效前落盘的零连接旧节点）与校验层外瞬态。
+                  if node.status == NodeLifecycle.Wiring && node.task.isEmpty && node.in.isEmpty && node.deps.isEmpty then IO.unit
+                  else buildInput(node).flatMap { input =>
+                    spawnAndRun(node, input)
+                  }
+            }
+        }
 
   /** 构造节点输入：自身 task 上下文 + 各上游 result（=== Node <name> === 头，§2.7）+
     * blocked 声明协议脚注（设计 §1.5 原文，单点注入覆盖所有节点——节点 agent 是通用
@@ -298,10 +321,34 @@ class NodeEngine(
             case Some(completed) =>
               emitEvent("nodeCompleted", nodeId, NodePayload.buildNodeJson(completed, now)) *>
                 logger.info(s"Node '${completed.name}' completed (result ${resultText.length} chars)") *>
-                deliverOut(completed, resultText)
+                deliverOut(completed, resultText) *>
+                // deps 反向结算（deps 设计 §1.3）：与 deliverOut 同一完成 fiber 顺序推进
+                //（现状 deliverOut 同款语义）。blocked 分流在 completeNode 入口已与
+                // completed 分叉，deps 结算只挂 completed 分支尾部——blocked ∉ completed
+                // 不触发；failed（failNode）/cancelled（cancelNode）不挂 settleDeps，
+                // 下游保持 pending 可见（裁定③差异语义，NodeDepsSpec T5 锁定）。
+                settleDeps(completed)
             case None =>
               logger.warn(s"Node '$nodeId' vanished before completion — result not persisted")
         yield ()
+
+  /** deps 完成信号 → 触发依赖者（deps 设计 §1.3）：反向扫描活动区，对每个
+    * deps 含本次完成节点、且自身非 running/终态的依赖者调 startNode——闸门在
+    * startNode 内（deps 未全满足 / in 未归零都会静默返回）。满足判定是声明式
+    * 状态查询（幂等、零记账）：同一上游既 in 又 deps 时，in 路径（deliverOut
+    * barrier 归零）与 deps 路径（settleDeps）汇合同一个 startNode 入口，第二次
+    * 调用被幂等跳过，冗余无害不重复 spawn。归档上游可触发——TTL 归档不影响
+    * 「完成」事实（本函数由 completeNode 完成 fiber 调用时上游必在活动区；
+    * 归档变体由 NodeEdit D1-deps 补触发路径覆盖，findNode 兜底）。 */
+  private def settleDeps(completed: NodeDef): IO[Unit] =
+    store.snapshot.flatMap { s =>
+      s.nodes.values
+        .filter(d => d.deps.contains(completed.id)
+          && d.status != NodeLifecycle.Running
+          && !NodeLifecycle.Terminal.contains(d.status))
+        .toList
+        .traverse_(d => startNode(d.id))
+    }
 
   /** blocked 终态化（设计 §2.1 四条动作序列，与 completeNode 同构）：
     * ① 事务内现读 fresh（R2 纪律）→ status=Blocked / result=渲染串 / blockedFeedback /

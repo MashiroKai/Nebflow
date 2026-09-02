@@ -403,7 +403,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       t0 = System.currentTimeMillis()
       r <- nodeEdit(nodeInput("acc-entry-async", "调研-异步", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("slow research")), ctx)
+        "task" -> Json.fromString("slow research"), "out" -> Json.fromString("Nebula")), ctx)
       elapsedMs = System.currentTimeMillis() - t0
       // 等后台 fiber 跑完节点（fork 后节点独立推进）
       _ <- IO.sleep(nodeDelay + 3.seconds)
@@ -456,9 +456,9 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-dangle", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // 入口节点（无 out = 悬空；task 非空 → 创建即运行）
+      // 入口节点（out=Nebula 仅满足连接下限校验五；完成后再改接 → 悬空投递语义不变）
       _ <- nodeEdit(nodeInput("acc-dangle", "调研-悬空", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("research")), ctx)
+        "task" -> Json.fromString("research"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- IO.sleep(3.seconds)
       s1 <- rt.store.snapshot
       aId = s1.nodes.values.find(_.name == "调研-悬空").map(_.id).getOrElse("")
@@ -498,9 +498,10 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       now = System.currentTimeMillis()
       _ <- rt.store.mutate(s =>
         s.copy(nodes = s.nodes ++ Map(
+          // seed A 补 in（校验六适配）：断开用例 out=null 后 A 仍须剩 ≥1 连接
           "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent",
             status = NodeLifecycle.Completed, result = Some("kept result"), createdAt = now,
-            completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = Some("n-x")),
+            completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = Some("n-x"), in = List("n-seed")),
           "n-x" -> NodeDef(id = "n-x", name = "X", agent = "test-agent",
             status = NodeLifecycle.Wiring, in = List("n-a"), createdAt = now),
           "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent",
