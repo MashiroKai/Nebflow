@@ -62,6 +62,14 @@ export default {
   'flowmap.blockedDetail': 'Detail',
   'flowmap.blockedSuggestion': 'Suggestion',
   'flowmap.blockedRawTitle': 'Node output (raw)',
+  // deps 依赖连接（deps 设计 §1.4）：等待脚注 + 六档图例（输出边三态 × 依赖边三态）
+  'flowmap.waitingFor': 'Waiting',
+  'flowmap.legend.outDelivered': 'Output delivered',
+  'flowmap.legend.outWaiting': 'Output in-flight',
+  'flowmap.legend.outIdle': 'Output idle',
+  'flowmap.legend.depsMet': 'Dependency met',
+  'flowmap.legend.depsWaiting': 'Dependency waiting',
+  'flowmap.legend.depsUnmet': 'Dependency unmet',
   'agentFile.hint': 'This file is the project workspace agent instructions (AGENTS.md at the workspace root); edit and save it.',
 
   // === Friends & messages (A2A) ===

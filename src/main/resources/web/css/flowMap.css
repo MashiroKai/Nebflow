@@ -340,3 +340,66 @@
   .fm-result-summary, .solar-node-status { animation: none; }
   .fm-node.fm-node-flash { animation: none; box-shadow: 0 0 0 4px rgba(7, 193, 96, 0.3); }
 }
+
+/* ══ deps 依赖连接（deps 设计 §1.4，20260903）════════════════
+   视觉三重编码（不依赖单一色觉通道，亮暗主题经 CSS 变量自适应）：
+   ① 虚线线型 stroke-dasharray: 3 4（类型编码——与输出边实线区分）
+   ② 三档颜色（状态）：满足=--color-success / 等待=--color-warning / 未满足=--color-border
+   ③ 空心小箭头（第二类型编码——与输出边实心圆点区分）。
+   写成 .flow-edge.fm-edge.fm-edge-deps 三段特异度：压过上方 .flow-edge.fm-edge 三态规则。 */
+.flow-edge.fm-edge.fm-edge-deps {
+  stroke-dasharray: 3 4;
+  stroke-width: 1.5;
+  animation: none;
+}
+.flow-edge.fm-edge.fm-edge-deps.deps-met { stroke: var(--color-success); }
+.flow-edge.fm-edge.fm-edge-deps.deps-wait { stroke: var(--color-warning); }
+.flow-edge.fm-edge.fm-edge-deps.deps-unmet { stroke: var(--color-border); }
+/* 空心箭头：fill:none + 描边；r 走 CSS（SVG2 geometry property，Chromium 支持），
+   比输出边实心圆点（r=3 实心 fill）多一层类型区分。 */
+.fm-edge-arrow.fm-edge-deps-arrow {
+  fill: none;
+  stroke: var(--color-border);
+  stroke-width: 1;
+  r: 3.5px;
+  opacity: 0.9;
+}
+.fm-edge-arrow.fm-edge-deps-arrow.deps-met { stroke: var(--color-success); opacity: 1; }
+.fm-edge-arrow.fm-edge-deps-arrow.deps-wait { stroke: var(--color-warning); }
+
+/* 「等待谁」脚注（deps 设计 §1.4）：pending/wiring 且持有 in/deps 的卡片显示等待对象
+   （名(id) / 归档降级 裸id✦）；单行截断，hover title 看全量。 */
+.fm-wait-note {
+  margin-top: 4px;
+  font: 400 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 六档图例条（输出边三态 × 依赖边三态）：solar-card 底部，i18n flowmap.legend.* */
+.flowmap-legend {
+  display: flex;
+  gap: 14px;
+  row-gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 8px 4px 2px;
+  font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted);
+}
+.fm-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.fm-legend-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 0;
+  border-top: 2px solid var(--color-border);
+}
+.fm-legend-swatch.out.delivered { border-top-color: rgb(var(--sapphire) / 0.75); border-top-style: solid; }
+.fm-legend-swatch.out.inflight { border-top-color: var(--color-text-muted); border-top-style: dashed; }
+.fm-legend-swatch.out.idle { border-top-color: var(--color-border); border-top-style: solid; }
+.fm-legend-swatch.deps { border-top-style: dashed; }
+.fm-legend-swatch.deps.deps-met { border-top-color: var(--color-success); }
+.fm-legend-swatch.deps.deps-wait { border-top-color: var(--color-warning); }
+.fm-legend-swatch.deps.deps-unmet { border-top-color: var(--color-border); }
