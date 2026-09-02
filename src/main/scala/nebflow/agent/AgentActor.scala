@@ -525,7 +525,10 @@ object AgentActor extends AgentCore with AgentSession:
     /** #406: one-shot FlowExecute node — leaf tools stripped (see SessionContext.isFlowNode). */
     isFlowNode: Boolean = false,
     /** 轨道二 #5: 节点 userFacing 白名单声明（详见 SessionContext.userFacingNode）。 */
-    userFacingNode: Boolean = false
+    userFacingNode: Boolean = false,
+    /** 阶段 2a 沙箱（§A.6）：project 节点/分发器 spawn 置 true——AgentCore 据此
+      * 从 projectRoot 派生 ToolContext.sandbox。默认 false=旧行为（双轨豁免面）。 */
+    sandboxEnabled: Boolean = false
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -575,7 +578,8 @@ object AgentActor extends AgentCore with AgentSession:
             isSubTaskWorker = isSubTaskWorker,
             freezeExempt = freezeExempt,
             isFlowNode = isFlowNode,
-            userFacingNode = userFacingNode
+            userFacingNode = userFacingNode,
+            sandboxEnabled = sandboxEnabled
           )
         )(using ctx)
       )

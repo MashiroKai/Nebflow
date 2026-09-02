@@ -312,6 +312,21 @@ Git safety:
     else lines.takeRight(n).mkString("\n")
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    // 阶段 2a 沙箱（§A.4-4）：probe 失败时 fail-closed——绝不静默放行。
+    // sandbox.bash.failIfUnavailable=false 显式降级：WARN + 结果 [unsandboxed] 前缀。
+    if ctx.sandbox.enabled && !nebflow.core.sandbox.SandboxRuntime.current.available then
+      if ctx.sandbox.bashFailIfUnavailable then
+        IO.pure(Left(ToolError(nebflow.core.sandbox.SandboxRuntime.unavailableMessage(ctx.sandbox.root))))
+      else
+        BashTool.logger
+          .warn(
+            s"sandbox-exec unavailable; running Bash UNSANDBOXED (explicit sandbox.bash.failIfUnavailable=false)",
+            "sessionId" -> ctx.sessionId.getOrElse("")
+          )
+          *> doCall(input, ctx).map(markUnsandboxed)
+    else doCall(input, ctx)
+
+  private def doCall(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val explicitTimeoutMs: Option[Long] = input("timeout")
       .flatMap(_.asNumber)
       .flatMap(_.toLong)
@@ -325,11 +340,15 @@ Git safety:
     val cancelBg = input("cancel_background_job").flatMap(_.asBoolean).getOrElse(false)
 
     val sessionId = ctx.sessionId.getOrElse("default")
+    // 阶段 2a 沙箱（§A.4-1/3）：会话 shell 初 cwd = 沙箱根（现状初 cwd=JVM
+    // user.dir）；Seatbelt 包装随会话持有策略在 buildProcessBuilder 内完成。
+    // 读面按 H-10① 接受全盘（写 OS 强制 + JVM 读围栏双层），hardening 清单另列。
+    val sandboxOpt = Some(ctx.sandbox).filter(_.enabled)
 
     // If background_job_id is provided, enter query/cancel mode
     bgJobId match
       case Some(jobId) =>
-        ShellSession.forSession(sessionId).flatMap { shell =>
+        ShellSession.forSession(sessionId, initialDir = sandboxOpt.map(_.root.toString), sandbox = sandboxOpt).flatMap { shell =>
           if cancelBg then
             shell.cancelBackgroundJob(jobId).map { cancelled =>
               if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
@@ -380,7 +399,7 @@ Git safety:
             )
           else
             ShellSession
-              .forSession(sessionId)
+              .forSession(sessionId, initialDir = sandboxOpt.map(_.root.toString), sandbox = sandboxOpt)
               .flatMap { shell =>
                 if background then
                   val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
@@ -413,7 +432,7 @@ Git safety:
                     .execute(actualCommand, remoteTimeout)
                     .attempt
                     .map {
-                      case Right(pr) => formatResult(pr, desc, tailN)
+                      case Right(pr) => formatResult(pr, desc, tailN, sandboxOpt.map(_.root.toString))
                       case Left(_: TimeoutException) =>
                         Left(ToolError(s"[Command timed out after ${remoteTimeout.toMillis}ms]"))
                       case Left(e) =>
@@ -431,7 +450,26 @@ Git safety:
               }
           end if
     end match
-  end call
+
+  /** 显式降级（sandbox.bash.failIfUnavailable=false 且 probe 失败）：结果加
+    * [unsandboxed] 前缀（§A.4-4），防模型把无围栏输出当成已验证环境。 */
+  private def markUnsandboxed(r: Either[ToolError, String]): Either[ToolError, String] =
+    r match
+      case Right(s) => Right("[unsandboxed] " + s)
+      case left => left
+
+  /** Seatbelt 违规归因（§A.4-5）：stderr 出现方言 "Operation not permitted" 时
+    * 标注沙箱拒绝，防模型误诊为环境故障。 */
+  private[tools] def attributeSandboxDenial(
+    r: Either[ToolError, String],
+    pr: ProcessResult,
+    sandboxRoot: Option[String]
+  ): Either[ToolError, String] =
+    (r, sandboxRoot) match
+      case (Right(s), Some(root)) if pr.exitCode != 0 && pr.stderr.contains("Operation not permitted") =>
+        Right(s + s"\n[sandbox: bash write denied outside sandbox root $root]")
+      case _ => r
+  end attributeSandboxDenial
 
   /**
    * Execute a command in the foreground until it completes or fails.
@@ -464,6 +502,8 @@ Git safety:
   ): IO[Either[ToolError, String]] =
     // 无显式 timeout → 不设命令级超时（前台直跑语义，365.days 近似无限）。
     val processTimeout = explicitTimeoutMs.map(_.millis).getOrElse(365.days)
+    // §A.4-5 归因：沙箱会话的命令失败且 stderr 含 Seatbelt 方言 → 标注拒绝来源。
+    val sandboxRoot = Some(ctx.sandbox).filter(_.enabled).map(_.root.toString)
     val health = new JobHealth()
     // #22 (2026-08-19): a running Bash is INVISIBLE — the completion log only
     // fires when it returns, so a long/hung command reads as "turn went
@@ -486,7 +526,7 @@ Git safety:
         .execute(command, processTimeout, Some(health))
         .attempt
         .map {
-          case Right(pr) => formatResult(pr, desc, tailN)
+          case Right(pr) => formatResult(pr, desc, tailN, sandboxRoot)
           case Left(e: TimeoutException) =>
             Left(ToolError(s"[Command timed out after ${processTimeout.toMillis}ms]"))
           case Left(e) =>
@@ -573,7 +613,8 @@ Git safety:
   private def formatResult(
     result: ProcessResult,
     desc: Option[String],
-    tailN: Option[Int] = None
+    tailN: Option[Int] = None,
+    sandboxRoot: Option[String] = None
   ): Either[ToolError, String] =
     val prefix = desc.map(d => s"[$d]\n").getOrElse("")
     val dirLine = s"(cwd: ${result.cwd})\n"
@@ -586,8 +627,10 @@ Git safety:
     val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
     val output = cleanedOut + errLine
     val full = prefix + dirLine + exitLine + output
-    if full.trim.isEmpty then Right("[Command executed successfully with no output]")
-    else Right(full)
+    val base =
+      if full.trim.isEmpty then Right("[Command executed successfully with no output]")
+      else Right(full)
+    attributeSandboxDenial(base, result, sandboxRoot)
 
   end formatResult
 

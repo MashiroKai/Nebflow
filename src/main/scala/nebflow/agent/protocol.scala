@@ -824,6 +824,12 @@ case class SessionContext(
   expectsMail: Boolean = false,
   /** Total mail turns completed in this session. */
   mailTurnCount: Int = 0,
+  /** 阶段 2a 沙箱会话开关（§A.6/H-5①）：true 时 AgentCore 从 projectRoot 派生
+    * ToolContext.sandbox（root=worktree 或 workspace；分发器=project workspace）。
+    * 仅 project 节点（NodeEngine）与分发器（ProjectActor）spawn 置位；Nebula/
+    * team/flow/Delegate 等双轨会话默认 false=旧行为（§A.7 Nebula 天然豁免，
+    * 双轨期不动旧体系），2c 收敛后统一。 */
+  sandboxEnabled: Boolean = false,
   /** Last experience extraction timestamp. */
   lastExperienceAt: Option[Long] = None,
   /**
@@ -1100,6 +1106,7 @@ object AgentState:
     freezeExempt: Boolean = false,
     isFlowNode: Boolean = false,
     userFacingNode: Boolean = false,
+    sandboxEnabled: Boolean = false,
     loopTurnKey: Long = 0L
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
@@ -1125,7 +1132,8 @@ object AgentState:
         isSubTaskWorker = isSubTaskWorker,
         freezeExempt = freezeExempt,
         isFlowNode = isFlowNode,
-        userFacingNode = userFacingNode
+        userFacingNode = userFacingNode,
+        sandboxEnabled = sandboxEnabled
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
@@ -1177,6 +1185,7 @@ extension (s: AgentState)
   def askMode: Option[String] = s.session.askMode
   def language: Option[String] = s.session.language
   def projectRoot: Option[String] = s.session.projectRoot
+  def sandboxEnabled: Boolean = s.session.sandboxEnabled
   def rulesMd: Option[String] = s.session.rulesMd
   def folderId: Option[String] = s.session.folderId
   def gitBranch: Option[String] = s.session.gitBranch

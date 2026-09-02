@@ -322,6 +322,10 @@ object GatewayMain extends IOApp.Simple:
                             nebflow.core.compact.ToolResultTtlConfig.load(config.toolResultTtl)
                           val toolResultTtlRef: Ref[IO, nebflow.core.compact.ToolResultTtlConfig] =
                             Ref.unsafe(toolResultTtlCfg)
+                          // 阶段 2a 沙箱（§G.1）：fail-safe 加载 + 启动 probe 一次缓存
+                          // （§A.4-4）。probe 阻塞 <1s；失败默认 fail-closed。
+                          val sandboxCfg = nebflow.core.sandbox.SandboxConfig.load(config.sandbox)
+                          nebflow.core.sandbox.SandboxRuntime.init(sandboxCfg)
                       logger.info(s"nebflow v${nebflow.Version.string}") *>
                         (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                          else presetLabel match
@@ -370,7 +374,8 @@ object GatewayMain extends IOApp.Simple:
                                       config.bashStuckWindowSec.getOrElse(nebflow.shared.Defaults.BashStuckWindowSec),
                                     healthCheckIntervalSec = config.bashHealthCheckIntervalSec
                                       .getOrElse(nebflow.shared.Defaults.BgHealthCheckIntervalSec)
-                                  )
+                                  ),
+                                  sandboxConfig = sandboxCfg
                                 )
                                 // P2: spawn the global InteractionHub and publish its ref.
                                 // Every agent's permission/AskUser requests and every frontend

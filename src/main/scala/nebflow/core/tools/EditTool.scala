@@ -2,6 +2,7 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.core.sandbox.FileSandbox
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
@@ -132,39 +133,38 @@ Edit patterns:
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
-    if !nebflow.core.PathUtil.isAbsolute(filePathStr) then
-      IO.pure(Left(ToolError(s"Path must be absolute, got: $filePathStr")))
-    else
-      val filePath = Paths.get(filePathStr)
-      val oldString = input("old_string").flatMap(_.asString).getOrElse("")
-      val newString = input("new_string").flatMap(_.asString).getOrElse("")
-      val replaceAll = input("replace_all").flatMap(_.asBoolean).getOrElse(false)
+    // 阶段 2a 沙箱（§A.3）：写闸门——fresh canonical 路径执行。沙箱关时旧行为。
+    FileSandbox.checkWrite(ctx, filePathStr) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(filePath) =>
+        val oldString = input("old_string").flatMap(_.asString).getOrElse("")
+        val newString = input("new_string").flatMap(_.asString).getOrElse("")
+        val replaceAll = input("replace_all").flatMap(_.asBoolean).getOrElse(false)
 
-      // lock-free pre-validation
-      validateInput(filePath, input) match
-        case Left(err) => IO.pure(Left(err))
-        case Right(()) =>
-          // Snapshot file before editing (if it exists, with agent identity)
-          val snapshot = ctx.fileHistory.traverse_(_.snapshot(filePath, ctx.mailboxAddress))
-          val editIO = (snapshot *> IO.blocking(doEdit(filePath, oldString, newString, replaceAll)))
-            .handleErrorWith { e =>
-              val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-              logger.warn(s"Error editing file $filePath: ${e.getClass.getSimpleName}: $msg") *>
-                IO.pure(Left(ToolError(s"Error editing file: $msg")))
+        // lock-free pre-validation
+        validateInput(filePath, input) match
+          case Left(err) => IO.pure(Left(err))
+          case Right(()) =>
+            // Snapshot file before editing (if it exists, with agent identity)
+            val snapshot = ctx.fileHistory.traverse_(_.snapshot(filePath, ctx.mailboxAddress))
+            val editIO = (snapshot *> IO.blocking(doEdit(filePath, oldString, newString, replaceAll)))
+              .handleErrorWith { e =>
+                val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+                logger.warn(s"Error editing file $filePath: ${e.getClass.getSimpleName}: $msg") *>
+                  IO.pure(Left(ToolError(s"Error editing file: $msg")))
+              }
+            val lockedEdit = ctx.fileLockManager match
+              case Some(lm) => lm.withWriteLock(filePath)(editIO)
+              case None => editIO
+            lockedEdit.flatMap {
+              case Right(result) =>
+                val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
+                  ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString)) *>
+                  MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
+                record.as(Right(result))
+              case left => IO.pure(left)
             }
-          val lockedEdit = ctx.fileLockManager match
-            case Some(lm) => lm.withWriteLock(filePath)(editIO)
-            case None => editIO
-          lockedEdit.flatMap {
-            case Right(result) =>
-              val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
-                ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString)) *>
-                MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
-              record.as(Right(result))
-            case left => IO.pure(left)
-          }
-      end match
-    end if
+    end match
   end call
 
   // ---------------------------------------------------------------------------
