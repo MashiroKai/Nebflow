@@ -888,9 +888,18 @@ private[agent] trait AgentCore:
       // <workspace>/.nebflow/<wt>；None → workspace；分发器 → project workspace，
       // H-5①）。仅 project 节点/分发器（SessionContext.sandboxEnabled）激活；
       // Nebula 无文件工具天然豁免、team/flow/Delegate 双轨会话默认旧行为（§A.7）。
+      //
+      // [verify-fix] 2026-09-03 独立验证节点（E2E 实证）：sandbox root 必须取
+      // SessionContext.projectRoot（NodeEngine.scala:159-161 / ProjectActor spawn
+      // 写入的 worktree/workspace 路径，§A.6 唯一权威），不能沿用 effectiveProjectRoot
+      // ——后者走 folderId 链（ContextRefresher.resolveProjectRootForTool），节点会话
+      // 无 folderId → 回落 resources.projectRoot = 实例 os.pwd，E2E 实测节点的
+      // SANDBOX_DENIED 消息显示 sandbox root = 实例 cwd 而非项目 workspace。
+      // ToolContext.projectRoot 的既有 folderId 语义保持不动（防回归），只修沙箱根。
       sandboxPolicy =
         if state.sandboxEnabled then
-          try nebflow.core.sandbox.SandboxPolicy.forRoot(os.Path(effectiveProjectRoot), resources.sandboxConfig)
+          val sandboxRootStr = state.projectRoot.filter(_.nonEmpty).getOrElse(effectiveProjectRoot)
+          try nebflow.core.sandbox.SandboxPolicy.forRoot(os.Path(sandboxRootStr), resources.sandboxConfig)
           catch
             case e: Exception =>
               // projectRoot 形态异常（空串/跨盘符等）——fail-open 到旧行为并留痕，
