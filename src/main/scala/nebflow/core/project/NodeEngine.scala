@@ -70,6 +70,29 @@ class NodeEngine(
       case None => IO.unit
     }
 
+  /** 死会话 running 节点收殓（清场 c-③，20260903 03:04 清场误杀事故复盘）：
+    * status=running 但无在飞执行 fiber（running 表无此节点——会话死于传输中断 /
+    * 实例重启后内存态清空）→ 直接终态化 cancelled + 显示 TTL（cancelNode 全链）
+    * + 审计事件，修复 NodeCancel「cancel signal sent」但状态不落终态的假成功。
+    * 误杀防护（硬约束）：有在飞 fiber = 活会话（取消信号可达）→ Left 拒绝，
+    * 本方法绝不触碰活会话节点。幂等：非 running → Left（不重复终态化）。 */
+  def reapStaleRunning(nodeId: String): IO[Either[String, String]] =
+    store.getNode(nodeId).flatMap {
+      case None => IO.pure(Left(s"Node '$nodeId' not found"))
+      case Some(n) if n.status != NodeLifecycle.Running =>
+        IO.pure(Left(s"Node '${n.name}' is not running (status=${n.status}) — nothing to reap"))
+      case Some(n) =>
+        isRunning(nodeId).flatMap {
+          case true =>
+            IO.pure(Left(s"Node '${n.name}' has a live execution fiber — use the normal cancel signal, not reap"))
+          case false =>
+            logger.warn(s"Node '${n.name}' ($nodeId) reaped: status=running but no live execution fiber (dead session / instance restart)")
+            FlowMapEventLog.append(workspace, projectName, nodeId, "reaped",
+              "dead running session finalized as cancelled (no live execution fiber; NodeCancel reap)") *>
+              cancelNode(nodeId).as(Right(s"Node '${n.name}' reaped — dead running session finalized as cancelled (display TTL)"))
+        }
+    }
+
   /** WS nodeRemoved（TTL 移除/归档后通知前端移除卡片）。payload = 节点最终态
     * （NodeList 同构——归档区兜底查得，ttlLeftSec=0），不再发空对象。 */
   def emitRemoved(nodeId: String): IO[Unit] =
@@ -138,6 +161,8 @@ class NodeEngine(
                 // 补上这层，混合同持 in+deps 的下游只在两种等待都满足时才启动。既有全部
                 // 调用方（deliverOut/deliverOutTo/deliverFailed/D1 链/入口启动）本就在
                 // barrier 归零后才调（入口 in=Nil 平凡归零），检查对它们恒真、零行为变化。
+                // 本检查沿快照；并发接线窗口的事务性复核在 spawnAndRun 的翻转 mutate 内
+                //（fix a 启动判定完整性，20260903）。
                 if node.in.exists(up => !node.deliveredTo.contains(up)) then IO.unit
                 else
                   // 防御：wiring 空节点（无 task 无 in 无 deps）不空跑（防浪费 token）。
@@ -184,26 +209,38 @@ class NodeEngine(
       case None => workspace
     val nodeName = node.name
     for
+      // 在飞登记先行（清场 c-① liveness 误杀防护 20260903）：running 表先于
+      // status=Running 翻转——NodeList liveness / abandon / NodeCancel 收殓判定
+      // 以「running 表含此节点」为活会话信号，若先翻转后登记，spawn 窗口内的
+      // 节点会被误判死会话（false-dead → 可被收殓 = 误杀）。
+      cancelSig <- Deferred[IO, Unit]
+      _ <- running.update(_ + (nodeId -> cancelSig))
       // 状态 → running + startedAt（WS nodeUpdated，NodeList 同构 payload）。
       // 竞态修复（与终态化同族）：running 迁移落在事务内现读的 fresh 节点上——
       // getNode 快照经 EntityLoader 加载 agent 期间可能已落后，陈旧 copy 写回会
       // 覆盖该窗口内的接线变更；None = 节点已消失 → 中止 spawn（拒写复活垃圾行）。
-      _ <- store.mutate { s =>
+      // barrier 事务性复核（fix a 启动判定完整性 20260903）：startNode 入口的
+      // in ⊆ deliveredTo 检查沿 getNode 快照，快照与翻转之间并发接线（edit 追加
+      // in）可增长 in——沿陈旧快照放行 = 以不完整 barrier 提前启动（未等齐）。
+      // 复核与翻转并入同一 mutate 事务：fresh barrier 未齐 → 拒翻转不 spawn
+      //（status 保持原态，等真正等齐时的投递/结算方重试 startNode）。
+      flipped <- store.mutate { s =>
         s.nodes.get(nodeId) match
-          case Some(fresh) =>
+          case Some(fresh) if !fresh.in.exists(up => !fresh.deliveredTo.contains(up)) =>
             s.copy(nodes = s.nodes.updated(nodeId, fresh.copy(
               status = NodeLifecycle.Running,
               startedAt = Some(System.currentTimeMillis()))))
-          case None => s
-      }.flatMap { s =>
-        s.nodes.get(nodeId) match
-          case Some(runningDef) =>
-            emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(runningDef, System.currentTimeMillis()))
-          case None =>
-            IO.raiseError(new RuntimeException(s"Node '$nodeName' ($nodeId) vanished before start — spawn aborted"))
+          case _ => s
       }
-      cancelSig <- Deferred[IO, Unit]
-      _ <- running.update(_ + (nodeId -> cancelSig))
+      _ <- flipped.nodes.get(nodeId) match
+        case Some(runningDef) if runningDef.status == NodeLifecycle.Running =>
+          emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(runningDef, System.currentTimeMillis()))
+        case _ =>
+          // 回滚在飞登记并中止：节点已消失（原语义）或 barrier 未齐（fix a 新增
+          // ——并发接线增长被事务复核拦下；错误由 runDetached 等调用方日志承载）。
+          running.update(_ - nodeId) *>
+            IO.raiseError(new RuntimeException(
+              s"Node '$nodeName' ($nodeId) start aborted — node vanished or in-barrier not settled (concurrent rewiring)"))
       resultDeferred <- Deferred[IO, Either[FailOutcome, List[Message]]]
       // Bridge actor：捕获 Completed/Failed/Cancelled → Deferred（同步 complete，
       // 防 Behaviors.stopped 竞态——同 FlowDagExecutor 教训）。
