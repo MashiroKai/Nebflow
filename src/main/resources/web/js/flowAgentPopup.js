@@ -879,7 +879,7 @@ function updateFooterStatus(entry) {
     phaseEl.style.display = text ? '' : 'none';
   }
   // Management cluster: state-linked buttons + permission matrix.
-  syncManageControls(entry.manageBar, entry.meta);
+  syncManageControls(entry.manageBar, entry.meta, currentStepId);
 }
 
 // ── Stuck visibility (taskStuck broadcast, whitelisted 2026-08-22) ──────

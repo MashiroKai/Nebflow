@@ -138,6 +138,11 @@ object ProjectActor:
   /** 分发器全局 agent 名（定义文件交付 Nebula/entity-creator 注册）。 */
   val DispatcherAgentName = "project-dispatcher"
 
+  /** 分发器会话 id 前缀（sessionId = "dispatcher-<uuid8>"）。AgentControl/
+    * 面板的 cancel 白名单按此识别新 Project 系统会话（与 NodeEngine.SessionPrefix
+    * 同款跨层契约；前端 utils.isBgAgentId 硬编码同值）。 */
+  val DispatcherSessionPrefix = "dispatcher-"
+
   case class ProjectConfig(
     project: ProjectDef,
     engine: NodeEngine,
@@ -184,7 +189,7 @@ object ProjectActor:
         logger.warn(s"Dispatcher agent '$DispatcherAgentName' not found — cannot trigger project '${project.name}'")
         IO.pure(same)
       case Some(entry) =>
-        val sessionId = s"dispatcher-${java.util.UUID.randomUUID().toString.take(8)}"
+        val sessionId = s"$DispatcherSessionPrefix${java.util.UUID.randomUUID().toString.take(8)}"
         for
           snapshot <- cfg.engine.store.snapshot
           prompt =
@@ -215,11 +220,15 @@ object ProjectActor:
               isFlowNode = true
             )
           )
-          _ <- cfg.resources.agentRegistry.update(_ + (sessionId -> AgentRecord(sessionId, ref, AgentKind.Flow, rootSessionId)))
           // 单次会话观察桥（#28 可观测收尾）：分发器 turn 完成 → 清 registry +
           // 停 agent。此前分发器无回报（replyTo=None）→ turn 后 agent 长期 idle、
           // registry 条目永久滞留（kind=Flow 会被 getActiveAgents 快照当运行中
           // 幽灵行上报）。桥复用 NodeEngine 同款 bridge 模式。
+          // 卡死处置接线（dispatcher 会话卡死修复）：bridge 先于注册 spawn，
+          // 以 supervisorRef=bridgeRef 注册——bridge 的 Cancelled 分支成为分发器
+          // 的取消通道（AgentControl cancel / 面板 cancelAgent / TaskStuckWatcher
+          // giveUp 三方共用同一条 AgentEvent.Cancelled → 清 registry + 停 agent
+          // 链路）。分发器单次会话无 BackoffSupervisor，桥就是它的监督终态载体。
           bridgeRef <- cfg.system.spawn(
             Behaviors.receive[AgentEvent] { (_, event) =>
               event match
@@ -230,6 +239,23 @@ object ProjectActor:
                     .as(Behaviors.stopped)
             },
             s"dispatchbridge-${sessionId.take(8)}"
+          )
+          // 注册元数据对齐 DelegateTool 注册约定（AgentControl 注释原文）：
+          // startedAt/lastActivityMs 驱动 list 的 up/idle 列与卡死判定
+          // （lastActivityMs=now 从出生即可见——修复「turn 在首次 LLM touch 前
+          // 挂死则 watcher 永远看不见」的盲区）；supervisorRef 是 cancel 直达通道。
+          _ <- cfg.resources.agentRegistry.update(
+            _ + (
+              sessionId -> AgentRecord(
+                sessionId,
+                ref,
+                AgentKind.Flow,
+                rootSessionId,
+                startedAt = System.currentTimeMillis(),
+                lastActivityMs = System.currentTimeMillis(),
+                supervisorRef = Some(bridgeRef)
+              )
+            )
           )
           _ <- (ref ! AgentCommand.UserInput(text = prompt, replyTo = Some(bridgeRef))).void
           _ <- logger.info(s"Project '${project.name}' dispatcher session spawned: $sessionId")

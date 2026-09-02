@@ -638,4 +638,68 @@ class AgentControlToolSpec extends CatsEffectSuite:
     assert(audit.get.contains("reason=\"manager wedged, rebuild team\""), audit.get)
   }
 
+  // ── Project flow 会话（node-/dispatcher-）管理通道 ──────────
+
+  test("cancel node-/dispatcher- 会话（观察桥 supervisor）→ 放行，桥收 Cancelled；list 行不再标 read-only") {
+    val system = ActorSystem("ac-cancel-flow")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      bridgeEvents <- Ref.of[IO, List[AgentEvent]](Nil)
+      bridgeRef <- system.spawn(mkRecordingEvt(bridgeEvents), "flow-bridge")
+      nodeRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "flow-node")
+      dispatcherRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "flow-dispatcher")
+      _ <- resources.agentRegistry.set(Map(
+        "node-aaaa1111" -> AgentRecord(
+          "node-aaaa1111", nodeRef, AgentKind.Flow, "root-9",
+          startedAt = System.currentTimeMillis(),
+          lastActivityMs = System.currentTimeMillis(),
+          supervisorRef = Some(bridgeRef)
+        ),
+        "dispatcher-bbbb2222" -> AgentRecord(
+          "dispatcher-bbbb2222", dispatcherRef, AgentKind.Flow, "root-9",
+          startedAt = System.currentTimeMillis(),
+          lastActivityMs = System.currentTimeMillis(),
+          supervisorRef = Some(bridgeRef)
+        )
+      ))
+      listRes <- IO(call(resources, "root-9", "list"))
+      nodeRes <- IO(call(resources, "root-9", "cancel", target = "node-aaaa1111", reason = "hung node"))
+      dispatcherRes <- IO(call(resources, "root-9", "cancel", target = "dispatcher-bbbb2222"))
+      _ <- waitUntil(3.seconds)(bridgeEvents.get.map(_.size >= 2))
+      events <- bridgeEvents.get
+    yield
+      // list：新 Project flow 会话有取消通道 → 不再是 read-only 行
+      val nodeLine = listRes.fold(_.message, identity).split("\n").find(_.contains("node-aaaa1111"))
+      assert(nodeLine.exists(!_.contains("read-only")), s"node row must not be read-only:\n${nodeLine.getOrElse("?")}")
+      // cancel 放行（观察桥 Cancelled 通道）
+      assert(nodeRes.isRight, s"node session cancel must proceed, got: $nodeRes")
+      assert(dispatcherRes.isRight, s"dispatcher session cancel must proceed, got: $dispatcherRes")
+      val cancelled = events.collect { case c: AgentEvent.Cancelled => c }
+      assertEquals(cancelled.map(_.sessionId).sorted, List("dispatcher-bbbb2222", "node-aaaa1111"))
+      // node 会话的 cancel 文案指向 node 终态语义（不提父通知/任务文件）
+      assert(nodeRes.exists(_.contains("status=cancelled")), nodeRes.toString)
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  test("restart node-/dispatcher- 会话 → 拒绝（single-shot 语义，指路 cancel + 重新触发）") {
+    val system = ActorSystem("ac-restart-flow")
+    val tmp = os.temp.dir()
+    val program = for
+      resources <- mkResources(system, tmp)
+      bridgeRef <- system.spawn(mkRecordingEvt(Ref.unsafe(Nil)), "flow-bridge-r")
+      nodeRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "flow-node-r")
+      _ <- resources.agentRegistry.set(Map(
+        "node-cccc3333" -> AgentRecord(
+          "node-cccc3333", nodeRef, AgentKind.Flow, "root-9",
+          supervisorRef = Some(bridgeRef)
+        )
+      ))
+      res <- IO(call(resources, "root-9", "restart", target = "node-cccc3333"))
+    yield
+      assert(res.left.exists(_.message.contains("single-shot")), res.toString)
+      assert(res.left.exists(_.message.contains("Cancel")), res.toString)
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
 end AgentControlToolSpec

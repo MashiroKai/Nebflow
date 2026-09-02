@@ -44,6 +44,11 @@ import scala.concurrent.duration.FiniteDuration
  *     发 AgentEvent.Cancelled（AgentControl cancel 同链路）：父 barrier 归还、
  *     held 注入触发轮次、taskStore cancelled、registry 移除、child Stop、
  *     supervisor 自停。
+ *   - Project flow 会话（node-/dispatcher-，supervisorRef=观察桥）卡死：广播
+ *     taskStuck(action=restart) + 第 1 次即硬取消在飞 LLM；StopAttempts+2 轮仍
+ *     卡 → 经 supervisorRef 发 AgentEvent.Cancelled（观察桥 → dispatcher 清
+ *     registry+停 agent / node 走 engine cancelNode 全链清理）。不发 raw Stop
+ *     （单次会话无 supervisor 重启，Stop 只会杀 actor 而不发终态事件）。
  *   - 根 agent（无 parentRef）：不自动重启——广播 taskStuck WS 事件 + 日志，
  *     由用户决定。
  *
@@ -126,7 +131,21 @@ object TaskStuckWatcher:
         }
     }
 
-  /** 恢复动作：Team 只读通知 / 子 agent 重启 / 根 agent 通知。 */
+  /** taskStuck WS 广播（统一 payload：sessionId/kind/idleSecs/action）。 */
+  private def broadcastStuck(wsHub: WsHub, rec: AgentRecord, idleSecs: Long, action: String): IO[Unit] =
+    wsHub
+      .broadcast(
+        io.circe.Json.obj(
+          "type" -> "taskStuck".asJson,
+          "sessionId" -> rec.sessionId.asJson,
+          "kind" -> rec.kind.toString.asJson,
+          "idleSecs" -> idleSecs.asJson,
+          "action" -> action.asJson
+        )
+      )
+      .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}"))
+
+  /** 恢复动作：Team 只读通知 / Project flow 会话取消 / 子 agent 重启 / 根 agent 通知。 */
   private def recover(
     resources: SharedResources,
     wsHub: WsHub,
@@ -144,19 +163,54 @@ object TaskStuckWatcher:
           "but a looping turn may be terminated by loop guard; the team Manager or Nebula can " +
           "cancel/restart it via AgentControl"
       ) *>
-        wsHub
-          .broadcast(
-            io.circe.Json.obj(
-              "type" -> "taskStuck".asJson,
-              "sessionId" -> rec.sessionId.asJson,
-              "kind" -> rec.kind.toString.asJson,
-              "idleSecs" -> idleSecs.asJson,
-              "action" -> "attention".asJson
+        broadcastStuck(wsHub, rec, idleSecs, "attention")
+    // Project flow 会话（node-/dispatcher-，supervisorRef=观察桥）卡死恢复
+    // （let-it-crash）：此前 parentRef=None 落入根 agent 分支只 notice——卡死的
+    // 分发器/节点永远滞留为 Processing 幽灵行。恢复走 supervisorRef（观察桥）的
+    // Cancelled 通道：dispatcher → 清 registry + 停 agent；node → resultDeferred
+    // cancelled → engine cancelNode 全链清理。绝不发 raw Stop——单次会话无
+    // supervisor 重启，Stop 杀掉 actor 而不发终态事件（桥收不到 → engine fiber
+    // 挂死 / 桥僵尸）。第 1 次即硬取消在飞 LLM（无重启预算可消耗，硬取消是唯一
+    // 快速恢复）；StopAttempts+2 次仍卡 → 桥 Cancelled 兜底（覆盖工具挂死等
+    // 无在飞 LLM 的形态）。dag- 旧 flow 会话（无 supervisorRef）不进此分支，
+    // 维持根 agent notice（其取消走 cancelFlow）。
+    else if rec.kind == AgentKind.Flow && rec.supervisorRef.isDefined then
+      logger.warn(
+        s"TaskStuckWatcher: Project flow session ${rec.sessionId} (kind=Flow) stuck in Processing " +
+          s"for ${idleSecs}s > threshold — hard-cancelling in-flight LLM, escalating to bridge Cancelled"
+      ) *>
+        broadcastStuck(wsHub, rec, idleSecs, "restart") *>
+        stopCounts.modify { m =>
+          val n = m.getOrElse(rec.sessionId, 0) + 1
+          (m.updated(rec.sessionId, n), n)
+        }.flatMap { attempts =>
+          val escalate = nebflow.llm.LlmInterface.cancelInflightFor(rec.sessionId).flatMap { n =>
+            logger.warn(
+              s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts — hard-cancelled $n in-flight LLM request(s)"
             )
+          }.handleErrorWith(e =>
+            logger.warn(s"TaskStuckWatcher: hard-cancel for ${rec.sessionId} failed: ${e.getMessage}")
           )
-          .handleErrorWith(e =>
-            logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}")
-          )
+          val giveUp =
+            if attempts >= StopAttempts + 2 then
+              rec.supervisorRef match
+                case Some(sup) =>
+                  logger.warn(
+                    s"TaskStuckWatcher: ${rec.sessionId} still stuck after $attempts attempts — " +
+                      "releasing via bridge Cancelled (hard-cancel ineffective; single-shot session, no restart)"
+                  ) *>
+                    (sup ! AgentEvent.Cancelled(
+                      rec.sessionId,
+                      s"stuck for ${idleSecs}s with in-flight LLM hard-cancel ineffective — " +
+                        "released by TaskStuckWatcher; re-trigger the task if it should continue"
+                    )).handleErrorWith(e =>
+                      logger.warn(s"TaskStuckWatcher: bridge Cancelled for ${rec.sessionId} failed: ${e.getMessage}")
+                    ) *>
+                    stopCounts.update(_ - rec.sessionId)
+                case None => IO.unit
+            else IO.unit
+          escalate *> giveUp
+        }
     else
         rec.parentRef match
         case Some(_) =>
@@ -167,19 +221,7 @@ object TaskStuckWatcher:
             // AgentControl spec §3.5：子 agent 自动重启也广播 taskStuck（原先只有
             // 根 agent 广播）——前端可见「后台 agent 卡死，正在自动重启」，Nebula
             // 事后用 AgentControl(list) 能看到 retryCount。
-            wsHub
-              .broadcast(
-                io.circe.Json.obj(
-                  "type" -> "taskStuck".asJson,
-                  "sessionId" -> rec.sessionId.asJson,
-                  "kind" -> rec.kind.toString.asJson,
-                  "idleSecs" -> idleSecs.asJson,
-                  "action" -> "restart".asJson
-                )
-              )
-              .handleErrorWith(e =>
-                logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}")
-              ) *>
+            broadcastStuck(wsHub, rec, idleSecs, "restart") *>
             // gate-wedge P1-1: count ineffective Stops. A suspended agent never
             // consumes mailbox messages, so resending forever is useless (the
             // incident: thousands of resends over 6.5h). At the Nth attempt we
@@ -240,15 +282,7 @@ object TaskStuckWatcher:
             s"TaskStuckWatcher: root agent ${rec.sessionId} stuck in Processing for ${idleSecs}s " +
               "— not auto-restarting, broadcast taskStuck for user decision"
           ) *>
-            wsHub
-              .broadcast(
-                io.circe.Json.obj(
-                  "type" -> "taskStuck".asJson,
-                  "sessionId" -> rec.sessionId.asJson,
-                  "kind" -> rec.kind.toString.asJson
-                )
-              )
-              .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: taskStuck WS broadcast failed: ${e.getMessage}"))
+            broadcastStuck(wsHub, rec, idleSecs, "attention")
 
     end if
 
