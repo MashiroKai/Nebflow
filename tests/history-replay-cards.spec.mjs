@@ -29,6 +29,12 @@ const HARNESS_DIR = path.join(REPO_ROOT, 'tests', 'fixtures', 'history-replay');
 const SHOT_DIR = path.join(os.homedir(), '.nebflow', 'docs', 'Nebflow');
 const HARNESS_PATH = '/tests/fixtures/history-replay/harness.html';
 
+// Baseline ref for the degraded-state comparison: the commit BEFORE the
+// replay-card fix (fix landed in 5473ccb2). Pinned so the degraded baseline
+// stays stable as HEAD advances; override with REPLAY_BASELINE_REF to point
+// at another pre-fix revision.
+const BASELINE_REF = process.env.REPLAY_BASELINE_REF ?? '4dfc4a39';
+
 let baselineRoot;
 let baselinePort;
 let fixedPort;
@@ -64,9 +70,9 @@ async function waitUntilUp(url, tries = 50) {
 
 test.beforeAll(async () => {
   fs.mkdirSync(SHOT_DIR, { recursive: true });
-  // Baseline tree: the web resources exactly as they were at HEAD (pre-fix).
+  // Baseline tree: the web resources exactly as they were before the fix.
   baselineRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nb-replay-baseline-'));
-  execSync(`git archive HEAD src/main/resources/web | tar -x -C "${baselineRoot}"`, { cwd: REPO_ROOT });
+  execSync(`git archive ${BASELINE_REF} src/main/resources/web | tar -x -C "${baselineRoot}"`, { cwd: REPO_ROOT });
   // Harness + fixture must be reachable from BOTH roots (same-origin module imports).
   const baseHarnessDir = path.join(baselineRoot, 'tests', 'fixtures', 'history-replay');
   fs.mkdirSync(baseHarnessDir, { recursive: true });
