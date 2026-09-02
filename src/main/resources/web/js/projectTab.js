@@ -1,20 +1,27 @@
 // projectTab.js — Project 标签页（#27 方向调整：项目入口以标签页呈现，参考 team 面板设计）。
 // 点击侧边栏 Project 按钮 → 打开 `projects` Canvas 标签页；一行/卡片一个 project，
-// 沿用 .team-card 视觉与交互范式。点击 project name → 打开其 Flow Map 标签页；
-// Agent.md 入口 → rules 式查看/编辑 overlay。
+// 沿用 .team-card 视觉与交互范式。点击 project name → 同一标签页就地切换到其
+// Flow Map 视图（不新开标签页），左上角「返回项目列表」切回列表；
+// 空 Flow Map（无节点）的项目 title 不可点。Agent.md 入口 → rules 式查看/编辑 overlay。
 
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
 import { esc } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { fetchProjects, fetchFlowMap, summarize } from './nodeData.js';
-import { openFlowMapTab } from './flowMapTab.js';
+import { renderFlowMapInto } from './flowMapTab.js';
 import { openAgentFile } from './agentFileViewer.js';
 
 function openProjectTab() {
   const pane = getTabPane('projects');
   if (!pane) return;
   ensureFlowCss();
+  // 视图状态复位为列表：projects 标签页是「项目列表 ⇄ Flow Map 就地视图」双态页，
+  // 列表渲染进 .team-scroll；若当前在 Flow Map 就地视图（nav-bar + flowmap-view-body），
+  // 先清掉再建滚动体，避免列表渲染进旧 Flow Map 滚动体、或 nav-bar 残留在列表上方。
+  pane.dataset.projectsView = 'list';
+  delete pane.dataset.flowMapProject;
+  if (pane.querySelector('.flowmap-nav-bar')) pane.innerHTML = '';
   const scroll = ensureScroll(pane);
   renderProjectsInto(scroll);
 }
@@ -90,10 +97,16 @@ function projectCardHtml(p, summary) {
   const running = summary?.running || 0;
   const brief = summary?.notMounted ? t('project.notMounted') : (summary?.brief || t('project.idle'));
   const summaryCls = running > 0 ? 'running' : '';
+  // 无节点 → 点进 Flow Map 无意义：title 不可点（无 data-open-flowmap）、灰显 + 「暂无节点」角标。
+  // summary 为 null = flow-map 拉取失败（状态未知）→ 保持可点，让用户进视图看错误态；
+  // 只有确认无节点（total === 0，含未挂载）才禁用。
+  const empty = summary !== null && (summary?.total ?? 0) === 0;
+  const titleOpenAttr = empty ? '' : ` data-open-flowmap="${esc(p.name)}"`;
+  const titleTooltip = empty ? t('project.noNodesHint', { name: p.name }) : t('project.openFlowMap', { name: p.name });
   return `
-    <div class="team-card project-card" data-project="${esc(p.name)}" data-running="${running}">
+    <div class="team-card project-card${empty ? ' is-empty' : ''}" data-project="${esc(p.name)}" data-running="${running}" ${empty ? 'data-empty-flowmap="1"' : ''}>
       <div class="team-card-header">
-        <div class="team-card-title" data-open-flowmap="${esc(p.name)}" title="${esc(t('project.openFlowMap', { name: p.name }))}">${esc(p.name)}</div>
+        <div class="team-card-title${empty ? ' empty' : ''}"${titleOpenAttr} title="${esc(titleTooltip)}">${esc(p.name)}${empty ? `<span class="project-empty-tag">${esc(t('project.noNodes'))}</span>` : ''}</div>
         <div class="team-card-summary ${summaryCls}"><span class="dot"></span>${esc(brief)}</div>
       </div>
       <div class="project-fields">
@@ -119,7 +132,9 @@ function bindProjectClicks(scroll) {
   scroll.querySelectorAll('[data-open-flowmap]').forEach((el) => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
-      openFlowMapTab(el.getAttribute('data-open-flowmap') || '');
+      // 同标签页切换：不开新标签页，当前 projects 标签页就地显示 Flow Map 视图
+      // （左上角「返回项目列表」回到列表视图）。
+      openFlowMapInPlace(el.getAttribute('data-open-flowmap') || '');
     });
   });
   scroll.querySelectorAll('[data-open-agent]').forEach((el) => {
@@ -145,14 +160,55 @@ function bindProjectClicks(scroll) {
   });
 }
 
-/** 供 test hook / 多标签页刷新。节点事件突发时防抖，避免每事件重拉全部项目+flowmap。 */
+/** 同标签页进入 Flow Map 视图：不新开标签页，当前 projects 标签页就地切换。
+ *  pane 结构：.flowmap-nav-bar（左上角返回按钮）+ .flowmap-view-body（Flow Map 渲染体）。
+ *  Flow Map 的 fetch/渲染/TTL 由 flowMapTab 负责（renderFlowMapInto），这里只管
+ *  视图骨架与返回导航；body 挂 .flowmap-view-body 类供 flowMapTab 的 TTL ticker 定位。 */
+function openFlowMapInPlace(projectName) {
+  if (!projectName) return;
+  openTab('projects', t('project.title'), { type: 'projects', closable: true });
+  const pane = getTabPane('projects');
+  if (!pane) return;
+  ensureFlowCss();
+  pane.dataset.projectsView = 'flow-map';
+  pane.dataset.flowMapProject = projectName;
+  pane.innerHTML = `
+    <div class="flowmap-nav-bar">
+      <button class="flowmap-back-btn" data-back-to-projects type="button" title="${esc(t('project.backToProjects'))}" aria-label="${esc(t('project.backToProjects'))}">
+        <i data-lucide="arrow-left"></i><span>${esc(t('project.backToProjects'))}</span>
+      </button>
+    </div>
+    <div class="flowmap-view-body" data-fm-project="${esc(projectName)}"></div>`;
+  pane.querySelector('[data-back-to-projects]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    showProjectsList();
+  });
+  renderFlowMapInto(pane.querySelector('.flowmap-view-body'), projectName);
+  import('./utils.js').then(({ createIconsIn }) => createIconsIn(pane));
+}
+
+/** 返回项目列表：重置视图状态并重渲列表（projects 标签页同页切换回列表视图）。 */
+function showProjectsList() {
+  const pane = getTabPane('projects');
+  if (!pane) return;
+  openProjectTab();
+}
+
+/** 供 test hook / 多标签页刷新。节点事件突发时防抖，避免每事件重拉全部项目+flowmap。
+ *  视图分流：就地 Flow Map 视图刷新该项目的图（不闪回列表）；列表视图刷新卡片。 */
 let projectsRenderTimer = null;
 let renderSeq = 0;
 export function rerenderProjectsTab() {
   clearTimeout(projectsRenderTimer);
   projectsRenderTimer = setTimeout(() => {
     const pane = getTabPane('projects');
-    if (pane) renderProjectsInto(ensureScroll(pane));
+    if (!pane) return;
+    if (pane.dataset.projectsView === 'flow-map' && pane.dataset.flowMapProject) {
+      const body = pane.querySelector('.flowmap-view-body');
+      if (body) renderFlowMapInto(body, pane.dataset.flowMapProject);
+      return;
+    }
+    renderProjectsInto(ensureScroll(pane));
   }, 200);
 }
 

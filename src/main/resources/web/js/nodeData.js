@@ -77,7 +77,8 @@ export function summarize(fm) {
   else if (pending > 0) brief = `${pending} 节点等待`;
   else if (nodes.length === 0) brief = '空闲';
   else brief = `${completed} 节点已完成`;
-  return { running, failed, pending, completed, brief, notMounted: !!fm?.notMounted };
+  // total：完整节点数（含已归档终态节点）——项目面板据此判断「有节点才可点进 Flow Map」。
+  return { total: nodes.length, running, failed, pending, completed, brief, notMounted: !!fm?.notMounted };
 }
 
 // ── Agent.md 读取/保存（契约 §1：GET / PUT /api/projects/<name>/agent.md）──

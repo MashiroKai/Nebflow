@@ -91,3 +91,65 @@
 }
 
 .project-open-btn svg { width: 15px; height: 15px; }
+
+/* ── Flow Map 就地视图（同标签页切换，projectTab.openFlowMapInPlace）────────── */
+
+/* 顶部导航条：左上角「返回项目列表」入口 */
+.flowmap-nav-bar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--glass-bg);
+}
+
+.flowmap-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  font: 500 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.flowmap-back-btn:hover {
+  color: rgb(var(--sapphire) / 1);
+  border-color: rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.08);
+}
+.flowmap-back-btn svg { width: 14px; height: 14px; }
+
+/* Flow Map 渲染体：撑满 nav-bar 以下空间，内部由 flowMapTab 渲染
+   (.flowmap-card flex:1 填满；.dag-empty height:100% 居中) */
+.flowmap-view-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── 空 Flow Map 项目：无节点 → 不可点 ─────────────────── */
+
+.project-card.is-empty { opacity: 0.9; }
+
+.team-card-title.empty {
+  cursor: default;
+  color: var(--color-text-muted);
+}
+
+.project-empty-tag {
+  font: 500 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-frame-hover);
+  white-space: nowrap;
+  vertical-align: 2px;
+}
