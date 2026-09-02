@@ -1,7 +1,9 @@
-// flowMapTab.js — Project Flow Map 标签页（#27 方向调整：点击 project → 标签页打开）。
-// 复用 flow-run 标签页形态 + solar-card 显示设计；关闭标签页不影响项目数据。
-// 数据驱动自 §2.2 NodeList 结构；已完成节点 TTL 倒计时到期前端隐藏（数据保留归档）。
-// 点击节点卡片打开结果详情 viewer。
+// flowMapTab.js — Project Flow Map 渲染（#27 方向调整 + 导航调整：点击 project 不再
+// 新开标签页，由 projectTab 在 projects 标签页内就地渲染，本模块提供 renderFlowMapInto
+// 渲染管线 + TTL ticker + WS 刷新；独立 flow-map-* 标签页降级为 legacy 路径，
+// 仅供旧标签页恢复）。复用 flow-run 标签页形态 + solar-card 显示设计；
+// 关闭标签页不影响项目数据。数据驱动自 §2.2 NodeList 结构；
+// 已完成节点 TTL 倒计时到期前端隐藏（数据保留归档）。点击节点卡片打开结果详情 viewer。
 
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
@@ -26,14 +28,21 @@ const fmByProject = new Map();
 const seqByProject = new Map();
 let ttlTimer = null;
 
-/** 当前打开的所有 flow-map 标签页 → [{project, pane}]（DOM 即真相，恢复后同样成立）。 */
+/** 当前打开的所有 flow-map 视图 → [{project, pane}]（DOM 即真相，恢复后同样成立）。
+ *  包含两类：legacy 独立标签页（data-tab-id^="flow-map-"）与 projects 标签页内
+ *  的就地视图（pane.dataset.projectsView === 'flow-map'，由 projectTab 切换）。 */
 function openFlowMapPanes() {
   const panes = /** @type {NodeListOf<HTMLElement>} */ (
     document.querySelectorAll('.canvas-tab-pane[data-tab-id^="flow-map-"]')
   );
-  return Array.from(panes)
+  const list = Array.from(panes)
     .map((pane) => ({ project: (pane.dataset.tabId || '').slice('flow-map-'.length), pane }))
     .filter((x) => x.project);
+  const pp = getTabPane('projects');
+  if (pp && pp.dataset.projectsView === 'flow-map' && pp.dataset.flowMapProject) {
+    list.push({ project: pp.dataset.flowMapProject, pane: pp });
+  }
+  return list;
 }
 
 // ── 布局：按 out 边算深度层 ────────────────────────────────
@@ -166,7 +175,9 @@ function summarizeHeader(fm) {
   return parts.length ? parts.join(' · ') : esc(t('flowmap.idle'));
 }
 
-function renderFlowMap(container, fm, projectName) {
+/** 渲染 Flow Map 内容（header + solar 图 / 空态）进给定容器。导出供 projectTab
+ *  在 projects 标签页内就地渲染（同标签页切换视图）。 */
+export function renderFlowMap(container, fm, projectName) {
   const total = (fm?.nodes || []).length;
   const nodes = visibleNodes(fm);
   const { positions, width, height } = layoutNodes(fm);
@@ -232,7 +243,8 @@ function tickTtl() {
   let anyTtl = false;
   for (const { project, pane } of panes) {
     const fm = fmByProject.get(project);
-    const scroll = pane.querySelector('.team-scroll');
+    // legacy 标签页的滚动体是 .team-scroll；projects 就地视图的滚动体是 .flowmap-view-body。
+    const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
     if (!fm || !scroll) continue;
     let dirty = false;
     (fm.nodes || []).forEach((n) => {
@@ -254,10 +266,33 @@ function tickTtl() {
 
 // ── 标签页打开 / 渲染 ────────────────────────────────────
 
+/** 独立标签页打开（legacy 路径：canvas-tab-restore 恢复的旧 flow-map 标签页仍走这里）。
+ *  项目面板点击项目不再调此函数——改为 projects 标签页内就地视图（见 projectTab.js）。 */
 export function openFlowMapTab(projectName) {
   if (!projectName) return;
   openTab(`flow-map-${projectName}`, projectName, { type: 'flow-map', closable: true, pinned: true });
   renderFlowMapTab(projectName);
+}
+
+/** 把某项目的 Flow Map 渲染进任意容器（projects 标签页就地视图与 legacy 标签页共用）。
+ *  按项目维护渲染代：并发 fetch 只有最后一次写 DOM，过期响应丢弃。 */
+export function renderFlowMapInto(container, projectName) {
+  if (!container) return;
+  const seq = (seqByProject.get(projectName) || 0) + 1;
+  seqByProject.set(projectName, seq);
+  if (!container.querySelector('.flowmap-card-header')) {
+    container.dataset.fmState = 'loading';
+    container.innerHTML = `<div class="flowmap-loading">${esc(t('flowmap.loading'))}</div>`;
+  }
+  fetchFlowMap(projectName).then((fm) => {
+    if (seqByProject.get(projectName) !== seq || !container.isConnected) return; // 过期响应丢弃
+    fmByProject.set(projectName, fm);
+    renderFlowMap(container, fm, projectName);
+  }).catch(() => {
+    if (seqByProject.get(projectName) !== seq || !container.isConnected) return;
+    container.dataset.fmState = 'error';
+    container.innerHTML = `<div class="dag-empty"><div class="hint">${esc(t('flowmap.loadFail'))}</div></div>`;
+  });
 }
 
 function renderFlowMapTab(projectName) {
@@ -265,21 +300,7 @@ function renderFlowMapTab(projectName) {
   if (!pane) return;
   ensureFlowCss();
   const scroll = ensureScroll(pane, `flow-map-scroll-${projectName}`);
-  const seq = (seqByProject.get(projectName) || 0) + 1;
-  seqByProject.set(projectName, seq);
-  if (!scroll.querySelector('.flowmap-card-header')) {
-    scroll.dataset.fmState = 'loading';
-    scroll.innerHTML = `<div class="flowmap-loading">${esc(t('flowmap.loading'))}</div>`;
-  }
-  fetchFlowMap(projectName).then((fm) => {
-    if (seqByProject.get(projectName) !== seq || !scroll.isConnected) return; // 过期响应丢弃
-    fmByProject.set(projectName, fm);
-    renderFlowMap(scroll, fm, projectName);
-  }).catch(() => {
-    if (seqByProject.get(projectName) !== seq || !scroll.isConnected) return;
-    scroll.dataset.fmState = 'error';
-    scroll.innerHTML = `<div class="dag-empty"><div class="hint">${esc(t('flowmap.loadFail'))}</div></div>`;
-  });
+  renderFlowMapInto(scroll, projectName);
 }
 
 function ensureScroll(pane, id) {
@@ -319,11 +340,15 @@ window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => 
 });
 
 let refreshTimer = null;
-/** WS 事件驱动刷新：刷新所有打开的 flow-map 标签页（服务端快照为权威）。 */
+/** WS 事件驱动刷新：刷新 legacy 独立 flow-map 标签页（服务端快照为权威）。
+ *  projects 标签页的就地视图由 projectTab.rerenderProjectsTab 刷新——两边都
+ *  订阅同一批 WS 事件，但各自只刷自己的视图，避免一次节点事件双重 fetch。 */
 export function refreshOpenFlowMap() {
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => {
-    openFlowMapPanes().forEach(({ project }) => renderFlowMapTab(project));
+    openFlowMapPanes()
+      .filter(({ pane }) => (pane.dataset.tabId || '').startsWith('flow-map-'))
+      .forEach(({ project }) => renderFlowMapTab(project));
   }, 200);
 }
 
