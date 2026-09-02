@@ -115,7 +115,9 @@ object NodeTools:
 
   /** loop detect（§2.6）：同 agent + 同 task 归一化，活动区已有
     * running/completed 节点 → 疑似重复派发（TTL 窗口内 = 活动区仍显示）。
-    * 返回匹配的节点（无则 None）。NodeEdit 创建入口节点时校验（0 spawn）。 */
+    * 返回匹配的节点（无则 None）。NodeEdit 创建入口节点时校验（0 spawn）。
+    * R1 复核（blocked 反馈重入设计 §6）：Terminal 含 blocked——blocked 节点
+    * **应**计入重复派发（防对同一任务重复派发；blocked ≠ 可重派）。 */
   def findDuplicateDispatch(rt: ProjectRuntime, agentName: String, task: String): IO[Option[NodeDef]] =
     val norm = normalizeTask(task)
     if norm.isEmpty then IO.pure(None)
@@ -202,10 +204,13 @@ object NodeEditTool extends Tool:
 - **out** (optional, single value): node id, "Nebula", or null. Single-value semantics: setting replaces the old out (rewire); arrays are rejected (1-to-many not supported); null disconnects (result retained, re-wire later auto-delivers).
 - **skill** / **mcp** / **worktree** / **preset** (optional): node configuration (worktree must exist under workspace/.nebflow/).
 - **maxRetries** (optional, default 1).
+- **abandon** (optional, default false): abandon a TERMINAL node (blocked/completed/failed/cancelled) → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes; use NodeCancel for running nodes instead.
 
 ## Semantics
 - nodename missing → create (agent required; task and/or in required, otherwise the node sits in wiring state).
 - nodename exists → edit: in appends barrier inputs; out sets/replaces/disconnects.
+- Blocked node edit: changing task/agent (or in/out) on a blocked node reactivates it — status returns to wiring/pending, deliveredTo cleared, blockCount preserved (round history kept), completed upstream results re-delivered, then the node reruns with the new input. No-op if nothing actually changed.
+- abandon=true → terminal node becomes cancelled with display TTL (frontend removes it after TTL; result kept in archive).
 - Validation (0 spawn): agent exists; referenced nodes exist; DAG cycle check (DFS); 1-to-many rejected; target running → rejected ("input frozen — NodeCancel first").
 - Create an entry node (task present, no in) → it starts running immediately (async, non-blocking). Node result = the agent's final output, auto-saved to the node's result and delivered along out (node → downstream barrier / Nebula → injected to root session / null → retained, auto-delivered when wired later)."""
   val inputSchema = JsonObject.fromIterable(
@@ -228,7 +233,8 @@ object NodeEditTool extends Tool:
         "mcp" -> Json.obj("type" -> "string".asJson),
         "worktree" -> Json.obj("type" -> "string".asJson, "description" -> "Relative path under workspace/.nebflow/ (must exist; create via git worktree)".asJson),
         "preset" -> Json.obj("type" -> "string".asJson),
-        "maxRetries" -> Json.obj("type" -> "integer".asJson)
+        "maxRetries" -> Json.obj("type" -> "integer".asJson),
+        "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL node (blocked/completed/failed/cancelled) → cancelled + display TTL".asJson)
       ),
       "required" -> Json.arr("project".asJson, "nodename".asJson)
     )
@@ -251,6 +257,7 @@ object NodeEditTool extends Tool:
     val worktree = input("worktree").flatMap(_.asString)
     val preset = input("preset").flatMap(_.asString)
     val maxRetries = input("maxRetries").flatMap(_.asNumber).flatMap(_.toInt)
+    val abandon = input("abandon").flatMap(_.asBoolean).getOrElse(false)
     val inJson = input("in")
     val outJson = input("out")
 
@@ -261,8 +268,10 @@ object NodeEditTool extends Tool:
         case Right(rt) =>
           rt.store.snapshot.flatMap { s =>
             s.nodes.values.find(_.name == nodename) match
-              case Some(existing) => editNode(rt, existing, inJson, outJson, ctx)
-              case None => createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, inJson, outJson)
+              case Some(existing) => editNode(rt, existing, agent, task, abandon, inJson, outJson, ctx)
+              case None =>
+                if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
+                else createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, inJson, outJson)
           }
       }
 
@@ -406,7 +415,9 @@ object NodeEditTool extends Tool:
                 NodeTools.runDetached(rt, s"deliver retained upstream results -> $nodeId")(
                   ins.traverse_ { upId =>
                     rt.store.findNode(upId).flatMap {
-                      case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
+                      // R1（blocked 反馈重入设计 §6）：blocked 是终态且 result=反馈渲染串，
+                      // 但反馈串不是可投结果——D1 显式排除 blocked（failed 错误投递语义保持不变）
+                      case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
                         rt.engine.deliverOutTo(up, nodeId, up.result.get)
                       case _ => IO.unit
                     }
@@ -430,139 +441,246 @@ object NodeEditTool extends Tool:
 
   // ── 编辑 ─────────────────────────────────────────────
 
+  /** abandon 动作（blocked 反馈重入设计 §7.7）：终态节点 → status=cancelled + 显示 TTL
+    * + 审计事件。分发器处置 blocked 节点的「放弃」载体；NodeCancel 语义不动（仅 running）。
+    * R2 纪律：mutate 内现读 fresh，fresh 已非终态（并发重激活）→ 拒写。 */
+  private def abandonNode(rt: ProjectRuntime, node: NodeDef): IO[Either[ToolError, String]] =
+    if !NodeLifecycle.Terminal.contains(node.status) then
+      IO.pure(Left(ToolError(
+        s"Node '${node.name}' is ${node.status} — abandon only accepts terminal nodes (blocked/completed/failed/cancelled). Use NodeCancel for running nodes.")))
+    else
+      for
+        now <- IO(System.currentTimeMillis())
+        s <- rt.store.mutate { st =>
+          st.nodes.get(node.id) match
+            case Some(fresh) if NodeLifecycle.Terminal.contains(fresh.status) =>
+              st.copy(nodes = st.nodes.updated(node.id, fresh.copy(
+                status = NodeLifecycle.Cancelled,
+                completedAt = Some(now),
+                ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
+            case _ => st // 状态已变（并发重激活/移除）→ 拒写
+        }
+        _ <- s.nodes.get(node.id) match
+          case Some(c) if c.status == NodeLifecycle.Cancelled =>
+            rt.engine.emitUpdated(c) *>
+              FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id, "abandoned",
+                s"node abandoned via NodeEdit (${node.status} → cancelled + display TTL)")
+          case _ => IO.unit
+      yield Right(s"Node '${node.name}' abandoned — cancelled with display TTL (archived after TTL, result retained)")
+
   private def editNode(
     rt: ProjectRuntime,
     node: NodeDef,
+    agent: Option[String],
+    task: Option[String],
+    abandon: Boolean,
     inJson: Option[Json],
     outJson: Option[Json],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    // out 处理（单值替换/断开）——同步校验先 match，再进 IO 链
-    NodeTools.parseOut(outJson) match
-      case Left(err) => IO.pure(Left(ToolError(err)))
-      case Right(newOut) =>
-        // D2 修复（验收②c，@a4b5d184 spec 实证）：旧目标已消费 → 拒绝改接。
-        // 已完成节点改投新目标时，若旧目标已启动/已完成（结果已投递、输入已消费），
-        // 改投会造成语义漂移 + 重复投递风险。保留「旧目标未启动（Wiring/Pending）→
-        // 原子改投」分支（§2.3 场景表第 3 行，②b PASS 依赖）；断开（out=null）
-        // 不投新目标，无重复投递 → 不拦截。
-        val consumedGuard: IO[Either[String, Unit]] =
-          (node.status, node.out, newOut) match
-            case (NodeLifecycle.Completed, Some(oldT), Some(_)) if oldT != "Nebula" && newOut != node.out =>
-              rt.store.findNode(oldT).map {
-                case Some(x) if x.status != NodeLifecycle.Wiring && x.status != NodeLifecycle.Pending =>
-                  Left(
-                    s"Node '${node.name}' result already delivered to '${x.name}' (status=${x.status}) — input consumed. " +
-                      s"NodeCancel it first, then rewire, then recreate the old target node."
-                  )
-                case _ => Right(())
+    if abandon then abandonNode(rt, node)
+    else
+      // out 处理（单值替换/断开）——同步校验先 match，再进 IO 链
+      NodeTools.parseOut(outJson) match
+        case Left(err) => IO.pure(Left(ToolError(err)))
+        case Right(newOut) =>
+          // D2 修复（验收②c，@a4b5d184 spec 实证）：旧目标已消费 → 拒绝改接。
+          // 已完成节点改投新目标时，若旧目标已启动/已完成（结果已投递、输入已消费），
+          // 改投会造成语义漂移 + 重复投递风险。保留「旧目标未启动（Wiring/Pending）→
+          // 原子改投」分支（§2.3 场景表第 3 行，②b PASS 依赖）；断开（out=null）
+          // 不投新目标，无重复投递 → 不拦截。
+          val consumedGuard: IO[Either[String, Unit]] =
+            (node.status, node.out, newOut) match
+              case (NodeLifecycle.Completed, Some(oldT), Some(_)) if oldT != "Nebula" && newOut != node.out =>
+                rt.store.findNode(oldT).map {
+                  case Some(x) if x.status != NodeLifecycle.Wiring && x.status != NodeLifecycle.Pending =>
+                    Left(
+                      s"Node '${node.name}' result already delivered to '${x.name}' (status=${x.status}) — input consumed. " +
+                        s"NodeCancel it first, then rewire, then recreate the old target node."
+                    )
+                  case _ => Right(())
+                }
+              case _ => IO.pure(Right(()))
+          // 守卫：新目标已运行 → 拒绝（§2.2 状态守卫）+ 旧目标已消费 → 拒绝（§2.3）
+          val guard = newOut match
+            case Some(t) if t != "Nebula" =>
+              NodeTools.ensureTargetNotRunning(rt, t).flatMap {
+                case Left(err) => IO.pure(Left(err))
+                case Right(_)  => consumedGuard
               }
-            case _ => IO.pure(Right(()))
-        // 守卫：新目标已运行 → 拒绝（§2.2 状态守卫）+ 旧目标已消费 → 拒绝（§2.3）
-        val guard = newOut match
-          case Some(t) if t != "Nebula" =>
-            NodeTools.ensureTargetNotRunning(rt, t).flatMap {
-              case Left(err) => IO.pure(Left(err))
-              case Right(_)  => consumedGuard
-            }
-          case _ => consumedGuard
-        guard.flatMap {
-          case Left(err) => IO.pure(Left(ToolError(err)))
-          case Right(_) =>
-            // 环检测（新 out）
-            val cycle = newOut match
-              case Some(t) if t != "Nebula" => NodeTools.wouldCreateCycle(rt, node.id, t)
-              case _ => IO.pure(false)
-            cycle.flatMap { isCycle =>
-              if isCycle then IO.pure(Left(ToolError(s"Cycle detected: out → ${newOut.get} would create a loop — DAG must stay acyclic")))
-              else
-                // out 变更（原子：旧目标 in 移除 + 新目标 in 追加）
-                val setOutIO =
-                  if newOut != node.out then NodeTools.setOut(rt, node.id, newOut)
-                  else IO.unit
-                val inAdds = NodeTools.parseIn(inJson)
-                inAdds match
-                  case Left(err) => IO.pure(Left(ToolError(err)))
-                  case Right(adds) =>
-                    // wiring 变更涉及节点集（最终态事件）：本节点（in/out 变更，in 追加
-                    // 也改自身 in）、in 上游（out 改指本节点）、旧 out 目标（in 移除）、
-                    // 新 out 目标（in 追加）
-                    val affected: List[String] =
-                      val fromOut =
-                        if newOut != node.out then
-                          node.out.filter(_ != "Nebula").toList ++ newOut.filter(_ != "Nebula").toList
-                        else Nil
-                      (node.id +: (adds ++ fromOut)).distinct
-                    for
-                      // in 追加校验先行（存在性 + 环检），全部通过才动 store——旧实现
-                      // traverse 内 raiseError 后被 handleErrorWith 吞成 Left 值丢弃，
-                      // 后续 setOutIO/mutate 照跑且工具误报成功（一并修正）
-                      inChecks <- adds.traverse { upId =>
-                        NodeTools.ensureNodeExists(rt, upId).flatMap {
-                          case Left(e) => IO.pure(Left(e): Either[String, Unit])
-                          case Right(_) =>
-                            NodeTools.wouldCreateCycle(rt, upId, node.id).map {
-                              case true => Left(s"Cycle detected: adding in from '$upId' would create a loop (A→B→A) — DAG must stay acyclic")
-                              case false => Right(())
-                            }
-                        }
-                      }
-                      inResult <-
-                        if inChecks.exists(_.isLeft) then
-                          IO.pure(Left(ToolError(inChecks.collectFirst { case Left(e) => e }.getOrElse("invalid in"))))
-                        else
+            case _ => consumedGuard
+          guard.flatMap {
+            case Left(err) => IO.pure(Left(ToolError(err)))
+            case Right(_) =>
+              // 环检测（新 out）
+              val cycle = newOut match
+                case Some(t) if t != "Nebula" => NodeTools.wouldCreateCycle(rt, node.id, t)
+                case _ => IO.pure(false)
+              cycle.flatMap { isCycle =>
+                if isCycle then IO.pure(Left(ToolError(s"Cycle detected: out → ${newOut.get} would create a loop — DAG must stay acyclic")))
+                else
+                  // out 变更（原子：旧目标 in 移除 + 新目标 in 追加）
+                  val setOutIO =
+                    if newOut != node.out then NodeTools.setOut(rt, node.id, newOut)
+                    else IO.unit
+                  val inAdds = NodeTools.parseIn(inJson)
+                  inAdds match
+                    case Left(err) => IO.pure(Left(ToolError(err)))
+                    case Right(adds) =>
+                      // blocked 重激活（blocked 反馈重入设计 §6 #5）：编辑 blocked 节点且
+                      // task/agent/in/out 实际变更 → status 回 wiring/pending、deliveredTo
+                      // 清空、completedAt/ttlExpireAt/startedAt 复位、blockCount 保留
+                      // （不清零，§3.1），随后 D1 补投递链重投全部已完成上游。
+                      val taskChanged = task.exists(t => NodeTools.normalizeTask(t) != node.task.map(NodeTools.normalizeTask).getOrElse(""))
+                      val agentChanged = agent.exists(_ != node.agent)
+                      val actualChange = taskChanged || agentChanged || newOut != node.out || adds.nonEmpty
+                      val reactivate = node.status == NodeLifecycle.Blocked && actualChange
+                      val appliedTask = task.orElse(node.task)
+                      val appliedAgent = agent.getOrElse(node.agent)
+                      // agent 变更 → 存在性校验（0 spawn 拦截）
+                      val agentCheck: IO[Option[ToolError]] =
+                        if reactivate && agentChanged then
+                          EntityLoader.loadAgent(appliedAgent).map {
+                            case None    => Some(ToolError(s"Agent '$appliedAgent' not found in global library"))
+                            case Some(_) => None
+                          }
+                        else IO.pure(None)
+                      agentCheck.flatMap {
+                        case Some(err) => IO.pure(Left(err))
+                        case None =>
+                          // wiring 变更涉及节点集（最终态事件）：本节点（in/out 变更，in 追加
+                          // 也改自身 in）、in 上游（out 改指本节点）、旧 out 目标（in 移除）、
+                          // 新 out 目标（in 追加）
+                          val affected: List[String] =
+                            val fromOut =
+                              if newOut != node.out then
+                                node.out.filter(_ != "Nebula").toList ++ newOut.filter(_ != "Nebula").toList
+                              else Nil
+                            (node.id +: (adds ++ fromOut)).distinct
                           for
-                            // in 追加（barrier）：每个上游 out 改指向本节点（原子改投 §2.3）
-                            _ <- adds.traverse_(upId => NodeTools.setOut(rt, upId, Some(node.id)))
-                            _ <- setOutIO
-                            // 已完成节点改接 → 立即投递（§2.3：结果缓冲/归档 → 向新目标投递）。
-                            // 后台化（收口③）：deliverOutTo 内 startNode 同步等下游终态，
-                            // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
-                            _ <- (newOut, node.status) match
-                              case (Some(t), NodeLifecycle.Completed) =>
-                                node.result match
-                                  case Some(res) =>
-                                    NodeTools.runDetached(rt, s"deliver retained result ${node.id} -> $t")(
-                                      rt.engine.deliverOutTo(node, t, res)
-                                    )
-                                  case None => IO.unit
-                              case _ => IO.unit
-                            // 修复次因 A（edit 路径补 D1 等价投递 + barrier 结算复查，
-                            // create 路径见 proceed 内 D1 注释）：新追加上游中已终态且
-                            // 有结果的 → 立即投递（findNode 活动/归档兜底；含悬空完成的
-                            // 上游——其 completeNode 时 out 悬空未投，此处是唯一投递入口）；
-                            // 随后复查 barrier——deliveredTo 可能已含全部 in 上游（分批
-                            // 送达/重复接线）→ startNode。投递与结算串在同一 detached
-                            // fiber（deliverOutTo 自带结算 → startNode；复查随后命中
-                            // running/terminal 由 startNode 幂等跳过）；后台化遵循
-                            // runDetached 的阻塞教训（直接调用会把工具 fiber 卡到节点终态）。
-                            _ <- if adds.nonEmpty then NodeTools.runDetached(rt, s"deliver appended upstream results + settle barrier -> ${node.id}")(
-                              for
-                                _ <- adds.traverse_ { upId =>
-                                  rt.store.findNode(upId).flatMap {
-                                    case Some(up) if up.result.isDefined && NodeLifecycle.Terminal.contains(up.status) =>
-                                      rt.engine.deliverOutTo(up, node.id, up.result.get)
-                                    case _ => IO.unit
+                            // in 追加校验先行（存在性 + 环检），全部通过才动 store——旧实现
+                            // traverse 内 raiseError 后被 handleErrorWith 吞成 Left 值丢弃，
+                            // 后续 setOutIO/mutate 照跑且工具误报成功（一并修正）
+                            inChecks <- adds.traverse { upId =>
+                              NodeTools.ensureNodeExists(rt, upId).flatMap {
+                                case Left(e) => IO.pure(Left(e): Either[String, Unit])
+                                case Right(_) =>
+                                  NodeTools.wouldCreateCycle(rt, upId, node.id).map {
+                                    case true => Left(s"Cycle detected: adding in from '$upId' would create a loop (A→B→A) — DAG must stay acyclic")
+                                    case false => Right(())
                                   }
                                 }
-                                _ <- rt.store.getNode(node.id).flatMap {
-                                  case Some(n) if n.in.nonEmpty && n.in.forall(n.deliveredTo.contains) =>
-                                    rt.engine.startNode(n.id)
-                                  case _ => IO.unit
-                                }
-                              yield ()
-                            )
-                            else IO.unit
-                            // wiring 变更事件（NodeList 同构 payload，store 最终态）——此前只发
-                            // 本节点且 payload 含陈旧 in、改写的上游/新旧目标无事件（缺失补齐）
-                            _ <- NodeTools.emitWiringUpdates(rt, affected)
-                          yield Right(
-                            s"Node '${node.name}' updated" +
-                              (newOut.map(t => s" — out → $t").getOrElse("") + (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else ""))
-                          )
-                    yield inResult
-            }
-        }
+                            }
+                            inResult <-
+                              if inChecks.exists(_.isLeft) then
+                                IO.pure(Left(ToolError(inChecks.collectFirst { case Left(e) => e }.getOrElse("invalid in"))))
+                              else
+                                for
+                                  // in 追加（barrier）：每个上游 out 改指向本节点（原子改投 §2.3）
+                                  _ <- adds.traverse_(upId => NodeTools.setOut(rt, upId, Some(node.id)))
+                                  _ <- setOutIO
+                                  // blocked 重激活写回（R2 纪律）：事务内现读 fresh，fresh 仍
+                                  // Blocked 才写；状态已变（并发 abandon/重激活）→ 拒写不重激活。
+                                  didReactivate <-
+                                    if reactivate then
+                                      rt.store.mutate { s =>
+                                        s.nodes.get(node.id) match
+                                          case Some(fresh) if fresh.status == NodeLifecycle.Blocked =>
+                                            val nextStatus =
+                                              if appliedTask.exists(_.trim.nonEmpty) && fresh.in.isEmpty then NodeLifecycle.Pending
+                                              else NodeLifecycle.Wiring
+                                            s.copy(nodes = s.nodes.updated(node.id, fresh.copy(
+                                              status = nextStatus,
+                                              task = appliedTask,
+                                              agent = appliedAgent,
+                                              result = None, // blocked 反馈渲染串不复存在（反馈保留在 blockedFeedback）
+                                              deliveredTo = Nil,
+                                              startedAt = None,
+                                              completedAt = None,
+                                              ttlExpireAt = None))) // blockCount / blockedFeedback 保留
+                                          case _ => s
+                                      }.map(s2 =>
+                                        s2.nodes.get(node.id).exists(n => n.status == NodeLifecycle.Wiring || n.status == NodeLifecycle.Pending))
+                                    else IO.pure(false)
+                                  _ <- if didReactivate then
+                                    FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id, "reactivated",
+                                      s"blocked node edited (round ${node.blockCount} preserved) → ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}") *>
+                                      // 重激活补投递（design §6 #5「随后走现有 D1 补投递链」）：
+                                      // deliveredTo 已清空 → 全部 in 上游（终态有结果、非 blocked）
+                                      // 重投（deliverOutTo dedup 幂等）→ barrier 结算 → 启动；
+                                      // 入口节点（task 且无 in）→ 直接启动。后台化（runDetached：
+                                      // 直接调用会把工具 fiber 卡到节点终态）。
+                                      NodeTools.runDetached(rt, s"reactivated redelivery + barrier settle -> ${node.id}")(
+                                        rt.store.getNode(node.id).flatMap {
+                                          case None => IO.unit
+                                          case Some(n) =>
+                                            n.in.traverse_ { upId =>
+                                              rt.store.findNode(upId).flatMap {
+                                                case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
+                                                  rt.engine.deliverOutTo(up, n.id, up.result.get)
+                                                case _ => IO.unit
+                                              }
+                                            } *> rt.store.getNode(node.id).flatMap {
+                                              case Some(n2) if n2.in.nonEmpty && n2.in.forall(n2.deliveredTo.contains) =>
+                                                rt.engine.startNode(n2.id)
+                                              case Some(n2) if n2.in.isEmpty && n2.status == NodeLifecycle.Pending =>
+                                                rt.engine.startNode(n2.id)
+                                              case _ => IO.unit
+                                            }
+                                        }
+                                      )
+                                  else IO.unit
+                                  // 已完成节点改接 → 立即投递（§2.3：结果缓冲/归档 → 向新目标投递）。
+                                  // 后台化（收口③）：deliverOutTo 内 startNode 同步等下游终态，
+                                  // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
+                                  _ <- (newOut, node.status) match
+                                    case (Some(t), NodeLifecycle.Completed) =>
+                                      node.result match
+                                        case Some(res) =>
+                                          NodeTools.runDetached(rt, s"deliver retained result ${node.id} -> $t")(
+                                            rt.engine.deliverOutTo(node, t, res)
+                                          )
+                                        case None => IO.unit
+                                    case _ => IO.unit
+                                  // 修复次因 A（edit 路径补 D1 等价投递 + barrier 结算复查，
+                                  // create 路径见 proceed 内 D1 注释）：新追加上游中已终态且
+                                  // 有结果的 → 立即投递（findNode 活动/归档兜底；含悬空完成的
+                                  // 上游——其 completeNode 时 out 悬空未投，此处是唯一投递入口）；
+                                  // 随后复查 barrier——deliveredTo 可能已含全部 in 上游（分批
+                                  // 送达/重复接线）→ startNode。投递与结算串在同一 detached
+                                  // fiber（deliverOutTo 自带结算 → startNode；复查随后命中
+                                  // running/terminal 由 startNode 幂等跳过）；后台化遵循
+                                  // runDetached 的阻塞教训（直接调用会把工具 fiber 卡到节点终态）。
+                                  _ <- if adds.nonEmpty then NodeTools.runDetached(rt, s"deliver appended upstream results + settle barrier -> ${node.id}")(
+                                    for
+                                      _ <- adds.traverse_ { upId =>
+                                        rt.store.findNode(upId).flatMap {
+                                          // R1：同 create 路径——blocked 反馈串不是可投结果，显式排除
+                                          case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
+                                            rt.engine.deliverOutTo(up, node.id, up.result.get)
+                                          case _ => IO.unit
+                                        }
+                                      }
+                                      _ <- rt.store.getNode(node.id).flatMap {
+                                        case Some(n) if n.in.nonEmpty && n.in.forall(n.deliveredTo.contains) =>
+                                          rt.engine.startNode(n.id)
+                                        case _ => IO.unit
+                                      }
+                                    yield ()
+                                  )
+                                  else IO.unit
+                                  // wiring 变更事件（NodeList 同构 payload，store 最终态）——此前只发
+                                  // 本节点且 payload 含陈旧 in、改写的上游/新旧目标无事件（缺失补齐）
+                                  _ <- NodeTools.emitWiringUpdates(rt, affected)
+                                yield Right(
+                                  s"Node '${node.name}' updated" +
+                                    (if didReactivate then s" — reactivated from blocked (round ${node.blockCount} preserved)" else "") +
+                                    (newOut.map(t => s" — out → $t").getOrElse("") + (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else ""))
+                                )
+                          yield inResult
+                      }
+              }
+          }
 
 object NodeListTool extends Tool:
   val name = "NodeList"
