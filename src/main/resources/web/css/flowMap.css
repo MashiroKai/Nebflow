@@ -152,7 +152,7 @@
   color: rgb(var(--sapphire) / 0.9);
 }
 
-/* result 摘要 */
+/* result 摘要（新出现时轻微淡入：状态变化/完成结果在增量更新里平滑浮现） */
 .fm-result-summary {
   font: 400 10px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
@@ -163,6 +163,7 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  animation: fm-fade-in 0.3s ease;
   /* 卡片内容宽 104px（124 − 左右各 10 padding）；写死 132px 会左右各溢出 4px
      （qa minor 取证）。100% 让摘要贴着卡片内沿收边，超长照旧省略号截断。 */
   max-width: 100%;
@@ -202,4 +203,69 @@
 
 @media (prefers-reduced-motion: reduce) {
   .flow-edge.fm-edge.inflight { animation: none; }
+}
+
+/* ══ WS 实时更新：增量 diff 渲染的过渡动画 ═══════════════════
+   事件驱动增量路径（flowMapTab.js）靠这些过渡实现：新节点淡入、消失节点淡出、
+   布局重排时节点滑到新位置、边端点 rAF 跟随 + 状态色平滑变化。选择器带 .fm-node
+   / .flowmap-card 前缀隔离，不影响 flow-run 面板的同名人元素。 */
+
+/* 节点卡片：位移（left/top，4s 布局重排节奏）+ 出入场（opacity/transform）。
+   easeInOutCubic 与 flowMapTab.js 的 rAF 插值同曲线，边和节点同步滑动。 */
+.solar-node.fm-node {
+  transition:
+    opacity 0.35s ease,
+    transform 0.3s cubic-bezier(0.33, 0, 0.2, 1),
+    left 0.4s cubic-bezier(0.645, 0.045, 0.355, 1),
+    top 0.4s cubic-bezier(0.645, 0.045, 0.355, 1),
+    filter 0.15s ease;
+}
+.fm-node.fm-enter { opacity: 0; transform: scale(0.85); }
+.fm-node.fm-exit { opacity: 0; transform: scale(0.8); pointer-events: none; }
+
+/* 状态切换平滑过渡：环/点/标签的透明度与描边色（pending→running→completed）。
+   终态的轨道点：FLOW_CSS 用 .solar-node.completed .solar-dot-wrap { animation: none }
+   停转——状态原地变化时点会瞬跳回初始角度（可见跳变）。这里以更高特异度把同一条
+   动画重新声明为 paused（名字/时长/延迟与 running 完全一致 → 不重启），冻结在当前
+   相位；cancelled 从 running 转来同理。 */
+.fm-node .solar-ring,
+.fm-node .solar-dot,
+.fm-node .solar-node-label {
+  transition: opacity 0.35s ease, border-color 0.35s ease;
+}
+.solar-node.fm-node.completed .ring-1 .solar-dot-wrap,
+.solar-node.fm-node.cancelled .ring-1 .solar-dot-wrap {
+  animation: solar-spin 3s linear infinite paused;
+}
+.solar-node.fm-node.completed .ring-2 .solar-dot-wrap,
+.solar-node.fm-node.cancelled .ring-2 .solar-dot-wrap {
+  animation: solar-spin 4.5s linear infinite reverse paused;
+  animation-delay: -3s;
+}
+.solar-node.fm-node.completed .ring-3 .solar-dot-wrap,
+.solar-node.fm-node.cancelled .ring-3 .solar-dot-wrap {
+  animation: solar-spin 6s linear infinite paused;
+  animation-delay: -4s;
+}
+
+/* 状态图标（✓/✗）随 head 重建时轻微浮现 */
+.solar-node-status { animation: fm-fade-in 0.3s ease; }
+
+/* 边：状态档位（idle/inflight/delivered）颜色与线宽平滑变化 */
+.flow-edge.fm-edge { transition: stroke 0.35s ease, stroke-width 0.35s ease, opacity 0.35s ease; }
+.fm-edge-arrow { transition: fill 0.35s ease, opacity 0.35s ease; }
+
+/* 画布尺寸：节点增删触发重排时宽度连续过渡（.solar-scroll 居中偏移随之连续，
+   配合节点 left 过渡整图不横跳）。仅限 flow-map 卡片，flow-run 不动。 */
+.flowmap-card .solar-canvas {
+  transition: width 0.4s cubic-bezier(0.645, 0.045, 0.355, 1),
+    height 0.4s cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+@keyframes fm-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .solar-node.fm-node { transition: opacity 0.35s ease; }
+  .flowmap-card .solar-canvas { transition: none; }
+  .fm-result-summary, .solar-node-status { animation: none; }
 }
