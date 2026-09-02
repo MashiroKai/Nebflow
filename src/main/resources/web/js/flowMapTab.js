@@ -397,9 +397,12 @@ function nodeContentKey(n) {
   ].join('|');
 }
 
-/** 就地更新节点卡片内容，但保留 .solar-orbit——重建会把 running 节点的轨道旋转
- *  动画打回初始相位（可见跳变）。做法：用 nodeHtml 生成新鲜卡片，把 orbit 以外的
- *  子节点按原顺序移植进现有元素，根 class/状态属性同步替换。 */
+/** 就地更新节点卡片内容，但保留 .solar-orbit——轨道旋转由 flowAnim.js 的 rAF
+ *  以 inline transform 逐帧驱动（状态按 pane|nodeId 键控续接）。移植 orbit 以外
+ *  子节点使 .solar-dot-wrap 元素及其 inline transform 原地保留：rAF 的键控状态
+ *  st.el === el 继续成立，增量更新零打断、零重挂载（全量重建路径由 flowAnim 的
+ *  keyed re-attach 兜底续角度）。根 class/状态属性同步替换，rAF reconcile 据此
+ *  感知 running→终态并执行滑行淡出。 */
 function transplantNodeContent(el, n, pos, originX) {
   const holder = document.createElement('div');
   holder.innerHTML = nodeHtml(n, pos, originX);

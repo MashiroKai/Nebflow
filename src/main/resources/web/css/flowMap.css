@@ -224,28 +224,14 @@
 .fm-node.fm-exit { opacity: 0; transform: scale(0.8); pointer-events: none; }
 
 /* 状态切换平滑过渡：环/点/标签的透明度与描边色（pending→running→completed）。
-   终态的轨道点：FLOW_CSS 用 .solar-node.completed .solar-dot-wrap { animation: none }
-   停转——状态原地变化时点会瞬跳回初始角度（可见跳变）。这里以更高特异度把同一条
-   动画重新声明为 paused（名字/时长/延迟与 running 完全一致 → 不重启），冻结在当前
-   相位；cancelled 从 running 转来同理。 */
+   终态轨道点不再用 CSS 处理——@keyframes solar-spin 已随 rAF 重构（flowAnim.js）
+   删除，旋转/收尾（running→completed/cancelled/failed 先滑行到循环端点再淡出）
+   全部由 rAF 以 inline transform/opacity 驱动并自动续接相位；CSS animation 若与
+   inline transform 同属性会互相覆盖，故此处不得再声明 .solar-dot-wrap 动画。 */
 .fm-node .solar-ring,
 .fm-node .solar-dot,
 .fm-node .solar-node-label {
   transition: opacity 0.35s ease, border-color 0.35s ease;
-}
-.solar-node.fm-node.completed .ring-1 .solar-dot-wrap,
-.solar-node.fm-node.cancelled .ring-1 .solar-dot-wrap {
-  animation: solar-spin 3s linear infinite paused;
-}
-.solar-node.fm-node.completed .ring-2 .solar-dot-wrap,
-.solar-node.fm-node.cancelled .ring-2 .solar-dot-wrap {
-  animation: solar-spin 4.5s linear infinite reverse paused;
-  animation-delay: -3s;
-}
-.solar-node.fm-node.completed .ring-3 .solar-dot-wrap,
-.solar-node.fm-node.cancelled .ring-3 .solar-dot-wrap {
-  animation: solar-spin 6s linear infinite paused;
-  animation-delay: -4s;
 }
 
 /* 状态图标（✓/✗）随 head 重建时轻微浮现 */
