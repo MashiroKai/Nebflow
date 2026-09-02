@@ -194,9 +194,24 @@ object NodeTools:
     for
       s <- rt.store.snapshot
       arch <- rt.store.archiveSnapshot
+      // 清场 c-①（20260903 03:04 清场误杀事故复盘）：running 节点携带 liveness
+      // 字段——true = 有在飞执行 fiber（活会话，取消信号可达）；false = 无在飞
+      // fiber（死会话残留/实例重启泄漏，可经 NodeCancel / abandon 收殓）。非
+      // running 节点不带该键（wiring/pending 无会话存活概念、终态无存活可言
+      // ——语义明确）。仅快照（NodeList 工具 / REST flow-map）带；WS 事件单一
+      // 序列化点（NodePayload.buildNodeJson）不动 → 事件键集断言零影响。
+      liveness <- s.nodes.values.toList
+        .filter(_.status == NodeLifecycle.Running)
+        .traverse(n => rt.engine.isRunning(n.id).map(alive => n.id -> alive))
+        .map(_.toMap)
     yield
       val now = System.currentTimeMillis()
-      val nodes = s.nodes.values.toList.sortBy(_.createdAt).map(n => NodePayload.buildNodeJson(n, now))
+      val nodes = s.nodes.values.toList.sortBy(_.createdAt).map { n =>
+        val base = NodePayload.buildNodeJson(n, now)
+        liveness.get(n.id) match
+          case Some(alive) => base.deepMerge(Json.obj("liveness" -> Json.fromBoolean(alive)))
+          case None        => base
+      }
       val wtDir = os.Path(rt.project.workspace) / ".nebflow" / "worktrees"
       val worktrees =
         if os.exists(wtDir) then os.list(wtDir).filter(os.isDir).map(_.last).toList
@@ -230,7 +245,7 @@ object NodeEditTool extends Tool:
 - **out** (optional, single value): node id, "Nebula", or null. Single-value semantics: setting replaces the old out (rewire); arrays are rejected (1-to-many not supported); null disconnects (result retained, re-wire later auto-delivers).
 - **skill** / **mcp** / **worktree** / **preset** (optional): node configuration (worktree must exist under workspace/.nebflow/).
 - **maxRetries** (optional, default 1).
-- **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled) OR wiring/pending node → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes and the topology-cleanup exit for retired wiring/pending nodes; use NodeCancel for running nodes instead.
+- **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled), wiring/pending node, or a STALE RUNNING node whose session is dead (no live execution fiber, e.g. after an instance restart) → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes, the topology-cleanup exit for retired wiring/pending nodes, and the reaping exit for dead-session running nodes. A LIVE running node is refused (mis-kill protection) — use NodeCancel for running nodes instead.
 
 ## Semantics
 - nodename missing → create (agent required; at least one connection required — in, deps, or out; a node with task but zero connections is rejected).
@@ -540,19 +555,22 @@ object NodeEditTool extends Tool:
     * 清场时退役节点常是活的 wiring/pending（「悬空活节点」无处置出口），abandon 是
     * 其唯一出口（NodeCancel 仅 running）。wiring/pending 无在飞会话，无中断副作用；
     * 被退役节点的上游其后完成时 deliverOut → startNode 幂等跳过（cancelled ∈ Terminal）。
-    * running 仍排除（在飞会话，走 NodeCancel）。 */
+    *
+    * 死会话 running 收殓（清场 c-②，20260903 03:04 清场误杀事故复盘）：running 且
+    * 无在飞执行 fiber（会话死于传输中断/实例重启泄漏）→ 可收殓（cancelled + TTL）。
+    * 误杀防护（硬约束）：活 running（isRunning=true = 有在飞 fiber，取消信号可达）
+    * 绝对拒绝，只能走 NodeCancel。无复活竞态：running 节点不会被 startNode 二次
+    * spawn（入口状态幂等跳过），死会话不可能复活 → 预检后无需事务内复查 IO 信号。 */
   private def abandonNode(rt: ProjectRuntime, node: NodeDef): IO[Either[ToolError, String]] =
-    if node.status == NodeLifecycle.Running then
-      IO.pure(Left(ToolError(
-        s"Node '${node.name}' is running — abandon only accepts terminal or wiring/pending nodes. Use NodeCancel for running nodes.")))
-    else
+    def doAbandon(allowDeadRunning: Boolean): IO[Either[ToolError, String]] =
       for
         now <- IO(System.currentTimeMillis())
         s <- rt.store.mutate { st =>
           st.nodes.get(node.id) match
-            // R2：fresh 仍非 running（终态/wiring/pending）才写——并发重激活成 running
-            // 时拒写（该窗口内节点已有在飞会话，abandon 不得中断）
-            case Some(fresh) if fresh.status != NodeLifecycle.Running =>
+            // R2：fresh 仍可收殓（终态/wiring/pending；或预检过死会话的 running）
+            // 才写——并发重激活成 running 且未预检死会话时拒写（该窗口内节点已有
+            // 在飞会话，abandon 不得中断）
+            case Some(fresh) if fresh.status != NodeLifecycle.Running || allowDeadRunning =>
               st.copy(nodes = st.nodes.updated(node.id, fresh.copy(
                 status = NodeLifecycle.Cancelled,
                 completedAt = Some(now),
@@ -563,9 +581,19 @@ object NodeEditTool extends Tool:
           case Some(c) if c.status == NodeLifecycle.Cancelled =>
             rt.engine.emitUpdated(c) *>
               FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id, "abandoned",
-                s"node abandoned via NodeEdit (${node.status} → cancelled + display TTL)")
+                s"node abandoned via NodeEdit (${node.status}${if allowDeadRunning && node.status == NodeLifecycle.Running then "/dead-session" else ""} → cancelled + display TTL)")
           case _ => IO.unit
       yield Right(s"Node '${node.name}' abandoned — cancelled with display TTL (archived after TTL, result retained)")
+
+    if node.status == NodeLifecycle.Running then
+      rt.engine.isRunning(node.id).flatMap {
+        case true =>
+          IO.pure(Left(ToolError(
+            s"Node '${node.name}' is running with a live session — abandon refused (mis-kill protection). Use NodeCancel for running nodes.")))
+        case false =>
+          doAbandon(allowDeadRunning = true)
+      }
+    else doAbandon(allowDeadRunning = false)
 
   private def editNode(
     rt: ProjectRuntime,
@@ -923,7 +951,7 @@ object NodeCancelTool extends Tool:
     """Cancel a running node (supervisor cancel semantics) — the dispatcher's stop-loss tool.
 ## When to Use
 - A node is mis-wired, hung, or superseded: cancel it, then rewire or recreate. Result is NOT delivered; upstream results already delivered stay buffered/archived.
-- Cancel target must be running (non-running → no-op with notice)."""
+- Cancel target must be running (non-running → no-op with notice). A running node with a live session gets a cancel signal; a STALE running node (dead session, e.g. after an instance restart) is reaped — finalized as cancelled immediately instead of a fake success."""
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
@@ -953,7 +981,14 @@ object NodeCancelTool extends Tool:
             case Some(n) if n.status != NodeLifecycle.Running =>
               IO.pure(Right(s"Node '${n.name}' is not running (status=${n.status}) — no-op"))
             case Some(n) =>
-              rt.engine.cancelNodeById(nodeId).as(Right(s"Node '${n.name}' cancel signal sent"))
+              // 清场 c-③（20260903 事故复盘）：有在飞执行 fiber → 正常取消信号（原
+              // 语义）；无在飞 fiber（会话已死/实例重启泄漏）→ 直接收殓终态化——修复
+              // 「返回成功但节点状态不落终态」的假成功（假成功下分发器以为已止损，
+              // stale running 永久滞留）。收殓内部二次复核 isRunning（防窗口竞态）。
+              rt.engine.isRunning(nodeId).flatMap {
+                case true => rt.engine.cancelNodeById(nodeId).as(Right(s"Node '${n.name}' cancel signal sent"))
+                case false => rt.engine.reapStaleRunning(nodeId).map(_.left.map(ToolError(_)))
+              }
           }
     }
 
