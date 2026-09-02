@@ -1,6 +1,7 @@
 // orbPresets.js — micOrb liquid-orb palette preset registry + state→palette
 // resolution chain (v8.3.0; design doc 20260902_micorb-presets-design.md §2/§3,
-// author rulings 2026-09-02 20:59).
+// author rulings 2026-09-02 20:59 + 2026-09-03 01:32: 9th preset 冰山 Iceberg,
+// default-map rework, 开箱基调 Neon → Ocean).
 //
 // 配色 = 状态语言: each of the 9 orb states maps to a preset board (dark/light
 // double boards); the mapping is user-overridable per state in the settings
@@ -28,9 +29,10 @@ const LS_KEY = key('micOrb.palette');
 export const CHANGE_EVENT = 'micorb-palette-changed';
 
 /**
- * 8 preset registries (design §2.2). `dark`/`light` are full boards; hex
- * strings are converted to float triplets lazily and cached.
- * `ash` (灰烬, the desaturated offline board) is registered separately below.
+ * 9 preset registries (design §2.2 + iceberg, ruling 2026-09-03 01:32).
+ * `dark`/`light` are full boards; hex strings are converted to float triplets
+ * lazily and cached. `ash` (灰烬, the desaturated offline board) is registered
+ * separately below.
  */
 export const PRESETS = [
   { id: 'nebula',  name: { zh: '星云', en: 'Nebula' },
@@ -57,6 +59,14 @@ export const PRESETS = [
   { id: 'neon',    name: { zh: '霓虹', en: 'Neon' },
     dark:  { a: '#3DF2F2', b: '#F05AD8', c: '#1A1A66' },
     light: { a: '#28D0D8', b: '#D848C2', c: '#151552' } },
+  // 冰山 Iceberg — frozen-state board (ruling 2026-09-03 01:32): cold
+  // translucent ice — near-white ice-blue core (a), glacier-cyan flow (b),
+  // deep-navy underlayer (c). Hue arc 191–211°; board distance vs its cold
+  // neighbors stays far above the registry min pair (ocean/aurora ≈ 90):
+  // vs ocean 153.6/149.9, vs dawn 181.1/196.8 (dark/light, 9-ch Euclidean).
+  { id: 'iceberg', name: { zh: '冰山', en: 'Iceberg' },
+    dark:  { a: '#BEE9FF', b: '#3EC8E8', c: '#0A2E52' },
+    light: { a: '#9AD6F2', b: '#2FA8CC', c: '#082543' } },
 ];
 
 /**
@@ -69,32 +79,35 @@ export const ASH = { id: 'ash', name: { zh: '灰烬', en: 'Ash' },
   dark:  { a: '#B9C2D2', b: '#8D99AE', c: '#2B3242' },
   light: { a: '#8C96A8', b: '#707C90', c: '#232B3A' } };
 
-/** Default 基调 (ruling ③: 开箱即 Neon — replaces the old blue/violet default). */
-export const DEFAULT_BASE = 'neon';
+/** Default 基调 (ruling 2026-09-03 01:32: 开箱即 Ocean — the brand idle state
+ *  ships ice-blue; Neon moves to the bg-agents default. `idle` resolves
+ *  through the 基调, so this constant IS the factory idle mapping). */
+export const DEFAULT_BASE = 'ocean';
 
 /**
- * Default state→preset mapping (ruling ②). `idle` is intentionally absent:
- * it resolves to the 基调 (which defaults to neon), so the 基调 dropdown
- * always controls the brand state unless idle is explicitly overridden.
+ * Default state→preset mapping (ruling ② + rework 2026-09-03 01:32).
+ * `idle` is intentionally absent: it resolves to the 基调 (which now defaults
+ * to ocean), so the 基调 dropdown always controls the brand state unless idle
+ * is explicitly overridden.
  */
 export const DEFAULT_STATE_MAP = {
-  'listening':    'ocean',   // 听写中
-  'processing':   'dawn',    // 识别中
-  'nebula-busy':  'aurora',  // Nebula 工作中
-  'bg-agents':    'nebula',  // 后台 agent 工作
-  'frozen':       'emerald', // 冻结中
-  'frozen-error': 'magma',   // 冻结·错误
-  'mic-error':    'magma',   // 麦克风错误
-  'offline':      'ash',     // 离线
+  'listening':    'aurora',   // 听写中
+  'processing':   'dawn',     // 识别中
+  'nebula-busy':  'nebula',   // Nebula 工作中
+  'bg-agents':    'neon',     // 后台 agent 工作
+  'frozen':       'iceberg',  // 冻结中
+  'frozen-error': 'magma',    // 冻结·错误
+  'mic-error':    'magma',    // 麦克风错误
+  'offline':      'ash',      // 离线
 };
 
 const PRESET_BY_ID = {};
 for (const p of PRESETS) PRESET_BY_ID[p.id] = p;
 PRESET_BY_ID[ASH.id] = ASH;
 
-/** ids allowed in the per-state map (8 presets + ash). */
+/** ids allowed in the per-state map (9 presets + ash). */
 const ALL_IDS = new Set(Object.keys(PRESET_BY_ID));
-/** ids allowed as 基调 (8 presets only — ruling ①). */
+/** ids allowed as 基调 (9 presets only — ruling ①). */
 const BASE_IDS = new Set(PRESETS.map((p) => p.id));
 
 /** @returns {{id:string,name:{zh:string,en:string},dark:Object,light:Object}|null} */
