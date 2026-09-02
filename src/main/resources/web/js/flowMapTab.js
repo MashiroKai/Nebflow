@@ -89,6 +89,15 @@ function layoutNodes(fm) {
 }
 
 // ── 节点卡片（复用 solar 视觉）────────────────────────────
+// 配置徽标（skill/mcp/preset）：卡片上紧凑展示，完整值放 title，点击卡片在详情里看全。
+function cfgBadgesHtml(n) {
+  return [['skill', n.skill], ['mcp', n.mcp], ['preset', n.preset]]
+    .filter(([, v]) => typeof v === 'string' && v)
+    .map(([k, v]) =>
+      `<span class="fm-cfg-badge fm-cfg-${k}" title="${esc(k)}: ${esc(v)}"><span class="fm-cfg-key">${esc(k)}</span>${esc(v)}</span>`
+    ).join('');
+}
+
 function nodeHtml(n, pos, originX) {
   const st = n.status || 'pending';
   const cls = NODE_STATUS_CLS[st] || 'pending';
@@ -104,6 +113,7 @@ function nodeHtml(n, pos, originX) {
   const result = n.result
     ? `<div class="fm-result-summary" title="${esc(n.result)}">${esc(n.result.slice(0, 46))}${n.result.length > 46 ? '…' : ''}</div>`
     : (st === 'running' ? `<div class="fm-result-summary running">${esc(t('flowmap.cardRunning'))}</div>` : '');
+  const cfg = cfgBadgesHtml(n);
   return `
     <div class="solar-node fm-node ${cls}" data-node-id="${esc(n.id)}" data-agent="${esc(n.agent)}"
          data-status="${esc(st)}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
@@ -115,6 +125,7 @@ function nodeHtml(n, pos, originX) {
       <div class="fm-node-head">${worktreeBadge}${statusIcon}</div>
       <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
       <div class="solar-node-sub">${esc(n.agent)}${ttl ? ' ' + ttl : ''}</div>
+      ${cfg ? `<div class="fm-cfg-row">${cfg}</div>` : ''}
       ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}
       ${result}
     </div>`;
@@ -226,7 +237,8 @@ function openNodeDetail(projectName, nodeId) {
   const node = fmByProject.get(projectName)?.nodes?.find((n) => n.id === nodeId);
   if (!node) return;
   import('./flowViewers.js').then(({ openNodeResultViewer }) => {
-    openNodeResultViewer(esc(node.name), node.agent || '', node.status || '', node.worktree || '', node.result, node.id);
+    openNodeResultViewer(esc(node.name), node.agent || '', node.status || '', node.worktree || '', node.result, node.id,
+      { skill: node.skill || '', mcp: node.mcp || '', preset: node.preset || '' });
   });
 }
 

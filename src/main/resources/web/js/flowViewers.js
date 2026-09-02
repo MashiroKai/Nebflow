@@ -75,11 +75,15 @@ export function closeViewer() {
 
 // ── Node 结果详情（Flow Map 节点点击查看）──────────────────
 // 复用 openViewerShell 的 overlay 语义；结果从活动或归档读取（阶段 0 mock 显 result）。
-export function openNodeResultViewer(nodeName, agent, status, worktree, result, nodeId) {
+// cfg = {skill, mcp, preset}——节点配置（Flow Map 卡片上紧凑徽标，详情里全量展示）。
+export function openNodeResultViewer(nodeName, agent, status, worktree, result, nodeId, cfg = {}) {
   const title = `${nodeName}${result ? ' · ' + t('flowmap.resultTitle') : ' · ' + t('flowmap.noResult')}`;
   const body = openViewerShell(title);
   if (!body) return;
   const meta = [agent, status, worktree].filter(Boolean).map((s) => esc(s)).join(' · ');
+  const cfgParts = [['skill', cfg.skill], ['mcp', cfg.mcp], ['preset', cfg.preset]]
+    .filter(([, v]) => typeof v === 'string' && v)
+    .map(([k, v]) => `<span class="flow-node-cfg"><span class="flow-node-cfg-key">${esc(k)}</span>${esc(v)}</span>`);
   const label = result ? t('flowmap.resultTitle') : t('flowmap.noResult');
   const content = result
     ? result
@@ -88,6 +92,7 @@ export function openNodeResultViewer(nodeName, agent, status, worktree, result, 
     <div class="flow-def-section">
       <div class="flow-agent-block-head"><span class="flow-agent-block-name">${esc(nodeName)}</span></div>
       ${meta ? `<div class="flow-def-source">${meta}</div>` : ''}
+      ${cfgParts.length ? `<div class="flow-def-source flow-node-cfg-line">${cfgParts.join('')}</div>` : ''}
       <div class="flow-agent-block-field">
         <span class="flow-agent-block-label">${esc(label)}</span>
         <div class="flow-agent-block-readonly" style="max-height:420px;overflow-y:auto;white-space:pre-wrap">${esc(content)}</div>

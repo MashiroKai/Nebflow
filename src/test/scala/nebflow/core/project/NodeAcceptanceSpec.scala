@@ -645,7 +645,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
 
   // ── ⑫ NodeList 快照字段完整性（分发器决策依据）─────────
 
-  test("⑫ NodeList: snapshot carries status/result summary/hasWorktree/worktrees/ttlLeftSec") {
+  test("⑫ NodeList: snapshot carries status/result summary/hasWorktree/worktrees/ttlLeftSec/skill/mcp/preset") {
     val ws = tempRoot / "ws-nodelist"
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-nl-${scala.util.Random.nextInt(100000)}")
@@ -657,6 +657,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       _ <- rt.store.mutate(s =>
         s.copy(nodes = s.nodes ++ Map(
           "n-done" -> NodeDef(id = "n-done", name = "已完成", agent = "test-agent",
+            skill = Some("code-review"), mcp = Some("github"), preset = Some("fast"),
             status = NodeLifecycle.Completed, result = Some("r" * 600), createdAt = now,
             completedAt = Some(now - 1000), ttlExpireAt = Some(now + 120000)),
           "n-wt" -> NodeDef(id = "n-wt", name = "并行", agent = "test-agent",
@@ -678,6 +679,10 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       assert(doneRes.length <= 501 && doneRes.length >= 500, s"result must be truncated to ≤500-char summary + ellipsis, got ${doneRes.length}")
       assertEquals(done.hcursor.downField("hasWorktree").as[Boolean].toOption, Some(false))
       assert(done.hcursor.downField("ttlLeftSec").as[Long].toOption.exists(_ > 0), "ttlLeftSec must be present for terminal node")
+      // 子任务 C：节点配置字段（skill/mcp/preset）须随 NodeList 载荷下发（前端 Flow Map 展示依据）
+      assertEquals(done.hcursor.downField("skill").as[String].toOption, Some("code-review"))
+      assertEquals(done.hcursor.downField("mcp").as[String].toOption, Some("github"))
+      assertEquals(done.hcursor.downField("preset").as[String].toOption, Some("fast"))
       val wt = nodes.find(_.hcursor.get[String]("name").toOption.contains("并行")).get
       assertEquals(wt.hcursor.downField("hasWorktree").as[Boolean].toOption, Some(true))
       assertEquals(wt.hcursor.downField("worktree").as[String].toOption, Some("worktrees/wt-x"))
