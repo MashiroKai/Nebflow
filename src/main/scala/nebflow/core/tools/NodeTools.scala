@@ -110,6 +110,9 @@ object NodeTools:
           "id" -> n.id.asJson,
           "name" -> n.name.asJson,
           "agent" -> n.agent.asJson,
+          "skill" -> n.skill.asJson,
+          "mcp" -> n.mcp.asJson,
+          "preset" -> n.preset.asJson,
           "status" -> n.status.asJson,
           "in" -> n.in.asJson,
           "out" -> n.out.asJson,
@@ -477,7 +480,7 @@ object NodeListTool extends Tool:
 - **project** (required): project name.
 
 ## Returns
-{nodes: [{id, name, agent, status, in, out, hasWorktree, worktree, result (≤500-char summary), retries, createdAt, completedAt, ttlLeftSec}], worktrees: [...], meta: {project, updatedAt}}"""
+{nodes: [{id, name, agent, skill, mcp, preset, status, in, out, hasWorktree, worktree, result (≤500-char summary), retries, createdAt, completedAt, ttlLeftSec}], worktrees: [...], meta: {project, updatedAt}}"""
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
