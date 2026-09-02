@@ -17,13 +17,16 @@ import org.http4s.dsl.io.*
 import scala.concurrent.duration.*
 
 /**
- * Project AGENTS.md REST 端点契约测试（AGENTS.md 迁移，2026-09-02 裁定）。
+ * Project agent 指令 REST 端点契约测试（读取优先级反转，2026-09-03 裁定）。
  *
- * 磁盘位置从 `<workspace>/.nebflow/Agent.md` 迁移到工作区根 `AGENTS.md`（URL 不变）。钉死：
- *  1. GET：工作区根 AGENTS.md 存在 → 返回其内容（新位置优先）
- *  2. GET：仅剩旧 .nebflow/Agent.md → 仍 200 读旧（AC-5 迁移兼容）
- *  3. GET：两者皆无 → 404
- *  4. PUT：写入工作区根 AGENTS.md（旧位置保留不动，下次 GET 新位置优先——保存即迁移）
+ * 背景：AGENTS.md 迁移（2a0dada0）后 slideblocks 偏差回滚——其根 AGENTS.md 是 GitHub 上游英文
+ * 内容不可动，中文项目指令保留为 `.nebflow/Agent.md` 真文件。因此读取优先级反转为：
+ * **`.nebflow/Agent.md` 存在则优先（symlink 算存在）；缺失回落工作区根 `AGENTS.md`**。钉死：
+ *  1. GET：`.nebflow/Agent.md` 真文件存在 → 返回它，根 AGENTS.md 另有内容时不误读（slideblocks）
+ *  2. GET：`.nebflow/Agent.md` → `../AGENTS.md` symlink → 经链接读到根内容（已迁移项目语义不变）
+ *  3. GET：无 `.nebflow/Agent.md` → 回落根 AGENTS.md；悬空 symlink 同样回落；两处皆无 → 404
+ *  4. PUT：落点与 GET 优先位置一致——真文件场景写 `.nebflow/Agent.md`（根不动）；
+ *     symlink 场景经链接写真实目标（链接保留）；无文件场景写根 AGENTS.md
  *  5. auth 门禁（无 token → 403）
  */
 class ProjectAgentFileRoutesSpec extends CatsEffectSuite:
@@ -84,6 +87,13 @@ class ProjectAgentFileRoutesSpec extends CatsEffectSuite:
       case Left(err) => fail(s"create failed: $err")
     }
 
+  /** 相对 symlink `../AGENTS.md`（已迁移项目的真实形状）。 */
+  private def mkRelativeAgentsSymlink(ws: os.Path): Unit =
+    java.nio.file.Files.createSymbolicLink(
+      (ws / ".nebflow" / "Agent.md").toNIO,
+      java.nio.file.Paths.get("../AGENTS.md")
+    )
+
   private def getBody(resp: Response[IO]): IO[(Status, String)] =
     resp.as[io.circe.Json].map(j => (resp.status, j.hcursor.downField("content").as[String].getOrElse("")))
 
@@ -96,32 +106,68 @@ class ProjectAgentFileRoutesSpec extends CatsEffectSuite:
       .map(resp => assertEquals(resp.status, Status.Forbidden))
   }
 
-  test("GET: workspace root AGENTS.md preferred over legacy .nebflow/Agent.md") {
-    val ws = tempRoot / "ws-new"
+  // ① 真文件优先：slideblocks 场景——.nebflow/Agent.md 中文真文件命中，根 AGENTS.md（上游英文）不误读
+  test("GET: real .nebflow/Agent.md takes priority over root AGENTS.md (slideblocks rollback)") {
+    val ws = tempRoot / "ws-real-priority"
     os.makeDir.all(ws / ".nebflow")
-    mkProject("af-new", ws).flatMap { _ =>
-      os.write.over(ws / ".nebflow" / "Agent.md", "# legacy old content\n")
-      os.write.over(ws / "AGENTS.md", "# new root content\n")
-      run(authed(Request[IO](Method.GET, Uri.unsafeFromString("/projects/af-new/agent.md"))))
+    mkProject("af-real-priority", ws).flatMap { _ =>
+      os.write.over(ws / "AGENTS.md", "# upstream root content\n") // 根另有内容（不可动）
+      os.write.over(ws / ".nebflow" / "Agent.md", "# 中文项目指令\n")
+      run(authed(Request[IO](Method.GET, Uri.unsafeFromString("/projects/af-real-priority/agent.md"))))
         .flatMap(getBody)
         .map { (status, content) =>
           assertEquals(status, Status.Ok)
-          assertEquals(content, "# new root content\n")
+          assertEquals(content, "# 中文项目指令\n")
         }
     }
   }
 
-  test("GET: legacy-only .nebflow/Agent.md still returns 200 (AC-5 migration compat)") {
-    val ws = tempRoot / "ws-legacy"
+  // ② symlink 命中：已迁移项目 .nebflow/Agent.md → ../AGENTS.md，经链接读到根文件同一内容
+  test("GET: .nebflow/Agent.md symlink to ../AGENTS.md returns root content through the link") {
+    val ws = tempRoot / "ws-symlink"
     os.makeDir.all(ws / ".nebflow")
-    mkProject("af-legacy", ws).flatMap { _ =>
-      os.remove(ws / "AGENTS.md") // 模拟未迁移旧项目：仅剩旧位置文件（create 已写根模板，删掉）
-      os.write.over(ws / ".nebflow" / "Agent.md", "# legacy only\n")
-      run(authed(Request[IO](Method.GET, Uri.unsafeFromString("/projects/af-legacy/agent.md"))))
+    mkProject("af-symlink", ws).flatMap { _ =>
+      os.write.over(ws / "AGENTS.md", "# migrated root content\n")
+      mkRelativeAgentsSymlink(ws)
+      run(authed(Request[IO](Method.GET, Uri.unsafeFromString("/projects/af-symlink/agent.md"))))
         .flatMap(getBody)
         .map { (status, content) =>
           assertEquals(status, Status.Ok)
-          assertEquals(content, "# legacy only\n")
+          assertEquals(content, "# migrated root content\n")
+        }
+    }
+  }
+
+  // ③ 无文件回落：无 .nebflow/Agent.md → 返回根 AGENTS.md
+  test("GET: no .nebflow/Agent.md -> falls back to root AGENTS.md") {
+    val ws = tempRoot / "ws-fallback"
+    os.makeDir.all(ws)
+    mkProject("af-fallback", ws).flatMap { _ =>
+      os.write.over(ws / "AGENTS.md", "# root fallback content\n")
+      run(authed(Request[IO](Method.GET, Uri.unsafeFromString("/projects/af-fallback/agent.md"))))
+        .flatMap(getBody)
+        .map { (status, content) =>
+          assertEquals(status, Status.Ok)
+          assertEquals(content, "# root fallback content\n")
+        }
+    }
+  }
+
+  // 悬空 symlink 兜底：视为不存在 → 回落根 AGENTS.md
+  test("GET: dangling .nebflow/Agent.md symlink falls back to root AGENTS.md") {
+    val ws = tempRoot / "ws-dangling"
+    os.makeDir.all(ws / ".nebflow")
+    mkProject("af-dangling", ws).flatMap { _ =>
+      os.write.over(ws / "AGENTS.md", "# root behind dangling link\n")
+      java.nio.file.Files.createSymbolicLink(
+        (ws / ".nebflow" / "Agent.md").toNIO,
+        java.nio.file.Paths.get("../no-such-target.md")
+      )
+      run(authed(Request[IO](Method.GET, Uri.unsafeFromString("/projects/af-dangling/agent.md"))))
+        .flatMap(getBody)
+        .map { (status, content) =>
+          assertEquals(status, Status.Ok)
+          assertEquals(content, "# root behind dangling link\n")
         }
     }
   }
@@ -136,22 +182,76 @@ class ProjectAgentFileRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("PUT: writes workspace root AGENTS.md; legacy file untouched; GET then prefers new (save = migration)") {
-    val ws = tempRoot / "ws-put"
+  // PUT 落点①真文件场景：写 .nebflow/Agent.md（slideblocks 中文指令），根 AGENTS.md 不动；GET 读回一致
+  test("PUT: real .nebflow/Agent.md present -> writes legacy file, root AGENTS.md untouched") {
+    val ws = tempRoot / "ws-put-real"
     os.makeDir.all(ws / ".nebflow")
-    mkProject("af-put", ws).flatMap { _ =>
-      os.write.over(ws / ".nebflow" / "Agent.md", "# legacy pre-save\n")
+    mkProject("af-put-real", ws).flatMap { _ =>
+      os.write.over(ws / "AGENTS.md", "# upstream root untouched\n")
+      os.write.over(ws / ".nebflow" / "Agent.md", "# 中文旧内容\n") // slideblocks：真文件已存在
+      val body = io.circe.Json.obj("content" -> "# 中文已保存\n".asJson)
+      run(authed(Request[IO](Method.PUT, Uri.unsafeFromString("/projects/af-put-real/agent.md")).withEntity(body)))
+        .flatMap(resp => IO(assertEquals(resp.status, Status.Ok)))
+        .flatMap { _ =>
+          IO {
+            assertEquals(os.read(ws / ".nebflow" / "Agent.md"), "# 中文已保存\n")
+            assertEquals(os.read(ws / "AGENTS.md"), "# upstream root untouched\n")
+          }
+        }
+        .flatMap { _ =>
+          run(authed(Request[IO](Method.GET, Uri.unsafeFromString("/projects/af-put-real/agent.md"))))
+            .flatMap(getBody)
+            .map { (status, content) =>
+              assertEquals(status, Status.Ok)
+              assertEquals(content, "# 中文已保存\n")
+            }
+        }
+    }
+  }
+
+  // PUT 落点②symlink 场景：经链接写真实目标（根 AGENTS.md 内容更新），链接本身保留不破坏
+  test("PUT: symlink .nebflow/Agent.md -> writes through link to root, link preserved") {
+    val ws = tempRoot / "ws-put-link"
+    os.makeDir.all(ws / ".nebflow")
+    mkProject("af-put-link", ws).flatMap { _ =>
+      os.write.over(ws / "AGENTS.md", "# root before save\n")
+      mkRelativeAgentsSymlink(ws)
+      val body = io.circe.Json.obj("content" -> "# root after save\n".asJson)
+      run(authed(Request[IO](Method.PUT, Uri.unsafeFromString("/projects/af-put-link/agent.md")).withEntity(body)))
+        .flatMap(resp => IO(assertEquals(resp.status, Status.Ok)))
+        .flatMap { _ =>
+          IO {
+            assertEquals(os.read(ws / "AGENTS.md"), "# root after save\n") // 落点=链接目标（根）
+            assertEquals(os.isLink(ws / ".nebflow" / "Agent.md"), true) // 链接未被原子替换破坏
+          }
+        }
+        .flatMap { _ =>
+          run(authed(Request[IO](Method.GET, Uri.unsafeFromString("/projects/af-put-link/agent.md"))))
+            .flatMap(getBody)
+            .map { (status, content) =>
+              assertEquals(status, Status.Ok)
+              assertEquals(content, "# root after save\n")
+            }
+        }
+    }
+  }
+
+  // PUT 落点③无文件场景：写工作区根 AGENTS.md，GET 回落读到同一内容
+  test("PUT: no .nebflow/Agent.md -> writes root AGENTS.md; GET then returns it") {
+    val ws = tempRoot / "ws-put-root"
+    os.makeDir.all(ws)
+    mkProject("af-put-root", ws).flatMap { _ =>
       val body = io.circe.Json.obj("content" -> "# saved to root\n".asJson)
-      run(authed(Request[IO](Method.PUT, Uri.unsafeFromString("/projects/af-put/agent.md")).withEntity(body)))
+      run(authed(Request[IO](Method.PUT, Uri.unsafeFromString("/projects/af-put-root/agent.md")).withEntity(body)))
         .flatMap(resp => IO(assertEquals(resp.status, Status.Ok)))
         .flatMap { _ =>
           IO {
             assertEquals(os.read(ws / "AGENTS.md"), "# saved to root\n")
-            assertEquals(os.read(ws / ".nebflow" / "Agent.md"), "# legacy pre-save\n") // 旧文件保留不动
+            assertEquals(os.exists(ws / ".nebflow" / "Agent.md"), false) // 不额外长出旧位置文件
           }
         }
         .flatMap { _ =>
-          run(authed(Request[IO](Method.GET, Uri.unsafeFromString("/projects/af-put/agent.md"))))
+          run(authed(Request[IO](Method.GET, Uri.unsafeFromString("/projects/af-put-root/agent.md"))))
             .flatMap(getBody)
             .map { (status, content) =>
               assertEquals(status, Status.Ok)
