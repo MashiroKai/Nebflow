@@ -303,7 +303,31 @@ object NodeEditTool extends Tool:
               case Some(existing) => editNode(rt, existing, agent, task, abandon, inJson, depsJson, outJson, ctx)
               case None =>
                 if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
-                else createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson)
+                else
+                  // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
+                  // 活动区按名未命中 → 归档区按名兜底。归档节点只支持 out 改接（悬空
+                  // 完成结果的补投递——「悬空节点后来被接线」的归档变体：editNode 的
+                  // completed+newOut 投递分支沿 deliverOutTo 补投，barrier 随之结算）；
+                  // 其余编辑域（task/agent/in/deps/配置/abandon）拒绝——归档是显示过期
+                  //（TTL 满、结果保留可投递），不是重激活通道（重激活只属于 Blocked 态）。
+                  // 修复前：归档名落 createNode → 同名重复节点（拓扑污染）或静默失败。
+                  rt.store.archiveSnapshot.flatMap { arch =>
+                    arch.nodes.values.find(_.name == nodename) match
+                      case Some(archived) =>
+                        val forbidden =
+                          agent.isDefined || task.isDefined || skill.isDefined || mcp.isDefined ||
+                            worktree.isDefined || preset.isDefined || maxRetries.isDefined ||
+                            abandon || inJson.isDefined || depsJson.isDefined
+                        if !outJson.isDefined then
+                          IO.pure(Left(ToolError(
+                            s"Node '$nodename' is archived (display TTL expired, result retained). Only 'out' rewiring is supported for archived nodes (result re-delivery).")))
+                        else if forbidden then
+                          IO.pure(Left(ToolError(
+                            s"Node '$nodename' is archived — only 'out' rewiring is supported (result re-delivery); task/agent/in/deps/config edits are not.")))
+                        else editNode(rt, archived, agent, task, abandon, inJson, depsJson, outJson, ctx)
+                      case None =>
+                        createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson)
+                  }
           }
       }
 
@@ -796,13 +820,26 @@ object NodeEditTool extends Tool:
                                       // runDetached 的阻塞教训（直接调用会把工具 fiber 卡到节点终态）。
                                       _ <- if adds.nonEmpty then NodeTools.runDetached(rt, s"deliver appended upstream results + settle barrier -> ${node.id}")(
                                         for
-                                          _ <- adds.traverse_ { upId =>
-                                            rt.store.findNode(upId).flatMap {
-                                              // R1：同 create 路径——blocked 反馈串不是可投结果，显式排除
-                                              case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
-                                                rt.engine.deliverOutTo(up, node.id, up.result.get)
-                                              case _ => IO.unit
-                                            }
+                                          // 补投递完整性（fix b「已存在边+归档上游不补投递」修复
+                                          // 20260903）：不只投递本次追加上游——全部 in 上游中
+                                          // 「终态有结果而 deliveredTo 未记」的都补投（findNode
+                                          // 活动/归档兜底）。覆盖两类缺口：①边已存在但投递曾丢失
+                                          //（陈旧 out 覆盖时代的历史悬空，实证 n-219106db：两个
+                                          // 归档 completed 上游在 in 里、deliveredTo 恒空、下游
+                                          // 永久等待）；②新建边指向归档上游（fix a 路径，setOut
+                                          // 归档感知后不再崩溃）。运行中上游天然跳过（无 result，
+                                          // 等 completeNode → deliverOut 正常投）。
+                                          // R1：blocked 反馈串不是可投结果，显式排除（同 create 路径）。
+                                          _ <- rt.store.getNode(node.id).flatMap {
+                                            case Some(nFresh) =>
+                                              nFresh.in.traverse_ { upId =>
+                                                rt.store.findNode(upId).flatMap {
+                                                  case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
+                                                    rt.engine.deliverOutTo(up, node.id, up.result.get)
+                                                  case _ => IO.unit
+                                                }
+                                              }
+                                            case None => IO.unit
                                           }
                                           _ <- rt.store.getNode(node.id).flatMap {
                                             case Some(n) if n.in.nonEmpty && n.in.forall(n.deliveredTo.contains) =>
