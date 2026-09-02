@@ -1,0 +1,155 @@
+<!doctype html>
+<!-- micorb-presets-harness.html — test page for tests/micorb-presets.spec.mjs
+     (micOrb palette preset system v8.3.0).
+
+     Two modes, selected by query param:
+
+     1. Default (single-orb): the exact #voice-btn DOM from index.html plus a
+        mountable #appearance-root, wired to the REAL production modules
+        (/js/micOrb.js, /js/orbPresets.js, /js/orbSettingsUI.js). Exposes
+        window.__micorbTest helpers for driving states and reading renderer
+        targets (palette uniforms, hue, pulse).
+
+     2. ?matrix=1&theme=dark|light: the 9-state matrix page — one real
+        OrbRenderer per state, each driven through STATES + the default
+        resolution chain (orbPresets.boardForState), labeled with the state
+        and its mapped preset. Used for the dark/light matrix screenshots.
+
+     Served by the in-spec static server at /harness (or /matrix). -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>micorb presets harness</title>
+<!-- Real app stylesheets: the appearance section is exercised as-shipped
+     (settings-row / cfg-select / toggle / orb-* classes come from these). -->
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/sidebar.css">
+<link rel="stylesheet" href="/css/sapphire.css">
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+  /* Single-orb mode: uniform dark surface (also the premultiplied-residue
+     probe background — any buffer leak tints it). */
+  body.single { background: #0B0E14; }
+  #voice-btn { width: 64px; height: 64px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+  .orb-canvas { width: 64px; height: 64px; display: block; }
+  .mic-orb-wrap { position: fixed; left: 40px; top: 40px; }
+  #appearance-root { position: fixed; left: 200px; top: 24px; width: 460px;
+    max-height: 92vh; overflow-y: auto; color: #e8ecf6; }
+  #appearance-root.hidden { display: none; }
+
+  /* Matrix mode (visual reference values from the approved preview page). */
+  body.matrix-dark  { background: #0B0E14; color: #E8ECF6; }
+  body.matrix-light { background: #F2F3F7; color: #1C2233; }
+  .mx-title { font-size: 15px; font-weight: 650; padding: 18px 26px 4px; }
+  .mx-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; padding: 12px 26px 28px; max-width: 760px; }
+  .mx-cell { display: flex; flex-direction: column; align-items: center; gap: 6px;
+    border: 1px solid rgba(128,128,128,.22); border-radius: 14px; padding: 14px 8px 10px; }
+  .mx-cell canvas { width: 110px; height: 110px; display: block; }
+  .mx-name { font-size: 12.5px; font-weight: 600; }
+  .mx-sub  { font-size: 11px; opacity: .62; font-family: ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+<script type="module">
+  const params = new URLSearchParams(location.search);
+  const MATRIX = params.get('matrix') === '1';
+  const THEME = params.get('theme') === 'light' ? 'light' : 'dark';
+
+  if (!MATRIX) {
+    /* ------------------------------------------------ single-orb mode ---- */
+    document.body.className = 'single';
+    document.body.insertAdjacentHTML('beforeend', `
+      <div class="mic-orb-wrap" id="mic-orb-wrap">
+        <button class="micbubble" id="voice-btn" type="button" title="Voice input" aria-label="Voice input">
+          <canvas class="orb-canvas" id="mic-canvas" aria-hidden="true"></canvas>
+          <div class="css-orb orb" id="mic-css-orb" role="img" aria-label="Mic state"></div>
+        </button>
+      </div>
+      <div id="input-bar"></div>
+      <div id="appearance-root" class="hidden"></div>`);
+
+    const micOrb = await import('/js/micOrb.js');
+    const orbPresets = await import('/js/orbPresets.js');
+    const ui = await import('/js/orbSettingsUI.js');
+
+    micOrb.initMicOrb();
+
+    window.__micorbTest = {
+      ready: true,
+      presets: orbPresets,
+      /** Full MicOrb instance (production path). */
+      orb: () => micOrb.getMicOrb(),
+      /** Drive a state through MicOrb.apply (production path). */
+      apply: (k) => micOrb.getMicOrb().apply(k),
+      /** Renderer targets — what the shader WILL receive (post-lerp target). */
+      snap: () => {
+        const inst = micOrb.getMicOrb();
+        const r = inst.renderer;
+        return {
+          state: inst.state,
+          pal: { a: r.target.pal.a.slice(), b: r.target.pal.b.slice(), c: r.target.pal.c.slice() },
+          hue: r.target.hue, sat: r.target.sat, lum: r.target.lum,
+          rot: r.target.rotSpeed, ts: r.target.timeScale,
+          pulse: r.transitionPulse,
+          webglOk: inst.webglOk,
+        };
+      },
+      /** Mount the real settings appearance section into #appearance-root. */
+      mountAppearance: () => {
+        const root = document.getElementById('appearance-root');
+        root.classList.remove('hidden');
+        root.innerHTML = ui.renderAppearanceSection();
+        ui.bindAppearanceEvents(root);
+        return root.innerHTML.length;
+      },
+      localStorageDump: () => {
+        const keys = {};
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k.includes('micOrb')) keys[k] = localStorage.getItem(k);
+        }
+        return keys;
+      },
+    };
+    window.__harnessReady = true;
+  } else {
+    /* ---------------------------------------------------- matrix mode ---- */
+    document.body.className = 'matrix-' + THEME;
+
+    const { OrbRenderer, STATES } = await import('/js/micOrb.js');
+    const orbPresets = await import('/js/orbPresets.js');
+    const { t } = await import('/js/i18n.js');
+    const isLight = THEME === 'light';
+
+    document.body.insertAdjacentHTML('beforeend',
+      `<div class="mx-title">micOrb 9 态矩阵 · ${isLight ? '亮色' : '暗色'} · 默认映射（基调 Neon）</div>
+       <div class="mx-grid" id="mx-grid"></div>`);
+    const grid = document.getElementById('mx-grid');
+    const order = ['idle', 'listening', 'processing', 'nebula-busy', 'bg-agents', 'frozen', 'frozen-error', 'mic-error', 'offline'];
+
+    for (const k of order) {
+      const s = STATES.find((x) => x.k === k);
+      const pid = orbPresets.presetIdFor(k, null);
+      const board = orbPresets.boardForState(k, null, isLight);
+      const cell = document.createElement('div');
+      cell.className = 'mx-cell';
+      cell.dataset.state = k;
+      cell.insertAdjacentHTML('beforeend',
+        `<canvas></canvas><span class="mx-name">${t(s.i18n)}</span><span class="mx-sub">${k} → ${pid}</span>`);
+      grid.appendChild(cell);
+      const r = new OrbRenderer(cell.querySelector('canvas'), { size: 110 });
+      r.setTheme(isLight);
+      r.setPalette(board);
+      r.setStateCfg(s); // hue zeroed in-table; sat/lum/rot/ts/scale from STATES
+      cell._renderer = r;
+    }
+
+    // Let the palette lerp (0.04/frame) + tone lerp settle fully (~2.8s),
+    // then flag ready for the screenshot.
+    await new Promise((res) => setTimeout(res, 2800));
+    window.__matrixReady = true;
+  }
+</script>
+</body>
+</html>

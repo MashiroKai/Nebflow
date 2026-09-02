@@ -1,3 +1,26 @@
+// v8.3.0 (2026-09-02): PALETTE PRESET SYSTEM — 配色 = 状态语言 (design
+// 20260902_micorb-presets-design.md, author rulings 2026-09-02 20:59).
+//  - orbPresets.js registers 8 preset boards (dark/light double boards) + the
+//    desaturated Ash offline board, and resolves state → (user map override ?
+//    default map ? 基调) → preset board. Default 基调 = Neon (ruling ③: the
+//    old blue/violet PAL_DEFAULT is no longer the shipped look; it stays as
+//    the pre-resolution fallback + shader init only).
+//  - STATES: hue column zeroed (each state's color language IS its mapped
+//    preset board — hue-rotating it again would double-shift); sat/lum remain
+//    per-state tone modifiers on top of the board (frozen mutes, offline
+//    desaturates); rot/ts/scale/vol motion semantics untouched. Error states
+//    dropped their hardcoded pal boards and map through the same chain
+//    (defaults: both Magma; frozen-error is tone-muted 0.80/0.90 vs mic-error
+//    1.02/1.00 so the two stay tellable apart, per the 可辨识 acceptance).
+//  - OrbRenderer.setPalette(p): installs a resolved board as the fallback for
+//    states without an explicit board and lerps the live uniform (0.04/frame,
+//    same path as the v8.2.2 error-board switch = no flicker). Theme switches
+//    and preset changes land here — never re-run setStateCfg (v8.2.1 F5).
+//  - MicOrb: loadSaved() at construction; applyTheme() re-resolves the
+//    CURRENT state's board for the active theme; the settings panel commits
+//    via orbPresets.saveSaved → CHANGE_EVENT → re-resolve (uniform-only).
+// Shader, context attributes, premultiplied output, phaseTime: untouched.
+//
 // v8.2.12 (2026-09-02): DETERMINISTIC PREMULTIPLIED FRAME — fixes the dark
 // smudge residue around the orb in Chrome (user report 2026-09-02 16:25, dark
 // mode) and the Safari/Chrome visual divergence (Safari flat / Chrome dirty).
@@ -82,35 +105,37 @@
 
 import state from './state.js';
 import { t } from './i18n.js';
+import * as orbPresets from './orbPresets.js';
 
 /* ========================================================================
-   9-state definition (spec §10.1 + §10.5). hue/sat/lum feed the shader's
-   adjustHue + sat + lum mechanism; rot = rotSpeed (rad/s); ts = timeScale
-   (internal fluid flow rate); scale = stateScale (canvas transform);
-   vol:true = hover driven by mic RMS (listening); pal = palette uniform
-   override for the two error states (hue rotation cannot reach red/amber).
+   9-state definition (spec §10.1 + §10.5). v8.3.0: color language lives in
+   the per-state preset map (orbPresets.boardForState) — the hue column is
+   zeroed so a mapped preset board is never double-shifted by adjustHue.
+   sat/lum stay relative tone modifiers applied to the mapped board (frozen
+   mutes, offline desaturates); rot/ts/scale feed motion; vol:true = hover
+   driven by mic RMS (listening). Error states no longer hardcode pal boards
+   (v8.2.2) — they resolve through the same chain (both default to Magma;
+   frozen-error is tone-muted so the two errors remain distinguishable).
    ======================================================================== */
 const STATES = [
-  { k: 'idle',         cls: 's-idle',      i18n: 'chat.micOrb.idle',       hue: 0,   sat: 1.00, lum: 1.00, rot: 0.05, ts: 0.5, scale: 1.00 },
-  { k: 'listening',    cls: 's-listening', i18n: 'chat.micOrb.listening',  hue: -18, sat: 1.08, lum: 1.05, rot: 0.3,  ts: 1.6, scale: 1.08, vol: true },
-  { k: 'processing',   cls: 's-processing',i18n: 'chat.micOrb.processing', hue: 22,  sat: 1.06, lum: 0.94, rot: 1.0,  ts: 1.3, scale: 1.05 },
-  { k: 'nebula-busy',  cls: 's-nebula',    i18n: 'chat.micOrb.nebulaBusy', hue: 34,  sat: 1.16, lum: 1.06, rot: 0.6,  ts: 1.2, scale: 1.03 },
-  { k: 'bg-agents',    cls: 's-bg',        i18n: 'chat.micOrb.bgAgents',   hue: 8,   sat: 0.80, lum: 0.92, rot: 0.15, ts: 0.8, scale: 1.00 },
-  { k: 'frozen',       cls: 's-frozen',    i18n: 'chat.micOrb.frozen',     hue: 0,   sat: 0.40, lum: 0.74, rot: 0,    ts: 0,   scale: 1.00 },
-  { k: 'frozen-error', cls: 's-frozenerr', i18n: 'chat.micOrb.frozenError', hue: 0,  sat: 0.92, lum: 0.95, rot: 0,    ts: 0,   scale: 1.00, pal: { a: [0.878, 0.663, 0.482], b: [0.812, 0.580, 0.396], c: [0.427, 0.286, 0.184] } },
-  { k: 'mic-error',    cls: 's-micerr',    i18n: 'chat.micOrb.micError',   hue: 0,   sat: 1.02, lum: 1.00, rot: 0,    ts: 0,   scale: 1.00, pal: { a: [0.929, 0.451, 0.427], b: [0.910, 0.353, 0.388], c: [0.541, 0.180, 0.200] } },
-  { k: 'offline',      cls: 's-offline',   i18n: 'chat.micOrb.offline',    hue: 0,   sat: 0.00, lum: 0.85, rot: 0,    ts: 0,   scale: 1.00 },
+  { k: 'idle',         cls: 's-idle',      i18n: 'chat.micOrb.idle',       hue: 0, sat: 1.00, lum: 1.00, rot: 0.05, ts: 0.5, scale: 1.00 },
+  { k: 'listening',    cls: 's-listening', i18n: 'chat.micOrb.listening',  hue: 0, sat: 1.08, lum: 1.05, rot: 0.3,  ts: 1.6, scale: 1.08, vol: true },
+  { k: 'processing',   cls: 's-processing',i18n: 'chat.micOrb.processing', hue: 0, sat: 1.06, lum: 0.94, rot: 1.0,  ts: 1.3, scale: 1.05 },
+  { k: 'nebula-busy',  cls: 's-nebula',    i18n: 'chat.micOrb.nebulaBusy', hue: 0, sat: 1.16, lum: 1.06, rot: 0.6,  ts: 1.2, scale: 1.03 },
+  { k: 'bg-agents',    cls: 's-bg',        i18n: 'chat.micOrb.bgAgents',   hue: 0, sat: 0.80, lum: 0.92, rot: 0.15, ts: 0.8, scale: 1.00 },
+  { k: 'frozen',       cls: 's-frozen',    i18n: 'chat.micOrb.frozen',     hue: 0, sat: 0.40, lum: 0.74, rot: 0,    ts: 0,   scale: 1.00 },
+  { k: 'frozen-error', cls: 's-frozenerr', i18n: 'chat.micOrb.frozenError', hue: 0, sat: 0.80, lum: 0.90, rot: 0,   ts: 0,   scale: 1.00 },
+  { k: 'mic-error',    cls: 's-micerr',    i18n: 'chat.micOrb.micError',   hue: 0, sat: 1.02, lum: 1.00, rot: 0,    ts: 0,   scale: 1.00 },
+  { k: 'offline',      cls: 's-offline',   i18n: 'chat.micOrb.offline',    hue: 0, sat: 0.00, lum: 0.85, rot: 0,    ts: 0,   scale: 1.00 },
 ];
 
 const STATE_BY_KEY = {};
 for (const s of STATES) STATE_BY_KEY[s.k] = s;
 
-/* v8.2.2 palette table (spec §10.7 E1): the default blue/violet palette
-   matches the former C_BLUE/C_VIOLET/C_DEEP constants component-wise (the 7
-   normal states keep the same base look; the shader's clarity params were
-   retuned slightly in v8.2.2 — alpha pow/shade/brightness — so the output is
-   close to, not literally pixel-identical with, pre-v8.2.2). Error states
-   pass red/amber boards. */
+/* v8.2.2 palette table; v8.3.0 demoted to a FALLBACK: the shipped default
+   look is the Neon 基调 (orbPresets.DEFAULT_BASE, ruling ③). PAL_DEFAULT only
+   seeds the renderer before the first resolution and guards resolution
+   failures — the visible boards all come from orbPresets. */
 const PAL_DEFAULT = { a: [0.471, 0.627, 0.863], b: [0.549, 0.490, 0.839], c: [0.200, 0.251, 0.502] };
 
 /** @param {{a:number[], b:number[], c:number[]}} p */
@@ -377,7 +402,10 @@ class OrbRenderer {
     this.startTime = performance.now();
     this.lastTime = 0;
     this.params = { hue: 0, hover: 0.08, rot: 0, sat: 1, lum: 1, timeScale: 1 };
-    this.target = { hue: 0, hover: 0.08, rotSpeed: 0.05, sat: 1, lum: 1, timeScale: 0.5, scale: 1.0, pal: PAL_DEFAULT };
+    /* v8.3.0: the board can be injected at construction (harnesses, preview
+       orbs); production resolves it via MicOrb.applyTheme → setPalette. */
+    const initPal = this.opts.palette || PAL_DEFAULT;
+    this.target = { hue: 0, hover: 0.08, rotSpeed: 0.05, sat: 1, lum: 1, timeScale: 0.5, scale: 1.0, pal: initPal };
     /* v8.2 jarvis port: volume-driven hover / state scale / switch pulse */
     this.volume = 0;           // mic RMS normalized to [0,1]
     this.volDriven = false;    // whether the current state's hover follows volume
@@ -390,7 +418,10 @@ class OrbRenderer {
     this.pulseAmp = 0;         // lum pulse amplitude (lerped in/out)
     this.pulsePeriod = 1.6;
     this.hoverIntensity = 1.0; // lerped 1.0<->1.4
-    this.pal = clonePal(PAL_DEFAULT); // current palette (0.04/frame lerp)
+    this.pal = clonePal(initPal); // current palette (0.04/frame lerp)
+    /* v8.3.0: fallback board for states that resolve through the preset map
+       (every state, since the error boards moved into the map too). */
+    this.activePalette = clonePal(initPal);
     this.state = 'idle';
     this.initShaders();
     this.initBuffers();
@@ -474,7 +505,20 @@ class OrbRenderer {
   }
 
   /**
-   * @param {{k:string,hue?:number,rot?:number,sat?:number,lum?:number,ts?:number,scale?:number,vol?:boolean,pal?:{a:number[],b:number[],c:number[]}}} s
+   * v8.3.0: install a resolved preset board (dark or light per the active
+   * theme) as the fallback for map-resolved states, and lerp the live
+   * uniform toward it. The ONLY palette entry point for preset/theme
+   * switches — deliberately does NOT touch setStateCfg/pulse (v8.2.1 F5:
+   * theme switches must never re-trigger the transition pulse).
+   * @param {{a:number[],b:number[],c:number[]}} p
+   */
+  setPalette(p) {
+    this.activePalette = clonePal(p);
+    this.target.pal = this.activePalette;
+  }
+
+  /**
+   * @param {{k:string,hue?:number,rot?:number,sat?:number,lum?:number,ts?:number,scale?:number,vol?:boolean}} s
    */
   setStateCfg(s) {
     this.state = s.k;
@@ -484,8 +528,9 @@ class OrbRenderer {
     this.target.lum = (s.lum === undefined ? 1 : s.lum);
     this.target.timeScale = (s.ts === undefined ? 1 : s.ts);
     this.target.scale = (s.scale === undefined ? 1 : s.scale);
-    /* v8.2.2: error-state palettes (red/amber) lerp in over ~0.7s — no hard cut */
-    this.target.pal = s.pal || PAL_DEFAULT;
+    /* v8.3.0: every state's board comes from the preset map (installed via
+       setPalette); the board lerps in over ~0.7s — no hard cut. */
+    this.target.pal = this.activePalette;
     /* v8.2: hover='volume' states (listening) keep hover under setVolume
        control; other states fall back to the 0.08 base perturbation */
     this.volDriven = !!s.vol;
@@ -658,6 +703,9 @@ class MicOrb {
     this.webglOk = false;
     this.micErrorTimer = null;
     this.reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    /* v8.3.0: persisted appearance selection (基调/状态映射/自定义) — resolved
+       into renderer boards by applyTheme; reloaded on CHANGE_EVENT. */
+    this.orbSel = orbPresets.loadSaved();
 
     if (this.canvas) {
       this.renderer = new OrbRenderer(this.canvas, { size: 64, reducedMotion: this.reduced });
@@ -688,7 +736,13 @@ class MicOrb {
 
   applyTheme() {
     const isLight = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
-    if (this.webglOk && this.renderer) this.renderer.setTheme(isLight);
+    if (this.webglOk && this.renderer) {
+      this.renderer.setTheme(isLight);
+      /* v8.3.0: swap the CURRENT state's mapped board to its dark/light
+         variant. Uniform-only (setPalette + setTheme) — never re-runs
+         setStateCfg, so a theme switch never re-triggers the pulse (F5). */
+      this.renderer.setPalette(orbPresets.boardForState(this.state, this.orbSel, isLight));
+    }
   }
 
   /**
@@ -820,6 +874,13 @@ class MicOrb {
     }
     // Locale: re-render the aria-label text when the language switches.
     window.addEventListener('locale-changed', () => this.updateA11y());
+    // v8.3.0: appearance settings changed (基调/状态映射/自定义 committed via
+    // orbPresets.saveSaved) → reload the selection and re-resolve the current
+    // board. Uniform-only; no setStateCfg, no pulse.
+    window.addEventListener(orbPresets.CHANGE_EVENT, () => {
+      this.orbSel = orbPresets.loadSaved();
+      this.applyTheme();
+    });
     // Busy / bg-agents / offline have no push event on state.js — poll 1s.
     setInterval(() => this.pollDerived(), 1000);
   }
@@ -864,6 +925,11 @@ export function notifyVoiceState(voiceState) {
   const o = getMicOrb();
   if (o) o.notifyVoiceState(voiceState);
 }
+
+/* v8.3.0: exported for harnesses and the settings preview orb so every orb
+   on screen shares the exact production render pipeline (no shader copies).
+   STATES is the single state table — the 9-state matrix harness reads it. */
+export { OrbRenderer, STATES };
 
 /** Reset the singleton (test harness only). */
 export function __resetMicOrbForTest() {
