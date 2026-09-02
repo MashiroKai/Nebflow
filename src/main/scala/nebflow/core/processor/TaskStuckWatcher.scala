@@ -206,6 +206,18 @@ object TaskStuckWatcher:
                     )).handleErrorWith(e =>
                       logger.warn(s"TaskStuckWatcher: bridge Cancelled for ${rec.sessionId} failed: ${e.getMessage}")
                     ) *>
+                    // 面板实时终态帧（Sub-Agents 面板取消实时刷新修复）：giveUp
+                    // 取消此前零 WS 出口 → 面板行幽灵滞留到刷新。仅 node-* 在此
+                    // 补发——dispatcher-* 由其观察桥拆除点（ProjectActor）统一
+                    // 补发，避免双发。
+                    (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
+                     then
+                       nebflow.core.node.NodeRunner
+                         .emitSubagentPanelDone(wsHub.broadcast, rec.sessionId, rec.rootSessionId)
+                         .handleErrorWith(e =>
+                           logger.warn(s"TaskStuckWatcher: panel done frame for ${rec.sessionId} failed: ${e.getMessage}")
+                         )
+                     else IO.unit) *>
                     stopCounts.update(_ - rec.sessionId)
                 case None => IO.unit
             else IO.unit

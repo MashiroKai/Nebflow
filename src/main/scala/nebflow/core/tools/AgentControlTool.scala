@@ -238,7 +238,9 @@ When to use:
             else
               val confirm = input("confirm").flatMap(_.asBoolean).getOrElse(false)
               withGuardedRecord(resources, ctx, sessionId, "cancel", confirm, reason)((rec, _) =>
-                doCancel(resources, rec, reason, by = callerLabel(ctx))
+                // notifyWs = 调用者 WS 出口：node-* 会话取消补发面板终态帧
+                // （Sub-Agents 面板取消实时刷新修复）。
+                doCancel(resources, rec, reason, by = callerLabel(ctx), notifyWs = ctx.wsSend)
               )
           case "restart" =>
             if sessionId.isEmpty then IO.pure(Left(ToolError("restart requires sessionId (run list first to get one)")))
@@ -561,8 +563,20 @@ When to use:
   /** Cancel 终止任务终态（区别于 Interrupt 停当前 turn）。public：WS cancelAgent
     * handler（子 agent 管理面板）复用同链路——supervisorRef 优先（Cancelled →
     * notifyParentAndStop，barrier 正确释放），无 supervisor 走降级兜底
-    * （Stop + 自补通知 + taskStore cancelled + registry 移除）。 */
-  def doCancel(resources: SharedResources, rec: AgentRecord, reason: String, by: String = "the user panel"): IO[Either[ToolError, String]] =
+    * （Stop + 自补通知 + taskStore cancelled + registry 移除）。
+    *
+    * notifyWs：面板实时终态帧出口（Sub-Agents 面板取消实时刷新修复）——node-*
+    * Project 会话经此补发 agentDone 同构帧（dispatcher-* 不在此发：其观察桥
+    * 拆除点 ProjectActor 统一补发，覆盖含 Failed/watcher giveUp 的全部路径，
+    * 避免双发）。工具路径传 ctx.wsSend、面板路径传连接 wsSend；None = 静默
+    * （既有测试/无 WS 语境零改动）。 */
+  def doCancel(
+      resources: SharedResources,
+      rec: AgentRecord,
+      reason: String,
+      by: String = "the user panel",
+      notifyWs: Option[io.circe.Json => IO[Unit]] = None
+  ): IO[Either[ToolError, String]] =
     val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
     rec.supervisorRef match
       case Some(sup) =>
@@ -572,20 +586,30 @@ When to use:
         // Cancelled → 清 registry + 停 agent（node 另经 engine cancelNode 落
         // status=cancelled，结果不投递）——无父通知/任务文件语义。
         (sup ! AgentEvent.Cancelled(rec.sessionId, reason)).flatMap { _ =>
-          IO.pure(
-            Right(
-              if rec.kind == AgentKind.Flow then
-                s"Cancel sent for Project session '${rec.sessionId}' — it will be unregistered and the agent stopped" +
-                  (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix) then
-                     "; the node settles to status=cancelled and its result is NOT delivered"
-                   else "") + "."
-              else
-                s"Cancel sent to supervisor for '${rec.sessionId}'. The parent session will receive a cancelled " +
-                  s"notification and the task file will be marked cancelled. Terminal state settles " +
-                  s"asynchronously (if the agent completes at the same moment, whichever terminal event is " +
-                  s"processed first wins)."
+          val panelFrame =
+            if rec.kind == AgentKind.Flow && rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
+            then
+              notifyWs.fold(IO.unit)(ws =>
+                nebflow.core.node.NodeRunner
+                  .emitSubagentPanelDone(ws, rec.sessionId, rec.rootSessionId)
+                  .handleErrorWith(_ => IO.unit)
+              )
+            else IO.unit
+          panelFrame *>
+            IO.pure(
+              Right(
+                if rec.kind == AgentKind.Flow then
+                  s"Cancel sent for Project session '${rec.sessionId}' — it will be unregistered and the agent stopped" +
+                    (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix) then
+                       "; the node settles to status=cancelled and its result is NOT delivered"
+                     else "") + "."
+                else
+                  s"Cancel sent to supervisor for '${rec.sessionId}'. The parent session will receive a cancelled " +
+                    s"notification and the task file will be marked cancelled. Terminal state settles " +
+                    s"asynchronously (if the agent completes at the same moment, whichever terminal event is " +
+                    s"processed first wins)."
+              )
             )
-          )
         }
       case None =>
         // 降级路径（spec §3.2 兜底）：Ephemeral（bridge death-watch 兜底回收）或

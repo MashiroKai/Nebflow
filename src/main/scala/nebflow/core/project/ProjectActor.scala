@@ -270,11 +270,14 @@ object ProjectActor:
        |${reentryActions(project)}""".stripMargin
 
   /** 分发器观察桥（单例化改造后）：Completed 按 pendingInjected 延迟拆除 /
-    * Failed+Cancelled 立即拆除（清 activeRef 登记 + registry + 停 agent）。 */
+    * Failed+Cancelled 立即拆除（清 activeRef 登记 + registry + 停 agent）。
+    * rootSessionId：面板终态帧的归桶键（Sub-Agents 面板实时刷新修复）。
+    */
   private def dispatcherBridge(
     cfg: ProjectConfig,
     active: Ref[IO, Option[ActiveDispatcher]],
     ref: ActorRef[AgentCommand],
+    rootSessionId: String,
     sessionId: String
   ): Behavior[AgentEvent] =
     def teardown: IO[Behavior[AgentEvent]] =
@@ -294,10 +297,18 @@ object ProjectActor:
             case _ => (None, true)
           }.flatMap {
             case true  => teardown
-            case false => IO.pure(dispatcherBridge(cfg, active, ref, sessionId))
+            case false => IO.pure(dispatcherBridge(cfg, active, ref, rootSessionId, sessionId))
           }
         case AgentEvent.Failed(_, _) | AgentEvent.Cancelled(_, _) =>
-          active.update(_.filterNot(_.sessionId == sessionId)) *> teardown
+          // 面板实时终态帧（Sub-Agents 面板取消/终止实时刷新修复）：取消与
+          // 致命失败此前零 WS 出口（会话级 done 只走正常完成路径）→ 面板行由
+          // agentStart 创建后幽灵滞留到浏览器刷新。这里是分发器全部异常终态
+          // 路径（AgentControl cancel / 面板 cancelAgent / watcher giveUp /
+          // 会话崩溃）的唯一汇合点，补发一次 agentDone 同构帧即全覆盖。
+          NodeRunner
+            .emitSubagentPanelDone(cfg.engine.wsSendFn, sessionId, rootSessionId)
+            .handleErrorWith(_ => IO.unit) *>
+            active.update(_.filterNot(_.sessionId == sessionId)) *> teardown
     }
 
   private def dispatchTask(
@@ -419,7 +430,7 @@ object ProjectActor:
           // 首个 Completed（=最后一 turn 终态）才清 registry+停 agent。Failed/
           // Cancelled 不延迟：致命失败是一次性终态（排队任务随会话丢弃，与
           // failed 语义一致），取消本就是立即终止语义。
-          bridgeRef <- cfg.system.spawn(dispatcherBridge(cfg, active, ref, sessionId), s"dispatchbridge-${sessionId.take(8)}")
+          bridgeRef <- cfg.system.spawn(dispatcherBridge(cfg, active, ref, rootSessionId, sessionId), s"dispatchbridge-${sessionId.take(8)}")
           // 注册元数据对齐 DelegateTool 注册约定（AgentControl 注释原文）：
           // startedAt/lastActivityMs 驱动 list 的 up/idle 列与卡死判定
           // （lastActivityMs=now 从出生即可见——修复「turn 在首次 LLM touch 前

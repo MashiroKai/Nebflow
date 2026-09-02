@@ -122,6 +122,25 @@ object NodeRunner:
           base(Json.fromJsonObject(finalObj))
         case None => base(json)
 
+  /** Sub-Agents 面板实时终态帧（取消/终止实时刷新修复，2026-09-03）。
+    *
+    * 缺口：Project flow 会话（node-/dispatcher-）被取消注销（AgentControl
+    * cancel / 面板 cancelAgent / TaskStuckWatcher giveUp / 观察桥 Failed+
+    * Cancelled）时，后端此前不发任何面板可理解的事件——面板行由 agentStart
+    * 创建、只被 agentDone 或会话级 done 清理，取消后 Processing 幽灵行滞留到
+    * 浏览器刷新（activeAgents 快照重拉才消失）。
+    *
+    * 补发 agentDone 同构帧（agentId=会话 id；rootSessionId 归桶键、sessionId
+    * 路由键、nodeSessionId 弹窗键由 routeSubagentWsSend 注入，与活体事件契约
+    * 全同构）：前端零改动复用既有终态管线——agentDone 处理器 done 标记 + 2s
+    * 移除 + cleanupBgAgentView，会话级 done 分支（node-/dispatcher- 前缀）立即
+    * 删行。仅 Project flow 会话终态补发使用；Delegate/SubTask 自有事件链，勿用。
+    */
+  def emitSubagentPanelDone(wsSend: Json => IO[Unit], sessionId: String, rootSessionId: String): IO[Unit] =
+    routeSubagentWsSend(wsSend, rootSessionId, sessionId)(
+      Json.obj("type" -> "agentDone".asJson, "agentId" -> sessionId.asJson)
+    )
+
   /** 共享 registry 注册（AgentRecord 统一构造；默认值 = AgentRecord 默认）。 */
   def registerAgent(
     resources: SharedResources,

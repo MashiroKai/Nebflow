@@ -960,11 +960,28 @@ onMessage('done', (msg, view) => {
   // Processing — cleanup still terminal; dispatcher- same contract.)
   const doneSid = msg.sessionId;
   if (doneSid && (String(doneSid).startsWith('node-') || String(doneSid).startsWith('dispatcher-'))) {
+    const touchedRoots = [];
     for (const [root, agents] of Object.entries(state.sessionBgAgents || {})) {
+      let touched = false;
       for (const [key, entry] of Object.entries(agents)) {
-        if (key === doneSid || (entry && entry.sessionId === doneSid)) delete agents[key];
+        if (key === doneSid || (entry && entry.sessionId === doneSid)) { delete agents[key]; touched = true; }
       }
       if (Object.keys(agents).length === 0) delete state.sessionBgAgents[root];
+      if (touched) touchedRoots.push(root);
+    }
+    // 取消/终态实时收尾（2026-09-03）：行已删，立即刷新归属桶徽标 + 打开中的
+    // 面板——此前只删状态不渲染，面板行滞留到下次交互/刷新才消失。此刻活跃
+    // 视图是拦截器切入的弹窗视图（ws.js bg/flow interceptor），须临时切到归属
+    // 视图渲染再还原（与 agentDone 2s 收尾同款模式）；后端取消链路补发的
+    // agentDone 帧先经 ws.js 转换为会话级 done 到达此处。
+    for (const root of touchedRoots) {
+      const targetView = findViewBySessionId(root);
+      if (targetView) {
+        const savedView = activeView;
+        setActiveView(targetView);
+        updateBgAgentIndicator();
+        setActiveView(savedView);
+      }
     }
   }
   clearBusyFor(msg);

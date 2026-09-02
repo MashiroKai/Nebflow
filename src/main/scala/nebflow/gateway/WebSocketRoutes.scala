@@ -1087,8 +1087,11 @@ class WebSocketRoutes(
                       )
                     case Some(rec) =>
                       val reason = if cReason.nonEmpty then cReason else "cancelled from panel"
+                      // notifyWs = 本连接 wsSend：node-* 会话取消补发 agentDone
+                      // 面板帧（Sub-Agents 面板取消实时刷新修复；dispatcher-*
+                      // 由观察桥拆除点补发，不在此重发）。
                       nebflow.core.tools.AgentControlTool
-                        .doCancel(sharedResources, rec, reason)
+                        .doCancel(sharedResources, rec, reason, notifyWs = Some(wsSend))
                         .flatMap {
                           case Right(msg) => cancelReply(ok = true, "message" -> msg.asJson)
                           case Left(err)  => cancelReply(ok = false, "error" -> err.message.asJson)
