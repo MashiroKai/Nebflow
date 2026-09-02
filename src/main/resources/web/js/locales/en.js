@@ -54,6 +54,14 @@ export default {
   'flowmap.noResult': 'No result',
   'flowmap.runningDetail': 'Node is running; when it completes its result is saved and delivered along the out edge.',
   'flowmap.noResultDetail': 'This node has no result yet (running / waiting / dangling).',
+  // blocked（20260902 反馈路径设计 §4.2/§4.3）：状态计数 + 详情窗结构化反馈
+  'flowmap.blocked': 'blocked',
+  'flowmap.blockedTitle': 'Blocked — waiting for dispatcher adjustment',
+  'flowmap.blockedRounds': 'Blocked ×{n}',
+  'flowmap.blockedCategory': 'Category',
+  'flowmap.blockedDetail': 'Detail',
+  'flowmap.blockedSuggestion': 'Suggestion',
+  'flowmap.blockedRawTitle': 'Node output (raw)',
   'agentFile.hint': 'This file is the project workspace agent instructions (AGENTS.md at the workspace root); edit and save it.',
 
   // === Friends & messages (A2A) ===

@@ -31,7 +31,9 @@ export const NODE_WS = {
   removed: 'nodeRemoved',
 };
 
-export const NODE_STATUS = ['pending', 'running', 'completed', 'failed', 'cancelled', 'wiring'];
+// blocked（20260902 反馈路径设计 §4.2）：Node→分发器反馈重入的终态——turn 正常结束
+// 但节点声明无法继续，需分发器调整任务/拓扑；待办语义（ttlExpireAt=None 常驻活动图）。
+export const NODE_STATUS = ['pending', 'running', 'completed', 'failed', 'blocked', 'cancelled', 'wiring'];
 
 // 节点状态 → 面板状态色 class（复用 flow-run 的 solar 状态色，见 flowCss.js）
 export const NODE_STATUS_CLS = {
@@ -39,6 +41,7 @@ export const NODE_STATUS_CLS = {
   running: 'running',
   completed: 'completed',
   failed: 'failed',
+  blocked: 'blocked',
   cancelled: 'cancelled',
   wiring: 'pending',
 };

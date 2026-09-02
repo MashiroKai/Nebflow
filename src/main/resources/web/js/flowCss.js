@@ -493,11 +493,15 @@ export const FLOW_CSS = `
 .solar-node.pending .solar-node-label { opacity: 0.4; }
 .solar-node.completed .solar-node-label { opacity: 0.6; }
 .solar-node.failed .solar-ring { border-color: var(--color-error, #e5484d); opacity: 0.5; }
+/* blocked（20260902 反馈路径设计 §4.2）：需动作的警示态——琥珀环，非 failed 的终结红。
+   --amber 三元组由 sapphire.css 按亮暗主题定义（亮 255 152 0 / 暗 255 168 60），双主题自适应。 */
+.solar-node.blocked .solar-ring { border-color: rgb(var(--amber, 255 152 0) / 0.75); opacity: 0.6; }
 
-/* Status icon (✓ / ✗) — inline in the sub line */
+/* Status icon (✓ / ✗ / ⚑) — inline in the sub line */
 .solar-node-status { font: 700 10px -apple-system, sans-serif; margin-left: 4px; }
 .solar-node-status.ok { color: #4caf50; }
 .solar-node-status.err { color: #f44336; }
+.solar-node-status.warn { color: rgb(var(--amber, 255 152 0)); }
 
 /* Node label — primary line shows the nodeId (unique per node); the agent
  * name, when different, moves to the sub line. max-width:100% keeps text

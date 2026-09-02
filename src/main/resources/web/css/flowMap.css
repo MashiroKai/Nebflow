@@ -174,6 +174,82 @@
   background: rgb(var(--sapphire) / 0.08);
 }
 
+/* blocked 节点（20260902 反馈路径设计 §4.2）：需要分发器/人动作的警示态——
+   琥珀描边 + 轻琥珀底光 + result 摘要琥珀化，区别于 failed 的终结红。
+   --amber 在 sapphire.css 按亮暗主题定义（亮 255 152 0 / 暗 255 168 60），双主题免适配。 */
+.solar-node.fm-node.blocked {
+  border-color: rgb(var(--amber) / 0.55);
+  box-shadow: 0 0 0 1px rgb(var(--amber) / 0.22), 0 2px 14px rgb(var(--amber) / 0.10);
+}
+.solar-node.fm-node.blocked .fm-result-summary {
+  background: rgb(var(--amber) / 0.10);
+  color: rgb(var(--amber) / 0.95);
+}
+
+/* 详情窗 blocked 结构化反馈面板（设计 §4.3，flowViewers.openNodeResultViewer）：
+   category 标签 + detail + suggestion + 「已被阻断 N 轮」，result 原文折叠可展开。 */
+.flow-blocked-panel {
+  border: 1px solid rgb(var(--amber) / 0.4);
+  background: rgb(var(--amber) / 0.07);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 10px 0;
+}
+.flow-blocked-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flow-blocked-badge {
+  font: 700 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: rgb(var(--amber));
+  letter-spacing: 0.02em;
+}
+.flow-blocked-category {
+  font: 600 10px/1.4 ui-monospace, SFMono-Regular, monospace;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--amber) / 0.5);
+  background: rgb(var(--amber) / 0.14);
+  color: rgb(var(--amber));
+}
+.flow-blocked-count {
+  font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  margin-left: auto;
+}
+.flow-blocked-row { margin-top: 8px; }
+.flow-blocked-label {
+  display: inline-block;
+  font: 600 9px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgb(var(--amber) / 0.14);
+  color: rgb(var(--amber));
+}
+.flow-blocked-text {
+  font: 400 12px/1.55 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 3px;
+}
+.flow-blocked-raw { margin-top: 10px; }
+.flow-blocked-raw > summary {
+  cursor: pointer;
+  font: 500 11px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  user-select: none;
+}
+.flow-blocked-raw > summary:hover { color: var(--color-text); }
+.flow-blocked-raw[open] > summary { margin-bottom: 6px; }
+.flow-blocked-raw .flow-agent-block-readonly {
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
 /* 边的投递语义（§2.7）。flow-run 的 .flow-edge.active 是"正在流动"的行军蚁；
    在项目图里上游 completed 意味着结果**已经**投递过去了——继续跑动画会读成
    "还在流"。三档区分：已投递=实线加重、等待上游出结果=行军蚁、其余=静止细线。

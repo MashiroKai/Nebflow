@@ -125,6 +125,7 @@ function nodeHtml(n, pos, originX) {
   const top = pos.y - NODE_H / 2 + PAD;
   const statusIcon = st === 'completed' ? '<span class="solar-node-status ok">✓</span>'
     : st === 'failed' ? '<span class="solar-node-status err">✗</span>'
+    : st === 'blocked' ? '<span class="solar-node-status warn">⚑</span>'
     : st === 'cancelled' ? '<span class="solar-node-status cancelled">—</span>' : '';
   const worktreeBadge = n.hasWorktree || n.worktree
     ? `<span class="fm-worktree-badge" title="${esc(n.worktree || '')}">wt</span>` : '';
@@ -214,10 +215,12 @@ function summaryParts(fm) {
   const running = nodes.filter((n) => n.status === 'running').length;
   const failed = nodes.filter((n) => n.status === 'failed').length;
   const pending = nodes.filter((n) => n.status === 'pending').length;
+  const blocked = nodes.filter((n) => n.status === 'blocked').length;
   const completed = nodes.filter((n) => n.status === 'completed').length;
   const parts = [];
   if (running) parts.push(`${running} ${t('flowmap.run')}`);
   if (pending) parts.push(`${pending} ${t('flowmap.wait')}`);
+  if (blocked) parts.push(`${blocked} ${t('flowmap.blocked')}`);
   if (failed) parts.push(`${failed} ${t('flowmap.fail')}`);
   if (completed) parts.push(`${completed} ${t('flowmap.done')}`);
   return parts;
@@ -630,8 +633,13 @@ function bindFlowMapClicks(container, projectName) {
 function openNodeDetail(projectName, nodeId) {
   const node = fmByProject.get(projectName)?.nodes?.find((n) => n.id === nodeId);
   if (!node) return;
+  // blocked 结构化反馈透传（20260902 设计 §4.3）：blockedFeedback{category,detail,suggestion}
+  // + blockCount 由上游 NodePayload.buildNodeJson 单序列化点就位，仅 blocked 态有反馈体。
+  const blocked = node.status === 'blocked'
+    ? { feedback: node.blockedFeedback || null, count: Number.isFinite(node.blockCount) ? node.blockCount : 0 }
+    : null;
   import('./flowViewers.js').then(({ openNodeResultViewer }) => {
-    openNodeResultViewer(esc(node.name), node.agent || '', node.status || '', node.worktree || '', node.result, node.id);
+    openNodeResultViewer(esc(node.name), node.agent || '', node.status || '', node.worktree || '', node.result, node.id, blocked);
   });
 }
 
