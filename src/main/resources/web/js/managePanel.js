@@ -29,7 +29,7 @@ import { isBgAgentId } from './utils.js';
 export const OPERABLE_KINDS = new Set(['Delegate', 'SubTask', 'Ephemeral']);
 
 /** Read-only kinds get greyed buttons with a reason tooltip.
- *  Project 会话卡死修复：新 Project 系统的 Flow 会话（node-*/dispatcher-*，
+ *  Project 会话卡死修复：新 Project 系统的 Flow 会话（node- 前缀与 dispatcher- 前缀，
  *  会话 id 可区分——dag- 旧 flow 会话不在此列）有观察桥取消通道（后端
  *  AgentControl cancel / WS cancelAgent 已放行），stop 可操作；restart 对
  *  单次会话无意义（cancel + 重新触发），retry 恒隐。 */
