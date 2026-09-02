@@ -103,6 +103,7 @@ class NodeGhostRowSpec extends CatsEffectSuite:
         wsSendFn = j => wsEvents.update(j :: _),
         workspace = ws.toString,
         rootSessionId = "nebula-root",
+        projectName = "ghost-test",
         emitEvent = (t, id, _) => engineEvents.update((t, id) :: _)
       )
       now = System.currentTimeMillis()

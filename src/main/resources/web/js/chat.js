@@ -375,6 +375,16 @@ const EVENT_TYPE_LABELS = {
   follow_up: 'Follow-up', parallel: 'Parallel',
 };
 
+/** Node 完成通知状态段（NODE · 项目 · 节点 · 状态）：状态显示为全大写值
+ *  （COMPLETED / FAILED / CANCELED）；未知状态原样大写。 */
+const NODE_STATUS_LABELS = {
+  completed: 'COMPLETED', failed: 'FAILED', cancelled: 'CANCELED',
+};
+
+function nodeStatusLabel(eventType) {
+  return NODE_STATUS_LABELS[eventType] || String(eventType).toUpperCase();
+}
+
 /** Build the source label text, optionally combining with sender and eventType.
  *  e.g. source='mail', sender='Manager', eventType='result' → 'Mail · Manager · Result'
  *  sender is optional (backward compatible): absent → 'SOURCE · EventType'.
@@ -383,6 +393,23 @@ const EVENT_TYPE_LABELS = {
  *  e.g. 'nebflow-project/Backend · Result'. */
 export function injectedSourceLabel(source, eventType, sender, sourceTeam) {
   if (!source && !sourceTeam) return '';
+  // Node 完成通知专用格式（唯一 Node 类注入消息，source="node" 仅 NodeEngine
+  // deliverToNebula 发出）：NODE · <项目名> · <节点名> · <状态>。后端把项目名
+  // 与节点名打包在 sender = "<projectName>/<nodeName>"（路径约定，同 sourceTeam
+  // team/agent 惯例）；旧历史行 sender="node"（无 '/'）→ 优雅降级为
+  // 'NODE · <状态>'。状态段走全大写 nodeStatusLabel（COMPLETED/FAILED/CANCELED）。
+  // 不改其他消息类型格式。
+  if (source === 'node') {
+    const parts = ['NODE'];
+    if (sender) {
+      const sep = sender.indexOf('/');
+      if (sep > 0 && sep < sender.length - 1) {
+        parts.push(sender.slice(0, sep), sender.slice(sep + 1));
+      }
+    }
+    if (eventType) parts.push(nodeStatusLabel(eventType));
+    return parts.join(' · ');
+  }
   const parts = [];
   if (sourceTeam) {
     parts.push(sender ? `${sourceTeam}/${sender}` : sourceTeam);

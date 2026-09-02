@@ -1,7 +1,8 @@
 package nebflow.core.project
 
-import io.circe.Codec
+import io.circe.{Codec, Json}
 import io.circe.derivation.{Configuration, ConfiguredCodec}
+import io.circe.syntax.*
 
 /**
  * Project + Node + Flow Map 数据模型（#28 阶段 0，方案文档 20260831_project-node-architecture.md §2.1）。
@@ -48,6 +49,29 @@ case class NodeDef(
 object NodeDef:
   given Configuration = Configuration.default.withDefaults
   given Codec[NodeDef] = ConfiguredCodec.derived
+
+/** NodeList 载荷同构的节点 JSON（NodeList 工具 / REST flow-map / WS 事件共用单一序列化点）。
+  * WS 事件（nodeCreated/nodeUpdated/nodeRemoved）与快照永远同构，前端增量渲染可直接对齐
+  * 字段集：{id, name, agent, status, in, out, hasWorktree, worktree, result(≤500 字符摘要),
+  * retries, createdAt, completedAt, ttlLeftSec}。 */
+object NodePayload:
+  def buildNodeJson(node: NodeDef, now: Long): Json =
+    val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
+    Json.obj(
+      "id" -> node.id.asJson,
+      "name" -> node.name.asJson,
+      "agent" -> node.agent.asJson,
+      "status" -> node.status.asJson,
+      "in" -> node.in.asJson,
+      "out" -> node.out.asJson,
+      "hasWorktree" -> node.worktree.isDefined.asJson,
+      "worktree" -> node.worktree.asJson,
+      "result" -> node.result.map(r => if r.length > 500 then r.take(500) + "…" else r).asJson,
+      "retries" -> node.retries.asJson,
+      "createdAt" -> node.createdAt.asJson,
+      "completedAt" -> node.completedAt.asJson,
+      "ttlLeftSec" -> ttlLeft.asJson
+    )
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(

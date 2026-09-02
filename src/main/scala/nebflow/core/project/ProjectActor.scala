@@ -88,6 +88,7 @@ object ProjectRuntimeRegistry:
               wsSend.getOrElse((_: Json) => IO.unit),
               project.workspace,
               rootSessionId,
+              project.name,
               emitNodeEvent(project.name, wsSend)
             )
           )

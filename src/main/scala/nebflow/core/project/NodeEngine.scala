@@ -36,6 +36,8 @@ class NodeEngine(
   val wsSendFn: Json => IO[Unit],
   workspace: String,
   val rootSessionId: String,
+  /** 项目名：Node 完成通知蓝气泡 header 第二段（NODE · <项目名> · <节点名> · <状态>）。 */
+  val projectName: String,
   /** WS 事件推送（type → payload 载体）。 */
   emitEvent: (String, String, Json) => IO[Unit]
 ):
@@ -54,22 +56,27 @@ class NodeEngine(
       case None => IO.unit
     }
 
-  /** WS nodeRemoved（TTL 移除/归档后通知前端移除卡片）。 */
+  /** WS nodeRemoved（TTL 移除/归档后通知前端移除卡片）。payload = 节点最终态
+    * （NodeList 同构——归档区兜底查得，ttlLeftSec=0），不再发空对象。 */
   def emitRemoved(nodeId: String): IO[Unit] =
-    emitEvent("nodeRemoved", nodeId, Json.obj())
+    store.findNode(nodeId).flatMap {
+      case Some(n) => emitEvent("nodeRemoved", nodeId, NodePayload.buildNodeJson(n, System.currentTimeMillis()))
+      case None    => emitEvent("nodeRemoved", nodeId, Json.obj("id" -> nodeId.asJson))
+    }
 
-  /** WS nodeCreated（NodeEdit 创建后）。 */
+  /** WS nodeCreated（NodeEdit 创建后）。payload 与 NodeList 同构。 */
   def emitCreated(node: NodeDef): IO[Unit] =
-    emitEvent("nodeCreated", node.id, node.asJson)
+    emitEvent("nodeCreated", node.id, NodePayload.buildNodeJson(node, System.currentTimeMillis()))
 
-  /** WS nodeUpdated（NodeEdit 编辑/状态变更后）。 */
+  /** WS nodeUpdated（NodeEdit 编辑/wiring 变更后）。payload 与 NodeList 同构，
+    * 调用方须传 store 最终态（wiring 变更走 NodeTools.emitWiringUpdates）。 */
   def emitUpdated(node: NodeDef): IO[Unit] =
-    emitEvent("nodeUpdated", node.id, node.asJson)
+    emitEvent("nodeUpdated", node.id, NodePayload.buildNodeJson(node, System.currentTimeMillis()))
 
   /** 显式投递（改接投递 §2.3：已完成节点结果 → 指定目标）。 */
   def deliverOutTo(node: NodeDef, target: String, resultText: String): IO[Unit] =
     target match
-      case "Nebula" => deliverToNebula(s"[Node '${node.name}' completed]\n$resultText")
+      case "Nebula" => deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed")
       case t =>
         for
           targetOpt <- store.findNode(t)
@@ -137,9 +144,9 @@ class NodeEngine(
       case None => workspace
     val nodeName = node.name
     for
-      // 状态 → running + startedAt（WS nodeUpdated）
+      // 状态 → running + startedAt（WS nodeUpdated，NodeList 同构 payload）
       _ <- store.mutate(s => s.copy(nodes = s.nodes.updated(nodeId, node.copy(status = NodeLifecycle.Running, startedAt = Some(System.currentTimeMillis())))))
-      _ <- emitEvent("nodeUpdated", nodeId, node.copy(status = NodeLifecycle.Running).asJson)
+      _ <- emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(node.copy(status = NodeLifecycle.Running), System.currentTimeMillis()))
       cancelSig <- Deferred[IO, Unit]
       _ <- running.update(_ + (nodeId -> cancelSig))
       resultDeferred <- Deferred[IO, Either[FailOutcome, List[Message]]]
@@ -213,7 +220,7 @@ class NodeEngine(
     )
     for
       _ <- store.mutate(s => s.copy(nodes = s.nodes.updated(node.id, completed)))
-      _ <- emitEvent("nodeCompleted", node.id, completed.asJson)
+      _ <- emitEvent("nodeCompleted", node.id, NodePayload.buildNodeJson(completed, now))
       _ <- logger.info(s"Node '${node.name}' completed (result ${resultText.length} chars)")
       _ <- deliverOut(completed, resultText)
     yield ()
@@ -228,7 +235,7 @@ class NodeEngine(
     )
     for
       _ <- store.mutate(s => s.copy(nodes = s.nodes.updated(node.id, failed)))
-      _ <- emitEvent("nodeUpdated", node.id, failed.asJson)
+      _ <- emitEvent("nodeUpdated", node.id, NodePayload.buildNodeJson(failed, now))
       _ <- logger.warn(s"Node '${node.name}' failed: ${err.take(200)}")
       // 失败投递（§2.7）：out=Nebula → failed 消息；out=节点 → collect 结算（占位符）。
       _ <- deliverFailed(failed, err)
@@ -242,7 +249,7 @@ class NodeEngine(
       ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs)
     )
     store.mutate(s => s.copy(nodes = s.nodes.updated(node.id, cancelled))) *>
-      emitEvent("nodeUpdated", node.id, cancelled.asJson) *>
+      emitEvent("nodeUpdated", node.id, NodePayload.buildNodeJson(cancelled, now)) *>
       logger.info(s"Node '${node.name}' cancelled")
 
   // ── 投递（§2.7）─────────────────────────────────────────
@@ -252,7 +259,7 @@ class NodeEngine(
     node.out match
       case None => IO.unit // 悬空：结果保留在 result（持久化），接线后自动投递
       case Some("Nebula") =>
-        deliverToNebula(s"[Node '${node.name}' completed]\n$resultText")
+        deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed")
       case Some(targetId) =>
         for
           targetOpt <- store.findNode(targetId)
@@ -279,7 +286,7 @@ class NodeEngine(
     node.out match
       case None => IO.unit
       case Some("Nebula") =>
-        deliverToNebula(s"[Node '${node.name}' failed]\n$err")
+        deliverToNebula(s"[Node '${node.name}' failed]\n$err", node.name, "failed")
       case Some(targetId) =>
         // collect 结算：占位符标记 + 计数归零继续（§2.4 默认 collect）
         for
@@ -301,15 +308,20 @@ class NodeEngine(
             case None => IO.unit
         yield ()
 
-  /** out=Nebula：ImmediateInput 投 Nebula 根会话（source="node"，复用 flow 气泡语义）。 */
-  private def deliverToNebula(text: String): IO[Unit] =
+  /** out=Nebula：ImmediateInput 投 Nebula 根会话（source="node"，复用 flow 气泡语义）。
+    * 气泡 header 契约（前端 chat.js injectedSourceLabel node 分支）：
+    *   source = "node" → 显示段 NODE
+    *   eventType = status（"completed" | "failed"）→ 显示段 COMPLETED / FAILED
+    *   sender = "<projectName>/<nodeName>" → 显示段 <项目名> · <节点名>
+    * 整条 header = NODE · <项目名> · <节点名> · <状态>。 */
+  private def deliverToNebula(text: String, nodeName: String, status: String): IO[Unit] =
     resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
       case Some(ref) =>
         (ref ! AgentCommand.ImmediateInput(
           text,
           source = Some("node"),
-          eventType = Some("completed"),
-          sender = Some("node")
+          eventType = Some(status),
+          sender = Some(s"$projectName/$nodeName")
         )).void
       case None =>
         logger.warn(s"Root session '$rootSessionId' not found — node result not delivered")
