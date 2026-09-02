@@ -1080,10 +1080,10 @@ class WebSocketRoutes(
                         "error" ->
                           s"No live agent with sessionId='$cSessionId' (registry is in-memory; stale ids vanish after restart)".asJson
                       )
-                    case Some(rec) if !nebflow.core.tools.AgentControlTool.CancelableKinds.contains(rec.kind) =>
+                    case Some(rec) if !nebflow.core.tools.AgentControlTool.cancelable(rec) =>
                       cancelReply(
                         ok = false,
-                        "error" -> s"Kind ${rec.kind} is read-only (cancelable: Delegate / SubTask / Ephemeral)".asJson
+                        "error" -> s"Kind ${rec.kind} is read-only (cancelable: Delegate / SubTask / Ephemeral / Project node-dispatcher sessions)".asJson
                       )
                     case Some(rec) =>
                       val reason = if cReason.nonEmpty then cReason else "cancelled from panel"
@@ -1138,6 +1138,15 @@ class WebSocketRoutes(
                       // 镜像 processing——cancelCurrentTurn + restartStateFor + 续跑）
                       (rec.ref ! nebflow.agent.AgentCommand.RestartAgent(nebflow.agent.RestartLevel.Soft)) *>
                         prReply(ok = true, "message" -> "Root restart (soft) sent; frozen turn will resume from checkpoint".asJson)
+                    case Some(rec) if rec.kind == nebflow.agent.AgentKind.Flow =>
+                      // Project flow 会话（node-/dispatcher-）：单次会话，supervisor
+                      // 是观察桥（不 respawn）——restart 语义不成立，且 raw Stop 会
+                      // 杀 agent 而不发终态事件（node engine fiber 挂死）。拒绝并指路。
+                      prReply(
+                        ok = false,
+                        "error" ->
+                          "Project node/dispatcher sessions are single-shot — restart not supported. Cancel it and re-trigger the work.".asJson
+                      )
                     case Some(rec) if rec.supervisorRef.isDefined =>
                       // Delegate/SubTask：Stop → BackoffSupervisor respawn（断点续跑）
                       (rec.ref ! nebflow.agent.AgentCommand.Stop(s"parent-restart")) *>

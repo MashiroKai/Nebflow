@@ -188,7 +188,26 @@ class NodeEngine(
           isFlowNode = true // leaf 剥离（与 flow 节点一致：无 Node 工具/展示类）
         )
       )
-      _ <- resources.agentRegistry.update(_ + (sessionId -> AgentRecord(sessionId, ref, AgentKind.Flow, rootSessionId)))
+      // 卡死处置接线（与 ProjectActor 分发器注册同款）：supervisorRef=bridgeRef
+      // ——bridge 的 Cancelled 分支（resultDeferred.complete(Left(cancelled))）
+      // 成为节点的取消通道，AgentControl cancel / 面板 cancelAgent /
+      // TaskStuckWatcher giveUp 共用。cancelled 走 cancelNode（status=cancelled
+      // + TTL + 停 agent + running 清理）= NodeCancel 同语义，不会像 raw Stop
+      // 那样把 engine fiber 永远挂在 resultDeferred 上。
+      // startedAt/lastActivityMs=now：list 的 up/idle 列 + watcher 从出生可见。
+      _ <- resources.agentRegistry.update(
+        _ + (
+          sessionId -> AgentRecord(
+            sessionId,
+            ref,
+            AgentKind.Flow,
+            rootSessionId,
+            startedAt = System.currentTimeMillis(),
+            lastActivityMs = System.currentTimeMillis(),
+            supervisorRef = Some(bridgeRef)
+          )
+        )
+      )
       _ <- (ref ! AgentCommand.UserInput(text = inputText, replyTo = Some(bridgeRef))).void
       // 等待完成——不设超时（硬约束）；唯一竞争事件 = NodeCancel 信号。
       outcome <- IO.race(resultDeferred.get, cancelSig.get)
