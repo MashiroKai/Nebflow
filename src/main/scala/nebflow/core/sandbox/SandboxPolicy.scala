@@ -63,15 +63,22 @@ object SandboxPolicy:
   /**
    * 从节点 projectRoot + 配置构造会话策略（AgentCore 每次 spawn 调一次）。
    * root/readExtras/extraWritable 全部在此 canonicalize——后续推导可重入。
+   *
+   * [verify-fix] 2026-09-03 独立验证节点（隔离实例 E2E 实证）：cfg.enabled=false
+   * 必须短路返回 off——原实现硬编码 enabled=true，全局 flag 只停了 Bash probe
+   * （SandboxRuntime.init），文件五工具闸门照常激活，§G.1「enabled=false 一键回
+   * 旧行为」回滚语义失效。回归断言见 SandboxSpec「G.1 回滚」用例。
    */
   def forRoot(root: os.Path, cfg: SandboxConfig): SandboxPolicy =
-    SandboxPolicy(
-      root = os.Path(canonicalize(root.wrapped)),
-      readExtras = (defaultReadExtras ++ cfg.additionalRootsAsRead).map(p => os.Path(canonicalize(p.wrapped))).distinct,
-      extraWritable = cfg.additionalRootsAsWrite.map(p => os.Path(canonicalize(p.wrapped))),
-      enabled = true,
-      bashFailIfUnavailable = cfg.bashFailIfUnavailable
-    )
+    if !cfg.enabled then off
+    else
+      SandboxPolicy(
+        root = os.Path(canonicalize(root.wrapped)),
+        readExtras = (defaultReadExtras ++ cfg.additionalRootsAsRead).map(p => os.Path(canonicalize(p.wrapped))).distinct,
+        extraWritable = cfg.additionalRootsAsWrite.map(p => os.Path(canonicalize(p.wrapped))),
+        enabled = true,
+        bashFailIfUnavailable = cfg.bashFailIfUnavailable
+      )
 
   /** 临时根：/private/tmp、/tmp（符号链接形态，Seatbelt 需两种拼写）、java.io.tmpdir。 */
   private def tempRoots: List[os.Path] =

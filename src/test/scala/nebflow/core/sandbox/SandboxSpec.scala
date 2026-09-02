@@ -270,6 +270,20 @@ class SandboxSpec extends CatsEffectSuite:
     assert(glob.isRight, s"off 时 Glob 保持旧行为: $glob")
   }
 
+  test("G.1 回滚: 配置链 forRoot(cfg(enabled=false)) 必须产出 off 策略（config→forRoot 全链）") {
+    // [verify-fix] 2026-09-03 独立验证节点：原 forRoot 硬编码 enabled=true，全局
+    // flag 只停 Bash probe、文件闸照常激活——隔离实例 E2E 实证回滚失效。本用例
+    // 钉住 config→forRoot 全链的回滚语义。
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-flagoff"))
+    val policy = SandboxPolicy.forRoot(tmp, SandboxConfig(enabled = false))
+    assertEquals(policy.enabled, false, "forRoot(enabled=false) 必须短路为 off")
+    val ctx = ToolContext(projectRoot = tmp.toString, sandbox = policy)
+    val res = FileSandbox.checkWrite(ctx, "/Users/dev/nb-flagoff-probe.txt")
+    assert(res.isRight, s"flag off 时界外写必须放行（旧行为）: ${res.left.map(_.message)}")
+    val denied = FileSandbox.checkRead(ctx, s"$tmp/../escape.txt")
+    assert(denied.isRight, s"flag off 时相对/越界路径不再有根校验（旧行为按绝对路径判定后放行）: ${denied.left.map(_.message)}")
+  }
+
   // ------------------------------------------------------------------
   // ~/.nebflow 白名单（H-12①）：三子目录可读、根层拒读写、不在可写根
   // ------------------------------------------------------------------
