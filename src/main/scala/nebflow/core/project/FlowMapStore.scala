@@ -61,19 +61,29 @@ class FlowMapStore private (
       _ <- persistArchive(newArc)
     yield newArc
 
-  /** 环检测：设 from.out = to（或给 to 加 in=from）是否成环。
-    * to 的传递下游（沿 out 边，跳过 Nebula）可达 from → 成环。 */
+  /** 环检测：设 from.out = to（或给 to 加 in=from，或给 to 声明 deps=[from]）是否成环。
+    * to 的传递下游可达 from → 成环。后继集合（沿连接的流向）=
+    * 「out 目标（跳过 Nebula）」 ∪ 「{ m | m.deps.contains(当前节点) }」——deps 设计
+    * §1.2 校验二：deps 下游单侧持有（上游无对应 out 镜像边），混合图环检测必须显式
+    * 并入 deps 反向边；create/edit 全部既有调用点经本单点自动获得 in+deps 混合覆盖。 */
   def wouldCreateCycle(from: String, to: String): IO[Boolean] =
     if to == "Nebula" || to.isEmpty then IO.pure(false)
     else
       state.get.map { s =>
+        // deps 反向索引：d → 依赖 d 的节点集（d 完成会触发它们 = 流向 d → m）
+        val depsReverse: Map[String, List[String]] =
+          s.nodes.values.foldLeft(Map.empty[String, List[String]]) { (acc, n) =>
+            n.deps.foldLeft(acc)((a, d) => a.updated(d, n.id :: a.getOrElse(d, Nil)))
+          }
+        def successors(id: String): List[String] =
+          val viaOut = s.nodes.get(id).flatMap(_.out).filter(_ != "Nebula").toList
+          viaOut ++ depsReverse.getOrElse(id, Nil)
         def reachable(start: String, visited: Set[String]): Boolean =
           if start == from then true
           else if visited.contains(start) then false
           else
-            s.nodes.get(start).flatMap(_.out).filter(_ != "Nebula") match
-              case Some(nxt) => reachable(nxt, visited + start)
-              case None => false
+            val nexts = successors(start)
+            nexts.nonEmpty && nexts.exists(nxt => reachable(nxt, visited + start))
         reachable(to, Set.empty)
       }
 
