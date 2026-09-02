@@ -150,7 +150,11 @@ function nodeHtml(n, pos, originX) {
 }
 
 function fmtTtl(sec) {
-  return `⏱ ${Math.max(0, Math.ceil(sec))}s`;
+  const s = Math.max(0, Math.ceil(sec));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `⏱ ${h}h ${m}m`; // 24h 量级：终态节点显示保留 1 天（2026-09-02 裁定）
+  if (m > 0) return `⏱ ${m}m ${s % 60}s`;
+  return `⏱ ${s}s`;
 }
 
 // ── 边（SVG，复用 .flow-edge）─────────────────────────────

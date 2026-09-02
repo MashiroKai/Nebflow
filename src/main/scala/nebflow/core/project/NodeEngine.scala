@@ -19,7 +19,7 @@ import nebflow.shared.Message
  *    leaf、无记忆无持久会话；projectRoot = worktree 或工作区）
  * 2. 结果捕获（bridge actor + Deferred）：节点 agent 完成 → 其最终输出文本即结果
  *    （无 FlowReport/verdict/slots）→ 写节点 result（持久化）+ status=completed +
- *    ttlExpireAt=+5min → 沿 out 投递
+ *    ttlExpireAt=+24h → 沿 out 投递
  * 3. 投递（§2.7）：out=节点 → 下游 deliveredTo 记录 + barrier 归零启动下游（输入 =
  *    task 上下文 + 各上游 result 带 === Node <name> === 头）；out=Nebula →
  *    ImmediateInput("[Node '<name>' completed]\n<result>", source="node") 投根会话；
@@ -411,8 +411,8 @@ class NodeEngine(
   private case class FailOutcome(message: String)
 
 object NodeEngine:
-  /** 终态节点显示 TTL（5min；测试档可缩短——ProjectActor 注入）。 */
-  val TtlDisplayMs: Long = 5 * 60 * 1000L
+  /** 终态节点显示 TTL（24h——2026-09-02 作者裁定；测试档可缩短——ProjectActor 注入）。 */
+  val TtlDisplayMs: Long = 24 * 60 * 60 * 1000L
 
   /** 节点 id 前缀（sessionId = "node-<uuid>"）。 */
   val SessionPrefix = "node-"

@@ -384,6 +384,34 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       assert(wInput.isDefined, s"W's input must contain BOTH results, got inputs=${llm.inputs.get.unsafeRunSync().map(_.take(150))}")
   }
 
+  // ── 终态显示 TTL：一次性计算 + 24h 量级（2026-09-02 作者裁定）──
+
+  test("ttl display: terminalized node ttlExpireAt = completedAt + TtlDisplayMs (24h, one-shot)") {
+    val ws = tempRoot / "ws-ttl"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"bar-ttl-${scala.util.Random.nextInt(100000)}")
+    val llm = CaptureLlm()
+    for
+      res <- mkResources(system, tempRoot, llm.handle)
+      rt <- mountProject("bar-ttl", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      _ <- nodeEdit(nodeInput("bar-ttl", "node-ttl", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("ttl-check"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- waitStatus(rt, "node-ttl", Set(NodeLifecycle.Completed))
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      n <- rt.store.snapshot.map(_.nodes.values.find(_.name == "node-ttl"))
+    yield
+      // 常量量级：显示保留 1 天（防误改回 5min 量级的回归哨兵）
+      assertEquals(NodeEngine.TtlDisplayMs, 24 * 60 * 60 * 1000L, "TtlDisplayMs must be 24h")
+      val node = n.getOrElse(fail("node-ttl must exist in active area right after completion"))
+      assertEquals(node.status, NodeLifecycle.Completed, "node must have run to completion")
+      val completedAt = node.completedAt.getOrElse(fail("completedAt must be set on completed node"))
+      val ttlExpireAt = node.ttlExpireAt.getOrElse(fail("ttlExpireAt must be set on terminalized node"))
+      // 一次性计算语义：ttlExpireAt - completedAt 恒等于常量（终态转换时算一次，此后不再重算）
+      assertEquals(ttlExpireAt - completedAt, NodeEngine.TtlDisplayMs,
+        s"ttlExpireAt must be exactly completedAt + ${NodeEngine.TtlDisplayMs}ms (24h)")
+  }
+
   // ── 附带：加载净化存量 out="null" 字面串 ────────────────
 
   test("sanitize: legacy out=\"null\" string in flow-map.json loads as None and persists back as real null") {
