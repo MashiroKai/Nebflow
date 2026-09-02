@@ -10,7 +10,7 @@ import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 /**
  * Project 实体存储（#28 阶段 0）：
  * - 磁盘 `~/.nebflow/projects/<name>/project.json`（定义）
- * - 工作区 `.nebflow/`（Agent.md + flow-map.json + .gitignore）
+ * - 工作区根 `AGENTS.md`（agent 指令模板）+ `.nebflow/`（flow-map.json + .gitignore）
  * - ProjectRegistry：name → ProjectActor ref（挂载映射，Mail 路由/前端面板用）
  */
 object ProjectStore:
@@ -57,7 +57,7 @@ object ProjectStore:
     *
     * 产出（验收①「只有 flow-map.json 被 store 写，无手写文件」相关）：
     * - `projects/<name>/project.json`（定义）
-    * - `<workspace>/.nebflow/Agent.md`（模板）
+    * - `<workspace>/AGENTS.md`（agent 指令模板，工作区根——与市面标准统一）
     * - `<workspace>/.nebflow/flow-map.json`（由 FlowMapStore 首写）
     * - `<workspace>/.gitignore`（内容含 `.nebflow/`，防项目 repo 污染，R6——写 workspace 根，
     *   git 语义：`.nebflow/` 不带前导斜杠匹配任意层级；根已有 .gitignore → 追加不覆盖）
@@ -78,7 +78,7 @@ object ProjectStore:
           val ws = os.Path(workspace, PathUtil.dataRoot)
           val nebflowDir = ws / ".nebflow"
           os.makeDir.all(nebflowDir)
-          val agentFile = (nebflowDir / "Agent.md").toString
+          val agentFile = (ws / "AGENTS.md").toString
           val now = System.currentTimeMillis()
           val pd = ProjectDef(
             name = name,
@@ -89,9 +89,9 @@ object ProjectStore:
           )
           os.makeDir.all(projectDir(name))
           AtomicJson.writeSync(projectJsonPath(name), pd.asJson.noSpaces)
-          // 工作区 .nebflow/ 脚手架（仅缺省时写，不覆盖已有 Agent.md）
-          if !os.exists(nebflowDir / "Agent.md") then os.write.over(nebflowDir / "Agent.md", agentMdTemplate)
-          // R6：.gitignore 写 workspace 根（防 .nebflow/ 落项目 repo）；根已有 → 追加 .nebflow/ 行
+          // agent 指令模板写工作区根 AGENTS.md（仅缺省时写，不覆盖已有；旧位置 .nebflow/Agent.md 由读路径回落兼容）
+          if !os.exists(ws / "AGENTS.md") then os.write.over(ws / "AGENTS.md", agentMdTemplate)
+          // R6：.gitignore 写 workspace 根（防 .nebflow/ 落项目 repo；根 AGENTS.md 天然进 git）；根已有 → 追加 .nebflow/ 行
           writeNebflowGitignore(ws)
           Right(pd)
       }

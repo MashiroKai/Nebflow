@@ -1,7 +1,7 @@
 // projectTab.js — Project 标签页（#27 方向调整：项目入口以标签页呈现，参考 team 面板设计）。
 // 点击侧边栏 Project 按钮 → 打开 `projects` Canvas 标签页；一行/卡片一个 project，
 // 沿用 .team-card 视觉与交互范式。点击 project name → 打开其 Flow Map 标签页；
-// Agent.md 入口 → rules 式查看/编辑 overlay。
+// AGENTS.md 入口 → rules 式查看/编辑 overlay。
 
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';

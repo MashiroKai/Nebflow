@@ -6,8 +6,8 @@
 //   GET /api/projects → {projects:[{name,workspace,agentFile,description,createdAt}]}
 //   GET /api/projects/<name>/flow-map → NodeList 载荷 {nodes[],worktrees[],meta}
 //     未挂载 → 404 {error}
-//   GET /api/projects/<name>/agent.md → {content}（项目不存在/无 Agent.md → 404）
-//   PUT /api/projects/<name>/agent.md → body {content} → {saved:true}（写回 .nebflow/Agent.md 原子写）
+//   GET /api/projects/<name>/agent.md → {content}（项目不存在/无 AGENTS.md → 404；旧 .nebflow/Agent.md 兼容回落）
+//   PUT /api/projects/<name>/agent.md → body {content} → {saved:true}（写回工作区根 AGENTS.md）
 // WS 事件广播帧 {type,project,nodeId,node}：
 //   nodeCreated / nodeUpdated / nodeCompleted / nodeRemoved
 
@@ -19,7 +19,8 @@ export const API = {
   projects: '/api/projects',
   // 某项目 Flow Map 快照（契约 §3 NodeList 载荷）：GET /api/projects/<name>/flow-map；未挂载 404
   flowMap: (name) => `/api/projects/${encodeURIComponent(name)}/flow-map`,
-  // 项目 Agent.md（契约 §1）：GET 读 → {content} / PUT 存 → body {content} → {saved:true}；写回工作区 .nebflow/Agent.md
+  // 项目 AGENTS.md（契约 §1）：GET 读 → {content} / PUT 存 → body {content} → {saved:true}；
+  // URL 不变，磁盘读写工作区根 AGENTS.md（旧 .nebflow/Agent.md 由后端回落兼容）
   agentFile: (name) => `/api/projects/${encodeURIComponent(name)}/agent.md`,
 };
 
@@ -80,18 +81,18 @@ export function summarize(fm) {
   return { running, failed, pending, completed, brief, notMounted: !!fm?.notMounted };
 }
 
-// ── Agent.md 读取/保存（契约 §1：GET / PUT /api/projects/<name>/agent.md）──
+// ── AGENTS.md 读取/保存（契约 §1：GET / PUT /api/projects/<name>/agent.md）──
 
-/** 读取项目 Agent.md。GET → {content}；404（项目不存在/无 Agent.md）返回缺省文本。 */
+/** 读取项目 AGENTS.md。GET → {content}；404（项目不存在/无 AGENTS.md）返回缺省文本。 */
 export async function fetchAgentFile(name) {
   const r = await fetch(API.agentFile(name), { headers: authHeaders() });
-  if (r.status === 404) return '# Agent.md\n\n（暂无内容）\n';
+  if (r.status === 404) return '# AGENTS.md\n\n（暂无内容）\n';
   if (!r.ok) throw new Error(`agent.md ${r.status}`);
   const data = await r.json();
   return data?.content ?? '';
 }
 
-/** 保存项目 Agent.md。PUT body {content} → {saved:true}（写回工作区 .nebflow/Agent.md 原子写）。 */
+/** 保存项目 AGENTS.md。PUT body {content} → {saved:true}（写回工作区根 AGENTS.md）。 */
 export async function saveAgentFile(name, content) {
   const r = await fetch(API.agentFile(name), {
     method: 'PUT',

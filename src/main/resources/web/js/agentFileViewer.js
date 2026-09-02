@@ -1,6 +1,6 @@
-// agentFileViewer.js — 项目 Agent.md 查看/编辑器（#27 方向调整：像 team rules.md 一样可点击查看、可改）。
+// agentFileViewer.js — 项目 AGENTS.md 查看/编辑器（#27 方向调整：像 team rules.md 一样可点击查看、可改）。
 // 复用 flowViewers 的 openViewerShell overlay + 保存语义；数据走 nodeData 的
-// fetchAgentFile / saveAgentFile（契约 §1：GET / PUT /api/projects/<name>/agent.md）。
+// fetchAgentFile / saveAgentFile（契约 §1：GET / PUT /api/projects/<name>/agent.md，磁盘为工作区根 AGENTS.md）。
 
 import { openViewerShell } from './flowViewers.js';
 import { esc } from './flowHelpers.js';
@@ -9,7 +9,7 @@ import { fetchAgentFile, saveAgentFile } from './nodeData.js';
 
 export async function openAgentFile(projectName) {
   const footer = `<span class="flow-viewer-status" id="flow-agentfile-status"></span><button class="flow-viewer-save" id="flow-agentfile-save">${esc(t('flowViewers.save'))}</button>`;
-  const body = openViewerShell(`${projectName} · Agent.md`, { footer });
+  const body = openViewerShell(`${projectName} · AGENTS.md`, { footer });
   if (!body) return;
   body.innerHTML = `<div class="flow-mail-empty">${esc(t('flowViewers.loading'))}</div>`;
   let content = '';
@@ -22,7 +22,7 @@ export async function openAgentFile(projectName) {
   if (!body.isConnected) return; // viewer 已关
   body.innerHTML = `
     <div class="flow-def-section">
-      <h3>Agent.md</h3>
+      <h3>AGENTS.md</h3>
       <p style="font:400 11px -apple-system;color:var(--color-text-muted);margin:0 0 8px;">${esc(t('agentFile.hint'))}</p>
       <textarea class="flow-def-edit" id="flow-agentfile-textarea" style="min-height:320px;font-family:ui-monospace,SFMono-Regular,monospace;">${esc(content)}</textarea>
     </div>`;

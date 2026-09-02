@@ -25,8 +25,8 @@ export default {
   'project.openWorkspace': '在文件浏览器中打开',
   'project.workspaceOpened': '文件浏览器已切换到 {path}',
   'project.openWorkspaceFail': '打开工作区失败',
-  'project.agentFile': 'Agent.md',
-  'project.agentFileLabel': 'Agent.md',
+  'project.agentFile': 'AGENTS.md',
+  'project.agentFileLabel': 'AGENTS.md',
   'project.agentFileOpen': '查看 / 编辑',
   'project.runningAgents': '运行中 agent',
   'project.openFlowMap': '打开「{name}」的 Flow Map',
@@ -51,7 +51,7 @@ export default {
   'flowmap.noResult': '暂无结果',
   'flowmap.runningDetail': '节点运行中，完成后结果将自动保存并沿出边投递。',
   'flowmap.noResultDetail': '该节点尚未产生结果（运行中/等待/悬空）。',
-  'agentFile.hint': '此文件是项目工作区的 agent 指令（.nebflow/Agent.md），可编辑并保存。',
+  'agentFile.hint': '此文件是项目工作区根的 agent 指令（AGENTS.md），可编辑并保存。',
 
   // === Friends & messages (A2A) ===
   'contacts.searchPlaceholder': 'nebflow 号 / 邮箱',

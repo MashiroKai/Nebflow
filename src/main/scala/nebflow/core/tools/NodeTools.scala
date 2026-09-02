@@ -550,7 +550,7 @@ object ProjectCreateTool extends Tool:
     """Create a Project (Nebula use) — project definition + workspace .nebflow/ scaffolding.
 ## When to Use
 - Setting up a new project under the Project + Node model: name + workspace + optional description.
-- Creates projects/<name>/project.json, workspace/.nebflow/ (Agent.md template + flow-map.json + .gitignore) and mounts the project (FlowMapStore + ProjectActor ready)."""
+- Creates projects/<name>/project.json, workspace root AGENTS.md (agent instructions template), workspace/.nebflow/ (flow-map.json + .gitignore) and mounts the project (FlowMapStore + ProjectActor ready)."""
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
@@ -576,9 +576,9 @@ object ProjectCreateTool extends Tool:
     if name.isEmpty || workspace.isEmpty then IO.pure(Left(ToolError("'name' and 'workspace' are required")))
     else
       val agentMdTemplate =
-        s"""# ${name} — Agent.md
+        s"""# ${name} — AGENTS.md
 
-项目级 agent 指令（取代 team rules.md）。分发器任务文本可引用本文件。
+项目级 agent 指令（取代 team rules.md，工作区根 AGENTS.md）。分发器任务文本可引用本文件。
 
 - 工作区：$workspace
 - Flow Map：`$workspace/.nebflow/flow-map.json`
