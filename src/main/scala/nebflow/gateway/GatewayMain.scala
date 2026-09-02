@@ -350,7 +350,10 @@ object GatewayMain extends IOApp.Simple:
                                   contextWindow = contextWindow,
                                   agentLibrary = agentLibrary,
                                   taskStore = FileTaskStore,
-                                  historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd),
+                                  // 压缩报告落盘（2026-09-02 迁移）：sessions/<sessionId>/compaction/
+                                  // （按会话归组，对齐 CompactionQueueStore 规范）——不再写项目目录 archives/
+                                  historyArchiver =
+                                    nebflow.core.compact.HistoryArchiver.fileSystem(PathUtil.dataRoot / "sessions"),
                                   fileLockManager = fileLockMgr,
                                   sessionModelOverrides = sessionModelOverrides,
                                   providerRegistry = registry,
