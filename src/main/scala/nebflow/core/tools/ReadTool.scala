@@ -2,6 +2,7 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.core.sandbox.FileSandbox
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.shared.{ContentBlock, Defaults}
@@ -106,47 +107,49 @@ Guidelines:
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
-    if !nebflow.core.PathUtil.isAbsolute(filePathStr) then
-      IO.pure(Left(ToolError(s"Path must be absolute, got: $filePathStr")))
-    else
-      val filePath = Paths.get(filePathStr)
-      val fileName = filePath.getFileName.toString
+    // 阶段 2a 沙箱（§A.3）：读闸门——canonical 路径执行；root 内 symlink 指外
+    // 经 canonicalize 解析出去向而被拒（§A.8-3）。沙箱关时旧行为；沙箱开时相对
+    // 路径按节点 root 解析（§A.8-8，非 JVM user.dir）。
+    FileSandbox.checkRead(ctx, filePathStr) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(filePath) =>
+        val fileName = filePath.getFileName.toString
 
-      imageMimeType(fileName) match
-        case Some(mediaType) =>
-          // Image file — return description; actual image bytes extracted by extractImages
-          IO.blocking {
-            if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
-            else if Files.isDirectory(filePath) then
-              Left(
-                ToolError(s"Path is a directory, not a file: $filePath. Use Bash with ls to list directory contents.")
-              )
-            else if Files.size(filePath) > MAX_IMAGE_BYTES then
-              val sizeMb = Files.size(filePath).toDouble / 1024 / 1024
-              Left(
-                ToolError(
-                  s"Image too large: $fileName (${f"$sizeMb%.1f"}MB, limit ${MAX_IMAGE_BYTES / 1024 / 1024}MB)."
+        imageMimeType(fileName) match
+          case Some(mediaType) =>
+            // Image file — return description; actual image bytes extracted by extractImages
+            IO.blocking {
+              if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
+              else if Files.isDirectory(filePath) then
+                Left(
+                  ToolError(s"Path is a directory, not a file: $filePath. Use Bash with ls to list directory contents.")
                 )
-              )
-            else
-              val bytes = Files.readAllBytes(filePath)
-              prepareImage(bytes, mediaType, fileName) match
-                case TooLarge(detail) => Left(ToolError(detail))
-                case Prepared(_, preparedMime, note) =>
-                  val sizeKb = bytes.length.toDouble / 1024
-                  val noteStr = note.fold("")(n => s" | $n")
-                  Right(s"[image: $fileName | $preparedMime | ${f"$sizeKb%.0f"}KB$noteStr]")
-          }.flatMap {
-            case Right(desc) =>
-              for _ <- ctx.readTracker.traverse_(_.recordRead(filePath, false))
-              yield Right(desc)
-            case Left(err) => IO.pure(Left(err))
-          }
-        case None =>
-          // Text file (including SVG) — existing behavior
-          readTextFile(input, filePath)
-      end match
-    end if
+              else if Files.size(filePath) > MAX_IMAGE_BYTES then
+                val sizeMb = Files.size(filePath).toDouble / 1024 / 1024
+                Left(
+                  ToolError(
+                    s"Image too large: $fileName (${f"$sizeMb%.1f"}MB, limit ${MAX_IMAGE_BYTES / 1024 / 1024}MB)."
+                  )
+                )
+              else
+                val bytes = Files.readAllBytes(filePath)
+                prepareImage(bytes, mediaType, fileName) match
+                  case TooLarge(detail) => Left(ToolError(detail))
+                  case Prepared(_, preparedMime, note) =>
+                    val sizeKb = bytes.length.toDouble / 1024
+                    val noteStr = note.fold("")(n => s" | $n")
+                    Right(s"[image: $fileName | $preparedMime | ${f"$sizeKb%.0f"}KB$noteStr]")
+            }.flatMap {
+              case Right(desc) =>
+                for _ <- ctx.readTracker.traverse_(_.recordRead(filePath, false))
+                yield Right(desc)
+              case Left(err) => IO.pure(Left(err))
+            }
+          case None =>
+            // Text file (including SVG) — existing behavior
+            readTextFile(input, filePath)
+        end match
+    end match
   end call
 
   private def readTextFile(input: JsonObject, filePath: Path): IO[Either[ToolError, String]] =

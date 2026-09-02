@@ -106,5 +106,10 @@ case class SharedResources(
   /** Bash 卡死防护阈值（#391）：GatewayMain 从 nebflow.json 顶层键 fail-safe
     * 读取（bashAutoBackgroundMs/bashBackgroundHardTimeoutMs/bashStuckWindowSec），
     * 经 AgentCore 注入 ToolContext → BashTool。带默认值 → 既有测试构造零改动。 */
-  bashResilience: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig()
+  bashResilience: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig(),
+  /** 阶段 2a 沙箱配置（§G.1）：GatewayMain 从 nebflow.json sandbox 节 fail-safe
+    * 加载（absent → enabled=true 默认）。经 AgentCore 派生 ToolContext.sandbox——
+    * 但闸门激活还需会话级 SessionContext.sandboxEnabled=true（仅 project 节点/
+    * 分发器 spawn 置位），故存量测试的默认构造不受影响。 */
+  sandboxConfig: nebflow.core.sandbox.SandboxConfig = nebflow.core.sandbox.SandboxConfig()
 )

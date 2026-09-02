@@ -884,6 +884,21 @@ private[agent] trait AgentCore:
         (kept, dropped)
       freshProjectRoot <- ContextRefresher.resolveProjectRootForTool(state, resources, effectiveDef)
       effectiveProjectRoot = freshProjectRoot.getOrElse(resources.projectRoot.toString)
+      // 阶段 2a 沙箱（§A.3/§A.6）：root = 会话 projectRoot（node.worktree=Some →
+      // <workspace>/.nebflow/<wt>；None → workspace；分发器 → project workspace，
+      // H-5①）。仅 project 节点/分发器（SessionContext.sandboxEnabled）激活；
+      // Nebula 无文件工具天然豁免、team/flow/Delegate 双轨会话默认旧行为（§A.7）。
+      sandboxPolicy =
+        if state.sandboxEnabled then
+          try nebflow.core.sandbox.SandboxPolicy.forRoot(os.Path(effectiveProjectRoot), resources.sandboxConfig)
+          catch
+            case e: Exception =>
+              // projectRoot 形态异常（空串/跨盘符等）——fail-open 到旧行为并留痕，
+              // 不让策略构造失败打断会话。
+              NebflowLogger.forName("nebflow.agent")
+                .warnSync(s"sandbox policy build failed (${e.getMessage}); falling back to unsandboxed for this session")
+              nebflow.core.sandbox.SandboxPolicy.off
+        else nebflow.core.sandbox.SandboxPolicy.off
       toolCtx = ToolContext(
         projectRoot = effectiveProjectRoot,
         llm = Some(resources.llm),
@@ -912,7 +927,8 @@ private[agent] trait AgentCore:
         actorSystem = Some(ctx.system),
         messages = state.messages,
         bashConfig = resources.bashResilience,
-        teamName = teamNameOpt
+        teamName = teamNameOpt,
+        sandbox = sandboxPolicy
       )
       freshResults <- filteredCalls.parTraverse { call =>
         val skipStreaming = call.name == "AskUserQuestion"
