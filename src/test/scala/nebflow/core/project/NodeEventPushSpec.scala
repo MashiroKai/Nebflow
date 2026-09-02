@@ -22,7 +22,7 @@ import scala.concurrent.duration.*
  *
  * 断言前端 4 事件通道（nodeCreated / nodeUpdated / nodeCompleted / nodeRemoved）覆盖
  * 增/删/改/wiring 全部变化，且事件 payload 与 NodeList 同构
- * （{id,name,agent,status,in,out,hasWorktree,worktree,result,retries,createdAt,completedAt,ttlLeftSec}）：
+ * （{id,name,agent,skill,mcp,preset,status,in,out,hasWorktree,worktree,result,retries,createdAt,completedAt,ttlLeftSec}）：
  *
  * 1. wiring 变更事件：create 带 in（barrier 合并）→ 上游 out 改指发 nodeUpdated；
  *    create 带 out → 目标 in 追加发 nodeUpdated（此前只有 nodeCreated，改写节点无事件）。
@@ -101,9 +101,10 @@ class NodeEventPushSpec extends CatsEffectSuite:
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
     Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
 
-  /** NodeList 载荷节点条目的字段集（事件 payload 必须同构）。 */
+  /** NodeList 载荷节点条目的字段集（事件 payload 必须同构——与 NodePayload.buildNodeJson
+    * 单一序列化点对齐；skill/mcp/preset 为子任务 C 节点配置三字段）。 */
   private val NodeListKeys: Set[String] =
-    Set("id", "name", "agent", "status", "in", "out", "hasWorktree", "worktree", "result", "retries", "createdAt", "completedAt", "ttlLeftSec")
+    Set("id", "name", "agent", "skill", "mcp", "preset", "status", "in", "out", "hasWorktree", "worktree", "result", "retries", "createdAt", "completedAt", "ttlLeftSec")
 
   /** 记录 (type, nodeId) 事件的挂载。 */
   private def mountRecording(
