@@ -463,7 +463,7 @@ export const FLOW_CSS = `
 .ring-1 { width: 6px; height: 6px; }
 .ring-2 { width: 14px; height: 14px; }
 .ring-3 { width: 24px; height: 24px; }
-.solar-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; }
+.solar-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; will-change: transform; }
 .solar-dot {
   position: absolute; width: 3px; height: 3px;
   background: var(--color-text); border-radius: 50%; top: -1.5px;
@@ -472,22 +472,25 @@ export const FLOW_CSS = `
 .ring-2 .solar-dot { left: 6px; }
 .ring-3 .solar-dot { left: 11px; }
 
-/* Initial angles — three dots spread around the orbit */
+/* Initial angles — three dots spread around the orbit. These are BOTH the
+   resting positions (pending / completed / static) and the loop endpoints:
+   the rAF driver (flowAnim.js) rotates each dot exactly 360° per revolution,
+   so every loop ends where it began — no seam. */
 .ring-1 .solar-dot-wrap { transform: rotate(0deg); }
 .ring-2 .solar-dot-wrap { transform: rotate(120deg); }
 .ring-3 .solar-dot-wrap { transform: rotate(240deg); }
 
-/* Running: rings spin at different speeds, middle reversed (V4 core) */
-.solar-node.running .ring-1 .solar-dot-wrap { animation: solar-spin 3s linear infinite; }
-.solar-node.running .ring-2 .solar-dot-wrap { animation: solar-spin 4.5s linear infinite reverse; animation-delay: -3s; }
-.solar-node.running .ring-3 .solar-dot-wrap { animation: solar-spin 6s linear infinite; animation-delay: -4s; }
-@keyframes solar-spin { to { transform: rotate(360deg); } }
+/* Running rotation is owned by flowAnim.js (time-based rAF, inline
+   transforms). CSS keyframes could not (a) guarantee loop endpoints — an
+   implicit "from" of the base transform made ring-2/3 sweep only 120-240deg
+   per loop then snap back — nor (b) coast to the loop endpoint and fade when
+   a node completes. will-change on .solar-dot-wrap keeps the per-frame
+   transform on the compositor. */
 
 /* Status variants */
 .solar-node.pending .solar-ring { border-style: dashed; opacity: 0.4; }
 .solar-node.pending .solar-dot { opacity: 0.3; }
 .solar-node.pending .solar-node-label { opacity: 0.4; }
-.solar-node.completed .solar-dot-wrap { animation: none; }
 .solar-node.completed .solar-node-label { opacity: 0.6; }
 .solar-node.failed .solar-ring { border-color: var(--color-error, #e5484d); opacity: 0.5; }
 
