@@ -317,32 +317,33 @@ object NodeEditTool extends Tool:
             s.nodes.values.find(_.name == nodename) match
               case Some(existing) => editNode(rt, existing, agent, task, abandon, inJson, depsJson, outJson, ctx)
               case None =>
-                if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
-                else
-                  // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
-                  // 活动区按名未命中 → 归档区按名兜底。归档节点只支持 out 改接（悬空
-                  // 完成结果的补投递——「悬空节点后来被接线」的归档变体：editNode 的
-                  // completed+newOut 投递分支沿 deliverOutTo 补投，barrier 随之结算）；
-                  // 其余编辑域（task/agent/in/deps/配置/abandon）拒绝——归档是显示过期
-                  //（TTL 满、结果保留可投递），不是重激活通道（重激活只属于 Blocked 态）。
-                  // 修复前：归档名落 createNode → 同名重复节点（拓扑污染）或静默失败。
-                  rt.store.archiveSnapshot.flatMap { arch =>
-                    arch.nodes.values.find(_.name == nodename) match
-                      case Some(archived) =>
-                        val forbidden =
-                          agent.isDefined || task.isDefined || skill.isDefined || mcp.isDefined ||
-                            worktree.isDefined || preset.isDefined || maxRetries.isDefined ||
-                            abandon || inJson.isDefined || depsJson.isDefined
-                        if !outJson.isDefined then
-                          IO.pure(Left(ToolError(
-                            s"Node '$nodename' is archived (display TTL expired, result retained). Only 'out' rewiring is supported for archived nodes (result re-delivery).")))
-                        else if forbidden then
-                          IO.pure(Left(ToolError(
-                            s"Node '$nodename' is archived — only 'out' rewiring is supported (result re-delivery); task/agent/in/deps/config edits are not.")))
-                        else editNode(rt, archived, agent, task, abandon, inJson, depsJson, outJson, ctx)
-                      case None =>
-                        createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson)
-                  }
+                // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
+                // 活动区按名未命中 → 归档区按名兜底。归档节点只支持 out 改接（悬空
+                // 完成结果的补投递——「悬空节点后来被接线」的归档变体：editNode 的
+                // completed+newOut 投递分支沿 deliverOutTo 补投，barrier 随之结算）；
+                // 其余编辑域（task/agent/in/deps/配置/abandon）拒绝——归档是显示过期
+                //（TTL 满、结果保留可投递），不是重激活通道（重激活只属于 Blocked 态）。
+                // 修复前：归档名落 createNode → 同名重复节点（拓扑污染）或静默失败。
+                rt.store.archiveSnapshot.flatMap { arch =>
+                  arch.nodes.values.find(_.name == nodename) match
+                    case Some(archived) =>
+                      val forbidden =
+                        agent.isDefined || task.isDefined || skill.isDefined || mcp.isDefined ||
+                          worktree.isDefined || preset.isDefined || maxRetries.isDefined ||
+                          abandon || inJson.isDefined || depsJson.isDefined
+                      if abandon then
+                        IO.pure(Left(ToolError(s"Node '$nodename' is archived (display TTL expired) — abandon is not applicable; it already ages out of views on its own.")))
+                      else if !outJson.isDefined then
+                        IO.pure(Left(ToolError(
+                          s"Node '$nodename' is archived (display TTL expired, result retained). Only 'out' rewiring is supported for archived nodes (result re-delivery).")))
+                      else if forbidden then
+                        IO.pure(Left(ToolError(
+                          s"Node '$nodename' is archived — only 'out' rewiring is supported (result re-delivery); task/agent/in/deps/config edits are not.")))
+                      else editNode(rt, archived, agent, task, abandon, inJson, depsJson, outJson, ctx)
+                    case None =>
+                      if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
+                      else createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson)
+                }
           }
       }
 
