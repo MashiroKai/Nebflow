@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- orbit-anim-harness.html — minimal Flow Map pane for tests/orbit-anim.spec.mjs.
+
+     Imports the REAL production modules (/js/flowCss.js, /js/flowAnim.js) and
+     replicates the exact .solar-node DOM that flowMapTab.nodeHtml / 
+     flowDag.solarNodeHtml render, so the driver + CSS are exercised as-shipped.
+     Served by the in-spec static server at /harness. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>orbit anim harness</title>
+<style>
+  /* Mirror the app theme values (base.css dark + sapphire.css glass) so the
+     orbit rings/dots render visibly in screenshots. */
+  :root {
+    --color-surface: #1c1f27;
+    --color-text: #e8eaed;
+    --color-text-muted: #7b7e88;
+    --color-border: #2a2d35;
+    --color-primary: #5b7fbf;
+    --glass-bg: rgba(24, 28, 38, 0.68);
+    --glass-border: rgba(255, 255, 255, 0.06);
+    --glass-blur: 10px;
+  }
+</style>
+</head>
+<body style="background:#111;margin:0">
+<div class="canvas-tab-pane" data-tab-id="flow-map-testproj" data-type="flow-map"
+     style="position:relative;width:600px;height:400px">
+  <div class="solar-node running" id="n1" data-node-id="N1" data-agent="agent-a">
+    <div class="solar-orbit">
+      <div class="solar-ring ring-1"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
+      <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
+      <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
+    </div>
+  </div>
+  <div class="solar-node pending" id="n2" data-node-id="N2" data-agent="agent-b"
+       style="position:absolute;left:220px;top:120px">
+    <div class="solar-orbit">
+      <div class="solar-ring ring-1"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
+      <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
+      <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
+    </div>
+  </div>
+</div>
+<script type="module">
+  import { FLOW_CSS } from '/js/flowCss.js';
+  import '/js/flowAnim.js';
+  const s = document.createElement('style');
+  s.textContent = FLOW_CSS;
+  document.head.appendChild(s);
+  window.__harnessReady = true;
+</script>
+</body>
+</html>
