@@ -154,8 +154,9 @@ class PlanWaitingBufferSpec extends CatsEffectSuite:
         _ <- parentRef ! AgentCommand.UserInput("kick off", None, Some("v7-1"))
         _ <- waitUntil(20.seconds)(requests.get.map(_.size == 1))
         // Enter plan mode: plan agent plans (mock returns plan text) → planReady.
+        // 30s 预算：并行节点全量测试抢 CPU 时 mock LLM 调度的尾部延迟（实测可达 20s+）。
         _ <- parentRef ! AgentCommand.StartPlan("plan the work")
-        _ <- waitUntil(20.seconds)(wsEvents.get.map(_.exists(_.hcursor.downField("type").as[String].toOption.contains("planReady"))))
+        _ <- waitUntil(30.seconds)(wsEvents.get.map(_.exists(_.hcursor.downField("type").as[String].toOption.contains("planReady"))))
         // ── planWaiting window: delegate result + user input arrive ──
         _ <- parentRef ! AgentCommand.ExternalEvent(
           source = "delegate",
@@ -175,7 +176,7 @@ class PlanWaitingBufferSpec extends CatsEffectSuite:
         _ = assertEquals(preCount, 1, "buffered messages must not open parent turns during planWaiting")
         // Exit the plan window: cancel → F1 drain injects both markers.
         _ <- parentRef ! AgentCommand.PlanCancelled
-        _ <- waitUntil(20.seconds)(requests.get.map(_.count(_.messages.exists(_.textContent.contains("kick off"))) >= 2))
+        _ <- waitUntil(30.seconds)(requests.get.map(_.count(_.messages.exists(_.textContent.contains("kick off"))) >= 2))
         _ <- IO.sleep(500.millis)
         reqs <- requests.get
         evts <- wsEvents.get
