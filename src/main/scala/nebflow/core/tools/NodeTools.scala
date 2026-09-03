@@ -4,10 +4,13 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
+import nebflow.actor.ActorRef
+import nebflow.agent.AgentCommand
+import nebflow.core.{AskItem, AskOption, NebflowLogger, PathUtil}
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.*
+
+import scala.util.Try
 
 /**
  * Node 工具集（#28 阶段 0，方案 §2.2 —— 任务分发器用）。
@@ -1143,34 +1146,74 @@ object ProjectCreateTool extends Tool:
   val description =
     """Create a Project (Nebula use) — project definition + workspace .nebflow/ scaffolding.
 ## When to Use
-- Setting up a new project under the Project + Node model: name + workspace + optional description.
-- Creates projects/<name>/project.json, workspace root AGENTS.md (agent instructions template), workspace/.nebflow/ (flow-map.json + .gitignore) and mounts the project (FlowMapStore + ProjectActor ready)."""
+- **Known workspace path** (the user told you, or you know it): pass `workspace` (absolute path; `name`/`description` optional) — direct create: writes projects/<name>/project.json, workspace root AGENTS.md template, workspace/.nebflow/ + .gitignore scaffolding, and mounts the project (FlowMapStore + ProjectActor ready).
+- **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style panel pops up on the user's window listing candidate paths (first-level directories under ~/Claude code/ not already used as project workspaces). The user picks one or types a custom absolute path (the built-in "Other…" free input), and creation proceeds automatically with the choice.
+- `name` defaults to the workspace path's basename when omitted.
+## After Creation
+- Dispatch work with Task(project=<name>, task=...) — the project is mounted and triggerable immediately.
+## Semantics
+- Same name + same workspace → idempotent (returns "already exists", re-mounts; safe to repeat).
+- Same name + different workspace → explicit error (never silently re-points an existing project).
+- Panel dismissed (cancel / empty answer) → clear shelved message, nothing created — re-invoke with a known path or ask the user again."""
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
       "properties" -> Json.obj(
-        "name" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (single path segment)".asJson),
-        "workspace" -> Json.obj("type" -> "string".asJson, "description" -> "Absolute path to the project workspace".asJson),
+        "name" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Project name (single path segment). Optional — defaults to the workspace path basename.".asJson
+        ),
+        "workspace" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Absolute path to the project workspace. Omit to pop the interactive path-selection panel (AskUserQuestion-style card).".asJson
+        ),
         "description" -> Json.obj("type" -> "string".asJson, "description" -> "Optional one-line description".asJson)
       ),
-      "required" -> Json.arr("name".asJson, "workspace".asJson)
+      "required" -> Json.arr()
     )
   )
 
+  /** 前端卡片取消哨兵（chat.js 取消按钮回填 answers=['__cancelled__']）。 */
+  val CancelSentinel = "__cancelled__"
+
   def summarize(input: JsonObject): String =
-    val n = input("name").flatMap(_.asString).getOrElse("?")
-    s"ProjectCreate($n)"
+    val n = input("name").flatMap(_.asString).orElse(input("workspace").flatMap(_.asString))
+    s"ProjectCreate(${n.getOrElse("<panel>")})"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val name = input("name").flatMap(_.asString).getOrElse("")
-    val workspace = input("workspace").flatMap(_.asString).getOrElse("")
-    val description = input("description").flatMap(_.asString)
-    if name.isEmpty || workspace.isEmpty then IO.pure(Left(ToolError("'name' and 'workspace' are required")))
+    val rawName = input("name").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val rawWorkspace = input("workspace").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val description = input("description").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    rawWorkspace match
+      // 已知路径直建（口径①，既有路径语义不变，name 缺省改 basename 派生）。
+      case Some(ws) =>
+        Try(os.Path(ws, PathUtil.dataRoot)) match
+          case scala.util.Success(_) => createChain(rawName, ws, description, ctx)
+          case scala.util.Failure(_) => pathPanel(rawName, description, ctx) // path 不可用 → 面板兜底
+      // 未知/缺省 path（口径②）→ AskUser 式交互面板。
+      case None => pathPanel(rawName, description, ctx)
+
+  // ============================================================
+  // 创建链（直建与面板选择路径共用）
+  // ============================================================
+
+  /** 创建 + 幂等挂载。name 缺省 = workspace basename（口径①）。
+    * 同名冲突语义（任务口径）：同 workspace → 幂等（"already exists" + 挂载）；
+    * 异 workspace → 明确报错（绝不静默改指旧定义）。 */
+  private def createChain(
+      nameOpt: Option[String],
+      workspace: String,
+      description: Option[String],
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    val resolvedName = nameOpt.getOrElse(baseName(workspace))
+    if resolvedName.isEmpty then
+      IO.pure(Left(ToolError(s"Cannot derive project name from workspace '$workspace' — pass 'name' explicitly")))
     else
       val agentMdTemplate =
-        s"""# ${name} — AGENTS.md
+        s"""# ${resolvedName} — AGENTS.md
 
 项目级 agent 指令（取代 team rules.md，工作区根 AGENTS.md）。分发器任务文本可引用本文件。
 
@@ -1191,18 +1234,166 @@ object ProjectCreateTool extends Tool:
               .mount(pd, system, res, ctx.wsSend, ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("default"))
               .as {
                 val verb = if created then "created" else "already exists"
-                Right(s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}.")
+                Right(
+                  s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
+                    s"Dispatch work with Task(project='${pd.name}', task=...)."
+                )
               }
           case _ =>
             IO.pure(Right(s"Project '${pd.name}' definition ready. Mount requires an agent session."))
 
-      ProjectStore.create(name, workspace, description, agentMdTemplate).flatMap {
+      ProjectStore.create(resolvedName, workspace, description, agentMdTemplate).flatMap {
         case Right(pd) => mountProject(pd, created = true)
         case Left(err) =>
           // 幂等挂载（试点重启恢复关键路径）：定义已存在 → 不重建定义、不动脚手架，
           // 直接挂载（ProjectStore.create 防覆盖返回 Left；load 命中即已存在）。
-          ProjectStore.load(name).flatMap {
-            case Some(pd) => mountProject(pd, created = false)
+          // 同名异 workspace → 明确报错（不静默复用旧定义）。
+          ProjectStore.load(resolvedName).flatMap {
             case None => IO.pure(Left(ToolError(err)))
+            case Some(pd) if sameWorkspace(pd.workspace, workspace) => mountProject(pd, created = false)
+            case Some(pd) =>
+              IO.pure(Left(ToolError(
+                s"Project '$resolvedName' already exists with a different workspace (${pd.workspace}) — " +
+                  "choose another name or reuse the existing workspace"
+              )))
           }
       }
+
+  /** workspace 归一化（绝对化 + 去尾斜杠），用于同名冲突判定与候选排除。
+    * 不可解析 → None（视为不同）。 */
+  private def normalizeWorkspace(p: String): Option[String] =
+    Try(os.Path(p, PathUtil.dataRoot).toString).toOption
+
+  private def sameWorkspace(a: String, b: String): Boolean =
+    (normalizeWorkspace(a), normalizeWorkspace(b)) match
+      case (Some(x), Some(y)) => stripTrailingSlashes(x) == stripTrailingSlashes(y)
+      case _                  => false
+
+  /** 路径 basename（name 派生）；根路径等无 basename → ""（由调用方报错）。 */
+  private def baseName(workspace: String): String =
+    Try(os.Path(workspace, PathUtil.dataRoot)).map(_.last).getOrElse("")
+
+  // ============================================================
+  // 未知路径交互面板（口径②）
+  // ============================================================
+
+  /** 候选根目录（触点）：默认 ~/Claude code；spec 用系统属性注入隔离目录。
+    * 独立属性注入（非 PathUtil.dataRoot 派生）——候选根是用户机器上的项目
+    * 惯例目录，与数据根语义无关。 */
+  private def candidatesRoot: os.Path =
+    Option(System.getProperty("nebflow.projectcreate.candidates-dir"))
+      .map(os.Path(_, os.Path(sys.props("user.home"))))
+      .getOrElse(os.Path(sys.props("user.home")) / "Claude code")
+
+  /** 候选扫描（纯函数，spec 覆盖）：root 一级子目录、排除点目录与已占用
+    * workspace、按名称排序、最多 max 个。root 不存在 → 空（面板仍有 Other
+    * 自由输入兜底，不因无候选而不可用）。 */
+  def scanCandidates(root: os.Path, taken: Set[String], max: Int = 8): List[String] =
+    if !os.isDir(root) then Nil
+    else
+      os.list(root)
+        .filter(os.isDir)
+        .map(_.toString)
+        .filterNot(p => os.Path(p).last.startsWith("."))
+        .filterNot(p => taken.exists(t => stripTrailingSlashes(t) == stripTrailingSlashes(p)))
+        .toList
+        .sorted
+        .take(max)
+
+  /** '~' 展开（仅前缀语义，防 API 差异；非 ~ 开头原样返回）。 */
+  def expandTilde(path: String): String =
+    val home = sys.props("user.home")
+    if path == "~" then home
+    else if path.startsWith("~/") then home + path.drop(1)
+    else path
+
+  private sealed trait PanelAnswer
+  private object PanelAnswer:
+    /** 取消哨兵 / 空答案 → 搁置（不创建、不报错悬挂）。 */
+    case object Shelved extends PanelAnswer
+    /** 非绝对路径等不可用输入 → 明确报错（不创建）。 */
+    case class BadPath(raw: String, why: String) extends PanelAnswer
+    /** 合法绝对路径 → 进入创建链。 */
+    case class Chosen(path: String) extends PanelAnswer
+
+  /** 去尾部斜杠（Scala String.stripTrailing 无参版，斜杠语义手写）。 */
+  private def stripTrailingSlashes(s: String): String = s.replaceAll("/+$", "")
+
+  /** 面板答案解析（纯函数，spec 覆盖）：首槽空 / 取消哨兵 → Shelved；
+    * '~' 展开后非绝对 → BadPath；合法 → Chosen（去尾斜杠）。 */
+  private def parsePanelAnswer(answers: List[String]): PanelAnswer =
+    val raw = answers.headOption.map(_.trim).getOrElse("")
+    if raw.isEmpty || raw == CancelSentinel then PanelAnswer.Shelved
+    else
+      val expanded = expandTilde(raw)
+      if !expanded.startsWith("/") then PanelAnswer.BadPath(raw, "path must be absolute")
+      else PanelAnswer.Chosen(stripTrailingSlashes(expanded))
+
+  /** 面板答案落地（纯分派）：Shelved → 搁置消息；BadPath → 明确报错；
+    * Chosen → 创建链。 */
+  private def applyPanelAnswer(
+      ans: PanelAnswer,
+      nameOpt: Option[String],
+      description: Option[String],
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    ans match
+      case PanelAnswer.Shelved =>
+        IO.pure(Right(
+          "ProjectCreate shelved: the path-selection panel was dismissed without a choice — " +
+            "no project created. Re-invoke with a known 'workspace', or ask the user again."
+        ))
+      case PanelAnswer.BadPath(raw, why) =>
+        IO.pure(Left(ToolError(
+          s"Panel answer '$raw' is not usable ($why) — nothing created. " +
+            "Re-invoke with an absolute 'workspace' path."
+        )))
+      case PanelAnswer.Chosen(path) => createChain(nameOpt, path, description, ctx)
+
+  /** 未知路径分支：复用 AskUser pending 机制（AgentCommand.AskUser →
+    * InteractionHub → 前端 AskUserQuestion 卡片），零新增前端/问答通道。
+    *
+    * 语义边界（全部与 AskUserQuestionTool 对齐，不另起一套）：
+    * - headless（NEBFLOW_HEADLESS=1）→ askGuard 同款报错（无交互用户，面板会
+    *   永久悬挂）；
+    * - 无 agent 会话（REST 直调 / harness）→ 明确报错不悬挂；
+    * - 等待无人工超时——与 AskUserQuestion 同语义（pending 期间会话标记
+    *   WaitingForUser 豁免 TaskStuckWatcher；hub 缺席时 AgentActor 直接取消
+    *   ask 回 Nil → 走 Shelved 搁置消息）；
+    * - 取消/空答案 → 明确搁置消息（无创建、无悬挂）；
+    * - 答案落定 → restoreRegistryAfterAnswer 配对恢复（与 AskUserQuestionTool
+    *   同一实现——#43 修复的答案来源校验语义原样适用：面板答案只能来自用户
+    *   点选帧 askUserAnswer（非 injected 用户消息），agent 侧注入负载永不消费）。
+    */
+  private def pathPanel(
+      nameOpt: Option[String],
+      description: Option[String],
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    AskUserQuestionTool.askGuard() match
+      case Some(err) => IO.pure(Left(err))
+      case None =>
+        ctx.agentActorRef match
+          case None =>
+            IO.pure(Left(ToolError(
+              "Workspace path required — no interactive session available for the path-selection panel; " +
+                "pass 'workspace' (and optionally 'name') explicitly."
+            )))
+          case Some(agentRef) =>
+            for
+              taken <- ProjectStore.list().map(_.flatMap(p => normalizeWorkspace(p.workspace)).toSet)
+              candidates = scanCandidates(candidatesRoot, taken)
+              question =
+                s"ProjectCreate 需要项目工作区路径 — 候选为 $candidatesRoot 下尚未用作项目工作区的目录。" +
+                  "点选其一，或选 Other… 输入其他绝对路径（支持 ~）。"
+              item = AskItem(question, candidates.map(c => AskOption(c, None)))
+              requestId = java.util.UUID.randomUUID().toString.take(8)
+              answers <- agentRef
+                .?(
+                  (replyTo: ActorRef[List[String]]) => AgentCommand.AskUser(requestId, List(item), Some(replyTo)),
+                  timeout = None
+                )
+              _ <- AskUserQuestionTool.restoreRegistryAfterAnswer(ctx)
+              result <- applyPanelAnswer(parsePanelAnswer(answers), nameOpt, description, ctx)
+            yield result
+end ProjectCreateTool
