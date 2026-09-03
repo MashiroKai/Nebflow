@@ -1,0 +1,226 @@
+// project-create-panel.spec.mjs — ProjectCreate「未知路径 AskUser 式交互面板」
+// 前端验证。
+//
+// 后端实现（NodeTools.scala ProjectCreateTool）：workspace 缺省/不可用 → 复用
+// AskUser pending 机制（AgentCommand.AskUser → InteractionHub → 前端
+// renderAskUser）弹路径面板；候选 = candidatesRoot 一级目录排除已占用 workspace；
+// Other 自由输入兜底；取消 → '__cancelled__' 哨兵。
+//
+// 前端实现 = 零新增：面板就是 AskUserQuestion 卡片本身（renderAskUser/
+// showOptions），i18n 无新增 key（chat.confirm/chat.cancel/chat.other 中英已
+// 成对）。本 spec 驱动真实渲染模块（无 stub、无打包）验证面板载荷下的：
+//   1. 卡片渲染：问题 + 候选路径按钮 + Other 兜底 + 取消键；
+//   2. 点选候选 → 确认 → askUserAnswer 帧载荷正确（answers=[路径], requestId）；
+//   3. Other 自由输入 → 载荷正确；
+//   4. 取消 → answers=['__cancelled__']；
+//   5. 亮暗双主题截图落盘（验收证据）。
+//
+// Static file server on a random high port (never the 8080 host), spawned in
+// beforeAll and killed in afterAll.
+//
+// Run: npx playwright test tests/project-create-panel.spec.mjs
+
+import { test, expect } from '@playwright/test';
+import { spawn } from 'node:child_process';
+import net from 'node:net';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const HARNESS_PATH = '/tests/fixtures/project-create-panel/harness.html';
+const SHOT_DIR = path.join(os.homedir(), '.nebflow', 'docs', 'Nebflow');
+const DARK_SHOT = path.join(SHOT_DIR, '20260903_project-create-panel-dark.png');
+const LIGHT_SHOT = path.join(SHOT_DIR, '20260903_project-create-panel-light.png');
+
+let port;
+const servers = [];
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+    srv.on('error', reject);
+  });
+}
+
+function startStaticServer(dir) {
+  return spawn('python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1', '--directory', dir], {
+    stdio: 'ignore',
+  });
+}
+
+async function waitUntilUp(url, tries = 50) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return;
+    } catch { /* not up yet */ }
+    await new Promise(r => setTimeout(r, 100));
+  }
+  throw new Error(`static server never came up at ${url}`);
+}
+
+test.beforeAll(async () => {
+  fs.mkdirSync(SHOT_DIR, { recursive: true });
+  port = await freePort();
+  servers.push(startStaticServer(REPO_ROOT));
+  await waitUntilUp(`http://127.0.0.1:${port}${HARNESS_PATH}`);
+});
+
+test.afterAll(async () => {
+  for (const s of servers) s.kill('SIGTERM');
+  servers.length = 0;
+});
+
+async function newPage(browser, colorScheme) {
+  const context = await browser.newContext({
+    locale: 'zh-CN',
+    colorScheme,
+    viewport: { width: 900, height: 1000 },
+  });
+  const page = await context.newPage();
+  const pageErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(err.message));
+  await page.goto(`http://127.0.0.1:${port}${HARNESS_PATH}`);
+  await page.waitForFunction(() => window.__ready === true, null, { timeout: 15000 });
+  return { context, page, pageErrors };
+}
+
+const CANDIDATES = [
+  '/Users/dev/Claude code/Nebflow',
+  '/Users/dev/Claude code/phd-notebook',
+  '/Users/dev/Claude code/Reminder',
+];
+
+// ============================================================
+// 1. 面板渲染：问题 + 候选路径 + Other 兜底 + 取消键
+// ============================================================
+test('面板渲染：候选路径按钮 + 其他… 自由输入兜底 + 取消键（零前端改动的 AskUser 卡片）', async ({ browser }) => {
+  const { context, page, pageErrors } = await newPage(browser, 'dark');
+  const { requestId } = await page.evaluate(() => window.__panel());
+  await page.waitForTimeout(100);
+  expect(pageErrors).toEqual([]);
+
+  // 唯一卡片，带 requestId 标签（chat-input passthrough 定位用）
+  await expect(page.locator('.option-box')).toHaveCount(1);
+  await expect(page.locator('.option-box')).toHaveAttribute('data-request-id', requestId);
+
+  // 问题文本含面板语义（候选根 + 自由输入提示）
+  const question = await page.locator('.option-q').first().textContent();
+  expect(question).toContain('ProjectCreate');
+  expect(question).toContain('工作区路径');
+  expect(question).toContain('绝对路径');
+
+  // 候选按钮 = 3 个候选路径 + 1 个 其他…（allowOther 兜底）
+  const btns = page.locator('.option-btn');
+  await expect(btns).toHaveCount(CANDIDATES.length + 1);
+  for (const c of CANDIDATES) {
+    await expect(page.locator(`.option-btn[data-label="${c}"]`)).toHaveCount(1);
+  }
+  await expect(page.locator('.option-btn', { hasText: '其他...' })).toHaveCount(1);
+
+  // 确认/取消键在位；未作答时确认禁用
+  await expect(page.locator('.option-confirm')).toBeDisabled();
+  await expect(page.locator('.option-cancel')).toBeEnabled();
+
+  await page.screenshot({ path: DARK_SHOT, fullPage: true });
+  await context.close();
+});
+
+// ============================================================
+// 2. 点选候选 → 确认 → 载荷正确
+// ============================================================
+test('点选候选路径 → 确认：askUserAnswer 载荷 = answers[路径] + requestId，卡片锁定', async ({ browser }) => {
+  const { context, page, pageErrors } = await newPage(browser, 'dark');
+  await page.evaluate(() => window.__panel());
+  await page.waitForTimeout(100);
+  expect(pageErrors).toEqual([]);
+
+  const pick = CANDIDATES[1]; // phd-notebook
+  await page.locator(`.option-btn[data-label="${pick}"]`).click();
+  await expect(page.locator(`.option-btn[data-label="${pick}"]`)).toHaveClass(/picked/);
+  await page.locator('.option-confirm').click();
+
+  const frames = await page.evaluate(() => window.__capturedFrames());
+  expect(frames).toHaveLength(1);
+  expect(frames[0]).toEqual({
+    type: 'askUserAnswer',
+    sessionId: 'harness-session',
+    answers: [pick],
+    requestId: 'pc-e2e-01',
+  });
+
+  // 卡片锁定（幂等防双答：按钮全禁用 + 确认/取消隐藏 + 答案回显）
+  const btnCount = await page.locator('.option-btn').count();
+  for (let i = 0; i < btnCount; i++) await expect(page.locator('.option-btn').nth(i)).toBeDisabled();
+  await expect(page.locator('.option-answer')).toHaveCount(1);
+  await expect(page.locator('.option-answer')).toContainText(pick);
+  await context.close();
+});
+
+// ============================================================
+// 3. 其他… 自由输入兜底 → 载荷正确
+// ============================================================
+test('其他… 自由输入兜底：键入自定义绝对路径 → answers = 键入值', async ({ browser }) => {
+  const { context, page, pageErrors } = await newPage(browser, 'dark');
+  await page.evaluate(() => window.__panel());
+  await page.waitForTimeout(100);
+  expect(pageErrors).toEqual([]);
+
+  const custom = '/Users/dev/scratch/new-project';
+  await page.locator('.option-btn', { hasText: '其他...' }).click();
+  const input = page.locator('.option-custom-input');
+  await expect(input).toBeVisible();
+  await input.fill(custom);
+  await page.locator('.option-confirm').click();
+
+  const frames = await page.evaluate(() => window.__capturedFrames());
+  expect(frames).toHaveLength(1);
+  expect(frames[0].type).toBe('askUserAnswer');
+  expect(frames[0].answers).toEqual([custom]);
+  expect(frames[0].requestId).toBe('pc-e2e-01');
+  await context.close();
+});
+
+// ============================================================
+// 4. 取消 → '__cancelled__' 哨兵（后端据回搁置消息，不创建）
+// ============================================================
+test('取消键：answers = __cancelled__ 哨兵（后端回搁置消息，不创建项目）', async ({ browser }) => {
+  const { context, page, pageErrors } = await newPage(browser, 'dark');
+  await page.evaluate(() => window.__panel());
+  await page.waitForTimeout(100);
+  expect(pageErrors).toEqual([]);
+
+  await page.locator('.option-cancel').click();
+
+  const frames = await page.evaluate(() => window.__capturedFrames());
+  expect(frames).toHaveLength(1);
+  expect(frames[0]).toEqual({
+    type: 'askUserAnswer',
+    sessionId: 'harness-session',
+    answers: ['__cancelled__'],
+    requestId: 'pc-e2e-01',
+  });
+  await context.close();
+});
+
+// ============================================================
+// 5. 亮色主题截图（暗色已在用例 1 落盘）
+// ============================================================
+test('亮色主题渲染并截图（与暗色成对，验收证据）', async ({ browser }) => {
+  const { context, page, pageErrors } = await newPage(browser, 'light');
+  await page.evaluate(() => window.__panel());
+  await page.waitForTimeout(100);
+  expect(pageErrors).toEqual([]);
+
+  await expect(page.locator('.option-box')).toHaveCount(1);
+  const btns = page.locator('.option-btn');
+  await expect(btns).toHaveCount(CANDIDATES.length + 1);
+  await page.screenshot({ path: LIGHT_SHOT, fullPage: true });
+  await context.close();
+});
