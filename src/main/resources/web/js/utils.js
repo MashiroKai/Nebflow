@@ -594,3 +594,17 @@ export function isBgAgentId(id) {
     id.startsWith('node-') || id.startsWith('dispatcher-')
   );
 }
+
+/** Mid-segment truncation for tool labels (2026-09-03 footer toolline fix):
+ *  keep head + '…' + tail within `max` chars. Labels are `Tool(param)` — the
+ *  head carries the tool name + param lead, the tail carries the filename /
+ *  verb end of the param; both ends identify the call, the middle (long
+ *  directory prefixes, URL queries) is the expendable part. Pure string
+ *  function — no DOM, safe to assert in node. */
+export function truncateMiddle(str, max = 96, tailKeep = 24) {
+  const s = String(str ?? '');
+  if (s.length <= max) return s;
+  const headLen = max - tailKeep - 1; // 1 = the '…' itself
+  if (headLen < 1) return s.slice(0, max);
+  return s.slice(0, headLen) + '…' + (tailKeep > 0 ? s.slice(-tailKeep) : '');
+}
