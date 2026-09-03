@@ -217,8 +217,11 @@ Behavior:
     * entry present → status=Processing + fresh lastActivityMs (same touch
     * semantics as AgentCore.touchRegistryActivity — never creates a ghost
     * row). No-op when sharedResources/sessionId are absent (harness calls).
-    * Failure-safe: a registry touch must never fail the user's answer. */
-  private def restoreRegistryAfterAnswer(ctx: ToolContext): IO[Unit] =
+    * Failure-safe: a registry touch must never fail the user's answer.
+    * private[tools]: ProjectCreateTool's path panel dispatches the same
+    * AgentCommand.AskUser and must pair the same un-mark (one shared
+    * implementation — no divergent copy). */
+  private[tools] def restoreRegistryAfterAnswer(ctx: ToolContext): IO[Unit] =
     (ctx.sharedResources, ctx.sessionId) match
       case (Some(res), Some(sid)) =>
         val now = System.currentTimeMillis()
