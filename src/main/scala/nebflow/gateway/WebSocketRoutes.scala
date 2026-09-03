@@ -493,7 +493,7 @@ class WebSocketRoutes(
     else ensureAgent(sessionId)(ref => ref ! command)
 
   def routes: HttpRoutes[IO] =
-    WebSocketRoutes.uploadsRoutes(token) <+> WebSocketRoutes.jsRoutes <+> WebSocketRoutes.assetsRoutes <+> HttpRoutes.of[IO] {
+    WebSocketRoutes.uploadsRoutes(token) <+> WebSocketRoutes.jsRoutes <+> WebSocketRoutes.assetsRoutes <+> WebSocketRoutes.nfFileRoutes(token) <+> HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
       // Cookie takes priority to avoid token leakage in browser history/logs/Referer.
       // Query param kept as fallback for cross-origin or first-load scenarios.
@@ -598,64 +598,12 @@ class WebSocketRoutes(
       if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
       else handleInject(req)
 
-    // --- Local file serving for card iframes ---
-    // GET /api/nf-file?path=xxx&token=xxx — serves whitelisted media files from disk.
-    // Used by card iframes to display local images/videos/audio without base64 embedding.
-    // Supports Range requests for video seeking.
-    case req @ GET -> Root / "api" / "nf-file" =>
-      val provided = extractToken(req)
-      if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
-      else
-        val rawPath = req.params.get("path").getOrElse("")
-        if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
-        else
-          // Resolve and validate path
-          val expanded = if rawPath.startsWith("~") then sys.props("user.home") + rawPath.substring(1) else rawPath
-          val path = java.nio.file.Paths.get(expanded).normalize()
-          val ext = path.toString.lastIndexOf('.') match
-            case -1 => ""
-            case i => path.toString.substring(i + 1).toLowerCase
-          // Only allow whitelisted media extensions
-          val allowedExt = Set(
-            "png",
-            "jpg",
-            "jpeg",
-            "gif",
-            "svg",
-            "webp",
-            "ico",
-            "bmp",
-            "avif",
-            "tiff",
-            "tif",
-            "mp4",
-            "webm",
-            "ogg",
-            "ogv",
-            "mov",
-            "mp3",
-            "wav",
-            "oga",
-            "flac",
-            "aac",
-            "m4a",
-            "woff",
-            "woff2",
-            "ttf",
-            "otf",
-            "pdf",
-            "docx",
-            "xlsx",
-            "xlsm",
-            "pptx",
-            "epub"
-          )
-          if !allowedExt.contains(ext) then BadRequest("File type not allowed")
-          else if !java.nio.file.Files.exists(path) || !java.nio.file.Files.isRegularFile(path) then NotFound()
-          else StaticFile.fromPath(fs2.io.file.Path(path.toString), Some(req)).getOrElseF(NotFound())
-        end if
-      end if
-
+    // GET /api/nf-file — local file serving for card iframes moved to the
+    // companion as nfFileRoutes(token) (standalone, unit-testable, same
+    // pattern as uploadsRoutes/jsRoutes); mounted ahead of this match above.
+    // 2026-09-03 Canvas interactive-HTML fix: the whitelist (NfFileAllowedExt)
+    // now also covers the text asset types (js/css/json) a multi-file HTML
+    // deliverable references from the Canvas HTML viewer.
     case GET -> Root =>
       // P1 single switch point: when the esbuild dist is packed on the
       // classpath (sbt -Dnebflow.webdist=1 assembly), "/" serves the bundled
@@ -4518,19 +4466,11 @@ class WebSocketRoutes(
   // Callback helpers
   // ============================================================
 
-  /** Extract token from query param (localStorage), Authorization header, or cookie. */
+  /** Extract token from query param (localStorage), Authorization header, or cookie.
+    * Logic lives on the companion (pure, shared with nfFileRoutes); this
+    * instance alias keeps every existing call site unchanged. */
   private def extractToken(req: org.http4s.Request[IO]): String =
-    val fromParam = req.params.get("token").getOrElse("")
-    if fromParam.nonEmpty then fromParam
-    else
-      val fromHeader = req.headers
-        .get[org.http4s.headers.Authorization]
-        .collectFirst { case org.http4s.headers.Authorization(org.http4s.Credentials.Token(_, t)) =>
-          t
-        }
-        .getOrElse("")
-      if fromHeader.nonEmpty then fromHeader
-      else req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
+    WebSocketRoutes.extractToken(req)
 
   /**
    * POST /api/callbacks/inject
@@ -4594,6 +4534,108 @@ class WebSocketRoutes(
 end WebSocketRoutes
 
 object WebSocketRoutes:
+
+  /** Extract token from query param (localStorage), Authorization header, or
+    * cookie. Pure — shared by every authenticated route through the
+    * class-side alias. */
+  private[gateway] def extractToken(req: org.http4s.Request[IO]): String =
+    val fromParam = req.params.get("token").getOrElse("")
+    if fromParam.nonEmpty then fromParam
+    else
+      val fromHeader = req.headers
+        .get[org.http4s.headers.Authorization]
+        .collectFirst { case org.http4s.headers.Authorization(org.http4s.Credentials.Token(_, t)) =>
+          t
+        }
+        .getOrElse("")
+      if fromHeader.nonEmpty then fromHeader
+      else req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
+
+  /** Extension whitelist for GET /api/nf-file (local files served to
+    * card/canvas iframes).
+    *
+    * 2026-09-03 Canvas interactive-HTML fix: beyond the media types it now
+    * covers the text asset types a multi-file HTML deliverable references —
+    * `js` (companion data/script modules), `mjs`, `css`, `json`. Without
+    * them the Canvas HTML viewer renders the document shell, but the page's
+    * own boot script dies on the first missing module, BEFORE binding any
+    * event listeners — the reported "renders but nothing is clickable"
+    * failure (prototype.html:455 `const SNAP = window.FM_SNAPSHOT` →
+    * :487 seedFromSnapshot() throws on the 400'd script).
+    *
+    * Security posture unchanged: the route stays token-gated end to end, and
+    * anything running inside the srcdoc canvas iframe already executes with
+    * app-origin script privileges (viewers/html.js sandbox: allow-scripts +
+    * allow-same-origin), so serving js/css/json does not widen the trust
+    * boundary — content source remains locally opened, user-initiated
+    * deliverables.
+    *
+    * Pure + testable on purpose (same pattern as uploadsRoutes). */
+  val NfFileAllowedExt: Set[String] = Set(
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "svg",
+    "webp",
+    "ico",
+    "bmp",
+    "avif",
+    "tiff",
+    "tif",
+    "mp4",
+    "webm",
+    "ogg",
+    "ogv",
+    "mov",
+    "mp3",
+    "wav",
+    "oga",
+    "flac",
+    "aac",
+    "m4a",
+    "woff",
+    "woff2",
+    "ttf",
+    "otf",
+    "pdf",
+    "docx",
+    "xlsx",
+    "xlsm",
+    "pptx",
+    "epub",
+    "js",
+    "mjs",
+    "css",
+    "json"
+  )
+
+  /** Serves whitelisted local files from disk for card iframes
+    * (GET /api/nf-file?path=xxx&token=xxx). Supports Range requests for
+    * video seeking. Standalone (zero class deps) so it is directly
+    * unit-testable (NfFileRoutesSpec); composed ahead of the instance
+    * routes like uploadsRoutes. */
+  def nfFileRoutes(token: String): HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case req @ GET -> Root / "api" / "nf-file" =>
+      val provided = extractToken(req)
+      if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
+      else
+        val rawPath = req.params.get("path").getOrElse("")
+        if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
+        else
+          // Resolve and validate path
+          val expanded = if rawPath.startsWith("~") then sys.props("user.home") + rawPath.substring(1) else rawPath
+          val path = java.nio.file.Paths.get(expanded).normalize()
+          val ext = path.toString.lastIndexOf('.') match
+            case -1 => ""
+            case i => path.toString.substring(i + 1).toLowerCase
+          // Only allow whitelisted extensions
+          if !NfFileAllowedExt.contains(ext) then BadRequest("File type not allowed")
+          else if !java.nio.file.Files.exists(path) || !java.nio.file.Files.isRegularFile(path) then NotFound()
+          else StaticFile.fromPath(fs2.io.file.Path(path.toString), Some(req)).getOrElseF(NotFound())
+        end if
+      end if
+  }
 
   /**
     * 第六件 QC (2026-08-30): which input sources may probe the AskUser

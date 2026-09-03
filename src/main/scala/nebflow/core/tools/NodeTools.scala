@@ -5,6 +5,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.NebflowLogger
+import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.*
 
@@ -212,10 +213,21 @@ object NodeTools:
           case Some(alive) => base.deepMerge(Json.obj("liveness" -> Json.fromBoolean(alive)))
           case None        => base
       }
-      val wtDir = os.Path(rt.project.workspace) / ".nebflow" / "worktrees"
-      val worktrees =
-        if os.exists(wtDir) then os.list(wtDir).filter(os.isDir).map(_.last).toList
+      val wtDir = os.Path(rt.project.workspace) / ".nebflow"
+      val authDir = wtDir / "worktrees"
+      // worktrees[] 双位置合并去重（20260903 worktree 参数修复——参照系统一）：
+      // worktrees/ 权威位置目录名 ∪ .nebflow/ 顶层目录/软链名（os.isDir 沿软链），
+      // distinct + sorted 排序稳定。worktrees/ 容器本身不算 worktree。今日生产
+      // 顶层同名条目为指向权威位置的软链 → 去重后名单与可传 worktree 名单一致。
+      // 节点 payload 的 worktree 字段零改动（仍原样序列化存储值）。
+      val authNames = if os.exists(authDir) then os.list(authDir).filter(os.isDir).map(_.last).toList else Nil
+      val topNames =
+        // 保留名（worktrees/skills/commands）不是 worktree 候选（QC P1：否则
+        // NodeList 主动教 LLM 传 "skills" 且校验层会放行）
+        if os.exists(wtDir) then
+          os.list(wtDir).filter(os.isDir).map(_.last).filterNot(PathUtil.ReservedTopLevelNames.contains).toList
         else Nil
+      val worktrees = (authNames ++ topNames).distinct.sorted
       Json.obj(
         "nodes" -> nodes.asJson,
         "worktrees" -> worktrees.asJson,
@@ -243,7 +255,7 @@ object NodeEditTool extends Tool:
 - **in** (optional): upstream node id(s) to add as barrier inputs (multi-in = barrier; each upstream's out is rewired to this node).
 - **deps** (optional, replace-on-provide): upstream node id(s) this node waits on for COMPLETION SIGNAL only — no result is injected (downstream input = its own task, self-sufficient). Needs a result? Use in. Only needs "run after upstream completes"? Use deps. Need both? Write both. Not passed = unchanged; passed (any form, including [] / null) = whole-list replacement. Upstream failed/cancelled/blocked never triggers a deps waiter (it stays pending and visible). A running upstream is legal to depend on (waiting for it IS the semantics); editing deps on a RUNNING node is rejected (input frozen).
 - **out** (required on create, single value): node id or "Nebula" (flow exit). Single-value semantics: setting replaces the old out (rewire); arrays are rejected (1-to-many not supported); null (disconnect) is REJECTED — nodes must keep their out edge, rewire to a new target instead.
-- **skill** / **mcp** / **worktree** / **preset** (optional): node configuration (worktree must exist under workspace/.nebflow/).
+- **skill** / **mcp** / **worktree** / **preset** (optional): node configuration. worktree: bare directory name under workspace/.nebflow/worktrees/ (must exist) — e.g. "micorb-config-hide", NOT "worktrees/micorb-config-hide"; no path separators, no absolute paths, no "..". Prefix forms ("worktrees/<name>" / ".nebflow/<name>") are tolerated but the bare name is canonical. Create via: git worktree add <workspace>/.nebflow/worktrees/<name> -b <branch>.
 - **maxRetries** (optional, default 1).
 - **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled), wiring/pending node, or a STALE RUNNING node whose session is dead (no live execution fiber, e.g. after an instance restart) → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes, the topology-cleanup exit for retired wiring/pending nodes, and the reaping exit for dead-session running nodes. A LIVE running node is refused (mis-kill protection) — use NodeCancel for running nodes instead.
 
@@ -277,7 +289,7 @@ object NodeEditTool extends Tool:
         ).asJson, "description" -> "Single out target: node id or \"Nebula\" (required on create). Arrays rejected (1-to-many); null (disconnect) rejected — rewire instead".asJson),
         "skill" -> Json.obj("type" -> "string".asJson),
         "mcp" -> Json.obj("type" -> "string".asJson),
-        "worktree" -> Json.obj("type" -> "string".asJson, "description" -> "Relative path under workspace/.nebflow/ (must exist; create via git worktree)".asJson),
+        "worktree" -> Json.obj("type" -> "string".asJson, "description" -> "Bare directory name under workspace/.nebflow/worktrees/ (must exist). e.g. \"micorb-config-hide\" — NOT \"worktrees/micorb-config-hide\"; no path separators, no absolute paths".asJson),
         "preset" -> Json.obj("type" -> "string".asJson),
         "maxRetries" -> Json.obj("type" -> "integer".asJson),
         "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL node (blocked/completed/failed/cancelled) → cancelled + display TTL".asJson)
@@ -394,13 +406,24 @@ object NodeEditTool extends Tool:
           EntityLoader.loadAgent(agentName).flatMap {
             case None => IO.pure(Left(ToolError(s"Agent '$agentName' not found in global library")))
             case Some(_) =>
-              // 2. worktree 存在性
+              // 2. worktree 归一化 + 双位置实存校验（20260903 worktree 参数修复，
+              //    根因报告 20260903_nodeedit-worktree-param-fix.md §一/§六）：入参
+              //    宽容归一（裸名 / "worktrees/<名>" / ".nebflow/<名>" / "./<名>" 均
+              //    收，PathUtil.normalizeWorktree 单点，与 NodeEngine cwd 同源）；
+              //    拒绝走 WORKTREE_FORMAT 可行动文案——os-lib InvalidSegment（面向
+              //    Scala 开发者，LLM 不可自纠）不再外泄。实存双查：worktrees/ 权威
+              //    位置优先、.nebflow/ 顶层存量 fallback（零迁移不破现网）。存储仍
+              //    存裸名（Some(bare)，零迁移）。
               worktree match
                 case Some(wt) =>
-                  val wtPath = os.Path(rt.project.workspace) / ".nebflow" / wt
-                  if !os.exists(wtPath) then
-                    IO.pure(Left(ToolError(s"Worktree '$wt' not found under ${rt.project.workspace}/.nebflow/ — create it first via git worktree add")))
-                  else proceed(rt, nodename, agentName, task, skill, mcp, worktree, preset, maxRetries, ins, deps, out)
+                  PathUtil.normalizeWorktree(wt) match
+                    case Left(err) => IO.pure(Left(ToolError(err)))
+                    case Right(bare) =>
+                      if PathUtil.resolveWorktreeDir(os.Path(rt.project.workspace), bare).isEmpty then
+                        IO.pure(Left(ToolError(
+                          s"Worktree '$bare' not found under ${rt.project.workspace}/.nebflow/worktrees/ (nor top-level .nebflow/) — " +
+                            s"create it first via: git worktree add ${rt.project.workspace}/.nebflow/worktrees/$bare -b <branch>")))
+                      else proceed(rt, nodename, agentName, task, skill, mcp, Some(bare), preset, maxRetries, ins, deps, out)
                 case None => proceed(rt, nodename, agentName, task, skill, mcp, worktree, preset, maxRetries, ins, deps, out)
           }
 
