@@ -469,6 +469,10 @@ enum AgentStreamEvent:
   case TextDelta(text: String)
   case ToolStart(label: String)
   case ToolEnd(label: String, summary: String, content: String, isError: Boolean, input: Option[JsonObject] = None)
+  /** 工具执行期心跳（审计 20260903 子项①）：toolStart→toolEnd 之间每
+    * Defaults.ToolHeartbeatSec 秒发一条，喂活前端 busy timer——前台长工具
+    * 执行零事件段不再触发前端 630s 纯静默超时误杀。 */
+  case ToolHeartbeat(label: String)
   case AgentStart(agentName: String, agentType: String, taskDescription: Option[String] = None)
   case AgentEnd(agentName: String)
   case Thinking
@@ -537,6 +541,10 @@ enum AgentStreamEvent:
         if isSubagent then
           Json.obj("type" -> "agentToolStart".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
         else Json.obj("type" -> "toolStart".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
+      case ToolHeartbeat(label) =>
+        if isSubagent then
+          Json.obj("type" -> "agentToolHeartbeat".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
+        else Json.obj("type" -> "toolHeartbeat".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
       case ToolEnd(label, summary, content, isError, input) =>
         val base =
           if isSubagent then

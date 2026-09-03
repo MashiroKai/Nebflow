@@ -211,6 +211,45 @@ class AnthropicAdapter(
     end if
   end buildSystemBlocks
 
+  /**
+   * 跨 provider thinking 重放适配（审计 20260903 子项④，flap 风暴底层缺陷）。
+   *
+   * 会话历史由「不产出 thinking 块的 provider」生成时（所有 OpenAI 协议
+   * adapter 的 history 序列化都丢弃 thinking；GLM/zhipu 会话即此形态），
+   * fallback 到 requireThinkingPassback 的 Anthropic 兼容端点（deepseek）
+   * 会 400 "The content[].thinking in the thinking mode must be passed back
+   * to the API"——thinking 模式下 assistant 历史缺 thinking 块。实测 25 次
+   * DOWN 全部源于此（09-03 flap 风暴，p50 0.9s 探测秒回 UP 后再 400）。
+   *
+   * 取舍（转换优先、不可转换则剥离）：
+   *  - 历史「有」thinking 块 → 原样回传（2026-08-15 既有契约，本签名 spec
+   *    锁定；含签名块的回传行为不变）。
+   *  - 历史「缺」thinking 块 → 转换不可能（无法伪造模型没产生的推理内容）
+   *    → 剥离 = 本请求不进 thinking 模式（去掉 thinking 参数）。deepseek 对
+   *    纯文本历史在非 thinking 模式下正常接受；后续轮次由 deepseek 自己产生
+   *    thinking 块后自然恢复 thinking 模式。
+   */
+  private[providers] def effectiveThinking(params: SendMessageParams): Option[Json] =
+    params.thinking match
+      case Some(t) if requireThinkingPassback && hasAssistantWithoutThinking(params.messages) =>
+        nebflow.core.NebflowLogger
+          .forName("nebflow.llm.anthropic")
+          .warn(
+            s"thinking mode dropped for this request: ${params.model} requires thinking passback but " +
+              "session history contains assistant messages without thinking blocks (cross-provider replay) — " +
+              "replaying would 400 (audit 20260903 #4)"
+          )
+        None
+      case other => other
+
+  private def hasAssistantWithoutThinking(messages: List[Message]): Boolean =
+    messages.exists {
+      case Message(MessageRole.Assistant, Right(blocks), _, _) =>
+        !blocks.exists(_.isInstanceOf[ContentBlock.Thinking])
+      case Message(MessageRole.Assistant, Left(_), _, _) => true
+      case _ => false
+    }
+
   def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
     val systemBlocks = buildSystemBlocks(params)
     val body = Json.obj(
@@ -224,7 +263,7 @@ class AnthropicAdapter(
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => bodyWithSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
       case None => bodyWithSystem
-    val bodyWithThinking = params.thinking match
+    val bodyWithThinking = effectiveThinking(params) match
       case Some(t) => bodyWithTools.deepMerge(Json.obj("thinking" -> t))
       case None => bodyWithTools
     val bodyWithMetadata = (params.sessionId, params.agentId) match
@@ -253,7 +292,11 @@ class AnthropicAdapter(
     backend.send(request).flatMap { response =>
       response.body match
         case Left(error) =>
-          IO.raiseError(new RuntimeException(s"Anthropic API error: $error"))
+          // 审计 20260903 子项②：非 2xx 升格为结构化 HttpError（带状态码）——
+          // classifyError 的结构化分支据此区分 400 Format（不驱逐）与 Auth/404
+          // 等确证死亡（驱逐）。旧 RuntimeException 文案无状态码，400 只能落
+          // Unknown/Transient → 重试耗尽后照样 markDown（flap 主因）。
+          IO.raiseError(sttp.client4.HttpError(error, response.code))
         case Right(bodyStr) =>
           IO.defer {
             parse(bodyStr) match
@@ -313,7 +356,7 @@ class AnthropicAdapter(
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => bodyWithSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
       case None => bodyWithSystem
-    val bodyWithThinking = params.thinking match
+    val bodyWithThinking = effectiveThinking(params) match
       case Some(t) => bodyWithTools.deepMerge(Json.obj("thinking" -> t))
       case None => bodyWithTools
     val bodyWithMetadata = (params.sessionId, params.agentId) match
@@ -346,7 +389,8 @@ class AnthropicAdapter(
         Stream.eval(backend.send(request)).flatMap { response =>
           response.body match
             case Left(error) =>
-              Stream.eval(IO.raiseError(new RuntimeException(s"Anthropic API error: $error")))
+              // 同 sendMessage：结构化 HttpError 携带状态码（子项②）。
+              Stream.eval(IO.raiseError(sttp.client4.HttpError(error, response.code)))
             case Right(byteStream) =>
               parseSseIncrementally(byteStream, toolCallState, tokenRef, params)
         }

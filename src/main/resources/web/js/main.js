@@ -2093,6 +2093,12 @@ onMessage('agentToolStart', (msg, view) => {
 });
 
 onMessage('agentToolEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+// 审计 20260903 子项①：工具执行期心跳——长工具执行（toolStart→toolEnd 之间零
+// 事件段）由后端每 30s 推送心跳重置 busy timer，前端 630s 纯静默超时不再误杀
+// 正在干活的 turn。agentToolHeartbeat（子代理原事件）与 toolHeartbeat（主会话
+// /转换后）都重置对应会话计时器（与 agentToolEnd 既有重置面一致）。
+onMessage('toolHeartbeat', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentToolHeartbeat', (msg, view) => { resetStreamTimeout(msg.rootSessionId || msg.sessionId); });
 onMessage('agentEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
 
 onMessage('agentThinking', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
