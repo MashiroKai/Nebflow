@@ -298,7 +298,7 @@ private[agent] trait AgentCore:
       //    redesign): compaction only compresses. Every agent goes straight
       //    to the Compact turn (tools disabled, text-only summary).
       jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
-      reminder = CompactService.buildCompactReminder(depth, isLead)
+      reminder = CompactService.buildCompactReminder(depth, isLead, state.sessionId)
       pending = CompactionJob(jobId, mode, None, replyTo, resumeAfterCompact, postCompactInstruction)
       // #38 Layer B (2026-09-01): compact 轮输入先剔除超大 ToolResult（落盘
       // 已有或在此补盘）——压缩轮只需全文概貌 + 路径引用，不需要大结果本体。
