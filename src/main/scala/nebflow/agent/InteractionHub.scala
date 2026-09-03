@@ -64,6 +64,9 @@ object InteractionHub:
               // removal (P1 lesson: reply-slot lifecycle lives in ONE place).
               ctx.forkTurn(handleChatInputAnswer(pending, rootWsSend, rootSessionId, text, reply)) *>
                 IO.pure(behavior)
+            case InteractionHubCommand.ListPendingAsks(rootSessionId, reply) =>
+              // 刷新存活 (2026-09-03): read-only snapshot for reconnect replay.
+              ctx.forkTurn(handleListPendingAsks(pending, rootSessionId, reply)) *> IO.pure(behavior)
         }
       IO.pure(behavior)
     }
@@ -168,6 +171,53 @@ object InteractionHub:
         .add("sourceAgent", req.sourceAgent.asJson)
         .add("sourceSession", req.sourceSession.asJson)
     )
+
+  // ============================================================
+  // 刷新存活 (2026-09-03): reconnect replay — read-only pending snapshot.
+  //
+  // A pending AskUser already survives a page refresh through the history
+  // restore chain (#43), but that chain loses the requestId binding
+  // (UiMessage.AskUser persists only {type, items}) and disappears entirely
+  // when the askUser entry falls outside the first history page. The gateway
+  // calls ListPendingAsks when a client (re)subscribes to a session (initial
+  // history load) and re-sends the cards — the hub stays the single authority:
+  // an ask answered between snapshot and render is simply not in the snapshot.
+  //
+  // Read-only: the pending map is untouched. The replayed frame is state
+  // re-delivery, NOT a re-ask — answering a card that was replayed twice
+  // consumes the slot exactly once (second answer hits "unknown requestId",
+  // card already locked locally).
+  // ============================================================
+  private def handleListPendingAsks(
+    pending: Ref[IO, Map[String, PendingRequest]],
+    rootSessionId: String,
+    reply: ActorRef[List[Json]]
+  ): IO[Unit] =
+    pending.get.map { m =>
+      m.toList
+        .collect {
+          case (rid, p) if p.rootSessionId == rootSessionId && p.kind == InteractionKind.AskUser => (rid, p)
+        }
+        .sortBy(_._2.createdAt)
+        .map { case (rid, p) =>
+          renderAskUser(
+            InteractionRequest(
+              requestId = rid,
+              kind = p.kind,
+              payload = p.payload,
+              reply = p.reply,
+              rootSessionId = p.rootSessionId,
+              sourceAgent = p.sourceAgent,
+              sourceSession = p.sourceSession
+            )
+          ).deepMerge(Json.obj("replayed" -> Json.fromBoolean(true)))
+        }
+    }.flatTap(list =>
+      if list.nonEmpty then
+        logger.info(s"ListPendingAsks root=$rootSessionId → ${list.size} pending ask(s) replayed")
+      else IO.unit
+    ).flatMap(list => (reply ! list).void)
+
 
   // ============================================================
   // Answer: complete the reply target (multi-slot by requestId)
@@ -338,3 +388,14 @@ object InteractionHubCommand:
       text: String,
       reply: cats.effect.Deferred[IO, Boolean]
   ) extends InteractionHubCommand
+
+  /** 刷新存活 (2026-09-03): gateway → hub — snapshot the still-pending AskUser
+    * cards for `rootSessionId` (oldest first), each rendered exactly like the
+    * first send plus `replayed: true`. The gateway re-sends them when a client
+    * (re)subscribes to the session (initial history load after browser refresh
+    * / WS reconnect / session switch) so the card and its requestId binding
+    * survive regardless of history pagination. Read-only: never touches the
+    * pending map or the reply slots.
+    */
+  final case class ListPendingAsks(rootSessionId: String, reply: ActorRef[List[Json]])
+      extends InteractionHubCommand
