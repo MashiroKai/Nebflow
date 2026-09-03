@@ -1,13 +1,22 @@
 // turnGroup.js — #346 WeChat-style turn-level collapse of intermediate process.
 //
-// On `done` the turn's process rows (thinking rows, tool cards, intermediate
-// text segments) are gathered into a `.turn-group` and collapsed behind a
+// On `done` the turn's process rows (thinking rows, tool cards, injected
+// events) are gathered into `.turn-group` container(s) and collapsed behind a
 // one-line summary bar: `✻ phrase, model · tool count` (v1.2: model name is
 // visible summary text; timestamp stays in the title tooltip). Failed turns
 // (`error`/`interrupted`/`timeout`/`maxTokens`) are grouped but NEVER
 // collapsed — no summary bar (spec A5: the element does not exist), rows
 // stay visible for troubleshooting. Streaming path is untouched: rows
 // append directly to the chat as today; gathering happens once, at terminal.
+//
+// 2026-09-03 ruling — collapse keeps LLM text visible: ONLY tool blocks +
+// tool results + injected events collapse. EVERY assistant text row (ai text,
+// whatever its position in the turn) stays flat in its original position and
+// order — text interleaved with tools splits the collapsible rows into
+// contiguous RUNS, each run becoming its own group:
+//   文字A → [✻ group1: 工具1] → 文字B → [✻ group2: 工具2] → 最终回复
+// Text is never moved into (or out of) a group; expanding a run reveals its
+// tools exactly where they happened.
 //
 // Zero protocol/backend changes (spec D1): success vs failure is executed
 // here from the terminal events main.js already receives; history reload
@@ -52,12 +61,35 @@ function isAgentRow(row) {
   return row.classList.contains('ai') && !!row.querySelector('.bubble.ai');
 }
 
-/** True for rows that belong to the agent's intermediate process — agent work
- *  PLUS injected messages (ruling 2026-08-25). */
-function isProcessRow(row) {
+/** True for rows that belong to the collapsible process — agent work MINUS
+ *  assistant text (2026-09-03 ruling: tool blocks + tool results + injected
+ *  events only; LLM text replies always stay visible in place). */
+function isCollapsibleRow(row) {
   if (!row.classList.contains('row')) return false;
   if (isInjectedRow(row)) return true;
-  return isAgentRow(row);
+  if (row.classList.contains('tool') || row.classList.contains('card-content')) return true;
+  if (row.classList.contains('thinking-row')) return true;
+  return false; // ai text rows (and everything else) never collapse
+}
+
+/** Split scope rows into contiguous runs of collapsible rows. Assistant text
+ *  rows act as run separators and stay flat — each run becomes one group, so
+ *  文字→工具→文字→工具→最终 gathers as two groups with the texts untouched
+ *  between them (original position and order preserved, 2026-09-03 ruling). */
+function collapsibleRuns(rows) {
+  const runs = [];
+  let cur = null;
+  for (const row of rows) {
+    if (isCollapsibleRow(row)) {
+      if (!cur) cur = [];
+      cur.push(row);
+    } else if (cur) {
+      runs.push(cur);
+      cur = null;
+    }
+  }
+  if (cur) runs.push(cur);
+  return runs;
 }
 
 /** True when the scope contains at least one agent-produced row (tool /
@@ -80,13 +112,15 @@ function findFinalRow(scope) {
   return null;
 }
 
-/** Build the group DOM around the given process rows (DOM moves, no
- *  rebuild — listeners and scroll memory survive). Returns null when there
- *  is nothing to group (E5 zero-process; E6 thinking-only = final product).
+/** Build the group DOM around the given collapsible run (DOM moves, no
+ *  rebuild — listeners and scroll memory survive). `finalRow` (the turn's
+ *  final text reply, never part of a run since the 2026-09-03 ruling) is only
+ *  consulted for the E6 thinking-only exemption. Returns null when there is
+ *  nothing to group (E5 zero-process; E6 thinking-only = final product).
  *  `withSummary` controls whether a summary bar element is created — failed
  *  groups pass false: spec A5 asserts `.turn-summary` does NOT exist there. */
-function buildGroup(chat, processRows, finalRow, meta, withSummary = true) {
-  const steps = processRows.filter(r => r !== finalRow);
+function buildGroup(chat, run, finalRow, meta, withSummary = true) {
+  const steps = run;
   if (steps.length === 0) return null;
   // E6: a lone thinking row with no text reply IS the user's only readable
   // content — never hide it.
@@ -111,7 +145,7 @@ function buildGroup(chat, processRows, finalRow, meta, withSummary = true) {
   }
   group.appendChild(stepsEl);
 
-  chat.insertBefore(group, processRows[0]);
+  chat.insertBefore(group, run[0]);
   steps.forEach(r => stepsEl.appendChild(r));
   return { group, steps: stepsEl, summary, text };
 }
@@ -191,24 +225,28 @@ function turnScope(chat) {
 }
 
 /**
- * Done path: gather this turn's process rows and collapse immediately
- * (synchronous, no linger — v1.1 user ruling). Returns the group or null.
+ * Done path: gather this turn's collapsible runs and collapse immediately
+ * (synchronous, no linger — v1.1 user ruling). Text replies stay flat between
+ * the groups (2026-09-03 ruling). Returns the last group built, or null.
  */
 export function collapseTurn(view, meta = {}) {
   const chat = view.dom.chat;
   const scope = turnScope(chat);
-  let built = null;
+  const finalRow = findFinalRow(scope);
+  const builtGroups = [];
   if (hasAgentWork(scope)) { // lone injection / no agent work → nothing to collapse
-    const processRows = scope.filter(isProcessRow);
-    if (processRows.length > 0) { // E5
-      built = buildGroup(chat, processRows, findFinalRow(scope), meta);
+    for (const run of collapsibleRuns(scope)) { // E5/E6 runs → buildGroup null
+      const built = buildGroup(chat, run, finalRow, meta);
+      if (built) builtGroups.push(built);
     }
   }
-  if (built) {
+  for (const built of builtGroups) {
     fillSummary(built, meta);
     built.group.dataset.turnState = 'done';
     built.steps.style.display = 'none';
     built.summary.setAttribute('aria-expanded', 'false');
+  }
+  if (builtGroups.length) {
     // keep the viewport pinned to the bottom when it was pinned (spec §4.2)
     if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80) {
       chat.scrollTop = chat.scrollHeight;
@@ -216,7 +254,7 @@ export function collapseTurn(view, meta = {}) {
   }
   markClosed(chat); // #403: LLM ended — the turn is closed even when there
                     // was nothing to group (E5/E6); later arrivals are a new turn.
-  return built ? built.group : null;
+  return builtGroups.length ? builtGroups[builtGroups.length - 1].group : null;
 }
 
 /**
@@ -226,20 +264,21 @@ export function collapseTurn(view, meta = {}) {
 export function failTurn(view) {
   const chat = view.dom.chat;
   const scope = turnScope(chat);
-  let built = null;
+  const finalRow = findFinalRow(scope);
+  const builtGroups = [];
   if (hasAgentWork(scope)) {
-    const processRows = scope.filter(isProcessRow);
-    if (processRows.length > 0) {
+    for (const run of collapsibleRuns(scope)) {
       // A5: failed groups carry NO summary element (not merely hidden).
-      built = buildGroup(chat, processRows, findFinalRow(scope), {}, false);
+      const built = buildGroup(chat, run, finalRow, {}, false);
+      if (built) builtGroups.push(built);
     }
   }
-  if (built) {
+  for (const built of builtGroups) {
     built.group.dataset.turnState = 'failed';
     built.group.classList.add('turn-failed');
   }
   markClosed(chat); // #403: terminal reached — later arrivals are a new turn
-  return built ? built.group : null;
+  return builtGroups.length ? builtGroups[builtGroups.length - 1].group : null;
 }
 
 /** E10: message-search hit inside a collapsed group — expand it first so the
@@ -329,9 +368,9 @@ export function buildTurnGroupsForHistory(chat, opts = {}) {
 
 function groupSegment(chat, seg) {
   if (!hasAgentWork(seg)) return; // lone injection / no agent work — leave flat
-  const processRows = seg.filter(isProcessRow);
-  if (processRows.length === 0) return;
   const finalRow = findFinalRow(seg);
+  const runs = collapsibleRuns(seg);
+  if (runs.length === 0) return; // E5: nothing collapsible (text-only turn)
   // E4 P0: success = some Ai row in the segment carries a done-badge
   // (SessionRecorder backfills durationMs on done — the implicit marker).
   // v1.2: footers are time + copy only, so phrase/model ride on the badge's
@@ -345,16 +384,20 @@ function groupSegment(chat, seg) {
     sessionId: chat.dataset?.sessionId || '',
   } : {};
   // A5: failed segments build the group WITHOUT a summary element.
-  const built = buildGroup(chat, processRows, finalRow, meta, success);
-  if (!built) return;
-  if (success) {
-    fillSummary(built, meta);
-    built.group.dataset.turnState = 'done';
-    built.steps.style.display = 'none';
-    built.summary.setAttribute('aria-expanded', 'false');
-  } else {
-    built.group.dataset.turnState = 'failed';
-    built.group.classList.add('turn-failed');
+  // 2026-09-03: one group per collapsible run — assistant text rows between
+  // runs stay flat at their original positions (live/rebuild parity).
+  for (const run of runs) {
+    const built = buildGroup(chat, run, finalRow, meta, success);
+    if (!built) continue;
+    if (success) {
+      fillSummary(built, meta);
+      built.group.dataset.turnState = 'done';
+      built.steps.style.display = 'none';
+      built.summary.setAttribute('aria-expanded', 'false');
+    } else {
+      built.group.dataset.turnState = 'failed';
+      built.group.classList.add('turn-failed');
+    }
   }
 }
 
