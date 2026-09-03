@@ -6,9 +6,9 @@
 
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
-import { esc } from './flowHelpers.js';
+import { esc, authHeaders } from './flowHelpers.js';
 import { t } from './i18n.js';
-import { fetchProjects, fetchFlowMap, summarize } from './nodeData.js';
+import { fetchProjects, fetchFlowMap, summarize, API } from './nodeData.js';
 import { renderFlowMapInto } from './flowMapTab.js';
 import { openAgentFile } from './agentFileViewer.js';
 
@@ -108,6 +108,7 @@ function projectCardHtml(p, summary) {
       <div class="team-card-header">
         <div class="team-card-title${empty ? ' empty' : ''}"${titleOpenAttr} title="${esc(titleTooltip)}">${esc(p.name)}${empty ? `<span class="project-empty-tag">${esc(t('project.noNodes'))}</span>` : ''}</div>
         <div class="team-card-summary ${summaryCls}"><span class="dot"></span>${esc(brief)}</div>
+        <button class="project-archive-btn" data-archive-project="${esc(p.name)}" title="${esc(t('project.archive'))}" aria-label="${esc(t('project.archiveTitle', { name: p.name }))}"><i data-lucide="archive"></i></button>
       </div>
       <div class="project-fields">
         <div class="project-field" title="${esc(p.workspace)}">
@@ -158,6 +159,38 @@ function bindProjectClicks(scroll) {
       }).catch(() => window.__showToast?.(t('project.openWorkspaceFail'), 'error'));
     });
   });
+  scroll.querySelectorAll('[data-archive-project]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      archiveProject(el.getAttribute('data-archive-project') || '');
+    });
+  });
+}
+
+/** 归档项目（迁移方案 v2 §6.1）：显式人工动作——确认弹层（防误触，复用
+ *  window.__showConfirm 既有确认范式）→ POST /api/projects/<name>/archive →
+ *  列表重渲（后端 ProjectStore.list 源头过滤归档项，卡片即时消失，无需刷新页面，
+ *  对齐 WS 事件驱动的 rerenderProjectsTab 既有刷新机制）。
+ *  零删除零移动：仅 project.json 打归档标记，workspace 与定义文件全部保留。 */
+function archiveProject(name) {
+  if (!name) return;
+  window.__showConfirm?.(
+    t('project.archiveTitle', { name }),
+    t('project.archiveConfirm', { name }),
+    async () => {
+      try {
+        const r = await fetch(`${API.projects}/${encodeURIComponent(name)}/archive`, {
+          method: 'POST',
+          headers: authHeaders(),
+        });
+        if (!r.ok) throw new Error(`archive ${r.status}`);
+        window.__showToast?.(t('project.archiveDone', { name }), 'success');
+        rerenderProjectsTab();
+      } catch (e) {
+        window.__showToast?.(t('project.archiveFail', { name }), 'error');
+      }
+    }
+  );
 }
 
 /** 同标签页进入 Flow Map 视图：不新开标签页，当前 projects 标签页就地切换。

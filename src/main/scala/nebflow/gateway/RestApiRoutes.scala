@@ -285,8 +285,11 @@ class RestApiRoutes(
     // ── Project + Flow Map REST（#28 阶段 0，前端 Project 面板 + Flow Map 视图数据源）──
     // 契约（同步 Frontend，与 NodeList 工具同 shape）：
     //   GET /projects → 200 {projects:[{name, workspace, agentFile, description, createdAt}]}
+    //                   （归档项目不在列——ProjectStore.list 源头过滤，迁移方案 v2 §6.1）
     //   GET /projects/<name>/flow-map → 200 {nodes:[...], worktrees:[...], meta:{...}}
     //   GET/PUT /projects/<name>/agent.md → 200 {content} / {saved:true}
+    //   POST /projects/<name>/archive → 200 {archived:true, archivedAt}（§6.1 显式人工
+    //                   归档：仅 project.json 打标记，零删除零移动；幂等；单程无取消）
     // 未挂载/不存在 → 404 {error}; 需 auth（withAuth）。
     // 注意：routes 挂载在 Router("/api" -> ...) 下，路径必须写相对段
     // （Root / "projects"），写 "api" 会双前缀 /api/api（QA P1②）。
@@ -305,6 +308,19 @@ class RestApiRoutes(
             ).asJson
           )
         }.flatMap(Ok(_))
+      }
+
+    // POST /projects/<name>/archive — 归档（迁移方案 v2 §6.1）：显式人工动作唯一入口
+    // （面板按钮/明确指令）。语义：仅 project.json 打归档标记（零删除零移动，workspace
+    // 原样）；列表出口过滤（list 源头）→ 面板即时消失；startupMount 同源跳过 → 重启
+    // 不自动挂载；运行中 ProjectActor/会话不强制拆除（registry 与 Mail 路由不受影响）。
+    // 幂等：重复归档不重写。单程：本批无取消归档 API（手工删两键可恢复）。
+    case req @ POST -> Root / "projects" / name / "archive" =>
+      withAuth(req) {
+        ProjectStore.archive(name).flatMap {
+          case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+          case Right(at) => Ok(Json.obj("archived" -> true.asJson, "archivedAt" -> at.asJson))
+        }
       }
 
     case req @ GET -> Root / "projects" / name / "flow-map" =>
