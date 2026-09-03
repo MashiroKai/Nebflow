@@ -30,8 +30,10 @@ const has = (hay, needle) => hay.includes(needle);
 console.log('T2 · A9.6 dock-left 几何 / A10 详情联动（静态）');
 assert('A9.6a', 'CSS：.fm-detail.dock-left right:404px（§5.8b 并排）',
   has(css, '.fm-detail.dock-left { right: 404px; }'));
-assert('A9.6b', 'CSS：窄视口(<800px)回退同位 right:16px',
-  /@media \(max-width: 799px\)\s*\{\s*\.fm-detail\.dock-left \{ right: 16px; \}/.test(css));
+assert('A9.6b', 'JS：并排判定 host 口径 clientWidth>=780（§5.8b 2026-09-04 修订；视口媒体查询已删）',
+  has(arch, 'const DOCK_MIN_HOST_W = 780')
+  && has(arch, 'host.clientWidth >= DOCK_MIN_HOST_W')
+  && !/@media \(max-width: 799px\)/.test(css));
 assert('A9.5a', 'CSS：详情 z-index 70（浮前）',
   /\/\* ── 右侧详情面板[\s\S]{0,700}?z-index: 70;/.test(css));
 assert('A9.5b', 'CSS：归档面板 z-index 60',
@@ -81,6 +83,19 @@ assert('FIXa', 'JS：identical = id 集相等（与序无关），逐位对比�
   && !has(arch, 'b.members[i] && b.members[i].id === m.id'));
 assert('FIXb', 'CSS：projectPanel 未引入 container-type（回退 375 几何回归实验）',
   !has(pcss, 'container-type'));
+
+// ── 回归护栏：20260904 v3 三缺陷修复（§5.8b 修订注记）─────────────────────
+console.log('Fix · 20260904 三缺陷修复静态护栏（D1 host 口径 max-width / D2 已上移 A9.6b / D3 头部让位）');
+assert('D1a', 'CSS：.fm-archive-panel max-width 改 host 口径 calc(100% - 32px)',
+  /\.fm-archive-panel \{[^]*?max-width: calc\(100% - 32px\)/.test(css));
+assert('D1b', 'CSS：.fm-detail max-width 改 host 口径 calc(100% - 32px)',
+  /\.fm-detail \{[^]*?max-width: calc\(100% - 32px\)/.test(css));
+assert('D1c', 'CSS：flowMap.css 无 100vw 视口口径取值残留（值位置；悬浮层几何全 host 口径）',
+  !has(css, 'calc(100vw') && !/: ?100vw/.test(css));
+assert('D3', 'CSS：.flowmap-card-header padding-right:56px（让出悬浮钮 16+40 + 徽章区）',
+  /\.flowmap-card-header \{[^]*?padding-right: 56px/.test(css));
+assert('D3b', 'CSS：.flowmap-summary overflow ellipsis（D3 让位 + 窄 host 收缩时截断，不撑出横向滚动）',
+  /\.flowmap-summary \{[^]*?overflow: hidden;[^]*?text-overflow: ellipsis/.test(css));
 
 console.log(`\n${pass} passed, ${fails.length} failed${fails.length ? ' → ' + fails.join(', ') : ''}`);
 process.exit(fails.length ? 1 : 0);
