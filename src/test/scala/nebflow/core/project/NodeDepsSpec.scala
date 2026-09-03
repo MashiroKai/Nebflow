@@ -25,8 +25,8 @@ import scala.concurrent.duration.*
  * - T3 混合图环检测（store 层传递链 + NodeEdit e2e 双层）
  * - T4 D1-deps 补触发（活动区 + 归档变体——「归档上游可触发」裁定回归锚）
  * - T5 failed 不触发 deps 下游（对照 in 边 collect——锁定 §1.3 行为差异）
- * - T6 零连接创建被拒（裁定①校验五 EMPTY_NODE_CONNECTION）
- * - T7 改接至零连接被拒（裁定①校验六，可达场景落地，见任务偏差记录）
+ * - T6 创建连接校验（校验五，20260903 收紧：(task ∨ in) ∧ out——创建必带 out）
+ * - T7 编辑路径连接校验（校验六零连接下限不变 + 校验六-a 断开拒绝，20260903 收紧）
  * - T8 abandon 接受域扩展（裁定①待实施语义 §1.6）
  */
 class NodeDepsSpec extends CatsEffectSuite:
@@ -314,9 +314,11 @@ class NodeDepsSpec extends CatsEffectSuite:
       )))
       cycleStore <- rt.store.wouldCreateCycle("n-c", "n-a")
       noCycle <- rt.store.wouldCreateCycle("n-a", "n-c") // 反向链不成环
-      // e2e：node-b(wiring) ← node-a(out→node-b，流 A→B)。再给 A 声明 deps=[B] = B→A(deps) → 环
-      _ <- nodeEdit(nodeInput("deps-t3", "node-b", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // e2e：node-b(wiring) ← node-a(out→node-b，流 A→B)。再给 A 声明 deps=[B] = B→A(deps) → 环。
+      // node-b store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-e2e-b" -> NodeDef(id = "n-e2e-b", name = "node-b", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       bE2e <- idOf(rt, "node-b")
       _ <- nodeEdit(nodeInput("deps-t3", "node-a", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("work"), "out" -> Json.fromString(bE2e)), ctx)
@@ -406,9 +408,11 @@ class NodeDepsSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t5", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // 对照组：C2（wiring, out=Nebula）← A2（entry, boom-a2, out→C2）——in 边
-      _ <- nodeEdit(nodeInput("deps-t5", "in-waiter", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // 对照组：C2（wiring, out=Nebula）← A2（entry, boom-a2, out→C2）——in 边。
+      // C2 store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-in-waiter" -> NodeDef(id = "n-in-waiter", name = "in-waiter", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       c2Id <- idOf(rt, "in-waiter")
       _ <- nodeEdit(nodeInput("deps-t5", "src-a2", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("boom-a2"), "out" -> Json.fromString(c2Id)), ctx)
@@ -442,9 +446,9 @@ class NodeDepsSpec extends CatsEffectSuite:
       assert(c2Input.exists(_.contains("boom-exploded")), "in-edge collect carries failed upstream error string as result")
   }
 
-  // ── T6 零连接创建被拒（校验五 EMPTY_NODE_CONNECTION）──────
+  // ── T6 创建连接校验（校验五，20260903 收紧：(task ∨ in) ∧ out）──────
 
-  test("T6 zero-connection create rejected (EMPTY_NODE_CONNECTION lists in/deps/out); out=Nebula alone passes (Nebula counts)") {
+  test("T6 creation connection policy: no-out rejected (task-only / deps-only), out-only rejected (no input side); task+out and in+out pass") {
     val ws = tempRoot / "ws-t6"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t6-${scala.util.Random.nextInt(100000)}")
@@ -453,34 +457,43 @@ class NodeDepsSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t6", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // task-only（旧合法形态）→ 现在被拒：task 不计入连接下限
+      // task-only（无 out）→ 拒：悬空新节点废弃（校验五 out 强制）
       r1 <- nodeEdit(nodeInput("deps-t6", "lonely", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("no connection at all")), ctx)
       s1 <- rt.store.snapshot
-      // 对照：仅 out=Nebula（wiring 节点）→ 合法（out=Nebula 计入连接下限）
+      // 对照：仅 out=Nebula（无 task/in）→ 拒：out-only 中继废弃（in 侧下限 (task ∨ in)）
       r2 <- nodeEdit(nodeInput("deps-t6", "nebula-only", "agent" -> Json.fromString("test-agent"),
         "out" -> Json.fromString("Nebula")), ctx)
-      // 对照：仅 deps（需要已存在上游）→ 合法
+      // 对照：仅 deps（无 out）→ 拒：deps 不计入连接（须带 out）
       _ <- nodeEdit(nodeInput("deps-t6", "up", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("up-work"), "out" -> Json.fromString("Nebula")), ctx)
       upId <- idOf(rt, "up")
       r3 <- nodeEdit(nodeInput("deps-t6", "deps-only", "agent" -> Json.fromString("test-agent"),
         "deps" -> Json.fromString(upId)), ctx)
+      // 合法域：task+out（入口）与 in+out（wiring）→ 过
+      r4 <- nodeEdit(nodeInput("deps-t6", "entry-ok", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("entry-work"), "out" -> Json.fromString("Nebula")), ctx)
+      r5 <- nodeEdit(nodeInput("deps-t6", "wire-ok", "agent" -> Json.fromString("test-agent"),
+        "in" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
       s2 <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r1.isLeft, s"task-only create must be rejected, got: $r1")
-      assert(r1.left.exists(_.contains("must declare at least one connection")), s"message must state the rule, got: $r1")
-      assert(r1.left.exists(_.contains("in, deps, or out")), s"message must list the three params, got: $r1")
+      assert(r1.isLeft, s"task-only create (no out) must be rejected, got: $r1")
+      assert(r1.left.exists(_.contains("must declare 'out'")), s"message must state the out rule, got: $r1")
+      assert(r1.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"r1 must carry EMPTY_NODE_CONNECTION code, got: $r1")
       assert(s1.nodes.values.find(_.name == "lonely").isEmpty, "store must have no new node after rejection")
-      assert(r2.isRight, s"out=Nebula-only create must pass (Nebula counts as connection), got: $r2")
-      assert(r3.isRight, s"deps-only create must pass, got: $r3")
-      assert(s2.nodes.values.exists(n => n.name == "deps-only" && n.deps.contains(upId)), "deps-only node must carry deps")
+      assert(r2.isLeft, s"out-only create (no task/in) must be rejected under the tightened policy, got: $r2")
+      assert(r2.left.exists(_.contains("must declare an input side")), s"r2 message must state the input-side rule, got: $r2")
+      assert(r3.isLeft, s"deps-only create (no out) must be rejected, got: $r3")
+      assert(r3.left.exists(_.contains("must declare 'out'")), s"r3 message must state the out rule, got: $r3")
+      assert(r4.isRight, s"task+out entry create must pass, got: $r4")
+      assert(r5.isRight, s"in+out wiring create must pass, got: $r5")
+      assert(s2.nodes.values.exists(n => n.name == "wire-ok" && n.in.contains(upId)), "wire-ok node must carry in")
   }
 
-  // ── T7 改接至零连接被拒（校验六，可达场景）────────────────
+  // ── T7 编辑路径连接校验（校验六零连接下限 + 校验六-a 断开拒绝，20260903 收紧）──
 
-  test("T7 rewiring to zero connections rejected: disconnect-only-out rejected, clear-only-deps rejected; keeping another connection passes") {
+  test("T7 edit connection policy: disconnect-to-no-out rejected; clearing deps with connections left passes; zero-connection floor unchanged") {
     val ws = tempRoot / "ws-t7"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t7-${scala.util.Random.nextInt(100000)}")
@@ -497,38 +510,41 @@ class NodeDepsSpec extends CatsEffectSuite:
       slowId <- idOf(rt, "slow-up")
       upId <- nodeEdit(nodeInput("deps-t7", "up", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("up-work"), "out" -> Json.fromString("Nebula")), ctx) *> idOf(rt, "up")
-      // 7a：仅持 out 的 wiring 节点断开 out → 拒（唯一连接消失）
+      // 7a：持 out 的 wiring 节点断开 out → 拒（校验六-a：断开一律拒绝）。setup 补
+      // in=[slow-up] 适配创建新规范（原 out-only 创建已非法），r7a 断言一字未动
       _ <- nodeEdit(nodeInput("deps-t7", "only-out", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+        "in" -> Json.fromString(slowId), "out" -> Json.fromString("Nebula")), ctx)
       r7a <- nodeEdit(nodeInput("deps-t7", "only-out", "out" -> Json.Null), ctx)
-      // 7b：仅持 deps 的 wiring 节点清空 deps → 拒
-      _ <- nodeEdit(nodeInput("deps-t7", "only-deps", "agent" -> Json.fromString("test-agent"),
-        "deps" -> Json.fromString(slowId)), ctx)
+      // 7b：仅持 deps 的 wiring 节点清空 deps → 拒（校验六零连接下限不变）。存量式
+      // 形态——新规范下 deps-only 不可经 NodeEdit 创建，改 store 直种保持断言原样
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-onlydeps" -> NodeDef(id = "n-onlydeps", name = "only-deps", agent = "test-agent",
+          deps = List(slowId), status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis()))))
       r7b <- nodeEdit(nodeInput("deps-t7", "only-deps", "deps" -> Json.arr()), ctx)
-      // 7c 合法对照：out + deps 并持，清空 deps 仍剩 out → 成功
+      // 7c 合法对照：多连接并持，清空 deps 仍剩 in+out → 成功（setup 补 in 适配创建新规范）
       _ <- nodeEdit(nodeInput("deps-t7", "out-and-deps", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula"), "deps" -> Json.fromString(slowId)), ctx)
+        "in" -> Json.fromString(slowId), "out" -> Json.fromString("Nebula"), "deps" -> Json.fromString(slowId)), ctx)
       r7c <- nodeEdit(nodeInput("deps-t7", "out-and-deps", "deps" -> Json.Null), ctx)
       odAfter <- idOf(rt, "out-and-deps").flatMap(nodeById(rt, _).map(_.getOrElse(fail("must exist"))))
-      // 7d 合法对照：in + out 并持，断开 out 仍剩 in → 成功
+      // 7d 对照（新规范翻转）：in + out 并持，断开 out → 拒（校验六-a 取代旧「剩 in 即过」）
       _ <- nodeEdit(nodeInput("deps-t7", "in-and-out", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+        "in" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
       ioId <- idOf(rt, "in-and-out")
-      _ <- nodeEdit(nodeInput("deps-t7", "up", "out" -> Json.fromString(ioId)), ctx)
       r7d <- nodeEdit(nodeInput("deps-t7", "in-and-out", "out" -> Json.Null), ctx)
       ioAfter <- nodeById(rt, ioId).map(_.getOrElse(fail("must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r7a.isLeft, s"disconnecting the only out edge must be rejected, got: $r7a")
+      assert(r7a.isLeft, s"disconnecting out must be rejected, got: $r7a")
       assert(r7a.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"7a must carry EMPTY_NODE_CONNECTION code, got: $r7a")
       assert(r7b.isLeft, s"clearing the only deps list must be rejected, got: $r7b")
       assert(r7b.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"7b must carry EMPTY_NODE_CONNECTION code, got: $r7b")
-      assert(r7c.isRight, s"clearing deps while out remains must pass, got: $r7c")
+      assert(r7c.isRight, s"clearing deps while in+out remain must pass, got: $r7c")
       assertEquals(odAfter.deps, Nil, "7c: deps must be cleared (replace-on-provide)")
       assertEquals(odAfter.out, Some("Nebula"), "7c: out must remain")
-      assert(r7d.isRight, s"disconnecting out while in remains must pass, got: $r7d")
-      assertEquals(ioAfter.out, None, "7d: out must be disconnected")
-      assert(ioAfter.in.contains(upId), "7d: in must remain (disconnect is legal when another connection stays)")
+      assert(r7d.isLeft, s"disconnecting out must be rejected under the tightened policy, got: $r7d")
+      assert(r7d.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"7d must carry EMPTY_NODE_CONNECTION code, got: $r7d")
+      assertEquals(ioAfter.out, Some("Nebula"), "7d: out must remain (disconnect rejected)")
+      assert(ioAfter.in.contains(upId), "7d: in must remain untouched")
   }
 
   // ── T8 abandon 接受域扩展（§1.6 裁定①）──────────────────
@@ -547,9 +563,11 @@ class NodeDepsSpec extends CatsEffectSuite:
         "task" -> Json.fromString("slow-a"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "slow-a", Set(NodeLifecycle.Running))
       slowId <- idOf(rt, "slow-a")
-      // wiring 节点 abandon → cancelled + display TTL + 审计
-      _ <- nodeEdit(nodeInput("deps-t8", "w-wire", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // wiring 节点 abandon → cancelled + display TTL + 审计。
+      // w-wire store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-w-wire" -> NodeDef(id = "n-w-wire", name = "w-wire", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-wire")
       rWire <- nodeEdit(nodeInput("deps-t8", "w-wire", "abandon" -> Json.fromBoolean(true)), ctx)
       _ <- IO.sleep(200.millis)

@@ -212,9 +212,11 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-shape", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // B（wiring，无 task）← A 入口 blocked
-      _ <- nodeEdit(nodeInput("blk-shape", "down-b", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // B（wiring，无 task）← A 入口 blocked。down-b store 直种（20260903 创建必带
+      // out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-down-b" -> NodeDef(id = "n-down-b", name = "down-b", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       _ <- nodeEdit(nodeInput("blk-shape", "blocked-a", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("will-block-A"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "blocked-a", Set(NodeLifecycle.Blocked))
@@ -444,9 +446,11 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       _ <- nodeEdit(nodeInput("blk-r1", "consumer-b", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("consume-b"), "in" -> Json.fromString(aId),
         "out" -> Json.fromString("Nebula")), ctx)
-      // edit 路径：W 追加 in=[A] → 不得投递/启动
-      _ <- nodeEdit(nodeInput("blk-r1", "wiring-w", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // edit 路径：W 追加 in=[A] → 不得投递/启动。W store 直种（20260903 创建必带
+      // out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-wiring-w" -> NodeDef(id = "n-wiring-w", name = "wiring-w", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       _ <- nodeEdit(nodeInput("blk-r1", "wiring-w", "in" -> Json.fromString(aId)), ctx)
       _ <- IO.sleep(800.millis) // 给「假如误投递」留窗口
       inputs <- llm.inputs.get
