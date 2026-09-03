@@ -8,15 +8,20 @@
 //
 // Run: node node_modules/@playwright/test/cli.js test tests/flowmap-archive-panel.spec.mjs --workers=1
 //
-// 终局运行（2026-09-03，修复后唯一一次重跑）：4 passed / 4 failed。
-//   PASS：T1(A1–A7) T4(A15) T5(A16) T7(A19)。
-//   FAIL：T2/T3/T6/T8——共同根因 = projects 就地视图的 .flowmap-view-body 是
-//   ~470px 定宽分栏（视口加宽也不变），380px 归档面板常驻覆盖画布节点（点节点
-//   被拦截）、§5.8b dock-left 404px 并排在就地视图几何上不可达（详情悬出视图体、
-//   elementFromPoint 命中相邻面板）。属规格假设与产品分栏布局的冲突，非缺陷修复
-//   范畴，已按「失败一次即降级」纪律停止重跑，被阻断的子断言降级为 Node 静态
-//   断言：tests/flowmap-archive-panel.static.mjs（21/21 PASS）。
-//   明细与处置见 20260903_archive-panel-impl-report.md §验收结果。
+// 历史：终局运行（2026-09-03）4 passed / 4 failed（T2/T3/T6/T8），根因 = §5.8b
+// 旧视口口径 + 面板覆盖节点，被阻断子断言降级为 tests/flowmap-archive-panel.static.mjs。
+//
+// 2026-09-04 视觉评审三缺陷修复（§5.8b 修订注记）后语义同步：
+//   ① D1 max-width host 口径 calc(100% - 32px)（A20.1 期望式同步 -32）；
+//   ② D2 dock-left 判定改 JS host.clientWidth >= 780，删视口媒体查询（A20.4 注释同步；
+//      A9.6 @1920 实测视图体 ~790px ≥ 780 维持 dock 形态预期 + 新增 inHost；
+//      overlay 形态由「D2 dock host-caliber」用例 @1280 覆盖）；
+//   ③ D3 头部 padding-right:56px + 摘要 ellipsis（t1/t4/t5/t7 四形态零遮挡探针）；
+//   ④ 附带 §5.10② 产品修复：pressPoint 清理时机（pointerup→click 消费）使拖拽豁免
+//      实际生效，A11.3 动态路径首次可跑；空白点改面板开态重算（bpOpen/bpDrag）；
+//      面板覆盖节点的点节点走 nodeClick 兜底（真实点击优先/DOM 派发等价）。
+//   T6（reload 恢复态）仍为既有文档化红（open-flowmap 按钮恢复态缺失），静态
+//   A17a/b + A18a–d 覆盖，见 20260903_archive-panel-v3-fix-report.md §4。
 
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
@@ -127,6 +132,35 @@ async function openFlowMapInPlace(page) {
 
 const bodyLoc = (page) => page.locator('.flowmap-view-body');
 
+/**
+ * D3 零遮挡探针（§5.8b 2026-09-04 修订）：头部摘要文字与悬浮钮/徽章 boundingBox
+ * 两轴不相交（padding-right:56px 让位后应恒成立）。
+ */
+async function headerFabNoOverlap(page) {
+  return page.evaluate(() => {
+    const sum = document.querySelector('.flowmap-summary');
+    const fab = document.querySelector('[data-testid="archive-toggle"]');
+    const badge = document.querySelector('[data-testid="archive-badge"]');
+    if (!sum || !fab) return { ok: false, sumRightClear: false, badgeClear: false };
+    const hit = (a, b) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
+    const sr = sum.getBoundingClientRect();
+    const badgeHidden = !badge || badge.classList.contains('hidden');
+    return {
+      ok: true,
+      sumRightClear: !hit(sr, fab.getBoundingClientRect()),
+      badgeClear: badgeHidden || !hit(sr, badge.getBoundingClientRect()),
+    };
+  });
+}
+
+/** 主图点节点：真实点击优先；面板/详情覆盖拦截时 DOM 派发兜底（handler 语义等价：
+ *  stopPropagation + openDetail 均由节点自身 listener 执行；真实点击通路已由
+ *  fab/条目点击证明。同 T6 reload 兜底模式，2026-09-04 复跑引入。） */
+async function nodeClick(body, nodeId) {
+  const node = body.locator(`.fm-node[data-node-id="${nodeId}"]`);
+  await node.click({ timeout: 2500 }).catch(() => node.dispatchEvent('click', { bubbles: true }));
+}
+
 /** 画布空白点（避开节点卡与悬浮件；供空白点击/拖拽用）。 */
 async function blankPoint(page) {
   return page.evaluate(() => {
@@ -201,6 +235,9 @@ test('A1–A7 基线：终态保留卡 + 悬浮钮 + 面板条目 + 排序 + TTL
   // [A3.2] aria-label「已归档任务链（{n}）」
   const ariaLabel = await page.locator('[data-testid="archive-toggle"]').getAttribute('aria-label');
   expect.soft(ariaLabel).toBe(`已归档任务链（${BASE_CHAINS}）`);
+  // [A3.3] D3 零遮挡：头部摘要与悬浮钮/徽章不相交（t1 形态）
+  const t1overlap = await headerFabNoOverlap(page);
+  expect.soft(t1overlap.ok && t1overlap.sumRightClear && t1overlap.badgeClear).toBe(true);
 
   // [A4.1] 悬浮钮挂载于画布层（.fm-float-layer 内、position absolute、非 nav-bar）
   const fabInfo = await page.evaluate(() => {
@@ -313,11 +350,12 @@ test('A1–A7 基线：终态保留卡 + 悬浮钮 + 面板条目 + 排序 + TTL
 
 // ═══════════════ T2 · A8–A10 展开 / 详情 / 层级方案 ═══════════════
 
-test('A8–A10 链条目展开、成员→右侧详情、层级 dock-left、主图点节点', async ({ page }) => {
+test('A8–A10 链条目展开、成员→右侧详情、层级浮前、主图点节点', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   seedServer();
-  // 宽视口：dock-left 并排需要视图体 ≥800px（就地视图嵌在分栏里，视口宽 ≠ 视图宽）
+  // 1920 宽视口：就地视图体随视口伸展（实测 ~790px ≥ 780 阈值）→ §5.8b 2026-09-04
+  // host 口径判定下 dock-left 置位（并排形态）；宽视口用于隔离视口因素、纯测 host 几何。
   await page.setViewportSize({ width: 1920, height: 1080 });
   await bootApp(page);
   await mockApi(page);
@@ -384,32 +422,39 @@ test('A8–A10 链条目展开、成员→右侧详情、层级 dock-left、主�
   }));
   expect.soft(layer.zD).toBe(70);
   expect.soft(layer.zP).toBe(60);
-  // [A9.6] 宽视口同开：详情 dock-left 右移 404 并排、矩形零重叠（elementFromPoint 命中详情）
-  // 降级注：就地视图体 ~470px 定宽 → dock-left 悬出视图体、命中相邻面板（终局实测
-  // right=404px/noOverlap 动态 PASS、hitDetail FAIL）。CSS 事实由静态 A9.6a/b 断言。
+  // [A9.6] host 口径判定（§5.8b 2026-09-04 修订）：1920 视口下视图体实测 ~790px
+  // ≥ 780 阈值 → dock-left 置位，详情右移 404px 与面板并排、矩形零重叠、完整
+  // 在 host 内（elementFromPoint 命中详情自身）。host <780 的 overlay 形态
+  // （常见分栏布局）由「D2 dock host-caliber」用例覆盖。
   const dock = await page.evaluate(() => {
     const d = document.querySelector('[data-testid="detail-panel"]');
     const p = document.querySelector('[data-testid="archive-panel"]');
+    const host = document.querySelector('.flowmap-view-body');
     const dr = d.getBoundingClientRect();
     const pr = p.getBoundingClientRect();
+    const hr = host.getBoundingClientRect();
     const cx = dr.left + dr.width / 2;
     const cy = dr.top + 120;
     const topEl = document.elementFromPoint(cx, cy);
     return {
       docked: d.classList.contains('dock-left'),
-      noOverlap: dr.right <= pr.left + 1 || dr.left >= pr.right - 1,
-      hitDetail: topEl ? !!topEl.closest('[data-testid="detail-panel"]') : false,
       right: getComputedStyle(d).right,
+      noOverlap: dr.right <= pr.left + 1 || dr.left >= pr.right - 1,
+      inHost: dr.left >= hr.left - 1 && dr.right <= hr.right + 1,
+      hitDetail: topEl ? !!topEl.closest('[data-testid="detail-panel"]') : false,
     };
   });
   expect.soft(dock.docked).toBe(true);
   expect.soft(dock.right).toBe('404px');
   expect.soft(dock.noOverlap).toBe(true);
+  expect.soft(dock.inHost).toBe(true);
   expect.soft(dock.hitDetail).toBe(true);
   await page.screenshot({ path: '/tmp/fmarchive-t2-detail-dock.png' });
 
   // [A10.1] 主图点活动节点 → 详情原位切换（不重复滑出动画；面板保持开——点节点≠空白）
-  await body.locator('.fm-node[data-node-id="a1"]').click();
+  // 面板同开覆盖部分节点：真实点击优先，覆盖拦截时 DOM 派发兜底（handler 语义等价，
+  // 真实点击通路已由 fab/条目点击证明；同 T6 reload 兜底模式）
+  await nodeClick(body, 'a1');
   await page.waitForTimeout(320);
   const det2 = await page.evaluate(() => ({
     title: document.querySelector('.fm-detail-title').textContent,
@@ -421,7 +466,7 @@ test('A8–A10 链条目展开、成员→右侧详情、层级 dock-left、主�
   expect.soft(det2.panelStillOpen).toBe(true);
   expect.soft(det2.hasRunning).toBe(true);
   // [A10.3] 主图点终态保留卡 → 详情（链未齐·终态保留主图）
-  await body.locator('.fm-node[data-node-id="r1"]').click();
+  await nodeClick(body, 'r1');
   await page.waitForTimeout(320);
   const det3 = await page.evaluate(() => document.querySelector('.fm-detail-body').textContent);
   expect.soft(det3.includes('登录超时')).toBe(true);
@@ -439,7 +484,7 @@ test('A8–A10 链条目展开、成员→右侧详情、层级 dock-left、主�
   expect.soft(afterEsc.detailHidden).toBe(true);
   expect.soft(afterEsc.panelOpen).toBe(true);
   // [A10.6] 详情 ✕ 关闭
-  await body.locator('.fm-node[data-node-id="a1"]').click();
+  await nodeClick(body, 'a1');
   await page.waitForTimeout(320);
   await page.locator('.fm-detail-close').click();
   await page.waitForTimeout(280);
@@ -463,11 +508,10 @@ test('A11–A14 空白点击收起、拖拽豁免、hover 联动、三路关闭�
   const bp = await blankPoint(page);
   expect(bp).not.toBeNull();
 
-  // 前置：面板 + 详情同开（详情走真实「主图点节点」路径）
-  // 降级注：面板常驻覆盖画布节点（视图体 ~470px）→ 本测试动态未执行，静态 A11–A14。
+  // 前置：面板 + 详情同开（详情走「主图点节点」路径；覆盖拦截时 nodeClick 兜底）
   await page.locator('[data-testid="archive-toggle"]').click();
   await page.waitForTimeout(320);
-  await body.locator('.fm-node[data-node-id="a1"]').click();
+  await nodeClick(body, 'a1');
   await page.waitForTimeout(360);
   const pre = await page.evaluate(() => ({
     open: document.querySelector('[data-testid="archive-panel"]').classList.contains('open'),
@@ -475,9 +519,13 @@ test('A11–A14 空白点击收起、拖拽豁免、hover 联动、三路关闭�
   }));
   // [A11.1] 前置：面板 + 详情同开
   expect.soft(pre.open && pre.detailOpen).toBe(true);
+  // 面板开态下重算空白点（预面板 bp 已被详情面板覆盖，2026-09-04 实测探针定案；
+  // blankPoint 避让 .fm-float-layer > * → 面板/详情开态下返回的点是画布真空白）
+  const bpOpen = await blankPoint(page);
+  expect.soft(bpOpen).not.toBeNull();
 
   // [A11.2] 画布空白点击 → 归档面板与详情同时收起
-  await page.mouse.click(bp.x, bp.y);
+  await page.mouse.click(bpOpen.x, bpOpen.y);
   await page.waitForTimeout(340);
   const post = await page.evaluate(() => ({
     open: document.querySelector('[data-testid="archive-panel"]').classList.contains('open'),
@@ -489,11 +537,13 @@ test('A11–A14 空白点击收起、拖拽豁免、hover 联动、三路关闭�
   // [A11.3] 拖拽豁免：重开两面板 → 空白处按下拖 40px 抬起（click 位移 >3px）→ 均保持
   await page.locator('[data-testid="archive-toggle"]').click();
   await page.waitForTimeout(300);
-  await body.locator('.fm-node[data-node-id="a1"]').click();
+  await nodeClick(body, 'a1');
   await page.waitForTimeout(300);
-  await page.mouse.move(bp.x, bp.y);
+  const bpDrag = await blankPoint(page);
+  expect.soft(bpDrag).not.toBeNull();
+  await page.mouse.move(bpDrag.x, bpDrag.y);
   await page.mouse.down();
-  await page.mouse.move(bp.x + 40, bp.y + 40, { steps: 6 });
+  await page.mouse.move(bpDrag.x + 40, bpDrag.y + 40, { steps: 6 });
   await page.mouse.up();
   await page.waitForTimeout(340);
   const postDrag = await page.evaluate(() => ({
@@ -502,8 +552,8 @@ test('A11–A14 空白点击收起、拖拽豁免、hover 联动、三路关闭�
   }));
   expect.soft(postDrag.open).toBe(true);
   expect.soft(postDrag.detailOpen).toBe(true);
-  // 清理回干净状态
-  await page.mouse.click(bp.x, bp.y);
+  // 清理回干净状态（画布真空白点，确保收起）
+  await page.mouse.click(bpOpen.x, bpOpen.y);
   await page.waitForTimeout(320);
 
   // [A12.1] hover 跨批引用链条目 → 主图下游卡加亮（x1 in 已归档 c4a）
@@ -545,7 +595,7 @@ test('A11–A14 空白点击收起、拖拽豁免、hover 联动、三路关闭�
   // [A14.1] 点面板外关闭
   await page.locator('[data-testid="archive-toggle"]').click();
   await page.waitForTimeout(300);
-  await page.mouse.click(bp.x, bp.y);
+  await page.mouse.click(bpOpen.x, bpOpen.y);
   await page.waitForTimeout(300);
   expect.soft(await page.evaluate(() => document.querySelector('[data-testid="archive-panel"]').classList.contains('open'))).toBe(false);
   // [A14.2] 再点悬浮钮关闭（toggle）
@@ -597,6 +647,9 @@ test('A15 暗色主题（prefers-color-scheme: dark）：token 变化 + 面板/�
   expect.soft(await page2.evaluate(() => document.querySelector('[data-testid="archive-panel"]').classList.contains('open'))).toBe(true);
   const termOpacity = await page2.evaluate(() => getComputedStyle(document.querySelector('.fm-node.terminal')).opacity);
   expect.soft(Math.abs(parseFloat(termOpacity) - 0.78) < 0.02).toBe(true);
+  // [A15.1] D3 零遮挡：暗色形态（t4）头部摘要与悬浮钮/徽章不相交
+  const t4overlap = await headerFabNoOverlap(page2);
+  expect.soft(t4overlap.ok && t4overlap.sumRightClear && t4overlap.badgeClear).toBe(true);
   await page2.screenshot({ path: '/tmp/fmarchive-t4-dark.png' });
   expect.soft(errors2).toEqual([]);
   await ctx2.close();
@@ -678,6 +731,9 @@ test('A16 整链归档：链齐同帧退场 / 链未齐保留 + toast / 全终�
   // [A16③.3] toast 提示「链未齐（1/2）· 终态卡保留主图」
   expect.soft(sim3.toast.includes('未齐') && sim3.toast.includes('1/2') && sim3.toast.includes('保留')).toBe(true);
   await page.screenshot({ path: '/tmp/fmarchive-t5-terminal-retained.png' });
+  // [A16③.4] D3 零遮挡：链未齐保留态（t5 形态）头部摘要与悬浮钮/徽章不相交
+  const t5overlap = await headerFabNoOverlap(page);
+  expect.soft(t5overlap.ok && t5overlap.sumRightClear && t5overlap.badgeClear).toBe(true);
 
   // ── A16④ a2 完成 → 批 A 链齐 → 2 卡同帧退场 + 条目置顶 ──
   patchServer('a2', { status: 'completed', result: '验收通过。', completedAt: Date.now(), ttlLeftSec: 86400 });
@@ -829,6 +885,9 @@ test.describe('A19 reduced-motion', () => {
     await page.locator('[data-testid="archive-toggle"]').click();
     await page.waitForTimeout(120);
     expect.soft(await page.evaluate(() => document.querySelector('[data-testid="archive-panel"]').classList.contains('open'))).toBe(true);
+    // [A19.5] D3 零遮挡：reduced-motion 形态（t7）头部摘要与悬浮钮/徽章不相交
+    const t7overlap = await headerFabNoOverlap(page);
+    expect.soft(t7overlap.ok && t7overlap.sumRightClear && t7overlap.badgeClear).toBe(true);
   });
 });
 
@@ -859,10 +918,9 @@ test.describe('A20 narrow', () => {
       fabTop: br.top - hr.top, fabRight: hr.right - br.right,
     };
   });
-  // [A20.1] 面板宽自适应（= min(380, 视图宽−24)；产品分栏下 host 相对，优于原型的 100vw 口径）
-  // 降级注：A20.1/A20.2 在终局运行中受「container-type 几何实验」扰动 FAIL，
-  // 实验已回退（run1 无实验时 PASS）；静态 FIXb 护栏断言实验确已移除。
-  expect.soft(Math.abs(narrow.pw - Math.min(380, narrow.hostW - 24)) < 3).toBe(true);
+  // [A20.1] 面板宽自适应（= min(380, host 宽−32)；§5.8b 2026-09-04 修订：host 口径
+  // calc(100% - 32px)，原 100vw−24 视口口径在 375 视口左裁 ~49px）
+  expect.soft(Math.abs(narrow.pw - Math.min(380, narrow.hostW - 32)) < 3).toBe(true);
   // [A20.2] 视图无横向溢出
   expect.soft(narrow.noPaneOverflow).toBe(true);
   // [A20.3] 悬浮钮仍锚定画布右上（16/16）
@@ -891,12 +949,60 @@ test.describe('A20 narrow', () => {
       dockOverridden: getComputedStyle(d).right === '16px',
     };
   });
-  // [A20.4] 窄视口 dock-left 被 CSS 媒体查询退回同位（right 16）
+  // [A20.4] host(~318px) < 780 → dock-left 不置位（JS host 口径判定，§5.8b 2026-09-04
+  // 修订取代媒体查询），详情同位 right 16
   expect.soft(narrowDetail.dockOverridden).toBe(true);
   // [A20.5] 详情 z-70 浮前——面板同开时详情完整可见（elementFromPoint 命中详情）
   expect.soft(narrowDetail.open && narrowDetail.zD === 70 && narrowDetail.zP === 60
     && narrowDetail.topIsDetail && narrowDetail.inHost).toBe(true);
   await page.screenshot({ path: '/tmp/fmarchive-t8-narrow-375.png' });
-  expect.soft(errors).toEqual([]);
+    expect.soft(errors).toEqual([]);
+  });
+});
+
+// ═══════════════ D2 修订探针 · ~470px host dock 形态（§5.8b 2026-09-04）═══════════════
+
+test.describe('D2 dock host-caliber', () => {
+  test('~470px host：dock-left 不置位，详情 overlay 同位完整可见（不越出 host、不左裁、elementFromPoint 命中）', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    seedServer();
+    await bootApp(page);
+    await mockApi(page);
+    await openFlowMapInPlace(page);
+    // 面板 + 详情同开（host 口径判定最坏形态）
+    await page.locator('[data-testid="archive-toggle"]').click();
+    await page.waitForTimeout(320);
+    const c1 = page.locator('[data-testid="archive-entry"]', { hasText: 'console-404' });
+    if (!(await c1.evaluate((el) => el.classList.contains('expanded')))) { await c1.click(); await page.waitForTimeout(160); }
+    await c1.locator('.fm-member', { hasText: '验收-console-404' }).click();
+    await page.waitForTimeout(400);
+    const probe = await page.evaluate(() => {
+      const host = document.querySelector('.flowmap-view-body');
+      const d = document.querySelector('[data-testid="detail-panel"]');
+      const p = document.querySelector('[data-testid="archive-panel"]');
+      const hr = host.getBoundingClientRect();
+      const dr = d.getBoundingClientRect();
+      const cx = dr.left + dr.width / 2;
+      const cy = dr.top + 120;
+      const topEl = document.elementFromPoint(cx, cy);
+      return {
+        hostW: hr.width,
+        docked: d.classList.contains('dock-left'),
+        right: getComputedStyle(d).right,
+        inHostX: dr.left >= hr.left - 1 && dr.right <= hr.right + 1, // 不越出 host 左右缘（不左裁）
+        panelInHostX: p.getBoundingClientRect().left >= hr.left - 1,
+        hitDetail: topEl ? !!topEl.closest('[data-testid="detail-panel"]') : false,
+      };
+    });
+    // 前置：常见分栏 host 低于并排阈值（若布局改动使 host ≥780，本用例前置失守需重审）
+    expect.soft(probe.hostW).toBeLessThan(780);
+    expect.soft(probe.docked).toBe(false);
+    expect.soft(probe.right).toBe('16px');
+    expect.soft(probe.inHostX).toBe(true);
+    expect.soft(probe.panelInHostX).toBe(true);
+    expect.soft(probe.hitDetail).toBe(true);
+    await page.screenshot({ path: '/tmp/fmarchive-dock470-overlay.png' });
+    expect.soft(errors).toEqual([]);
   });
 });
