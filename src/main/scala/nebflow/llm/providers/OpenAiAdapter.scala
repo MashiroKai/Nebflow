@@ -343,7 +343,9 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     backend.send(request).flatMap { response =>
       response.body match
         case Left(error) =>
-          IO.raiseError(new RuntimeException(s"OpenAI API error: $error"))
+          // 审计 20260903 子项②：结构化 HttpError（与 AnthropicAdapter 同款）——
+          // classifyError 据状态码区分 400 Format（不驱逐）与 Auth/配额（驱逐）。
+          IO.raiseError(sttp.client4.HttpError(error, response.code))
         case Right(bodyStr) =>
           IO.defer {
             parse(bodyStr) match
@@ -442,7 +444,8 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       Stream.eval(backend.send(request)).flatMap { response =>
         response.body match
           case Left(error) =>
-            Stream.eval(IO.raiseError(new RuntimeException(s"OpenAI API error: $error")))
+            // 同 sendMessage：结构化 HttpError（子项②）。
+            Stream.eval(IO.raiseError(sttp.client4.HttpError(error, response.code)))
           case Right(byteStream) =>
             // If the stream dies mid-tool-call (transport error, or downstream
             // cancellation from the no-progress watchdog / a fallback switch),

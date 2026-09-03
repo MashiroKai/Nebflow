@@ -4,10 +4,13 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
+import nebflow.actor.ActorRef
+import nebflow.agent.AgentCommand
+import nebflow.core.{AskItem, AskOption, NebflowLogger, PathUtil}
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.*
+
+import scala.util.Try
 
 /**
  * Node 工具集（#28 阶段 0，方案 §2.2 —— 任务分发器用）。
@@ -143,7 +146,9 @@ object NodeTools:
     * running/completed 节点 → 疑似重复派发（TTL 窗口内 = 活动区仍显示）。
     * 返回匹配的节点（无则 None）。NodeEdit 创建入口节点时校验（0 spawn）。
     * R1 复核（blocked 反馈重入设计 §6）：Terminal 含 blocked——blocked 节点
-    * **应**计入重复派发（防对同一任务重复派发；blocked ≠ 可重派）。 */
+    * **应**计入重复派发（防对同一任务重复派发；blocked ≠ 可重派）。
+    * hold 批（20260903 暂停/人在回路设计 §2.5 #6）：追加 Held——held 节点
+    * 任务未完（结果已产出但等放行），同 agent+task 重派仍应报「疑似重复派发」。 */
   def findDuplicateDispatch(rt: ProjectRuntime, agentName: String, task: String): IO[Option[NodeDef]] =
     val norm = normalizeTask(task)
     if norm.isEmpty then IO.pure(None)
@@ -152,7 +157,7 @@ object NodeTools:
         s.nodes.values.find { n =>
           n.agent == agentName &&
           n.task.exists(t => normalizeTask(t) == norm) &&
-          (n.status == NodeLifecycle.Running || NodeLifecycle.Terminal.contains(n.status))
+          (n.status == NodeLifecycle.Running || n.status == NodeLifecycle.Held || NodeLifecycle.Terminal.contains(n.status))
         }
       }
 
@@ -257,14 +262,18 @@ object NodeEditTool extends Tool:
 - **out** (required on create, single value): node id or "Nebula" (flow exit). Single-value semantics: setting replaces the old out (rewire); arrays are rejected (1-to-many not supported); null (disconnect) is REJECTED — nodes must keep their out edge, rewire to a new target instead.
 - **skill** / **mcp** / **worktree** / **preset** (optional): node configuration. worktree: bare directory name under workspace/.nebflow/worktrees/ (must exist) — e.g. "micorb-config-hide", NOT "worktrees/micorb-config-hide"; no path separators, no absolute paths, no "..". Prefix forms ("worktrees/<name>" / ".nebflow/<name>") are tolerated but the bare name is canonical. Create via: git worktree add <workspace>/.nebflow/worktrees/<name> -b <branch>.
 - **maxRetries** (optional, default 1).
-- **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled), wiring/pending node, or a STALE RUNNING node whose session is dead (no live execution fiber, e.g. after an instance restart) → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes, the topology-cleanup exit for retired wiring/pending nodes, and the reaping exit for dead-session running nodes. A LIVE running node is refused (mis-kill protection) — use NodeCancel for running nodes instead.
+- **hold** (optional, default false): human-gate flag (human-in-the-loop) — when this node completes it does NOT deliver downstream and does NOT settle deps: status becomes HELD (result saved in full; never expires; stays on the main map), the full result is announced to Nebula, and the chain waits for NodeEdit(release=true). Requires out to be a NODE id — out="Nebula" is refused (Nebula-bound results deliver directly, nothing to hold). Settable/withdrawable while wiring/pending/running (a running node may be gated: the switch takes effect at completion); refused on completed/terminal/held.
+- **release** (optional, default false): release a HELD node (the ONLY way out of held) — a STANDALONE action: combining it with task/agent/in/deps/out/abandon/hold/skill/mcp/worktree/preset/maxRetries refuses the whole call (no half-release-half-rewire; release first, then issue a separate NodeEdit to rewire). held → completed: the downstream delivery chain runs (deliverOut → deps settlement); display TTL restarts from release; completedAt keeps the held moment (when the work actually finished).
+- **note** (optional, ONLY together with release=true): user supplementary text — atomically appended to the out target node's task ("== 用户补充（放行时注入） ==" section) so the downstream input carries it. Any other combination refuses.
+- **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled), wiring/pending, HELD, or a STALE RUNNING node whose session is dead (no live execution fiber, e.g. after an instance restart) → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes, the topology-cleanup exit for retired wiring/pending nodes, the clean-up exit for abandoned hold chains (held has no live session — no interruption side effects), and the reaping exit for dead-session running nodes. A LIVE running node is refused (mis-kill protection) — use NodeCancel for running nodes instead.
 
 ## Semantics
 - nodename missing → create (agent required; 'out' is mandatory — a downstream node id or "Nebula"; plus an input side: task (entry semantics) or in. Dangling nodes and out-only relay nodes are rejected — EMPTY_NODE_CONNECTION).
 - nodename exists → edit: in appends barrier inputs; deps replaces the whole dependency list (when provided); out sets/replaces (rewire). Disconnecting (out=null on a node that has an out edge) is rejected — rewire to a new target instead.
 - Connection policy (20260903 收紧): creation requires BOTH an out edge (node id or "Nebula") AND an input side (task or in — task counts as the in-side connection, so entry nodes (task + out, no in) are legal and run on create; in and task may coexist). Missing out, or out with neither task nor in → EMPTY_NODE_CONNECTION. Disconnecting to a no-out state on edit → EMPTY_NODE_CONNECTION (rewire, don't disconnect). Legacy dangling nodes (out=null created before this policy) stay editable: edit their task/agent/in/deps freely, rewire their out to a target and the retained result auto-delivers.
 - Blocked node edit: changing task/agent (or in/out) on a blocked node reactivates it — status returns to wiring/pending, deliveredTo cleared, blockCount preserved (round history kept), completed upstream results re-delivered, then the node reruns with the new input. No-op if nothing actually changed.
-- abandon=true → terminal node becomes cancelled with display TTL (frontend removes it after TTL; result kept in archive).
+- abandon=true → terminal/wiring/pending/held node becomes cancelled with display TTL (frontend removes it after TTL; result kept in archive).
+- Hold / release (human-in-the-loop, 20260903 design): a hold=true node completes to HELD — a NON-terminal paused state: result retained, announced to Nebula in full, no downstream delivery, no deps settlement; the node never expires or archives (awaits release indefinitely). Release with NodeEdit(release=true, note=?) — held → completed and the delivery chain runs as if it had just completed. To rewire a held node: release first, then a separate NodeEdit with out (the result delivers to the new target).
 - Validation (0 spawn): agent exists; referenced nodes exist; DAG cycle check (DFS); 1-to-many rejected; target running → rejected ("input frozen — NodeCancel first").
 - Create an entry node (task present, no in) → it starts running immediately (async, non-blocking). Node result = the agent's final output, auto-saved to the node's result and delivered along out (node → downstream barrier / Nebula → injected to root session / legacy no-out → retained, auto-delivered when rewired)."""
   val inputSchema = JsonObject.fromIterable(
@@ -292,7 +301,10 @@ object NodeEditTool extends Tool:
         "worktree" -> Json.obj("type" -> "string".asJson, "description" -> "Bare directory name under workspace/.nebflow/worktrees/ (must exist). e.g. \"micorb-config-hide\" — NOT \"worktrees/micorb-config-hide\"; no path separators, no absolute paths".asJson),
         "preset" -> Json.obj("type" -> "string".asJson),
         "maxRetries" -> Json.obj("type" -> "integer".asJson),
-        "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL node (blocked/completed/failed/cancelled) → cancelled + display TTL".asJson)
+        "hold" -> Json.obj("type" -> "boolean".asJson, "description" -> "Human-gate: node completes to HELD (result saved+announced to Nebula, no downstream delivery) awaiting release=true. Requires a node-id out (not \"Nebula\"). wiring/pending/running only".asJson),
+        "release" -> Json.obj("type" -> "boolean".asJson, "description" -> "Release a HELD node → completed, delivery chain runs. STANDALONE action — any other edit parameter in the same call refuses (release first, then rewire separately)".asJson),
+        "note" -> Json.obj("type" -> "string".asJson, "description" -> "User supplementary text, ONLY with release=true — appended to the out target's task (carried into downstream input)".asJson),
+        "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, HELD, or dead-session running node → cancelled + display TTL".asJson)
       ),
       "required" -> Json.arr("project".asJson, "nodename".asJson)
     )
@@ -316,6 +328,12 @@ object NodeEditTool extends Tool:
     val preset = input("preset").flatMap(_.asString)
     val maxRetries = input("maxRetries").flatMap(_.asNumber).flatMap(_.toInt)
     val abandon = input("abandon").flatMap(_.asBoolean).getOrElse(false)
+    // hold 三参（20260903 暂停/人在回路设计 §2.5）：Option 保留「显式传入」信号——
+    // hold=false 显式传入 = 撤销闸点（缺省 = 不改动）；release/note 布尔/文本语义。
+    val holdProvided = input("hold").flatMap(_.asBoolean)
+    val hold = holdProvided.getOrElse(false)
+    val release = input("release").flatMap(_.asBoolean).getOrElse(false)
+    val note = input("note").flatMap(_.asString)
     val inJson = input("in")
     val depsJson = input("deps")
     val outJson = input("out")
@@ -327,7 +345,7 @@ object NodeEditTool extends Tool:
         case Right(rt) =>
           rt.store.snapshot.flatMap { s =>
             s.nodes.values.find(_.name == nodename) match
-              case Some(existing) => editNode(rt, existing, agent, task, abandon, inJson, depsJson, outJson, ctx)
+              case Some(existing) => editNode(rt, existing, agent, task, abandon, holdProvided, hold, release, note, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson, ctx)
               case None =>
                 // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
                 // 活动区按名未命中 → 归档区按名兜底。归档节点只支持 out 改接（悬空
@@ -342,19 +360,23 @@ object NodeEditTool extends Tool:
                       val forbidden =
                         agent.isDefined || task.isDefined || skill.isDefined || mcp.isDefined ||
                           worktree.isDefined || preset.isDefined || maxRetries.isDefined ||
-                          abandon || inJson.isDefined || depsJson.isDefined
+                          abandon || inJson.isDefined || depsJson.isDefined ||
+                          holdProvided.isDefined || release || note.isDefined
                       if abandon then
                         IO.pure(Left(ToolError(s"Node '$nodename' is archived (display TTL expired) — abandon is not applicable; it already ages out of views on its own.")))
+                      else if release || note.isDefined || holdProvided.isDefined then
+                        IO.pure(Left(ToolError(
+                          s"Node '$nodename' is archived (display TTL expired) — hold/release do not apply: held is a non-terminal state and is never archived; archived nodes are terminal. Only 'out' rewiring is supported.")))
                       else if !outJson.isDefined then
                         IO.pure(Left(ToolError(
                           s"Node '$nodename' is archived (display TTL expired, result retained). Only 'out' rewiring is supported for archived nodes (result re-delivery).")))
                       else if forbidden then
                         IO.pure(Left(ToolError(
-                          s"Node '$nodename' is archived — only 'out' rewiring is supported (result re-delivery); task/agent/in/deps/config edits are not.")))
-                      else editNode(rt, archived, agent, task, abandon, inJson, depsJson, outJson, ctx)
+                          s"Node '$nodename' is archived — only 'out' rewiring is supported (result re-delivery); task/agent/in/deps/config/hold edits are not.")))
+                      else editNode(rt, archived, agent, task, abandon, holdProvided, hold, release, note, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson, ctx)
                     case None =>
                       if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
-                      else createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson)
+                      else createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson, hold)
                 }
           }
       }
@@ -373,7 +395,8 @@ object NodeEditTool extends Tool:
     maxRetries: Option[Int],
     inJson: Option[Json],
     depsJson: Option[Json],
-    outJson: Option[Json]
+    outJson: Option[Json],
+    hold: Boolean = false
   ): IO[Either[ToolError, String]] =
     val agentName = agent.getOrElse("")
     val inIds = NodeTools.parseIn(inJson)
@@ -401,6 +424,11 @@ object NodeEditTool extends Tool:
           IO.pure(Left(ToolError(
             s"Node '$nodename' must declare an input side — 'task' (entry semantics: starts running on create) or 'in' (barrier upstream). " +
               "Out-only relay nodes are no longer supported. (EMPTY_NODE_CONNECTION)")))
+        // hold 校验①（20260903 暂停/人在回路设计 §2.5 #1）：hold=true 要求 out 为
+        // 节点 id——out=Nebula 结果直投 Nebula，无投递可扣，hold 无意义。
+        else if hold && out.contains("Nebula") then
+          IO.pure(Left(ToolError(
+            "hold=true requires a node-target out edge — out=\"Nebula\" nodes deliver to Nebula directly, nothing to hold.")))
         else
           // 1. agent 存在性
           EntityLoader.loadAgent(agentName).flatMap {
@@ -423,8 +451,8 @@ object NodeEditTool extends Tool:
                         IO.pure(Left(ToolError(
                           s"Worktree '$bare' not found under ${rt.project.workspace}/.nebflow/worktrees/ (nor top-level .nebflow/) — " +
                             s"create it first via: git worktree add ${rt.project.workspace}/.nebflow/worktrees/$bare -b <branch>")))
-                      else proceed(rt, nodename, agentName, task, skill, mcp, Some(bare), preset, maxRetries, ins, deps, out)
-                case None => proceed(rt, nodename, agentName, task, skill, mcp, worktree, preset, maxRetries, ins, deps, out)
+                      else proceed(rt, nodename, agentName, task, skill, mcp, Some(bare), preset, maxRetries, ins, deps, out, hold)
+                case None => proceed(rt, nodename, agentName, task, skill, mcp, worktree, preset, maxRetries, ins, deps, out, hold)
           }
 
   private def proceed(
@@ -439,7 +467,8 @@ object NodeEditTool extends Tool:
     maxRetries: Option[Int],
     ins: List[String],
     deps: List[String],
-    out: Option[String]
+    out: Option[String],
+    hold: Boolean = false
   ): IO[Either[ToolError, String]] =
     val nodeId = s"n-${java.util.UUID.randomUUID().toString.take(8)}"
     for
@@ -492,6 +521,7 @@ object NodeEditTool extends Tool:
             task = task,
             in = Nil,
             deps = deps,
+            hold = hold,
             out = None,
             status = if task.isDefined && ins.isEmpty then NodeLifecycle.Pending else NodeLifecycle.Wiring,
             retries = 0,
@@ -593,7 +623,12 @@ object NodeEditTool extends Tool:
     * 无在飞执行 fiber（会话死于传输中断/实例重启泄漏）→ 可收殓（cancelled + TTL）。
     * 误杀防护（硬约束）：活 running（isRunning=true = 有在飞 fiber，取消信号可达）
     * 绝对拒绝，只能走 NodeCancel。无复活竞态：running 节点不会被 startNode 二次
-    * spawn（入口状态幂等跳过），死会话不可能复活 → 预检后无需事务内复查 IO 信号。 */
+    * spawn（入口状态幂等跳过），死会话不可能复活 → 预检后无需事务内复查 IO 信号。
+    *
+    * held 接受域（20260903 暂停/人在回路设计 §2.5 #7）：held 无在飞会话（会话已随
+    * 完成销毁），无中断副作用 → cancelled + TTL + 审计同款；放弃一条暂停链的节点
+    * 是合法清场。机械上 fresh 守卫（status != Running）天然放行 held，零分支改动，
+    * 仅接受域文档与文案同步。 */
   private def abandonNode(rt: ProjectRuntime, node: NodeDef): IO[Either[ToolError, String]] =
     def doAbandon(allowDeadRunning: Boolean): IO[Either[ToolError, String]] =
       for
@@ -622,7 +657,7 @@ object NodeEditTool extends Tool:
       rt.engine.isRunning(node.id).flatMap {
         case true =>
           IO.pure(Left(ToolError(
-            s"Node '${node.name}' is running with a live session — abandon refused (mis-kill protection: abandon accepts terminal/wiring/pending and dead-session running only). Use NodeCancel for running nodes.")))
+            s"Node '${node.name}' is running with a live session — abandon refused (mis-kill protection: abandon accepts terminal/wiring/pending/held and dead-session running only). Use NodeCancel for running nodes.")))
         case false =>
           doAbandon(allowDeadRunning = true)
       }
@@ -634,12 +669,53 @@ object NodeEditTool extends Tool:
     agent: Option[String],
     task: Option[String],
     abandon: Boolean,
+    holdProvided: Option[Boolean],
+    hold: Boolean,
+    release: Boolean,
+    note: Option[String],
+    skill: Option[String],
+    mcp: Option[String],
+    worktree: Option[String],
+    preset: Option[String],
+    maxRetries: Option[Int],
     inJson: Option[Json],
     depsJson: Option[Json],
     outJson: Option[Json],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    if abandon then abandonNode(rt, node)
+    // ── 动作分支（20260903 暂停/人在回路设计 §2.5 校验③④ + 决策④）──
+    // release 与 abandon 互斥；note 仅与 release 同用；release 是独立动作，
+    // 与任何其他编辑参数同传 → 整调用拒绝（防半放行半改线；改线需求 =
+    // 先 release 后再单独 NodeEdit 改接）。
+    if release && abandon then
+      IO.pure(Left(ToolError(
+        s"release is a standalone action — it cannot be combined with abandon (or any other edit). Release '${node.name}' first, then issue separate NodeEdit calls.")))
+    else if abandon then abandonNode(rt, node)
+    else if note.isDefined && !release then
+      // 校验④：note 仅与 release 同用
+      IO.pure(Left(ToolError(
+        "'note' is only valid together with release=true — it injects user supplementary text into the out target's task at release time.")))
+    else if release then
+      // 校验③：release 仅接受 held 节点（guard 在 releaseNode 内做 fresh 判定）；
+      // 与其他编辑参数同传 → 拒绝（可行动文案指引先 release 再改接）
+      val conflicts =
+        List(
+          task.isDefined -> "'task'", agent.isDefined -> "'agent'",
+          inJson.isDefined -> "'in'", depsJson.isDefined -> "'deps'",
+          outJson.isDefined -> "'out'", skill.isDefined -> "'skill'",
+          mcp.isDefined -> "'mcp'", worktree.isDefined -> "'worktree'",
+          preset.isDefined -> "'preset'", maxRetries.isDefined -> "'maxRetries'",
+          hold -> "'hold'"
+        ).collect { case (true, name) => name }
+      if conflicts.nonEmpty then
+        IO.pure(Left(ToolError(
+          s"release is a standalone action — conflicting parameters present (${conflicts.mkString(", ")}). " +
+            s"Release '${node.name}' first, then issue a separate NodeEdit for rewiring/editing.")))
+      else
+        rt.engine.releaseNode(node.id, note).map {
+          case Right(msg) => Right(msg)
+          case Left(err)  => Left(ToolError(err))
+        }
     // 校验三（deps 设计 §1.2）：编辑 running 下游传 deps → 同款冻结拒绝（「输入已冻结」
     // 对齐 in 语义）；给下游加 deps 的上游是 running 则合法（等它完成正是 deps 语义）。
     else if depsJson.isDefined && node.status == NodeLifecycle.Running then
@@ -739,12 +815,27 @@ object NodeEditTool extends Tool:
                           val finalIn = node.in ++ adds
                           val finalDeps = if depsProvided then newDeps else node.deps
                           val finalOut = if outJson.isDefined then newOut else node.out
+                          // hold 校验（20260903 暂停/人在回路设计 §2.5 #1/#2/#5）：
+                          // #2 完成/终态/held 上设置或撤销 → 拒（held 的撤销出口是 release/
+                          //   abandon，回退语义各司其职；blocked 属终态同拒——重激活后另设）；
+                          // #5 running 合法（hold 是完成时行为开关，不属输入冻结域）；
+                          // #1 hold=true 要求（最终）out 为节点 id（同调用改接出节点边也认）。
+                          val holdStatusOk = holdProvided.isEmpty ||
+                            (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
+                          val holdOutOk = !hold ||
+                            finalOut.exists(t => t != "Nebula")
                           val earlyReject: Option[ToolError] =
                             if finalIn.isEmpty && finalDeps.isEmpty && finalOut.isEmpty then
                               Some(ToolError(
                                 s"Node '${node.name}' must keep at least one connection — this rewiring would leave it disconnected. (EMPTY_NODE_CONNECTION)"))
                             else if dChecks.exists(_.isLeft) then
                               Some(ToolError(dChecks.collectFirst { case Left(e) => e }.getOrElse("invalid deps")))
+                            else if !holdStatusOk then
+                              Some(ToolError(
+                                s"hold can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered or held). Use release/abandon for held nodes; re-activation is the exit for blocked."))
+                            else if !holdOutOk then
+                              Some(ToolError(
+                                "hold=true requires a node-target out edge — out=\"Nebula\" nodes deliver to Nebula directly, nothing to hold."))
                             else None
                           // blocked 重激活（blocked 反馈重入设计 §6 #5）：编辑 blocked 节点且
                           // task/agent/in/out/deps 实际变更 → status 回 wiring/pending、deliveredTo
@@ -811,6 +902,19 @@ object NodeEditTool extends Tool:
                                               case Some(fresh) =>
                                                 s.copy(nodes = s.nodes.updated(node.id, fresh.copy(deps = newDeps)))
                                               case None => s
+                                          }.void
+                                        else IO.unit
+                                      // hold 设置/撤销写回（20260903 暂停/人在回路设计 §2.5 #2/#5）：
+                                      // 校验已在 earlyReject 拦截（终态/held/blocked → 拒）；
+                                      // running 合法（完成时行为开关，rule 5）。事务内现读
+                                      // fresh（R2 纪律）；状态校验双重保险。
+                                      _ <-
+                                        if holdProvided.isDefined then
+                                          rt.store.mutate { s =>
+                                            s.nodes.get(node.id) match
+                                              case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Running =>
+                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(hold = hold)))
+                                              case _ => s
                                           }.void
                                         else IO.unit
                                       // blocked 重激活写回（R2 纪律）：事务内现读 fresh，fresh 仍
@@ -940,6 +1044,7 @@ object NodeEditTool extends Tool:
                                     yield Right(
                                       s"Node '${node.name}' updated" +
                                         (if didReactivate then s" — reactivated from blocked (round ${node.blockCount} preserved)" else "") +
+                                        (if holdProvided.isDefined then s" — hold → $hold" else "") +
                                         (newOut.map(t => s" — out → $t").getOrElse("") + (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else "")) +
                                         (if depsProvided && depsChanged then s" — deps → [${newDeps.mkString(",")}]" else "")
                                     )
@@ -994,7 +1099,7 @@ object NodeCancelTool extends Tool:
     """Cancel a running node (supervisor cancel semantics) — the dispatcher's stop-loss tool.
 ## When to Use
 - A node is mis-wired, hung, or superseded: cancel it, then rewire or recreate. Result is NOT delivered; upstream results already delivered stay buffered/archived.
-- Cancel target must be running (non-running → no-op with notice). A running node with a live session gets a cancel signal; a STALE running node (dead session, e.g. after an instance restart) is reaped — finalized as cancelled immediately instead of a fake success."""
+- Cancel target must be running (non-running → no-op with notice; a HELD node is likewise a no-op — its exit is NodeEdit release=true or abandon=true, not cancel). A running node with a live session gets a cancel signal; a STALE running node (dead session, e.g. after an instance restart) is reaped — finalized as cancelled immediately instead of a fake success."""
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
@@ -1041,34 +1146,74 @@ object ProjectCreateTool extends Tool:
   val description =
     """Create a Project (Nebula use) — project definition + workspace .nebflow/ scaffolding.
 ## When to Use
-- Setting up a new project under the Project + Node model: name + workspace + optional description.
-- Creates projects/<name>/project.json, workspace root AGENTS.md (agent instructions template), workspace/.nebflow/ (flow-map.json + .gitignore) and mounts the project (FlowMapStore + ProjectActor ready)."""
+- **Known workspace path** (the user told you, or you know it): pass `workspace` (absolute path; `name`/`description` optional) — direct create: writes projects/<name>/project.json, workspace root AGENTS.md template, workspace/.nebflow/ + .gitignore scaffolding, and mounts the project (FlowMapStore + ProjectActor ready).
+- **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style panel pops up on the user's window listing candidate paths (first-level directories under ~/Claude code/ not already used as project workspaces). The user picks one or types a custom absolute path (the built-in "Other…" free input), and creation proceeds automatically with the choice.
+- `name` defaults to the workspace path's basename when omitted.
+## After Creation
+- Dispatch work with Task(project=<name>, task=...) — the project is mounted and triggerable immediately.
+## Semantics
+- Same name + same workspace → idempotent (returns "already exists", re-mounts; safe to repeat).
+- Same name + different workspace → explicit error (never silently re-points an existing project).
+- Panel dismissed (cancel / empty answer) → clear shelved message, nothing created — re-invoke with a known path or ask the user again."""
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
       "properties" -> Json.obj(
-        "name" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (single path segment)".asJson),
-        "workspace" -> Json.obj("type" -> "string".asJson, "description" -> "Absolute path to the project workspace".asJson),
+        "name" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Project name (single path segment). Optional — defaults to the workspace path basename.".asJson
+        ),
+        "workspace" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Absolute path to the project workspace. Omit to pop the interactive path-selection panel (AskUserQuestion-style card).".asJson
+        ),
         "description" -> Json.obj("type" -> "string".asJson, "description" -> "Optional one-line description".asJson)
       ),
-      "required" -> Json.arr("name".asJson, "workspace".asJson)
+      "required" -> Json.arr()
     )
   )
 
+  /** 前端卡片取消哨兵（chat.js 取消按钮回填 answers=['__cancelled__']）。 */
+  val CancelSentinel = "__cancelled__"
+
   def summarize(input: JsonObject): String =
-    val n = input("name").flatMap(_.asString).getOrElse("?")
-    s"ProjectCreate($n)"
+    val n = input("name").flatMap(_.asString).orElse(input("workspace").flatMap(_.asString))
+    s"ProjectCreate(${n.getOrElse("<panel>")})"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val name = input("name").flatMap(_.asString).getOrElse("")
-    val workspace = input("workspace").flatMap(_.asString).getOrElse("")
-    val description = input("description").flatMap(_.asString)
-    if name.isEmpty || workspace.isEmpty then IO.pure(Left(ToolError("'name' and 'workspace' are required")))
+    val rawName = input("name").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val rawWorkspace = input("workspace").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val description = input("description").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    rawWorkspace match
+      // 已知路径直建（口径①，既有路径语义不变，name 缺省改 basename 派生）。
+      case Some(ws) =>
+        Try(os.Path(ws, PathUtil.dataRoot)) match
+          case scala.util.Success(_) => createChain(rawName, ws, description, ctx)
+          case scala.util.Failure(_) => pathPanel(rawName, description, ctx) // path 不可用 → 面板兜底
+      // 未知/缺省 path（口径②）→ AskUser 式交互面板。
+      case None => pathPanel(rawName, description, ctx)
+
+  // ============================================================
+  // 创建链（直建与面板选择路径共用）
+  // ============================================================
+
+  /** 创建 + 幂等挂载。name 缺省 = workspace basename（口径①）。
+    * 同名冲突语义（任务口径）：同 workspace → 幂等（"already exists" + 挂载）；
+    * 异 workspace → 明确报错（绝不静默改指旧定义）。 */
+  private def createChain(
+      nameOpt: Option[String],
+      workspace: String,
+      description: Option[String],
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    val resolvedName = nameOpt.getOrElse(baseName(workspace))
+    if resolvedName.isEmpty then
+      IO.pure(Left(ToolError(s"Cannot derive project name from workspace '$workspace' — pass 'name' explicitly")))
     else
       val agentMdTemplate =
-        s"""# ${name} — AGENTS.md
+        s"""# ${resolvedName} — AGENTS.md
 
 项目级 agent 指令（取代 team rules.md，工作区根 AGENTS.md）。分发器任务文本可引用本文件。
 
@@ -1089,18 +1234,166 @@ object ProjectCreateTool extends Tool:
               .mount(pd, system, res, ctx.wsSend, ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("default"))
               .as {
                 val verb = if created then "created" else "already exists"
-                Right(s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}.")
+                Right(
+                  s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
+                    s"Dispatch work with Task(project='${pd.name}', task=...)."
+                )
               }
           case _ =>
             IO.pure(Right(s"Project '${pd.name}' definition ready. Mount requires an agent session."))
 
-      ProjectStore.create(name, workspace, description, agentMdTemplate).flatMap {
+      ProjectStore.create(resolvedName, workspace, description, agentMdTemplate).flatMap {
         case Right(pd) => mountProject(pd, created = true)
         case Left(err) =>
           // 幂等挂载（试点重启恢复关键路径）：定义已存在 → 不重建定义、不动脚手架，
           // 直接挂载（ProjectStore.create 防覆盖返回 Left；load 命中即已存在）。
-          ProjectStore.load(name).flatMap {
-            case Some(pd) => mountProject(pd, created = false)
+          // 同名异 workspace → 明确报错（不静默复用旧定义）。
+          ProjectStore.load(resolvedName).flatMap {
             case None => IO.pure(Left(ToolError(err)))
+            case Some(pd) if sameWorkspace(pd.workspace, workspace) => mountProject(pd, created = false)
+            case Some(pd) =>
+              IO.pure(Left(ToolError(
+                s"Project '$resolvedName' already exists with a different workspace (${pd.workspace}) — " +
+                  "choose another name or reuse the existing workspace"
+              )))
           }
       }
+
+  /** workspace 归一化（绝对化 + 去尾斜杠），用于同名冲突判定与候选排除。
+    * 不可解析 → None（视为不同）。 */
+  private def normalizeWorkspace(p: String): Option[String] =
+    Try(os.Path(p, PathUtil.dataRoot).toString).toOption
+
+  private def sameWorkspace(a: String, b: String): Boolean =
+    (normalizeWorkspace(a), normalizeWorkspace(b)) match
+      case (Some(x), Some(y)) => stripTrailingSlashes(x) == stripTrailingSlashes(y)
+      case _                  => false
+
+  /** 路径 basename（name 派生）；根路径等无 basename → ""（由调用方报错）。 */
+  private def baseName(workspace: String): String =
+    Try(os.Path(workspace, PathUtil.dataRoot)).map(_.last).getOrElse("")
+
+  // ============================================================
+  // 未知路径交互面板（口径②）
+  // ============================================================
+
+  /** 候选根目录（触点）：默认 ~/Claude code；spec 用系统属性注入隔离目录。
+    * 独立属性注入（非 PathUtil.dataRoot 派生）——候选根是用户机器上的项目
+    * 惯例目录，与数据根语义无关。 */
+  private def candidatesRoot: os.Path =
+    Option(System.getProperty("nebflow.projectcreate.candidates-dir"))
+      .map(os.Path(_, os.Path(sys.props("user.home"))))
+      .getOrElse(os.Path(sys.props("user.home")) / "Claude code")
+
+  /** 候选扫描（纯函数，spec 覆盖）：root 一级子目录、排除点目录与已占用
+    * workspace、按名称排序、最多 max 个。root 不存在 → 空（面板仍有 Other
+    * 自由输入兜底，不因无候选而不可用）。 */
+  def scanCandidates(root: os.Path, taken: Set[String], max: Int = 8): List[String] =
+    if !os.isDir(root) then Nil
+    else
+      os.list(root)
+        .filter(os.isDir)
+        .map(_.toString)
+        .filterNot(p => os.Path(p).last.startsWith("."))
+        .filterNot(p => taken.exists(t => stripTrailingSlashes(t) == stripTrailingSlashes(p)))
+        .toList
+        .sorted
+        .take(max)
+
+  /** '~' 展开（仅前缀语义，防 API 差异；非 ~ 开头原样返回）。 */
+  def expandTilde(path: String): String =
+    val home = sys.props("user.home")
+    if path == "~" then home
+    else if path.startsWith("~/") then home + path.drop(1)
+    else path
+
+  private sealed trait PanelAnswer
+  private object PanelAnswer:
+    /** 取消哨兵 / 空答案 → 搁置（不创建、不报错悬挂）。 */
+    case object Shelved extends PanelAnswer
+    /** 非绝对路径等不可用输入 → 明确报错（不创建）。 */
+    case class BadPath(raw: String, why: String) extends PanelAnswer
+    /** 合法绝对路径 → 进入创建链。 */
+    case class Chosen(path: String) extends PanelAnswer
+
+  /** 去尾部斜杠（Scala String.stripTrailing 无参版，斜杠语义手写）。 */
+  private def stripTrailingSlashes(s: String): String = s.replaceAll("/+$", "")
+
+  /** 面板答案解析（纯函数，spec 覆盖）：首槽空 / 取消哨兵 → Shelved；
+    * '~' 展开后非绝对 → BadPath；合法 → Chosen（去尾斜杠）。 */
+  private def parsePanelAnswer(answers: List[String]): PanelAnswer =
+    val raw = answers.headOption.map(_.trim).getOrElse("")
+    if raw.isEmpty || raw == CancelSentinel then PanelAnswer.Shelved
+    else
+      val expanded = expandTilde(raw)
+      if !expanded.startsWith("/") then PanelAnswer.BadPath(raw, "path must be absolute")
+      else PanelAnswer.Chosen(stripTrailingSlashes(expanded))
+
+  /** 面板答案落地（纯分派）：Shelved → 搁置消息；BadPath → 明确报错；
+    * Chosen → 创建链。 */
+  private def applyPanelAnswer(
+      ans: PanelAnswer,
+      nameOpt: Option[String],
+      description: Option[String],
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    ans match
+      case PanelAnswer.Shelved =>
+        IO.pure(Right(
+          "ProjectCreate shelved: the path-selection panel was dismissed without a choice — " +
+            "no project created. Re-invoke with a known 'workspace', or ask the user again."
+        ))
+      case PanelAnswer.BadPath(raw, why) =>
+        IO.pure(Left(ToolError(
+          s"Panel answer '$raw' is not usable ($why) — nothing created. " +
+            "Re-invoke with an absolute 'workspace' path."
+        )))
+      case PanelAnswer.Chosen(path) => createChain(nameOpt, path, description, ctx)
+
+  /** 未知路径分支：复用 AskUser pending 机制（AgentCommand.AskUser →
+    * InteractionHub → 前端 AskUserQuestion 卡片），零新增前端/问答通道。
+    *
+    * 语义边界（全部与 AskUserQuestionTool 对齐，不另起一套）：
+    * - headless（NEBFLOW_HEADLESS=1）→ askGuard 同款报错（无交互用户，面板会
+    *   永久悬挂）；
+    * - 无 agent 会话（REST 直调 / harness）→ 明确报错不悬挂；
+    * - 等待无人工超时——与 AskUserQuestion 同语义（pending 期间会话标记
+    *   WaitingForUser 豁免 TaskStuckWatcher；hub 缺席时 AgentActor 直接取消
+    *   ask 回 Nil → 走 Shelved 搁置消息）；
+    * - 取消/空答案 → 明确搁置消息（无创建、无悬挂）；
+    * - 答案落定 → restoreRegistryAfterAnswer 配对恢复（与 AskUserQuestionTool
+    *   同一实现——#43 修复的答案来源校验语义原样适用：面板答案只能来自用户
+    *   点选帧 askUserAnswer（非 injected 用户消息），agent 侧注入负载永不消费）。
+    */
+  private def pathPanel(
+      nameOpt: Option[String],
+      description: Option[String],
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    AskUserQuestionTool.askGuard() match
+      case Some(err) => IO.pure(Left(err))
+      case None =>
+        ctx.agentActorRef match
+          case None =>
+            IO.pure(Left(ToolError(
+              "Workspace path required — no interactive session available for the path-selection panel; " +
+                "pass 'workspace' (and optionally 'name') explicitly."
+            )))
+          case Some(agentRef) =>
+            for
+              taken <- ProjectStore.list().map(_.flatMap(p => normalizeWorkspace(p.workspace)).toSet)
+              candidates = scanCandidates(candidatesRoot, taken)
+              question =
+                s"ProjectCreate 需要项目工作区路径 — 候选为 $candidatesRoot 下尚未用作项目工作区的目录。" +
+                  "点选其一，或选 Other… 输入其他绝对路径（支持 ~）。"
+              item = AskItem(question, candidates.map(c => AskOption(c, None)))
+              requestId = java.util.UUID.randomUUID().toString.take(8)
+              answers <- agentRef
+                .?(
+                  (replyTo: ActorRef[List[String]]) => AgentCommand.AskUser(requestId, List(item), Some(replyTo)),
+                  timeout = None
+                )
+              _ <- AskUserQuestionTool.restoreRegistryAfterAnswer(ctx)
+              result <- applyPanelAnswer(parsePanelAnswer(answers), nameOpt, description, ctx)
+            yield result
+end ProjectCreateTool
