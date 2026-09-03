@@ -191,6 +191,23 @@ function askUserAnswerText(msgs, i) {
   return (nextMsg && nextMsg.type === 'user' && !nextMsg.injected && nextMsg.text) ? nextMsg.text : null;
 }
 
+/** The nearest history entry that is not an agent-injected user bubble
+ *  (issue #43, 2026-09-03). main.js uses this for pending-interaction
+ *  detection after a history (re)load: delegate results / Mail / flow
+ *  notifications legitimately queue AFTER a still-pending askUser entry, so
+ *  "askUser is the literal last message" was false exactly when results
+ *  arrived during the wait — and the restored card stayed locked with no way
+ *  to answer. Skipping injected bubbles, an askUser at the scan stop = still
+ *  pending; any other entry (ai/tool/user) = the ask moved on (a
+ *  non-injected user message is a recorded answer — card click or chat-input
+ *  passthrough). Exported so the restore spec exercises the SAME code
+ *  main.js runs. */
+export function findLastRealMessage(msgs) {
+  let i = (msgs || []).length - 1;
+  while (i >= 0 && msgs[i].type === 'user' && msgs[i].injected) i--;
+  return i >= 0 ? msgs[i] : null;
+}
+
 // ---------- Attachment rendering (shared by both restore paths) ----------
 
 /** Convert an absolute uploads path (ui.json records attachments as

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<!-- askuser-answer-source harness.html — static test harness for issue #43
+     (AskUser pending 期间 agent 注入消息被误消费为答案).
+
+     Imports the REAL frontend render/restore modules (persistence.js /
+     chatView.js / chat.js — no stubs, no bundling) and exposes drivers:
+
+       window.__replay(name) → restoreFromBackendHistory(fixture) — the exact
+                               function main.js runs after a browser refresh
+                               (historyPage handler), followed by the same
+                               pending re-render composition main.js performs
+                               (findLastRealMessage → renderAskUser).
+       window.__live(name)   → the live WS-event path (renderAskUser +
+                               renderInjectedBubble) for the interaction check.
+       window.__pendingOf(name) → findLastRealMessage(fixture) — the REAL
+                               exported pending-detection scan main.js calls.
+
+     The spec (tests/askuser-answer-source.spec.mjs) serves the repo root over
+     a throwaway static server (never the 8080 host) and drives both the
+     incident fixture (askUser + queued delegate bubbles) and the answered
+     fixture (legitimate recorded answer) against it.
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>askuser-answer-source harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'harness-session';
+
+    // Capture outgoing WS frames (the live AskUser confirm path sends one) —
+    // nothing must reach a real socket in this harness.
+    window.__captured = [];
+    state.ws = { readyState: 1, send: (data) => window.__captured.push(JSON.parse(data)) };
+
+    // AskUser card drafts live in localStorage keyed by session — keep runs hermetic.
+    try { localStorage.removeItem('nebflow_askuser_drafts'); } catch {}
+
+    const persistence = await import(`${WEB}/persistence.js`);
+    const chat = await import(`${WEB}/chat.js`);
+    // Exposed for the spec's direct unit-level probes of the REAL module.
+    window.__persistence = persistence;
+
+    // Pre-fix fallback: the baseline tree has no findLastRealMessage —
+    // reproduce the OLD main.js behavior (literal last message) so the same
+    // harness drives both revisions.
+    function lastRealOf(msgs) {
+      return persistence.findLastRealMessage
+        ? persistence.findLastRealMessage(msgs)
+        : (msgs && msgs.length ? msgs[msgs.length - 1] : null);
+    }
+
+    const _fixtures = {};
+    async function loadFixture(name) {
+      if (!_fixtures[name]) _fixtures[name] = await (await fetch(`./${name}.json`)).json();
+      return _fixtures[name];
+    }
+
+    function freshChat() {
+      chatEl.innerHTML = '';
+    }
+
+    // ---- Driver: history replay (post-refresh path) ----
+    // restoreFromBackendHistory + the SAME pending re-render composition the
+    // historyPage handler in main.js performs (remove locked option-box rows,
+    // re-render interactively when the ask is still pending).
+    window.__replay = async (name) => {
+      freshChat();
+      const msgs = await loadFixture(name);
+      persistence.restoreFromBackendHistory(msgs);
+      const lastReal = lastRealOf(msgs);
+      const isAskUserPending = lastReal && lastReal.type === 'askUser'
+        && Array.isArray(lastReal.items) && lastReal.items.length > 0;
+      if (isAskUserPending) {
+        chatEl.querySelectorAll('.row.ai').forEach(row => {
+          if (row.querySelector('.option-box')) row.remove();
+        });
+        chat.renderAskUser(lastReal.items, 'harness-session', lastReal.agentName, lastReal.requestId);
+      }
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return { isAskUserPending: !!isAskUserPending };
+    };
+
+    // ---- Driver: live render (WS-event path) ----
+    // The exact live functions the onMessage handlers call: renderAskUser for
+    // the question, renderInjectedBubble for each queued agent-side result.
+    window.__live = async (name) => {
+      freshChat();
+      const msgs = await loadFixture(name);
+      for (const m of msgs) {
+        if (m.type === 'askUser') {
+          chat.renderAskUser(m.items, 'harness-session', m.agentName, m.requestId);
+        } else if (m.type === 'user' && m.injected) {
+          chat.renderInjectedBubble(m.text, m.source, m.timestamp, m.eventType);
+        }
+      }
+      await new Promise(r => setTimeout(r, 50));
+    };
+
+    window.__pendingOf = async (name) => {
+      const msgs = await loadFixture(name);
+      return lastRealOf(msgs);
+    };
+
+    window.__pendingRaw = (msgs) => lastRealOf(msgs);
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

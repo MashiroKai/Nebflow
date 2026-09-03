@@ -49,7 +49,7 @@ import {
   showDeleteFolderModal,
   showAgentModal, hideAgentModal, initModals
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
 import { renderTaskList, sessionShowsTeamTasks } from './taskList.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
@@ -1486,8 +1486,17 @@ onMessage('historyPage', (msg, view) => {
     restoreFromBackendHistory(msg.messages, { busyTail: isStillBusy });
 
     // Detect if the agent is waiting for AskUser — in that case it's NOT actively streaming.
+    // Issue #43 (2026-09-03): agent-injected user bubbles (delegate results,
+    // Mail, flow/node notifications) legitimately queue AFTER a still-pending
+    // askUser entry — requiring askUser to be the literal LAST message made
+    // the pending detection fail exactly when results arrived during the
+    // wait, and the restored card stayed locked with no way to answer.
+    // findLastRealMessage (shared with persistence.js, spec-covered) scans
+    // backward over injected bubbles; a non-injected user message after the
+    // askUser means an answer was recorded (card click or chat-input
+    // passthrough) — the ask is no longer pending.
     const histMsgs = msg.messages;
-    const lastHistMsg = histMsgs && histMsgs[histMsgs.length - 1];
+    const lastHistMsg = findLastRealMessage(histMsgs) || undefined;
     const isAskUserPending = lastHistMsg && lastHistMsg.type === 'askUser'
       && Array.isArray(lastHistMsg.items) && lastHistMsg.items.length > 0;
     const isAskPermissionPending = lastHistMsg && lastHistMsg.type === 'askPermission'
