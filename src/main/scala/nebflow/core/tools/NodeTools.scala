@@ -222,7 +222,10 @@ object NodeTools:
       // 节点 payload 的 worktree 字段零改动（仍原样序列化存储值）。
       val authNames = if os.exists(authDir) then os.list(authDir).filter(os.isDir).map(_.last).toList else Nil
       val topNames =
-        if os.exists(wtDir) then os.list(wtDir).filter(os.isDir).map(_.last).filterNot(_ == "worktrees").toList
+        // 保留名（worktrees/skills/commands）不是 worktree 候选（QC P1：否则
+        // NodeList 主动教 LLM 传 "skills" 且校验层会放行）
+        if os.exists(wtDir) then
+          os.list(wtDir).filter(os.isDir).map(_.last).filterNot(PathUtil.ReservedTopLevelNames.contains).toList
         else Nil
       val worktrees = (authNames ++ topNames).distinct.sorted
       Json.obj(

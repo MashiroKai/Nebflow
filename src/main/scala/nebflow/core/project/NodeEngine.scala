@@ -210,8 +210,15 @@ class NodeEngine(
     // （与 NodeEdit 校验同源，参照系唯一）。顶层命中与旧公式
     // `(os.Path(workspace) / ".nebflow" / wt).toString` 逐字节一致（回归红线）；
     // 两处均不存在 → 旧公式路径；损坏存储值 → workspace 兜底（不再 InvalidSegment
-    // 炸 spawn）。
-    val projectRoot = PathUtil.resolveNodeProjectRoot(workspace, node.worktree)
+    // 炸 spawn）并 warnSync 留痕（QC P2：fail-safe 必须可排查）。
+    val projectRoot =
+      node.worktree match
+        case Some(wt) if PathUtil.normalizeWorktree(wt).isLeft =>
+          val pr = PathUtil.resolveNodeProjectRoot(workspace, node.worktree)
+          logger.warnSync(
+            s"Node '${node.name}' (${node.id}) has corrupt worktree value '$wt' — projectRoot fell back to workspace ($pr)")
+          pr
+        case _ => PathUtil.resolveNodeProjectRoot(workspace, node.worktree)
     val nodeName = node.name
     for
       // 在飞登记先行（清场 c-① liveness 误杀防护 20260903）：running 表先于
