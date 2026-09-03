@@ -175,19 +175,25 @@ class ToolsLogAgentCoreSpec extends FunSuite:
       // 同一轮：LLM 请求（真实 LlmLogWriter 写 router summary/full/sse）+
       // 其触发的工具执行（真实 AgentCore 链，ctx.requestId 由 pipeToolExecutions
       // 从 ConsumeResult 注入——此处直接给 ToolContext 赋同源 id）
+      // （适配 20260903 子项⑤：log() 三段式拆分为 logRequest+logResponse——
+      //  本用例的 fixture 语义「router 行携带同源 request_id」不变）
       LlmLogWriter
-        .log(
-          request = LlmRequest(messages = Nil, sessionId = "sess-toolslog", agentId = "spec-agent"),
-          chunks = Nil,
+        .logRequest(
+          LlmRequest(messages = Nil, sessionId = "sess-toolslog", agentId = "spec-agent"),
+          requestId = alignId,
+          isSubagent = false,
+          isCompaction = false
+        )
+        .unsafeRunSync()
+      LlmLogWriter
+        .logResponse(
+          requestId = alignId,
           resultText = "ok",
           resultToolCalls = Nil,
           resultThinking = None,
           resultStopReason = Some("end_turn"),
           resultUsage = None,
-          resultModel = Some("spec-model"),
-          isSubagent = false,
-          isCompaction = false,
-          requestId = Some(alignId)
+          resultModel = Some("spec-model")
         )
         .unsafeRunSync()
       val call = ToolCall(id = "t-align", name = "Read", input = JsonObject("file_path" -> (root / "f.txt").toString.asJson))

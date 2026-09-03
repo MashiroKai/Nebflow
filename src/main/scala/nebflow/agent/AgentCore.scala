@@ -725,6 +725,11 @@ private[agent] trait AgentCore:
           ctxTriple <- contextIo.timeout(ContextBuildTimeout).attempt
           result <- ctxTriple match
             case Right((turnCtx, request, stateWithReminder)) =>
+              // 审计 20260903 子项⑤：逐事件 SSE 编码器——每个流 chunk 到达即
+              // 实时落盘（时间戳=到达时刻），首 token 延迟/chunk 间隙才可实测。
+              // 编码器持有单请求的 block index 状态（原批量版 chunksToSseEvents
+              // 的可变状态迁移于此）。
+              val sseEncoder = new nebflow.core.LlmLogWriter.StreamEventEncoder(llmRequestId, request.agentId)
               // Synchronously update gitBranch in state — no async message
               val stateWithBranch = stateWithReminder.withGitBranch(turnCtx.currentBranch)
               ctx.forkTurn(
@@ -739,9 +744,14 @@ private[agent] trait AgentCore:
                       stateForLlm.execution.llmCallsThisTurn
                     )
                   ) *>
+                    // 审计 20260903 子项⑤：request 行在流派发时落盘（旧批量版
+                    // 在流收集完成后才写，request→response 时间戳全部 <1.2s 失真）。
+                    LlmLogWriter.logRequest(request, llmRequestId, isSubagent, isCompactTurn) *>
                     resources.llm
                       .sendStream(request, onAttempt = Some(onAttemptCb))
                       .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
+                      // 审计 20260903 子项⑤：逐事件实时落盘——ts 取 chunk 到达时刻。
+                      .evalTap(chunk => LlmLogWriter.logStreamEvent(sseEncoder, chunk))
                       // P0 阶段 3：每个流 chunk touch 活动戳——流活着 = turn 有活动 =
                       // 不判卡死。Ref.modify 是原子的，按流序逐 chunk 更新，开销可忽略。
                       .evalTap(_ => touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing))
@@ -768,18 +778,14 @@ private[agent] trait AgentCore:
                           case _ => IO.unit
                         }
                         trackModel *> notifyModelChanged *>
-                          LlmLogWriter.log(
-                            request,
-                            chunks,
-                            cr.text,
-                            cr.toolCalls,
-                            cr.thinking,
-                            cr.stopReason,
-                            cr.usage,
-                            cr.model,
-                            isSubagent,
-                            isCompactTurn,
-                            requestId = Some(llmRequestId)
+                          LlmLogWriter.logResponse(
+                            requestId = llmRequestId,
+                            resultText = cr.text,
+                            resultToolCalls = cr.toolCalls,
+                            resultThinking = cr.thinking,
+                            resultStopReason = cr.stopReason,
+                            resultUsage = cr.usage,
+                            resultModel = cr.model
                           ) *> IO.pure(cr.copy(requestId = Some(llmRequestId)))
                       }
                       .attempt
@@ -978,7 +984,13 @@ private[agent] trait AgentCore:
                 .flatTap(r => logToolStructured(call, callCtx, r))
             else permissionDecision(resources, state, call)
               .flatMap {
-                case PermissionDecision.Allow => executeTool(call, callCtx)
+                case PermissionDecision.Allow =>
+                  // 审计 20260903 子项①：工具执行期心跳包裹（仅实际执行段——
+                  // 权限 Ask/AskUserQuestion 等待由前端 askUser 处理器既有
+                  // 「抑制 timer」契约覆盖，包裹会反向重武装 timer，故排除）。
+                  withToolHeartbeat(nebflow.core.summarizeToolCall(call), state.wsSend, isSubagent, sessionIdOpt)(
+                    executeTool(call, callCtx)
+                  )
                 case PermissionDecision.Deny =>
                   val denied =
                     ToolExecResult(s"Tool ${call.name} is denied by the session permission policy", isError = true)
@@ -1653,6 +1665,25 @@ private[agent] trait AgentCore:
     sessionId: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     wsSend(event.toJson(ctx.self.path.name, isSubagent, sessionId))
+
+  /**
+   * 工具执行期心跳（审计 20260903 子项①，RemoteExecutor 活动心跳先例的 WS
+   * 面补充）：io 运行期间每 Defaults.ToolHeartbeatSec 秒发一条 toolHeartbeat
+   * WS 事件喂活前端 busy timer——前台长工具执行（toolStart→toolEnd 之间零
+   * 事件）不再触发前端 630s 纯静默超时误杀仍在干活的 turn（实测 56/359
+   * turn 超 630s）。心跳发送失败绝不影响工具执行（吞掉 + 告警日志）。
+   */
+  protected def withToolHeartbeat[A](
+    label: String,
+    wsSend: io.circe.Json => IO[Unit],
+    isSubagent: Boolean,
+    sessionId: Option[String]
+  )(io: IO[A])(using ctx: ActorContext[AgentCommand]): IO[A] =
+    val emit = emitStreamIO(wsSend, AgentStreamEvent.ToolHeartbeat(label), isSubagent, sessionId)
+      .handleErrorWith(e =>
+        NebflowLogger.forName("nebflow.agent").warn(s"toolHeartbeat emit failed: ${e.getMessage}")
+      )
+    ToolHeartbeat.span(emit, Defaults.ToolHeartbeatSec.seconds)(io)
 
   protected def streamEmitter(
     wsSend: io.circe.Json => IO[Unit],

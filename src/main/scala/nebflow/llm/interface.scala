@@ -758,14 +758,33 @@ object LlmInterface:
                                                   new FallbackExhaustedError(List(attempt))
                                                 )
                                               case ErrorPermanence.Permanent =>
+                                                // 审计 20260903 子项②③——eviction 分流：
+                                                //  - evict=false（400 Format/重放形状类）：provider 秒回
+                                                //    400 恰恰证明它活着（解析并拒绝了我们的请求），失败根源
+                                                //    是重放形状 vs 契约——不驱逐，只跳本次请求。markDown 在此
+                                                //    只会制造 flap：探测空历史永远成功 → 秒回 UP → 下一个
+                                                //    fallback 再 400（实锤：deepseek 7min 35 次 DOWN）。
+                                                //  - reason=Timeout（首 token 看门狗 TimeoutException 走
+                                                //    Permanent 分类）：软下线回避窗——「慢 ≠ 死」，窗口后自然
+                                                //    回链，无需探测恢复。
+                                                //  - 其余（Auth/404/配额/EmptyStream 等确证死亡）：维持 markDown。
+                                                val eviction =
+                                                  if !classification.evict then IO.unit
+                                                  else if classification.reason == FailoverReason.Timeout then
+                                                    healthMonitor.softAvoid(
+                                                      candidate.providerId,
+                                                      candidate.model,
+                                                      Defaults.TimeoutAvoidWindowMs
+                                                    )
+                                                  else healthMonitor
+                                                    .markDown(candidate.providerId, candidate.model, downReason)
                                                 fs2.Stream.eval(
                                                   logger.warn(
                                                       s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
                                                     )
                                                     *> failureRef.update(_ :+ attempt)
                                                     *> notify
-                                                    *> healthMonitor
-                                                      .markDown(candidate.providerId, candidate.model, downReason)
+                                                    *> eviction
                                                 ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                                               case ErrorPermanence.Transient =>
                                                 if retriesLeft > 0 && !isTimeout then
@@ -789,22 +808,30 @@ object LlmInterface:
                                                   val skipMsg =
                                                     if isTimeout then "inactivity timeout, skipping to next provider"
                                                     else "retries exhausted"
-                                                  // Align with the Rust handle.rs fallback branch: timeout is
-                                                  // classified Permanent, so the stream ALWAYS markDowns here
-                                                  // (Rust handle.rs L720-735 has no locked check on mark_down).
-                                                  // This branch is only reachable with locked=false (the seam
-                                                  // guard above propagates every error once partial content
-                                                  // was streamed), so the lock needs no reset.
-                                                  // DOWN→probe→UP→timeout→DOWN churn is bounded by the
-                                                  // waitForAnyUp timeout (120s) at the all-Down gate.
+                                                  // Branch reachable only with locked=false (the seam guard
+                                                  // above propagates every error once partial content was
+                                                  // streamed), so the lock needs no reset.
+                                                  // 审计 20260903 子项③：Timeout 类降级软下线——超时 = 慢，
+                                                  // 不是死。跳过本次请求 + 软回避窗（TimeoutAvoidWindowMs），
+                                                  // 不 markDown 不进探测集，窗口到期自然回链；markDown
+                                                  // 保留给 Auth/404/配额等确证死亡。非超时 Transient 耗尽
+                                                  // （如 429 重试耗尽）维持原 markDown 行为。
+                                                  val eviction =
+                                                    if isTimeout then
+                                                      healthMonitor.softAvoid(
+                                                        candidate.providerId,
+                                                        candidate.model,
+                                                        Defaults.TimeoutAvoidWindowMs
+                                                      )
+                                                    else healthMonitor
+                                                      .markDown(candidate.providerId, candidate.model, downReason)
                                                   fs2.Stream.eval(
                                                     logger.warn(
                                                       s"Stream fallback: ${candidate.providerId}/${candidate.model} $skipMsg"
                                                     )
                                                       *> failureRef.update(_ :+ attempt)
                                                       *> notify
-                                                      *> healthMonitor
-                                                        .markDown(candidate.providerId, candidate.model, downReason)
+                                                      *> eviction
                                                   ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                                                 end if
                                             end match
