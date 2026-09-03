@@ -242,8 +242,12 @@ export function refreshChains(project, fmNodes) {
       continue;
     }
     const prev = known.get(b.id);
-    const identical = !!prev && prev.members.length === b.members.length
-      && prev.members.every((m, i) => b.members[i] && b.members[i].id === m.id);
+    // 成员集不变（id 集相等，与序无关）→ 幂等跳过（§7.2）：冻结条目按完成时间
+    // 倒序、当前批按创建升序，逐位对比会把每条已归档链误判为重建（每次刷新重复
+    // toast + 已归档成员被退场动画复活回主图）。成员集变化才算重建（迟到成员并入）。
+    const prevIds = prev ? new Set(prev.members.map((m) => m.id)) : null;
+    const identical = !!prevIds && prevIds.size === b.members.length
+      && b.members.every((m) => prevIds.has(m.id));
     if (identical) continue; // 冻结条目原样保留（成员被服务端 TTL 出库由墓碑补位）
     const chain = buildChain(b.id, b.members);
     if (prev) Object.assign(prev, chain); // 迟到成员并入已归档链（重建条目，不重复）
