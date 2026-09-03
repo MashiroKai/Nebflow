@@ -1,3 +1,32 @@
+// v8.4.0 (2026-09-03): VOICE-RESPONSIVE DEFORMATION — the listening orb now
+// deforms with the LIVE dictation loudness (author 2026-09-03: 说话声音越大，
+// 边缘震动/形变幅度越大；波形要有机、不要整齐正弦).
+//  - Voice sources (one per STT path, never two mic streams): the cloud STT
+//    path already computes per-chunk RMS in voiceEngine.onMicChunk and feeds
+//    the orb through setMicVolumeListener → setVolume (REUSED unchanged).
+//    The browser Web Speech path exposes no audio levels, so the orb opens
+//    its own READ-ONLY tap (VoiceTap: getUserMedia({audio}) → AnalyserNode,
+//    never connected to ctx.destination → cannot be heard nor interfere with
+//    the STT engine) while — and only while — the effective state is
+//    listening. Denial / no device / headless → caught, orb degrades to the
+//    fixed base amplitude; STT and rendering are unaffected.
+//  - Amplitude pipeline: setVoiceLevel(v) injects the raw level; drawFrame
+//    smooths it with frame-rate-independent attack/release exponentials
+//    (τ_attack 70ms / τ_release 280ms) into voiceLevel = the uVol uniform.
+//    Non-listening states force the smoothing target to 0, so injected
+//    levels can never leak into any other state (frozen stays frozen).
+//  - Organic waveform: the edge displacement is a 3-harmonic angular field
+//    (integer wavenumbers 3/5/8 for 2π continuity — non-integer angular k
+//    would tear a seam at the atan wrap) with incommensurate temporal drift
+//    (4.7/-6.9/11.3 rad/s) AND slow per-harmonic amplitude jitter (1.31/
+//    2.09/3.73 rad/s, depth 0.28), so no fixed waveform ever repeats and no
+//    single "neat sine" is visible. Generated into the GLSL from ONE source
+//    of truth (VOICE_WAVE) that voiceWaveAt() mirrors for tests. It rides
+//    ON TOP of the pre-existing noise deformation (shared r0 contour).
+//  - Shader, premultiplied output, phaseTime accumulation, STATES table,
+//    preset boards: untouched except the added uVol uniform + displacement
+//    block (uniform-gated: uVol=0 keeps every other state bit-identical).
+//
 // v8.3.0 (2026-09-02): PALETTE PRESET SYSTEM — 配色 = 状态语言 (design
 // 20260902_micorb-presets-design.md, author rulings 2026-09-02 20:59).
 //  - orbPresets.js registers 8 preset boards (dark/light double boards) + the
@@ -147,6 +176,90 @@ function clonePal(p) { return { a: p.a.slice(), b: p.b.slice(), c: p.c.slice() }
 const PULSE_TABLE = { 'listening': [0.06, 1.6], 'nebula-busy': [0.05, 2.2], 'bg-agents': [0.03, 3.0] };
 
 /* ========================================================================
+   v8.4.0 voice-responsive deformation — parameters (single source of truth
+   for BOTH the generated GLSL block and the JS mirror voiceWaveAt()).
+   ======================================================================== */
+
+/* Organic waveform (author 2026-09-03: 不要整齐的正弦). Three angular
+   harmonics; the wavenumbers k are INTEGERS (3/5/8) because sin(k·θ) must be
+   2π-periodic in θ — a non-integer k would tear a fixed seam into the edge
+   at the atan2 wrap. The "irrational / incommensurate" quality lives in the
+   TEMPORAL dimension: each harmonic drifts at its own speed (4.7 / -6.9 /
+   11.3 rad/s — pairwise non-integer ratios) and its amplitude slowly jitters
+   (rates 1.31 / 2.09 / 3.73 rad/s, depth 0.28 → ×0.72..1.00). The three
+   time bases never re-align, so the waveform shape keeps evolving and no
+   single neat sine is ever visible. The field is additionally multiplied by
+   uVol (smoothed mic level) and rides on top of the pre-existing noise
+   deformation inside draw() (w-field + r0 nEdge wobble). */
+export const VOICE_WAVE = {
+  amp: 0.062, // max radial displacement (uv units) at voiceLevel 1
+  harmonics: [
+    { k: 3, drift: 4.7,  phase: 0.0, jitterRate: 1.31, jitterPhase: 0.7 },
+    { k: 5, drift: -6.9, phase: 1.7, jitterRate: 2.09, jitterPhase: 2.1 },
+    { k: 8, drift: 11.3, phase: 4.2, jitterRate: 3.73, jitterPhase: 0.3 },
+  ],
+  weights: [0.46, 0.34, 0.20], // sums to 1
+  jitterDepth: 0.28,
+};
+
+/* JS mirror of the generated GLSL displacement field (uVol factored out —
+   this is the unit-amplitude waveform). Tests sample it to assert the
+   multi-harmonic / non-fixed-waveform criteria; the GLSL block below is
+   GENERATED from VOICE_WAVE so the two cannot drift apart. */
+export function voiceWaveAt(theta, t) {
+  let w = 0;
+  for (let i = 0; i < VOICE_WAVE.harmonics.length; i++) {
+    const h = VOICE_WAVE.harmonics[i];
+    const jit = (1 - VOICE_WAVE.jitterDepth) + VOICE_WAVE.jitterDepth * Math.sin(t * h.jitterRate + h.jitterPhase);
+    w += VOICE_WAVE.weights[i] * jit * Math.sin(theta * h.k + t * h.drift + h.phase);
+  }
+  return w;
+}
+
+/* GLSL block generated from VOICE_WAVE (same literals, same formula shape). */
+const VOICE_GLSL = (() => {
+  const f = (x) => (Number.isInteger(x) ? x.toFixed(1) : String(x));
+  const d = VOICE_WAVE.jitterDepth, base = (1 - d).toFixed(2), depth = d.toFixed(2);
+  const lines = [
+    '  /* v8.4.0: organic voice deformation (listening only — uVol is the',
+    '     smoothed mic level, forced to 0 in every other state). Multi-',
+    '     harmonic radial edge displacement riding on the shared wobble',
+    '     contour: wavenumbers 3/5/8 (2π-continuous around the rim),',
+    '     incommensurate drift + slow per-harmonic amplitude jitter so the',
+    '     shape keeps evolving — never a single neat sine. */',
+    '  if (uVol > 0.001) {',
+    '    float lr=length(uv);',
+    '    vec2 dir=lr>0.0001?uv/lr:vec2(0.0);',
+    '    float ang=atan(uv.y,uv.x);',
+    '    float wave=0.0;',
+  ];
+  VOICE_WAVE.harmonics.forEach((h, i) => {
+    lines.push('    wave+=' + VOICE_WAVE.weights[i].toFixed(2) + '*(' + base + '+' + depth + '*sin(tt*' + f(h.jitterRate) + '+' + f(h.jitterPhase) + '))*sin(ang*' + f(h.k) + '+tt*' + f(h.drift) + '+' + f(h.phase) + ');');
+  });
+  lines.push('    uv+=dir*(uVol*' + VOICE_WAVE.amp.toFixed(3) + '*wave);');
+  lines.push('  }');
+  return lines;
+})();
+
+/* Attack/release time constants for the voice amplitude (frame-rate
+   independent exponential smoothing, factor = 1-exp(-dt/τ)). Attack 70ms
+   tracks speech onset fast; release 280ms lets it fall off softly (both
+   inside the design band: attack 50-100ms / release 200-400ms). dt shares
+   the F1 clamp (≤0.05) so a background tab can never jump the amplitude. */
+export const VOICE_TAU_ATTACK = 0.07;
+export const VOICE_TAU_RELEASE = 0.28;
+
+/** One smoothing step (pure, exported for node-level assertions).
+ *  @param {number} cur current smoothed level
+ *  @param {number} target raw injected level (caller applies state gating)
+ *  @param {number} dt frame delta seconds (pre-clamped) */
+export function stepVoiceLevel(cur, target, dt) {
+  const tau = target > cur ? VOICE_TAU_ATTACK : VOICE_TAU_RELEASE;
+  const next = cur + (target - cur) * (1 - Math.exp(-dt / tau));
+  return (target <= 0 && next < 0.0005) ? 0 : next; // snap the release tail
+}
+
+/* ========================================================================
    WebGL OrbRenderer — v7 transparent liquid material shader, v8.2.2 full
    port from mic-bubble-visual-v8.html (palette uniforms + phaseTime + pulse
    soft-start + volume-driven hover + rotSpeed tiers + stateScales).
@@ -164,6 +277,7 @@ const FS = [
   'uniform float hue; uniform float hover; uniform float rot;',
   'uniform float hoverIntensity; uniform float isLight;',
   'uniform float sat; uniform float lum; uniform float timeScale;',
+  'uniform float uVol;',
   '/* v8.2.2: palette as uniforms — error states (red/amber) share the same',
   '   crystalline structure (fluid/refraction/highlight/rim all preserved) */',
   'uniform vec3 palA; uniform vec3 palB; uniform vec3 palC;',
@@ -354,6 +468,7 @@ const FS = [
   '  float tt=iTime*timeScale;',
   '  uv.x+=hover*hoverIntensity*0.1*sin(uv.y*9.0+tt);',
   '  uv.y+=hover*hoverIntensity*0.1*sin(uv.x*9.0+tt);',
+  ...VOICE_GLSL,
   '  return draw(uv);',
   '}',
   'void main(){',
@@ -407,8 +522,13 @@ class OrbRenderer {
     const initPal = this.opts.palette || PAL_DEFAULT;
     this.target = { hue: 0, hover: 0.08, rotSpeed: 0.05, sat: 1, lum: 1, timeScale: 0.5, scale: 1.0, pal: initPal };
     /* v8.2 jarvis port: volume-driven hover / state scale / switch pulse */
-    this.volume = 0;           // mic RMS normalized to [0,1]
     this.volDriven = false;    // whether the current state's hover follows volume
+    /* v8.4.0: voice amplitude pipeline — rawVoice is the injected level
+       (setVoiceLevel), voiceLevel the attack/release-smoothed value that
+       drives the uVol uniform. volDriven=false forces the smoothing target
+       to 0, so injected levels can only ever affect the listening state. */
+    this.rawVoice = 0;
+    this.voiceLevel = 0;
     this.scale = 1.0;
     this.transitionPulse = 0;
     /* v8.2.1 no-flicker: */
@@ -452,7 +572,7 @@ class OrbRenderer {
     this.program = prog;
     gl.useProgram(prog);
     this.u = {};
-    ['iTime', 'iResolution', 'hue', 'hover', 'rot', 'hoverIntensity', 'isLight', 'sat', 'lum', 'timeScale', 'palA', 'palB', 'palC']
+    ['iTime', 'iResolution', 'hue', 'hover', 'rot', 'hoverIntensity', 'isLight', 'sat', 'lum', 'timeScale', 'uVol', 'palA', 'palB', 'palC']
       .forEach((n) => { this.u[n] = gl.getUniformLocation(prog, n); });
     /* v8.2.12: blending stays OFF — the quad covers the full viewport and
        overwrites every pixel with the premultiplied frame. */
@@ -549,6 +669,8 @@ class OrbRenderer {
       this.pulseTarget = 0;
       this.transitionPulse = 0;
       this.pulseAmp = 0;
+      this.rawVoice = 0;
+      this.voiceLevel = 0;
       this.drawFrame();
       return;
     }
@@ -557,9 +679,23 @@ class OrbRenderer {
     this.resume();
   }
 
-  /** v8.2: volume-driven listening shake (production feeds voiceEngine RMS). */
+  /* v8.2 production feed (voiceEngine cloud-path RMS listener) — kept as an
+     alias of the v8.4.0 canonical inject path. */
   setVolume(v) {
-    this.volume = Math.max(0, Math.min(1, v));
+    this.setVoiceLevel(v);
+  }
+
+  /**
+   * v8.4.0: inject the raw voice level [0,1]. Production sources: the
+   * voiceEngine cloud-path RMS feed (setVolume above) and the orb-owned
+   * VoiceTap (Web Speech path). Tests feed synthetic sequences here to
+   * assert the smoothed uVol amplitude without a microphone. The level only
+   * reaches the shader while the current state is volume-driven (listening):
+   * drawFrame forces the smoothing target to 0 in every other state.
+   * @param {number} v
+   */
+  setVoiceLevel(v) {
+    this.rawVoice = Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
   }
 
   /** @param {boolean} isLight */
@@ -592,7 +728,7 @@ class OrbRenderer {
       this.params.hue += (this.target.hue - this.params.hue) * 0.035;
       /* v8.2: hover='volume' — listening hover follows mic volume
          (target = 0.10 + volume·0.90), lerp 0.1 */
-      if (this.volDriven) this.target.hover = 0.10 + this.volume * 0.90;
+      if (this.volDriven) this.target.hover = 0.10 + this.rawVoice * 0.90;
       this.params.hover += (this.target.hover - this.params.hover) * 0.1;
       this.params.rot += dt * this.target.rotSpeed;
       this.params.sat += (this.target.sat - this.params.sat) * 0.04;
@@ -621,6 +757,10 @@ class OrbRenderer {
       if (pc) this.pulsePeriod = pc[1];
       this.pulseAmp += ((pc ? pc[0] : 0) - this.pulseAmp) * 0.06;
       this.pulsePhase += dt * Math.PI * 2 / this.pulsePeriod;
+      /* v8.4.0: smoothed voice amplitude — target exists only in vol-driven
+         (listening) states; everywhere else it decays to 0 (fixed base
+         amplitude), so level injection can never leak into other states. */
+      this.voiceLevel = stepVoiceLevel(this.voiceLevel, this.volDriven ? this.rawVoice : 0, dt);
     }
     const effHover = Math.min(1, this.params.hover + this.transitionPulse * 0.3);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
@@ -631,6 +771,7 @@ class OrbRenderer {
     gl.uniform1f(this.u.hover, effHover);
     gl.uniform1f(this.u.rot, this.params.rot);
     gl.uniform1f(this.u.hoverIntensity, this.hoverIntensity);
+    gl.uniform1f(this.u.uVol, this.voiceLevel);
     gl.uniform1f(this.u.sat, this.params.sat);
     gl.uniform3fv(this.u.palA, this.pal.a);
     gl.uniform3fv(this.u.palB, this.pal.b);
@@ -656,6 +797,92 @@ class OrbRenderer {
   render() {
     this.drawFrame();
     if (this.running) requestAnimationFrame(this.render);
+  }
+}
+
+/* ========================================================================
+   v8.4.0 VoiceTap — orb-owned READ-ONLY mic level source for the Web Speech
+   dictation path. The cloud STT path already computes per-chunk RMS in
+   voiceEngine.onMicChunk and feeds the orb through setMicVolumeListener —
+   when that feed is active (state.stt.sttConfigured) the tap is NOT opened
+   (one electric source per path, never two live mic streams). Web Speech
+   exposes no audio levels, so while the orb is listening the tap opens its
+   own getUserMedia({audio}) stream routed ONLY through an AnalyserNode —
+   deliberately never connected to ctx.destination, so it can neither be
+   heard nor interfere with a concurrently running SpeechRecognition engine.
+   Permission denied / device busy or missing / headless → caught, the tap
+   reports 'failed', the orb degrades to the fixed base amplitude (level 0)
+   and STT + rendering continue unaffected. No uncaught exceptions.
+   ======================================================================== */
+class VoiceTap {
+  /** @param {(v: number) => void} onLevel */
+  constructor(onLevel) {
+    this.onLevel = onLevel;
+    /** @type {'idle'|'starting'|'running'|'failed'} */
+    this.state = 'idle';
+    /** @type {MediaStream|null} */ this.stream = null;
+    /** @type {AudioContext|null} */ this.ctx = null;
+    this.rafId = 0;
+  }
+
+  start() {
+    if (this.state === 'running' || this.state === 'starting') return;
+    this.state = 'starting';
+    const md = (typeof navigator !== 'undefined') ? navigator.mediaDevices : null;
+    if (!md || !md.getUserMedia || typeof requestAnimationFrame === 'undefined') {
+      this.state = 'failed';
+      return;
+    }
+    md.getUserMedia({ audio: true }).then((stream) => {
+      // Stopped while the permission prompt was pending — release at once.
+      if (this.state !== 'starting') {
+        stream.getTracks().forEach((tr) => { try { tr.stop(); } catch (_) {} });
+        return;
+      }
+      const Ctx = window.AudioContext || window['webkitAudioContext'];
+      if (!Ctx) {
+        stream.getTracks().forEach((tr) => { try { tr.stop(); } catch (_) {} });
+        this.state = 'failed';
+        return;
+      }
+      const ctx = new Ctx();
+      if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      ctx.createMediaStreamSource(stream).connect(analyser); // tap only — no destination
+      const buf = new Float32Array(analyser.fftSize);
+      const track = stream.getAudioTracks()[0];
+      if (track) track.onended = () => this.stop(); // device unplug → decay to base
+      this.stream = stream;
+      this.ctx = ctx;
+      this.state = 'running';
+      const loop = () => {
+        if (this.state !== 'running') return;
+        analyser.getFloatTimeDomainData(buf);
+        let sumSq = 0;
+        for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i];
+        const rms = Math.sqrt(sumSq / buf.length);
+        /* Same normalization as the voiceEngine cloud feed (silence floor
+           0.01, ×10 gain, clamp [0,1]) — both sources produce comparable
+           levels for the same smoothing pipeline. */
+        this.onLevel(Math.min(1, Math.max(0, (rms - 0.01) * 10)));
+        this.rafId = requestAnimationFrame(loop);
+      };
+      this.rafId = requestAnimationFrame(loop);
+    }).catch(() => {
+      this.state = 'failed'; // degrade — fixed base amplitude, STT unaffected
+    });
+  }
+
+  stop() {
+    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = 0; }
+    if (this.stream) this.stream.getTracks().forEach((tr) => { try { tr.stop(); } catch (_) {} });
+    if (this.ctx) { try { this.ctx.close(); } catch (_) {} }
+    const wasRunning = this.state === 'running';
+    this.stream = null;
+    this.ctx = null;
+    this.state = 'idle';
+    if (wasRunning) this.onLevel(0); // release back to the base amplitude
   }
 }
 
@@ -703,6 +930,11 @@ class MicOrb {
     this.webglOk = false;
     this.micErrorTimer = null;
     this.reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    /* v8.4.0: orb-owned read-only mic tap (Web Speech path — the cloud STT
+       path already feeds RMS through the voiceEngine listener below). */
+    this.voiceTap = new VoiceTap((v) => {
+      if (this.renderer && !this.renderer.failed) this.renderer.setVoiceLevel(v);
+    });
     /* v8.3.0: persisted appearance selection (基调/状态映射/自定义) — resolved
        into renderer boards by applyTheme; reloaded on CHANGE_EVENT. */
     this.orbSel = orbPresets.loadSaved();
@@ -746,6 +978,27 @@ class MicOrb {
   }
 
   /**
+   * v8.4.0: start/stop the orb-owned mic level tap with the listening state.
+   * The tap runs ONLY when ALL of these hold —
+   *   - the effective state is listening (any other state stops it),
+   *   - the renderer is WebGL (the CSS fallback has no deformation to drive),
+   *   - motion is allowed (reduced motion keeps one still frame),
+   *   - the cloud STT path is not already feeding RMS
+   *     (state.stt.sttConfigured → voiceEngine.onMicChunk → setMicVolume-
+   *     Listener feeds setVolume; opening a second stream would be waste),
+   *   - no test harness disabled it (window.__MICORB_TAP_DISABLE__).
+   * Failures degrade silently (VoiceTap never throws) — the orb keeps the
+   * fixed base amplitude and STT keeps working.
+   */
+  syncVoiceTap() {
+    const cloudFeeds = !!(state.stt && state.stt.sttConfigured);
+    const disabled = typeof window !== 'undefined' && window.__MICORB_TAP_DISABLE__ === true;
+    const want = this.state === 'listening' && this.webglOk && !this.reduced && !cloudFeeds && !disabled;
+    if (want) this.voiceTap.start();
+    else this.voiceTap.stop();
+  }
+
+  /**
    * Apply a state: v8.2.2 — every state goes through the WebGL path (error
    * states included, via palette uniforms); CSS orb only when WebGL failed.
    * @param {string} key
@@ -763,6 +1016,9 @@ class MicOrb {
       this.renderer.setStateCfg(s);
       this.applyTheme();
     }
+    /* v8.4.0: the mic level tap follows the listening state (start on enter,
+       stop + release on leave; see syncVoiceTap for the gating rules). */
+    this.syncVoiceTap();
     // Wrap carries the state class so CSS vars (--orb-glow/--orb-dot/...)
     // follow for the fallback orb + ripple color.
     if (this.btn) {
@@ -934,6 +1190,7 @@ export { OrbRenderer, STATES };
 /** Reset the singleton (test harness only). */
 export function __resetMicOrbForTest() {
   if (instance && instance.renderer) instance.renderer.pause();
+  if (instance && instance.voiceTap) instance.voiceTap.stop();
   instance = null;
   dims.micError = dims.frozenError = dims.offline = dims.frozen = false;
   dims.listening = dims.processing = dims.nebulaBusy = dims.bgAgents = false;
