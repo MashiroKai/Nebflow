@@ -357,7 +357,10 @@ class WebSocketRoutes(
       _ <- actorOpt match
         case Some(ref) =>
           logger.info(s"deleteSession: stopping team member actor for $sessionId")
-          IO(ref ! AgentCommand.Stop(s"session $sessionId deleted"))
+          // 注意：`ref ! msg` 本身返回 IO[Unit]（offer 的描述）——直接使用，
+          // 不能包 IO(...)（嵌套 IO[IO[Unit]]，内层 offer 永不执行——与 V1
+          // 级联修复同类 bug，#38 停成员 stop 曾因此静默无效）。
+          ref ! AgentCommand.Stop(s"session $sessionId deleted")
         case None => IO.unit
       _ <- TeamSessionRegistry.unregisterActor(sessionId, sharedResources)
       pairOpt <- TeamSessionRegistry.instanceAndAgentOfSession(sessionId)
@@ -365,6 +368,12 @@ class WebSocketRoutes(
         case Some((inst, agent)) => TeamSessionRegistry.unregisterAgent(inst, agent, sessionId)
         case None                => IO.unit
     yield ()
+
+  /** V1 (2026-09-03): Delegate/SubTask/Ephemeral 子代理级联停止——实现抽在
+    * SessionChildCascade（deleteSession/batchDelete 两条路径与单测共用同一实现），
+    * 取舍理由见该对象 doc。 */
+  private def stopChildDelegateActors(sessionId: String): IO[Unit] =
+    SessionChildCascade.stopChildDelegateActors(sharedResources, sessionId).void
 
   /**
    * P2: translate a frontend interaction answer (permissionAnswer/askUserAnswer)
@@ -1542,7 +1551,7 @@ class WebSocketRoutes(
                   sessionTextBuffers.update(_ - sessionId) *>
                     sessionThinkingBuffers.update(_ - sessionId) *>
                     sessionTurnStarts.update(_ - sessionId) *>
-                    stopTeamSessionActors(sessionId) *> removeRootAgent(sessionId) *> sessionService
+                    stopTeamSessionActors(sessionId) *> stopChildDelegateActors(sessionId) *> removeRootAgent(sessionId) *> sessionService
                       .deleteSession(sessionId)
                       .flatMap { _ =>
                         sendAgentSessionListByName(wsSend, agentName)
@@ -1567,6 +1576,7 @@ class WebSocketRoutes(
                         sessionThinkingBuffers.update(_ - sid) *>
                         sessionTurnStarts.update(_ - sid) *>
                         stopTeamSessionActors(sid) *>
+                        stopChildDelegateActors(sid) *>
                         removeRootAgent(sid) *>
                         sessionService.deleteSession(sid)
                     }
