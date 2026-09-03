@@ -95,6 +95,9 @@ function convertAgentEvent(msg) {
       return { type: 'toolStart', sessionId: sid, label: msg.label || '' };
     case 'agentToolEnd':
       return { type: 'toolEnd', sessionId: sid, label: msg.label || '', summary: msg.summary || '', content: msg.content || '', isError: msg.isError || false, input: msg.input || null };
+    case 'agentToolHeartbeat':
+      // 审计 20260903 子项①：工具执行期心跳——转换为标准事件喂活 busy timer。
+      return { type: 'toolHeartbeat', sessionId: sid, label: msg.label || '' };
     case 'agentDone':
       return { type: 'done', sessionId: sid, model: msg.model, contextWindow: msg.contextWindow, inputTokens: msg.inputTokens, compactThreshold: msg.compactThreshold, outputTokens: msg.outputTokens };
     case 'usageUpdate':
@@ -162,6 +165,8 @@ const TERMINAL_MSG_TYPES = new Set([
 const STREAM_MSG_TYPES = new Set([
   'thinkingDelta', 'textDelta', 'textDone',
   'toolCallDetected', 'toolCallStart', 'toolCallChunk', 'toolStart', 'toolEnd',
+  'toolHeartbeat', // 审计 20260903 子项①：工具执行期心跳（喂活 busy timer）——
+  'agentToolHeartbeat', // 非 active 会话也必须过过滤器才能到 resetStreamTimeout。
   'toolArgDelta',
   'roundComplete',
   'agentStart', 'agentTextDelta', 'agentToolCallDetected',
