@@ -366,41 +366,11 @@ class WebSocketRoutes(
         case None                => IO.unit
     yield ()
 
-  /** V1 (2026-09-03, 结果投递链丢失向量修复): cascade-stop Delegate/SubTask/
-    * Ephemeral child actors of a deleted session.
-    *
-    * 丢失形态：deleteSession 只停 team 成员（stopTeamSessionActors）+ root
-    * agent（removeRootAgent）——Delegate/Ephemeral 子代理继续在飞；子完成后
-    * BackoffSupervisor/adapter `parentRef ! ExternalEvent`，而父 actor 循环
-    * 已退出（ActorSystem：`messages sent to it vanish silently`）→ 结果静默
-    * 蒸发，且 registry 行随子终态清理后连痕迹都不剩。
-    *
-    * 取舍（停掉 vs 让其完成落盘）：选「停掉」。父会话删除 = 用户显式放弃该
-    * 子树全部产出；(a) 让子跑完其结果也无处投递（父队列文件随会话删除，
-    * 无人再读），只会白烧 LLM token；(b) 停止语义清晰无竞态窗口——子代理
-    * Stop 后不再产生完成事件，BackoffSupervisor 的 Cancelled 兜底亦无从触
-    * 发死信路径。任务记录经 cancelRunningForParent 同步终态化（task store
-    * 真实性 + V2 启动扫描不会对已删父会话误报）。
-    */
+  /** V1 (2026-09-03): Delegate/SubTask/Ephemeral 子代理级联停止——实现抽在
+    * SessionChildCascade（deleteSession/batchDelete 两条路径与单测共用同一实现），
+    * 取舍理由见该对象 doc。 */
   private def stopChildDelegateActors(sessionId: String): IO[Unit] =
-    sharedResources.agentRegistry.get.flatMap { registry =>
-      val children = registry.values.filter { rec =>
-        rec.parentSessionId == sessionId &&
-        (rec.kind == AgentKind.Delegate || rec.kind == AgentKind.SubTask || rec.kind == AgentKind.Ephemeral)
-      }.toList
-      children.traverse_ { rec =>
-        logger.info(s"deleteSession: cascade-stopping child ${rec.kind} actor ${rec.sessionId}") *>
-          IO(rec.ref ! AgentCommand.Stop(s"parent session $sessionId deleted"))
-            .handleErrorWith(e => logger.warn(s"deleteSession: child stop offer failed for ${rec.sessionId}: ${e.getMessage}")) *>
-          sharedResources.agentRegistry.update(_ - rec.sessionId)
-      } *>
-        sharedResources.subAgentTaskStore
-          .cancelRunningForParent(sessionId, s"parent session $sessionId deleted (cascade stop)")
-          .flatMap {
-            case Nil => IO.unit
-            case ids => logger.info(s"deleteSession: cascade-cancelled in-flight task(s) of $sessionId: ${ids.mkString(", ")}")
-          }
-    }
+    SessionChildCascade.stopChildDelegateActors(sharedResources, sessionId).void
 
   /**
    * P2: translate a frontend interaction answer (permissionAnswer/askUserAnswer)
