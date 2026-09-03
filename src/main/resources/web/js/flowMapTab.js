@@ -1,9 +1,9 @@
 // flowMapTab.js — Project Flow Map 渲染（#27 方向调整 + 导航调整：点击 project 不再
 // 新开标签页，由 projectTab 在 projects 标签页内就地渲染，本模块提供 renderFlowMapInto
-// 渲染管线 + TTL ticker + WS 增量更新；独立 flow-map-* 标签页降级为 legacy 路径，
+// 渲染管线 + WS 增量更新；独立 flow-map-* 标签页降级为 legacy 路径，
 // 仅供旧标签页恢复）。复用 flow-run 标签页形态 + solar-card 显示设计；
 // 关闭标签页不影响项目数据。数据驱动自 §2.2 NodeList 结构；
-// 已完成节点 TTL 倒计时到期前端隐藏（数据保留归档）。点击节点卡片打开结果详情 viewer。
+// 点击节点卡片打开右侧详情面板（flowMapArchive）。
 //
 // 实时更新 + 变化动画（Flow Map 实时性）：WS nodeCreated/Updated/Completed/Removed 的
 // payload 是与 NodeList 同构的节点 JSON（后端 NodePayload.buildNodeJson 单序列化点），
@@ -12,12 +12,24 @@
 // 轨道动画与点击监听保持存活。视图打开（legacy 标签页或 projects 就地视图）状态下
 // 收到事件即更新，不切换标签页。fetch 全量快照降级为对账兜底：增量应用后仍安排一次
 // 防抖拉取，diff 渲染保证对账只在真实漂移时碰 DOM（对账无跳变）。
+//
+// 整链归档 v3（规格 20260903_flowmap-archive-panel-spec.md，作者 2026-09-03 20:26）：
+// 主图可见集 = 活动节点 + 链未齐的终态保留卡（visibleFmView 派生视图，链判定在
+// flowMapArchive.refreshChains）；链齐瞬间整链成员卡同帧 fm-exit 集体淡出（350ms
+// 一条整体动画）→ 存活卡平滑补位 → 面板条目置顶闪烁 + 徽章 +1。终态节点不再走
+// TTL 倒计时驻留（tickTtl/fm-ttl 徽标随 v3 语义移除，条目 TTL 归 flowMapArchive）。
 
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
 import { esc } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
+import {
+  isTerminalStatus, refreshChains, purgeExpired,
+  isVisibleNode, recordNodeRemoved, dropStore, getStore,
+  syncArchiveUi, openDetailFor,
+  notifyChainRetained, notifyChainArchived,
+} from './flowMapArchive.js';
 
 // 布局常量（复用 flowDag 视觉节奏）
 // V_SPACING 150 → 180：节点卡片改为按内容伸展后（带 result 摘要的卡片可达 ~134px），
@@ -51,7 +63,9 @@ const genByProject = new Map();
 const renderedFmByContainer = new WeakMap();
 /** @type {Map<string, number>} project → 对账拉取定时器 id */
 const reconcileTimers = new Map();
-let ttlTimer = null;
+/** @type {Set<string>} 整链退场动画进行中的项目：期间 WS/对账渲染挂起，
+ *  退场结束的统一渲染兜底（防止中途 diff 把正在退场的卡提前拆掉）。 */
+const exitAnimating = new Set();
 
 function bumpGen(project) {
   genByProject.set(project, (genByProject.get(project) || 0) + 1);
@@ -74,7 +88,9 @@ function openFlowMapPanes() {
   return list;
 }
 
-// ── 布局：按 out 边 + deps 边算深度层 ──────────────────────
+// ── 布局：按 out 边 + deps 边 + in 边算深度层 ──────────────
+// v3（规格 §3.1）：主图含链未齐终态保留卡，barrier 上游在图——in 边并入层级
+// 推导（childrenMap），否则保留卡全部塌到 depth 0 平排（原型实测）。
 function layoutNodes(fm) {
   const nodes = fm?.nodes || [];
   const nodeIds = new Set(nodes.map((n) => n.id));
@@ -88,6 +104,8 @@ function layoutNodes(fm) {
     // deps 边（下游单侧持有，deps 设计 §1.4）：并入流向图（上游 → 下游），
     // 否则纯 deps 下游被当根放第 0 层、边画成逆向
     (n.deps || []).forEach((d) => { if (nodeIds.has(d)) addChild(d, n.id); });
+    // in 边（barrier 输入）：v3 起参与层级推导（终态保留卡使上游在图）
+    (n.in || []).forEach((x) => { if (nodeIds.has(x)) addChild(x, n.id); });
   });
   const depth = {};
   nodes.forEach((n) => { depth[n.id] = 0; });
@@ -123,12 +141,17 @@ function layoutNodes(fm) {
 }
 
 /** 上游 id → 显示名解析器（deps 设计 §1.4「wiring 节点等待谁」脚注）：
- *  图内可见 → `名(id)`；已归档/隐藏 → `裸id✦` 诚实降级（断链诊断教训的低成本可见性）。 */
-function nameResolverOf(fm) {
+ *  图内可见 → `名(id)`；已随整链归档/到期出库 → `名✦`（诚实降级，规格 §3.3/§8.4）；
+ *  不在快照 → `裸id✦`（断链诊断教训的低成本可见性）。 */
+function nameResolverOf(project) {
+  const fm = fmByProject.get(project);
   const byId = new Map((fm?.nodes || []).map((n) => [n.id, n]));
+  const store = getStore(project);
   return (id) => {
     const n = byId.get(id);
-    return n ? `${n.name}(${id})` : `${id}✦`;
+    if (!n) return `${id}✦`;
+    if (store && (store.archivedIds.has(id) || store.expiredIds.has(id))) return `${n.name}✦`;
+    return `${n.name}(${id})`;
   };
 }
 
@@ -136,6 +159,7 @@ function nameResolverOf(fm) {
 function nodeHtml(n, pos, originX, nameOf) {
   const st = n.status || 'pending';
   const cls = NODE_STATUS_CLS[st] || 'pending';
+  const term = isTerminalStatus(st); // v3 链未齐终态保留卡（规格 §3.2 终态色卡）
   const left = pos.x - NODE_W / 2 + originX;
   const top = pos.y - NODE_H / 2 + PAD;
   const statusIcon = st === 'completed' ? '<span class="solar-node-status ok">✓</span>'
@@ -144,8 +168,6 @@ function nodeHtml(n, pos, originX, nameOf) {
     : st === 'cancelled' ? '<span class="solar-node-status cancelled">—</span>' : '';
   const worktreeBadge = n.hasWorktree || n.worktree
     ? `<span class="fm-worktree-badge" title="${esc(n.worktree || '')}">wt</span>` : '';
-  const ttl = (st === 'completed' || st === 'failed' || st === 'cancelled') && Number.isFinite(n.ttlLeftSec) && n.ttlLeftSec > 0
-    ? `<span class="fm-ttl" data-ttl-node="${esc(n.id)}" data-ttl="0">${fmtTtl(n.ttlLeftSec)}</span>` : '';
   const result = n.result
     ? `<div class="fm-result-summary" title="${esc(n.result)}">${esc(n.result.slice(0, 46))}${n.result.length > 46 ? '…' : ''}</div>`
     : (st === 'running' ? `<div class="fm-result-summary running">${esc(t('flowmap.cardRunning'))}</div>` : '');
@@ -158,8 +180,8 @@ function nodeHtml(n, pos, originX, nameOf) {
     ? `<div class="fm-wait-note" title="${esc(`${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}`)}">⏳ ${esc(t('flowmap.waitingFor'))}: ${esc(waitParts.join(' · '))}</div>`
     : '';
   return `
-    <div class="solar-node fm-node ${cls}" data-node-id="${esc(n.id)}" data-agent="${esc(n.agent)}"
-         data-status="${esc(st)}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
+    <div class="solar-node fm-node ${cls}${term ? ' terminal' : ''}" data-node-id="${esc(n.id)}" data-agent="${esc(n.agent)}"
+         data-status="${esc(st)}" tabindex="0" title="${esc(n.name)} · ${esc(n.agent)}${term ? `（${esc(t('flowmap.terminalTag'))}）` : ''}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
       <div class="solar-orbit">
         <div class="solar-ring ring-1"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
         <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
@@ -167,19 +189,11 @@ function nodeHtml(n, pos, originX, nameOf) {
       </div>
       <div class="fm-node-head">${worktreeBadge}${statusIcon}</div>
       <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
-      <div class="solar-node-sub">${esc(n.agent)}${ttl ? ' ' + ttl : ''}</div>
+      <div class="solar-node-sub">${esc(n.agent)}</div>
       ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}
       ${waitNote}
       ${result}
     </div>`;
-}
-
-function fmtTtl(sec) {
-  const s = Math.max(0, Math.ceil(sec));
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-  if (h > 0) return `⏱ ${h}h ${m}m`; // 24h 量级：终态节点显示保留 1 天（2026-09-02 裁定）
-  if (m > 0) return `⏱ ${m}m ${s % 60}s`;
-  return `⏱ ${s}s`;
 }
 
 // ── 边（SVG，复用 .flow-edge）─────────────────────────────
@@ -193,11 +207,12 @@ function edgeStateOf(n) {
   return 'idle';
 }
 
-/** 边只画在「可见」节点之间：终态到期被前端隐藏的节点不再拖出指向空位的幽灵边
- *  （旧版对全量节点画边，隐藏节点的边仍画向其占位坐标）。deps 边按下游 n.deps
- *  反向渲染（上游→下游画箭头，deps 设计 §1.4），边 id 用 `~>` 与输出边 `=>` 区分，
- *  DOM class 加 fm-edge-deps + 三态档位；已归档/隐藏的上游不画边（等待脚注以
- *  裸 id ✦ 诚实降级显示，诊断信息不丢）。 */
+/** 边只画在「可见」节点之间（fm 已是可见派生视图，§3.1）。三态语义按 §2.7：
+ *  delivered/inflight/idle。deps 边按下游 n.deps 反向渲染（上游→下游画箭头，
+ *  deps 设计 §1.4），边 id 用 `~>` 与输出边 `=>` 区分。已归档链（整链消失）的
+ *  上游不画边、不画锚点（v3 锚点废除，反馈②；等待脚注 ✦ 兜底）。
+ *  v3 补 in 边代理渲染（规格 §3.3）：barrier 输入在上游 out 未指向本节点时补画
+ *  同语言边（源=上游卡，态=上游状态三态）——「边天然连着」，out 已覆盖不双画。 */
 function collectEdges(fm, positions) {
   const vis = visibleNodes(fm);
   const ids = new Set(vis.map((n) => n.id));
@@ -211,6 +226,20 @@ function collectEdges(fm, positions) {
     edges.set(`${n.id}=>${n.out}`, {
       x1: from.x, y1: from.y, x2: to.x, y2: to.y, state: edgeStateOf(n),
     });
+  }
+  for (const n of vis) {
+    for (const up of (n.in || [])) {
+      if (!ids.has(up)) continue;
+      const key = `${up}=>${n.id}`;
+      if (edges.has(key)) continue; // 上游 out 已指向本节点 → 不双画
+      const from = positions[up];
+      const to = positions[n.id];
+      if (!from || !to) continue;
+      edges.set(key, {
+        x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+        state: edgeStateOf(byId.get(up)),
+      });
+    }
   }
   for (const n of vis) {
     for (const d of n.deps || []) {
@@ -263,7 +292,7 @@ function edgesSvg(fm, positions, width, height) {
   return `<svg class="solar-edges" width="${width}" height="${height}"><g transform="translate(${(width / 2).toFixed(1)},${PAD})">${paths}</g></svg>`;
 }
 
-// ── 图例（deps 设计 §1.4）：六档 = 输出边三态 × 依赖边三态，i18n 键 flowmap.legend.* ──
+// ── 图例（deps 设计 §1.4 六档 + v3 终态保留卡）：i18n 键 flowmap.legend.* ──
 function legendHtml() {
   const item = (swatchCls, key) =>
     `<span class="fm-legend-item"><span class="fm-legend-swatch ${swatchCls}" aria-hidden="true"></span>${esc(t(key))}</span>`;
@@ -275,42 +304,55 @@ function legendHtml() {
       ${item('deps deps-met', 'flowmap.legend.depsMet')}
       ${item('deps deps-wait', 'flowmap.legend.depsWaiting')}
       ${item('deps deps-unmet', 'flowmap.legend.depsUnmet')}
+      ${item('terminal', 'flowmap.legend.terminalRetained')}
     </div>`;
 }
 
-// ── 过滤：终态节点 ttlLeftSec<=0 即到期，前端隐藏（数据保留）──
+// ── 可见集（v3 整链语义，规格 §3.1）──────────────────────
+// fmByProject 缓存的是后端权威全量快照；渲染管线只吃「可见派生视图」：
+//   可见 = 活动节点（wiring/pending/running/blocked）+ 链未齐链的终态成员
+//   （completed/failed/cancelled，终态色卡保留主图）；已归档链成员与 TTL 到期
+//   清理链成员（flowMapArchive.expiredIds）不可见。旧版「ttlLeftSec 到期前端隐藏」
+//   随链语义移除（§1.3 裁定基线变更 / §7.6 死代码清理）。
+function visibleFmView(project, fm) {
+  if (!fm) return fm;
+  const nodes = (fm.nodes || []).filter((n) => isVisibleNode(project, n));
+  return nodes.length === (fm.nodes || []).length ? fm : { ...fm, nodes };
+}
+
+/** 渲染管线输入的 fm 已是可见视图（visibleFmView 单点过滤），此处恒等。 */
 function visibleNodes(fm) {
-  return (fm?.nodes || []).filter((n) => {
-    const terminal = n.status === 'completed' || n.status === 'failed' || n.status === 'cancelled';
-    if (!terminal) return true;
-    return !(Number.isFinite(n.ttlLeftSec) && n.ttlLeftSec <= 0);
-  });
+  return fm?.nodes || [];
 }
 
 // ── header 摘要：HTML 转义版（innerHTML）与纯文本版（textContent 增量更新）共用 ──
-function summaryParts(fm) {
-  const nodes = fm?.nodes || [];
+// 计数口径（规格 §3.1）：running/wait/done/fail 继续统计全量节点（含已归档链成员
+// 的终态总数）；v3 补「链未齐终态保留 {n}」= 可见集中的终态保留卡数。
+function summaryParts(project, fm) {
+  const nodes = fmByProject.get(project)?.nodes || (fm?.nodes || []);
   const running = nodes.filter((n) => n.status === 'running').length;
   const failed = nodes.filter((n) => n.status === 'failed').length;
   const pending = nodes.filter((n) => n.status === 'pending').length;
   const blocked = nodes.filter((n) => n.status === 'blocked').length;
   const completed = nodes.filter((n) => n.status === 'completed').length;
+  const retained = (fm?.nodes || []).filter((n) => isTerminalStatus(n.status)).length;
   const parts = [];
   if (running) parts.push(`${running} ${t('flowmap.run')}`);
   if (pending) parts.push(`${pending} ${t('flowmap.wait')}`);
   if (blocked) parts.push(`${blocked} ${t('flowmap.blocked')}`);
   if (failed) parts.push(`${failed} ${t('flowmap.fail')}`);
   if (completed) parts.push(`${completed} ${t('flowmap.done')}`);
+  if (retained) parts.push(t('flowmap.retained', { n: String(retained) }));
   return parts;
 }
 
-function summarizeHeader(fm) {
-  const parts = summaryParts(fm);
+function summarizeHeader(project, fm) {
+  const parts = summaryParts(project, fm);
   return parts.length ? parts.map(esc).join(' · ') : esc(t('flowmap.idle'));
 }
 
-function summaryText(fm) {
-  const parts = summaryParts(fm);
+function summaryText(project, fm) {
+  const parts = summaryParts(project, fm);
   return parts.length ? parts.join(' · ') : t('flowmap.idle');
 }
 
@@ -464,20 +506,19 @@ function animateNodeExit(el) {
 
 // ══ 增量 diff 渲染 ═══════════════════════════════════════
 
-/** 节点卡片「内容」签名：参与 nodeHtml 渲染且增量期间会变化的字段。TTL 的数值
- *  刻意不入键——ticker 每秒原地改写文本，重建反而会闪。deps 段与 in barrier 提示
- *  同款（deps 设计 §1.4）：pending/wiring 且有 deps 显示等待脚注，deps 集变化即重渲。 */
+/** 节点卡片「内容」签名：参与 nodeHtml 渲染且增量期间会变化的字段。v3 起终态
+ *  保留卡加入签名（terminal class + title 标注随状态切换原地重建）。deps 段与
+ *  in barrier 提示同款（deps 设计 §1.4）：pending/wiring 且有 deps 显示等待脚注，
+ *  deps 集变化即重渲。 */
 function nodeContentKey(n) {
   if (!n) return '∅';
   const st = n.status || 'pending';
-  const terminal = st === 'completed' || st === 'failed' || st === 'cancelled';
   return [
     st,
     n.name || '',
     n.agent || '',
     n.hasWorktree || n.worktree ? 1 : 0,
     n.worktree || '',
-    terminal && Number.isFinite(n.ttlLeftSec) && n.ttlLeftSec > 0 ? 1 : 0,
     st === 'pending' && (n.in || []).length > 1 ? (n.in || []).length : 0,
     st === 'pending' || st === 'wiring' ? (n.deps || []).length : 0,
     n.result || '',
@@ -510,7 +551,7 @@ function applyNodeDiff(canvas, prevFm, fm, positions, width, projectName) {
   const prevById = new Map(visibleNodes(prevFm).map((n) => [n.id, n]));
   const vis = visibleNodes(fm);
   const originX = width / 2;
-  const nameOf = nameResolverOf(fm);
+  const nameOf = nameResolverOf(projectName);
   const existing = new Map();
   canvas.querySelectorAll('.fm-node').forEach((el) => {
     existing.set(el.getAttribute('data-node-id'), el);
@@ -636,11 +677,11 @@ function renderFlowMapDiff(container, baseline, fm, projectName) {
   applyEdgeDiff(g, collectEdges(baseline, prevLayout.positions), collectEdges(fm, positions));
 
   const summary = container.querySelector('.flowmap-summary');
-  const txt = summaryText(fm);
+  const txt = summaryText(projectName, fm);
   if (summary && summary.textContent !== txt) summary.textContent = txt;
   container.dataset.fmState = 'nodes';
   container.dataset.fmVisible = String(visibleNodes(fm).length);
-  container.dataset.fmTotal = String((fm?.nodes || []).length);
+  container.dataset.fmTotal = String((fmByProject.get(projectName)?.nodes || []).length);
   return true;
 }
 
@@ -659,24 +700,28 @@ function animateAllIn(container) {
  *
  *  两条路径：容器里已有渲染好的图（且新旧都有可见节点）→ 增量 diff（带过渡动画，
  *  不重建 DOM）；否则全量 innerHTML（首渲 / 图⇄空态切换）。opts.animateAll 让
- *  全量路径也带入场动画（WS 事件把图从空态唤起时用）。 */
+ *  全量路径也带入场动画（WS 事件把图从空态唤起时用）。fm 必须是可见派生视图
+ *  （visibleFmView），渲染后同步归档悬浮层（§4/§5）。 */
 export function renderFlowMap(container, fm, projectName, opts = {}) {
-  const total = (fm?.nodes || []).length;
+  const rawNodes = fmByProject.get(projectName)?.nodes || [];
+  const total = rawNodes.length;
   const nodes = visibleNodes(fm);
   const prev = renderedFmByContainer.get(container);
   if (prev && nodes.length > 0 && visibleNodes(prev).length > 0
       && renderFlowMapDiff(container, prev, fm, projectName)) {
     renderedFmByContainer.set(container, fm);
-    if (nodes.some((n) => Number.isFinite(n.ttlLeftSec) && n.ttlLeftSec > 0)) startTtlTicker();
+    syncArchiveUi(container, projectName);
     return;
   }
   const { positions, width, height } = layoutNodes(fm);
-  const nameOf = nameResolverOf(fm);
+  const nameOf = nameResolverOf(projectName);
   const nodesHtml = nodes.map((n) => nodeHtml(n, positions[n.id] || { x: 0, y: 0 }, width / 2, nameOf)).join('');
-  // 空态三分（旧版一律"暂无节点，项目空闲"，把「未挂载」「TTL 已归档」两种
+  // 空态三分（旧版一律"暂无节点，项目空闲"，把「未挂载」「已归档」两种
   // 有数据的情况说成没数据 —— qa 取证「后端有 3 节点、视图显示暂无节点」即此）。
+  // v3（§7.3）：图空但有已归档链 → 「全部节点已完成，结果收入右上角归档」，
+  // 悬浮钮保持可用（主图与面板可同时为「空图 + 有条目」）。
   const emptyMsg = fm?.notMounted ? t('flowmap.notMounted')
-    : total > 0 ? t('flowmap.allArchived', { n: total })
+    : total > 0 ? t('flowmap.archive.allArchived')
     : t('flowmap.empty');
   const state = fm?.notMounted ? 'not-mounted' : nodes.length > 0 ? 'nodes' : total > 0 ? 'archived' : 'empty';
   container.dataset.fmState = state;
@@ -685,7 +730,7 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   container.innerHTML = `
     <div class="flowmap-card-header">
       <div class="flowmap-card-title" title="${esc(projectName)}">${esc(projectName)}</div>
-      <div class="flowmap-summary">${summarizeHeader(fm)}</div>
+      <div class="flowmap-summary">${summarizeHeader(projectName, fm)}</div>
     </div>
     ${nodes.length === 0
       ? `<div class="dag-empty"><div class="hint">${esc(emptyMsg)}</div></div>`
@@ -702,80 +747,37 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   renderedFmByContainer.set(container, fm);
   bindFlowMapClicks(container, projectName);
   if (opts.animateAll) animateAllIn(container);
-  if (nodes.some((n) => Number.isFinite(n.ttlLeftSec) && n.ttlLeftSec > 0)) startTtlTicker();
+  syncArchiveUi(container, projectName);
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(container));
 }
 
 function bindFlowMapClicks(container, projectName) {
   container.querySelectorAll('.fm-node').forEach((el) => {
     el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openNodeDetail(projectName, el.getAttribute('data-node-id') || '');
+      e.stopPropagation(); // §5.10：点节点 = 选择（开详情），不触发空白收起
+      openNodeDetail(projectName, el.getAttribute('data-node-id') || '', container);
     });
   });
 }
 
-// 节点结果详情：复用 flowViewers 的 overlay viewer（clean overlay 语义）。
-function openNodeDetail(projectName, nodeId) {
-  const node = fmByProject.get(projectName)?.nodes?.find((n) => n.id === nodeId);
-  if (!node) return;
-  // blocked 结构化反馈透传（20260902 设计 §4.3）：blockedFeedback{category,detail,suggestion}
-  // + blockCount 由上游 NodePayload.buildNodeJson 单序列化点就位，仅 blocked 态有反馈体。
-  const blocked = node.status === 'blocked'
-    ? { feedback: node.blockedFeedback || null, count: Number.isFinite(node.blockCount) ? node.blockCount : 0 }
-    : null;
-  import('./flowViewers.js').then(({ openNodeResultViewer }) => {
-    openNodeResultViewer(esc(node.name), node.agent || '', node.status || '', node.worktree || '', node.result, node.id, blocked);
-  });
-}
-
-/** TTL 倒计时：一个全局 ticker 驱动所有打开的 flow-map 标签页
- *  （旧版 interval 绑定单个 container，第二个标签页会把第一个的 ticker 顶掉）。 */
-function startTtlTicker() {
-  if (ttlTimer) return;
-  ttlTimer = setInterval(tickTtl, 1000);
-}
-
-function tickTtl() {
-  const panes = openFlowMapPanes();
-  if (panes.length === 0) { clearInterval(ttlTimer); ttlTimer = null; return; }
-  let anyTtl = false;
-  for (const { project, pane } of panes) {
-    const fm = fmByProject.get(project);
-    // legacy 标签页的滚动体是 .team-scroll；projects 就地视图的滚动体是 .flowmap-view-body。
-    const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
-    if (!fm || !scroll) continue;
-    let dirty = false;
-    (fm.nodes || []).forEach((n) => {
-      if ((n.status === 'completed' || n.status === 'failed' || n.status === 'cancelled') &&
-          Number.isFinite(n.ttlLeftSec) && n.ttlLeftSec > 0) {
-        n.ttlLeftSec -= 1;
-        if (n.ttlLeftSec <= 0) dirty = true; else anyTtl = true;
-      }
-    });
-    if (dirty) {
-      // ticker 原地改写缓存（引用同体），diff 基线取「回拨 1 秒」的克隆才能看出
-      // 「刚到期消失」这个变化 → 到期节点走淡出而不是瞬间蒸发。
-      const baseline = {
-        ...fm,
-        nodes: fm.nodes.map((n) => (n.ttlLeftSec === 0 ? { ...n, ttlLeftSec: 1 } : n)),
-      };
-      if (!renderFlowMapDiff(scroll, baseline, fm, project)) {
-        renderFlowMap(scroll, fm, project); // 最后一个可见节点到期 → 空态全量
-      } else {
-        renderedFmByContainer.set(scroll, fm);
-      }
-      continue;
-    }
-    scroll.querySelectorAll('[data-ttl-node]').forEach((el) => {
-      const n = (fm.nodes || []).find((x) => x.id === el.getAttribute('data-ttl-node'));
-      if (n) el.textContent = fmtTtl(n.ttlLeftSec);
-    });
+// 节点结果详情（§5.8）：v3 起走右侧详情面板（flowMapArchive，z 70 浮前 +
+// 宽视口 dock-left 并排），主图活动卡与链未齐终态保留卡同入口。
+function openNodeDetail(projectName, nodeId, container) {
+  if (container) {
+    openDetailFor(container, projectName, nodeId);
+    return;
   }
-  // 没有任何倒计时中的节点就停表——空转的 1s 定时器没有意义。
-  if (!anyTtl) { clearInterval(ttlTimer); ttlTimer = null; }
+  // 无容器上下文（理论不达，卡片点击均带容器）→ 兜底找可见视图。
+  for (const { project, pane } of openFlowMapPanes()) {
+    if (project !== projectName) continue;
+    const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
+    if (scroll) { openDetailFor(scroll, projectName, nodeId); return; }
+  }
 }
 
+// v3 死代码清理（规格 §7.6）：主图不再出现终态驻留卡——tickTtl 主图 TTL 倒计时
+// ticker、卡片 fm-ttl 徽标、fmtTtl、「到期淡出」基线回拨全部移除；nodeRemoved
+// 职责收缩为出库墓碑（flowMapArchive.recordNodeRemoved，§7.2）。
 // ── 标签页打开 / 渲染 ────────────────────────────────────
 
 /** 独立标签页打开（legacy 路径：canvas-tab-restore 恢复的旧 flow-map 标签页仍走这里）。
@@ -790,7 +792,9 @@ export function openFlowMapTab(projectName) {
  *  双代防陈旧：seq 管 fetch 对 fetch 的先后；gen 管「fetch 在途时 WS 增量已写入缓存」
  *  ——此时这份响应相对缓存是旧的，丢弃并重新对账，否则旧快照会回滚增量状态。
  *  opts.highlightNodeId：渲染完成后滚动定位并闪烁高亮该节点（任务列表节点条目
- *  点击跳转入口，2026-09-02）。 */
+ *  点击跳转入口，2026-09-02）。
+ *  v3 播种（§7.2）：快照全量节点入缓存 → 链派生（refreshChains）→ TTL 清理
+ *  （purgeExpired，快照导入触发一次）→ 可见派生视图渲染。 */
 export function renderFlowMapInto(container, projectName, opts = {}) {
   if (!container) return;
   const seq = (seqByProject.get(projectName) || 0) + 1;
@@ -808,7 +812,10 @@ export function renderFlowMapInto(container, projectName, opts = {}) {
     }
     bumpGen(projectName);
     fmByProject.set(projectName, fm);
-    renderFlowMap(container, fm, projectName);
+    refreshChains(projectName, fm.nodes);
+    purgeExpired(projectName);
+    if (exitAnimating.has(projectName)) return; // 整链退场进行中：退场结束统一渲染兜底
+    renderFlowMap(container, visibleFmView(projectName, fm), projectName);
     if (opts.highlightNodeId) highlightFlowMapNode(container, projectName, opts.highlightNodeId);
   }).catch(() => {
     if (seqByProject.get(projectName) !== seq || !container.isConnected) return;
@@ -859,13 +866,9 @@ document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) =>
     fmByProject.delete(project);
     seqByProject.delete(project);
     genByProject.delete(project);
+    dropStore(project); // v3：链派生 store 随视图生命周期
     const timer = reconcileTimers.get(project);
     if (timer) { clearTimeout(timer); reconcileTimers.delete(project); }
-    // 事件在 pane 移除之前派发，故要把正在关的这个排除掉再判断是否还有活的标签页。
-    if (openFlowMapPanes().filter((x) => x.project !== project).length === 0) {
-      clearInterval(ttlTimer);
-      ttlTimer = null;
-    }
   }
 });
 
@@ -934,8 +937,9 @@ function renderFlowMapTabIfNeeded(project) {
 }
 
 /** 节点 WS 事件（{type, project, nodeId, node}）处理：
- *  1) 缓存可用（有快照、已挂载、payload 带节点身份）→ 并入快照 + 增量 diff 渲染
- *     （动画），再安排对账拉取兜底；
+ *  1) 缓存可用（有快照、已挂载、payload 带节点身份）→ 并入快照 → 链重判
+ *     （refreshChains）→ 链齐 → 整链同帧退场动画（§3.4/§6.1b）；链未齐 → 终态卡
+ *     原地转终态色卡保留主图 + toast（§6.3）→ 增量 diff 渲染 → 对账兜底；
  *  2) 否则（无缓存 / 未挂载刚激活 / 视图处于非图状态 / 旧帧缺字段）→ 全量拉快照。 */
 function handleNodeWsEvent(msg) {
   const type = String(msg?.type || '');
@@ -946,21 +950,83 @@ function handleNodeWsEvent(msg) {
   const fm = fmByProject.get(project);
   const node = msg?.node;
   if (fm && !fm.notMounted && node && node.id) {
+    const prevNode = (fm.nodes || []).find((n) => n.id === node.id) || null;
+    if (type === 'nodeRemoved') recordNodeRemoved(project, prevNode || node);
     const nodes = (fm.nodes || []).filter((n) => n.id !== node.id);
     if (type !== 'nodeRemoved') nodes.push(node);
     const next = { ...fm, nodes, meta: { ...(fm.meta || {}), updatedAt: Date.now() } };
     bumpGen(project);
     fmByProject.set(project, next);
-    let applied = true;
+    // 链重判：返回新完成（含「迟到成员并入已归档链」的重建）链 → 整链退场；
+    // refreshChains 对成员集不变的链幂等跳过（冻结条目保留）。
+    const completedChains = refreshChains(project, next.nodes);
+    const becameTerminal = type !== 'nodeRemoved' && isTerminalStatus(node.status);
+    const nodeArchived = completedChains.some((c) => c.members.some((m) => m.id === node.id));
+    if (completedChains.length > 0 && !prefersReducedMotion()) {
+      animateChainExit(project, panes, completedChains, next);
+    } else {
+      renderFlowMapPanes(project, panes, next);
+    }
     for (const { pane } of panes) {
       const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
-      if (!scroll) { applied = false; break; }
-      // 视图还没渲染出图（空态/加载态）→ 全量渲染并让新图入场；已在图态 → 纯增量。
-      renderFlowMap(scroll, next, project, { animateAll: !scroll.querySelector('.solar-canvas') });
+      if (scroll) syncArchiveUi(scroll, project, {
+        pulse: completedChains.length > 0,
+        flashChainIds: completedChains.map((c) => c.id),
+      });
     }
-    if (applied) { scheduleReconcile(project); return; }
+    if (completedChains.length > 0) {
+      const mainScroll = panes.map((p) => p.pane.querySelector('.team-scroll') || p.pane.querySelector('.flowmap-view-body')).find(Boolean);
+      if (mainScroll) notifyChainArchived(project, completedChains, mainScroll);
+    } else if (becameTerminal && !nodeArchived && !prefersReducedMotion()) {
+      // 链未齐：终态卡保留主图说明 toast（§14-8 拍板 A）
+      const chain = (getStore(project).chainOf.get(node.id)) || null;
+      const mainScroll = panes.map((p) => p.pane.querySelector('.team-scroll') || p.pane.querySelector('.flowmap-view-body')).find(Boolean);
+      if (chain && mainScroll) notifyChainRetained(project, chain, mainScroll);
+    }
+    scheduleReconcile(project);
+    return;
   }
   refreshFlowMapViews(project);
+}
+
+/** 增量渲染所有 pane 的可见派生视图（WS 事件常规路径）。 */
+function renderFlowMapPanes(project, panes, fm) {
+  for (const { pane } of panes) {
+    const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
+    if (!scroll) continue;
+    // 视图还没渲染出图（空态/加载态）→ 全量渲染并让新图入场；已在图态 → 纯增量。
+    renderFlowMap(scroll, visibleFmView(project, fm), project,
+      { animateAll: !scroll.querySelector('.solar-canvas') });
+  }
+}
+
+/** 整链同帧退场（规格 §3.4/§6.1b）：① 先渲染一帧「状态已更新、成员仍在图」的
+ *  中间态（终态色卡 + 边转 delivered）；② 全部成员卡同一帧加 fm-exit（一条整体
+ *  动画 350ms，非逐节点滴入）；③ 退场结束后统一渲染（整链移除 + 存活卡补位
+ *  400ms 既有曲线 + 条目置顶闪烁 + 徽章脉冲）。期间该项目渲染挂起，防止中途
+ *  diff 把正在退场的卡提前拆掉。 */
+function animateChainExit(project, panes, chains, fm) {
+  const memberIds = new Set(chains.flatMap((c) => c.members.map((m) => m.id)));
+  exitAnimating.add(project);
+  for (const { pane } of panes) {
+    const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
+    if (!scroll) continue;
+    const preView = {
+      ...fm,
+      nodes: (fm.nodes || []).filter((n) => isVisibleNode(project, n) || memberIds.has(n.id)),
+    };
+    renderFlowMap(scroll, preView, project,
+      { animateAll: !scroll.querySelector('.solar-canvas') });
+    for (const id of memberIds) {
+      const el = scroll.querySelector(`.fm-node[data-node-id="${CSS.escape(id)}"]`);
+      if (el) el.classList.add('fm-exit');
+    }
+  }
+  setTimeout(() => {
+    exitAnimating.delete(project);
+    // 350ms 窗口内可能又并入新事件：读最新缓存渲染（退场链成员已不在可见集）
+    renderFlowMapPanes(project, panes, fmByProject.get(project) || fm);
+  }, 350);
 }
 
 // WS 事件驱动（契约 §2）：四类节点事件全部走增量管线。之前是「任何事件 → 全量
