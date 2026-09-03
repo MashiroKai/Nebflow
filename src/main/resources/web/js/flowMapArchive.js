@@ -413,6 +413,7 @@ export function ensureArchiveLayer(host, container, project) {
     ctxByLayer.set(layer, ctx);
     bindLayerEvents(ctx);
     layerCtxs.add(ctx);
+    observeHost(ctx); // D-QA1：host 尺寸落定回调重判 dock 形态（见文件尾 RO 块）
   }
   ctx.project = project;
   ctx.container = container;
@@ -804,7 +805,7 @@ document.addEventListener('click', (e) => {
   if (target.closest('.fm-node')) return;
   let closed = false;
   for (const ctx of Array.from(layerCtxs)) {
-    if (!ctx.layer.isConnected) { layerCtxs.delete(ctx); continue; }
+    if (!ctx.layer.isConnected) { dropCtx(ctx); continue; }
     if (ctx.panelOpen || !ctx.detail.hidden) closed = true;
     closeDetail(ctx);
     closePanel(ctx, { keepFocus: true });
@@ -817,7 +818,7 @@ document.addEventListener('keydown', (e) => {
   let detailClosed = false;
   let panelCtx = null;
   for (const ctx of Array.from(layerCtxs)) {
-    if (!ctx.layer.isConnected) { layerCtxs.delete(ctx); continue; }
+    if (!ctx.layer.isConnected) { dropCtx(ctx); continue; }
     if (!ctx.detail.hidden) { closeDetail(ctx); detailClosed = true; } // Esc 先关详情（z 70 顶层）
     else if (ctx.panelOpen) panelCtx = ctx;
   }
@@ -831,13 +832,59 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// host 口径 dock 判定无媒体查询自动跟随：视口尺寸变化 → 全量重判（§5.8b 2026-09-04）
-window.addEventListener('resize', () => {
+// host 口径 dock 判定无媒体查询自动跟随：host 尺寸变化 → 落定口径全量重判
+// （§5.8b 2026-09-04；D-QA1 修复）。#canvas-panel 宽度走 flex-basis 0.32s 过渡
+// （split.css），window resize 事件时刻读到的 host.clientWidth 永远是过渡前旧值，
+// 320ms 落定后无重判 → dock 形态按旧宽锁死。ResizeObserver 在每帧布局落定后回调
+// （过渡逐帧触发、终帧即最终宽度），天然免疫该时序，且附带覆盖分栏拖宽
+// （col-resizer 改 --canvas-width 不派发 window resize）的同类缺口。
+function rejudgeAllDocks() {
   for (const ctx of Array.from(layerCtxs)) {
-    if (!ctx.layer.isConnected) { layerCtxs.delete(ctx); continue; }
+    if (!ctx.layer.isConnected) { dropCtx(ctx); continue; }
     updateDetailDock(ctx);
   }
-});
+}
+
+/** @type {ResizeObserver|null} host box 尺寸回调 → 重判（模块单例；RO 纯作触发时机，宽度仍读 live clientWidth，DOCK_MIN_HOST_W 语义不变）。 */
+let hostRo = null;
+
+function observeHost(/** @type {LayerCtx} */ ctx) {
+  if (typeof ResizeObserver === 'undefined') return; // 降级路径见下方 resize+双 rAF+transitionend
+  const host = ctx.layer.parentElement;
+  if (!host) return;
+  if (!hostRo) hostRo = new ResizeObserver(rejudgeAllDocks);
+  hostRo.observe(host);
+}
+
+function unobserveHost(/** @type {LayerCtx} */ ctx) {
+  if (!hostRo) return;
+  const host = ctx.layer.parentElement;
+  if (!host) return;
+  for (const other of layerCtxs) { // 同 host 仍有存活 ctx（host 存活而层全量重建）→ 保留观察
+    if (other !== ctx && other.layer.isConnected && other.layer.parentElement === host) return;
+  }
+  hostRo.unobserve(host);
+}
+
+/** 惰性清扫出口：层脱离文档 → 停观察 + 出册（观察者生命周期防泄漏）。 */
+function dropCtx(/** @type {LayerCtx} */ ctx) {
+  unobserveHost(ctx);
+  layerCtxs.delete(ctx);
+}
+
+if (typeof ResizeObserver === 'undefined') {
+  // 防御性降级（无 RO 环境才启用；RO 可用时整体旁路——事件时刻读数必为过渡前旧值，
+  // 再判一次反而引入中间翻转抖动）：事件时刻立即重判（host 不随过渡变化时已正确）
+  // + 双 rAF（无过渡/0 时长的布局落定）+ transitionend（flex-basis 0.32s 过渡自
+  // #canvas-panel 冒泡至 window 的落定终值重判）。
+  window.addEventListener('resize', () => {
+    rejudgeAllDocks();
+    requestAnimationFrame(() => requestAnimationFrame(rejudgeAllDocks));
+  });
+  window.addEventListener('transitionend', (e) => {
+    if (e.propertyName === 'flex-basis') rejudgeAllDocks();
+  });
+}
 
 // ── 链事件通知（flowMapTab 整链退场/链未齐保留时调用）─────────────
 /** 链未齐提示 toast（§6.3/§14-8 拍板 A：说明终态卡为何保留主图）。 */
@@ -870,7 +917,7 @@ function findCtx(container, project) {
 setInterval(() => {
   const projects = new Set();
   for (const ctx of Array.from(layerCtxs)) {
-    if (!ctx.layer.isConnected) { layerCtxs.delete(ctx); continue; }
+    if (!ctx.layer.isConnected) { dropCtx(ctx); continue; }
     projects.add(ctx.project);
   }
   for (const project of projects) {
