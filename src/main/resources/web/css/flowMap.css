@@ -9,6 +9,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 12px 18px;
+  padding-right: 56px; /* §5.8b 2026-09-04 修订：让出右上悬浮钮（16+40）+ 徽章区，摘要尾字不再被遮 */
   border-bottom: 1px solid var(--color-border);
   flex: 0 0 auto;
 }
@@ -26,6 +27,8 @@
   font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   white-space: nowrap;
+  overflow: hidden;      /* D3 让位 + 窄 host 收缩：摘要截断不溢出，防撑出 host 横向滚动（A20.2） */
+  text-overflow: ellipsis;
 }
 
 .flowmap-loading {
@@ -474,7 +477,7 @@
 /* ── 归档面板（§5：锚定悬浮钮下缘、无遮罩、玻璃、链条目倒序）── */
 .fm-archive-panel {
   position: absolute; top: 64px; right: 16px;      /* 悬浮钮（16+40）下缘 +8px */
-  width: 380px; max-width: calc(100vw - 24px);
+  width: 380px; max-width: calc(100% - 32px); /* host 口径（§5.8b 2026-09-04 修订；原 100vw 视口口径窄视口下左裁） */
   max-height: min(70vh, 560px);
   display: flex; flex-direction: column;
   background: var(--glass-bg);
@@ -599,7 +602,7 @@
 /* ── 右侧详情面板（§5.8 + §5.8b：z 70 浮前 + 宽视口 dock-left 并排零重叠）── */
 .fm-detail {
   position: absolute; top: 64px; right: 16px; bottom: 16px;
-  width: 360px; max-width: calc(100vw - 24px);
+  width: 360px; max-width: calc(100% - 32px); /* host 口径（§5.8b 2026-09-04 修订；原 100vw 视口口径窄视口下左裁） */
   display: flex; flex-direction: column;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -617,16 +620,11 @@
 .fm-detail.open { opacity: 1; transform: translateX(0); pointer-events: auto; }
 .fm-detail.closing { transition-duration: 0.16s; transition-timing-function: ease; }
 /* 面板同开 → 详情左靠（380 + 8 + 16 = 404），矩形零重叠（§5.8b）。
-   已知边界（qa 终局实测）：projects 就地视图的视图体是 ~470px 定宽分栏，
-   dock-left 404px 会把详情悬出视图体、与相邻面板重叠——§5.8b 的「宽视口并排」
-   仅在 legacy 全宽 Flow Map 标签页可达；就地视图依赖 z 70 浮前保证可点。
-   视图宽口径的容器查询回退已试过（container-type on .flowmap-view-body），
-   因其改变 flex 收缩语义、扰动 375 窄视口几何而回退，待作者拍板后再上。 */
+   2026-09-04 修订（作者拍板）：并排判定改 host 口径——updateDetailDock 按
+   host.clientWidth >= 780（380 卡片 + 8 间距 + 360 dock + 16+16 边距）切
+   dock-left，删除原 @media(max-width:799px) 视口口径控制。host ~470px 定宽
+   分栏（常见布局）时 dock 为同位 overlay 形态且完整可见，不再悬出视图体。 */
 .fm-detail.dock-left { right: 404px; }
-/* 窄视口放不下并排（<800px）→ 退回同位，z 70 浮前保证详情完整可见 */
-@media (max-width: 799px) {
-  .fm-detail.dock-left { right: 16px; }
-}
 .fm-detail-head {
   display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
   padding: 11px 14px; border-bottom: 1px solid var(--color-border); min-width: 0;
