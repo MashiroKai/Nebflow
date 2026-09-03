@@ -92,6 +92,30 @@
 
 .project-open-btn svg { width: 15px; height: 15px; }
 
+/* 归档按钮（迁移方案 v2 §6.1）：卡片头部显式人工归档入口，尺寸/形态对齐
+   .project-open-btn（26×26 icon 按钮，位于 header 摘要右侧）；hover 用既有
+   --color-error 红提示半破坏性语义，实际动作经确认弹层二次防误触。 */
+.project-archive-btn {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.project-archive-btn:hover {
+  color: var(--color-error, #e5484d);
+  border-color: var(--color-error, #e5484d);
+  background: rgba(229, 72, 77, 0.08);
+}
+.project-archive-btn svg { width: 15px; height: 15px; }
+
 /* ── Flow Map 就地视图（同标签页切换，projectTab.openFlowMapInPlace）────────── */
 
 /* 顶部导航条：左上角「返回项目列表」入口 */

@@ -1,6 +1,7 @@
 package nebflow.core.project
 
 import cats.effect.{IO, Ref}
+import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import nebflow.actor.ActorRef
@@ -37,7 +38,10 @@ object ProjectStore:
         else None
     }
 
-  /** List all projects. */
+  /** List all projects. 归档项目不在列（迁移方案 v2 §6.1）：本函数是全仓唯一列表源——
+    * 面板 API（RestApiRoutes GET /projects）与启动挂载（GatewayMain startupMount）
+    * 同源消费，源头过滤 → 归档即从面板消失 + 重启不自动挂载。
+    * 恢复显示 = 手工删除 project.json 中 archived/archivedAt 两键（单程语义，无自动路径）。 */
   def list(): IO[List[ProjectDef]] =
     IO.blocking {
       if !os.exists(projectsDir) then Nil
@@ -51,7 +55,39 @@ object ProjectStore:
           }
           .flatten
           .toList
-    }
+    }.map(_.filterNot(_.archived.contains(true)))
+
+  /** 归档（迁移方案 v2 §6.1）：project.json 原位手术式插键——读原始 Json →
+    * deepMerge 写入 archived=true + archivedAt → AtomicJson 原子写回。
+    * 不走 ProjectDef 全量 re-encode：derived codec 会把 None 字段编码为 null、
+    * 重排既有字段布局；手术式插键保证存量字段逐字节稳定，且条件序列化天然成立
+    * （键只在归档后出现）。零删除零移动：只重写这一个文件，workspace 与目录不动。
+    * 幂等：已归档 → 不重写文件，返回既有 archivedAt。
+    * 返回 Right(归档时间戳)；项目不存在/名字非法/JSON 损坏 → Left。 */
+  def archive(name: String): IO[Either[String, Long]] =
+    if name.isEmpty || name.contains("/") || name.contains("\\") || name == "." || name == ".." then
+      IO.pure(Left(s"Invalid project name: '$name'"))
+    else
+      IO.blocking {
+        val p = projectJsonPath(name)
+        if !os.exists(p) then Left(s"Project '$name' not found")
+        else
+          jsonParse(os.read(p)) match
+            case Left(e) => Left(s"Corrupt project.json for '$name': $e")
+            case Right(json) =>
+              val alreadyArchived = json.hcursor.downField("archived").as[Boolean].toOption.contains(true)
+              if alreadyArchived then
+                val at = json.hcursor.downField("archivedAt").as[Long].toOption.getOrElse(System.currentTimeMillis())
+                Right(at)
+              else
+                val ts = System.currentTimeMillis()
+                val updated = json.deepMerge(
+                  Json.obj("archived" -> Json.fromBoolean(true), "archivedAt" -> Json.fromLong(ts))
+                )
+                AtomicJson.writeSync(p, updated.noSpaces)
+                logger.infoSync(s"Project '$name' archived (marker written to project.json; files untouched)")
+                Right(ts)
+      }
 
   /** Create a project definition + workspace `.nebflow/` scaffolding.
     *
