@@ -1,0 +1,52 @@
+[
+  {
+    "type": "ai",
+    "text": "方案已出。两个决策点需要你拍板：8 条决策点如何处置、M1 何时启动。",
+    "durationMs": 1200,
+    "model": "test-model",
+    "timestamp": 1756870000000
+  },
+  {
+    "type": "askUser",
+    "requestId": "13e28bec",
+    "agentName": "Nebula",
+    "items": [
+      {
+        "question": "8 条决策点（§3.3）如何处置？",
+        "options": [
+          { "label": "全部按建议 a", "description": "8 条全部按 a 执行，方案随即进入实施排期" },
+          { "label": "部分调整", "description": "选此项后在回复里写明要改哪几条、改成什么" },
+          { "label": "暂不拍板", "description": "方案先挂着，你看完文档再逐条回复" }
+        ]
+      },
+      {
+        "question": "M1（批次 1 归档 + 5 flow 转型）何时启动？",
+        "options": [
+          { "label": "拍板后即启动 M1", "description": "决策点拍板后即派实施" },
+          { "label": "重启后再启动", "description": "先把重启三道门收口" },
+          { "label": "先不动", "description": "M1 排期待你另行指示" }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "user",
+    "text": "\"分层压缩提示词设计稿\":\n任务完成。\n\n**规格书路径**：`~/.nebflow/docs/Nebflow/20260903_compaction-prompt-by-level.md`（已 commit `056ac58`，已 Pop 到 Canvas）\n\n## 现状审计核心发现（5 条）\n\n1. **分层机制已存在但对新架构失明**",
+    "injected": true,
+    "source": "delegate",
+    "eventType": "completed",
+    "sender": "Explorer",
+    "attachments": [],
+    "timestamp": 1756870100000
+  },
+  {
+    "type": "user",
+    "text": "\"v3.2：纵排层级+曲线连线+禁emoji\":\n# Flow Map 原型 v3.2 修订汇报（作者 11:08 三点意见）\n\n**结论：PASS** —— Playwright 回归 **28/28 全绿，0 JS 错误**",
+    "injected": true,
+    "source": "delegate",
+    "eventType": "completed",
+    "sender": "design-engineer",
+    "attachments": [],
+    "timestamp": 1756870200000
+  }
+]
