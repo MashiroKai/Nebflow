@@ -357,7 +357,10 @@ class WebSocketRoutes(
       _ <- actorOpt match
         case Some(ref) =>
           logger.info(s"deleteSession: stopping team member actor for $sessionId")
-          IO(ref ! AgentCommand.Stop(s"session $sessionId deleted"))
+          // 注意：`ref ! msg` 本身返回 IO[Unit]（offer 的描述）——直接使用，
+          // 不能包 IO(...)（嵌套 IO[IO[Unit]]，内层 offer 永不执行——与 V1
+          // 级联修复同类 bug，#38 停成员 stop 曾因此静默无效）。
+          ref ! AgentCommand.Stop(s"session $sessionId deleted")
         case None => IO.unit
       _ <- TeamSessionRegistry.unregisterActor(sessionId, sharedResources)
       pairOpt <- TeamSessionRegistry.instanceAndAgentOfSession(sessionId)

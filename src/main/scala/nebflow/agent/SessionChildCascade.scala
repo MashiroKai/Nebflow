@@ -48,9 +48,11 @@ object SessionChildCascade:
         logger.info(s"deleteSession: cascade-cancelling child ${rec.kind} actor ${rec.sessionId}") *>
           (rec.supervisorRef match
             case Some(sup) =>
-              IO(sup ! AgentEvent.Cancelled(rec.sessionId, s"parent session $sessionId deleted"))
+              // 注意：`ref ! msg` 本身返回 IO[Unit]（offer 的描述）——直接使用，
+              // 绝不能再包一层 IO(...)（那会得到 IO[IO[Unit]]，内层 offer 永不执行）。
+              (sup ! AgentEvent.Cancelled(rec.sessionId, s"parent session $sessionId deleted"))
             case None =>
-              IO(rec.ref ! AgentCommand.Stop(s"parent session $sessionId deleted"))
+              (rec.ref ! AgentCommand.Stop(s"parent session $sessionId deleted"))
                 .handleErrorWith(e =>
                   logger.warn(s"deleteSession: child stop offer failed for ${rec.sessionId}: ${e.getMessage}")) *>
                 resources.agentRegistry.update(_ - rec.sessionId)
