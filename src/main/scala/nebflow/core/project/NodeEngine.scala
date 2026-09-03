@@ -110,10 +110,11 @@ class NodeEngine(
   def emitUpdated(node: NodeDef): IO[Unit] =
     emitEvent("nodeUpdated", node.id, NodePayload.buildNodeJson(node, System.currentTimeMillis()))
 
-  /** 显式投递（改接投递 §2.3：已完成节点结果 → 指定目标）。 */
+  /** 显式投递（改接投递 §2.3：已完成节点结果 → 指定目标）。V8: Nebula 分支
+    * 同样记账——人工改接重投后刷新账本，避免周期扫描对同一结果再补投。 */
   def deliverOutTo(node: NodeDef, target: String, resultText: String): IO[Unit] =
     target match
-      case "Nebula" => deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed")
+      case "Nebula" => deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
       case t =>
         for
           targetOpt <- store.findNode(t)
@@ -476,7 +477,7 @@ class NodeEngine(
     node.out match
       case None => IO.unit // 悬空：结果保留在 result（持久化），接线后自动投递
       case Some("Nebula") =>
-        deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed")
+        deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
       case Some(targetId) =>
         for
           targetOpt <- store.findNode(targetId)
@@ -503,7 +504,7 @@ class NodeEngine(
     node.out match
       case None => IO.unit
       case Some("Nebula") =>
-        deliverToNebula(s"[Node '${node.name}' failed]\n$err", node.name, "failed")
+        deliverToNebula(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
       case Some(targetId) =>
         // collect 结算：占位符标记 + 计数归零继续（§2.4 默认 collect）
         for
@@ -530,8 +531,15 @@ class NodeEngine(
     *   source = "node" → 显示段 NODE
     *   eventType = status（"completed" | "failed"）→ 显示段 COMPLETED / FAILED
     *   sender = "<projectName>/<nodeName>" → 显示段 <项目名> · <节点名>
-    * 整条 header = NODE · <项目名> · <节点名> · <状态>。 */
-  private def deliverToNebula(text: String, nodeName: String, status: String): IO[Unit] =
+    * 整条 header = NODE · <项目名> · <节点名> · <状态>。
+    *
+    * V8 (2026-09-03)：带 nodeId 的调用（deliverOut/deliverFailed/deliverOutTo/重投
+    * 扫描）在 offer 后写 nebulaDeliveredAt 记账（at-least-once：offer 与记账之间
+    * 崩溃 → 重投扫描会再投一次，宁重复不丢失）。nodeId=None（FeedbackRouter
+    * escalate 复用通道）保持 fire-and-forget——blocked 反馈本体已持久化在节点上，
+    * 升级消息不进重投扫描（避免对已处置的 blocked 再升级）。根 ref 缺失时不丢弃：
+    * 不记账 → 周期重投扫描在根会话可用后补投。 */
+  private def deliverToNebula(text: String, nodeName: String, status: String, nodeId: Option[String] = None): IO[Unit] =
     resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
       case Some(ref) =>
         (ref ! AgentCommand.ImmediateInput(
@@ -539,10 +547,59 @@ class NodeEngine(
           source = Some("node"),
           eventType = Some(status),
           sender = Some(s"$projectName/$nodeName")
-        )).void
+        )) *> nodeId.traverse_(id => markNebulaDelivered(id)).void
       case None =>
-        logger.warn(s"Root session '$rootSessionId' not found — node result not delivered")
+        logger.warn(s"Root session '$rootSessionId' not found — node result parked for redelivery scan (nodeName=$nodeName)")
         IO.unit
+    }
+
+  /** V8: 写 nebulaDeliveredAt 记账（活动区优先，归档区兜底——TTL 归档的
+    * 未投递节点同样要记账，否则扫描每次重启都重投）。 */
+  private def markNebulaDelivered(nodeId: String): IO[Unit] =
+    store.getNode(nodeId).flatMap {
+      case Some(_) =>
+        store.mutate { s =>
+          s.nodes.get(nodeId) match
+            case Some(n) => s.copy(nodes = s.nodes.updated(nodeId, n.copy(nebulaDeliveredAt = Some(System.currentTimeMillis()))))
+            case None    => s
+        }.void
+      case None =>
+        store.mutateArchive { a =>
+          a.nodes.get(nodeId) match
+            case Some(n) => a.copy(nodes = a.nodes.updated(nodeId, n.copy(nebulaDeliveredAt = Some(System.currentTimeMillis()))))
+            case None    => a
+        }.void
+    }
+
+  /**
+   * V8 (2026-09-03): 重启重投扫描——扫活动区+归档区全部「终态（completed/failed）
+   * + out=Nebula + 有 result + 未记账」的节点，补投并记账。挂载时立即跑一次
+   * （ProjectRuntimeRegistry.mount），此后挂载在 TtlTick 周期（GatewayMain 启动的
+   * projectTtlScanner，30s）——启动期根会话 actor 通常尚未 spawn（懒加载），周期
+   * 扫描保证根会话可用后的 30s 内补投。根 ref 缺失时静默跳过（结果滞留 map，
+   * 不消费不记账，下个 tick 再试）。返回本次补投的节点数（>0 时 actor 记 info）。
+   */
+  def redeliverUnconsumedNebulaResults(): IO[Int] =
+    resources.agentRegistry.get.flatMap { registry =>
+      if !registry.contains(rootSessionId) then IO.pure(0)
+      else
+        for
+          active <- store.snapshot
+          arch <- store.archiveSnapshot
+          pending = (active.nodes.values ++ arch.nodes.values)
+            .filter(n =>
+              (n.status == NodeLifecycle.Completed || n.status == NodeLifecycle.Failed) &&
+                n.out.contains("Nebula") &&
+                n.result.exists(_.trim.nonEmpty) &&
+                n.nebulaDeliveredAt.isEmpty
+            )
+            .toList
+          _ <- pending.traverse_(n =>
+            deliverToNebula(s"[Node '${n.name}' ${n.status}]\n${n.result.get}", n.name, n.status, Some(n.id)))
+          _ <- if pending.nonEmpty then
+            logger.info(s"Node redelivery scan: re-delivered ${pending.size} unconsumed out=Nebula result(s) to root '$rootSessionId'")
+          else IO.unit
+        yield pending.size
     }
 
   private def extractLastAssistantText(messages: List[Message]): String =
