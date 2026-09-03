@@ -171,10 +171,41 @@ function restoreCompactCardRow(m, next) {
 
 /** The persisted user answer that follows an askUser entry (or null). The
  *  gateway records card answers as a User message right after the askUser
- *  entry (answers joined with '\n'); '__cancelled__' is the cancel sentinel. */
+ *  entry (answers joined with '\n'); '__cancelled__' is the cancel sentinel.
+ *
+ *  Answer-source validation (issue #43, 2026-09-03 incident): agent-injected
+ *  messages (delegate results, Mail, flow/node notifications) are ALSO
+ *  persisted as type:'user' — carrying injected:true + a source tag. They are
+ *  NOT user-initiated and must NEVER be consumed as the card's answer: doing
+ *  so locked the still-pending card with delegate-report fragments split
+ *  across the answer slots (markAnsweredPick splits by '\n'), leaving the
+ *  user no card to answer and pushing them onto the chat-input passthrough
+ *  (which answers only the oldest card with ONE free-text slot — the second
+ *  question came back "(skipped)"). Only a NON-injected user message adjacent
+ *  to the askUser entry is a recorded answer; an injected bubble at i+1 means
+ *  the card was still pending — render it interactive (safe direction: an
+ *  already-consumed requestId re-answered is dropped by the hub with the
+ *  slot retained, #12). */
 function askUserAnswerText(msgs, i) {
   const nextMsg = msgs[i + 1];
-  return (nextMsg && nextMsg.type === 'user' && nextMsg.text) ? nextMsg.text : null;
+  return (nextMsg && nextMsg.type === 'user' && !nextMsg.injected && nextMsg.text) ? nextMsg.text : null;
+}
+
+/** The nearest history entry that is not an agent-injected user bubble
+ *  (issue #43, 2026-09-03). main.js uses this for pending-interaction
+ *  detection after a history (re)load: delegate results / Mail / flow
+ *  notifications legitimately queue AFTER a still-pending askUser entry, so
+ *  "askUser is the literal last message" was false exactly when results
+ *  arrived during the wait — and the restored card stayed locked with no way
+ *  to answer. Skipping injected bubbles, an askUser at the scan stop = still
+ *  pending; any other entry (ai/tool/user) = the ask moved on (a
+ *  non-injected user message is a recorded answer — card click or chat-input
+ *  passthrough). Exported so the restore spec exercises the SAME code
+ *  main.js runs. */
+export function findLastRealMessage(msgs) {
+  let i = (msgs || []).length - 1;
+  while (i >= 0 && msgs[i].type === 'user' && msgs[i].injected) i--;
+  return i >= 0 ? msgs[i] : null;
 }
 
 // ---------- Attachment rendering (shared by both restore paths) ----------
