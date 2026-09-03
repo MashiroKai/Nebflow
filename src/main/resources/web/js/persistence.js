@@ -328,6 +328,22 @@ export function loadMsgs() {
   return safeGetJSON(LS_KEY, []);
 }
 
+/** 刷新存活 (2026-09-03): saveMsg that never duplicates a pending askUser
+ *  cache entry. The reconnect-replayed hub frame (replayed: true) may arrive
+ *  after the live first-send already cached the same pending ask — keyed by
+ *  requestId. Without this, every refresh/reconnect would append another
+ *  identical askUser row to the cache and restoreFromStorage would render
+ *  stacked duplicates before the backend history replaces them. */
+export function saveAskMsgDedup(entry, sessionId, requestId) {
+  if (!requestId) { saveMsg(entry, sessionId); return; }
+  try {
+    const all = safeGetJSON(LS_SESSIONS_KEY, {});
+    const arr = all[sessionId] || [];
+    if (arr.some(m => m && m.type === 'askUser' && m.requestId === requestId)) return;
+  } catch (e) { /* cache unreadable — fall through to plain save */ }
+  saveMsg(entry, sessionId);
+}
+
 // ---------- Replay all stored messages into the DOM (localStorage fallback) ----------
 // Builds DOM directly (doesn't call render functions from chat.js) to avoid
 // circular deps and to avoid re-saving.

@@ -249,6 +249,31 @@ class WebSocketRoutes(
       case None => IO.unit
     }
 
+  /** 刷新存活 (2026-09-03): re-send a root session's still-pending AskUser
+    * cards to THIS connection. Called after the initial historyPage of a
+    * session (re)subscribe — see the getHistory hook. Resolves the root
+    * session id first (team/flow node sessions have no hub slots of their
+    * own; their asks live under the root), then snapshots via the hub and
+    * re-renders each card byte-identical to the first send plus
+    * `replayed: true` (the frontend dedup key). Failure-tolerant: a hub
+    * hiccup degrades to "no replay", the history restore chain still applies.
+    */
+  private def replayPendingAsks(sessionId: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
+    sharedResources.interactionHubRef.get.flatMap {
+      case None => IO.unit
+      case Some(hub) =>
+        resolveRootSessionId(sessionId).flatMap { rootSid =>
+          hub
+            .?[List[io.circe.Json]](reply =>
+              nebflow.agent.InteractionHubCommand.ListPendingAsks(rootSid, reply)
+            )
+            .flatMap(_.traverse_(frame => wsSend(frame)))
+            .handleErrorWith { e =>
+              logger.warn(s"Pending-ask replay failed for session $sessionId: ${e.getMessage}")
+            }
+        }
+    }
+
   /** P2: seed the root session's permission-policy bucket from persisted meta. */
   private def seedPermissionPolicy(sessionId: String, safetyMode: String): IO[Unit] =
     val mode = nebflow.core.SafetyMode.fromString(safetyMode)
@@ -2623,6 +2648,22 @@ class WebSocketRoutes(
                       )
                     )
                 })
+                // 刷新存活 (2026-09-03): after the initial history page of a
+                // session (re)subscribe — browser refresh, WS reconnect
+                // (frontend onReconnect re-fetches history) or session switch —
+                // re-send the hub's still-pending AskUser cards. Ordered AFTER
+                // historyPage on the same outbound queue so the replayed frames
+                // are never wiped by the initial-load DOM clear. Pagination
+                // fetches (beforeIndex set) prepend older messages and must not
+                // trigger a replay. The hub is the single authority: an ask
+                // answered before this point is not in the snapshot. The frames
+                // carry the live requestId — the frontend dedups against the
+                // history-restored (requestId-less) card and rebinds the answer
+                // channel (chat-input close + #12 precise routing).
+                .flatMap { _ =>
+                  if beforeIndex.isEmpty then replayPendingAsks(sessionId, wsSend)
+                  else IO.unit
+                }
                 .handleErrorWith { e =>
                   wsSend(
                     io.circe.Json
@@ -3590,16 +3631,48 @@ class WebSocketRoutes(
                               // injection blocks; refType=task fail-open 跳过。
                               processRefs(json, blocks).flatMap { _ =>
                                 val blocksList = blocks.toList
-                                ensureAgent(msgSessionId)(ref =>
-                                  ref ! AgentCommand
-                                    .UserInput(
-                                      content,
-                                      None,
-                                      clientMessageId,
-                                      Some(blocksList).filter(_.nonEmpty),
-                                      chatWidth
-                                    )
-                                )
+                                // 刷新存活 (2026-09-03): the typeless browser send
+                                // (input.js normal Enter path) must honor the 第六件
+                                // (2026-08-30) input-passthrough contract as well.
+                                // The check used to live only in handleUserText —
+                                // reachable via WS immediateInput/userMessage, i.e.
+                                // the busy→queue→drain path. After a page refresh the
+                                // frontend busy flag is gone, so the typed text lands
+                                // on THIS branch and was queued as a NEW turn while a
+                                // pending ask blocked the session — the refreshed
+                                // input box could never answer (the #43-domain gap).
+                                // Hub hit → the text IS the answer (the user bubble is
+                                // already appended above); miss → normal dispatch,
+                                // byte-identical behavior. Ref/attachment-carrying
+                                // frames keep the default dispatch: their payloads
+                                // are structured returns, not free-text answers.
+                                val frameHasRefsPayload =
+                                  json.hcursor.downField("taskRefs").as[List[io.circe.Json]].fold(_ => false, _.nonEmpty) ||
+                                    json.hcursor.downField("refs").as[List[io.circe.Json]].fold(_ => false, _.nonEmpty)
+                                // NOTE: `blocks` always contains the content text itself
+                                // (ContentBlock.Text(content) above), so it can't
+                                // discriminate — guard on the frame's structured
+                                // payloads instead (refs fields + attachments).
+                                if attachments.isEmpty && !frameHasRefsPayload then
+                                  askPassthroughOrDispatch(
+                                    msgSessionId,
+                                    content,
+                                    clientMessageId,
+                                    blocksList,
+                                    chatWidth,
+                                    source = "typeless"
+                                  )
+                                else
+                                  ensureAgent(msgSessionId)(ref =>
+                                    ref ! AgentCommand
+                                      .UserInput(
+                                        content,
+                                        None,
+                                        clientMessageId,
+                                        Some(blocksList).filter(_.nonEmpty),
+                                        chatWidth
+                                      )
+                                  )
                               }
                       }
                   }
@@ -3625,6 +3698,54 @@ class WebSocketRoutes(
     * dispatch gate 拦截排队（B5 系统输入排队语义），不唤醒不解冻。前端在
     * 冻结态禁用输入栏，此处不再调 skipCurrentFreezeWindow 保持语义干净。
     */
+  /** 刷新存活 (2026-09-03): shared tail of the input-box send paths — probe the
+    * hub for a pending AskUser card; a hit delivers the text as the tool result
+    * (第六件 2026-08-30 semantics), a miss falls through to the normal dispatch
+    * byte-identically. Used by BOTH the typeless browser send and the
+    * immediateInput/userMessage path inside [[handleUserText]].
+    *
+    * @param passthroughAlreadyRecorded
+    *   true when the caller already persisted the user bubble (typeless branch
+    *   appends UiMessage.User before deciding); the hub never appends, so this
+    *   only documents ownership — kept for symmetry with handleUserText, which
+    *   appends on the hit path itself.
+    */
+  private def askPassthroughOrDispatch(
+      sessionId: String,
+      content: String,
+      clientMessageId: Option[String],
+      blocks: List[ContentBlock],
+      chatWidth: Int,
+      source: String
+  ): IO[Unit] =
+    if sessionId.nonEmpty && content.nonEmpty then
+      sharedResources.interactionHubRef.get.flatMap {
+        case Some(hub) =>
+          resolveRootSessionId(sessionId).flatMap { rootSid =>
+            Deferred[IO, Boolean].flatMap { answered =>
+              (hub ! nebflow.agent.InteractionHubCommand.AnswerViaChatInput(rootSid, content, answered)) *>
+                // QC: bounded wait — a hub crash / swallowed forkTurn must not
+                // park this gateway fiber forever; on timeout fall back to
+                // the normal dispatch path (message still reaches the agent).
+                answered.get.timeout(1.second).handleError(_ => false)
+            }.flatMap {
+              case true =>
+                logger.info(
+                  s"User text ($source) → AskUser passthrough for session $sessionId (${content.length} chars)"
+                )
+              case false =>
+                ensureAgent(sessionId)(ref =>
+                  ref ! AgentCommand.UserInput(content, None, clientMessageId, Some(blocks).filter(_.nonEmpty), chatWidth)
+                )
+            }
+          }
+        case None =>
+          ensureAgent(sessionId)(ref =>
+            ref ! AgentCommand.UserInput(content, None, clientMessageId, Some(blocks).filter(_.nonEmpty), chatWidth)
+          )
+      }
+    else IO.unit
+
   private def handleUserText(sessionId: String, content: String, source: String): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
       // 第六件 QC (2026-08-30): the passthrough probe is WS-input-box ONLY —
