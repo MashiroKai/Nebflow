@@ -205,9 +205,10 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       )
       _ <- rt.store.sweepExpired(now)
       s0 <- rt.store.snapshot
-      // 显示消失后接线：NodeEdit 建 B，in 引用归档 A
+      // 显示消失后接线：NodeEdit 建 B，in 引用归档 A（out=Nebula：20260903 创建必带 out 适配）
       _ <- nodeEdit(nodeInput("acc-ttl-b", "B", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("consume A"), "in" -> Json.arr(Json.fromString("n-a"))), ctx)
+        "task" -> Json.fromString("consume A"), "in" -> Json.arr(Json.fromString("n-a")),
+        "out" -> Json.fromString("Nebula")), ctx)
       // 收口③：D1 投递 + 下游启动已后台化——轮询等 B 脱离 Wiring（收到结果启动）
       _ <- waitUntil(5.seconds)(rt.store.snapshot.map(
         _.nodes.values.find(_.name == "B").exists(_.status != NodeLifecycle.Wiring)))
@@ -485,9 +486,9 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         s"B must start after receiving retained result, status=${b.map(_.status)}")
   }
 
-  // ── ⑤ 断开（out=null 悬空化，结果保留）────────────────
+  // ── ⑤ 断开拒绝（out=null 悬空化已废除，20260903 连接规范收紧）────────
 
-  test("⑤ disconnect: out=null detaches, result retained in activity, rewirable") {
+  test("⑤ disconnect rejected: out=null on a node with an out edge is refused (EMPTY_NODE_CONNECTION); state untouched") {
     val ws = tempRoot / "ws-disc"
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-disc-${scala.util.Random.nextInt(100000)}")
@@ -498,7 +499,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       now = System.currentTimeMillis()
       _ <- rt.store.mutate(s =>
         s.copy(nodes = s.nodes ++ Map(
-          // seed A 补 in（校验六适配）：断开用例 out=null 后 A 仍须剩 ≥1 连接
+          // 存量形态种子：A 持 out=n-x（新规范下断开操作被拒，状态必须原样保留）
           "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent",
             status = NodeLifecycle.Completed, result = Some("kept result"), createdAt = now,
             completedAt = Some(now - 1000), ttlExpireAt = Some(now + 99999), out = Some("n-x"), in = List("n-seed")),
@@ -508,18 +509,19 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
             status = NodeLifecycle.Wiring, createdAt = now)
         ))
       )
-      // A.out = null → 断开（X.in 同步移除，结果保留）
+      // A.out = null → 拒（校验六-a：断开废弃——改接而非断开）
       r <- nodeEdit(nodeInput("acc-disc", "A", "out" -> Json.Null), ctx)
       s1 <- rt.store.snapshot
       a <- rt.store.getNode("n-a")
       x <- rt.store.getNode("n-x")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isRight, s"disconnect must succeed, got: $r")
-      assertEquals(a.map(_.out), Some(None), "A.out must become null (dangling)")
+      assert(r.isLeft, s"disconnect must be rejected under the tightened connection policy, got: $r")
+      assert(r.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"rejection must carry EMPTY_NODE_CONNECTION, got: $r")
+      assertEquals(a.map(_.out), Some(Some("n-x")), "A.out must remain (disconnect rejected)")
       assertEquals(a.flatMap(_.result), Some("kept result"), "A.result must be retained")
-      assertEquals(x.map(_.in), Some(List.empty), "old target X.in must have A removed")
-      assertEquals(x.map(_.deliveredTo), Some(List.empty), "X.deliveredTo must not contain A after detach")
+      assertEquals(x.map(_.in), Some(List("n-a")), "old target X.in must be untouched")
+      assertEquals(x.map(_.deliveredTo), Some(List.empty), "X.deliveredTo unchanged (no partial apply)")
   }
 
   // ── ⑥ DAG 环拒（NodeEdit 工具层 E2E）──────────────────
@@ -605,8 +607,10 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         ))
       )
       // 建 M（barrier：in = [A, B, C]）→ 3 路上游已完成 → 全部投递 → M 启动
+      //（out=Nebula：20260903 创建必带 out 适配）
       r <- nodeEdit(nodeInput("acc-barrier", "M", "agent" -> Json.fromString("test-agent"),
-        "task" -> Json.fromString("merge all"), "in" -> Json.arr(Json.fromString("n-a"), Json.fromString("n-b"), Json.fromString("n-c"))), ctx)
+        "task" -> Json.fromString("merge all"), "in" -> Json.arr(Json.fromString("n-a"), Json.fromString("n-b"), Json.fromString("n-c")),
+        "out" -> Json.fromString("Nebula")), ctx)
       _ <- IO.sleep(3.seconds)
       s <- rt.store.snapshot
       mOpt = s.nodes.values.find(_.name == "M")

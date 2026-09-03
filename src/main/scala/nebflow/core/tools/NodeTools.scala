@@ -230,9 +230,9 @@ object NodeEditTool extends Tool:
   val name = "NodeEdit"
 
   val description =
-    """Create or edit a Node in a project's Flow Map — the task dispatcher's single tool for topology (create / wire / rewire / disconnect).
+    """Create or edit a Node in a project's Flow Map — the task dispatcher's single tool for topology (create / wire / rewire).
 ## When to Use
-- The task dispatcher builds the project's node graph: create entry nodes (task + out), wire barriers (in), rewire running/completed nodes, disconnect (out=null).
+- The task dispatcher builds the project's node graph: create entry nodes (task + out), wire barriers (in), rewire running/completed nodes. Disconnecting (out=null) is no longer supported — every node keeps its out edge; rewire to a new target instead.
 - All topology changes go through this tool — 0 files written (0 hand-written files; the store owns flow-map.json).
 
 ## Parameters
@@ -242,19 +242,19 @@ object NodeEditTool extends Tool:
 - **task** (optional): the node's task context — an entry node (task present, no in) starts running immediately on create.
 - **in** (optional): upstream node id(s) to add as barrier inputs (multi-in = barrier; each upstream's out is rewired to this node).
 - **deps** (optional, replace-on-provide): upstream node id(s) this node waits on for COMPLETION SIGNAL only — no result is injected (downstream input = its own task, self-sufficient). Needs a result? Use in. Only needs "run after upstream completes"? Use deps. Need both? Write both. Not passed = unchanged; passed (any form, including [] / null) = whole-list replacement. Upstream failed/cancelled/blocked never triggers a deps waiter (it stays pending and visible). A running upstream is legal to depend on (waiting for it IS the semantics); editing deps on a RUNNING node is rejected (input frozen).
-- **out** (optional, single value): node id, "Nebula", or null. Single-value semantics: setting replaces the old out (rewire); arrays are rejected (1-to-many not supported); null disconnects (result retained, re-wire later auto-delivers).
+- **out** (required on create, single value): node id or "Nebula" (flow exit). Single-value semantics: setting replaces the old out (rewire); arrays are rejected (1-to-many not supported); null (disconnect) is REJECTED — nodes must keep their out edge, rewire to a new target instead.
 - **skill** / **mcp** / **worktree** / **preset** (optional): node configuration (worktree must exist under workspace/.nebflow/).
 - **maxRetries** (optional, default 1).
 - **abandon** (optional, default false): abandon a terminal (blocked/completed/failed/cancelled), wiring/pending node, or a STALE RUNNING node whose session is dead (no live execution fiber, e.g. after an instance restart) → status=cancelled + display TTL (audit-logged). The dispatcher's give-up action for blocked nodes, the topology-cleanup exit for retired wiring/pending nodes, and the reaping exit for dead-session running nodes. A LIVE running node is refused (mis-kill protection) — use NodeCancel for running nodes instead.
 
 ## Semantics
-- nodename missing → create (agent required; at least one connection required — in, deps, or out; a node with task but zero connections is rejected).
-- nodename exists → edit: in appends barrier inputs; deps replaces the whole dependency list (when provided); out sets/replaces/disconnects.
-- Connection floor (裁定①): every node must keep at least one connection (in / deps / out, out="Nebula" counts). Create with all three absent → EMPTY_NODE_CONNECTION; an edit that would leave the node with zero connections is rejected the same way (disconnecting a single edge is legal as long as another connection remains; result is never cleared by disconnecting).
+- nodename missing → create (agent required; 'out' is mandatory — a downstream node id or "Nebula"; plus an input side: task (entry semantics) or in. Dangling nodes and out-only relay nodes are rejected — EMPTY_NODE_CONNECTION).
+- nodename exists → edit: in appends barrier inputs; deps replaces the whole dependency list (when provided); out sets/replaces (rewire). Disconnecting (out=null on a node that has an out edge) is rejected — rewire to a new target instead.
+- Connection policy (20260903 收紧): creation requires BOTH an out edge (node id or "Nebula") AND an input side (task or in — task counts as the in-side connection, so entry nodes (task + out, no in) are legal and run on create; in and task may coexist). Missing out, or out with neither task nor in → EMPTY_NODE_CONNECTION. Disconnecting to a no-out state on edit → EMPTY_NODE_CONNECTION (rewire, don't disconnect). Legacy dangling nodes (out=null created before this policy) stay editable: edit their task/agent/in/deps freely, rewire their out to a target and the retained result auto-delivers.
 - Blocked node edit: changing task/agent (or in/out) on a blocked node reactivates it — status returns to wiring/pending, deliveredTo cleared, blockCount preserved (round history kept), completed upstream results re-delivered, then the node reruns with the new input. No-op if nothing actually changed.
 - abandon=true → terminal node becomes cancelled with display TTL (frontend removes it after TTL; result kept in archive).
 - Validation (0 spawn): agent exists; referenced nodes exist; DAG cycle check (DFS); 1-to-many rejected; target running → rejected ("input frozen — NodeCancel first").
-- Create an entry node (task present, no in) → it starts running immediately (async, non-blocking). Node result = the agent's final output, auto-saved to the node's result and delivered along out (node → downstream barrier / Nebula → injected to root session / null → retained, auto-delivered when wired later)."""
+- Create an entry node (task present, no in) → it starts running immediately (async, non-blocking). Node result = the agent's final output, auto-saved to the node's result and delivered along out (node → downstream barrier / Nebula → injected to root session / legacy no-out → retained, auto-delivered when rewired)."""
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
@@ -274,7 +274,7 @@ object NodeEditTool extends Tool:
         "out" -> Json.obj("oneOf" -> Json.arr(
           Json.obj("type" -> "string".asJson),
           Json.obj("type" -> "null".asJson)
-        ).asJson, "description" -> "Single out target: node id, \"Nebula\", or null (disconnect). Arrays rejected (1-to-many)".asJson),
+        ).asJson, "description" -> "Single out target: node id or \"Nebula\" (required on create). Arrays rejected (1-to-many); null (disconnect) rejected — rewire instead".asJson),
         "skill" -> Json.obj("type" -> "string".asJson),
         "mcp" -> Json.obj("type" -> "string".asJson),
         "worktree" -> Json.obj("type" -> "string".asJson, "description" -> "Relative path under workspace/.nebflow/ (must exist; create via git worktree)".asJson),
@@ -375,11 +375,20 @@ object NodeEditTool extends Tool:
       case (_, _, Left(err), _) => IO.pure(Left(ToolError(err)))
       case (_, _, _, Left(err)) => IO.pure(Left(ToolError(err)))
       case (_, Right(ins), Right(deps), Right(out)) =>
-        // 校验五（裁定①零连接下限，deps 设计 §1.2）：in/deps/out 三者全缺 → 拒绝创建，
-        // 错误码 EMPTY_NODE_CONNECTION。task 是内容不是连接，不计入下限——旧合法形态
-        // 「task-only 入口节点」自此须声明 out（通常 out=Nebula）或 in/deps。
-        if ins.isEmpty && deps.isEmpty && out.isEmpty then
-          IO.pure(Left(ToolError(s"Node '$nodename' must declare at least one connection — provide in, deps, or out.")))
+        // 校验五（连接规范收紧 v2，20260903 裁定①②③）：创建必须 (task ∨ in) ∧ out。
+        // out 是唯一出口权威边——悬空新节点不再支持，「先创建后补 out」工作流废弃；
+        // in 侧 task 即连接（入口节点 task+out 创建即运行语义保持），in 边与 task 可
+        // 并存；纯空挂载（无 task 无 in 无 out）由 out 检查一并拒绝。deps 是完成信号
+        // 不是输入内容，不计入 in 侧（deps+out 纯信号中继仍须 task 或 in 承载输入
+        // 语义）。错误码沿用 EMPTY_NODE_CONNECTION（两条文案都携带，供分发器自纠）。
+        if out.isEmpty then
+          IO.pure(Left(ToolError(
+            s"Node '$nodename' must declare 'out' on creation — a downstream node id or \"Nebula\" (flow exit). " +
+              "Dangling nodes are no longer supported (create-then-wire-out is retired): wire the out edge in the same NodeEdit. (EMPTY_NODE_CONNECTION)")))
+        else if !task.exists(_.trim.nonEmpty) && ins.isEmpty then
+          IO.pure(Left(ToolError(
+            s"Node '$nodename' must declare an input side — 'task' (entry semantics: starts running on create) or 'in' (barrier upstream). " +
+              "Out-only relay nodes are no longer supported. (EMPTY_NODE_CONNECTION)")))
         else
           // 1. agent 存在性
           EntityLoader.loadAgent(agentName).flatMap {
@@ -617,6 +626,13 @@ object NodeEditTool extends Tool:
       // out 处理（单值替换/断开）——同步校验先 match，再进 IO 链
       NodeTools.parseOut(outJson) match
         case Left(err) => IO.pure(Left(ToolError(err)))
+        // 校验六-a（连接规范收紧 v2，裁定④）：out 断开（显式 null/"null" 且节点现有
+        // out）→ 拒绝——改接新目标而非断开（「先断开再改接」废弃）。存量悬空节点
+        //（out 已 null）显式传 null = 无状态变更 no-op，放行（口径⑤ 存量不回溯）。
+        case Right(newOut) if outJson.isDefined && newOut.isEmpty && node.out.isDefined =>
+          IO.pure(Left(ToolError(
+            s"Node '${node.name}' has an out edge — disconnecting (out=null) is no longer supported. " +
+              "Rewire to a new target instead (out=<node-id|\"Nebula\">); every node keeps its out edge. (EMPTY_NODE_CONNECTION)")))
         case Right(newOut) =>
           // deps 处理（deps 设计 §1.2，replace-on-provide 语义裁定）：未传不改；
           // 传了（任何形态，含 [] / null）整体替换——清空是合法改接动作（清空后仍须
