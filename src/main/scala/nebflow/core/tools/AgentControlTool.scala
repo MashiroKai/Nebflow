@@ -404,6 +404,12 @@ When to use:
         anchorsOpt match
           case None         => true // root bucket caller — global view
           case Some(anchors) => anchors.contains(sid) || chainReaches(registry, sid, anchors, 8)
+      // V2 (2026-09-03): orphan scope — a crash-survivor task has no registry
+      // row of its own; scope it by its PARENT session instead.
+      orphanInScope = (parentSid: String) =>
+        anchorsOpt match
+          case None         => true
+          case Some(anchors) => anchors.contains(parentSid) || chainReaches(registry, parentSid, anchors, 8)
       runningTasks <- resources.subAgentTaskStore.findRunningTasks
       taskMap = runningTasks.map(t => t.taskId -> t).toMap
       now = System.currentTimeMillis()
@@ -451,19 +457,46 @@ When to use:
         }
     yield
       val header = List("sessionId", "kind", "agent", "parent", "status", "stuck?", "loop", "barrier", "up", "idle", "retries", "task")
-      val table = (header :: rows).map(r => "| " + r.mkString(" | ") + " |").mkString("\n")
+      // V2 (2026-09-03): orphan rows — tasks with status=running but NO live
+      // registry entry (previous process crashed mid-task; the registry is
+      // memory-only). This join-free listing is the only surface where the
+      // orphan stays visible between the crash and the next startup sweep.
+      val orphanRows = runningTasks
+        .filter(t => !registry.contains(t.taskId))
+        .filter(t => orphanInScope(t.parentSessionId))
+        .map { t =>
+          List(
+            t.taskId,
+            if t.source == "subtask" then "SubTask" else "Delegate",
+            t.agentName,
+            if t.parentSessionId.nonEmpty then t.parentSessionId.take(16) else "-",
+            "orphan(running)",
+            "crash",
+            "-",
+            "-",
+            fmtMillis(math.max(0L, now - t.spawnedAt)),
+            fmtMillis(math.max(0L, now - t.spawnedAt)),
+            t.retryCount.toString,
+            (t.description + " [orphan: no live actor — lost to a process crash; swept at next startup]").take(60)
+          )
+        }
+      val table = (header :: rows ++ orphanRows).map(r => "| " + r.mkString(" | ") + " |").mkString("\n")
       val scopeNote =
         if anchorsOpt.isDefined then
           "\nScope: your team subtree only (own members + their sub-agents) — root sessions and other teams' agents are hidden."
           else ""
+      val orphanNote =
+        if orphanRows.nonEmpty then
+          "\norphan(running) = task survived a process crash: no live actor exists, its result was lost. The startup sweep terminalizes these and notifies the parent session on next restart."
+          else ""
       val summary =
-        if rows.isEmpty then "No live background agents in your scope (registry is empty or outside your subtree)."
+        if rows.isEmpty && orphanRows.isEmpty then "No live background agents in your scope (registry is empty or outside your subtree)."
         else
-          s"""Background agents (${rows.size}):
+          s"""Background agents (${rows.size + orphanRows.size}):
              |
              |$table
              |
-             |stuck? = Processing with no activity for >${Defaults.StuckThresholdMs / 60000}min (same threshold as the automatic watcher).
+             |stuck? = Processing with no activity for >${Defaults.StuckThresholdMs / 60000}min (same threshold as the automatic watcher).$orphanNote
              |loop = streak/rounds (loop-guard): streak = consecutive rounds failing the same call (warn@3); rounds = non-progressing
              |       rounds this turn (escalates at 70% turn budget / 8). Non-zero = loop suspicion — check status, consider restart.
              |barrier = outstandingSubagents/heldResults (issue #31): outstanding>0 while idle with no in-flight work = phantom slot

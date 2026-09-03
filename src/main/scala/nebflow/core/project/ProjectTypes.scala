@@ -56,6 +56,11 @@ case class NodeDef(
     * pending/wiring 可见。旧 flow-map.json 无此键 → withDefaults 解码为 Nil（零迁移）。 */
   deps: List[String] = Nil,
   deliveredTo: List[String] = Nil,
+  /** V8 (2026-09-03): out=Nebula 投递记账——deliverToNebula 成功 offer 后落时间戳。
+    * 与 deliveredTo（in barrier 判定，节点间沿边去重）完全分离，barrier 语义零改动；
+    * 空 = 结果未达 Nebula（崩溃窗口 / 根 ref 缺失滞留）→ 周期重投扫描补投。
+    * 旧 flow-map.json 无此键 → withDefaults 解码为 None（零迁移）。 */
+  nebulaDeliveredAt: Option[Long] = None,
   status: String = NodeLifecycle.Wiring,
   result: Option[String] = None,
   retries: Int = 0,

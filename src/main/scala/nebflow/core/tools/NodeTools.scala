@@ -830,6 +830,9 @@ object NodeEditTool extends Tool:
                                                   deps = appliedDeps,
                                                   result = None, // blocked 反馈渲染串不复存在（反馈保留在 blockedFeedback）
                                                   deliveredTo = Nil,
+                                                  // V8: 重激活 = 该节点身份重跑一轮，out=Nebula 投递
+                                                  // 记账同样清零——重跑完成后的结果重新投递+记账。
+                                                  nebulaDeliveredAt = None,
                                                   startedAt = None,
                                                   completedAt = None,
                                                   ttlExpireAt = None))) // blockCount / blockedFeedback 保留

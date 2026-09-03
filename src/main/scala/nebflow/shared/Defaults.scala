@@ -148,6 +148,19 @@ object Defaults:
    */
   val MailDedupWindowMs: Long = 30 * 60 * 1000L
 
+  /**
+   * V13 (2026-09-03): replay-scoping window for the mail dedup. The dedup
+   * ledger consult now happens ONLY for deliveries inside this window after
+   * the recipient session's activation (AgentRecord.startedAt) — the only
+   * moment the restart-recovery re-fire (MailTool activateAgent → re-fire
+   * disk head) can inject a true duplicate. Outside the window every delivery
+   * injects even if the fingerprint is fresh — a legitimate same-content
+   * re-send (10min polling text, re-pasted instruction) is never eaten.
+   * Long enough to cover any activation→re-fire→drain scheduling delay,
+   * short enough that the false-suppress exposure shrinks 30min → 60s.
+   */
+  val MailDedupReplayWindowMs: Long = 60 * 1000L
+
   // ---- Task stuck detection (P0 阶段 3) ----
 
   /**

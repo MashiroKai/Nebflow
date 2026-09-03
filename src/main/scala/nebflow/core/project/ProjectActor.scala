@@ -113,6 +113,10 @@ object ProjectRuntimeRegistry:
             ),
             s"project-${project.name.take(20)}"
           )
+          // V8 (2026-09-03): 挂载即扫——项目在运行时挂载（ProjectCreate 路径）且根
+          // 会话已活跃时，滞留的 out=Nebula 结果立即补投，不等首个 30s tick。
+          // 启动自动挂载路径根 ref 通常缺失 → 静默跳过，由 TtlTick 周期兜底。
+          _ <- engine.redeliverUnconsumedNebulaResults().handleErrorWith(_ => IO.unit)
           rt = ProjectRuntime(project, store, engine, system, resources, Some(actorRef))
           _ <- register(rt)
         yield rt
@@ -202,9 +206,15 @@ object ProjectActor:
             case ProjectCommand.CancelNode(nodeId) =>
               cfg.engine.cancelNodeById(nodeId).as(behavior)
             case ProjectCommand.TtlTick =>
-              cfg.engine.store.sweepExpired(System.currentTimeMillis()).flatMap { removed =>
-                removed.traverse_(id => cfg.engine.emitRemoved(id))
-              }.as(behavior)
+              // V8 (2026-09-03): Nebula 未消费结果重投扫描——挂载在启动装配点的
+              // projectTtlScanner 驱动的周期 tick 上；启动期根会话未 spawn 时扫描
+              // 静默跳过（结果滞留 flow-map，下个 tick 再试），根会话可用后 30s 内
+              // 补投。best-effort：扫描失败不影响 TTL sweep。
+              cfg.engine.redeliverUnconsumedNebulaResults()
+                .handleErrorWith(e => logger.warn(s"Node redelivery scan failed: ${e.getMessage}").as(0)).void *>
+                cfg.engine.store.sweepExpired(System.currentTimeMillis()).flatMap { removed =>
+                  removed.traverse_(id => cfg.engine.emitRemoved(id))
+                }.as(behavior)
             case ProjectCommand.Shutdown =>
               IO.pure(Behaviors.stopped)
           }

@@ -395,6 +395,20 @@ object GatewayMain extends IOApp.Simple:
                                     case Left(e) =>
                                       logger.warn(s"Task TTL sweep failed: ${e.getMessage}").void
                                   }
+                                // V2 (2026-09-03) 孤儿 delegate 启动收殓：崩溃时在飞的
+                                // SubTask/Delegate 任务——部分结果抢救 + 父会话 F2 队列
+                                // 通知（correlationId 幂等）+ 任务记录终态化。挂在启动
+                                // 装配点（任何会话 actor spawn 之前 → 队列文件单写者），
+                                // 多次重启幂等（终态化后 findRunningTasks 不再命中）。
+                                // Best-effort：永不阻塞启动。
+                                val subagentCrashSweep: IO[Unit] =
+                                  nebflow.agent.SubAgentStartupRecovery
+                                    .recoverOrphans(sharedResources.subAgentTaskStore, sessionStore)
+                                    .attempt.flatMap {
+                                      case Right(ids) if ids.nonEmpty =>
+                                        logger.info(s"Subagent crash sweep: ${ids.size} orphan task(s) recovered").void
+                                      case _ => IO.unit
+                                    }
                                 // wsHub 提前到 startupMount 之前创建：启动挂载的项目
                                 // engine 需要持有一个真实广播 wsSend（节点/分发器 agent
                                 // 事件 + nodeUpdated/nodeCompleted 等 Flow Map 事件）。
@@ -435,7 +449,7 @@ object GatewayMain extends IOApp.Simple:
                                 // 发 TtlTick；无项目时空转。
                                 val projectTtlScanner: IO[Unit] =
                                   nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
-                                hubSetup *> taskTtlSweep *> startupMount *> projectTtlScanner *> {
+                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> startupMount *> projectTtlScanner *> {
                                   val sharedResourcesLive = sharedResources
                                   val sessionService = new SessionService(sessionStore)
                                   val agentService = new AgentService(agentLibrary)
