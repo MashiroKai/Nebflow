@@ -214,8 +214,10 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       rt <- mountProject("edge-arch-append", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W（wiring）先建，R 入口 out→W（R 运行 2.5s → W 的 barrier 挂起等 R）
-      _ <- nodeEdit(nodeInput("edge-arch-append", "w-w", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("edge-arch-append", "run-r", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("slow-r"), "out" -> Json.fromString(wId)), ctx)
@@ -256,9 +258,11 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-arch-deps", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // W（wiring）+ X（deps 等待对象，运行 2.5s）
-      _ <- nodeEdit(nodeInput("edge-arch-deps", "w-w", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // W（wiring）+ X（deps 等待对象，运行 2.5s）。W store 直种（20260903 创建必带
+      // out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("edge-arch-deps", "slow-x", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("slow-x"), "out" -> Json.fromString("Nebula")), ctx)
@@ -306,8 +310,10 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-arch-wire", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("edge-arch-wire", "w-w", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("edge-arch-wire", "done-a", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
@@ -344,8 +350,10 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-active-wire", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("edge-active-wire", "w-w", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("edge-active-wire", "done-a", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
@@ -375,8 +383,10 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-preedge", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("edge-preedge", "w-w", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("edge-preedge", "done-a", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
@@ -417,8 +427,10 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-catchup", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("edge-catchup", "w-w", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("edge-catchup", "done-a", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("done-result-A"), "out" -> Json.fromString("Nebula")), ctx)

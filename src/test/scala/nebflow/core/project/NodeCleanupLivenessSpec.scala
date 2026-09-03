@@ -253,9 +253,11 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("cln-live", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // wiring 节点（无存活概念）
-      _ <- nodeEdit(nodeInput("cln-live", "w-wire", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // wiring 节点（无存活概念）。w-wire store 直种（20260903 创建必带 out 新规范下
+      // out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-w-wire" -> NodeDef(id = "n-w-wire", name = "w-wire", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wiringId <- idOf(rt, "w-wire")
       payWiring <- payloadOf(rt, wiringId)
       // 真实活 running（延迟 LLM 保持窗口）
