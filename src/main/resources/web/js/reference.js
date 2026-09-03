@@ -22,7 +22,16 @@ function nextRefId(refType) {
 }
 
 function extLabel(name, mime) {
-  const ext = ((name || '').split('.').pop() || '').toLowerCase();
+  // 20260903 filename-dup fix: an extension exists only when the BASENAME has
+  // a real dot (dot > 0, so dotfiles like .gitignore stay extension-less too).
+  // Dot-less names — canvas tabs pass tab.title (a display label, canvas.js
+  // refInputForTab) as fileName — used to fall through split('.').pop() and
+  // return the WHOLE name as the "extension", so typeLabel (chip tooltip/
+  // expanded meta line + message-card badge) rendered the full filename right
+  // next to the title that already showed it (引用块文件名重复, 09-03 截图).
+  const base = (name || '').split('/').pop() || '';
+  const dot = base.lastIndexOf('.');
+  const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
   if (ext === 'pdf') return 'PDF';
   if (mime === 'application/pdf') return 'PDF';
   if (['md', 'markdown'].includes(ext)) return 'MD';
@@ -109,7 +118,9 @@ export function makeReference(input) {
       type: 'ref', refType: 'file', id: nextRefId('file'),
       source: { kind: src.kind || 'workspace', path: src.path || '', fileName: name, title: src.title || name, mimeType: mime },
       anchor,
-      meta: { mimeType: mime, sizeBytes: src.sizeBytes, icon: fileIcon(name, mime), typeLabel: extLabel(name, mime) },
+      // 20260903 fix: type from the PATH basename — canvas tabs pass tab.title
+      // (no extension) as fileName, so extLabel(name) would degrade to 'FILE'.
+      meta: { mimeType: mime, sizeBytes: src.sizeBytes, icon: fileIcon(name, mime), typeLabel: extLabel(src.path || name, mime) },
       display: { label: name, preview: previewOf(name, src.preview || src.text, 160), lineBadge: pageBadge(anchor) },
     };
   }
@@ -120,7 +131,7 @@ export function makeReference(input) {
       type: 'ref', refType: 'document', id: nextRefId('document'),
       source: { kind: src.kind || 'canvas', path: src.path || '', fileName: name, title: src.title || name, mimeType: mime },
       anchor,
-      meta: { mimeType: mime, sizeBytes: src.sizeBytes, icon: fileIcon(name, mime), typeLabel: extLabel(name, mime) },
+      meta: { mimeType: mime, sizeBytes: src.sizeBytes, icon: fileIcon(name, mime), typeLabel: extLabel(src.path || name, mime) },
       display: { label: name, preview: previewOf(name, src.preview || anchor.text, 160), pageBadge: pageBadge(anchor), lineBadge: pageBadge(anchor) },
     };
   }
@@ -398,16 +409,21 @@ function renderInputRef(ref, onRemove) {
   return wrap;
 }
 
-/** Normalized short source line for the input card meta (workspace path / url). */
+/** Normalized short source line for the message-card aux row (path dir / url).
+ *  20260903 filename-dup fix: file/document aux line = DIRECTORY only — the
+ *  card head already shows the basename once, so the last segment (the file
+ *  name itself) is dropped here. Deep dirs abbreviate the head (「…/」+ last 2
+ *  segments, 「目录深时首部省略」); a bare-filename path yields '' (no dir info). */
 function normalizeSource(ref) {
   if (ref.refType === 'task') return '';
   if (ref.refType === 'friend-message') return ref.source?.friendNeblinkId || '';
   if (ref.source?.url) return ref.source.url;
   const p = ref.source?.path || '';
   if (!p) return '';
-  // Show the last two path segments for a compact来源 line.
   const segs = p.split('/').filter(Boolean);
-  return segs.length > 2 ? '…/' + segs.slice(-2).join('/') : p;
+  segs.pop();                       // drop the basename — title row owns it
+  if (!segs.length) return '';
+  return segs.length > 2 ? '…/' + segs.slice(-2).join('/') : segs.join('/');
 }
 
 /** Parse the backend return-injection text "[打回任务 #id: title]" (the only
@@ -494,10 +510,13 @@ function renderMessageRef(ref) {
   badge.textContent = ref.display?.pageBadge || ref.meta?.typeLabel || '';
   head.appendChild(badge);
   card.appendChild(head);
-  const src = document.createElement('div');
-  src.className = 'att-ref-card-source';
-  src.textContent = normalizeSource(ref);
-  card.appendChild(src);
+  const sourceLine = normalizeSource(ref);
+  if (sourceLine) {               // 20260903 fix: bare-filename path → no dir, no aux row
+    const src = document.createElement('div');
+    src.className = 'att-ref-card-source';
+    src.textContent = sourceLine;
+    card.appendChild(src);
+  }
   const body = document.createElement('div');
   body.className = 'att-ref-card-content';
   body.textContent = ref.display?.preview || '';

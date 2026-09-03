@@ -42,6 +42,8 @@
   #input { width: 100%; border: none; background: transparent; outline: none;
     resize: none; font: 400 13px -apple-system, BlinkMacSystemFont, sans-serif;
     color: var(--color-text); }
+  /* 消息卡挂载区（20260903 追加）：340px = .att-ref-bubble 同宽，真实卡片视觉 */
+  #message-stage { width: 340px; margin: 14px auto 0; }
 </style>
 </head>
 <body>
@@ -57,6 +59,9 @@
     </div>
   </div>
 </div>
+<!-- 20260903 追加：消息内引用卡（.att-ref-card，用户气泡附件卡）的挂载点 ——
+     文件名重复 bug 的实际发生面（徽章=被污染的 typeLabel + 辅助行带文件名）。 -->
+<div id="message-stage"></div>
 <!-- Ready flag pre-seeded in a classic script: the spec's waitForFunction
      predicate reads a boolean (never throws) while the module below is
      still importing. -->
@@ -90,6 +95,24 @@
     longfile: {
       refType: 'file',
       source: { kind: 'workspace', path: '/Users/dev/Documents/20260902_超长标题截断省略号验证_这是一个非常非常长的文件名用来验证固定宽度下省略号生效.txt' },
+      anchor: { kind: 'none' },
+    },
+    // ── 20260903 文件名重复修复回归输入 ──
+    // canvas 标签页把「显示标题」当 fileName（canvas.js refInputForTab: name =
+    // tab.title || basename）——标题无扩展名时 extLabel 曾把整个名字当「扩展名」，
+    // typeLabel/消息卡徽章 = 完整文件名，与标题重复（09-03 截图实证）。
+    canvasTitleFile: {
+      refType: 'file',
+      source: { kind: 'canvas', path: '/Users/dev/Claude code/Nebflow/20260903_pr41-close-draft.md',
+                fileName: 'PR #41 致谢关闭文案草稿', title: 'PR #41 致谢关闭文案草稿' },
+      anchor: { kind: 'none' },
+    },
+    // 60+ 字符无扩展名长标题：固定尺寸断言（28px 不撑高）+ 徽章/辅助行核验
+    longTitleFile: {
+      refType: 'file',
+      source: { kind: 'canvas', path: '/Users/dev/Claude code/Nebflow/docs/notes/20260903_超长文件名验证_这是一个超过六十个字符的引用块标题用来断言固定尺寸且不随内容变化的中文名称数据备份稿二.md',
+                fileName: '20260903_超长文件名验证_这是一个超过六十个字符的引用块标题用来断言固定尺寸且不随内容变化的中文名称数据备份稿二',
+                title: '20260903_超长文件名验证_这是一个超过六十个字符的引用块标题用来断言固定尺寸且不随内容变化的中文名称数据备份稿二' },
       anchor: { kind: 'none' },
     },
   };
@@ -134,6 +157,30 @@
     clickAt: (i) => preview.querySelectorAll(':scope > .att-ref')[i].click(),
     metaTextAt: (i) => preview.querySelectorAll(':scope > .att-ref')[i].querySelector('.att-ref-meta').textContent,
     metaVisibleAt: (i) => getComputedStyle(preview.querySelectorAll(':scope > .att-ref')[i].querySelector('.att-ref-meta')).display !== 'none',
+    // ── 20260903 追加：消息内引用卡（mode:'message'）渲染 + 快照 ──
+    renderCard: (key) => {
+      const ref = makeReference(MOCK_INPUTS[key]);
+      const holder = document.getElementById('message-stage');
+      holder.innerHTML = '';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble user att-bubble att-ref-bubble';
+      bubble.appendChild(renderRefBlock(ref, { mode: 'message' }));
+      holder.appendChild(bubble);
+      return ref;
+    },
+    card: () => {
+      const card = document.querySelector('#message-stage .att-ref-card');
+      if (!card) return null;
+      const q = (sel) => card.querySelector(sel);
+      return {
+        refType: card.dataset.refType,
+        title: q('.att-ref-card-title')?.textContent ?? '',
+        badge: q('.att-ref-card-badge')?.textContent ?? '',
+        source: q('.att-ref-card-source')?.textContent ?? null,
+        sourceAbsent: !q('.att-ref-card-source'),
+        text: card.textContent,
+      };
+    },
   });
   window.__reftagTest.ready = true;
 </script>
