@@ -42,6 +42,11 @@ case class ToolContext(
   actorSystem: Option[ActorSystem] = None,
   messages: List[Message] = Nil,
   toolCallId: String = "",
+  /** 当轮 LLM 请求 id（审计 20260903 方案 B 关联增强）：pipeLlmCall 生成 →
+    * ConsumeResult.requestId → pipeToolExecutions 注入本字段 → AgentCore 结构化
+    * 埋点写入 ToolsLogWriter，tools 与 router 两类 JSONL 同 request_id 精确
+    * 对齐。非 LLM 触发（REST 直调 / spec harness）为 None——key 必在、值可空。 */
+  requestId: Option[String] = None,
   /**
    * True when this call originates from another Nebflow instance via remote-exec.
    * Disables BashTool's auto-background mechanism — the caller manages lifecycle.

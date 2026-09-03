@@ -8,6 +8,7 @@ import nebflow.shared.*
 import java.nio.file.*
 import java.security.MessageDigest
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicReference
 
 import scala.jdk.CollectionConverters.*
 
@@ -36,11 +37,21 @@ object LlmLogWriter:
   def setEnabled(v: Boolean): Unit = enabled.set(v)
   def isEnabled: Boolean = enabled.get()
 
-  private val logDir: Path =
-    Paths.get(System.getProperty("user.home"), ".nebflow", "logs", "router")
-  private val objectsDir: Path = logDir.resolve("objects")
+  private val logDirOverride = AtomicReference[Option[Path]](None)
 
-  private val retentionDays = 3
+  /** Test-only redirect of the router log directory (spec harnesses /
+    * isolated instances assert tools↔router requestId alignment without
+    * touching the real ~/.nebflow/logs/router). */
+  private[nebflow] def setLogDirForTest(p: Path): Unit = logDirOverride.set(Some(p))
+  private[nebflow] def resetLogDirForTest(): Unit = logDirOverride.set(None)
+
+  private def logDir: Path =
+    logDirOverride.get().getOrElse(Paths.get(System.getProperty("user.home"), ".nebflow", "logs", "router"))
+  private def objectsDir: Path = logDir.resolve("objects")
+
+  /** Retention days — shared with ToolsLogWriter (方案 B: tools 日志保留对齐
+    * router 现行默认). */
+  private[core] val retentionDays = 3
 
   // Double-checked locking for daily prune
   private val lastPruneDate = java.util.concurrent.atomic.AtomicReference("")
@@ -50,6 +61,9 @@ object LlmLogWriter:
   /**
    * Log one complete LLM call (request + response + SSE events).
    * Called from AgentCore.pipeLlmCall after stream collection completes.
+   * `requestId` (方案 B 20260903): correlation id supplied by the caller so
+   * tool executions of the SAME turn carry the identical id in
+   * tools JSONL — when None, a fresh UUID is generated (legacy behavior).
    * Never throws — errors are logged and swallowed.
    */
   def log(
@@ -62,12 +76,13 @@ object LlmLogWriter:
     resultUsage: Option[TokenUsage],
     resultModel: Option[String],
     isSubagent: Boolean,
-    isCompaction: Boolean
+    isCompaction: Boolean,
+    requestId: Option[String] = None
   ): IO[Unit] =
     if !enabled.get() then IO.unit
     else
       IO.blocking {
-        val requestId = java.util.UUID.randomUUID().toString
+        val reqId = requestId.getOrElse(java.util.UUID.randomUUID().toString)
         val model = resultModel.getOrElse("unknown")
         val agent = request.agentId
         val session = request.sessionId
@@ -104,7 +119,7 @@ object LlmLogWriter:
         val summary = Json.obj(
           "timestamp" -> ts.asJson,
           "type" -> "request".asJson,
-          "request_id" -> requestId.asJson,
+          "request_id" -> reqId.asJson,
           "url" -> "".asJson,
           "api_type" -> "anthropic_messages".asJson,
           "model" -> model.asJson,
@@ -140,7 +155,7 @@ object LlmLogWriter:
 
         // ── SSE events ──
 
-        val sseEvents = chunksToSseEvents(chunks, requestId, agent, model, keepDetail = true)
+        val sseEvents = chunksToSseEvents(chunks, reqId, agent, model, keepDetail = true)
         sseEvents.foreach(appendJsonl("sse", _))
 
         // ── Response entry ──
