@@ -177,9 +177,11 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-chain", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // 先建 B（wiring，无 task），再建入口 A 且 out → B
-      _ <- nodeEdit(nodeInput("bar-chain", "node-b", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // 先建 B（wiring，无 task），再建入口 A 且 out → B。
+      // B store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-b" -> NodeDef(id = "n-b", name = "node-b", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       bId <- idOf(rt, "node-b")
       _ <- nodeEdit(nodeInput("bar-chain", "node-a", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("produce-X"), "out" -> Json.fromString(bId)), ctx)
@@ -210,8 +212,10 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-parallel", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("bar-parallel", "merge-c", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // merge-c store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-merge-c" -> NodeDef(id = "n-merge-c", name = "merge-c", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       cId <- idOf(rt, "merge-c")
       _ <- nodeEdit(nodeInput("bar-parallel", "src-a", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("result-of-A"), "out" -> Json.fromString(cId)), ctx)
@@ -280,9 +284,11 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
         "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "done-a", Set(NodeLifecycle.Completed))
       aId0 <- idOf(rt, "done-a")
-      // 已存在 wiring 节点 W（无 task，仅 out → wiring 态）
-      _ <- nodeEdit(nodeInput("bar-d1-edit", "wiring-w", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // 已存在 wiring 节点 W（无 task，store 直种——20260903 创建必带 out 新规范下
+      // out-only wiring 节点不可经 NodeEdit 创建；本用例主体是 edit-append 路径，种子等价）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-wiring-w" -> NodeDef(id = "n-wiring-w", name = "wiring-w", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       // edit 路径追加 in=[A]（修复次因 A）→ 立即投递 + barrier 结算启动
       _ <- nodeEdit(nodeInput("bar-d1-edit", "wiring-w", "in" -> Json.fromString(aId0)), ctx)
       _ <- waitStatus(rt, "wiring-w", Set(NodeLifecycle.Completed))
@@ -313,9 +319,12 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       _ <- nodeEdit(nodeInput("bar-race", "race-a", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("race-result-A"), "out" -> Json.fromString("Nebula")), ctx)
       _ <- waitStatus(rt, "race-a", Set(NodeLifecycle.Running))
-      // A 运行中建 C 并接线 in=[A]（NodeTools.setOut 改写运行中节点的 out）
-      _ <- nodeEdit(nodeInput("bar-race", "race-c", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // A 运行中建 C 并接线 in=[A]（NodeTools.setOut 改写运行中节点的 out）。
+      // C store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经
+      // NodeEdit 创建；本用例主体是运行中接线竞态，种子等价）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-race-c" -> NodeDef(id = "n-race-c", name = "race-c", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       cId <- idOf(rt, "race-c")
       aId0 <- idOf(rt, "race-a")
       _ <- nodeEdit(nodeInput("bar-race", "race-c", "in" -> Json.fromString(aId0)), ctx)
@@ -353,9 +362,12 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-append", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      // W（wiring）+ R 入口 out→W（R 运行中 → W 的 barrier 挂起等 R）
-      _ <- nodeEdit(nodeInput("bar-append", "w-w", "agent" -> Json.fromString("test-agent"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      // W（wiring）+ R 入口 out→W（R 运行中 → W 的 barrier 挂起等 R）。
+      // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经
+      // NodeEdit 创建；本用例主体是分批 barrier 投递，种子等价）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
+          status = NodeLifecycle.Wiring, out = Some("Nebula"), createdAt = System.currentTimeMillis()))))
       wId <- idOf(rt, "w-w")
       _ <- nodeEdit(nodeInput("bar-append", "run-r", "agent" -> Json.fromString("test-agent"),
         "task" -> Json.fromString("running-result-R"), "out" -> Json.fromString(wId)), ctx)
