@@ -451,6 +451,11 @@ private[agent] trait AgentCore:
             state.wsSend(AgentStreamEvent.RetryStatus(msg).toJson(ctx.self.path.name, isSubagent, sessionIdOpt))
           }
         val turnId = state.currentTurnId + 1
+        // 方案 B（审计 20260903）：当轮 LLM 请求关联 id——生成于派发前，同时
+        // 传给 LlmLogWriter（router JSONL 的 request_id）并附入 ConsumeResult
+        // （工具执行轮经 ToolContext.requestId 流入 tools JSONL），两类日志
+        // 精确对齐。Retry 重跑同一 ConsumeResult 时 id 不变（同一 LLM 响应）。
+        val llmRequestId = java.util.UUID.randomUUID().toString
         // Compact/ask turns skip FastMicroCompact: the agent needs the full
         // history for the summary. #38 Layer B (2026-09-01): oversized
         // ToolResults are stripped BEFORE this point (startDirectCompaction
@@ -770,8 +775,9 @@ private[agent] trait AgentCore:
                             cr.usage,
                             cr.model,
                             isSubagent,
-                            isCompactTurn
-                          ) *> IO.pure(cr)
+                            isCompactTurn,
+                            requestId = Some(llmRequestId)
+                          ) *> IO.pure(cr.copy(requestId = Some(llmRequestId)))
                       }
                       .attempt
                       .flatMap {
@@ -935,6 +941,7 @@ private[agent] trait AgentCore:
         sharedResources = Some(resources),
         actorSystem = Some(ctx.system),
         messages = state.messages,
+        requestId = result.requestId,
         bashConfig = resources.bashResilience,
         teamName = teamNameOpt,
         sandbox = sandboxPolicy
@@ -965,21 +972,24 @@ private[agent] trait AgentCore:
                       .getOrElse(0)} chars)"
                 )
               ).as(ToolExecResult(nebflow.llm.SearchProviderResolver.kimiEchoContent(call)))
+                .flatTap(r => logToolStructured(call, callCtx, r))
             else permissionDecision(resources, state, call)
               .flatMap {
                 case PermissionDecision.Allow => executeTool(call, callCtx)
                 case PermissionDecision.Deny =>
-                  IO.pure(
+                  val denied =
                     ToolExecResult(s"Tool ${call.name} is denied by the session permission policy", isError = true)
-                  )
+                  logToolStructured(call, callCtx, denied).as(denied)
                 case PermissionDecision.Ask => askUserPermission(call, state, resources, permissionDeferredRef, permissionDenialsRef, callCtx)
               }
           )
             .map(r => (call, r))
             .attempt
-            .map {
-              case Right(pair) => pair
-              case Left(e) => (call, ToolExecResult(s"Tool error: ${e.getMessage}", isError = true))
+            .flatMap {
+              case Right(pair) => IO.pure(pair)
+              case Left(e) =>
+                val r = ToolExecResult(s"Tool error: ${e.getMessage}", isError = true)
+                logToolStructured(call, callCtx, r).as((call, r))
             }
             .flatTap { (call, r) =>
               if call.name != "AskUserQuestion" then
@@ -1004,9 +1014,10 @@ private[agent] trait AgentCore:
             }
       }
       guardedBatch <- ToolResultGuard.guardBatch(freshResults, state.sessionId.getOrElse("default"))
-      droppedResults = droppedCalls.map(call =>
-        (call, ToolExecResult(s"Tool not available: ${call.name}", isError = true))
-      )
+      droppedResults <- droppedCalls.traverse { call =>
+        val r = ToolExecResult(s"Tool not available: ${call.name}", isError = true)
+        logToolStructured(call, toolCtx, r).as((call, r))
+      }
       // ── Block 3 循环检测器（supervision trio §D2-A，2026-08-27）────────
       // guardBatch 之后、ToolsComplete 之前的单一 choke point——一切 kind 的
       // AgentActor 工具轮都过此环。Root 例外（D3）：depth==0 的 L1 降级为
@@ -1180,7 +1191,8 @@ private[agent] trait AgentCore:
         policies.get(rootSid).map(p => nebflow.core.SafetyMode.toString(p.safetyMode)).getOrElse("confirm-edits")
       permissionDeferredRef.modify {
       case existing @ Some(_) =>
-        (existing, IO.pure(ToolExecResult("Another permission request is already pending", isError = true)))
+        val r = ToolExecResult("Another permission request is already pending", isError = true)
+        (existing, logToolStructured(call, toolCtx, r).as(r))
       case None =>
         val deferred = cats.effect.Deferred.unsafe[IO, Boolean]
         (
@@ -1229,7 +1241,10 @@ private[agent] trait AgentCore:
                     permissionDenialsRef.modify { m =>
                       val n = m.getOrElse(call.name, 0) + 1
                       (m.updated(call.name, n), n)
-                    }.map(n => ToolExecResult(AgentCore.denialMessage(call.name, n), isError = true))
+                    }.flatMap { n =>
+                      val r = ToolExecResult(AgentCore.denialMessage(call.name, n), isError = true)
+                      logToolStructured(call, toolCtx, r).as(r)
+                    }
                 case None =>
                   // Timeout — dismiss the permission popup on the frontend
                   // (the card is rendered at sessionId = rootSessionId).
@@ -1241,12 +1256,13 @@ private[agent] trait AgentCore:
                       )
                     )
                     .handleErrorWith(_ => IO.unit) *>
-                    IO.pure(
-                      ToolExecResult(
+                    {
+                      val r = ToolExecResult(
                         s"Permission timed out — no response within ${PermissionTimeout.toMinutes} min, auto-denied. Re-issue the command if needed.",
                         isError = true
                       )
-                    )
+                      logToolStructured(call, toolCtx, r).as(r)
+                    }
             yield result
             end for
           }
@@ -1315,6 +1331,37 @@ private[agent] trait AgentCore:
 
   end sendPermissionRequest
 
+  /** 方案 B（审计 20260903）：结构化工具执行写入——经 ToolsLogWriter 异步落盘
+    * tools JSONL。所有产出 ToolExecResult 的路径（executeToolInner 内外）
+    * 统一走本 helper，保证 §2.1 九类失败路径与成功路径都有一行结构化记录；
+    * 原 nebflow.log 文本行零改动。kind 来自 agentRegistry（best-effort，
+    * 非注册上下文为 null）；requestId 经 ToolContext 透传（非 LLM 轮为 null）。 */
+  private def logToolStructured(
+      call: ToolCall,
+      ctx: ToolContext,
+      result: ToolExecResult,
+      elapsedMs: Long = 0L
+  ): IO[Unit] =
+    ctx.sharedResources.traverse(_.agentRegistry.get).flatMap { registryOpt =>
+      val kind = for
+        reg <- registryOpt
+        sid <- ctx.sessionId
+        rec <- reg.get(sid)
+      yield rec.kind.toString
+      ToolsLogWriter.log(
+        tool = call.name,
+        agent = ctx.agentDef.map(_.name),
+        sessionId = ctx.sessionId,
+        kind = kind,
+        isError = result.isError,
+        elapsedMs = elapsedMs,
+        errorText = if result.isError then result.content else "",
+        inputSummary = nebflow.core.summarizeToolCall(call),
+        resultChars = result.content.length,
+        requestId = ctx.requestId
+      )
+    }
+
   protected def executeTool(call: ToolCall, ctx: ToolContext): IO[ToolExecResult] =
     // WebSearch P0: defense in depth — the turn loop normally handles kimi's
     // native $web_search before the permission gate; if one ever reaches here
@@ -1328,7 +1375,9 @@ private[agent] trait AgentCore:
     // "parameter is required" error — report the parse failure itself instead,
     // with the raw arguments, so the LLM can correct its JSON and retry.
     nebflow.llm.providers.ToolInputJson.malformedDetails(call.input, call.name) match
-      case Some(msg) => IO.pure(ToolExecResult(msg, isError = true))
+      case Some(msg) =>
+        val r = ToolExecResult(msg, isError = true)
+        logToolStructured(call, ctx, r).as(r)
       case None =>
         executeToolInner(call, ctx)
 
@@ -1414,12 +1463,20 @@ private[agent] trait AgentCore:
             }
             .flatTap { result =>
               val elapsed = (System.nanoTime() - start) / 1_000_000
-              if result.isError then
-                logger.warn(s"$logCtx Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
-              else logger.info(s"$logCtx Tool $summary OK (${elapsed}ms)")
+              // 原 nebflow.log 文本行零改动（100 字截断维持现状）
+              val textLine =
+                if result.isError then
+                  logger.warn(s"$logCtx Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
+                else logger.info(s"$logCtx Tool $summary OK (${elapsed}ms)")
+              // 方案 B：结构化 JSONL（errorText 全量不截断）
+              textLine *> logToolStructured(call, ctx, result, elapsedMs = elapsed)
             }
         }
-      case None => IO.pure(ToolExecResult(s"No such tool available: ${call.name}", isError = true))
+      case None =>
+        // §2.1 收敛：此路径原先绕过 flatTap（无文本行、无结构化记录）——
+        // 现补结构化写入（文本行为保持零改动仍不新增）。
+        val r = ToolExecResult(s"No such tool available: ${call.name}", isError = true)
+        logToolStructured(call, ctx, r).as(r)
 
   /** WebSearch P0: Tier 2 routing for the WebSearch tool call. When the
     * session's provider has native search (zhipu/kimi/qwen — resolved from
