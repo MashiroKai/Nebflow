@@ -1071,6 +1071,11 @@
 /* ---------- Memory Button (header) ---------- */
 
 /* ---------- Nebflow Toast Notification ---------- */
+/* 2026-09-03 glass redesign (author ruling): material aligned to the
+   .glass-control standard (sapphire.css tokens); type semantics expressed
+   ONLY by the leading glyph icon color — the 3px left accent strip is gone.
+   Box-shadow uses --glass-control-* tokens (dark theme adapts via the
+   token's own media definitions), so no dark-mode override block is needed. */
 .nebflow-toast {
   position: fixed;
   bottom: 20px;
@@ -1084,23 +1089,32 @@
   opacity: 0;
   transform: translateY(10px);
   transition: opacity 0.25s, transform 0.25s;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow),
+    0 8px 24px var(--glass-control-glow);
   color: var(--color-text);
 }
 .nebflow-toast.show {
   opacity: 1;
   transform: translateY(0);
 }
-.nebflow-toast-error { border-left: 3px solid #f44336; }
-.nebflow-toast-info { border-left: 3px solid var(--color-primary); }
-.nebflow-toast-success { border-left: 3px solid var(--color-success); }
+/* Type semantics: leading glyph, colored per type (no color strip). */
+.nebflow-toast-icon {
+  margin-right: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+.nebflow-toast-error .nebflow-toast-icon { color: #f44336; }
+.nebflow-toast-info .nebflow-toast-icon { color: var(--color-primary); }
+.nebflow-toast-success .nebflow-toast-icon { color: var(--color-success); }
 .nebflow-toast-link {
   display: inline-block;
   margin-left: 10px;
@@ -1109,14 +1123,6 @@
   color: var(--color-text);
   text-decoration: none;
   cursor: pointer;
-}
-@media (prefers-color-scheme: dark) {
-  .nebflow-toast {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
 }
 
 
