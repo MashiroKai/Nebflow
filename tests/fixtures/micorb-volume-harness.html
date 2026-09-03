@@ -1,0 +1,86 @@
+<!doctype html>
+<!-- micorb-volume-harness.html — test page for tests/micorb-volume.spec.mjs
+     (micOrb listening-state voice-responsive deformation, v8.4.0).
+
+     Single-orb mode only: the exact #voice-btn DOM from index.html, wired to
+     the REAL production modules (/js/micOrb.js). The orb-owned mic tap is
+     disabled via window.__MICORB_TAP_DISABLE__ so headless runs stay
+     deterministic (levels are injected through renderer.setVoiceLevel; the
+     tap's own graceful degradation is asserted separately with the flag
+     cleared, see the spec's T6).
+
+     Exposes window.__volTest helpers: state driving, level injection,
+     smoothed-level readback (the uVol uniform value), phaseTime sampling.
+     Served by the in-spec static server at /volharness. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>micorb volume harness</title>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { background: #0B0E14; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+  #voice-btn { width: 64px; height: 64px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+  .orb-canvas { width: 64px; height: 64px; display: block; }
+  .mic-orb-wrap { position: fixed; left: 40px; top: 40px; }
+</style>
+</head>
+<body>
+<script>
+  /* Disable the orb-owned mic tap BEFORE the module loads — headless runs
+     inject levels directly; no getUserMedia in the deterministic tests. */
+  window.__MICORB_TAP_DISABLE__ = true;
+</script>
+<script type="module">
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="mic-orb-wrap" id="mic-orb-wrap">
+      <button class="micbubble" id="voice-btn" type="button" title="Voice input" aria-label="Voice input">
+        <canvas class="orb-canvas" id="mic-canvas" aria-hidden="true"></canvas>
+        <div class="css-orb orb" id="mic-css-orb" role="img" aria-label="Mic state"></div>
+      </button>
+    </div>
+    <div id="input-bar"></div>`);
+
+  const micOrb = await import('/js/micOrb.js');
+  const state = await import('/js/state.js');
+  /* Production has ws.js flipping state.connected on socket open; the bare
+     harness has no ws, and state.connected defaults false — micOrb's 1s
+     pollDerived would then flip the orb to offline mid-test. Simulate the
+     connected reality the tests assert against. */
+  state.default.connected = true;
+  micOrb.initMicOrb();
+
+  const renderer = () => micOrb.getMicOrb().renderer;
+
+  window.__volTest = {
+    ready: true,
+    micOrb,
+    /** Drive a state through MicOrb.apply (production path). */
+    apply: (k) => micOrb.getMicOrb().apply(k),
+    /** Inject a raw voice level [0,1] (the test seam over the mic sources). */
+    inject: (v) => renderer().setVoiceLevel(v),
+    /** Production alias must land on the same raw level. */
+    injectAlias: (v) => renderer().setVolume(v),
+    /** Full voice-pipeline snapshot (raw = injected, level = uVol uniform). */
+    snapVoice: () => {
+      const r = renderer();
+      return {
+        state: micOrb.getMicOrb().state,
+        raw: r.rawVoice,
+        level: r.voiceLevel,
+        driven: r.volDriven,
+        hover: r.params.hover,
+        webglOk: micOrb.getMicOrb().webglOk,
+        tapState: micOrb.getMicOrb().voiceTap.state,
+        pulse: r.transitionPulse,
+        ts: r.target.timeScale,
+      };
+    },
+    /** phaseTime readback (F1 continuity sampling). */
+    phaseTime: () => renderer().phaseTime,
+    /** voiceWaveAt re-export for the waveform-shape assertions. */
+    voiceWaveAt: micOrb.voiceWaveAt,
+  };
+  window.__harnessReady = true;
+</script>
+</body>
+</html>
