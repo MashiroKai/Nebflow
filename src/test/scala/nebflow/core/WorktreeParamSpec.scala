@@ -94,6 +94,11 @@ class WorktreeParamSpec extends FunSuite:
     checkActionable(r.swap.toOption.get)
   }
 
+  test("normalize: 'v2..fix' (double dot inside one segment) accepted — segment-level '..' check") {
+    // QC P3：'..' 按段级拒绝（../x 拒），合法名 v2..fix 放行（旧公式经 os-lib 本就接受）
+    assertEquals(PathUtil.normalizeWorktree("v2..fix"), Right("v2..fix"))
+  }
+
   test("reject: absolute windows drive 'C:\\\\x'") {
     val r = PathUtil.normalizeWorktree("C:\\x")
     assert(r.isLeft)
@@ -133,6 +138,20 @@ class WorktreeParamSpec extends FunSuite:
   test("resolveWorktreeDir: neither position → None") {
     val w = ws("none")
     assertEquals(PathUtil.resolveWorktreeDir(w, "wt-d"), None)
+  }
+
+  test("resolveWorktreeDir: reserved top-level system dir 'skills' never treated as worktree fallback (QC P1)") {
+    val w = ws("reserved")
+    os.makeDir.all(w / ".nebflow" / "skills")
+    assertEquals(PathUtil.resolveWorktreeDir(w, "skills"), None)
+    assertEquals(PathUtil.resolveWorktreeDir(w, "commands"), None)
+    assertEquals(PathUtil.resolveWorktreeDir(w, "worktrees"), None)
+  }
+
+  test("resolveWorktreeDir: authoritative worktrees/<reserved-name> still resolves (guard is fallback-only)") {
+    val w = ws("reserved-auth")
+    os.makeDir.all(w / ".nebflow" / "worktrees" / "skills")
+    assertEquals(PathUtil.resolveWorktreeDir(w, "skills"), Some(w / ".nebflow" / "worktrees" / "skills"))
   }
 
   test("resolveWorktreeDir: authoritative wins over top-level symlink alias (production cleanup shape)") {
