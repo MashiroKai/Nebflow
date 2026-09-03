@@ -134,19 +134,30 @@ object PathUtil:
         else if stripped.startsWith("worktrees/") then stripped.stripPrefix("worktrees/")
         else if stripped.startsWith(".nebflow/") then stripped.stripPrefix(".nebflow/")
         else stripped
-      if bare.contains("..") || bare.contains("/") || bare.isEmpty || bare == "." then
+      // ".." 按段级检查（QC P3 统一，与 GlobTool 同语义）：拒绝 "../x" 段，放行
+      // "v2..fix" 这类含连续点的合法目录名（旧公式经 os-lib 本就接受后者）。
+      if bare.split('/').contains("..") || bare.contains("/") || bare.isEmpty || bare == "." then
         Left(WorktreeFormatError)
       else Right(bare)
 
+  /** `.nebflow/` 顶层保留名（QC P1）：worktrees/ 容器 + 项目级系统目录
+    * （skills/ commands/，见 SkillService.projectSkillPaths/projectCommandPaths）。
+    * 顶层 fallback 永不把这些名字解析为 worktree——否则 `worktree: "skills"` 会
+    * 因 `.nebflow/skills` 实存而通过校验、节点在系统目录里运行，且 NodeList 会
+    * 主动把它们列为候选（参照系污染）。权威位置 worktrees/<名> 不受此限。 */
+  val ReservedTopLevelNames: Set[String] = Set("worktrees", "skills", "commands")
+
   /** worktree 目录双位置实存解析：worktrees/<名>（权威位置）优先，
     * .nebflow/<名>（顶层存量——现网节点全在顶层；今日生产顶层同名条目为指向
-    * 权威位置的软链，两分支产出同物理目录，回归零影响）fallback。两处均不
-    * 存在 → None。NodeTools 校验与 NodeEngine 运行时 cwd 引同一份（参照系
-    * 唯一）。os.exists 沿软链（follow-links）语义与现状一致。
+    * 权威位置的软链，两分支产出同物理目录，回归零影响）fallback，但保留名
+    * （ReservedTopLevelNames）不参与 fallback。两处均不存在 → None。NodeTools
+    * 校验与 NodeEngine 运行时 cwd 引同一份（参照系唯一）。os.exists 沿软链
+    * （follow-links）语义与现状一致。
     */
   def resolveWorktreeDir(workspace: os.Path, bareName: String): Option[os.Path] =
     val authoritative = workspace / ".nebflow" / "worktrees" / bareName
     if os.exists(authoritative) then Some(authoritative)
+    else if ReservedTopLevelNames.contains(bareName) then None
     else
       val legacy = workspace / ".nebflow" / bareName
       if os.exists(legacy) then Some(legacy) else None
