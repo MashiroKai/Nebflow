@@ -67,6 +67,7 @@ lazy val root = (project in file("."))
       // Testing
       munit,
       munitCatsEffect,
+      catsEffectTestkit,
     ),
 
     // Compiler options

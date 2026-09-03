@@ -25,8 +25,10 @@ import nebflow.core.NebflowLogger
  *
  * The hub has no external state dependencies (two in-memory Refs). If it
  * crashes, the actor system restarts it; in-flight pending requests are lost
- * and the requesting agents fall back to their 5-minute permission timeout
- * (AskUser replyTo is dropped — bounded by the actor system restart).
+ * and the requesting agents keep waiting (R1, wait-timeout-fix: there is no
+ * permission timeout anymore — same exposure as AskUser's unbounded wait).
+ * The stuck turn remains user-cancellable via Interrupt, which is the
+ * guaranteed exit; the restarted hub serves FUTURE requests.
  */
 object InteractionHub:
   private val logger = NebflowLogger.forName("nebflow.agent.interaction")
@@ -115,8 +117,9 @@ object InteractionHub:
         case None =>
           // F4 (#433): the target root session is unreachable (deleted /
           // zombie / never had a client). Rendering into it would park the
-          // card in a graveyard no one watches — invisible = unanswerable =
-          // guaranteed 5-minute timeout denial. Fan the card out to ALL other
+          // card in a graveyard no one watches — invisible = unanswerable
+          // (and since R1, wait-timeout-fix, there is no timeout that would
+          // eventually deny it). Fan the card out to ALL other
           // registered roots instead, flagged `fallback: true` so the frontend
           // shows a global actionable toast rather than routing the card into
           // a session it cannot open. Answers still match by requestId, so a
@@ -234,8 +237,9 @@ object InteractionHub:
             if answerCompletes(p, ans) then (m - ans.requestId, complete(p, ans))
             else
               // #12: a malformed answer must NOT consume the card — eating it
-              // would strand the pending deferred on its 5-minute timeout with
-              // the card gone (user cannot re-answer what they cannot see).
+              // would strand the pending deferred forever with
+              // the card gone (user cannot re-answer what they cannot see;
+              // and since R1, wait-timeout-fix, no timeout would ever release it).
               (
                 m,
                 logMissing(ans, s"answer shape does not match kind=${p.kind} of requestId=${ans.requestId} — card RETAINED")

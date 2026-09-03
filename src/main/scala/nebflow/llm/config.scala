@@ -75,13 +75,31 @@ object ModelChainConfig:
 
 end ModelChainConfig
 
+/** One MCP server entry of the `mcpServers` map (mcp.json / nebflow.json).
+  *
+  * R3 (wait-timeout-fix, 2026-09-03 作者裁定②): `timeoutMs` — OPTIONAL
+  * per-server tool-call ceiling in milliseconds, applied to `tools/call` only
+  * (never to `initialize`/`tools/list`, which keep their fixed 30s
+  * infrastructure-probe timeout). Semantics:
+  *   - absent / null  → NO call timeout (default): the tool runs to
+  *     completion like any built-in slow tool (Bash/Read); a truly wedged
+  *     call is caught by the session-level backstops (no-progress ceiling /
+  *     TaskStuckWatcher), replacing the removed blanket 120s client hard top.
+  *   - set (e.g. 45000) → every tool of THIS server is capped at 45s; on
+  *     expiry the call fails with the same error semantics as before
+  *     (TimeoutException → ToolError "Error: timeout…" → next LLM turn).
+  * Field naming follows the existing `stuckThresholdMs` convention
+  * (milliseconds, camelCase). Decoder is derived — fully backward compatible
+  * (existing configs without the field decode unchanged).
+  */
 case class McpServerConfig(
   command: Option[String] = None,
   args: Option[List[String]] = None,
   env: Option[Map[String, String]] = None,
   url: Option[String] = None,
   headers: Option[Map[String, String]] = None,
-  enabled: Option[Boolean] = None
+  enabled: Option[Boolean] = None,
+  timeoutMs: Option[Long] = None
 )
 
 object McpServerConfig:
