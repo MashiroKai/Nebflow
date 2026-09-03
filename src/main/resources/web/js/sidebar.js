@@ -22,6 +22,11 @@ import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities
 import * as presets from './presets.js';
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
 
+// 2026-09-03 作者裁定：光球（micOrb）按预设驱动，设置页隐藏光球配置区。
+// 仅 UI 门控——orbSettingsUI/orbPresets/micOrb 代码与配置读取逻辑全部保留，
+// 用户本地已存自定义配置照常生效；翻回 true 即恢复配置区。
+const ORB_SETTINGS_VISIBLE = false;
+
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
 
@@ -754,10 +759,11 @@ export function renderSettings() {
       </div>
       <div class="cfg-hint" id="autostart-hint" style="display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'};margin-top:-4px">${escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported'))}</div>
     </div>
+    ${ORB_SETTINGS_VISIBLE ? `
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.appearance')}</div>
       ${renderAppearanceSection()}
-    </div>
+    </div>` : ''}
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.providers')}</div>
       <div id="provider-list">
@@ -1286,8 +1292,8 @@ function bindSettingsEvents(content, cfg) {
 
   // Appearance section (v8.3.0 micOrb palette presets) — element-level
   // bindings on fresh nodes; commits persist + dispatch CHANGE_EVENT so the
-  // live orb re-resolves its board.
-  bindAppearanceEvents(content);
+  // live orb re-resolves its board. Gated off by ORB_SETTINGS_VISIBLE.
+  if (ORB_SETTINGS_VISIBLE) bindAppearanceEvents(content);
 
   // Language selector
   document.getElementById('cfg-language')?.addEventListener('change', function() {
