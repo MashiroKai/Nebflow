@@ -147,9 +147,12 @@ class NodeEngine(
       case None => IO.unit
       case Some(node) =>
         node.status match
-          // blocked 同样幂等跳过（§1.1：重跑同样 blocked；唯一出口 = NodeEdit 重激活）
-          case NodeLifecycle.Running | NodeLifecycle.Completed | NodeLifecycle.Failed | NodeLifecycle.Cancelled | NodeLifecycle.Blocked =>
-            IO.unit // 已终态/运行中，幂等跳过
+          // blocked 同样幂等跳过（§1.1：重跑同样 blocked；唯一出口 = NodeEdit 重激活）；
+          // held 防御性跳过（20260903 暂停/人在回路设计 §2.2）：held 不应有任何启动
+          // 路径可达（自身完成已发生过、上游投递因 deliverOut 未跑而永不满足 barrier、
+          // deps 闸门因 held ∉ completed 而天然拦），闸门单点多挡一道=纵深防御风格。
+          case NodeLifecycle.Running | NodeLifecycle.Completed | NodeLifecycle.Failed | NodeLifecycle.Cancelled | NodeLifecycle.Blocked | NodeLifecycle.Held =>
+            IO.unit // 已终态/运行中/held，幂等跳过
           case _ =>
             // deps 闸门（deps 设计 §1.3，单权威）：全部 deps 上游 completed 才放行。
             // 单闸门自动保护全部启动入口（deliverOut/deliverOutTo/D1 补投递/重激活链/
@@ -354,36 +357,52 @@ class NodeEngine(
 
   private def completeNode(nodeId: String, resultText: String): IO[Unit] =
     // blocked 分流（设计 §1.3/§2.1）：最终输出以 BLOCKED 锚定 → blockedNode；
-    // 非 BLOCKED 开头 → completed 原路径无损降级（误报率≈0）。
+    // 非 BLOCKED 开头 → 继续分流。分流顺序（20260903 暂停/人在回路设计 §2.2，
+    // 语义优先级）：**blocked 优先于 hold**——节点申告「无法继续」是比「暂停等
+    // 放行」更强的信号，BLOCKED 输出即使在 hold 节点上也走 blockedNode +
+    // FeedbackRouter（重入），不得被 held 吞掉。
     BlockedReader.parse(resultText) match
       case Some(feedback) => blockedNode(nodeId, feedback)
       case None =>
-        for
-          now <- IO(System.currentTimeMillis())
-          s <- store.mutate { st =>
-            st.nodes.get(nodeId) match
-              case Some(fresh) =>
-                st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
-                  status = NodeLifecycle.Completed,
-                  result = Some(resultText),
-                  completedAt = Some(now),
-                  ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
-              case None => st
-          }
-          _ <- s.nodes.get(nodeId) match
-            case Some(completed) =>
-              emitEvent("nodeCompleted", nodeId, NodePayload.buildNodeJson(completed, now)) *>
-                logger.info(s"Node '${completed.name}' completed (result ${resultText.length} chars)") *>
-                deliverOut(completed, resultText) *>
-                // deps 反向结算（deps 设计 §1.3）：与 deliverOut 同一完成 fiber 顺序推进
-                //（现状 deliverOut 同款语义）。blocked 分流在 completeNode 入口已与
-                // completed 分叉，deps 结算只挂 completed 分支尾部——blocked ∉ completed
-                // 不触发；failed（failNode）/cancelled（cancelNode）不挂 settleDeps，
-                // 下游保持 pending 可见（裁定③差异语义，NodeDepsSpec T5 锁定）。
-                settleDeps(completed)
-            case None =>
-              logger.warn(s"Node '$nodeId' vanished before completion — result not persisted")
-        yield ()
+        // hold 分流（20260903 暂停/人在回路设计 §2.2）：hold=true 节点完成 →
+        // heldNode（结果落库 + 通知 Nebula，不投递不结算，等 NodeEdit release）。
+        // 分流判定沿 fresh 快照；heldNode 事务内二次守卫（纵深防御，同 blockedNode
+        // R2 纪律）。非 hold / 状态已变 → completed 原路径（语义零改动）。
+        store.getNode(nodeId).flatMap {
+          case Some(fresh) if fresh.status == NodeLifecycle.Running && fresh.hold =>
+            heldNode(nodeId, resultText)
+          case _ => completedNode(nodeId, resultText)
+        }
+
+  /** completed 原路径（20260903 hold 分流提取自 completeNode，语义零改动）：
+    * 落库 completed + TTL → emitEvent nodeCompleted → deliverOut → settleDeps。 */
+  private def completedNode(nodeId: String, resultText: String): IO[Unit] =
+    for
+      now <- IO(System.currentTimeMillis())
+      s <- store.mutate { st =>
+        st.nodes.get(nodeId) match
+          case Some(fresh) =>
+            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+              status = NodeLifecycle.Completed,
+              result = Some(resultText),
+              completedAt = Some(now),
+              ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs))))
+          case None => st
+      }
+      _ <- s.nodes.get(nodeId) match
+        case Some(completed) =>
+          emitEvent("nodeCompleted", nodeId, NodePayload.buildNodeJson(completed, now)) *>
+            logger.info(s"Node '${completed.name}' completed (result ${resultText.length} chars)") *>
+            deliverOut(completed, resultText) *>
+            // deps 反向结算（deps 设计 §1.3）：与 deliverOut 同一完成 fiber 顺序推进
+            //（现状 deliverOut 同款语义）。blocked 分流在 completeNode 入口已与
+            // completed 分叉，deps 结算只挂 completed 分支尾部——blocked ∉ completed
+            // 不触发；failed（failNode）/cancelled（cancelNode）不挂 settleDeps，
+            // 下游保持 pending 可见（裁定③差异语义，NodeDepsSpec T5 锁定）。
+            settleDeps(completed)
+        case None =>
+          logger.warn(s"Node '$nodeId' vanished before completion — result not persisted")
+    yield ()
 
   /** deps 完成信号 → 触发依赖者（deps 设计 §1.3）：反向扫描活动区，对每个
     * deps 含本次完成节点、且自身非 running/终态的依赖者调 startNode——闸门在
@@ -438,6 +457,128 @@ class NodeEngine(
         case None =>
           logger.warn(s"Node '$nodeId' vanished before blocked finalize — feedback not persisted")
     yield ()
+
+  /** held 挂起（20260903 暂停/人在回路设计 §2.2 四动作序列，与 blockedNode 同构）：
+    * ① 事务内现读 fresh（R2 纪律，拒写已消失/状态已变）→ status=Held /
+    *    result=全文 / completedAt=now / ttlExpireAt=None（永不过期 = blocked
+    *    「待办语义」先例；主图保留，整链归档判定天然排除——held ∉ Terminal）。
+    * ② emitEvent nodeUpdated（NodePayload 同构载荷，不加新 WS 事件类型）。
+    * ③ 不结算下游：deliverOut / settleDeps 都不调（与 blocked「传播停止」同款；
+    *    差异：blocked 是异常申告走 FeedbackRouter 重入，held 是主动闸门等
+    *    NodeEdit release 放行）。
+    * ④ deliverToNebula held 全文通知（设计 §6 决策②：全文对齐 out=Nebula 完成
+    *    投递先例，Nebula 需全文才能与用户讨论）+ FlowMapEventLog "held" 摘要。
+    *    通知为 fire-and-forget（不传 nodeId 不进 V8 记账）：held 通知是状态通报
+    *    而非结果投递本体——结果滞留节点上，release → deliverOut 才是投递（彼时
+    *    走 completed 路径的 V8 at-least-once 记账）；且 held ∉ {Completed, Failed}
+    *    重投扫描本就不覆盖，不记账可避免对 out=Nebula 后续放行的记账污染。 */
+  private def heldNode(nodeId: String, resultText: String): IO[Unit] =
+    for
+      now <- IO(System.currentTimeMillis())
+      s <- store.mutate { st =>
+        st.nodes.get(nodeId) match
+          case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+            st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
+              status = NodeLifecycle.Held,
+              result = Some(resultText),
+              completedAt = Some(now),
+              ttlExpireAt = None)))
+          case _ => st // 节点已消失 / 状态已变 → 拒写（R2 竞态纪律）
+      }
+      _ <- s.nodes.get(nodeId) match
+        case Some(hn) if hn.status == NodeLifecycle.Held =>
+          emitEvent("nodeUpdated", nodeId, NodePayload.buildNodeJson(hn, now)) *>
+            logger.info(s"Node '${hn.name}' held — awaiting release (result ${resultText.length} chars)") *>
+            FlowMapEventLog.append(workspace, projectName, nodeId, "held",
+              s"node completed but held (hold=true) — result ${resultText.length} chars, awaiting NodeEdit release") *>
+            deliverToNebula(s"[Node '${hn.name}' completed — held, awaiting release]\n$resultText", hn.name, NodeLifecycle.Held)
+        case Some(other) =>
+          logger.info(s"Node '$nodeId' state changed to '${other.status}' before held finalize — refused (fresh-read discipline)")
+        case None =>
+          logger.warn(s"Node '$nodeId' vanished before held finalize — result not persisted")
+    yield ()
+
+  /** release 放行（20260903 暂停/人在回路设计 §2.3）：held → completed 的唯一出口。
+    * 1. fresh-read 守卫：节点存在且 status==Held，否则报错。
+    * 2. 单事务 mutate（同一 FlowMapState 同时改两节点，原子）：
+    *    a. 本节点 Held→Completed，ttlExpireAt=now+TtlDisplayMs（completedAt 保留
+    *       held 时刻——那是工作完成的时刻；显示倒计时从放行起算）；
+    *    b. note 注入（note 非空时）：out 目标（NodeEdit 校验①保证建 hold 时为节点
+    *       id；held 期改接 out=Nebula 的边角 → note 无落点）且 status ∈ {wiring,
+    *       pending} → target.task += 用户补充段（目标不可能已运行：其 in 含本节点
+    *       而本节点从未投递 → barrier 永不归零；守卫仅纵深防御，若目标异常运行则
+    *       note 不注入并在返回文本说明）。
+    * 3. 事务后（既有完成路径复用）：emitUpdated 同步 → deliverOut(completed) →
+    *    settleDeps(completed) **fork 到独立 fiber**——startNode 同步等下游终态，
+    *    直接调用会把 NodeEdit 工具 fiber 卡到下游链条跑完（runDetached 教训同款）；
+    *    放行后下游启动前的全部闸门（目标自身 deps、barrier 复核）由 startNode
+    *    原样把关。
+    * 4. FlowMapEventLog "released" + note 摘要。 */
+  def releaseNode(nodeId: String, note: Option[String]): IO[Either[String, String]] =
+    val noteText = note.map(_.trim).filter(_.nonEmpty)
+    store.getNode(nodeId).flatMap {
+      case None =>
+        IO.pure(Left(s"Node '$nodeId' not found — release only applies to held nodes"))
+      case Some(n) if n.status != NodeLifecycle.Held =>
+        IO.pure(Left(s"Node '${n.name}' is not held (status=${n.status}) — release only applies to held nodes"))
+      case Some(node) =>
+        val now = System.currentTimeMillis()
+        store.mutate { st =>
+          st.nodes.get(nodeId) match
+            case Some(fresh) if fresh.status == NodeLifecycle.Held =>
+              val withReleased = st.nodes.updated(nodeId, fresh.copy(
+                status = NodeLifecycle.Completed,
+                ttlExpireAt = Some(now + NodeEngine.TtlDisplayMs)))
+              // note 注入（纵深防御守卫，与 fresh 同一事务原子）
+              val nodesFinal = noteText match
+                case Some(txt) =>
+                  fresh.out match
+                    case Some(t) if t != "Nebula" =>
+                      withReleased.get(t) match
+                        case Some(tn) if tn.status == NodeLifecycle.Wiring || tn.status == NodeLifecycle.Pending =>
+                          withReleased.updated(t, tn.copy(task = Some(tn.task.getOrElse("") + s"\n\n${NodeEngine.ReleaseNoteMarker}\n$txt")))
+                        case _ => withReleased // 目标缺失/异常运行 → 不注入（返回文本说明）
+                    case _ => withReleased // out=Nebula/None → note 无节点落点
+                case None => withReleased
+              st.copy(nodes = nodesFinal)
+            case _ => st // 状态已变（并发 abandon/release）→ 拒写（下方状态复核捕获）
+        }.flatMap { s =>
+          s.nodes.get(nodeId) match
+            case Some(released) if released.status == NodeLifecycle.Completed =>
+              val noteDelivered = noteText match
+                case Some(_) =>
+                  released.out match
+                    case Some(t) if t != "Nebula" =>
+                      s.nodes.get(t).exists(tn => tn.task.exists(_.contains(NodeEngine.ReleaseNoteMarker)))
+                    case _ => false
+                case None => true
+              val noteSummary = noteText.map(t => s"; note → ${released.out.getOrElse("?")}: ${t.take(80)}").getOrElse("")
+              emitUpdated(released) *>
+                FlowMapEventLog.append(workspace, projectName, nodeId, "released",
+                  s"held node released → completed (display TTL restarted; completedAt kept at held moment)$noteSummary") *>
+                // 传播链 fork（设计 §2.3 第 3 步）：deliverOut → settleDeps 后台推进，
+                // 工具调用立即返回（阻塞教训见方法注释）。result 理论恒 Some（heldNode
+                // 落全文）；防御 None → 跳过投递仅结算 deps。
+                ((released.result match
+                  case Some(res) => deliverOut(released, res) *> settleDeps(released)
+                  case None => settleDeps(released)
+                ).handleErrorWith(e =>
+                  logger.error(s"[$projectName] release propagation for '${released.name}' failed: ${Option(e.getMessage).getOrElse(e.toString)}")
+                ).start.void) *>
+                IO.pure(Right(
+                  s"Node '${released.name}' released — held → completed (display TTL restarted from release)" +
+                    (noteText match
+                      case Some(_) if noteDelivered => "; user note injected into out target's task"
+                      case Some(_) => "; WARNING: user note NOT injected (out target missing or not in wiring/pending state)"
+                      case None => "")
+                ))
+            case Some(other) =>
+              IO.pure(Left(s"Node '${other.name}' changed state before release finalize (status=${other.status}) — concurrent edit?"))
+            case None =>
+              IO.pure(Left(s"Node '$nodeId' vanished before release finalize"))
+        }
+    }
+
 
   private def failNode(nodeId: String, err: String): IO[Unit] =
     for
@@ -627,6 +768,10 @@ class NodeEngine(
 object NodeEngine:
   /** 终态节点显示 TTL（24h——2026-09-02 作者裁定；测试档可缩短——ProjectActor 注入）。 */
   val TtlDisplayMs: Long = 24 * 60 * 60 * 1000L
+
+  /** release note 注入段标记（20260903 暂停/人在回路设计 §2.4）：releaseNode 把
+    * 用户补充以本标记为头追加进 out 目标 task，buildInput 天然携带进下游输入。 */
+  val ReleaseNoteMarker: String = "== 用户补充（放行时注入） =="
 
   /** 节点 id 前缀（sessionId = "node-<uuid>"）。 */
   val SessionPrefix = "node-"
