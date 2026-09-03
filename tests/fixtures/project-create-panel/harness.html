@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<!-- project-create-panel harness.html — ProjectCreate「未知路径 AskUser 式交互面板」
+     前端验证静态 harness。
+
+     前端实现 = 完整复用 AskUserQuestion 卡片（renderAskUser/showOptions），零新增
+     组件与 i18n key —— 本 harness 以真实渲染模块（chatView.js / state.js / chat.js，
+     无 stub 无打包）回放面板形态的 askUser 载荷，验证：
+       1. 面板卡片渲染（问题 + 候选路径按钮 + Other 自由输入兜底 + 取消键）；
+       2. 点选候选 → 确认 → askUserAnswer 帧载荷正确（answers=[路径], requestId）；
+       3. Other 自由输入 → 载荷正确；
+       4. 取消 → answers=['__cancelled__'] 哨兵。
+
+     spec（tests/project-create-panel.spec.mjs）以临时静态服务驱动本页
+     （随机高位端口，never the 8080 host）。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>project-create-panel harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'harness-session';
+
+    // Capture outgoing WS frames (askUserAnswer confirm/cancel path) — nothing
+    // reaches a real socket in this harness.
+    window.__captured = [];
+    state.ws = { readyState: 1, send: (data) => window.__captured.push(JSON.parse(data)) };
+
+    // AskUser card drafts live in localStorage keyed by session — keep runs hermetic.
+    try { localStorage.removeItem('nebflow_askuser_drafts'); } catch {}
+
+    const chat = await import(`${WEB}/chat.js`);
+
+    let _fixture = null;
+    async function loadFixture() {
+      if (!_fixture) _fixture = await (await fetch('./project-create-panel-fixture.json')).json();
+      return _fixture;
+    }
+
+    function freshChat() {
+      chatEl.innerHTML = '';
+      window.__captured.length = 0;
+    }
+
+    // Driver: render the ProjectCreate panel payload via the REAL live path
+    // (the onMessage 'askUser' handler calls renderAskUser exactly like this).
+    window.__panel = async () => {
+      freshChat();
+      const fx = await loadFixture();
+      chat.renderAskUser(fx.items, 'harness-session', 'Nebula', fx.requestId);
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return { requestId: fx.requestId };
+    };
+
+    window.__capturedFrames = () => window.__captured.slice();
+    window.__ready = true;
+  </script>
+</body>
+</html>
