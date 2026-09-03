@@ -14,7 +14,12 @@ import io.circe.syntax.*
 
 /** 节点生命周期（§2.1）：pending/running/completed/failed/cancelled + wiring 扩展。
   * blocked（20260902 反馈重入设计 §1.1）：turn 正常结束但节点声明无法继续——
-  * 停止传播 + 触发重入的终态；永不过期（ttlExpireAt=None，待办语义 §1.4）。 */
+  * 停止传播 + 触发重入的终态；永不过期（ttlExpireAt=None，待办语义 §1.4）。
+  * held（20260903 暂停/人在回路设计 §2.1，方案 B「节点 hold」）：节点完成后被
+  * 人工闸门扣住——结果持久保存 + 全文通知 Nebula，但不投递不结算，等待
+  * NodeEdit(release=true) 放行。**非终态**（Terminal 不加 held）——这是全部既有
+  * 机械零修改正确工作的关键：sweepExpired 不扫、整链归档判定天然排除、
+  * deps 闸门不触发、startNode 幂等跳过。 */
 object NodeLifecycle:
   val Wiring = "wiring"
   val Pending = "pending"
@@ -23,6 +28,7 @@ object NodeLifecycle:
   val Failed = "failed"
   val Cancelled = "cancelled"
   val Blocked = "blocked"
+  val Held = "held"
 
   val Terminal: Set[String] = Set(Completed, Failed, Cancelled, Blocked)
 
@@ -55,6 +61,10 @@ case class NodeDef(
     * 自身 task（自足）；failed/cancelled/blocked ∉ completed → 不触发，下游保持
     * pending/wiring 可见。旧 flow-map.json 无此键 → withDefaults 解码为 Nil（零迁移）。 */
   deps: List[String] = Nil,
+  /** 人工闸点（20260903 暂停/人在回路设计 §2.1，方案 B）：true = 完成时不投递
+    * 不结算，status→held（非终态）+ 结果全文通知 Nebula，等待 NodeEdit release。
+    * 旧 flow-map.json 无此键 → withDefaults 解码为 false（零迁移）= 旧行为。 */
+  hold: Boolean = false,
   deliveredTo: List[String] = Nil,
   /** V8 (2026-09-03): out=Nebula 投递记账——deliverToNebula 成功 offer 后落时间戳。
     * 与 deliveredTo（in barrier 判定，节点间沿边去重）完全分离，barrier 语义零改动；
@@ -119,7 +129,10 @@ object NodePayload:
       // 非 Nil 才带——NodeEventPushSpec 的 NodeListKeys 字段集断言零改动（无 deps
       // 的节点 payload 字段集不变），前端增量渲染对缺键天然兼容。
       val depsFields = if node.deps.nonEmpty then List("deps" -> node.deps.asJson) else Nil
-      Json.obj((baseFields ++ depsFields ++ feedbackFields)*)
+      // hold 条件序列化（20260903 暂停/人在回路设计 §2.1；与 deps 条件字段同构）：
+      // true 才带——无 hold 节点 payload 字段集不变（NodeEventPushSpec 零影响）。
+      val holdFields = if node.hold then List("hold" -> node.hold.asJson) else Nil
+      Json.obj((baseFields ++ depsFields ++ feedbackFields ++ holdFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(
