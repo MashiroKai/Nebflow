@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- toast-glass-harness.html — test page for tests/toast-glass.spec.mjs
+     (右下角通知 toast 毛玻璃重设计 — author ruling 2026-09-03 21:09).
+
+     Loads the REAL production stylesheet chain (base.css tokens + sapphire.css
+     glass-control vars + modal.css .nebflow-toast block) and the REAL
+     /js/modal.js module, then drives showToast() directly — the exact
+     production entry every toast consumer shares (projectTab / friendsApi /
+     contacts / sidebar / explorer / monacoEditor / canvas / chatSearch …).
+
+     The pageerror log feeds the spec's "no console error" assertion. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>toast glass harness</title>
+<!-- Real app stylesheets: base.css = theme tokens + body bg, sapphire.css =
+     glass-control material vars (loads last in production; same order here),
+     modal.css = the .nebflow-toast block under test. -->
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/modal.css">
+<link rel="stylesheet" href="/css/sapphire.css">
+<style>
+  html, body { margin: 0; padding: 0; }
+  /* Chat-like backdrop stand-in: the frosted toast needs content behind it
+     to be transparent-over-blur (frosted glass needs something to frost). */
+  .backdrop {
+    position: fixed; inset: 0; padding: 24px;
+    background: repeating-linear-gradient(45deg,
+      #6a8fd8 0 40px, #4a6ab0 40px 80px);
+  }
+  .backdrop .bubble {
+    max-width: 520px; padding: 10px 14px; border-radius: 14px;
+    font-size: 13px; line-height: 1.55; margin-bottom: 12px;
+    background: rgb(255 255 255 / 0.55); color: #1a1a1a;
+  }
+</style>
+</head>
+<body>
+<div class="backdrop">
+  <div class="bubble">毛玻璃后景验证：右下角 toast 需要有内容可透（半透明底 + backdrop blur）。</div>
+  <div class="bubble">第二行后景内容，用于堆叠场景下观察 frost 效果是否正常。</div>
+</div>
+<!-- Ready flag pre-seeded in a classic script: the spec's waitForFunction
+     predicate reads a boolean (never throws) while the module below is
+     still importing. -->
+<script>window.__toastTest = { ready: false, pageErrors: [] };</script>
+<script>
+  window.addEventListener('error', (e) => { window.__toastTest.pageErrors.push(String(e.message)); });
+</script>
+<script type="module">
+  const { showToast } = await import('/js/modal.js');
+  window.__toastTest.show = showToast;
+  window.__toastTest.ready = true;
+</script>
+</body>
+</html>
