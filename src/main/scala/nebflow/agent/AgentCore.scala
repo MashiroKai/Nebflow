@@ -22,11 +22,14 @@ private[agent] trait AgentCore:
 
   protected val MaxDepth = 5
 
-  /**
-   * Timeout for permission confirmation. Prevents indefinite session lockup
-   * when the user doesn't respond (popup missed, WS issue, away from keyboard).
-   */
-  private val PermissionTimeout = 5.minutes
+  // R1 (wait-timeout-fix, 2026-09-03 作者裁定): the 5-minute PermissionTimeout
+  // is REMOVED. A permission confirmation is a human-in-the-loop wait — the
+  // same class as AskUser — and must never auto-deny on a timer. The old
+  // "popup missed / WS issue / AFK" lockup concern is covered by visibility
+  // mechanisms instead: the hub card + F4 fallback broadcast (unreachable root
+  // → toast on every other registered root) + pending replay on session
+  // resubscribe. The guaranteed exit is the user's own cancel (Interrupt →
+  // registry back to Idle), not a timer. See AgentCore.awaitPermissionDecision.
 
   /**
    * Nebula-exclusive tools: only available when agentName == "Nebula".
@@ -1219,50 +1222,43 @@ private[agent] trait AgentCore:
             // P2: every agent (root or sub-agent) sends the request straight to
             // the InteractionHub — no depth/parentRef relay chain. The hub holds
             // the Deferred, renders the card in the Nebula window and routes the
-            // answer back by requestId. The 5-minute timeout stays on the
-            // requesting side (hub only routes).
+            // answer back by requestId. NO timeout on the requesting side
+            // (R1, wait-timeout-fix): the wait is indefinite, isomorphic to
+            // AskUser (actor ask timeout=None).
             val sourceAgent = toolCtx.agentDef.map(_.name).getOrElse("unknown")
             val sourceSession = state.sessionId.getOrElse("")
             val rootSessionId =
               Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
             for
+              // R2 (wait-timeout-fix): the turn is now parked on a
+              // human-in-the-loop wait — mark WaitingForUser so TaskStuckWatcher
+              // skips the session (previously stayed Processing → stuck false
+              // positives; permission waits were only accidentally shielded by
+              // the removed 5min timer being < the 10min stuck threshold).
+              // Paired un-mark below: decision landed → Processing.
+              _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser)
               _ <- sendPermissionRequest(toolCtx, state, permJson, deferred, sourceAgent, sourceSession, rootSessionId)
-              approvedOpt <- deferred.get
-                .map(Some(_))
-                .timeoutTo(PermissionTimeout, IO.pure(None))
+              // R1: wait indefinitely for the user's decision (no auto-deny).
+              approved <- AgentCore.awaitPermissionDecision(deferred)
               _ <- permissionDeferredRef.set(None)
-              result <- approvedOpt match
-                case Some(approved) =>
-                  if approved then executeTool(call, toolCtx)
-                  else
-                    // #12 劝停（用户 2026-08-20 批准）：第 ≥2 次用户拒绝时注入
-                    // system-reminder——对齐 retryableHint 模式，防 LLM 无限重试。
-                    // 超时不计数（用户未操作≠拒绝，超时消息自带 re-issue 指引）。
-                    permissionDenialsRef.modify { m =>
-                      val n = m.getOrElse(call.name, 0) + 1
-                      (m.updated(call.name, n), n)
-                    }.flatMap { n =>
-                      val r = ToolExecResult(AgentCore.denialMessage(call.name, n), isError = true)
-                      logToolStructured(call, toolCtx, r).as(r)
-                    }
-                case None =>
-                  // Timeout — dismiss the permission popup on the frontend
-                  // (the card is rendered at sessionId = rootSessionId).
-                  state
-                    .wsSend(
-                      Json.obj(
-                        "type" -> "permissionExpired".asJson,
-                        "sessionId" -> rootSessionId.asJson
-                      )
-                    )
-                    .handleErrorWith(_ => IO.unit) *>
-                    {
-                      val r = ToolExecResult(
-                        s"Permission timed out — no response within ${PermissionTimeout.toMinutes} min, auto-denied. Re-issue the command if needed.",
-                        isError = true
-                      )
-                      logToolStructured(call, toolCtx, r).as(r)
-                    }
+              // R2 closure: the decision landed — restore Processing with a
+              // fresh activity stamp so the watcher's idle window restarts here
+              // (paired with the WaitingForUser mark above).
+              _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Processing)
+              result <-
+                if approved then executeTool(call, toolCtx)
+                else
+                  // #12 劝停（用户 2026-08-20 批准）：第 ≥2 次用户拒绝时注入
+                  // system-reminder——对齐 retryableHint 模式，防 LLM 无限重试。
+                  // （R1 移除超时后不存在「超时不计数」路径——这里的每一次拒绝
+                  // 都是用户真实操作。）
+                  permissionDenialsRef.modify { m =>
+                    val n = m.getOrElse(call.name, 0) + 1
+                    (m.updated(call.name, n), n)
+                  }.flatMap { n =>
+                    val r = ToolExecResult(AgentCore.denialMessage(call.name, n), isError = true)
+                    logToolStructured(call, toolCtx, r).as(r)
+                  }
             yield result
             end for
           }
@@ -1903,11 +1899,22 @@ end AgentCore
 object AgentCore:
 
   /**
+   * R1 (wait-timeout-fix, 2026-09-03 作者裁定①): the permission-confirmation
+   * wait primitive — completes ONLY when the user answers, no timeout. This is
+   * the single seam for the "permission waits are unbounded" invariant;
+   * WaitTimeoutR1PermissionSpec pins it with a virtual clock (pending across
+   * 6min ≫ the removed 5min PermissionTimeout → still waiting; late answer
+   * honored). Caller: AgentCore.askUserPermission (the only permission wait).
+   */
+  def awaitPermissionDecision(deferred: cats.effect.Deferred[IO, Boolean]): IO[Boolean] =
+    deferred.get
+
+  /**
    * #12 劝停: error text for the n-th user denial of `toolName` within one
    * turn. First denial stays minimal; from the second on, inject a
    * system-reminder (retryableHint pattern) so the LLM changes approach
-   * instead of re-asking endlessly. Timeout does NOT count — a user who
-   * never saw the card is not a denial.
+   * instead of re-asking endlessly. Every denial is a real user action (the
+   * timer-driven auto-deny was removed by R1, wait-timeout-fix).
    */
   def denialMessage(toolName: String, n: Int): String =
     if n >= 2 then
