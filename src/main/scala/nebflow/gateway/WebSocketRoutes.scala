@@ -249,6 +249,31 @@ class WebSocketRoutes(
       case None => IO.unit
     }
 
+  /** 刷新存活 (2026-09-03): re-send a root session's still-pending AskUser
+    * cards to THIS connection. Called after the initial historyPage of a
+    * session (re)subscribe — see the getHistory hook. Resolves the root
+    * session id first (team/flow node sessions have no hub slots of their
+    * own; their asks live under the root), then snapshots via the hub and
+    * re-renders each card byte-identical to the first send plus
+    * `replayed: true` (the frontend dedup key). Failure-tolerant: a hub
+    * hiccup degrades to "no replay", the history restore chain still applies.
+    */
+  private def replayPendingAsks(sessionId: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
+    sharedResources.interactionHubRef.get.flatMap {
+      case None => IO.unit
+      case Some(hub) =>
+        resolveRootSessionId(sessionId).flatMap { rootSid =>
+          hub
+            .?[List[io.circe.Json]](reply =>
+              nebflow.agent.InteractionHubCommand.ListPendingAsks(rootSid, reply)
+            )
+            .flatMap(_.traverse_(frame => wsSend(frame)))
+            .handleErrorWith { e =>
+              logger.warn(s"Pending-ask replay failed for session $sessionId: ${e.getMessage}")
+            }
+        }
+    }
+
   /** P2: seed the root session's permission-policy bucket from persisted meta. */
   private def seedPermissionPolicy(sessionId: String, safetyMode: String): IO[Unit] =
     val mode = nebflow.core.SafetyMode.fromString(safetyMode)
@@ -2623,6 +2648,22 @@ class WebSocketRoutes(
                       )
                     )
                 })
+                // 刷新存活 (2026-09-03): after the initial history page of a
+                // session (re)subscribe — browser refresh, WS reconnect
+                // (frontend onReconnect re-fetches history) or session switch —
+                // re-send the hub's still-pending AskUser cards. Ordered AFTER
+                // historyPage on the same outbound queue so the replayed frames
+                // are never wiped by the initial-load DOM clear. Pagination
+                // fetches (beforeIndex set) prepend older messages and must not
+                // trigger a replay. The hub is the single authority: an ask
+                // answered before this point is not in the snapshot. The frames
+                // carry the live requestId — the frontend dedups against the
+                // history-restored (requestId-less) card and rebinds the answer
+                // channel (chat-input close + #12 precise routing).
+                .flatMap { _ =>
+                  if beforeIndex.isEmpty then replayPendingAsks(sessionId, wsSend)
+                  else IO.unit
+                }
                 .handleErrorWith { e =>
                   wsSend(
                     io.circe.Json
