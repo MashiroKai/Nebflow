@@ -152,7 +152,16 @@ case class ProjectDef(
   /** blocked 反馈档位（设计 §7.1）：auto（默认，自动重入）| escalate-only（blocked 直接升级 Nebula）。
     * 可选字段——存量 project.json 无此字段时反序列化默认 None → 挂载时取 auto。 */
   feedbackMode: Option[String] = None,
-  createdAt: Long
+  createdAt: Long,
+  /** 归档标记（迁移方案 v2 §6.1）：只有显式人工动作（面板归档按钮 → POST
+    * /api/projects/<name>/archive）会设置；无任何自动归档路径。归档后项目不出现在
+    * 项目列表（ProjectStore.list 源头过滤——面板 API 与 startupMount 同源跳过），
+    * workspace 文件零触碰（零删除零移动）。解码侧可选——存量 project.json 无此键 →
+    * withDefaults 解码 None（零迁移）；磁盘写入走 ProjectStore.archive 手术式原位
+    * 插键（非全量 re-encode），未归档项目文件不含此键（条件序列化，对齐 deps 风格）。
+    * 单程语义：恢复 = 手工删除 project.json 中 archived/archivedAt 两键（本批无 UI）。 */
+  archived: Option[Boolean] = None,
+  archivedAt: Option[Long] = None
 )
 
 object ProjectDef:
