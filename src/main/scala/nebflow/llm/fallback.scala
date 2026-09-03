@@ -93,6 +93,9 @@ object Fallback:
           case _ => FailoverReason.ProviderError
         // Context overflow affects all providers — abort immediately.
         // Other 400 errors are permanent for this provider but may not affect others.
+        // 审计 20260903 子项②：400 Format 类 = 请求形状 vs 契约问题，provider
+        // 本身健康（秒回 400 = 活着）——不参与驱逐（evict=false），只跳本次请求。
+        // 上下文溢出仍 Fatal（影响所有 provider，保持现行为）。
         val msgLower = Option(e.getMessage).map(_.toLowerCase).getOrElse("")
         val isContextOverflow = msgLower.contains("context_length_exceeded")
           || msgLower.contains("maximum context length")
@@ -101,7 +104,8 @@ object Fallback:
           case 400 if isContextOverflow => ErrorPermanence.Fatal
           case 401 | 403 | 404 | 400 => ErrorPermanence.Permanent
           case _ => ErrorPermanence.Transient
-        ErrorClassification(reason, permanence, Some(c), Some(error.getMessage))
+        val evict = !(c == 400 && !isContextOverflow)
+        ErrorClassification(reason, permanence, Some(c), Some(error.getMessage), evict)
       case e: AllProvidersDownTimeout =>
         ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(e.getMessage))
       case e: TurnBudgetExceeded =>
@@ -151,7 +155,14 @@ object Fallback:
         else if msg.contains("model not found") || msg.contains("404") then
           ErrorClassification(FailoverReason.ModelNotFound, ErrorPermanence.Permanent, message = Some(error.getMessage))
         else if msg.contains("invalid request") || msg.contains("bad request") || msg.contains("400") then
-          ErrorClassification(FailoverReason.Format, ErrorPermanence.Permanent, message = Some(error.getMessage))
+          // 同上（子项②）：stringly 400 形状同样不驱逐（与非流式 adapter 结构化
+          // HttpError 之外的残余路径保持一致语义）。
+          ErrorClassification(
+            FailoverReason.Format,
+            ErrorPermanence.Permanent,
+            message = Some(error.getMessage),
+            evict = false
+          )
         else if msg.contains("empty response") || msg.contains("no content") then
           ErrorClassification(FailoverReason.EmptyStream, ErrorPermanence.Permanent, message = Some(error.getMessage))
         else ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Transient, message = Some(error.getMessage))

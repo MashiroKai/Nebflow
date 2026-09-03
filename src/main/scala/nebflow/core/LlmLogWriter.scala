@@ -25,7 +25,7 @@ import scala.jdk.CollectionConverters.*
  * this directory and displays the logs in its dashboard.
  *
  * Retention: hard 3-day limit. Old JSONL files and orphaned objects are pruned
- * automatically (at most once per day, checked during log()).
+ * automatically (at most once per day, checked during logResponse()).
  */
 object LlmLogWriter:
 
@@ -45,6 +45,11 @@ object LlmLogWriter:
   private[nebflow] def setLogDirForTest(p: Path): Unit = logDirOverride.set(Some(p))
   private[nebflow] def resetLogDirForTest(): Unit = logDirOverride.set(None)
 
+  /** Artificial write delay (ms) — async non-blocking proof in specs
+    * (ToolsLogWriter 同款注入面). */
+  private val writeDelayMsForTest = new java.util.concurrent.atomic.AtomicLong(0)
+  private[nebflow] def setWriteDelayMsForTest(ms: Long): Unit = writeDelayMsForTest.set(ms)
+
   private def logDir: Path =
     logDirOverride.get().getOrElse(Paths.get(System.getProperty("user.home"), ".nebflow", "logs", "router"))
   private def objectsDir: Path = logDir.resolve("objects")
@@ -59,33 +64,28 @@ object LlmLogWriter:
   // ── Public API ──────────────────────────────────────────────────────
 
   /**
-   * Log one complete LLM call (request + response + SSE events).
-   * Called from AgentCore.pipeLlmCall after stream collection completes.
-   * `requestId` (方案 B 20260903): correlation id supplied by the caller so
-   * tool executions of the SAME turn carry the identical id in
-   * tools JSONL — when None, a fresh UUID is generated (legacy behavior).
+   * 审计 20260903 子项⑤——旧 `log()` 批量落盘（流收集完成后一次性写
+   * request/response/SSE）致时间戳失真：request→response 全部 <1.2s 而
+   * output_tokens 高达 2 万，首 token 延迟/chunk 间隙无法实测。现拆为三段：
+   *   - [[logRequest]]  流派发时落 request 行（summary+full+objects）；
+   *   - [[logStreamEvent]] 每 chunk 到达即实时落 sse 行（时间戳=到达时刻，
+   *     有界队列+后台 fiber 异步写——吞吐零回归，参照 ToolsLogWriter 模式）；
+   *   - [[logResponse]] 流结束落 response 行（附 request_id 与 request 行对齐）。
+   * `requestId`（方案 B 20260903）：调用方提供的关联 id，与 tools JSONL 对齐。
    * Never throws — errors are logged and swallowed.
    */
-  def log(
+
+  /** 流派发时落 request 行（在 sendStream 派发前调用）。 */
+  def logRequest(
     request: LlmRequest,
-    chunks: List[StreamChunk],
-    resultText: String,
-    resultToolCalls: List[ToolCall],
-    resultThinking: Option[String],
-    resultStopReason: Option[String],
-    resultUsage: Option[TokenUsage],
-    resultModel: Option[String],
+    requestId: String,
     isSubagent: Boolean,
-    isCompaction: Boolean,
-    requestId: Option[String] = None
+    isCompaction: Boolean
   ): IO[Unit] =
     if !enabled.get() then IO.unit
     else
       IO.blocking {
-        val reqId = requestId.getOrElse(java.util.UUID.randomUUID().toString)
-        val model = resultModel.getOrElse("unknown")
         val agent = request.agentId
-        val session = request.sessionId
         val messages = request.messages
         val tools = request.tools.getOrElse(Nil)
         val systemText = request.systemStable.getOrElse("") +
@@ -119,13 +119,13 @@ object LlmLogWriter:
         val summary = Json.obj(
           "timestamp" -> ts.asJson,
           "type" -> "request".asJson,
-          "request_id" -> reqId.asJson,
+          "request_id" -> requestId.asJson,
           "url" -> "".asJson,
           "api_type" -> "anthropic_messages".asJson,
-          "model" -> model.asJson,
+          "model" -> "unknown".asJson,
           "agent" -> agent.asJson,
           "channel" -> "web".asJson,
-          "session_id" -> session.asJson,
+          "session_id" -> request.sessionId.asJson,
           "metadata_agent_id" -> agent.asJson,
           "messages_count" -> messages.size.asJson,
           "system_length" -> systemText.length.asJson,
@@ -152,13 +152,23 @@ object LlmLogWriter:
 
         appendJsonl("summary", summary)
         appendJsonl("full", fullEntry)
+      }.handleErrorWith(e => logger.warn(s"LlmLogWriter.logRequest: ${e.getMessage}"))
 
-        // ── SSE events ──
-
-        val sseEvents = chunksToSseEvents(chunks, reqId, agent, model, keepDetail = true)
-        sseEvents.foreach(appendJsonl("sse", _))
-
-        // ── Response entry ──
+  /** 流结束时落 response 行（附 request_id；request/response 行序不变，
+    * viewer 按相邻序关联的既有契约保持）。 */
+  def logResponse(
+    requestId: String,
+    resultText: String,
+    resultToolCalls: List[ToolCall],
+    resultThinking: Option[String],
+    resultStopReason: Option[String],
+    resultUsage: Option[TokenUsage],
+    resultModel: Option[String]
+  ): IO[Unit] =
+    if !enabled.get() then IO.unit
+    else
+      IO.blocking {
+        val model = resultModel.getOrElse("unknown")
 
         val usageJson = resultUsage.map { u =>
           val base = Json.obj(
@@ -177,9 +187,9 @@ object LlmLogWriter:
           .obj(
             "timestamp" -> Instant.now().toString.asJson,
             "type" -> "response".asJson,
+            "request_id" -> requestId.asJson,
             "request_model" -> model.asJson,
             "resolved_model" -> model.asJson,
-            "agent" -> agent.asJson,
             "response_length" -> resultText.length.asJson,
             "is_streaming" -> true.asJson,
             "status_code" -> 200.asJson,
@@ -205,7 +215,185 @@ object LlmLogWriter:
 
         // ── Daily prune ──
         maybePrune()
-      }.handleErrorWith(e => logger.warn(s"LlmLogWriter: ${e.getMessage}"))
+      }.handleErrorWith(e => logger.warn(s"LlmLogWriter.logResponse: ${e.getMessage}"))
+
+  /**
+   * 单请求的流式 SSE 事件编码器（逐事件落盘的可变 block-index 状态持有者；
+   * 每个 LLM 流一个实例，fs2 顺序消费保证线程安全）。`encode` 纯转换：
+   * 时间戳在 [[logStreamEvent]] 的到达时刻捕获。
+   */
+  final class StreamEventEncoder(requestId: String, agent: String):
+    private var nextBlockIdx = 0
+    private var textIdx = -1
+    private var thinkingIdx = -1
+
+    def encode(chunk: StreamChunk, model: Option[String]): List[Json] =
+      def baseSse(eventType: String): Json =
+        Json.obj(
+          "timestamp" -> Instant.now().toString.asJson,
+          "type" -> "sse_event".asJson,
+          "request_id" -> requestId.asJson,
+          "request_model" -> model.asJson,
+          "resolved_model" -> model.asJson,
+          "agent" -> agent.asJson,
+          "sse_event_type" -> eventType.asJson
+        )
+
+      chunk match
+        case StreamChunk.Done(stopReason, usage, _, _) =>
+          val entry = baseSse("message_delta")
+            .deepMerge(
+              Json.obj(
+                "stop_reason" -> stopReason.getOrElse("end_turn").asJson
+              )
+            )
+          val withUsage = usage
+            .map { u =>
+              val baseU = Json.obj(
+                "input_tokens" -> u.inputTokens.asJson,
+                "output_tokens" -> u.outputTokens.asJson
+              )
+              val withCr = u.cacheReadTokens
+                .map(cr => baseU.deepMerge(Json.obj("cache_read_input_tokens" -> cr.asJson)))
+                .getOrElse(baseU)
+              val withCw = u.cacheWriteTokens
+                .map(cw => withCr.deepMerge(Json.obj("cache_creation_input_tokens" -> cw.asJson)))
+                .getOrElse(withCr)
+              entry.deepMerge(Json.obj("usage" -> withCw))
+            }
+            .getOrElse(entry)
+          List(withUsage)
+
+        case StreamChunk.ThinkingDelta(delta) =>
+          if thinkingIdx < 0 then
+            thinkingIdx = nextBlockIdx
+            nextBlockIdx += 1
+          List(
+            baseSse("content_block_delta").deepMerge(
+              Json.obj(
+                "sse_content_block_index" -> thinkingIdx.asJson,
+                "delta_reasoning" -> delta.asJson,
+                "delta_reasoning_length" -> delta.length.asJson
+              )
+            )
+          )
+
+        case StreamChunk.TextDelta(delta) =>
+          if textIdx < 0 then
+            textIdx = nextBlockIdx
+            nextBlockIdx += 1
+          List(
+            baseSse("content_block_delta").deepMerge(
+              Json.obj(
+                "sse_content_block_index" -> textIdx.asJson,
+                "delta_content" -> delta.asJson,
+                "delta_content_length" -> delta.length.asJson
+              )
+            )
+          )
+
+        case StreamChunk.ToolCallChunk(tc) =>
+          val idx = nextBlockIdx
+          nextBlockIdx += 1
+          // content_block_start: tool metadata
+          val start = baseSse("content_block_start").deepMerge(
+            Json.obj(
+              "sse_content_block_index" -> idx.asJson,
+              "sse_content_block" -> Json.obj(
+                "type" -> "tool_use".asJson,
+                "id" -> tc.id.asJson,
+                "name" -> tc.name.asJson
+              )
+            )
+          )
+          // content_block_delta: complete tool input JSON in one shot
+          val delta = baseSse("content_block_delta").deepMerge(
+            Json.obj(
+              "sse_content_block_index" -> idx.asJson,
+              "delta_tool_json" -> Json.fromJsonObject(tc.input).noSpaces.asJson
+            )
+          )
+          List(start, delta)
+
+        case _ => Nil // ToolCallStart, ToolArgDelta, ThinkingSignature: covered by ToolCallChunk / Done
+  end StreamEventEncoder
+
+  /** 每 chunk 到达即入队（ts 在 encode 时捕获=到达时刻）；后台 fiber 异步写盘，
+    * 吞吐零回归。model 仅 Done 帧可携带（meta.model），其余帧为 null。 */
+  def logStreamEvent(encoder: StreamEventEncoder, chunk: StreamChunk): IO[Unit] =
+    if !enabled.get() then IO.unit
+    else
+      IO.delay {
+        val model = chunk match
+          case StreamChunk.Done(_, _, meta, _) => meta.map(_.model)
+          case _ => None
+        encoder.encode(chunk, model)
+      }.flatMap(lines =>
+        if lines.isEmpty then IO.unit
+        else
+          ensureWorker *> lines.foldLeft(IO.unit) { (acc, json) =>
+            acc *> sseQueue.tryOffer(json).flatMap {
+              case true => IO.delay(pendingWrites.incrementAndGet()).void
+              case false =>
+                // Overflow: drop + WARN — telemetry loss never blocks the stream path.
+                IO.delay(logger.warnSync(
+                  s"LlmLogWriter: sse queue full ($QueueCapacity) — dropping streaming event line"
+                ))
+            }
+          }
+      )
+
+  // ── Async sse pipeline: bounded queue + background fiber (ToolsLogWriter 模式) ──
+
+  /** Bounded queue capacity — overflow drops + WARN, never blocks the stream. */
+  private val QueueCapacity = 8192
+
+  private val sseQueue: cats.effect.std.Queue[IO, Json] =
+    cats.effect.std.Queue.bounded[IO, Json](QueueCapacity).unsafeRunSync()(using
+      cats.effect.unsafe.implicits.global
+    )
+
+  private val sseWorkerStarted = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+  /** Flush barrier: while true the worker does not take from the queue. */
+  private val sseFlushing = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+  /** Offered-but-not-yet-written lines — lets flushSync wait out in-flight writes. */
+  private val pendingWrites = new java.util.concurrent.atomic.AtomicLong(0)
+
+  private def sseWorkerLoop: IO[Unit] =
+    (IO.blocking {
+      while sseFlushing.get() do Thread.sleep(5)
+    } *> sseQueue.take.flatMap(json => IO.blocking(appendJsonl("sse", json)))).foreverM
+
+  private def ensureWorker: IO[Unit] =
+    IO(sseWorkerStarted.compareAndSet(false, true)).ifM(sseWorkerLoop.start.void, IO.unit)
+
+  /** Synchronous drain — specs / shutdown hook make the async write observable:
+    * every line offered BEFORE flushSync started is on disk when it returns. */
+  private[nebflow] def flushSync(): Unit =
+    sseFlushing.set(true)
+    try
+      var more = true
+      while more do
+        sseQueue.tryTake.unsafeRunSync()(using cats.effect.unsafe.implicits.global) match
+          case Some(json) => appendJsonl("sse", json)
+          case None => more = false
+      // Wait out any in-flight worker write (same lock appendJsonl holds).
+      writeLock.synchronized(())
+      var waits = 0
+      while pendingWrites.get() > 0 && waits < 2000 do
+        Thread.sleep(5)
+        waits += 1
+    finally sseFlushing.set(false)
+
+  // JVM shutdown: best-effort flush of whatever is still queued.
+  locally {
+    Runtime.getRuntime.addShutdownHook(new Thread(
+      () => { try flushSync() catch case _: Throwable => () },
+      "llm-sse-log-flush"
+    ))
+  }
 
   // ── Content-Addressed Object Store ──────────────────────────────────
 
@@ -260,15 +448,24 @@ object LlmLogWriter:
       }.handleErrorWith(e => logger.warn(s"LlmLogWriter.logIntake: ${e.getMessage}"))
 
   private def appendJsonl(suffix: String, json: Json): Unit = writeLock.synchronized {
-    val date = Instant.now().toString.take(10) // yyyy-MM-dd
-    val path = logDir.resolve(s"${date}_$suffix.jsonl")
-    Files.createDirectories(logDir)
-    Files.write(
-      path,
-      (json.noSpaces + "\n").getBytes("UTF-8"),
-      StandardOpenOption.CREATE,
-      StandardOpenOption.APPEND
-    )
+    try
+      if writeDelayMsForTest.get() > 0 then Thread.sleep(writeDelayMsForTest.get())
+      val date = Instant.now().toString.take(10) // yyyy-MM-dd
+      val path = logDir.resolve(s"${date}_$suffix.jsonl")
+      Files.createDirectories(logDir)
+      Files.write(
+        path,
+        (json.noSpaces + "\n").getBytes("UTF-8"),
+        StandardOpenOption.CREATE,
+        StandardOpenOption.APPEND
+      )
+    catch case e: Exception => logger.warnSync(s"LlmLogWriter.appendJsonl: ${e.getMessage}")
+    finally
+      // 对齐 ToolsLogWriter：队列路径的每行在落盘（或失败）后清账——
+      // flushSync 以此判断「已出队但未写完」的在飞行是否清零。同步直写路径
+      // （logRequest/logResponse）从未 increment，此处置为负无害（flushSync
+      // 只判 >0）。
+      pendingWrites.decrementAndGet()
   }
 
   // ── Conversion: Nebflow types → Anthropic-style JSON ────────────────
@@ -350,120 +547,6 @@ object LlmLogWriter:
       "usage" -> usage.getOrElse(Json.obj())
     )
   end buildResponseJson
-
-  // ── SSE Event Generation ────────────────────────────────────────────
-
-  private def chunksToSseEvents(
-    chunks: List[StreamChunk],
-    requestId: String,
-    agent: String,
-    model: String,
-    keepDetail: Boolean
-  ): List[Json] =
-
-    val entries = List.newBuilder[Json]
-
-    // Track content block indices. Text and thinking don't need precise
-    // indices (viewer concatenates all delta_content / delta_reasoning).
-    // Tool calls need distinct indices for JSON fragment grouping.
-    var nextBlockIdx = 0
-    var textIdx = -1
-    var thinkingIdx = -1
-
-    def now: String = Instant.now().toString
-
-    def baseSse(eventType: String): Json =
-      Json.obj(
-        "timestamp" -> now.asJson,
-        "type" -> "sse_event".asJson,
-        "request_id" -> requestId.asJson,
-        "request_model" -> model.asJson,
-        "resolved_model" -> model.asJson,
-        "agent" -> agent.asJson,
-        "sse_event_type" -> eventType.asJson
-      )
-
-    for chunk <- chunks do
-      chunk match
-        case StreamChunk.Done(stopReason, usage, _, _) =>
-          val entry = baseSse("message_delta")
-            .deepMerge(
-              Json.obj(
-                "stop_reason" -> stopReason.getOrElse("end_turn").asJson
-              )
-            )
-          val withUsage = usage
-            .map { u =>
-              val baseU = Json.obj(
-                "input_tokens" -> u.inputTokens.asJson,
-                "output_tokens" -> u.outputTokens.asJson
-              )
-              val withCr = u.cacheReadTokens
-                .map(cr => baseU.deepMerge(Json.obj("cache_read_input_tokens" -> cr.asJson)))
-                .getOrElse(baseU)
-              val withCw = u.cacheWriteTokens
-                .map(cw => withCr.deepMerge(Json.obj("cache_creation_input_tokens" -> cw.asJson)))
-                .getOrElse(withCr)
-              entry.deepMerge(Json.obj("usage" -> withCw))
-            }
-            .getOrElse(entry)
-          entries += withUsage
-
-        case StreamChunk.ThinkingDelta(delta) =>
-          if thinkingIdx < 0 then
-            thinkingIdx = nextBlockIdx
-            nextBlockIdx += 1
-          entries += baseSse("content_block_delta")
-            .deepMerge(
-              Json.obj(
-                "sse_content_block_index" -> thinkingIdx.asJson,
-                "delta_reasoning" -> delta.asJson,
-                "delta_reasoning_length" -> delta.length.asJson
-              )
-            )
-
-        case StreamChunk.TextDelta(delta) =>
-          if textIdx < 0 then
-            textIdx = nextBlockIdx
-            nextBlockIdx += 1
-          entries += baseSse("content_block_delta")
-            .deepMerge(
-              Json.obj(
-                "sse_content_block_index" -> textIdx.asJson,
-                "delta_content" -> delta.asJson,
-                "delta_content_length" -> delta.length.asJson
-              )
-            )
-
-        case StreamChunk.ToolCallChunk(tc) =>
-          val idx = nextBlockIdx
-          nextBlockIdx += 1
-          // content_block_start: tool metadata
-          entries += baseSse("content_block_start")
-            .deepMerge(
-              Json.obj(
-                "sse_content_block_index" -> idx.asJson,
-                "sse_content_block" -> Json.obj(
-                  "type" -> "tool_use".asJson,
-                  "id" -> tc.id.asJson,
-                  "name" -> tc.name.asJson
-                )
-              )
-            )
-          // content_block_delta: complete tool input JSON in one shot
-          entries += baseSse("content_block_delta")
-            .deepMerge(
-              Json.obj(
-                "sse_content_block_index" -> idx.asJson,
-                "delta_tool_json" -> Json.fromJsonObject(tc.input).noSpaces.asJson
-              )
-            )
-
-        case _ => () // ToolCallStart, ToolArgDelta, ThinkingSignature: covered by ToolCallChunk / Done
-    end for
-
-    entries.result()
-  end chunksToSseEvents
 
   // ── Retention: hard 3-day limit ─────────────────────────────────────
 
