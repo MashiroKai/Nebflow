@@ -1357,5 +1357,10 @@ case class ConsumeResult(
   thinking: Option[String] = None,
   thinkingSignature: Option[String] = None,
   model: Option[String] = None,
-  contextWindow: Option[Int] = None
+  contextWindow: Option[Int] = None,
+  /** 当轮 LLM 请求 id（审计 20260903 方案 B）：pipeLlmCall 生成并同时传给
+    * LlmLogWriter（router JSONL 的 request_id）与本字段；工具执行轮经
+    * pipeToolExecutions 流入 ToolContext.requestId，实现工具日志与 router
+    * 日志精确对齐。Retry 重跑同一 cr 时 id 不变（同一 LLM 响应）。 */
+  requestId: Option[String] = None
 )
