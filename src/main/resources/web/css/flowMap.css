@@ -616,7 +616,12 @@
 .fm-detail[hidden] { display: none; }
 .fm-detail.open { opacity: 1; transform: translateX(0); pointer-events: auto; }
 .fm-detail.closing { transition-duration: 0.16s; transition-timing-function: ease; }
-/* 面板同开 → 详情左靠（380 + 8 + 16 = 404），矩形零重叠（§5.8b）*/
+/* 面板同开 → 详情左靠（380 + 8 + 16 = 404），矩形零重叠（§5.8b）。
+   已知边界（qa 终局实测）：projects 就地视图的视图体是 ~470px 定宽分栏，
+   dock-left 404px 会把详情悬出视图体、与相邻面板重叠——§5.8b 的「宽视口并排」
+   仅在 legacy 全宽 Flow Map 标签页可达；就地视图依赖 z 70 浮前保证可点。
+   视图宽口径的容器查询回退已试过（container-type on .flowmap-view-body），
+   因其改变 flex 收缩语义、扰动 375 窄视口几何而回退，待作者拍板后再上。 */
 .fm-detail.dock-left { right: 404px; }
 /* 窄视口放不下并排（<800px）→ 退回同位，z 70 浮前保证详情完整可见 */
 @media (max-width: 799px) {
