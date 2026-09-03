@@ -49,7 +49,7 @@ import {
   showDeleteFolderModal,
   showAgentModal, hideAgentModal, initModals
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
 import { renderTaskList, sessionShowsTeamTasks } from './taskList.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
@@ -1237,6 +1237,33 @@ onMessage('askUser', (msg, view) => {
   if (sid && state.sessionBusyTimeouts[sid]) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
+  }
+  // 刷新存活 (2026-09-03): replayed frames — the hub snapshot re-sent by the
+  // backend right after the initial historyPage of a session (re)subscribe
+  // (browser refresh, WS reconnect, session switch). This is state
+  // re-delivery of a card the backend still considers pending, NOT a new ask:
+  //  - the history-restored card carries no data-request-id (UiMessage.AskUser
+  //    persists only {type, items}), so the chat-input close frame
+  //    (askUserAnswered{requestId}) and #12 precise answer routing cannot find
+  //    it — rebind by re-rendering with the live requestId;
+  //  - a duplicate replay would stack cards — remove THIS ask's unanswered
+  //    cards first (answered/locked cards and other pending asks stay).
+  // Answered-before-replay cannot race: the hub snapshot only lists slots
+  // still pending, so an answered ask is never replayed.
+  if (msg.replayed) {
+    if (view) {
+      view.dom.chat.querySelectorAll('.row.ai .option-box').forEach(box => {
+        const rid = box.dataset.requestId || '';
+        const answered = !!box.querySelector('.option-answer');
+        if (!answered && (!rid || rid === msg.requestId)) box.closest('.row.ai').remove();
+      });
+      const rdata = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId);
+      if (rdata) saveAskMsgDedup(rdata, msg.sessionId, msg.requestId);
+    } else if (sid) {
+      // Non-active session: persist (deduped) so it can be restored on session switch
+      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId }, sid, msg.requestId);
+    }
+    return;
   }
   if (view) {
     // Defensive: finalize any in-flight AI bubble before rendering the question.
