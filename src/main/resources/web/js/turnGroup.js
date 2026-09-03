@@ -233,17 +233,20 @@ export function collapseTurn(view, meta = {}) {
   const chat = view.dom.chat;
   const scope = turnScope(chat);
   const finalRow = findFinalRow(scope);
-  let built = null;
+  const builtGroups = [];
   if (hasAgentWork(scope)) { // lone injection / no agent work → nothing to collapse
-    for (const run of collapsibleRuns(scope)) {
-      built = buildGroup(chat, run, finalRow, meta) || built; // E5/E6 runs → null
+    for (const run of collapsibleRuns(scope)) { // E5/E6 runs → buildGroup null
+      const built = buildGroup(chat, run, finalRow, meta);
+      if (built) builtGroups.push(built);
     }
   }
-  if (built) {
+  for (const built of builtGroups) {
     fillSummary(built, meta);
     built.group.dataset.turnState = 'done';
     built.steps.style.display = 'none';
     built.summary.setAttribute('aria-expanded', 'false');
+  }
+  if (builtGroups.length) {
     // keep the viewport pinned to the bottom when it was pinned (spec §4.2)
     if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80) {
       chat.scrollTop = chat.scrollHeight;
@@ -251,7 +254,7 @@ export function collapseTurn(view, meta = {}) {
   }
   markClosed(chat); // #403: LLM ended — the turn is closed even when there
                     // was nothing to group (E5/E6); later arrivals are a new turn.
-  return built ? built.group : null;
+  return builtGroups.length ? builtGroups[builtGroups.length - 1].group : null;
 }
 
 /**
@@ -262,19 +265,20 @@ export function failTurn(view) {
   const chat = view.dom.chat;
   const scope = turnScope(chat);
   const finalRow = findFinalRow(scope);
-  let built = null;
+  const builtGroups = [];
   if (hasAgentWork(scope)) {
     for (const run of collapsibleRuns(scope)) {
       // A5: failed groups carry NO summary element (not merely hidden).
-      built = buildGroup(chat, run, finalRow, {}, false) || built;
+      const built = buildGroup(chat, run, finalRow, {}, false);
+      if (built) builtGroups.push(built);
     }
   }
-  if (built) {
+  for (const built of builtGroups) {
     built.group.dataset.turnState = 'failed';
     built.group.classList.add('turn-failed');
   }
   markClosed(chat); // #403: terminal reached — later arrivals are a new turn
-  return built ? built.group : null;
+  return builtGroups.length ? builtGroups[builtGroups.length - 1].group : null;
 }
 
 /** E10: message-search hit inside a collapsed group — expand it first so the
