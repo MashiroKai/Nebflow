@@ -33,12 +33,18 @@ object CompactService:
    * stop its current task and produce a summary.
    * Different agent roles need different summary focus areas.
    */
-  def buildCompactReminder(depth: Int = 0, isLead: Boolean = false): Message =
-    val profile = CompactionProfile.fromDepth(depth, isLead)
+  def buildCompactReminder(
+    depth: Int = 0,
+    isLead: Boolean = false,
+    sessionId: Option[String] = None
+  ): Message =
+    val profile = CompactionProfile.fromDepth(depth, isLead, sessionId)
     val prompt = profile match
+      case CompactionProfile.ProjectNode => NodeCompactReminder
+      case CompactionProfile.Dispatcher => DispatcherCompactReminder
       case CompactionProfile.Worker => WorkerCompactReminder
       case CompactionProfile.Manager => ManagerCompactReminder
-      case _ => RootCompactReminder
+      case _ => NebulaCompactReminder // Root (also catches Legacy)
     Message(MessageRole.User, Left(prompt))
 
   // ------------------------------------------------------------------
@@ -91,42 +97,54 @@ object CompactService:
       |</system-reminder>""".stripMargin
 
   /**
-   * Root agent (Nebula) — the orchestrator.
-   *  Focus: user intent, task routing, flow results, planning state.
+   * Nebula (Root) — the long-lived global orchestrator. Focus: a GLOBAL STATUS
+   * LEDGER — every project/task line, in-flight dispatches, verbatim facts and
+   * rulings. Process detail of finished sub-tasks is discarded aggressively.
+   * 2026-09-03 (per-level compaction): replaces the generic coding-assistant
+   * template; durable user facts are extracted separately by NebulaMemoryHook
+   * before compaction, so the summary must NOT duplicate them.
    */
-  private val RootCompactReminder = CompactPreamble +
-    """<summary>
-      |1. Primary Request and Intent:
-      |   [Detailed description of all the user's explicit requests and intents]
+  private val NebulaCompactReminder = CompactPreamble +
+    """You are NEBULA — the global orchestrator. Your session is long-lived and
+      |spans every project, team and task line. After compaction you resume
+      |steering ALL of them from this summary alone (your durable user facts are
+      |extracted separately into memory before compaction — do not duplicate
+      |them here).
       |
-      |2. Key Technical Concepts:
-      |   - [Concept 1]
-      |   - [Concept 2]
+      |Your summary must read like a GLOBAL STATUS LEDGER, not a coding log.
+      |Discard aggressively: completed sub-task process details, long tool
+      |outputs, and exploratory back-and-forth whose conclusion is already
+      |captured below. Keep the conclusion, drop the journey.
       |
-      |3. Files and Code Sections:
-      |   Each file with its path in backticks, line ranges, and what was found/changed.
-      |   - `path/to/file` (line 42-89): description
-      |     ```
-      |     key code snippet
-      |     ```
+      |<summary>
+      |1. Global Mission Board:
+      |   For EACH active project/task line (one bullet per line):
+      |   - [Project/team name]: [status: in-flight / awaiting-review / done / failed]
+      |     → [what was last dispatched, to whom, and what is expected back]
       |
-      |4. Errors and Fixes:
-      |   - [Detailed description of error]: [How you fixed it]
+      |2. In-Flight Dispatches (waiting on results):
+      |   - [Team/project/agent] ← [what was asked] → [expected deliverable;
+      |     any threshold/retry/escalation rule attached to it]
       |
-      |5. Problem Solving:
-      |   [Description of solved problems and ongoing troubleshooting efforts]
+      |3. Facts, Decisions and Rulings (preserve VERBATIM):
+      |   - [User decisions, acceptance verdicts, corrections — quote exactly]
       |
-      |6. All User Messages:
-      |   - [Detailed non-tool-use user message]
+      |4. Pending / Blocked Items and their Gates:
+      |   - [Item]: [what gates it — e.g. waiting for X before dispatching Y;
+      |     retry policy; when to escalate to the user]
       |
-      |7. Pending Tasks:
-      |   - [Task 1]
+      |5. Completed This Session (one line each, no process detail):
+      |   - [Task line]: [final outcome + key artifact path if any]
       |
-      |8. Current Work:
-      |   [Precise description of what was being worked on immediately before this summary request.]
+      |6. User Preferences Stated This Session:
+      |   - [Working-style instructions, language, tool preferences]
       |
-      |9. Optional Next Step:
-      |   [The single immediate next action. Include direct quotes from the most recent conversation.]
+      |7. Current Work:
+      |   [What you were doing immediately before this summary request.]
+      |
+      |8. Next Step:
+      |   [The single immediate orchestration action. Include direct quotes from
+      |   the most recent user instruction if relevant.]
       |</summary>
       |""".stripMargin + CompactEpilogue
 
@@ -211,6 +229,99 @@ object CompactService:
       |5. Result to Report:
       |   [If the task is complete, what should you Mail back to the manager?]
       |</summary>
+      |""".stripMargin + CompactEpilogue
+
+  /**
+   * Project Dispatcher — single-session task dispatcher for one project.
+   * 2026-09-03 (per-level compaction): the Flow Map on disk (flow-map.json:
+   * nodes, wiring, statuses, results) is the AUTHORITATIVE state and survives
+   * this session. The summary does NOT replace the Flow Map — it only carries
+   * what THIS trigger changed and what remains to wrap up.
+   * 2026-08-31 (single-stage compaction): the dispatcher has no memory —
+   * this summary is the only in-session recovery carrier for the current
+   * trigger; project state lives in the Flow Map.
+   */
+  private val DispatcherCompactReminder = CompactPreamble +
+    """You are a PROJECT DISPATCHER — a single-session task dispatcher for one
+      |project. The Flow Map on disk (flow-map.json: nodes, wiring, statuses,
+      |results) is the AUTHORITATIVE state of this project — it survives after
+      |this session dies. This summary does NOT replace the Flow Map; it only
+      |needs to carry enough for you to finish the CURRENT trigger cleanly
+      |(finalize wiring, answer a re-entry injection, wrap up). Never copy the
+      |whole Flow Map into this summary — call NodeList fresh if you need it.
+      |
+      |IMPORTANT: you have NO persistent memory fallback after compaction — this
+      |summary is your ONLY in-session record. Preserve every trigger task,
+      |topology change, and unfinished gap in full.
+      |
+      |<summary>
+      |1. Trigger Task(s) (this session, one bullet per injection round):
+      |   - [The task text injected by Nebula/ProjectActor — quote verbatim;
+      |     for re-entry rounds, state which node triggered it and why]
+      |
+      |2. Topology Changes Made This Session (per NodeEdit executed):
+      |   - [nodeId/name]: agent=[agent], task=[yes/no], in=[upstream ids],
+      |     out=[downstream id or "Nebula"] → [created / rewired / cancelled]
+      |
+      |3. Nodes Started or Affected This Session:
+      |   - [nodeId/name]: [status at last NodeList — running/pending/blocked/cancelled]
+      |
+      |4. Unfinished Work (gaps the next trigger resumes from):
+      |   - [Node/edge planned but NOT created or wired, and why — name the exact gap]
+      |
+      |5. Worktree / Git Actions:
+      |   - [worktrees created or merged this session; git commands with outcomes]
+      |
+      |6. Wrap-up State:
+      |   [What remains before this trigger is fully settled — final NodeList
+      |   self-check done? any node still expected to start?]
+      |</summary>
+      |""".stripMargin + CompactEpilogue
+
+  /**
+   * Node Worker — a one-shot task node inside a project Flow Map.
+   * 2026-09-03 (per-level compaction): the node's FINAL OUTPUT TEXT becomes the
+   * node result (captured by NodeEngine, delivered downstream), so whatever
+   * downstream needs must survive this summary. No memory, no fallback — this
+   * summary is the ONLY record of the in-progress task.
+   */
+  private val NodeCompactReminder = CompactPreamble +
+    """You are a NODE WORKER — a one-shot task node inside a project Flow Map.
+      |Your final output text becomes the node result and is delivered to the
+      |downstream node, so anything downstream needs from your work must survive
+      |this summary. You have NO persistent memory and NO memory fallback after
+      |compaction — this summary is the ONLY record of your in-progress task.
+      |Never write "see memory" or assume anything survives outside it.
+      |
+      |Your ONE job after compaction: resume exactly the task below and finish it.
+      |
+      |<summary>
+      |1. Task Goal (IMMUTABLE — do not reinterpret, narrow, or expand it):
+      |   [The task text this node was started with — quote verbatim, including
+      |   acceptance criteria and constraints]
+      |
+      |2. Completed So Far (evidence-based):
+      |   - `path/to/file` (line X-Y): [what was done]
+      |   - Commits: [hash + one-line message; branch/worktree if any]
+      |   - Verification: [commands run + actual results — tests passed/failed,
+      |     build ok, screenshots taken]
+      |
+      |3. Blockers and Lessons:
+      |   - [What blocked you and how you worked around it; failed approaches
+      |     with WHY they failed — they must not be retried blindly]
+      |
+      |4. Remaining Steps (ordered):
+      |   1. [next concrete action]
+      |   2. [...]
+      |
+      |5. Result Statement So Far:
+      |   [If you had to report now: the one-paragraph result downstream would
+      |   receive, plus what is still missing from it]
+      |</summary>
+      |
+      |Discard freely: dead-end exploration without a lesson, verbose tool
+      |outputs, and completed-and-verified details beyond the evidence lines
+      |above.
       |""".stripMargin + CompactEpilogue
 
   // ------------------------------------------------------------------
