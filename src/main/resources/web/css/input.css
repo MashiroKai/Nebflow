@@ -229,6 +229,13 @@
   cursor: default;
   pointer-events: none;
 }
+/* Frozen ≠ disabled visually: the send icon stays full-contrast (send = wake,
+   08-24 ruling, deliberate design). This guard keeps the green-family disabled
+   svg dim introduced 2026-09-03 (#send-btn:disabled svg opacity 0.45) from
+   leaking into the frozen bar. */
+#input-bar.frozen #send-btn[disabled] svg {
+  opacity: 1;
+}
 /* Error-recovery input bar (frozen-error-recovery plan §4.3 dim 1) — amber
    family. Mirrors the .frozen structure EXACTLY (border/bg/ring/glow/edge/
    transition) and swaps only the hue — the "同族" skeleton with an importable
@@ -757,17 +764,25 @@
   .orb-ripple { display: none; }
 }
 #send-btn {
-  /* Light-green glass: semi-transparent tint over frosted backdrop */
-  background: rgba(7, 193, 96, 0.42);
+  /* Logo-green glass (2026-09-03 author ruling): the WeChat green #07C160 of
+     the logo, applied to the button. 0.42 washed out and read as disabled on
+     some backgrounds (PR #44 three-dim review, dim 1 confirmed). Values are
+     per-theme: the same alpha composites much darker over the dark backdrop,
+     so dark carries +0.07 alpha to hit the same perceived logo green. The
+     glass language is untouched — blur + saturate, inset edges, whisper
+     border all stay; only tint depth / border alpha / green glow change. */
+  background: rgba(7, 193, 96, 0.55);
   -webkit-backdrop-filter: blur(8px) saturate(1.3);
   backdrop-filter: blur(8px) saturate(1.3);
   color: #fff;
-  /* Faint glass edges: whisper border + inset top highlight + soft glow */
-  border: 1px solid rgba(7, 193, 96, 0.15);
+  /* Glass edges: whisper border (now green-tinted) + inset highlights +
+     restrained green glow (~0.2 alpha ambient — present, not loud). */
+  border: 1px solid rgba(7, 193, 96, 0.30);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.35),
     inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 1px 4px rgba(7, 193, 96, 0.2),
+    0 1px 4px rgba(7, 193, 96, 0.25),
+    0 0 12px rgba(7, 193, 96, 0.20),
     0 2px 8px rgba(0, 0, 0, 0.06);
   border-radius: 50%;
   width: 36px; height: 36px;
@@ -779,36 +794,57 @@
   transition: background 0.2s, box-shadow 0.2s, border-color 0.2s;
 }
 #send-btn:hover {
-  background: rgba(7, 193, 96, 0.55);
-  border-color: rgba(7, 193, 96, 0.25);
+  /* Deepen the tint inside the glass family — never a solid fill. */
+  background: rgba(7, 193, 96, 0.68);
+  border-color: rgba(7, 193, 96, 0.40);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.4),
     inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 2px 8px rgba(7, 193, 96, 0.28),
+    0 2px 8px rgba(7, 193, 96, 0.30),
+    0 0 14px rgba(7, 193, 96, 0.22),
     0 2px 12px rgba(0, 0, 0, 0.08);
 }
 #send-btn:active {
+  /* One notch deeper than hover + a pressed inset shadow — still translucent
+     (alpha < 1, blur still active). Solid fills are forbidden in this family. */
+  background: rgba(7, 193, 96, 0.75);
+  border-color: rgba(7, 193, 96, 0.45);
   box-shadow:
-    inset 0 1px 3px rgba(0, 0, 0, 0.12),
+    inset 0 1px 3px rgba(0, 0, 0, 0.15),
     0 1px 2px rgba(7, 193, 96, 0.12);
 }
 #send-btn:disabled {
-  background: rgba(170, 170, 170, 0.3);
-  border-color: rgba(0, 0, 0, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  /* PR #44 contribution, adopted: faint green (not grey) keeps the whole
+     control in the logo-green system while reading "not yet available". */
+  background: rgba(7, 193, 96, 0.16);
+  border-color: rgba(7, 193, 96, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
   cursor: default;
 }
+#send-btn:disabled svg { opacity: 0.45; }
 #send-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
 /* Disconnected state — doubles as the connection indicator: the send button
-   goes grey (disabled-looking) so users see they can't send until the link is
-   back. Grey, not red — red reads as an error, grey reads as "unavailable". */
+   fades into the faint-green family (same as :disabled) so users see they
+   can't send until the link is back. Green family, not grey — keeps the
+   button's green identity; not red — red reads as error, this reads as
+   "unavailable". */
 #send-btn.disconnected {
-  background: rgba(170, 170, 170, 0.3);
-  border-color: rgba(0, 0, 0, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  background: rgba(7, 193, 96, 0.16);
+  border-color: rgba(7, 193, 96, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
   cursor: not-allowed;
 }
-#send-btn.disconnected:hover { background: rgba(170, 170, 170, 0.3); }
+#send-btn.disconnected svg { opacity: 0.45; }
+#send-btn.disconnected:hover { background: rgba(7, 193, 96, 0.16); }
+/* Dark theme: same hue, deeper tint. Over the dark backdrop rgba(7,193,96,0.55)
+   composites to a muted sea-green (≈rgb(12,116,65)) — the exact "reads
+   disabled" failure the review flagged. +0.07 alpha lands the composite in
+   unmistakable logo-green territory while staying well under solid. */
+@media (prefers-color-scheme: dark) {
+  #send-btn { background: rgba(7, 193, 96, 0.62); border-color: rgba(7, 193, 96, 0.34); }
+  #send-btn:hover { background: rgba(7, 193, 96, 0.72); border-color: rgba(7, 193, 96, 0.44); }
+  #send-btn:active { background: rgba(7, 193, 96, 0.78); border-color: rgba(7, 193, 96, 0.48); }
+}
 
 #stop-btn {
   background: var(--color-error);
