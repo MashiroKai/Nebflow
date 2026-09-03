@@ -87,23 +87,43 @@ object MailDeliveryDedup:
    * (caller must consume the queue item without injecting it).
    *
    * `now` is parameterized so specs can exercise window expiry without sleeps.
+   *
+   * V13 (2026-09-03): the consult is now scoped to the REPLAY WINDOW. The
+   * proven duplicate source is MailTool's restart recovery re-firing the disk
+   * head — that re-fire can only inject within seconds of the recipient
+   * session's activation. Deliveries arriving OUTSIDE the replay window
+   * (`withinReplayWindow = false`, computed by the caller from the recipient's
+   * AgentRecord.startedAt) skip both the consult and the recording: a
+   * legitimate same-content re-send delivers unconditionally. Callers that
+   * cannot date the delivery (default `true`) keep the pre-V13 always-consult
+   * behavior — conservative fallback, existing component specs unchanged.
    */
-  def tryDeliver(recipientSessionId: String, fp: String, now: Long = System.currentTimeMillis()): IO[Boolean] =
-    for
-      _ <- if loaded.compareAndSet(false, true) then loadDiskIntoCache(now) else IO.unit
-      allowed <- cache.modify { m =>
-        m.get(fp) match
-          case Some(ts) if now - ts < Defaults.MailDedupWindowMs => (m, false)
-          case _                                                 => (m + (fp -> now), true)
-      }
-      _ <-
-        if allowed then persist(now)
-        else
-          val n = suppressedCount.incrementAndGet()
-          logger.warn(
-            s"[mail-dedup] duplicate queue delivery suppressed (recipient=${recipientSessionId.take(8)}, fp=${fp.take(12)}…, window=${Defaults.MailDedupWindowMs / 60000}min, suppressedTotal=$n)"
-          ) *> persist(now)
-    yield allowed
+  def tryDeliver(
+    recipientSessionId: String,
+    fp: String,
+    now: Long = System.currentTimeMillis(),
+    withinReplayWindow: Boolean = true
+  ): IO[Boolean] =
+    if !withinReplayWindow then
+      // Outside the replay window: not a restart-replay shape — deliver
+      // without consulting (and without recording) the fingerprint ledger.
+      logger.debug(s"[mail-dedup] outside replay window — deliver unconditionally (recipient=${recipientSessionId.take(8)})").as(true)
+    else
+      for
+        _ <- if loaded.compareAndSet(false, true) then loadDiskIntoCache(now) else IO.unit
+        allowed <- cache.modify { m =>
+          m.get(fp) match
+            case Some(ts) if now - ts < Defaults.MailDedupWindowMs => (m, false)
+            case _                                                 => (m + (fp -> now), true)
+        }
+        _ <-
+          if allowed then persist(now)
+          else
+            val n = suppressedCount.incrementAndGet()
+            logger.warn(
+              s"[mail-dedup] duplicate queue delivery suppressed (recipient=${recipientSessionId.take(8)}, fp=${fp.take(12)}…, window=${Defaults.MailDedupWindowMs / 60000}min, suppressedTotal=$n)"
+            ) *> persist(now)
+      yield allowed
 
   /** TEST-ONLY hook: drop the in-memory cache + loaded flag (simulates a
    * restart while the disk file survives). Production code never calls this. */

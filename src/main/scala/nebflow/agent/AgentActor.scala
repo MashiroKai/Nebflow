@@ -366,6 +366,25 @@ object AgentActor extends AgentCore with AgentSession:
         )
       case None => IO.unit
 
+  /**
+   * V13 (2026-09-03): is this mail delivery inside the REPLAY window — i.e.
+   * could it be the MailTool restart-recovery re-fire of the disk head? That
+   * re-fire is the only proven true-duplicate source and it happens within
+   * seconds of the recipient session's activation (AgentRecord.startedAt).
+   * Inside the window → dedup ledger consult applies (suppress restart
+   * replays); outside → a same-content re-send is legitimate and must deliver
+   * (V13: the 30min triple fingerprint used to eat it). Missing registry
+   * record / legacy 0 stamp → conservative fallback: dedup active
+   * (pre-V13 behavior).
+   */
+  private def mailDedupInReplayWindow(sid: String, resources: SharedResources): IO[Boolean] =
+    resources.agentRegistry.get.map { reg =>
+      reg.get(sid) match
+        case Some(rec) if rec.startedAt > 0 =>
+          System.currentTimeMillis() - rec.startedAt <= nebflow.shared.Defaults.MailDedupReplayWindowMs
+        case _ => true
+    }
+
   private[agent] def drainQueuesAfterCompaction(compactedState: AgentState): PostCompactDrain =
     val exec = compactedState.execution
     val imms = exec.pendingImmediateInputs
@@ -1181,37 +1200,46 @@ object AgentActor extends AgentCore with AgentSession:
                   // restart-replay root cause (MailTool restart recovery re-fires
                   // MailQueued for the disk head). The persisted fingerprint file
                   // survives the restart boundary.
-                  nebflow.core.flow.MailDeliveryDedup
-                    .tryDeliver(sid, nebflow.core.flow.MailDeliveryDedup.fingerprint(item.from, sid, item.message))
-                    .flatMap {
-                      case false =>
-                        // Duplicate within window: consume the item (queue + WS)
-                        // but inject nothing — sender semantics untouched.
-                        nebflow.core.flow.MailQueueStore.removeHead(sid).void *>
-                          emitDequeuedWs(state.wsSend, sid, item.id)
-                      case true =>
-                        for
-                          _ <- nebflow.core.flow.MailQueueStore.removeHead(sid).void
-                          // G3: re-read attachment paths at drain time (D6 — queue
-                          // persists paths, not base64). Lost files degrade to
-                          // placeholder text.
-                          attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
-                          blocks = nebflow.core.tools.ImageInject.messageBlocks(item.message, attBlocks)
-                          _ <- ctx.self ! AgentCommand.UserInput(
-                            item.message,
-                            None,
-                            None,
-                            blocks,
-                            0,
-                            source = Some("mail-queue"),
-                            sender = Some(item.from),
-                            delivery = Some("queue")
-                          )
-                          // Emit WS so frontend removes the pending item
-                          _ <- emitDequeuedWs(state.wsSend, sid, item.id)
-                        yield ()
-                    }
-                    .map(_ => idle(agentDef, resources, depth, parentRef, state))
+                  // V13 (2026-09-03): the consult is scoped to the replay window
+                  // after this session's activation — outside it a same-content
+                  // re-send is legitimate and delivers unconditionally.
+                  mailDedupInReplayWindow(sid, resources).flatMap { inReplayWindow =>
+                    nebflow.core.flow.MailDeliveryDedup
+                      .tryDeliver(
+                        sid,
+                        nebflow.core.flow.MailDeliveryDedup.fingerprint(item.from, sid, item.message),
+                        System.currentTimeMillis(),
+                        inReplayWindow
+                      )
+                      .flatMap {
+                        case false =>
+                          // Duplicate within window: consume the item (queue + WS)
+                          // but inject nothing — sender semantics untouched.
+                          nebflow.core.flow.MailQueueStore.removeHead(sid).void *>
+                            emitDequeuedWs(state.wsSend, sid, item.id)
+                        case true =>
+                          for
+                            _ <- nebflow.core.flow.MailQueueStore.removeHead(sid).void
+                            // G3: re-read attachment paths at drain time (D6 — queue
+                            // persists paths, not base64). Lost files degrade to
+                            // placeholder text.
+                            attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
+                            blocks = nebflow.core.tools.ImageInject.messageBlocks(item.message, attBlocks)
+                            _ <- ctx.self ! AgentCommand.UserInput(
+                              item.message,
+                              None,
+                              None,
+                              blocks,
+                              0,
+                              source = Some("mail-queue"),
+                              sender = Some(item.from),
+                              delivery = Some("queue")
+                            )
+                            // Emit WS so frontend removes the pending item
+                            _ <- emitDequeuedWs(state.wsSend, sid, item.id)
+                          yield ()
+                      }
+                  }.map(_ => idle(agentDef, resources, depth, parentRef, state))
                 case _ => IO.pure(idle(agentDef, resources, depth, parentRef, state))
         yield result
 
@@ -1312,29 +1340,38 @@ object AgentActor extends AgentCore with AgentSession:
                     s"Start by creating tasks with TaskCreate to track progress, then execute each step."
                 )
               )
-              newMessages = state.messages :+ planMsg
+              // V7 (2026-09-03): queues buffered during the plan wait drain into
+              // the SAME continuation round, after the approved plan message —
+              // shared F1 helper (barrier-held subagent results stay held,
+              // replyTo-bearing UserInputs stay deferred, exactly as in the
+              // compaction window drain).
+              drain = drainQueuesAfterCompaction(state)
+              newMessages = (state.messages :+ planMsg) ++ drain.appended
               sessionBusyIO = state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
-              result <- sessionBusyIO *> pipeLlmCall(
+              result <- sessionBusyIO *> persistQueues(state.sessionId, drain.exec) *> emitInjectedBubbles(state, drain) *> pipeLlmCall(
                 agentDef,
                 resources,
                 depth,
                 parentRef,
-                state.withMessages(newMessages).withPlanMode(None).withNextLoopTurn, // Block 3：计划执行 = 新 turn
+                state
+                  .withMessages(newMessages)
+                  .copy(execution = drain.exec)
+                  .withPlanMode(None)
+                  .withNextLoopTurn, // Block 3：计划执行 = 新 turn
                 None,
                 DispatchCause.UserWake
               )
             yield result
             end for
           case None =>
-            IO.pure(idle(agentDef, resources, depth, parentRef, state))
+            exitPlanWindow(agentDef, resources, depth, parentRef, state, "plan-approved-no-plan")
 
       case AgentCommand.PlanCancelled =>
         state.planMode match
           case Some(pm) =>
             logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-cancelled", "")
-            for
-              _ <- ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit)
-              _ <- ctx.forkTurn(
+            (ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit) *>
+              ctx.forkTurn(
                 state
                   .wsSend(
                     Json.obj(
@@ -1344,28 +1381,27 @@ object AgentActor extends AgentCore with AgentSession:
                     )
                   )
                   .handleErrorWith(_ => IO.unit)
-              )
-            yield idle(agentDef, resources, depth, parentRef, state.withPlanMode(None))
+              ) *>
+              exitPlanWindow(agentDef, resources, depth, parentRef, state.withPlanMode(None), "plan-cancelled"))
           case None =>
-            IO.pure(idle(agentDef, resources, depth, parentRef, state))
+            exitPlanWindow(agentDef, resources, depth, parentRef, state, "plan-cancelled-no-plan")
 
       case AgentCommand.PlanFailed(error) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-failed", s"err=${error.take(80)}")
         state.planMode.foreach(pm => ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit))
-        for
-          _ <- ctx.forkTurn(
-            state
-              .wsSend(
-                Json.obj(
-                  "type" -> "planEnd".asJson,
-                  "sessionId" -> state.sessionId.asJson,
-                  "reason" -> "failed".asJson,
-                  "error" -> error.asJson
-                )
+        ctx.forkTurn(
+          state
+            .wsSend(
+              Json.obj(
+                "type" -> "planEnd".asJson,
+                "sessionId" -> state.sessionId.asJson,
+                "reason" -> "failed".asJson,
+                "error" -> error.asJson
               )
-              .handleErrorWith(_ => IO.unit)
-          )
-          _ <- ctx.forkTurn(
+            )
+            .handleErrorWith(_ => IO.unit)
+        ) *>
+          ctx.forkTurn(
             state.sessionId.fold(IO.unit)(sid =>
               state
                 .wsSend(
@@ -1377,24 +1413,23 @@ object AgentActor extends AgentCore with AgentSession:
                 )
                 .handleErrorWith(_ => IO.unit)
             )
-          )
-        yield idle(agentDef, resources, depth, parentRef, state.withPlanMode(None))
-        end for
+          ) *>
+          exitPlanWindow(agentDef, resources, depth, parentRef, state.withPlanMode(None), "plan-failed")
 
       case AgentCommand.Interrupt() =>
         state.planMode.foreach(pm => ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit))
-        for _ <- ctx.forkTurn(
-            state
-              .wsSend(
-                Json.obj(
-                  "type" -> "planEnd".asJson,
-                  "sessionId" -> state.sessionId.asJson,
-                  "reason" -> "cancelled".asJson
-                )
+        ctx.forkTurn(
+          state
+            .wsSend(
+              Json.obj(
+                "type" -> "planEnd".asJson,
+                "sessionId" -> state.sessionId.asJson,
+                "reason" -> "cancelled".asJson
               )
-              .handleErrorWith(_ => IO.unit)
-          )
-        yield idle(agentDef, resources, depth, parentRef, state.withPlanMode(None))
+            )
+            .handleErrorWith(_ => IO.unit)
+        ) *>
+          exitPlanWindow(agentDef, resources, depth, parentRef, state.withPlanMode(None), "plan-interrupt")
 
       case AgentCommand.Stop(_) =>
         state.planMode.foreach(pm => ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit))
@@ -1415,14 +1450,91 @@ object AgentActor extends AgentCore with AgentSession:
             )
           )
 
-      // Buffer user messages while planning
+      // V7 (2026-09-03): buffer instead of swallow. The comment above always
+      // said "Buffer user messages while planning" but the code consumed and
+      // dropped — an in-flight Delegate completing (or a user typing) during
+      // the plan wait vanished silently. ExternalEvent → pendingEvents (F2
+      // persisted), ImmediateInput → pendingImmediateInputs (F2 persisted),
+      // UserInput → pendingUserInputs (in-memory, same exclusion as the
+      // processing state). All three drain at the plan window exits via the
+      // shared F1 helper (drainQueuesAfterCompaction) — see exitPlanWindow.
       case msg: AgentCommand.UserInput =>
-        IO.pure(planWaiting(agentDef, resources, depth, parentRef, state))
+        logAgentEvent(
+          agentDef, depth, state.sessionId, state.sessionName,
+          "plan-wait-buffer-user",
+          s"textLen=${msg.text.length} pending=${state.execution.pendingUserInputs.size + 1}"
+        )
+        IO.pure(
+          planWaiting(agentDef, resources, depth, parentRef,
+            state.copy(execution = state.execution.copy(
+              pendingUserInputs = state.execution.pendingUserInputs :+ msg)))
+        )
+
+      case evt: AgentCommand.ExternalEvent =>
+        val exec = state.execution.copy(pendingEvents = state.execution.pendingEvents :+ evt)
+        persistQueues(state.sessionId, exec) *>
+          IO.pure(planWaiting(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
+
+      case imm: AgentCommand.ImmediateInput =>
+        val exec = state.execution.copy(pendingImmediateInputs = state.execution.pendingImmediateInputs :+ imm)
+        persistQueues(state.sessionId, exec) *>
+          IO.pure(planWaiting(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
 
       case _ =>
+        // Non-queue commands (MailQueued triggers, notifications, ...) keep the
+        // pre-V7 behavior: the underlying state is durable elsewhere (mail queue
+        // disk file is the source of truth; triggers re-fire on next
+        // activation/turn-end), so dropping the trigger loses nothing.
         IO.pure(planWaiting(agentDef, resources, depth, parentRef, state))
 
   end planWaiting
+
+  /**
+   * V7 (2026-09-03): shared drain for every plan-window exit (approved /
+   * cancelled / failed / interrupt). Buffers accumulated during planWaiting
+   * are injected through the SAME F1 helper the compaction window uses
+   * (drainQueuesAfterCompaction — replyTo-bearing UserInputs stay deferred,
+   * sub-agent barrier results stay held while a batch is outstanding), so no
+   * new drain semantics are invented. Inline-appended content (immediate
+   * inputs + replyTo-free user messages + events) opens the next turn;
+   * deferred-only buffers forward their head to self for the full-metadata
+   * idle path (mirrors the compaction-complete resume=false branch).
+   */
+  private def exitPlanWindow(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    cause: String
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    val drain = drainQueuesAfterCompaction(state)
+    if drain.appended.nonEmpty then
+      for
+        _ <- persistQueues(state.sessionId, drain.exec)
+        _ <- IO(logAgentEvent(
+          agentDef, depth, state.sessionId, state.sessionName,
+          "plan-wait-drain",
+          s"cause=$cause imm=${drain.immMessages.size} user=${drain.userMessages.size} events=${drain.eventCount} " +
+            s"remainingUser=${drain.exec.pendingUserInputs.size} remainingEvents=${drain.exec.pendingEvents.size}"
+        ))
+        _ <- emitInjectedBubbles(state, drain)
+        result <- pipeLlmCall(
+          agentDef, resources, depth, parentRef,
+          state.copy(execution = drain.exec.copy(messages = state.messages ++ drain.appended)).withNextLoopTurn,
+          None
+        )
+      yield result
+    else
+      drain.exec.pendingUserInputs.headOption match
+        case Some(userCmd) =>
+          (ctx.self ! userCmd) *>
+            IO.pure(
+              idle(agentDef, resources, depth, parentRef,
+                state.copy(execution = drain.exec.copy(pendingUserInputs = drain.exec.pendingUserInputs.tail)))
+            )
+        case None =>
+          IO.pure(idle(agentDef, resources, depth, parentRef, state.copy(execution = drain.exec)))
   // ============================================================
   // Processing state
   // ============================================================
@@ -3198,9 +3310,18 @@ object AgentActor extends AgentCore with AgentSession:
                 // Delivery-layer fingerprint dedup (P0): same sender+recipient+content
                 // within the 30min window is consumed without injection — the
                 // restart-replay backstop (fingerprints persist across restarts).
-                nebflow.core.flow.MailDeliveryDedup
-                  .tryDeliver(sid, nebflow.core.flow.MailDeliveryDedup.fingerprint(item.from, sid, item.message))
-                  .flatMap {
+                // V13 (2026-09-03): consult scoped to the replay window after this
+                // session's activation — outside it a same-content re-send is
+                // legitimate and delivers unconditionally.
+                mailDedupInReplayWindow(sid, resources).flatMap { inReplayWindow =>
+                  nebflow.core.flow.MailDeliveryDedup
+                    .tryDeliver(
+                      sid,
+                      nebflow.core.flow.MailDeliveryDedup.fingerprint(item.from, sid, item.message),
+                      System.currentTimeMillis(),
+                      inReplayWindow
+                    )
+                    .flatMap {
                     case false =>
                       // Duplicate within window: consume the head, keep draining —
                       // recurse with count-1 so the next item is tried (or the
@@ -3214,6 +3335,7 @@ object AgentActor extends AgentCore with AgentSession:
                         )
                     case true => deliver
                   }
+                }
               case None =>
                 // Count > 0 but disk queue empty (items cancelled while busy) — reset
                 // count and re-enter finishTurnCont which will hit the idle branch.
