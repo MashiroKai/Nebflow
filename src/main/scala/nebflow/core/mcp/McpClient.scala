@@ -9,7 +9,7 @@ import nebflow.core.tools.{Tool, ToolContext, ToolRegistry}
 
 import scala.concurrent.duration.*
 
-class McpClient(serverId: String, transport: McpTransport):
+class McpClient(serverId: String, transport: McpTransport, callTimeout: Option[FiniteDuration] = None):
   private val logger = NebflowLogger.forName(s"nebflow.mcp.client.$serverId")
   private val counter = new java.util.concurrent.atomic.AtomicInteger(0)
 
@@ -77,9 +77,19 @@ class McpClient(serverId: String, transport: McpTransport):
         )
       )
     )
-    transport
-      .send(request)
-      .timeout(120.seconds)
+    // R3 (wait-timeout-fix, 2026-09-03 作者裁定②): the blanket 120s client
+    // hard top is REMOVED — MCP tools now share the built-in tools' semantics:
+    // run to completion (browser automation / deep retrieval / long simulation
+    // are legitimate), with the session-level backstops (no-progress ceiling /
+    // TaskStuckWatcher) catching truly wedged calls. A server may still opt in
+    // to a per-server ceiling via `timeoutMs` in its config (R3 field design):
+    // absent = unbounded, set = this server's tools are capped with the same
+    // error semantics as before (TimeoutException → ToolError "Error: …").
+    // NOTE: tools/list keeps its fixed 30s probe — infrastructure discovery,
+    // not tool execution.
+    val send = transport.send(request)
+    callTimeout
+      .fold(send)(send.timeout(_))
       .map { response =>
         response.result match
           case Some(result) =>

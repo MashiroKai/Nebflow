@@ -63,4 +63,7 @@ object Dependencies {
   // Testing
   val munit = "org.scalameta" %% "munit" % MunitVer % Test
   val munitCatsEffect = "org.typelevel" %% "munit-cats-effect" % MunitCEVer % Test
+  // 虚拟时钟（TestControl）——时间相关回归测试的缩阈模拟基建
+  // （wait-timeout-fix：权限等待 6min / MCP 跨 120s 断言零真实等待）。
+  val catsEffectTestkit = "org.typelevel" %% "cats-effect-testkit" % CatsEffectVer % Test
 }

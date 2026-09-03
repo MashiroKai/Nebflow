@@ -589,6 +589,17 @@ onMessage('agentFrozen', (msg, view) => {
     state.sessionBgAgents[sid][aid].freezeReason = normalizeReason(msg.reason);
     if (view) renderBgAgentDropdown();
   }
+  // R4-a (wait-timeout-fix, audit 20260903 Q2-A): a sub-agent freeze parks the
+  // ROOT session's turn at its outstanding-subagent barrier — busy stays true
+  // with zero activity events, so the root sessionBusyTimeout would false-fire
+  // at streamTimeoutMs+30s, send interrupt and kill a turn that is merely
+  // waiting for the barrier (「冻结期间响应超时」 across a multi-hour freeze).
+  // Mirror the 'frozen' handler (F8/F4): clear the root session's timer;
+  // agentResumed → next activity event re-arms it (existing contract).
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
   // 现象2 fix (2026-08-30): a schedule freeze is SYSTEM-wide — when any
   // background agent parks, the foreground input must disable too (if the
   // schedule window is active). applyLocalFreeze reads the authoritative
