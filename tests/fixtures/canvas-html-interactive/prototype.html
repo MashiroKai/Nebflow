@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flow Map 归档面板 · 交互原型（nebflow-website 真实快照）</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   Flow Map 归档面板 交互原型 —— 规格书 20260903_flowmap-archive-panel-spec.md 的可视化载体
+   ═══════════════════════════════════════════════════════════════════════
+   数据  = 真实快照（snapshot-data.js）：nebflow-website flow-map.json 直读，
+           11 活动节点 + 25 归档条目（store 8 ∪ 磁盘归档 16 ∪ 拟真标注 1）
+   排版  = 产品现有 DAG 层级布局（flowMapTab.js layoutNodes 算法逐字移植：
+           out/deps 建流向图 → 根出发 DFS 最深层级 → 行内居中；
+           NODE_W 150 / V_SPACING 180 / H_SPACING 210 / PAD 70）
+   连线  = 产品贝塞尔（M x1 y1 C x1 midY x2 midY x2 y2，中心到中心、竖直入竖出，
+           边画在卡片层之下）+ 三态档位 + r=3 端点圆
+   复用  = 20260903_flowmap-graphview/prototype-v3.html 的视口/相机（CAD 缩放、
+           平移、双击适配、hover 局部化）与 token 底座
+   新件  = ① 主图终态过滤 ② 不可见上游锚点（§3.2 方案 A：目标锚点 7px 点 +
+           28px 引入段，in 实心实线 / deps 空心虚线，终态三色）
+           ③ 归档入口图标 + 计数徽章（nav-bar 右端，lucide archive 图标族）
+           ④ 归档面板（mailbox 条目 / completedAt 倒序 / 行内展开独占式 /
+              hover 条目联动主图下游高亮 / 空结果兜底）
+           ⑤ 从图标拓展开合动画（transform-origin 100% 0，220ms/160ms）
+           ⑥ 模拟节点完成（演示 §3.4 完成即刻消失 → 补位 → 锚点浮现 →
+              徽章 +1 → 面板置顶闪烁）
+   铁律  = 禁 emoji（状态与箭头全 SVG）、文字不出卡（ellipsis + 卡盒裁剪）、
+           无 overlay 遮罩（面板非模态、主图保持可交互）、玻璃质感、克制专业感
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ═══ Tokens — 对齐 Nebflow base.css / sapphire.css（零新颜色）═══ */
+:root {
+  --color-primary: #07c160;
+  --color-error: #f44336;
+  --color-success: #4caf50;
+  --color-warning: #ff9800;
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-text: #1b1e26;
+  --color-text-muted: #8b8e96;
+  --color-text-dim: #6b6e76;
+  --color-border: #ddd;
+  --color-frame-hover: #e5e6e9;
+  --color-frame-border: #d9dade;
+  --sapphire: 91 127 191;
+  --amber: 255 152 0;
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-blur: 24px;
+  --glass-border: rgba(255, 255, 255, 0.35);
+  --glass-control-bg: rgba(255, 255, 255, 0.45);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.65);
+  --glass-control-border: rgba(255, 255, 255, 0.40);
+  --glass-control-highlight: rgba(255, 255, 255, 0.50);
+  --glass-control-underedge: rgba(0, 0, 0, 0.08);
+  --glass-control-blur: 10px;
+  --hud-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+  --panel-shadow: 0 8px 32px rgba(0,0,0,0.16);
+}
+.theme-dark {
+  --color-bg: #13161c;
+  --color-surface: #1c1f27;
+  --color-text: #e8eaed;
+  --color-text-muted: #7b7e88;
+  --color-text-dim: #9ba0aa;
+  --color-border: #2a2d35;
+  --color-frame-hover: #242730;
+  --color-frame-border: #34363e;
+  --amber: 255 168 60;
+  --glass-bg: rgba(28, 31, 39, 0.62);
+  --glass-border: rgba(255, 255, 255, 0.10);
+  --glass-control-bg: rgba(255, 255, 255, 0.05);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+  --glass-control-border: rgba(255, 255, 255, 0.08);
+  --glass-control-highlight: rgba(255, 255, 255, 0.08);
+  --glass-control-underedge: rgba(0, 0, 0, 0.25);
+  --hud-shadow: 0 2px 10px rgba(0,0,0,0.35), 0 6px 20px rgba(0,0,0,0.25);
+  --panel-shadow: 0 10px 36px rgba(0,0,0,0.45);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+button { font-family: inherit; }
+
+/* ═══ nav-bar（产品 .flowmap-nav-bar 构型 + 归档入口右端，§4.1）═══ */
+.fm-app { height: 100%; display: flex; flex-direction: column; }
+.flowmap-nav-bar {
+  position: relative;               /* 面板定位上下文（§4.1）*/
+  display: flex; align-items: center; gap: 10px;
+  flex: 0 0 auto; padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--glass-bg);
+  z-index: 40;                      /* 面板悬浮于主图之上 */
+}
+.flowmap-back-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--color-border); border-radius: 8px; background: transparent;
+  color: var(--color-text); font: 500 12px/1 -apple-system, sans-serif;
+  padding: 6px 10px; cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.flowmap-back-btn:hover { color: rgb(var(--sapphire) / 1); border-color: rgb(var(--sapphire) / 0.45); background: rgb(var(--sapphire) / 0.08); }
+.flowmap-back-btn svg { width: 14px; height: 14px; }
+.nb-title { font: 600 13px/1.2 -apple-system, sans-serif; letter-spacing: -0.01em; }
+.nb-sub { font: 400 11px/1.2 -apple-system, sans-serif; color: var(--color-text-muted); }
+
+/* ═══ 归档入口按钮（§4.2：lucide archive 图标族 + 玻璃 hover，克制无彩色）═══ */
+.fm-archive-btn {
+  position: relative; margin-left: auto;
+  width: 28px; height: 28px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent;
+  color: var(--color-text-muted); cursor: pointer; flex: 0 0 auto;
+  transition: background .15s, border-color .15s, color .15s, box-shadow .15s;
+}
+.fm-archive-btn svg { width: 15px; height: 15px; display: block; }
+.fm-archive-btn:hover, .fm-archive-btn.active {
+  background: var(--glass-control-bg); border-color: var(--glass-control-border); color: var(--color-text);
+  box-shadow: inset 0 1px 0 var(--glass-control-highlight), inset 0 -1px 0 var(--glass-control-underedge);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+}
+.fm-archive-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / .55); }
+
+/* 计数徽章（§4.3：team-mail-badge 构型移植，sapphire 底白字 10px/500）*/
+.fm-archive-badge {
+  position: absolute; top: -6px; right: -7px;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  background: rgb(var(--sapphire)); color: #fff;
+  font: 500 10px/16px -apple-system, sans-serif; text-align: center;
+  box-shadow: 0 0 0 2px var(--color-bg); pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.fm-archive-badge.hidden { display: none; }
+.fm-archive-badge.pulse { animation: fm-badge-pulse .15s ease; }
+@keyframes fm-badge-pulse { 50% { transform: scale(1.18); } }
+
+/* ═══ 归档面板（§5：锚定下拉、无遮罩、玻璃、mailbox 条目）═══ */
+.fm-archive-panel {
+  position: absolute; top: calc(100% + 4px); right: 14px;
+  width: 380px; max-width: calc(100vw - 24px);
+  max-height: min(70vh, 560px);
+  display: flex; flex-direction: column;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border); border-radius: 18px;
+  box-shadow: var(--panel-shadow);
+  z-index: 50;
+  transform-origin: 100% 0;                       /* §6.1 top right —— 从图标拓展开 */
+  opacity: 0; transform: scale(0.94) translateY(-6px);
+  transition: opacity .22s cubic-bezier(0.33, 0, 0.2, 1), transform .22s cubic-bezier(0.33, 0, 0.2, 1);
+  pointer-events: none;
+}
+.fm-archive-panel[hidden] { display: none; } /* hidden 属性必须压过 display:flex */
+.fm-archive-panel.open { opacity: 1; transform: scale(1) translateY(0); pointer-events: auto; }
+.fm-archive-panel.closing { transition-duration: .16s; transition-timing-function: ease; }
+.fm-panel-head {
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+  padding: 11px 14px; border-bottom: 1px solid var(--color-border);
+}
+.fm-panel-title { font: 600 13px/1.3 -apple-system, sans-serif; }
+.fm-panel-count { font: 400 11px/1.3 -apple-system, sans-serif; color: var(--color-text-muted); }
+.fm-panel-close {
+  margin-left: auto; border: none; background: transparent; cursor: pointer;
+  font: 400 16px/1 -apple-system, sans-serif; color: var(--color-text-muted);
+  opacity: .5; padding: 0 4px; transition: opacity .15s;
+}
+.fm-panel-close:hover { opacity: 1; }
+.fm-panel-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / .55); border-radius: 4px; }
+.fm-panel-body { flex: 1; overflow-y: auto; padding: 12px 14px; scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent; }
+
+/* 面板空态（§7.3：无插图、克制）*/
+.fm-panel-empty { text-align: center; padding: 40px 0; font: 400 12px/1.5 -apple-system, sans-serif; color: var(--color-text-muted); opacity: .65; }
+
+/* 条目（§5.3：flow-mail-row 构型移植）*/
+.fm-entry {
+  border: 1px solid rgba(128,128,128,0.12); border-radius: 8px;
+  background: rgba(128,128,128,0.06); margin-bottom: 8px; padding: 10px 12px;
+  cursor: pointer; user-select: none; -webkit-user-select: none;
+  transition: background .15s, border-color .15s;
+}
+.fm-entry:hover { background: rgba(128,128,128,0.10); border-color: rgba(128,128,128,0.18); }
+.fm-entry:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / .55); }
+.fm-entry.expanded { background: rgba(128,128,128,0.10); border-color: rgba(91,127,191,0.25); }
+.fm-entry.glow { border-color: rgba(91,127,191,0.45); background: rgba(91,127,191,0.10); }
+.fm-entry.flash { animation: fm-entry-flash .5s ease 1; }
+@keyframes fm-entry-flash { 0% { background: rgba(91,127,191,0.28); } 100% { background: rgba(128,128,128,0.06); } }
+.fm-entry-row1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fm-entry-st { flex: 0 0 auto; display: inline-flex; }
+.fm-entry-st svg { width: 12px; height: 12px; display: block; }
+.fm-entry-st.completed { color: var(--color-success); }
+.fm-entry-st.failed { color: var(--color-error); }
+.fm-entry-st.cancelled { color: var(--color-text-muted); }
+.fm-entry-name { flex: 0 1 auto; min-width: 0; font: 500 12px/1.4 -apple-system, sans-serif; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fm-entry-agent { flex: 1 1 auto; min-width: 24px; font: 400 11px/1.4 -apple-system, sans-serif; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.fm-entry-time { flex: 0 0 auto; font: 400 11px/1.4 -apple-system, sans-serif; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.fm-entry-chev { flex: 0 0 auto; display: inline-flex; color: var(--color-text-muted); opacity: .7; transition: transform .18s ease; }
+.fm-entry-chev svg { width: 10px; height: 10px; display: block; }
+.fm-entry.expanded .fm-entry-chev { transform: rotate(90deg); }
+.fm-entry-preview {
+  margin-top: 3px; font: 400 11px/1.45 -apple-system, sans-serif; color: var(--color-text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 展开正文（§5.5：flow-mail-content 语言，11.5px，320px 内滚）*/
+.fm-entry-body { display: none; margin-top: 8px; max-height: 320px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent; border-top: 1px solid rgba(128,128,128,0.12); padding-top: 8px; }
+.fm-entry.expanded .fm-entry-body { display: block; }
+.fm-entry-body .fm-md { font: 400 11.5px/1.55 -apple-system, sans-serif; color: var(--color-text); word-break: break-word; overflow-wrap: anywhere; }
+.fm-md p { margin: 4px 0; } .fm-md p:first-child { margin-top: 0; } .fm-md p:last-child { margin-bottom: 0; }
+.fm-md ul, .fm-md ol { margin: 4px 0 4px 18px; } .fm-md li { margin: 2px 0; }
+.fm-md code { background: var(--color-frame-hover); padding: 1px 4px; border-radius: 3px; font: 400 .9em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+.fm-md pre { background: var(--color-frame-hover); padding: 8px 12px; border-radius: 8px; overflow-x: auto; margin: 6px 0; }
+.fm-md pre code { background: none; padding: 0; word-break: normal; }
+.fm-md blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding-left: 10px; color: var(--color-text-muted); }
+.fm-md h1, .fm-md h2, .fm-md h3, .fm-md h4, .fm-md h5, .fm-md h6 { margin: 8px 0 4px; font-weight: 600; }
+.fm-md h3, .fm-md h4 { font-size: 12.5px; } .fm-md h5, .fm-md h6 { font-size: 12px; }
+.fm-md table { display: block; overflow-x: auto; border-collapse: collapse; margin: 6px 0; font-size: 11.5px; }
+.fm-md th, .fm-md td { border: 1px solid var(--color-border); padding: 3px 7px; }
+.fm-md th { background: var(--color-frame-hover); }
+.fm-md a { color: rgb(var(--sapphire)); } .fm-md hr { border: none; border-top: 1px solid var(--color-border); margin: 8px 0; }
+.fm-md strong { font-weight: 600; }
+.fm-md .md-empty { font-style: italic; color: var(--color-text-muted); opacity: .7; }
+
+/* ═══ 子头部（摘要 + 图例 + 原型控制）═══ */
+.fm-subheader {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+  padding: 7px 14px; border-bottom: 1px solid var(--color-border);
+  background: var(--glass-bg); min-width: 0;
+}
+.fm-summary { font: 400 12px/1.4 -apple-system, sans-serif; color: var(--color-text-muted); white-space: nowrap; }
+.fm-summary b { font-weight: 500; color: var(--color-text-dim); }
+.fm-legend { display: flex; gap: 10px; align-items: center; min-width: 0; overflow: hidden; }
+.fm-legend-item { display: inline-flex; align-items: center; gap: 5px; font: 400 10px/1.4 -apple-system, sans-serif; color: var(--color-text-muted); white-space: nowrap; }
+.fm-legend-swatch { width: 16px; height: 0; border-top: 2px solid var(--color-border); display: inline-block; }
+.fm-legend-swatch.delivered { border-top: 2px solid rgb(var(--sapphire) / .75); }
+.fm-legend-swatch.inflight { border-top: 2px dashed var(--color-text-muted); }
+.fm-legend-swatch.deps { border-top: 2px dashed var(--color-success); }
+.fm-spacer { flex: 1 1 auto; }
+.fm-demo { display: flex; gap: 6px; flex: 0 0 auto; }
+.fm-demo button {
+  font: 500 11px/1 -apple-system, sans-serif; color: var(--color-text-dim);
+  background: var(--glass-bg); border: 1px solid var(--glass-border);
+  -webkit-backdrop-filter: blur(8px) saturate(1.15); backdrop-filter: blur(8px) saturate(1.15);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.03), var(--hud-shadow);
+  border-radius: 8px; padding: 6px 10px; cursor: pointer; white-space: nowrap;
+  transition: background .15s, color .15s, box-shadow .15s, border-color .15s;
+}
+.fm-demo button:hover { color: var(--color-text); background: rgba(var(--sapphire), 0.12); border-color: rgba(var(--sapphire), 0.3); }
+.fm-demo button:active { box-shadow: inset 0 1px 3px rgba(0,0,0,0.12); }
+.fm-demo button:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / .55); }
+.theme-dark .fm-demo button { box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), inset 0 -1px 0 rgba(0,0,0,0.2), var(--hud-shadow); }
+
+/* ═══ 视口（v3 底座：固定、零滚动条、相机 transform）═══ */
+.fm-stage { position: relative; flex: 1; overflow: hidden; }
+.fm-viewport { position: absolute; inset: 0; overflow: hidden; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.fm-viewport.is-panning { cursor: grabbing; }
+.fm-world { position: absolute; top: 0; left: 0; will-change: transform; transform-origin: 0 0; }
+
+/* ═══ 边（产品三态 × deps，flowMap.css 定值移植）═══ */
+.flow-edge { fill: none; stroke: var(--color-border); stroke-width: 1.5; transition: stroke .35s ease, stroke-width .35s ease, opacity .18s ease; }
+.flow-edge.delivered { stroke: rgb(var(--sapphire) / 0.75); stroke-width: 2; }
+.flow-edge.inflight { stroke: var(--color-text-muted); stroke-width: 1.5; stroke-dasharray: 5 4; animation: flow-dash 1.2s linear infinite; opacity: .7; }
+.flow-edge.idle { stroke: var(--color-border); stroke-width: 1.5; }
+.flow-edge.fm-edge-deps { stroke-dasharray: 3 4; }
+.flow-edge.fm-edge-deps.delivered { stroke: var(--color-success); stroke-width: 2; }
+.flow-edge.fm-edge-deps.inflight { stroke: var(--color-warning); }
+.flow-edge.fm-hi { stroke: rgb(var(--sapphire) / 0.9) !important; stroke-width: 2.5 !important; opacity: 1 !important; }
+.fm-edge-arrow { fill: var(--color-border); opacity: .5; transition: fill .35s ease, opacity .18s ease; }
+.fm-edge-arrow.delivered { fill: rgb(var(--sapphire) / 0.75); opacity: 1; }
+.fm-edge-arrow.inflight { fill: var(--color-text-muted); opacity: .6; }
+.fm-edge-arrow.fm-edge-deps-arrow { fill: none; stroke: var(--color-border); stroke-width: 1.5; }
+.fm-edge-arrow.fm-edge-deps-arrow.delivered { stroke: var(--color-success); }
+.fm-edge-arrow.fm-hi { fill: rgb(var(--sapphire) / 0.9) !important; opacity: 1 !important; }
+@keyframes flow-dash { to { stroke-dashoffset: -9; } }
+
+/* ═══ 节点卡（产品 .solar-node.fm-node 逐字对齐；left/top 定位 = 产品路径）═══ */
+.solar-node.fm-node {
+  position: absolute; width: 150px; min-height: 88px; height: auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border); border-radius: 14px;
+  padding: 8px 10px; overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+  text-align: center; cursor: pointer; user-select: none; -webkit-user-select: none;
+  z-index: 2;
+  transition: opacity 0.35s ease, transform 0.3s cubic-bezier(0.33, 0, 0.2, 1), filter 0.15s ease, left 0.4s cubic-bezier(0.645,0.045,0.355,1), top 0.4s cubic-bezier(0.645,0.045,0.355,1);
+}
+.fm-node > * { flex: 0 0 auto; max-width: 100%; }
+.fm-node:hover { filter: brightness(1.04); }
+.solar-orbit { position: relative; width: 30px; height: 30px; margin: 0 auto 4px; flex-shrink: 0; }
+.solar-ring { position: absolute; top: 50%; left: 50%; border: 1px solid var(--color-border); border-radius: 50%; transform: translate(-50%, -50%); box-sizing: border-box; }
+.ring-1 { width: 6px; height: 6px; } .ring-2 { width: 14px; height: 14px; } .ring-3 { width: 24px; height: 24px; }
+.solar-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; will-change: transform; }
+.solar-dot { position: absolute; width: 3px; height: 3px; background: var(--color-text); border-radius: 50%; top: -1.5px; }
+.ring-1 .solar-dot { left: 2px; } .ring-2 .solar-dot { left: 6px; } .ring-3 .solar-dot { left: 11px; }
+.ring-1 .solar-dot-wrap { --a: 0deg; transform: rotate(var(--a)); }
+.ring-2 .solar-dot-wrap { --a: 120deg; transform: rotate(var(--a)); }
+.ring-3 .solar-dot-wrap { --a: 240deg; transform: rotate(var(--a)); }
+.fm-node.running .solar-dot-wrap { animation: solar-spin 4s linear infinite; }
+.fm-node.running .ring-2 .solar-dot-wrap { animation-duration: 6s; animation-direction: reverse; }
+.fm-node.running .ring-3 .solar-dot-wrap { animation-duration: 8s; }
+@keyframes solar-spin { from { transform: rotate(var(--a, 0deg)); } to { transform: rotate(calc(var(--a, 0deg) + 360deg)); } }
+.fm-node.pending .solar-ring { border-style: dashed; opacity: 0.4; }
+.fm-node.pending .solar-dot { opacity: 0.3; }
+.fm-node.pending .solar-node-label { opacity: 0.4; }
+.fm-node.failed .solar-ring { border-color: var(--color-error, #e5484d); opacity: 0.5; }
+.fm-node.blocked .solar-ring { border-color: rgb(var(--amber, 255 152 0) / 0.75); opacity: 0.6; }
+.solar-node-status { display: inline-block; flex: 0 0 auto; }
+.solar-node-status svg { width: 11px; height: 11px; display: block; }
+.solar-node-status.ok { color: var(--color-success); }
+.solar-node-status.err { color: var(--color-error); }
+.solar-node-status.warn { color: rgb(var(--amber)); }
+.fm-node-head { display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 2px; max-width: 100%; overflow: hidden; min-height: 11px; }
+.solar-node-label { font: 600 12px/1.25 -apple-system, sans-serif; color: var(--color-text); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.solar-node-sub { font: 400 10px/1.3 -apple-system, sans-serif; color: var(--color-text-muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.7; }
+.fm-wait-note { margin-top: 4px; max-width: 100%; font: 400 10px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fm-result-summary {
+  font: 400 10px/1.4 -apple-system, sans-serif; color: var(--color-text-muted);
+  margin-top: 2px; padding: 3px 6px; border-radius: 5px; background: var(--color-frame-hover);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.fm-node.fm-hi { transform: scale(1.06); filter: brightness(1.05); box-shadow: 0 6px 20px rgba(0,0,0,0.14), 0 2px 8px rgba(0,0,0,0.08); z-index: 5; }
+.fm-node.fm-adj { transform: scale(1.03); filter: brightness(1.03); border-color: rgb(var(--sapphire) / .5); }
+.fm-node.fm-enter { opacity: 0; transform: scale(0.85); }
+.fm-node.fm-exit { opacity: 0; transform: scale(0.8); pointer-events: none; }
+.fm-node:focus-visible { outline: 2px solid rgb(var(--sapphire) / .6); outline-offset: 2px; }
+
+/* ═══ 锚点（§3.2 方案 A：7px 点 + 28px 引入段，挂接目标卡、不进布局）═══ */
+.fm-anchors {
+  position: absolute; width: 150px; height: 36px; z-index: 3; pointer-events: none;
+  transition: left 0.4s cubic-bezier(0.645,0.045,0.355,1), top 0.4s cubic-bezier(0.645,0.045,0.355,1);
+}
+.fm-anc { position: absolute; top: 0; width: 7px; height: 36px; pointer-events: auto; cursor: default; --c: rgba(128,128,128,0.6); }
+.fm-anc.st-completed { --c: var(--color-success); }
+.fm-anc.st-failed { --c: var(--color-error); }
+.fm-anc.st-cancelled { --c: var(--color-text-muted); }
+.fm-anc-dot { position: absolute; top: 0; left: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--c); transition: transform .15s ease, box-shadow .15s ease; }
+.fm-anc.deps .fm-anc-dot { background: transparent; border: 1.5px solid var(--c); }
+.fm-anc-stem { position: absolute; top: 7px; left: 2.75px; width: 1.5px; height: 29px; background: var(--c); opacity: .85; }
+.fm-anc.deps .fm-anc-stem { background: repeating-linear-gradient(180deg, var(--c) 0 4px, transparent 4px 8px); opacity: .8; }
+.fm-anc.enter .fm-anc-dot, .fm-anc.enter .fm-anc-stem { animation: fm-fade-in .22s ease backwards; }
+.fm-anc.hi .fm-anc-dot { transform: scale(1.35); box-shadow: 0 0 0 4px rgba(91,127,191,0.25); }
+.fm-anc.hi .fm-anc-stem { opacity: 1; }
+@keyframes fm-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ═══ 空态（§7.3：全终态时主图文案，归档按钮保持可用）═══ */
+.fm-empty {
+  position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  pointer-events: none; z-index: 1;
+}
+.fm-empty.show { display: flex; }
+.fm-empty-card { text-align: center; padding: 26px 34px; border-radius: 16px; background: var(--glass-bg); border: 1px solid var(--glass-border); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); }
+.fm-empty-card svg { width: 22px; height: 22px; color: var(--color-text-muted); opacity: .6; margin-bottom: 8px; }
+.fm-empty-card div { font: 400 13px/1.6 -apple-system, sans-serif; color: var(--color-text-muted); }
+
+/* ═══ HUD（v3 底座）═══ */
+.fm-hud { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 6px; z-index: 30; }
+.fm-hud button {
+  width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--glass-border);
+  background: var(--glass-bg); color: var(--color-text-dim); cursor: pointer;
+  -webkit-backdrop-filter: blur(8px) saturate(1.15); backdrop-filter: blur(8px) saturate(1.15);
+  box-shadow: var(--hud-shadow); font: 500 13px/1 -apple-system, sans-serif;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.fm-hud button:hover { color: var(--color-text); border-color: rgba(var(--sapphire), .35); }
+.fm-hud .zPct { min-width: 44px; height: 28px; border-radius: 8px; border: 1px solid var(--glass-border); background: var(--glass-bg); -webkit-backdrop-filter: blur(8px) saturate(1.15); backdrop-filter: blur(8px) saturate(1.15); box-shadow: var(--hud-shadow); font: 500 10px/26px -apple-system, sans-serif; color: var(--color-text-dim); text-align: center; font-variant-numeric: tabular-nums; padding: 0 4px; }
+
+/* ═══ 降级（§6.4：prefers-reduced-motion → opacity-only，脉冲/闪烁/流动禁用）═══ */
+@media (prefers-reduced-motion: reduce) {
+  .fm-archive-panel { transition: opacity .01s linear; transform: none; }
+  .fm-archive-panel.open { transform: none; }
+  .fm-archive-badge.pulse, .fm-entry.flash, .fm-anc.enter .fm-anc-dot, .fm-anc.enter .fm-anc-stem { animation: none; }
+  .flow-edge.inflight { animation: none; }
+  .fm-node.running .solar-dot-wrap { animation: none; }
+  .solar-node.fm-node, .fm-anchors { transition: opacity 0.35s ease; }
+  .fm-entry-chev { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="fm-app" id="fmApp">
+  <!-- ═ nav-bar：产品 .flowmap-nav-bar 构型 + 右端归档入口（§4.1）══ -->
+  <div class="flowmap-nav-bar" id="fmNavBar">
+    <button class="flowmap-back-btn" type="button" tabindex="-1" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+      返回项目列表
+    </button>
+    <span class="nb-title">nebflow-website</span>
+    <span class="nb-sub">Flow Map</span>
+    <button class="fm-archive-btn" id="btnArchive" type="button" aria-expanded="false" aria-controls="fmPanel" data-testid="archive-toggle">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
+      <span class="fm-archive-badge hidden" id="fmBadge" data-testid="archive-badge"></span>
+    </button>
+
+    <!-- ═ 归档面板（§5）：锚定 nav-bar 下缘、右缘对齐图标、无遮罩 ══ -->
+    <div class="fm-archive-panel" id="fmPanel" role="region" aria-label="已归档节点" data-testid="archive-panel" hidden>
+      <div class="fm-panel-head">
+        <span class="fm-panel-title">已归档节点</span>
+        <span class="fm-panel-count" id="fmPanelCount"></span>
+        <button class="fm-panel-close" id="fmPanelClose" type="button" aria-label="关闭归档面板">✕</button>
+      </div>
+      <div class="fm-panel-body" id="fmPanelBody"></div>
+    </div>
+  </div>
+
+  <!-- ═ 子头部：摘要 + 图例 + 原型控制 ══ -->
+  <div class="fm-subheader">
+    <span class="fm-summary" id="fmSummary"></span>
+    <div class="fm-legend" aria-hidden="true">
+      <span class="fm-legend-item"><span class="fm-legend-swatch delivered"></span>已投递</span>
+      <span class="fm-legend-item"><span class="fm-legend-swatch inflight"></span>进行中</span>
+      <span class="fm-legend-item"><span class="fm-legend-swatch"></span>静止</span>
+      <span class="fm-legend-item"><span class="fm-legend-swatch deps"></span>依赖</span>
+      <span class="fm-legend-item"><svg width="8" height="15" viewBox="0 0 8 15" aria-hidden="true"><circle cx="4" cy="3.5" r="3" fill="rgb(var(--sapphire))"/><rect x="3.25" y="6.5" width="1.5" height="8.5" fill="rgb(var(--sapphire))" opacity=".85"/></svg>锚点=隐藏上游终态</span>
+    </div>
+    <span class="fm-spacer"></span>
+    <div class="fm-demo">
+      <button id="btnSim" type="button" title="模拟 WS nodeCompleted：终态即刻消失、下游补位、锚点浮现、徽章+1、条目置顶">模拟节点完成</button>
+      <button id="btnReset" type="button" title="恢复初始真实快照">重置</button>
+      <button id="btnTheme" type="button" title="切换暗色/亮色主题">暗色</button>
+    </div>
+  </div>
+
+  <!-- ═ 主图 ══ -->
+  <div class="fm-stage">
+    <div class="fm-viewport" id="fmViewport" data-testid="fm-viewport">
+      <div class="fm-world" id="fmWorld"></div>
+    </div>
+    <div class="fm-empty" id="fmEmpty">
+      <div class="fm-empty-card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
+        <div>全部节点已完成，结果收入右上角归档</div>
+      </div>
+    </div>
+    <div class="fm-hud">
+      <button id="zOut" type="button" aria-label="缩小">−</button>
+      <span class="zPct" id="zPct">100%</span>
+      <button id="zIn" type="button" aria-label="放大">+</button>
+      <button id="zFit" type="button" aria-label="适配视图" title="适配视图（0）">⤢</button>
+    </div>
+  </div>
+</div>
+
+<script src="./snapshot-data.js"></script>
+<script>
+'use strict';
+/* ═══════════════ 数据与常量（产品 flowMapTab.js 定值）═══════════════ */
+const SNAP = window.FM_SNAPSHOT;
+const NODE_W = 150, NODE_H = 108, V_SPACING = 180, H_SPACING = 210, PAD = 70;
+const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
+const NODE_STATUS_CLS = { wiring: 'pending', pending: 'pending', running: 'running', completed: 'completed', failed: 'failed', blocked: 'blocked', cancelled: 'cancelled' };
+const EASE_MOVE = 'cubic-bezier(0.645,0.045,0.355,1)'; // 产品 applyNodeDiff 同曲线
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtTime = (ts) => { if (!ts) return ''; const d = new Date(ts), p = (x) => String(x).padStart(2, '0'); return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const reducedMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* 状态图标 SVG（禁 emoji：勾/叉/横线全部 SVG 绘制）*/
+const ST_SVG = {
+  completed: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.5l2.5 2.5 4.5-5.5"/></svg>',
+  failed: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3l6 6M9 3l-6 6"/></svg>',
+  cancelled: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h6"/></svg>',
+};
+const CHEV_SVG = '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2l3.5 3-3.5 3"/></svg>';
+
+/* ═══════════════ 状态 ═══════════════ */
+const S = {
+  active: new Map(),          // id → active node（主图成员；完成即移除）
+  entries: [],                // 归档条目，completedAt 倒序（§5.4）
+  anchorIndex: new Map(),     // id → {name,status,agent}（store ∪ 磁盘归档 ∪ 拟真）
+  panelOpen: false,
+  expandedEntry: null,
+};
+function seedFromSnapshot() {
+  S.active = new Map(SNAP.active.map((n) => [n.id, { ...n }]));
+  S.entries = SNAP.entries.map((e) => ({ ...e }));
+  S.anchorIndex = new Map(Object.entries(SNAP.anchorIndex).map(([k, v]) => [k, { ...v }]));
+  S.expandedEntry = null;
+}
+seedFromSnapshot();
+
+/* ═══════════════ 布局：产品 layoutNodes 算法逐字移植（排版不动，§1.2）═══════════════ */
+function layoutNodes(nodes) {
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const childrenMap = new Map();
+  const addChild = (from, to) => { if (!childrenMap.has(from)) childrenMap.set(from, []); childrenMap.get(from).push(to); };
+  nodes.forEach((n) => {
+    if (n.out && n.out !== 'Nebula' && nodeIds.has(n.out)) addChild(n.id, n.out);
+    (n.deps || []).forEach((d) => { if (nodeIds.has(d)) addChild(d, n.id); });
+  });
+  const depth = {};
+  nodes.forEach((n) => { depth[n.id] = 0; });
+  const visited = new Set();
+  function visit(id, d) {
+    depth[id] = Math.max(depth[id] || 0, d);
+    if (visited.has(id)) return;
+    visited.add(id);
+    (childrenMap.get(id) || []).forEach((to) => visit(to, depth[id] + 1));
+  }
+  nodes.forEach((n) => {
+    const hasUpstream = (n.in || []).some((x) => nodeIds.has(x)) || (n.deps || []).some((x) => nodeIds.has(x));
+    if (!hasUpstream) visit(n.id, 0);
+  });
+  nodes.forEach((n) => visit(n.id, depth[n.id] || 0));
+  const atDepth = {};
+  nodes.forEach((n) => { const d = depth[n.id] || 0; (atDepth[d] = atDepth[d] || []).push(n.id); });
+  const positions = {};
+  const maxAt = Object.values(atDepth).reduce((m, ids) => Math.max(m, ids.length), 0);
+  Object.entries(atDepth).forEach(([d, ids]) => {
+    const y = Number(d) * V_SPACING;
+    const total = (ids.length - 1) * H_SPACING;
+    ids.forEach((id, i) => { positions[id] = { x: i * H_SPACING - total / 2, y }; });
+  });
+  const maxDepth = Math.max(0, ...Object.keys(atDepth).map(Number));
+  const width = Math.max((maxAt - 1) * H_SPACING + NODE_W + PAD * 2, 360);
+  const height = maxDepth * V_SPACING + PAD * 2;
+  return { positions, width, height };
+}
+
+/* ═══════════════ 边（产品 collectEdges / edgePathD 逐字移植）═══════════════ */
+function edgeStateOf(n) { if (n.status === 'completed') return 'delivered'; if (n.status === 'running') return 'inflight'; return 'idle'; }
+function depsEdgeStateOf(up) { const st = up?.status || 'pending'; if (st === 'completed') return 'delivered'; if (st === 'running') return 'inflight'; return 'idle'; }
+function collectEdges(nodes, positions) {
+  const ids = new Set(nodes.map((n) => n.id));
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const edges = new Map();
+  for (const n of nodes) {
+    if (!n.out || n.out === 'Nebula' || !ids.has(n.out)) continue;
+    const from = positions[n.id], to = positions[n.out];
+    if (!from || !to) continue;
+    edges.set(`${n.id}=>${n.out}`, { x1: from.x, y1: from.y, x2: to.x, y2: to.y, state: edgeStateOf(n), kind: 'out' });
+  }
+  for (const n of nodes) {
+    for (const d of n.deps || []) {
+      if (!ids.has(d)) continue;
+      const from = positions[d], to = positions[n.id];
+      if (!from || !to) continue;
+      edges.set(`${d}~>${n.id}`, { x1: from.x, y1: from.y, x2: to.x, y2: to.y, state: depsEdgeStateOf(byId.get(d)), kind: 'deps' });
+    }
+  }
+  return edges;
+}
+function edgePathD(p) {
+  const midY = (p.y1 + p.y2) / 2;
+  return `M ${p.x1.toFixed(1)} ${p.y1.toFixed(1)} C ${p.x1.toFixed(1)} ${midY.toFixed(1)} ${p.x2.toFixed(1)} ${midY.toFixed(1)} ${p.x2.toFixed(1)} ${p.y2.toFixed(1)}`;
+}
+function edgeClassOf(e) {
+  return e.kind === 'deps'
+    ? { path: `flow-edge fm-edge fm-edge-deps ${e.state}`, arrow: `fm-edge-arrow fm-edge-deps-arrow ${e.state}` }
+    : { path: `flow-edge fm-edge ${e.state}`, arrow: `fm-edge-arrow ${e.state}` };
+}
+
+/* ═══════════════ 锚点推导（§3.2 方案 A：in 左 deps 右，同行 12px→8px 压缩）═══════════════ */
+function anchorsOf(n) {
+  const items = [];
+  for (const id of n.in || []) if (!S.active.has(id)) items.push({ id, kind: 'in' });
+  for (const id of n.deps || []) if (!S.active.has(id)) items.push({ id, kind: 'deps' });
+  const gap = items.length * 19 > NODE_W - 24 ? 8 : 12;
+  const total = items.length * 7 + (items.length - 1) * gap;
+  let x = NODE_W / 2 - total / 2;
+  items.forEach((it) => {
+    it.x = x; x += 7 + gap;
+    const info = S.anchorIndex.get(it.id);
+    it.status = info ? info.status : 'unknown';
+    it.name = info ? info.name : null;
+  });
+  return items;
+}
+
+/* ═══════════════ 渲染 ═══════════════ */
+const world = document.getElementById('fmWorld');
+const viewport = document.getElementById('fmViewport');
+let POS = {}, LAYOUT = { width: 360, height: 200 };
+
+function statusIconOf(st) {
+  if (st === 'completed') return '<span class="solar-node-status ok">' + ST_SVG.completed + '</span>';
+  if (st === 'failed') return '<span class="solar-node-status err">' + ST_SVG.failed + '</span>';
+  if (st === 'blocked') return '<span class="solar-node-status warn"><svg viewBox="0 0 12 12" fill="currentColor"><path d="M3 1.5h1.2v9H3zM5.4 1.5h1.2v9H5.4z" transform="skewY(12 6 6)"/></svg></span>';
+  if (st === 'cancelled') return '<span class="solar-node-status cancelled-ok">' + ST_SVG.cancelled + '</span>';
+  return '';
+}
+function nameOf(id) { const n = S.active.get(id); return n ? `${n.name}(${id})` : `${id}✦`; }
+
+function cardHtml(n, pos) {
+  const st = n.status || 'pending';
+  const cls = NODE_STATUS_CLS[st] || 'pending';
+  const left = pos.x - NODE_W / 2 + LAYOUT.width / 2;
+  const top = pos.y - NODE_H / 2 + PAD;
+  const waitParts = (st === 'pending' || st === 'wiring') ? [...(n.in || []), ...(n.deps || [])].map(nameOf) : [];
+  const waitNote = waitParts.length ? `<div class="fm-wait-note" title="${esc(`等待: ${waitParts.join(' · ')}`)}">等待: ${esc(waitParts.join(' · '))}</div>` : '';
+  return `
+    <div class="solar-node fm-node ${cls}" data-node-id="${esc(n.id)}" data-status="${esc(st)}" data-agent="${esc(n.agent)}"
+         tabindex="0" title="${esc(n.name)} · ${esc(n.agent)}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
+      <div class="solar-orbit">
+        <div class="solar-ring ring-1"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
+        <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
+        <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
+      </div>
+      <div class="fm-node-head">${statusIconOf(st)}</div>
+      <div class="solar-node-label">${esc(n.name)}</div>
+      <div class="solar-node-sub">${esc(n.agent)}</div>
+      ${waitNote}
+    </div>`;
+}
+
+function anchorsHtml(n, pos) {
+  const items = anchorsOf(n);
+  if (!items.length) return '';
+  const left = pos.x - NODE_W / 2 + LAYOUT.width / 2;
+  const top = pos.y - NODE_H / 2 + PAD - 36; // 点(7) + 引入段(29) = 36，段尾接卡顶
+  const spans = items.map((it) => {
+    const tip = it.name
+      ? `上游 ${it.name}（${it.id}）${it.status === 'completed' ? '已完成' : it.status === 'failed' ? '已失败' : '已取消'}（已归档）`
+      : '上游已归档';
+    return `<span class="fm-anc ${it.kind} st-${it.status}" data-upstream="${esc(it.id)}" data-target="${esc(n.id)}"
+      style="left:${it.x.toFixed(1)}px" title="${esc(tip)}"><i class="fm-anc-dot"></i><i class="fm-anc-stem"></i></span>`;
+  }).join('');
+  return `<div class="fm-anchors" data-target="${esc(n.id)}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">${spans}</div>`;
+}
+
+function edgesHtml(nodes, positions) {
+  const paths = Array.from(collectEdges(nodes, positions)).map(([id, e]) => {
+    const cls = edgeClassOf(e);
+    return `<path class="${cls.path}" data-edge-id="${esc(id)}" d="${edgePathD(e)}"/><circle class="${cls.arrow}" data-edge-id="${esc(id)}" cx="${e.x2.toFixed(1)}" cy="${e.y2.toFixed(1)}" r="3"/>`;
+  }).join('');
+  return `<svg width="${LAYOUT.width}" height="${LAYOUT.height}" style="position:absolute;top:0;left:0;overflow:visible;pointer-events:none;z-index:1"><g transform="translate(${(LAYOUT.width / 2).toFixed(1)},${PAD})">${paths}</g></svg>`;
+}
+
+function render(opts = {}) {
+  const nodes = [...S.active.values()];
+  LAYOUT = layoutNodes(nodes);
+  POS = LAYOUT.positions;
+  world.style.width = LAYOUT.width + 'px';
+  world.style.height = LAYOUT.height + 'px';
+  const cards = nodes.map((n) => cardHtml(n, POS[n.id])).join('');
+  const anchors = nodes.map((n) => anchorsHtml(n, POS[n.id])).join('');
+  world.innerHTML = edgesHtml(nodes, POS) + anchors + cards;
+
+  // 补位动画（§3.4）：重建后从旧位置滑向新位置（left/top 400ms 产品同曲线）
+  if (opts.oldPositions && !reducedMotion()) {
+    requestAnimationFrame(() => {
+      nodes.forEach((n) => {
+        const old = opts.oldPositions[n.id];
+        const el = world.querySelector(`.fm-node[data-node-id="${CSS.escape(n.id)}"]`);
+        const anc = world.querySelector(`.fm-anchors[data-target="${CSS.escape(n.id)}"]`);
+        if (!el || !old) return;
+        const p = POS[n.id];
+        const oldLeft = old.x - NODE_W / 2 + LAYOUT.width / 2, oldTop = old.y - NODE_H / 2 + PAD;
+        const newLeft = p.x - NODE_W / 2 + LAYOUT.width / 2, newTop = p.y - NODE_H / 2 + PAD;
+        if (Math.abs(oldLeft - newLeft) < 0.5 && Math.abs(oldTop - newTop) < 0.5) return;
+        for (const el2 of [el, anc]) {
+          if (!el2) continue;
+          el2.style.transition = 'none';
+          el2.style.left = oldLeft + 'px'; el2.style.top = oldTop + 'px';
+          el2.getBoundingClientRect();
+          el2.style.transition = `left 0.4s ${EASE_MOVE}, top 0.4s ${EASE_MOVE}`;
+          el2.style.left = newLeft + 'px'; el2.style.top = newTop + 'px';
+        }
+      });
+    });
+  }
+  // 新锚点浮现（§3.4：fade-in 220ms）
+  if (opts.newAnchorFor) {
+    world.querySelectorAll(`.fm-anc[data-upstream="${CSS.escape(opts.newAnchorFor)}"]`).forEach((el) => el.classList.add('enter'));
+  }
+  updateSummary();
+  bindCardHover();
+}
+
+/* 摘要（产品 summaryParts 语义：done/fail 统计全量终态）*/
+function updateSummary() {
+  const act = S.active.size, done = S.entries.filter((e) => e.status === 'completed').length;
+  const fail = S.entries.filter((e) => e.status === 'failed').length;
+  const cancel = S.entries.filter((e) => e.status === 'cancelled').length;
+  document.getElementById('fmSummary').innerHTML =
+    `活动 <b>${act}</b> · 已完成 <b>${done}</b>${fail ? ` · 失败 <b>${fail}</b>` : ''}${cancel ? ` · 取消 <b>${cancel}</b>` : ''} · 归档 <b>${S.entries.length}</b> 条`;
+  document.getElementById('fmEmpty').classList.toggle('show', act === 0);
+}
+
+/* ═══════════════ 归档面板（§4/§5）═══════════════ */
+const btnArchive = document.getElementById('btnArchive');
+const panel = document.getElementById('fmPanel');
+const panelBody = document.getElementById('fmPanelBody');
+const badge = document.getElementById('fmBadge');
+let closeTimer = 0;
+
+function entryHtml(e, idx) {
+  const preview = (e.result || e.task || '').slice(0, 60);
+  return `
+  <div class="fm-entry" role="button" tabindex="0" data-id="${esc(e.id)}" data-ts="${e.completedAt || 0}"
+       aria-expanded="false" data-testid="archive-entry" title="${esc(e.name)}">
+    <div class="fm-entry-row1">
+      <span class="fm-entry-st ${esc(e.status)}">${ST_SVG[e.status] || ''}</span>
+      <span class="fm-entry-name">${esc(e.name)}</span>
+      <span class="fm-entry-agent">${esc(e.agent || '')}</span>
+      <span class="fm-entry-time">${fmtTime(e.completedAt)}</span>
+      <span class="fm-entry-chev">${CHEV_SVG}</span>
+    </div>
+    ${preview ? `<div class="fm-entry-preview">${esc(preview)}</div>` : ''}
+    <div class="fm-entry-body"><div class="fm-md">${renderEntryBody(e)}</div></div>
+  </div>`;
+}
+function renderEntryBody(e) {
+  if (!e.result || !e.result.trim()) return '<span class="md-empty">暂无结果</span>';
+  try { const html = renderMarkdown(e.result); return html || '<span class="md-empty">暂无结果</span>'; }
+  catch (_) { return '<pre>' + esc(e.result) + '</pre>'; } // 渲染异常纯文本兜底（§5.5）
+}
+
+function renderPanel() {
+  panelBody.innerHTML = S.entries.length
+    ? S.entries.map((e, i) => entryHtml(e, i)).join('')
+    : '<div class="fm-panel-empty">暂无已归档节点</div>';
+  // 恢复展开态（重渲染时保持独占展开的那条）
+  if (S.expandedEntry) {
+    const el = panelBody.querySelector(`.fm-entry[data-id="${CSS.escape(S.expandedEntry)}"]`);
+    if (el) { el.classList.add('expanded'); el.setAttribute('aria-expanded', 'true'); }
+  }
+  document.getElementById('fmPanelCount').textContent = `${S.entries.length} 条`;
+  updateBadge(false);
+  bindEntryEvents();
+}
+function updateBadge(pulse) {
+  const n = S.entries.length;
+  badge.textContent = n > 99 ? '99+' : String(n);
+  badge.classList.toggle('hidden', n === 0);
+  btnArchive.setAttribute('aria-label', `已归档节点（${n}）`);
+  if (pulse && !reducedMotion()) {
+    badge.classList.remove('pulse'); badge.getBoundingClientRect(); badge.classList.add('pulse');
+  }
+}
+
+function openPanel() {
+  clearTimeout(closeTimer);
+  panel.hidden = false;
+  panel.classList.remove('closing');
+  panel.getBoundingClientRect(); // 强制起始态生效
+  panel.classList.add('open');
+  btnArchive.classList.add('active');
+  btnArchive.setAttribute('aria-expanded', 'true');
+  S.panelOpen = true;
+}
+function closePanel(opts = {}) {
+  if (!S.panelOpen && panel.hidden) return;
+  S.panelOpen = false;
+  panel.classList.remove('open');
+  btnArchive.classList.remove('active');
+  btnArchive.setAttribute('aria-expanded', 'false');
+  if (reducedMotion()) { panel.hidden = true; panel.classList.remove('closing'); return; }
+  panel.classList.add('closing');
+  clearTimeout(closeTimer);
+  closeTimer = setTimeout(() => { panel.hidden = true; panel.classList.remove('closing'); }, 175);
+  if (!opts.keepFocus) btnArchive.focus({ preventScroll: true }); // 焦点归还图标（§5.7）
+}
+function togglePanel() { S.panelOpen ? closePanel({ keepFocus: true }) : openPanel(); }
+
+function bindEntryEvents() {
+  panelBody.querySelectorAll('.fm-entry').forEach((el) => {
+    el.addEventListener('click', () => toggleEntry(el));
+    el.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleEntry(el); }
+    });
+    // §5.6 hover 条目 → 主图高亮其直接可见下游（卡 + 对应锚点）
+    el.addEventListener('mouseenter', () => highlightDownstream(el.dataset.id, true));
+    el.addEventListener('mouseleave', () => highlightDownstream(el.dataset.id, false));
+  });
+}
+function toggleEntry(el) {
+  const id = el.dataset.id;
+  const wasOpen = el.classList.contains('expanded');
+  panelBody.querySelectorAll('.fm-entry.expanded').forEach((x) => { x.classList.remove('expanded'); x.setAttribute('aria-expanded', 'false'); });
+  if (!wasOpen) { el.classList.add('expanded'); el.setAttribute('aria-expanded', 'true'); S.expandedEntry = id; }
+  else S.expandedEntry = null;
+}
+function highlightDownstream(id, on) {
+  world.querySelectorAll('.fm-node.fm-adj-by-entry').forEach((x) => x.classList.remove('fm-adj', 'fm-adj-by-entry'));
+  world.querySelectorAll('.fm-anc.hi').forEach((x) => x.classList.remove('hi'));
+  if (!on) return;
+  for (const n of S.active.values()) {
+    const hit = (n.in || []).includes(id) || (n.deps || []).includes(id);
+    if (!hit) continue;
+    const card = world.querySelector(`.fm-node[data-node-id="${CSS.escape(n.id)}"]`);
+    if (card) card.classList.add('fm-adj', 'fm-adj-by-entry');
+    const anc = world.querySelector(`.fm-anc[data-target="${CSS.escape(n.id)}"][data-upstream="${CSS.escape(id)}"]`);
+    if (anc) anc.classList.add('hi');
+  }
+}
+
+/* 开合交互四路（§5.7）：图标 / ✕ / 外点 / Esc */
+btnArchive.addEventListener('click', togglePanel);
+document.getElementById('fmPanelClose').addEventListener('click', () => closePanel());
+document.addEventListener('pointerdown', (e) => {
+  if (!S.panelOpen) return;
+  if (panel.contains(e.target) || btnArchive.contains(e.target)) return;
+  closePanel({ keepFocus: true });
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && S.panelOpen) { e.stopPropagation(); closePanel(); }
+});
+// 锚点 hover → 面板开着时对应条目加亮（§5.6 反向）
+world.addEventListener('pointerover', (e) => {
+  const anc = e.target.closest('.fm-anc');
+  if (!anc || !S.panelOpen) return;
+  const entry = panelBody.querySelector(`.fm-entry[data-id="${CSS.escape(anc.dataset.upstream)}"]`);
+  if (entry) { entry.classList.add('glow'); anc.addEventListener('pointerleave', () => entry.classList.remove('glow'), { once: true }); }
+});
+
+/* ═══════════════ hover 局部化（v3 底座：自身 1.06 + 邻居 1.03 + 邻接边）═══════════════ */
+function neighborsOf(id) {
+  const n = S.active.get(id); if (!n) return new Set();
+  const set = new Set();
+  const ids = new Set([...S.active.keys()]);
+  if (n.out && ids.has(n.out)) set.add(n.out);
+  [...(n.in || []), ...(n.deps || [])].forEach((x) => { if (ids.has(x)) set.add(x); });
+  return set;
+}
+function edgesTouching(id) {
+  const out = [];
+  for (const [eid] of collectEdges([...S.active.values()], POS)) {
+    const [a, b] = eid.split(/=>|~>/);
+    if (a === id || b === id) out.push(eid);
+  }
+  return new Set(out);
+}
+function bindCardHover() {
+  world.querySelectorAll('.fm-node').forEach((el) => {
+    el.addEventListener('pointerenter', () => setHoverClasses(el.dataset.nodeId));
+    el.addEventListener('pointerleave', () => setHoverClasses(null));
+  });
+}
+function setHoverClasses(id) {
+  const neigh = id ? neighborsOf(id) : null;
+  const eSet = id ? edgesTouching(id) : null;
+  world.querySelectorAll('.fm-node').forEach((el) => {
+    const nid = el.dataset.nodeId;
+    el.classList.remove('fm-hi', 'fm-adj');
+    if (!id) return;
+    if (nid === id) el.classList.add('fm-hi');
+    else if (neigh.has(nid)) el.classList.add('fm-adj');
+  });
+  world.querySelectorAll('[data-edge-id]').forEach((el) => {
+    el.classList.toggle('fm-hi', !!(id && eSet.has(el.getAttribute('data-edge-id'))));
+  });
+}
+
+/* ═══════════════ 相机（v3 底座：fit / CAD 缩放 / 平移）═══════════════ */
+const cam = { s: 1, tx: 0, ty: 0, fitScale: 1 };
+const MIN_REL = 0.4, MAX_S = 4.0;
+const easeInOutCubic = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+let camRaf = 0, userNavigated = false;
+function applyCamera() {
+  world.style.transform = `translate(${cam.tx.toFixed(2)}px, ${cam.ty.toFixed(2)}px) scale(${cam.s.toFixed(4)})`;
+  document.getElementById('zPct').textContent = Math.round((cam.s / (cam.fitScale || 1)) * 100) + '%';
+}
+function stopCamAnim() { if (camRaf) { cancelAnimationFrame(camRaf); camRaf = 0; } }
+function animateCamera(target, ms = 280) {
+  stopCamAnim();
+  if (reducedMotion()) { Object.assign(cam, target); applyCamera(); return; }
+  const from = { ...cam }, t0 = performance.now();
+  const step = (now) => {
+    const k = easeInOutCubic(Math.min(1, (now - t0) / ms));
+    cam.s = from.s + (target.s - from.s) * k;
+    cam.tx = from.tx + (target.tx - from.tx) * k;
+    cam.ty = from.ty + (target.ty - from.ty) * k;
+    applyCamera();
+    camRaf = (k < 1) ? requestAnimationFrame(step) : 0;
+  };
+  camRaf = requestAnimationFrame(step);
+}
+function worldBBox() {
+  // DOM 空间：卡中心 = (pos.x + width/2, pos.y + PAD)（产品 left/top 定位口径）
+  const ox = LAYOUT.width / 2;
+  let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+  for (const n of S.active.values()) {
+    const p = POS[n.id]; if (!p) continue;
+    const cx = p.x + ox, cy = p.y + PAD;
+    minX = Math.min(minX, cx - NODE_W / 2); maxX = Math.max(maxX, cx + NODE_W / 2);
+    minY = Math.min(minY, cy - NODE_H / 2 - 40); maxY = Math.max(maxY, cy + NODE_H / 2); // 含锚点余量
+  }
+  if (minX > maxX) return { minX: 0, minY: 0, maxX: 360, maxY: 200, w: 360, h: 200 };
+  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
+}
+function fitTarget() {
+  const r = viewport.getBoundingClientRect();
+  const b = worldBBox();
+  const s = Math.min((r.width - 56) / b.w, (r.height - 56) / b.h, 1.15);
+  return { s, tx: (r.width - b.w * s) / 2 - b.minX * s, ty: (r.height - b.h * s) / 2 - b.minY * s };
+}
+function fit(animated = true) {
+  cam.fitScale = fitTarget().s;
+  const t = fitTarget();
+  if (animated) animateCamera(t); else { Object.assign(cam, t); applyCamera(); }
+}
+function zoomAt(px, py, factor) {
+  stopCamAnim();
+  const s2 = Math.min(MAX_S, Math.max(cam.fitScale * MIN_REL, cam.s * factor));
+  const k = s2 / cam.s;
+  cam.tx = px - k * (px - cam.tx); cam.ty = py - k * (py - cam.ty); cam.s = s2;
+  userNavigated = true; applyCamera();
+}
+viewport.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const r = viewport.getBoundingClientRect();
+  let dy = e.deltaY;
+  if (e.deltaMode === 1) dy *= 16; else if (e.deltaMode === 2) dy *= r.height;
+  dy = Math.max(-240, Math.min(240, dy));
+  zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-dy * 0.0016));
+}, { passive: false });
+let drag = null;
+viewport.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  drag = { x: e.clientX, y: e.clientY, tx: cam.tx, ty: cam.ty, moved: false };
+  viewport.setPointerCapture(e.pointerId);
+});
+viewport.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) > 3) { drag.moved = true; viewport.classList.add('is-panning'); }
+  if (drag.moved) { stopCamAnim(); cam.tx = drag.tx + dx; cam.ty = drag.ty + dy; userNavigated = true; applyCamera(); }
+});
+viewport.addEventListener('pointerup', () => { drag = null; viewport.classList.remove('is-panning'); });
+viewport.addEventListener('dblclick', () => { userNavigated = false; fit(); });
+document.getElementById('zIn').onclick = () => { const r = viewport.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1.25); };
+document.getElementById('zOut').onclick = () => { const r = viewport.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 0.8); };
+document.getElementById('zFit').onclick = () => { userNavigated = false; fit(); };
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === '+' || e.key === '=') { const r = viewport.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1.25); }
+  if (e.key === '-' || e.key === '_') { const r = viewport.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 0.8); }
+  if (e.key === '0') { userNavigated = false; fit(); }
+});
+
+/* ═══════════════ 模拟节点完成（§3.4 增量过渡演示）═══════════════
+   顺序取拓扑链头（P0 验收链 → email 链 → 其余根），每击完成一个：
+   终态卡淡出 → 存活卡平滑补位 → 新锚点浮现 → 徽章+1 → 面板开着则置顶闪烁 */
+const SIM_QUEUE = [
+  'n-c6adf615', 'n-8b6f1650', 'n-f4014d22',
+  'n-f0301070', 'n-36653e05', 'n-2dd3d33f', 'n-09cfa125', 'n-b19a464f', 'n-b532f46b', 'n-6b7db1a5', 'n-e0b29bf6',
+];
+let simBusy = false;
+function simulateCompletion() {
+  if (simBusy) return;
+  const id = SIM_QUEUE.find((x) => S.active.has(x));
+  if (!id) return;
+  simBusy = true;
+  const n = S.active.get(id);
+  const card = world.querySelector(`.fm-node[data-node-id="${CSS.escape(id)}"]`);
+  const oldPositions = {};
+  for (const [nid, p] of Object.entries(POS)) oldPositions[nid] = { ...p };
+  if (card) card.classList.add('fm-exit'); // ① 终态卡淡出（350ms）
+  setTimeout(() => {
+    // ② 数据迁移：active → entry（prepend 语义：排序后自然居顶）
+    S.active.delete(id);
+    S.entries.push({
+      id: n.id, name: n.name, agent: n.agent, status: 'completed',
+      result: '（演示模拟）节点已完成，结果收入归档面板。此处为原型「模拟节点完成」注入的示例结果文本，真实产品中为节点 result 载荷（≤500 字符）。',
+      task: n.task || '', completedAt: Date.now(), src: 'demo-sim',
+    });
+    S.entries.sort((a, b) => (-(a.completedAt || 0)) - (-(b.completedAt || 0)) || a.name.localeCompare(b.name));
+    // ③ 主图重渲染：补位 + 新锚点浮现（相机保持不动，§5.1 面板锚定 nav-bar 不随动）
+    render({ oldPositions, newAnchorFor: id });
+    // ④ 徽章 +1（脉冲）；⑤ 面板开着 → 条目 prepend + 闪烁一次
+    updateBadge(true);
+    if (S.panelOpen) prependEntryAnimated(id);
+    else renderPanel();
+    simBusy = false;
+    if (S.active.size === 0) { /* §7.3 全终态：空态文案 + 归档按钮保持可用 */ }
+  }, reducedMotion() ? 30 : 350);
+}
+function prependEntryAnimated(id) {
+  renderPanel();
+  const el = panelBody.querySelector(`.fm-entry[data-id="${CSS.escape(id)}"]`);
+  if (el) { el.classList.add('flash'); el.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' }); }
+}
+document.getElementById('btnSim').addEventListener('click', simulateCompletion);
+document.getElementById('btnReset').addEventListener('click', () => {
+  simBusy = false; seedFromSnapshot(); render(); renderPanel(); userNavigated = false; fit();
+});
+
+/* ═══════════════ 主题（双主题铁律：全 token 化，暗色为产品暗主题校准值）═══════════════ */
+function setTheme(dark) {
+  document.body.classList.toggle('theme-dark', dark);
+  document.getElementById('btnTheme').textContent = dark ? '亮色' : '暗色';
+  document.getElementById('btnTheme').setAttribute('aria-label', dark ? '切换为亮色主题' : '切换为暗色主题');
+}
+document.getElementById('btnTheme').addEventListener('click', () => setTheme(!document.body.classList.contains('theme-dark')));
+setTheme(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+/* ═══════════════ markdown 渲染（v3 底座：标题/列表/表格/代码/引用，行内粗体代码链接）═══════════════ */
+function mdInline(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+function renderMarkdown(src) {
+  const lines = String(src || '').replace(/\r\n?/g, '\n').split('\n');
+  const out = []; let i = 0;
+  const cellsOf = (r) => r.slice(1, -1).split('|').map((c) => c.trim());
+  const isSep = (cs) => cs.length > 0 && cs.every((c) => /^:?-{3,}:?$/.test(c.replace(/\s/g, '')));
+  while (i < lines.length) {
+    const t = lines[i].trim();
+    if (/^```/.test(t)) {
+      const buf = []; i++;
+      while (i < lines.length && !/^```\s*$/.test(lines[i].trim())) { buf.push(lines[i]); i++; }
+      i++;
+      out.push('<pre>' + esc(buf.join('\n')) + '</pre>'); continue;
+    }
+    const h = t.match(/^(#{1,6})\s+(.+)$/);
+    if (h) { const lv = Math.min(h[1].length + 2, 6); out.push(`<h${lv}>${mdInline(h[2])}</h${lv}>`); i++; continue; }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) { out.push('<hr>'); i++; continue; }
+    if (t.startsWith('>')) {
+      const buf = [];
+      while (i < lines.length && lines[i].trim().startsWith('>')) { buf.push(lines[i].trim().replace(/^>\s?/, '')); i++; }
+      out.push('<blockquote>' + mdInline(buf.join(' ')) + '</blockquote>'); continue;
+    }
+    if (t.startsWith('|') && t.endsWith('|')) {
+      const rows = [];
+      while (i < lines.length) { const tt = lines[i].trim(); if (tt.startsWith('|') && tt.endsWith('|')) { rows.push(tt); i++; } else break; }
+      const hasHead = rows.length > 1 && isSep(cellsOf(rows[1]));
+      let body = '';
+      rows.forEach((r, ri) => { const cs = cellsOf(r); if (isSep(cs)) return; const tag = (hasHead && ri === 0) ? 'th' : 'td'; body += '<tr>' + cs.map((c) => `<${tag}>${mdInline(c)}</${tag}>`).join('') + '</tr>'; });
+      out.push('<table>' + body + '</table>'); continue;
+    }
+    const li = t.match(/^([-*+]|\d+[.)])\s+(.*)$/);
+    if (li) {
+      const ordered = /\d/.test(li[1]); const items = [];
+      while (i < lines.length) {
+        const m = lines[i].trim().match(/^([-*+]|\d+[.)])\s+(.*)$/);
+        if (m) { items.push(m[2]); i++; }
+        else if (lines[i].trim() && /^\s{2,}\S/.test(lines[i]) && items.length) { items[items.length - 1] += ' ' + lines[i].trim(); i++; }
+        else break;
+      }
+      out.push(`<${ordered ? 'ol' : 'ul'}>` + items.map((x) => '<li>' + mdInline(x) + '</li>').join('') + `</${ordered ? 'ol' : 'ul'}>`); continue;
+    }
+    if (!t) { i++; continue; }
+    const buf = [lines[i]]; i++;
+    while (i < lines.length) {
+      const tt = lines[i].trim();
+      if (!tt || /^(#{1,6}\s|```|\||>)/.test(tt) || /^([-*+]|\d+[.)])\s+/.test(tt)) break;
+      buf.push(lines[i]); i++;
+    }
+    out.push('<p>' + mdInline(buf.join('\n')) + '</p>');
+  }
+  return out.join('');
+}
+
+/* ═══════════════ 回归调试钩子（window.__fm，回归脚本专用，不影响演示）═══════════════ */
+window.__fm = {
+  state: () => ({ active: S.active.size, entries: S.entries.length, open: S.panelOpen, expanded: S.expandedEntry, theme: document.body.classList.contains('theme-dark') ? 'dark' : 'light' }),
+  openPanel, closePanel, togglePanel, setTheme,
+  entryIds: () => [...panelBody.querySelectorAll('.fm-entry')].map((el) => el.dataset.id),
+  anchorCount: () => world.querySelectorAll('.fm-anc').length,
+  depsAnchorCount: () => world.querySelectorAll('.fm-anc.deps').length,
+  clearEntries: () => { S.entries = []; renderPanel(); },
+  simulateCompletion,
+};
+
+/* ═══════════════ 启动 ═══════════════ */
+if (!SNAP) {
+  document.getElementById('fmSummary').textContent = '快照数据加载失败：snapshot-data.js 缺失';
+} else {
+  render();
+  renderPanel();
+  fit(false);
+}
+</script>
+</body>
+</html>
