@@ -1095,10 +1095,12 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       _ <- mountProject("acc-wt-nodelist", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 权威位置两个 + 顶层一个 + 顶层软链别名（指向权威同名——生产孤儿清理形态）
+      // + 保留名系统目录（skills/：QC P1——不得混入 worktrees[] 候选）
       _ <- IO.blocking {
         os.makeDir.all(ws / ".nebflow" / "worktrees" / "wt-a")
         os.makeDir.all(ws / ".nebflow" / "worktrees" / "wt-x")
         os.makeDir.all(ws / ".nebflow" / "wt-b")
+        os.makeDir.all(ws / ".nebflow" / "skills")
         java.nio.file.Files.createSymbolicLink(
           (ws / ".nebflow" / "wt-a").toNIO, (os.rel / "worktrees" / "wt-a").toNIO)
       }

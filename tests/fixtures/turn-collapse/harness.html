@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<!-- turn-collapse harness.html — static test harness for the 2026-09-03
+     "collapse keeps LLM text" ruling (工具过程自动收起——保留中间文字回复).
+
+     Imports the REAL frontend modules (chatView.js / chat.js / turnGroup.js /
+     persistence.js — no stubs, no bundling) and replays the exact calls the
+     app makes on WS events / history restore:
+
+       window.__liveTurn()        → 文字A→工具1→文字B→注入→工具2→最终回复,
+                                    then collapseTurn() exactly like the
+                                    main.js `done` handler does.
+       window.__postClosureTurn() → an external injection arriving AFTER the
+                                    closure cursor + a follow-up turn and its
+                                    collapseTurn() (#403 2026-08-26 ruling).
+       window.__refailTurn()      → same-turn re-terminal heal: failTurn()
+                                    right after __liveTurn's done (no rows
+                                    appended between) — ungroupTail must
+                                    dissolve and re-gather every run-group.
+       window.__history(msgs, opts) → restoreFromBackendHistory(msgs, opts)
+                                    (the post-refresh path; fixture shape
+                                    matches the real ~/.nebflow session
+                                    ui.json entries).
+
+     The spec (tests/turn-collapse-keep-text.spec.mjs) serves the repo root
+     over a throwaway static server (never the 8080 host).
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>turn-collapse harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    /* Minimal stand-in for the app shell: give #chat the column width the
+       real layout gives it, everything else comes from the real CSS. */
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'harness-session';
+    // No real socket may exist in this harness.
+    state.ws = { readyState: 1, send: () => {} };
+
+    const chatMod = await import(`${WEB}/chat.js`);
+    const turnMod = await import(`${WEB}/turnGroup.js`);
+    const view = chatViews.primary;
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    // 文字A→工具1→文字B→注入→工具2→最终回复 + done 收起（对齐 main.js done
+    // handler 的 collapseTurn 调用形态：meta 带 durationMs/model/phrase/title）。
+    window.__liveTurn = async () => {
+      chatMod.renderUserBubble('帮我整理这份资料的关键结论', [], Date.now());
+      // 文字A — 中间文字（roundComplete finalize 形态：无 duration badge）
+      chatMod.appendAiText('好的，我先检索资料，再逐段汇报进展。');
+      chatMod.finishAi();
+      // 工具1
+      chatMod.renderTool('WebSearch\n  ("nebflow turn collapse")', '5 results', 'search results body', false, '{"query":"nebflow turn collapse"}', 'harness-session');
+      // 文字B — 中间文字
+      chatMod.appendAiText('找到关键线索了：收起分组在 turnGroup.js，继续核对细节。');
+      chatMod.finishAi();
+      // 注入事件（工具间外部注入）
+      chatMod.renderInjectedBubble('【Team】swift-dev 汇报：子任务已启动', 'team/swift-dev', Date.now(), 'mail', 'swift-dev', 'ReminderIsland', 'queue');
+      // 工具2
+      chatMod.renderTool('Read\n  ("turnGroup.js")', '120 lines', 'file body', false, '{"file_path":"/tmp/turnGroup.js"}', 'harness-session');
+      // 最终回复（done：带 duration badge）
+      chatMod.appendAiText('这是最终回复：中间文字全部保留，工具过程已折叠。');
+      chatMod.finishAi(4200, 'test-model');
+      turnMod.collapseTurn(view, {
+        durationMs: 4200,
+        model: 'test-model',
+        phrase: '✻ 整理线索 4 秒',
+        title: '10:30',
+        sessionId: 'harness-session',
+      });
+      await raf2();
+    };
+
+    // 闭合后到达的外部事件开新组（#403 2026-08-26 裁定回归）：新 turn 的
+    // 工具+最终回复 + done 收起。必须在 __liveTurn 之后调用。
+    window.__postClosureTurn = async () => {
+      chatMod.renderInjectedBubble('【Schedule】每日站会提醒', 'schedule', Date.now(), 'schedule', '', '', 'immediate');
+      chatMod.renderTool('Bash\n  (git status)', 'clean', 'git output', false, '{"command":"git status"}', 'harness-session');
+      chatMod.appendAiText('新回合的最终回复。');
+      chatMod.finishAi(1500, 'test-model');
+      turnMod.collapseTurn(view, {
+        durationMs: 1500,
+        model: 'test-model',
+        phrase: '✻ 快速确认 2 秒',
+        title: '10:31',
+        sessionId: 'harness-session',
+      });
+      await raf2();
+    };
+
+    // 同 turn 重终态治愈（ungroupTail）：done 后紧跟 error（期间无新行追加），
+    // 全部 run-group 溶解后按 failed 重收。必须在 __liveTurn 之后调用。
+    window.__refailTurn = async () => {
+      turnMod.failTurn(view);
+      await raf2();
+    };
+
+    // 历史重建（刷新后路径）：msgs 为真实 ui.json 形态。
+    window.__history = async (msgs, opts = {}) => {
+      chatEl.innerHTML = '';
+      const { restoreFromBackendHistory } = await import(`${WEB}/persistence.js`);
+      restoreFromBackendHistory(msgs, opts);
+      await raf2();
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>
