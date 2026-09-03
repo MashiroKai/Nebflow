@@ -1248,7 +1248,14 @@ object ProjectCreateTool extends Tool:
           // 幂等挂载（试点重启恢复关键路径）：定义已存在 → 不重建定义、不动脚手架，
           // 直接挂载（ProjectStore.create 防覆盖返回 Left；load 命中即已存在）。
           // 同名异 workspace → 明确报错（不静默复用旧定义）。
+          // 归档项目例外（迁移方案 v2 §6.1 单程语义）：拒绝挂载——否则出现「已挂载
+          // 但面板不可见」（list 过滤）的僵尸态；恢复须先手工删 project.json 归档两键。
           ProjectStore.load(resolvedName).flatMap {
+            case Some(pd) if pd.archived.contains(true) =>
+              IO.pure(Left(ToolError(
+                s"Project '$resolvedName' is archived (hidden from the Projects panel). " +
+                  s"Remove the 'archived'/'archivedAt' keys in ~/.nebflow/projects/$resolvedName/project.json to restore it first."
+              )))
             case None => IO.pure(Left(ToolError(err)))
             case Some(pd) if sameWorkspace(pd.workspace, workspace) => mountProject(pd, created = false)
             case Some(pd) =>
