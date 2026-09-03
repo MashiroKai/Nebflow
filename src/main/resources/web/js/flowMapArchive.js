@@ -522,6 +522,7 @@ function renderArchiveUi(/** @type {LayerCtx} */ ctx, opts = {}) {
   const countEl = ctx.panel.querySelector('.fm-panel-count');
   if (countEl) countEl.textContent = t('flowmap.archive.count', { n: String(s.chains.length), m: String(totalNodes) });
   updateBadge(ctx, !!opts.pulse);
+  updateDetailDock(ctx); // 每次渲染重判 host 口径 dock 形态（取代媒体查询的自动跟随）
 }
 
 // ── 开合（§5.7/§6/§9.2）──────────────────────────────────
@@ -579,8 +580,13 @@ function statusLabel(st) {
   return key ? t(key) : String(st || '');
 }
 
+/** 并排最小 host 宽（§5.8b 2026-09-04 修订，host 口径非视口）：380 卡片 + 8 间距 + 360 dock + 16+16 边距。 */
+const DOCK_MIN_HOST_W = 780;
+
 function updateDetailDock(/** @type {LayerCtx} */ ctx) {
-  ctx.detail.classList.toggle('dock-left', ctx.panelOpen); // §5.8b：面板同开 → dock-left 404px
+  const host = ctx.layer.parentElement;
+  const canDock = !!host && host.clientWidth >= DOCK_MIN_HOST_W;
+  ctx.detail.classList.toggle('dock-left', ctx.panelOpen && canDock); // §5.8b：面板同开且 host 足宽 → dock-left 404px
 }
 
 function openDetail(/** @type {LayerCtx} */ ctx, /** @type {string} */ nodeId) {
@@ -776,20 +782,22 @@ function bindLayerEvents(/** @type {LayerCtx} */ ctx) {
 }
 
 // ── 文档级管线：空白点击统一收起（§5.10）+ Esc 分层（§5.7）─────────
-/** 指针按下位置（>3px 位移的拖拽豁免 §5.10②）。 */
+/** 指针按下位置（>3px 位移的拖拽豁免 §5.10②）。
+ *  2026-09-04 修复：原在 pointerup 即清 pressPoint，而 click 事件晚于 pointerup
+ *  触发，位移判定恒 null 短路 → 拖拽豁免失效（画布平移拖拽误收面板，A11.3 动态
+ *  暴露）。改为 click 消费时自清（每次 pointerdown 重建）。 */
 let pressPoint = null;
 document.addEventListener('pointerdown', (e) => {
   pressPoint = { x: e.clientX, y: e.clientY };
-});
-document.addEventListener('pointerup', () => {
-  pressPoint = null;
 });
 
 document.addEventListener('click', (e) => {
   const target = /** @type {HTMLElement} */ (e.target);
   if (!target) return;
   // 拖拽豁免：位移 >3px 的按下-抬起不是「空白点击」
-  if (pressPoint && Math.hypot(e.clientX - pressPoint.x, e.clientY - pressPoint.y) > 3) return;
+  const dragged = pressPoint && Math.hypot(e.clientX - pressPoint.x, e.clientY - pressPoint.y) > 3;
+  pressPoint = null;
+  if (dragged) return;
   // 面板/悬浮钮/详情内部豁免
   if (target.closest('.fm-float-layer')) return;
   // 节点卡豁免（点节点 = 选择开详情；卡片自身已 stopPropagation，此处兜底）
@@ -820,6 +828,14 @@ document.addEventListener('keydown', (e) => {
   if (panelCtx) {
     e.stopPropagation();
     closePanel(panelCtx); // 焦点归还悬浮钮
+  }
+});
+
+// host 口径 dock 判定无媒体查询自动跟随：视口尺寸变化 → 全量重判（§5.8b 2026-09-04）
+window.addEventListener('resize', () => {
+  for (const ctx of Array.from(layerCtxs)) {
+    if (!ctx.layer.isConnected) { layerCtxs.delete(ctx); continue; }
+    updateDetailDock(ctx);
   }
 });
 
