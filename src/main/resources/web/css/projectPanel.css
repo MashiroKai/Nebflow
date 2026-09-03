@@ -125,8 +125,11 @@
 .flowmap-back-btn svg { width: 14px; height: 14px; }
 
 /* Flow Map 渲染体：撑满 nav-bar 以下空间，内部由 flowMapTab 渲染
-   (.flowmap-card flex:1 填满；.dag-empty height:100% 居中) */
+   (.flowmap-card flex:1 填满；.dag-empty height:100% 居中)
+   v3：position:relative 作为归档悬浮层（悬浮钮/面板/详情）的定位上下文
+   （规格 20260903_flowmap-archive-panel-spec.md §4.1）。 */
 .flowmap-view-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
