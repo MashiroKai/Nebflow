@@ -15,11 +15,11 @@ Nebflow 是一个开源（Apache 2.0）AI Agent 编排平台。本仓为 **Scala
 - **官网**: nebflow.space (Next.js on Vercel) — 见 nebflow-website 项目
 
 ## 分支与工作目录
-- **主开发分支**: `archive/scala`（Scala 代码在此分支维护）；当前活动开发分支见 git 现状
+- **主开发分支**: `main`（Scala 开发主线，2026-09-03 核对：main 上活跃 Scala 开发；旧口径「主开发分支 archive/scala」「main 已切换为 Rust」均已过时——archive/scala 分支已删除）；`beta`/`release` 为发版线
 - **工作目录**: `/Users/dev/Claude code/Nebflow`
 - **禁止触碰** `nebflow-rs/` 目录（那是 Rust 版的代码）和 `/tmp/nebflow-rust`（nebflow-rust 的工作目录）
 
-## 协作分工参考（试点期旧体系仍在运行；新架构节点按需组建）
+## 协作分工参考（nebflow-project team 已于 2026-09-03 归档迁入 Project 架构；按方向组建节点，领域知识见 nebflow-* skill 组）
 - 后端代码（Scala, build, API, flow engine）→ 后端方向
 - 前端代码（JS, CSS, HTML, UI）→ 前端方向
 - 文档（CODEBASE.md, README, API 文档）→ 文档方向
@@ -53,7 +53,7 @@ Nebflow 是一个开源（Apache 2.0）AI Agent 编排平台。本仓为 **Scala
 1. 为每个任务创建独立 worktree：`git worktree add /tmp/nb-<task-name> main -b feat/<task-name>`
 2. Mail 中告知工作目录路径；完成后 Manager 审查 → 合并 → 清理 worktree
 3. 编译测试在自己的 worktree 里跑：`cd /tmp/nb-<task-name> && sbt compile` / `sbt test`——**禁止 `sbt run`**
-4. 合并审查：简单改动（单文件、<50 行）直接审查合并；复杂改动（多文件、架构变更）走 code-review flow
+4. 合并审查：简单改动（单文件、<50 行）直接审查合并；复杂改动（多文件、架构变更）先过 review 审查再合并（原 code-review flow 已蒸馏为 review skill，2026-09-03）。分支名与 worktree 目录名一致（`feat/<feature-name>` ↔ `/tmp/nb-<feature-name>`）
 
 ## 运行安全
 - **🔴 绝对禁止对 8080 宿主实例执行 kill、pkill、kill -INT/-TERM/-9 或任何信号发送**——8080 是运行所在的 Nebflow 宿主实例：kill 它=kill 自己和用户会话（2026-08-19 00:20 事故）

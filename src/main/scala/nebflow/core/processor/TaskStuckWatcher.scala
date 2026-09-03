@@ -121,6 +121,19 @@ object TaskStuckWatcher:
       val stuck = registry.values.toList
         .filter(rec => scannedKinds.contains(rec.kind))
         .filter(rec => rec.status == AgentStatus.Processing)
+        // R2 (wait-timeout-fix, 2026-09-03 作者裁定): WaitingForUser is a
+        // first-class human-in-the-loop wait (AskUser pending / permission
+        // card) — a person, not the process, is the progress driver. Never a
+        // stuck candidate: this exclusion (paired with the status wiring)
+        // kills all 116/day taskStuck false positives (audit 20260903) and
+        // the destructive Stop→hard-cancel chain that killed sub-agents'
+        // pending questions. Behaviorally subsumed by the Processing filter
+        // above; kept as an explicit guard so a future widening of the scan
+        // condition can never silently re-include human-in-the-loop waits.
+        // Coverage resumes the moment the answer lands (paired restore to
+        // Processing with a fresh lastActivityMs — AgentActor AskUser handler
+        // / AgentCore.askUserPermission), so true hangs stay reachable.
+        .filter(rec => rec.status != AgentStatus.WaitingForUser)
         .filter(rec => rec.lastActivityMs > 0 && now - rec.lastActivityMs > thresholdMs)
       val stuckIds = stuck.map(_.sessionId).toSet
       // Drop counters for sessions that recovered (fresh activity / different

@@ -2129,6 +2129,13 @@ object AgentActor extends AgentCore with AgentSession:
           // Back to idle without finishing the turn — clear the busy mark so a
           // interrupted team agent isn't stuck "running" in the Teams panel.
           _ <- markTeamIdle(agentDef, state.sessionId)
+          // R2 closure (wait-timeout-fix): user cancel is the guaranteed exit
+          // from WaitingForUser (AskUser/permission parks the turn fiber on a
+          // deferred — no finishTurnCont runs). Without this touch the registry
+          // would keep the waiting status forever. Idle — NOT Processing — so
+          // the watcher sees a consistent idle row (also fixes the pre-existing
+          // stale-Processing-after-interrupt gap).
+          _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
         yield
           val interruptedState = state.resetForInterrupt.withPendingCompaction(None)
           idle(agentDef, resources, depth, parentRef, interruptedState)
@@ -2192,6 +2199,11 @@ object AgentActor extends AgentCore with AgentSession:
 
           _ <- state.readTracker.fold(IO.unit)(t => t.clear())
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+          // R2 closure (wait-timeout-fix): ResetSession discards a turn that
+          // may be parked on a pending AskUser/permission wait — un-mark
+          // WaitingForUser (mirror of the Interrupt handler), the registry row
+          // must never keep a waiting status for a turn that no longer exists.
+          _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
         yield
           val resetState = state
             .withMessages(Nil)
@@ -2456,17 +2468,30 @@ object AgentActor extends AgentCore with AgentSession:
         val payload = buildAskUserJson(Some(rootSid), srcAgent, items, Some(srcAgent), Some(srcSession))
         val sendIO = resources.interactionHubRef.get.flatMap {
           case Some(hub) =>
-            (hub ! InteractionHubCommand.Request(
-              InteractionRequest(
-                requestId = requestId,
-                kind = InteractionKind.AskUser,
-                payload = payload,
-                reply = InteractionReply.AskUserReply(replyToOpt),
-                rootSessionId = rootSid,
-                sourceAgent = srcAgent,
-                sourceSession = srcSession
-              )
-            )).void
+            // R2 (wait-timeout-fix, 2026-09-03): the turn parks on a
+            // human-in-the-loop wait — mark WaitingForUser so TaskStuckWatcher
+            // skips the session. Was: status stayed Processing + lastActivityMs
+            // frozen at dispatch → 116 taskStuck false positives/day (audit
+            // 20260903) and, for sub-agents, the destructive Stop→hard-cancel
+            // chain killing a pending question. Paired un-marks (state machine
+            // must never strand WaitingForUser):
+            //   answer → AskUserQuestionTool restore (Processing, fresh stamp)
+            //   user cancel → Interrupt/ResetSession handler touch (Idle)
+            //   turn end → finishTurnCont (Idle) — pre-existing backstop.
+            // True-hang coverage is intact: every exit above re-enters scanned
+            // statuses, and WaitingForUser itself is never a terminal state.
+            touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser) *>
+              (hub ! InteractionHubCommand.Request(
+                InteractionRequest(
+                  requestId = requestId,
+                  kind = InteractionKind.AskUser,
+                  payload = payload,
+                  reply = InteractionReply.AskUserReply(replyToOpt),
+                  rootSessionId = rootSid,
+                  sourceAgent = srcAgent,
+                  sourceSession = srcSession
+                )
+              )).void
           case None =>
             // Hub not spawned (early boot / tests): cancel the ask so the
             // caller's AskUserQuestionTool `.?` does not hang forever.

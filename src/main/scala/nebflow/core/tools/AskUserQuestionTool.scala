@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.ActorRef
-import nebflow.agent.AgentCommand
+import nebflow.agent.{AgentCommand, AgentStatus}
 import nebflow.core.{AskItem, AskOption, AskPreview, HeadlessMode, QuestionDependency}
 
 object AskUserQuestionTool extends Tool:
@@ -198,14 +198,36 @@ Behavior:
                 (replyTo: ActorRef[List[String]]) => AgentCommand.AskUser(requestId, items, Some(replyTo)),
                 timeout = None
               )
-              .map { answers =>
-                Right(formatAnswer(items, answers))
+              .flatMap { answers =>
+                // R2 closure (wait-timeout-fix): the answer landed — paired
+                // un-mark for the WaitingForUser status set by the agent's
+                // AskUser handler. Fresh activity stamp so the TaskStuckWatcher
+                // idle window restarts from the answer, and the session is back
+                // under true-stuck coverage while the turn continues.
+                restoreRegistryAfterAnswer(ctx).as(Right(formatAnswer(items, answers)))
               }
           case None =>
             IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
       end if
     end if
   end askUser
+
+  /** R2 (wait-timeout-fix): paired un-mark for the WaitingForUser status the
+    * agent's AskUser handler set when this question was dispatched. Registry
+    * entry present → status=Processing + fresh lastActivityMs (same touch
+    * semantics as AgentCore.touchRegistryActivity — never creates a ghost
+    * row). No-op when sharedResources/sessionId are absent (harness calls).
+    * Failure-safe: a registry touch must never fail the user's answer. */
+  private def restoreRegistryAfterAnswer(ctx: ToolContext): IO[Unit] =
+    (ctx.sharedResources, ctx.sessionId) match
+      case (Some(res), Some(sid)) =>
+        val now = System.currentTimeMillis()
+        res.agentRegistry.modify { m =>
+          m.get(sid) match
+            case Some(rec) => (m.updated(sid, rec.copy(status = AgentStatus.Processing, lastActivityMs = now)), ())
+            case None      => (m, ())
+        }.handleErrorWith(_ => IO.unit)
+      case _ => IO.unit
 
   /** Normalize a multi-select answer for the LLM: canonical compact JSON array
     * (`["A","B"]`). The frontend serializes a multi-select answer as a JSON
