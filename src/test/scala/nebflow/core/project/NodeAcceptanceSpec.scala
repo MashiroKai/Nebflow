@@ -983,4 +983,133 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       assert(imm.exists(_.text.startsWith("[Node '调研-失败' failed]")), s"text prefix, got ${imm.map(_.text.take(60))}")
   }
 
+  // ── NodeEdit worktree 参数归一化（20260903 worktree-param-fix，只增）──
+  //
+  // 集成域：NodeEdit createNode 对 worktree 入参的三形态宽容（裸名 /
+  // "worktrees/<名>" / ".nebflow/<名>"）+ 双位置实存（worktrees/ 权威优先、
+  // 顶层存量 fallback）+ 拒绝面可行动化（WORKTREE_FORMAT，os-lib 原始文案
+  // 不外泄）。修复前：含 "/" 入参直接 os-lib InvalidSegment 崩（当日 7 崩、
+  // 首试成功率 0%）。
+
+  /** 建 worktree 集成测试项目（真实 spawn 走 RecordingLlm 秒完）。 */
+  private def wtProject(tag: String): (os.Path, ActorSystem, SharedResources, ProjectRuntime, ToolContext) =
+    val ws = tempRoot / s"ws-wt-$tag"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-wt-$tag-${scala.util.Random.nextInt(100000)}")
+    val res = mkResources(system, tempRoot, new RecordingLlm).unsafeRunSync()
+    val rt = mountProject(s"acc-wt-$tag", ws, system, res).unsafeRunSync()
+    (ws, system, res, rt, mkCtx(res, system, ws.toString))
+
+  test("WT-1 worktree create: bare name under worktrees/ → Right, stores bare name") {
+    val (ws, system, res, rt, ctx) = wtProject("bare")
+    os.makeDir.all(ws / ".nebflow" / "worktrees" / "wt-a")
+    for
+      r <- nodeEdit(nodeInput("acc-wt-bare", "N1", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("wt-a"),
+        "out" -> Json.fromString("Nebula")), ctx)
+      s <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"bare-name create must succeed, got: $r")
+      assertEquals(s.nodes.values.find(_.name == "N1").flatMap(_.worktree), Some("wt-a"),
+        "NodeDef.worktree must store the bare name")
+  }
+
+  test("WT-2 worktree create: 'worktrees/<name>' prefix form (0%-first-try fix) → Right, stores bare") {
+    val (ws, system, res, rt, ctx) = wtProject("prefix")
+    os.makeDir.all(ws / ".nebflow" / "worktrees" / "wt-a")
+    for
+      r <- nodeEdit(nodeInput("acc-wt-prefix", "N2", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("worktrees/wt-a"),
+        "out" -> Json.fromString("Nebula")), ctx)
+      s <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"prefix-form create must be normalized and succeed, got: $r")
+      assertEquals(s.nodes.values.find(_.name == "N2").flatMap(_.worktree), Some("wt-a"))
+  }
+
+  test("WT-3 worktree create: '.nebflow/<name>' top-level form → Right, stores bare") {
+    val (ws, system, res, rt, ctx) = wtProject("nebflow-prefix")
+    os.makeDir.all(ws / ".nebflow" / "worktrees" / "wt-a")
+    for
+      r <- nodeEdit(nodeInput("acc-wt-nebflow-prefix", "N3", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("t"), "worktree" -> Json.fromString(".nebflow/wt-a"),
+        "out" -> Json.fromString("Nebula")), ctx)
+      s <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"top-level prefix form must normalize, got: $r")
+      assertEquals(s.nodes.values.find(_.name == "N3").flatMap(_.worktree), Some("wt-a"))
+  }
+
+  test("WT-4 worktree fallback: only top-level .nebflow/<name> exists (worktrees/ absent) → Right") {
+    val (ws, system, res, rt, ctx) = wtProject("fallback")
+    os.makeDir.all(ws / ".nebflow" / "wt-b")
+    for
+      r <- nodeEdit(nodeInput("acc-wt-fallback", "N4", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("wt-b"),
+        "out" -> Json.fromString("Nebula")), ctx)
+      s <- rt.store.snapshot
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"top-level legacy fallback must succeed, got: $r")
+      assertEquals(s.nodes.values.find(_.name == "N4").flatMap(_.worktree), Some("wt-b"))
+  }
+
+  test("WT-5 worktree reject: neither position → actionable not-found Left (name + git remedy, no os-lib leak)") {
+    val (ws, system, res, _, ctx) = wtProject("missing")
+    for
+      r <- nodeEdit(nodeInput("acc-wt-missing", "N5", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("no-such-wt"),
+        "out" -> Json.fromString("Nebula")), ctx)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      // not-found 与 format 拒绝是两种失败面（合法名字、目录缺失）：文案须可行动
+      // ——点名 + 双位置 + 具体 git worktree add 补救命令；os-lib 原始文案不得外泄。
+      val msg = r.left.toOption.getOrElse("")
+      assert(msg.contains("no-such-wt"), s"offending name missing: $msg")
+      assert(msg.contains(".nebflow/worktrees/"), s"authoritative location missing: $msg")
+      assert(msg.contains("git worktree add"), s"remedy command missing: $msg")
+      assert(msg.contains("-b <branch>"), s"branch flag missing: $msg")
+      assert(!msg.contains("not a valid path segment"), s"os-lib raw message leaked: $msg")
+  }
+
+  test("WT-6 worktree reject: absolute path input → Left WORKTREE_FORMAT (no crash)") {
+    val (ws, system, res, _, ctx) = wtProject("abs")
+    for
+      r <- nodeEdit(nodeInput("acc-wt-abs", "N6", "agent" -> Json.fromString("test-agent"),
+        "task" -> Json.fromString("t"), "worktree" -> Json.fromString("/abs/x"),
+        "out" -> Json.fromString("Nebula")), ctx)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.left.toOption.getOrElse("").contains("WORKTREE_FORMAT"), s"got: $r")
+  }
+
+  test("WT-7 NodeList worktrees[]: dual-position merge + dedup + stable sort") {
+    val ws = tempRoot / "ws-wt-nodelist"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"acc-wtnl-${scala.util.Random.nextInt(100000)}")
+    for
+      res <- mkResources(system, tempRoot, new RecordingLlm)
+      _ <- mountProject("acc-wt-nodelist", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // 权威位置两个 + 顶层一个 + 顶层软链别名（指向权威同名——生产孤儿清理形态）
+      _ <- IO.blocking {
+        os.makeDir.all(ws / ".nebflow" / "worktrees" / "wt-a")
+        os.makeDir.all(ws / ".nebflow" / "worktrees" / "wt-x")
+        os.makeDir.all(ws / ".nebflow" / "wt-b")
+        java.nio.file.Files.createSymbolicLink(
+          (ws / ".nebflow" / "wt-a").toNIO, (os.rel / "worktrees" / "wt-a").toNIO)
+      }
+      r <- NodeListTool.call(Json.obj("project" -> Json.fromString("acc-wt-nodelist")).asObject.get, ctx)
+      payload <- IO.fromEither(r.left.map(e => new RuntimeException(e.message)))
+      json <- IO.fromEither(io.circe.parser.parse(payload))
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      val wts = json.hcursor.downField("worktrees").as[List[String]].toOption.getOrElse(Nil)
+      assertEquals(wts, List("wt-a", "wt-b", "wt-x"),
+        s"dual-position merge must dedup (wt-a via symlink alias) and sort stably, got: $wts")
+  }
+
 end NodeAcceptanceSpec

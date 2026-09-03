@@ -98,6 +98,77 @@ object PathUtil:
       catch case _: Exception => Path(java.nio.file.Paths.get(pathStr))
     else base / os.RelPath(pathStr)
 
+  // ── Node worktree 参数归一化与双位置解析（20260903 NodeEdit worktree 参数修复）──
+  //
+  // 根因（分析报告 20260903_nodeedit-worktree-param-fix.md）：NodeEdit 校验层
+  // （NodeTools）与节点运行时 cwd（NodeEngine）各自用 os-lib 单段 `/` 拼接
+  // worktree 参数，含 "/" 的入参（分发器 system.md 曾教 "worktrees/<名>"）即抛
+  // 面向 Scala 开发者的 os-lib InvalidSegment，LLM 不可自纠（当日 7 崩 / 首试
+  // 成功率 0%）；且三方参照系（system.md / NodeList worktrees[] / 校验层）互不
+  // 一致。此处收口为单一权威实现，NodeTools 与 NodeEngine 引同一份。
+
+  /** worktree 归一化拒绝文案（轴 2 可行动化）：正例裸名 + 禁形态 + 补救命令 +
+    * 错误码（EMPTY_NODE_CONNECTION 同风格，LLM 可自纠）。 */
+  val WorktreeFormatError: String =
+    "Worktree must be a bare directory name under the project's .nebflow/worktrees/ — " +
+      "e.g. \"micorb-config-hide\". Do NOT include the \"worktrees/\" prefix, path separators, " +
+      "absolute paths, or \"..\". Create it first via: " +
+      "git worktree add <workspace>/.nebflow/worktrees/<name> -b <branch>, " +
+      "then pass worktree: \"<name>\". (WORKTREE_FORMAT)"
+
+  /** worktree 参数归一化：任意合理形态 → worktrees/ 下裸段名；不可归一 →
+    * Left(可行动报错)。
+    *
+    * 规则：trim → 剥 leading "./" → 剥 ".nebflow/worktrees/" / "worktrees/" /
+    * ".nebflow/" 前缀（各剥一次）。拒绝：绝对路径 / 含 ".." / 剥后仍含 "/" /
+    * 剥后为空（含 "."）。
+    *
+    * 安全边界：只剥已知固定前缀，不做任意路径解析；拒绝面（绝对路径/..）零放宽。
+    */
+  def normalizeWorktree(raw: String): Either[String, String] =
+    val stripped = raw.trim.stripPrefix("./")
+    if isAbsolute(stripped) then Left(WorktreeFormatError)
+    else
+      val bare =
+        if stripped.startsWith(".nebflow/worktrees/") then stripped.stripPrefix(".nebflow/worktrees/")
+        else if stripped.startsWith("worktrees/") then stripped.stripPrefix("worktrees/")
+        else if stripped.startsWith(".nebflow/") then stripped.stripPrefix(".nebflow/")
+        else stripped
+      if bare.contains("..") || bare.contains("/") || bare.isEmpty || bare == "." then
+        Left(WorktreeFormatError)
+      else Right(bare)
+
+  /** worktree 目录双位置实存解析：worktrees/<名>（权威位置）优先，
+    * .nebflow/<名>（顶层存量——现网节点全在顶层；今日生产顶层同名条目为指向
+    * 权威位置的软链，两分支产出同物理目录，回归零影响）fallback。两处均不
+    * 存在 → None。NodeTools 校验与 NodeEngine 运行时 cwd 引同一份（参照系
+    * 唯一）。os.exists 沿软链（follow-links）语义与现状一致。
+    */
+  def resolveWorktreeDir(workspace: os.Path, bareName: String): Option[os.Path] =
+    val authoritative = workspace / ".nebflow" / "worktrees" / bareName
+    if os.exists(authoritative) then Some(authoritative)
+    else
+      val legacy = workspace / ".nebflow" / bareName
+      if os.exists(legacy) then Some(legacy) else None
+
+  /** 节点运行时 projectRoot（cwd/沙箱根来源）解析——NodeEngine 单一调用点。
+    * 存量裸名 / 新前缀形态均先归一再双位置实存：
+    *   - 命中 → 实存目录（顶层命中 = 与旧公式 `(os.Path(workspace) / ".nebflow" /
+    *     wt).toString` 逐字节一致，回归红线）；
+    *   - 两处均不存在 → 旧公式路径（校验期实存、运行期目录被删窗口的字节等价兜底）；
+    *   - 归一化拒绝（损坏存储值）→ workspace 兜底（旧实现此处 InvalidSegment
+    *     炸 spawn，§5.2 同模式脆点亮）。
+    */
+  def resolveNodeProjectRoot(workspace: String, worktree: Option[String]): String =
+    worktree match
+      case None => workspace
+      case Some(wt) =>
+        normalizeWorktree(wt) match
+          case Right(bare) =>
+            resolveWorktreeDir(os.Path(workspace), bare)
+              .getOrElse(os.Path(workspace) / ".nebflow" / bare).toString
+          case Left(_) => workspace
+
   /**
    * The root data directory for Nebflow state (sessions, tasks, memory, config, etc.).
    * Override priority: CLI --home flag > <PREFIX>_HOME env var (dual-prefix

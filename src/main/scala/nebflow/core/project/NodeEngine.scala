@@ -7,6 +7,7 @@ import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
+import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.node.NodeRunner
 import nebflow.shared.Message
@@ -204,9 +205,13 @@ class NodeEngine(
   private def runWithAgent(node: NodeDef, entry: nebflow.core.entity.AgentEntry, inputText: String): IO[Unit] =
     val nodeId = node.id
     val sessionId = s"node-${java.util.UUID.randomUUID().toString.take(8)}"
-    val projectRoot = node.worktree match
-      case Some(wt) => (os.Path(workspace) / ".nebflow" / wt).toString
-      case None => workspace
+    // projectRoot 解析（20260903 worktree 参数修复）：归一化 + worktrees/ 权威
+    // 位置优先、顶层存量 fallback 的双查单点在 PathUtil.resolveNodeProjectRoot
+    // （与 NodeEdit 校验同源，参照系唯一）。顶层命中与旧公式
+    // `(os.Path(workspace) / ".nebflow" / wt).toString` 逐字节一致（回归红线）；
+    // 两处均不存在 → 旧公式路径；损坏存储值 → workspace 兜底（不再 InvalidSegment
+    // 炸 spawn）。
+    val projectRoot = PathUtil.resolveNodeProjectRoot(workspace, node.worktree)
     val nodeName = node.name
     for
       // 在飞登记先行（清场 c-① liveness 误杀防护 20260903）：running 表先于

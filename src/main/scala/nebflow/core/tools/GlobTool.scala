@@ -80,20 +80,40 @@ object GlobTool extends Tool:
       else nebflow.core.PathUtil.resolvePath(p, baseDir)
     }
     val workDirPath = baseDir
-    val searchRootPath =
+    // pattern 静态前缀 → 搜索根（20260903 Glob 修复）：静态前缀（首个 glob 字符
+    // 前的目录部分，如 "src/main/resources/web/js"）含 "/" 时旧实现走 os-lib 单段
+    // `/` 拼接 → InvalidSegment 崩（description 鼓励的 "src/**/*.ts" 写法自身必崩，
+    // 当日 5 崩实锤）→ 改 os.RelPath 多段构造（项目先例 TransferFileTool ×6 /
+    // PathUtil.resolvePath:99）。注意：os.RelPath 把 ".." 解析为 Up 段（允许逃逸，
+    // 中段 ".." 被 NIO normalize 静默折叠），与旧行为（拒）不符 → 构造前显式拒绝
+    // ".." 段并给可行动文案。"．" 段由 RelPath 归一（放宽无害——搜索根仍受
+    // §A.3 沙箱读闸门 canonicalize + readableRoots 约束）。
+    val searchRootEither: Either[ToolError, os.Path] =
       if baseFromPattern.startsWith("/") || (baseFromPattern.length >= 2 && baseFromPattern.charAt(1) == ':') then
-        os.Path(baseFromPattern)
+        Right(os.Path(baseFromPattern))
       else if baseFromPattern.nonEmpty then
-        val base = explicitPath.getOrElse(workDirPath)
-        base / baseFromPattern
-      else explicitPath.getOrElse(workDirPath)
+        if baseFromPattern.split('/').contains("..") then
+          Left(ToolError(
+            s"Invalid glob pattern: static directory prefix '$baseFromPattern' must not contain '..' segments — " +
+              "search stays within the search root; adjust the pattern's directory prefix. (GLOB_PATTERN)"))
+        else
+          val base = explicitPath.getOrElse(workDirPath)
+          try Right(base / os.RelPath(baseFromPattern))
+          catch
+            case e: Exception =>
+              Left(ToolError(
+                s"Invalid glob pattern: static directory prefix '$baseFromPattern' is not a usable relative path " +
+                  s"(${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}). (GLOB_PATTERN)"))
+      else Right(explicitPath.getOrElse(workDirPath))
 
     // §A.3 读闸门：搜索根 canonicalize + readableRoots contain；rg 从 canonical
     // 根起跑（检查对象=执行对象）。rg 默认不跟随 symlink 下钻（无 --follow），
     // 遍历逃逸由该默认承担（§A.8-4）。
-    FileSandbox.checkReadRoot(ctx, searchRootPath) match
-      case Left(err) => Left(err)
-      case Right(canonicalRoot) => runGlob(relPattern, canonicalRoot, workDir)
+    searchRootEither.flatMap { searchRootPath =>
+      FileSandbox.checkReadRoot(ctx, searchRootPath) match
+        case Left(err) => Left(err)
+        case Right(canonicalRoot) => runGlob(relPattern, canonicalRoot, workDir)
+    }
   }
 
   private def runGlob(
