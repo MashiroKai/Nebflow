@@ -181,7 +181,7 @@ class DeleteSessionCascadeSpec extends FunSuite:
         _ + ("v1-parent" -> AgentRecord("v1-parent", parentRef, AgentKind.Root, "v1-parent", None))
       )
       _ <- parentRef ! AgentCommand.UserInput("kick off the delegation", None, Some("v1-1"))
-      _ <- waitUntil(15.seconds)(
+      _ <- waitUntil(30.seconds)(
         resources.agentRegistry.get.map(_.keys.exists(_.startsWith("delegate-")))
       )
     yield (resources, "v1-parent", requests)
@@ -199,15 +199,16 @@ class DeleteSessionCascadeSpec extends FunSuite:
         // ── V1 cascade（deleteSession 的级联步骤，与 WS 路径同一实现）──
         stopped <- SessionChildCascade.stopChildDelegateActors(resources, parentSid)
         _ = assertEquals(clue(stopped), List(childSid), "the delegate child must be cascade-stopped")
-        _ <- waitUntil(10.seconds)(resources.agentRegistry.get.map(!_.contains(childSid)))
+        // 25s/30s 预算：并行节点全量测试抢 CPU 时调度尾部延迟实测可达 20s+。
+        _ <- waitUntil(25.seconds)(resources.agentRegistry.get.map(!_.contains(childSid)))
         taskAfter <- resources.subAgentTaskStore.findByTaskId(childSid)
-        _ <- waitUntil(10.seconds)(
+        _ <- waitUntil(25.seconds)(
           resources.subAgentTaskStore.findByTaskId(childSid).map(t => t.exists(_.status == "cancelled"))
         )
         _ = assert(taskAfter.flatMap(_.lastError).exists(t => t.contains("deleted") || t.contains("cancelled")), clue(taskAfter).toString)
         // Supervisor 正路：父收到 cancelled 通知（barrier 正确释放，无 phantom slot），
         // 唤醒轮的 LLM 请求携带 cancelled payload。
-        _ <- waitUntil(15.seconds)(
+        _ <- waitUntil(30.seconds)(
           requests.get.map(r =>
             r.filter(_.sessionId == parentSid).exists(_.messages.exists(_.textContent.contains("cancelled")))
           )
