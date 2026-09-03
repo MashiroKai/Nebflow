@@ -190,6 +190,13 @@ test('Flow Map 实时更新：新节点淡入 / 接线重绘 / 完成过渡 / �
   expect(transitionProp).toContain('left');
   expect(transitionProp).toContain('top');
 
+  // ── 需求②佐证（v3 重写：核验点前移至链齐退场窗口之前）──────────────
+  // 全程增量，n1 经 nodeCreated(n3) + 接线重绘多轮增量渲染后元素身份未变
+  //（探针存活）。原核验点位于 nodeRemoved 之后，v3 链齐整链退场下 n1 已随
+  // 链移除（见步骤 3 注），故前移至此。
+  const probeEarly = await page.evaluate(() => document.querySelector('.fm-node[data-node-id="n1"]')?.dataset.probe);
+  expect(probeEarly).toBe('keep');
+
   // 2) nodeCompleted n2：状态平滑过渡（class/dataset 原地更新 + result 摘要浮现）
   patchServer('n2', { status: 'completed', result: '初稿完成', completedAt: Date.now(), ttlLeftSec: 300 });
   await inject(page, {
@@ -208,26 +215,28 @@ test('Flow Map 实时更新：新节点淡入 / 接线重绘 / 完成过渡 / �
   await expect(body.locator('path[data-edge-id="n3=>n2"].delivered')).toHaveCount(1);
   await expect(body.locator('circle[data-edge-id="n3=>n2"].delivered')).toHaveCount(1);
 
-  // 3) nodeRemoved n3：淡出后移除（退场中间态 → 元素 detach）
-  serverFm.nodes = serverFm.nodes.filter((x) => x.id !== 'n3');
-  await inject(page, { type: 'nodeRemoved', project: 'alpha', nodeId: 'n3', node: structuredClone(N3) });
-  await page.waitForFunction(() => {
-    const el = document.querySelector('.fm-node[data-node-id="n3"]');
-    return el && (el.classList.contains('fm-exit') || parseFloat(getComputedStyle(el).opacity) < 1);
-  }, null, { timeout: 800 });
-  await page.waitForFunction(() => !document.querySelector('.fm-node[data-node-id="n3"]'), null, { timeout: 2000 });
+  // 3) v3 链齐整链退场语义（规格 §3.4/§6.1b/§7.6，[merge] T1 重写对齐 v3）：
+  //    n3 完成使批次链 {n1,n2,n3} 链齐 → 整链成员同一帧 fm-exit（350ms 一条
+  //    整体动画）→ 统一渲染后整链从主图移除。旧「nodeRemoved 逐卡淡出」断言
+  //    为 pre-v3 过期语义（QA v2 §2.5 代码级 traced：v3 下该时刻 n3 已随链
+  //    退场，旧谓词永假）。整链退场动画细节由归档 spec A16（绿）覆盖，此处
+  //    哨兵 steady-state：
+  await expect(body.locator('.fm-node[data-node-id="n3"]')).toHaveCount(0, { timeout: 3000 });
   await expect(body.locator('path[data-edge-id="n1=>n3"]')).toHaveCount(0);
   await expect(body.locator('path[data-edge-id="n3=>n2"]')).toHaveCount(0);
+  await expect(body.locator('.fm-node')).toHaveCount(0); // 整链清场：主图可见集 = ∅
 
-  // ── 需求②佐证：全程增量，n1 元素身份未变（探针存活）──────────────
-  const probe = await page.evaluate(() => document.querySelector('.fm-node[data-node-id="n1"]')?.dataset.probe);
-  expect(probe).toBe('keep');
+  // nodeRemoved n3（链归档后出库）：v3 收缩为出库墓碑记账（§7.2）。哨兵：
+  // 已归档成员不得被退场动画复活回主图——refreshChains 成员集幂等跳过 /
+  // 出库重建退场两条路径结束后，主图都必须维持零驻留卡。
+  serverFm.nodes = serverFm.nodes.filter((x) => x.id !== 'n3');
+  await inject(page, { type: 'nodeRemoved', project: 'alpha', nodeId: 'n3', node: structuredClone(N3) });
+  await expect(body.locator('.fm-node')).toHaveCount(0, { timeout: 3000 });
 
-  // 对账拉取兜底：事件后 600ms 防抖全量快照到达，diff 无漂移 → 不碰 DOM（探针仍在）
+  // 对账拉取兜底：事件后 600ms 防抖全量快照到达；稳态仍零复活（v3 口径）
   await page.waitForTimeout(900);
   expect(fmSnapshots).toBeGreaterThanOrEqual(snapshotsAtOpen + 1);
-  expect(await page.evaluate(() => document.querySelector('.fm-node[data-node-id="n1"]')?.dataset.probe)).toBe('keep');
-  await expect(body.locator('.fm-node')).toHaveCount(2);
+  await expect(body.locator('.fm-node')).toHaveCount(0);
 
   // 需求③：整个流程视图始终是同一份就地 Flow Map（未切走）
   await expect(page.locator('.canvas-tab-pane.active .flowmap-view-body')).toHaveCount(1);
