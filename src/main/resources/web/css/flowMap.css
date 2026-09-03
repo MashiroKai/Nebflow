@@ -9,6 +9,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 12px 18px;
+  padding-right: 56px; /* §5.8b 2026-09-04 修订：让出右上悬浮钮（16+40）+ 徽章区，摘要尾字不再被遮 */
   border-bottom: 1px solid var(--color-border);
   flex: 0 0 auto;
 }
@@ -26,6 +27,8 @@
   font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   white-space: nowrap;
+  overflow: hidden;      /* D3 让位 + 窄 host 收缩：摘要截断不溢出，防撑出 host 横向滚动（A20.2） */
+  text-overflow: ellipsis;
 }
 
 .flowmap-loading {
@@ -403,3 +406,321 @@
 .fm-legend-swatch.deps.deps-met { border-top-color: var(--color-success); }
 .fm-legend-swatch.deps.deps-wait { border-top-color: var(--color-warning); }
 .fm-legend-swatch.deps.deps-unmet { border-top-color: var(--color-border); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   v3 整链归档（规格 20260903_flowmap-archive-panel-spec.md）
+   悬浮层（fm-float-layer）+ 归档悬浮钮（fm-fab，元素选择器 .canvas-ref-select
+   同语言）+ 归档面板（mailbox 链条目）+ 右侧详情面板（z 70 / dock-left）+
+   链未齐终态保留卡（fm-node.terminal）+ hover 联动（fm-adj）。
+   层级表（§5.8b）：悬浮钮 45 < 归档面板 60 < 详情面板 70 < toast（modal.css 10000）。
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* 悬浮层定位上下文：legacy 路径宿主 = .canvas-tab-pane（split.css 已 relative）；
+   就地视图宿主 = .flowmap-view-body（projectPanel.css 已 relative）。层本身不拦截
+   点击（pointer-events:none），子悬浮件各自开启。 */
+.fm-float-layer {
+  --fm-panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+@media (prefers-color-scheme: dark) {
+  .fm-float-layer { --fm-panel-shadow: 0 10px 36px rgba(0, 0, 0, 0.45); }
+}
+.fm-float-layer > * { pointer-events: auto; }
+
+/* ── 归档悬浮钮（§4：画布内右上角 40px 圆形玻璃钮，opacity .6 → hover 1）── */
+.fm-fab {
+  position: absolute; top: 16px; right: 16px;
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; z-index: 45;
+  color: var(--color-text); opacity: 0.6;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+.fm-fab svg { width: 18px; height: 18px; display: block; }
+.fm-fab:hover {
+  background: var(--glass-control-bg-hover);
+  opacity: 1; transform: scale(1.05);
+}
+/* 面板开 = active：sapphire 染色（.canvas-ref-select.active 同式，§4.2） */
+.fm-fab.active {
+  opacity: 1; color: var(--color-primary);
+  border-color: rgb(var(--sapphire) / 0.35);
+  background: rgb(var(--sapphire) / 0.12);
+  transform: none;
+}
+.fm-fab:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+
+/* 计数徽章（§4.3：team-mail-badge 构型；计数 = 面板链条目数，TTL 清理同步减） */
+.fm-archive-badge {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  background: rgb(var(--sapphire)); color: #fff;
+  font: 500 10px/16px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center;
+  box-shadow: 0 0 0 2px var(--color-bg); pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.fm-archive-badge.hidden { display: none; }
+.fm-archive-badge.pulse { animation: fm-badge-pulse 0.15s ease; }
+@keyframes fm-badge-pulse { 50% { transform: scale(1.18); } }
+
+/* ── 归档面板（§5：锚定悬浮钮下缘、无遮罩、玻璃、链条目倒序）── */
+.fm-archive-panel {
+  position: absolute; top: 64px; right: 16px;      /* 悬浮钮（16+40）下缘 +8px */
+  width: 380px; max-width: calc(100% - 32px); /* host 口径（§5.8b 2026-09-04 修订；原 100vw 视口口径窄视口下左裁） */
+  max-height: min(70vh, 560px);
+  display: flex; flex-direction: column;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border); border-radius: 18px;
+  box-shadow: var(--fm-panel-shadow);
+  z-index: 60;
+  transform-origin: calc(100% - 20px) 0;           /* §6.1 原点 = 悬浮钮圆心 */
+  opacity: 0; transform: scale(0.94) translateY(-6px);
+  transition: opacity 0.22s cubic-bezier(0.33, 0, 0.2, 1), transform 0.22s cubic-bezier(0.33, 0, 0.2, 1);
+  pointer-events: none;
+}
+/* hidden 属性必须压过 display:flex（C4 现场修正） */
+.fm-archive-panel[hidden] { display: none; }
+.fm-archive-panel.open { opacity: 1; transform: scale(1) translateY(0); pointer-events: auto; }
+.fm-archive-panel.closing { transition-duration: 0.16s; transition-timing-function: ease; }
+.fm-panel-head {
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+  padding: 11px 14px; border-bottom: 1px solid var(--color-border);
+}
+.fm-panel-title { font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, sans-serif; }
+.fm-panel-count { font: 400 11px/1.3 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted); }
+.fm-panel-close {
+  margin-left: auto; border: none; background: transparent; cursor: pointer;
+  font: 400 16px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
+  opacity: 0.5; padding: 0 4px; transition: opacity 0.15s;
+}
+.fm-panel-close:hover { opacity: 1; }
+.fm-panel-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: 4px; }
+.fm-panel-body {
+  flex: 1; overflow-y: auto; padding: 12px 14px;
+  scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
+}
+.fm-panel-empty {
+  text-align: center; padding: 40px 0; font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); opacity: 0.65;
+}
+
+/* 链条目（§5.3：flow-mail-row 构型；条目 = 链）*/
+.fm-entry {
+  border: 1px solid rgba(128, 128, 128, 0.12); border-radius: 8px;
+  background: rgba(128, 128, 128, 0.06); margin-bottom: 8px; padding: 10px 12px;
+  cursor: pointer; user-select: none; -webkit-user-select: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.fm-entry:hover { background: rgba(128, 128, 128, 0.1); border-color: rgba(128, 128, 128, 0.18); }
+.fm-entry:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-entry.expanded { background: rgba(128, 128, 128, 0.1); border-color: rgba(91, 127, 191, 0.25); }
+.fm-entry.flash { animation: fm-entry-flash 0.5s ease 1; }
+@keyframes fm-entry-flash {
+  0% { background: rgba(91, 127, 191, 0.28); }
+  100% { background: rgba(128, 128, 128, 0.06); }
+}
+.fm-entry-row1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fm-entry-st { flex: 0 0 auto; display: inline-flex; }
+.fm-entry-st svg { width: 12px; height: 12px; display: block; }
+.fm-entry-st.completed { color: var(--color-success); }
+.fm-entry-st.failed { color: var(--color-error); }
+.fm-entry-st.cancelled { color: var(--color-text-muted); }
+.fm-entry-st.active { color: rgb(var(--sapphire)); }
+.fm-entry-name {
+  flex: 0 1 auto; min-width: 0; font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fm-entry-nodes {
+  flex: 0 0 auto; font: 500 10px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); border: 1px solid rgba(128, 128, 128, 0.18);
+  border-radius: 6px; padding: 2px 5px; font-variant-numeric: tabular-nums;
+}
+.fm-entry-time {
+  flex: 0 0 auto; margin-left: auto; font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); font-variant-numeric: tabular-nums;
+}
+/* TTL 即将过期标签（§5.9：剩余 <60min 才显示，克制）*/
+.fm-entry-ttl {
+  flex: 0 0 auto; font: 400 10px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-warning); opacity: 0.85;
+}
+.fm-entry-chev {
+  flex: 0 0 auto; display: inline-flex; color: var(--color-text-muted);
+  opacity: 0.7; transition: transform 0.18s ease;
+}
+.fm-entry-chev svg { width: 10px; height: 10px; display: block; }
+.fm-entry.expanded .fm-entry-chev { transform: rotate(90deg); }
+.fm-entry-preview {
+  margin-top: 3px; font: 400 11px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 链内成员列表（§5.5：展开后逐节点条目，点击 → 右侧详情）*/
+.fm-entry-members { display: none; margin-top: 8px; border-top: 1px solid rgba(128, 128, 128, 0.12); padding-top: 8px; }
+.fm-entry.expanded .fm-entry-members { display: block; }
+.fm-member {
+  display: block; width: 100%; text-align: left;
+  border: 1px solid rgba(128, 128, 128, 0.1); border-radius: 7px;
+  background: rgba(128, 128, 128, 0.03); margin-bottom: 6px; padding: 7px 9px;
+  cursor: pointer; transition: background 0.15s, border-color 0.15s;
+}
+.fm-member:last-child { margin-bottom: 0; }
+.fm-member:hover { background: rgba(128, 128, 128, 0.09); border-color: rgba(128, 128, 128, 0.16); }
+.fm-member:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-member-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fm-member-name {
+  flex: 0 1 auto; min-width: 0; font: 500 11.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fm-member-agent {
+  flex: 1 1 auto; min-width: 20px; font: 400 10.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
+}
+.fm-member-time {
+  flex: 0 0 auto; font: 400 10.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); font-variant-numeric: tabular-nums;
+}
+.fm-member-go { flex: 0 0 auto; display: inline-flex; color: var(--color-text-muted); opacity: 0.55; }
+.fm-member-go svg { width: 10px; height: 10px; display: block; }
+.fm-member-preview {
+  margin-top: 2px; font: 400 10.5px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── 右侧详情面板（§5.8 + §5.8b：z 70 浮前 + 宽视口 dock-left 并排零重叠）── */
+.fm-detail {
+  position: absolute; top: 64px; right: 16px; bottom: 16px;
+  width: 360px; max-width: calc(100% - 32px); /* host 口径（§5.8b 2026-09-04 修订；原 100vw 视口口径窄视口下左裁） */
+  display: flex; flex-direction: column;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border); border-radius: 18px;
+  box-shadow: var(--fm-panel-shadow);
+  z-index: 70;
+  opacity: 0; transform: translateX(24px);
+  transition: opacity 0.22s cubic-bezier(0.33, 0, 0.2, 1),
+    transform 0.22s cubic-bezier(0.33, 0, 0.2, 1),
+    right 0.22s cubic-bezier(0.33, 0, 0.2, 1);
+  pointer-events: none;
+}
+.fm-detail[hidden] { display: none; }
+.fm-detail.open { opacity: 1; transform: translateX(0); pointer-events: auto; }
+.fm-detail.closing { transition-duration: 0.16s; transition-timing-function: ease; }
+/* 面板同开 → 详情左靠（380 + 8 + 16 = 404），矩形零重叠（§5.8b）。
+   2026-09-04 修订（作者拍板）：并排判定改 host 口径——updateDetailDock 按
+   host.clientWidth >= 780（380 卡片 + 8 间距 + 360 dock + 16+16 边距）切
+   dock-left，删除原 @media(max-width:799px) 视口口径控制。host ~470px 定宽
+   分栏（常见布局）时 dock 为同位 overlay 形态且完整可见，不再悬出视图体。 */
+.fm-detail.dock-left { right: 404px; }
+.fm-detail-head {
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+  padding: 11px 14px; border-bottom: 1px solid var(--color-border); min-width: 0;
+}
+.fm-detail-st { flex: 0 0 auto; display: inline-flex; }
+.fm-detail-st svg { width: 12px; height: 12px; display: block; }
+.fm-detail-st.completed { color: var(--color-success); }
+.fm-detail-st.failed { color: var(--color-error); }
+.fm-detail-st.cancelled { color: var(--color-text-muted); }
+.fm-detail-st.active { color: rgb(var(--sapphire)); }
+.fm-detail-title {
+  flex: 0 1 auto; min-width: 0; font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, sans-serif;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fm-detail-close {
+  margin-left: auto; flex: 0 0 auto; border: none; background: transparent; cursor: pointer;
+  font: 400 16px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
+  opacity: 0.5; padding: 0 4px; transition: opacity 0.15s;
+}
+.fm-detail-close:hover { opacity: 1; }
+.fm-detail-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: 4px; }
+.fm-detail-body {
+  flex: 1; overflow-y: auto; padding: 12px 14px;
+  scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
+}
+.fm-detail-meta {
+  font: 400 11px/1.7 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); margin-bottom: 10px; word-break: break-all;
+}
+.fm-detail-meta b { font-weight: 500; color: var(--color-text-dim); }
+.fm-detail-sec {
+  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-dim); margin: 10px 0 4px;
+}
+.fm-detail-task {
+  font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
+  white-space: pre-wrap; word-break: break-word;
+  border: 1px solid rgba(128, 128, 128, 0.12); border-radius: 8px; background: rgba(128, 128, 128, 0.05);
+  padding: 8px 10px; max-height: 140px; overflow-y: auto; scrollbar-width: thin;
+}
+.fm-detail-result {
+  font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text); word-break: break-word; overflow-wrap: anywhere;
+}
+/* markdown 正文（flow-mail-content 同语言）*/
+.fm-md p { margin: 4px 0; }
+.fm-md p:first-child { margin-top: 0; }
+.fm-md p:last-child { margin-bottom: 0; }
+.fm-md ul, .fm-md ol { margin: 4px 0 4px 18px; }
+.fm-md li { margin: 2px 0; }
+.fm-md code {
+  background: var(--color-frame-hover); padding: 1px 4px; border-radius: 3px;
+  font: 400 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
+}
+.fm-md pre { background: var(--color-frame-hover); padding: 8px 12px; border-radius: 8px; overflow-x: auto; margin: 6px 0; }
+.fm-md pre code { background: none; padding: 0; word-break: normal; }
+.fm-md blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding-left: 10px; color: var(--color-text-muted); }
+.fm-md h1, .fm-md h2, .fm-md h3, .fm-md h4, .fm-md h5, .fm-md h6 { margin: 8px 0 4px; font-weight: 600; }
+.fm-md h3, .fm-md h4 { font-size: 12.5px; }
+.fm-md h5, .fm-md h6 { font-size: 12px; }
+.fm-md table { display: block; overflow-x: auto; border-collapse: collapse; margin: 6px 0; font-size: 11.5px; }
+.fm-md th, .fm-md td { border: 1px solid var(--color-border); padding: 3px 7px; }
+.fm-md th { background: var(--color-frame-hover); }
+.fm-md a { color: rgb(var(--sapphire)); }
+.fm-md hr { border: none; border-top: 1px solid var(--color-border); margin: 8px 0; }
+.fm-md strong { font-weight: 600; }
+.fm-md .md-empty { font-style: italic; color: var(--color-text-muted); opacity: 0.7; }
+
+/* ── v3 链未齐终态保留卡（§3.2）：opacity .78 后退一层、静态环染终态色、
+   标签降 dim；hover 回 1——一眼区分「还在跑的」与「已完成待整链归档的」── */
+.solar-node.fm-node.terminal { opacity: 0.78; }
+.solar-node.fm-node.terminal:hover { opacity: 1; }
+.solar-node.fm-node.terminal .solar-dot { opacity: 0.35; }
+.solar-node.fm-node.terminal .solar-node-label { color: var(--color-text-dim); }
+.solar-node.fm-node.terminal.completed .solar-ring { border-color: var(--color-success); opacity: 0.55; }
+.solar-node.fm-node.terminal.failed .solar-ring { border-color: var(--color-error); opacity: 0.55; }
+.solar-node.fm-node.terminal.cancelled .solar-ring { border-color: var(--color-text-muted); opacity: 0.55; }
+
+/* hover 联动加亮（§5.6）：条目/成员 hover → 可见下游卡 .fm-adj */
+.solar-node.fm-node.fm-adj {
+  transform: scale(1.03);
+  filter: brightness(1.03);
+  border-color: rgb(var(--sapphire) / 0.5);
+}
+
+/* 图例：链未齐终态保留卡项（v3 取代锚点图例；A2 反向断言：无任何锚点项）*/
+.fm-legend-swatch.terminal {
+  width: 14px; height: 10px; border-top: none;
+  border: 1px solid var(--color-success); border-radius: 3px; opacity: 0.8;
+}
+
+/* ── 降级（§6.4：prefers-reduced-motion → opacity-only ≤10ms，脉冲/闪烁禁用）── */
+@media (prefers-reduced-motion: reduce) {
+  .fm-archive-panel, .fm-detail { transition: opacity 0.01s linear; transform: none; }
+  .fm-archive-panel.open, .fm-detail.open { transform: none; }
+  .fm-archive-badge.pulse, .fm-entry.flash { animation: none; }
+  .fm-entry-chev { transition: none; }
+  .solar-node.fm-node.fm-adj { transform: none; }
+}
