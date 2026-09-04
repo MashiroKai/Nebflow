@@ -1862,6 +1862,45 @@ class RestApiRoutes(
         result <- Ok(Json.obj("skills" -> entries.asJson))
       yield result
 
+    // ── Plugins（阶段 2b §B.3：面板审批清单 + CLI 对等）─────────────
+
+    // GET /plugins — 注册表全量（含 untrusted / 拒载原因 + 审批清单数据）。
+    // 审批清单区块（§B.3）：元信息 / skills 摘要（前 20 行）/ mcp（env 只出键名，
+    // 值打码）/ org.nebflow/tools 申请 / 信任状态与 digest。
+    case GET -> Root / "plugins" =>
+      for
+        (plugins, rejected) <- nebflow.core.plugin.PluginRegistry.listWithRejected()
+        entries = plugins.sortBy(_.name).map(nebflow.core.plugin.PluginRegistry.approvalManifest)
+        rejectedEntries = rejected.sortBy(_._1).map { case (n, r) => Json.obj("name" -> n.asJson, "reason" -> r.asJson) }
+        result <- Ok(Json.obj("plugins" -> entries.asJson, "rejected" -> rejectedEntries.asJson))
+      yield result
+
+    // GET /plugins/catalog — 分发器目录段同源（trusted only；前端调试/预览用）
+    case GET -> Root / "plugins" / "catalog" =>
+      nebflow.core.plugin.PluginRegistry.renderCatalog().flatMap { catalog =>
+        Ok(Json.obj("catalog" -> catalog.asJson))
+      }
+
+    // POST /plugins/:name/approve — 审批：当前目录 digest 写入 trust 表（下个
+    // spawn/分配即时生效）。名字段白名单校验（拒绝路径穿越形态）。
+    case POST -> Root / "plugins" / name / "approve" =>
+      if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+      else
+        nebflow.core.plugin.PluginRegistry.approve(name).flatMap {
+          case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+          case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+        }
+
+    // POST /plugins/:name/revoke — 撤审：trust 表条目删除 → 回落 untrusted
+    // （默认拒绝）；运行中 plugin MCP 在下个信任重验 tick 停用（§B.5）。
+    case POST -> Root / "plugins" / name / "revoke" =>
+      if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+      else
+        nebflow.core.plugin.PluginRegistry.revoke(name).flatMap {
+          case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+          case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+        }
+
     // GET /flows/list — list all flow definitions (name, description, node count, maxLoop)
     case GET -> Root / "flows" / "list" =>
       for

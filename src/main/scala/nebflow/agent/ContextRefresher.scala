@@ -366,7 +366,12 @@ object ContextRefresher:
       else withModel.tools
     withModel.copy(
       tools = tools,
-      flowContract = if running.flowContract.nonEmpty then running.flowContract else withModel.flowContract
+      flowContract = if running.flowContract.nonEmpty then running.flowContract else withModel.flowContract,
+      // 阶段 2b Plugins（§B.4 第 3/4 步）：node 分配是 spawn 时运行时注入
+      // （NodeEngine 写入 pluginMcpServers/pluginTools，不落 agent.json）——
+      // 每 turn 热重载不得冲掉（flowContract 同款保活先例）。
+      pluginMcpServers = if running.pluginMcpServers.nonEmpty then running.pluginMcpServers else withModel.pluginMcpServers,
+      pluginTools = if running.pluginTools.nonEmpty then running.pluginTools else withModel.pluginTools
     )
 
   def refreshTurn(

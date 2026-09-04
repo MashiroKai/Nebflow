@@ -10,6 +10,8 @@ import nebflow.core.NebflowLogger
 import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.node.NodeRunner
+import nebflow.core.plugin.{PluginMcpManager, PluginRegistry, PluginsConfig}
+import nebflow.core.skill.SkillService
 import nebflow.shared.Message
 
 /**
@@ -203,12 +205,110 @@ class NodeEngine(
         case None =>
           failNode(nodeId, s"agent '${node.agent}' not found in global library")
         case Some(entry) =>
-          runWithAgent(node, entry, inputText)
+          // 阶段 2b Plugins（§B.4 第 4 步，spawn 前执行）：① 解析 node.plugins
+          // （untrusted/不存在/装载非法 → failNode，错误消息列明原因——分配失败是
+          // 节点级失败，不静默降级）；② skill 全文读出 + ${SKILL_DIR} 替换
+          // （SkillService.loadSkill 单点复用）组装 <injected-plugins> 块；
+          // ③ MCP server 启动 + 引用记账（PluginMcpManager，启动失败 → failNode）。
+          // 三步全部发生在状态翻转（status=Running）之前——失败路径零 running 残留。
+          prepareNodePlugins(node).flatMap {
+            case Left(err) => failNode(nodeId, err)
+            case Right(prepared) =>
+              val sessionId = s"node-${java.util.UUID.randomUUID().toString.take(8)}"
+              val inputWithPlugins =
+                if prepared.injectedBlock.isEmpty then inputText
+                else inputText + "\n\n" + prepared.injectedBlock
+              resources.pluginMcp.acquire(sessionId, prepared.mcpPlugins).flatMap {
+                case Left(err) => failNode(nodeId, err)
+                case Right(grant) =>
+                  // 回收兜底（§B.4 第 5 步）：completed/failed/cancelled/blocked 全
+                  // 终态汇合点=runWithAgent 完成；异常中止路径由 guarantee 补位。
+                  // release 幂等（PluginMcpManager 内 no-op 语义），双保险不重复卸载。
+                  runWithAgent(node, entry, inputWithPlugins, sessionId, prepared, grant)
+                    .guarantee(resources.pluginMcp.release(sessionId))
+              }
+          }
     yield ()
 
-  private def runWithAgent(node: NodeDef, entry: nebflow.core.entity.AgentEntry, inputText: String): IO[Unit] =
+  /** node.plugins → 可分配能力（§B.4 第 4 步 ①②，feature flag §G.2 开关）：
+    * flag off / 无分配 → 空 preparation（旧行为零变化）；解析失败 → Left
+    * （failNode，错误含审批指引）。 */
+  private def prepareNodePlugins(node: NodeDef): IO[Either[String, NodeEngine.PluginPreparation]] =
+    PluginsConfig.enabled.flatMap {
+      case false => IO.pure(Right(NodeEngine.PluginPreparation.empty))
+      case true =>
+        if node.plugins.isEmpty then IO.pure(Right(NodeEngine.PluginPreparation.empty))
+        else
+          node.plugins.traverse(PluginRegistry.resolve).flatMap { resolved =>
+            val errors = resolved.collect { case Left(e) => e }
+            if errors.nonEmpty then IO.pure(Left(errors.mkString(" | ")))
+            else
+              val defs = resolved.collect { case Right(d) => d }
+              defs.traverse(injectedPluginBlock).map { blocks =>
+                val inner = blocks.collect { case Right(b) if b.nonEmpty => b }
+                Right(NodeEngine.PluginPreparation(
+                  injectedBlock =
+                    if inner.isEmpty then ""
+                    else s"<injected-plugins>\n${inner.mkString("\n\n")}\n</injected-plugins>",
+                  mcpPlugins = defs.filter(_.mcpServers.nonEmpty),
+                  builtinTools = defs.flatMap(_.toolsExtension).distinct
+                ))
+              }
+          }
+    }
+
+  /** 逐 plugin 逐 skill 读 SKILL.md 全文（frontmatter 去除 + ${SKILL_DIR} 替换，
+    * SkillService.loadSkill 单点复用——修复「模型自读拿不到替换」缺口，§B.4 ②）。
+    * 文件不可读 → Left（节点级失败，不静默降级）。 */
+  private def injectedPluginBlock(defn: PluginRegistry.PluginDef): IO[Either[String, String]] =
+    if defn.skills.isEmpty then IO.pure(Right(""))
+    else
+      defn.skills.traverse { sk =>
+        SkillService.loadSkill(sk.path).flatMap {
+          case Some(content) =>
+            IO.pure[Either[String, String]](Right(
+              s"""<plugin name="${defn.name}" skill="${sk.name}">
+                 |${content.content}
+                 |</plugin>""".stripMargin))
+          case None =>
+            IO.pure[Either[String, String]](Left(
+              s"Plugin '${defn.name}' skill '${sk.id}' file unreadable: ${sk.path} — allocation refused (no silent degradation)"))
+        }
+      }.map { blocks =>
+        blocks.find(_.isLeft) match
+          case Some(Left(err)) => Left(err)
+          case _ => Right(blocks.collect { case Right(b) => b }.mkString("\n\n"))
+      }
+
+  /** 信任门运行时重验（§B.5 信任联动，ProjectActor.TtlTick 30s 驱动）：停用
+    * digest 失效的运行中 plugin MCP + 对持有会话发系统提醒。flag off → no-op。 */
+  def revalidatePluginTrust(): IO[Unit] =
+    PluginsConfig.enabled.flatMap {
+      case false => IO.unit
+      case true =>
+        resources.pluginMcp.revalidate(
+          PluginRegistry.scan(),
+          (sessionId, text) =>
+            resources.agentRegistry.get.flatMap { reg =>
+              reg.get(sessionId).map(_.ref) match
+                case Some(ref) =>
+                  (ref ! AgentCommand.ImmediateInput(text, source = Some("system"))).void
+                case None => IO.unit // 会话已终结——提醒无投递面，server 已停即足够
+            }
+        ).void
+    }
+
+  private def runWithAgent(
+    node: NodeDef,
+    entry: nebflow.core.entity.AgentEntry,
+    inputText: String,
+    sessionId: String,
+    prepared: NodeEngine.PluginPreparation,
+    grant: PluginMcpManager.Grant
+  ): IO[Unit] =
     val nodeId = node.id
-    val sessionId = s"node-${java.util.UUID.randomUUID().toString.take(8)}"
+    // sessionId 由 spawnAndRun 生成传入（阶段 2b：plugin MCP acquire 引用记账
+    // 需在 spawn 前拿到同一 id——终态回收 release(sessionId) 靠它对账）。
     // projectRoot 解析（20260903 worktree 参数修复）：归一化 + worktrees/ 权威
     // 位置优先、顶层存量 fallback 的双查单点在 PathUtil.resolveNodeProjectRoot
     // （与 NodeEdit 校验同源，参照系唯一）。顶层命中与旧公式
@@ -275,7 +375,13 @@ class NodeEngine(
         },
         s"nodebridge-${sessionId.take(8)}"
       )
-      agentDef = entry.toAgentDef
+      agentDef = entry.toAgentDef.copy(
+        // 阶段 2b Plugins（§B.4 第 4 步 ③）：plugin MCP 前缀来源 + 内建工具授予
+        // 进该会话 allowedSet（buildAllowedToolSet 扩展消费；仅运行时 AgentDef，
+        // 不落 agent.json）。
+        pluginMcpServers = grant.serverIds,
+        pluginTools = prepared.builtinTools
+      )
       ref <- NodeRunner.spawnAgentActor(
         system,
         NodeRunner.SpawnParams(
@@ -768,6 +874,20 @@ class NodeEngine(
 object NodeEngine:
   /** 终态节点显示 TTL（24h——2026-09-02 作者裁定；测试档可缩短——ProjectActor 注入）。 */
   val TtlDisplayMs: Long = 24 * 60 * 60 * 1000L
+
+  /** 阶段 2b Plugins：spawn 前解析完成的分配物（§B.4 第 4 步）。
+    * empty = flag 关 / 节点无分配 / 无可注入内容——旧行为零变化。 */
+  final case class PluginPreparation(
+    /** <injected-plugins> 全文块（逐 plugin 逐 skill，frontmatter 已去除 +
+      * ${SKILL_DIR} 已替换）；"" = 无注入。 */
+    injectedBlock: String,
+    /** 含 MCP server 的 plugin（acquire 输入；serverId = plugin_<p>_<s>）。 */
+    mcpPlugins: List[PluginRegistry.PluginDef],
+    /** org.nebflow/tools 授予的 builtin 工具名（白名单已在装载层校验）。 */
+    builtinTools: List[String]
+  )
+  object PluginPreparation:
+    val empty: PluginPreparation = PluginPreparation("", Nil, Nil)
 
   /** release note 注入段标记（20260903 暂停/人在回路设计 §2.4）：releaseNode 把
     * 用户补充以本标记为头追加进 out 目标 task，buildInput 天然携带进下游输入。 */

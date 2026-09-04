@@ -64,5 +64,12 @@ case class AgentDef(
   flows: List[String] = Nil, // flow names this agent can trigger
   // Flow-node agents only: the node's output contract (verdict enum + slots
   // schema) injected by FlowDagExecutor. None for all other agents.
-  flowContract: Option[FlowNodeContract] = None
+  flowContract: Option[FlowNodeContract] = None,
+  // 阶段 2b Plugins（§B.4 第 4 步）：node 分配 plugin 后由 NodeEngine 在 spawn 时
+  // 注入（entry.toAgentDef 之后的 copy）——仅存在于该会话的运行时 AgentDef，不落
+  // agent.json。pluginMcpServers = plugin MCP serverId（`plugin_<p>_<s>`），经
+  // buildAllowedToolSet MCP 过滤段追加前缀来源；pluginTools = org.nebflow/tools
+  // 授予的 builtin 工具名（白名单校验在 PluginRegistry 装载层，此处再过滤一次）。
+  pluginMcpServers: List[String] = Nil,
+  pluginTools: List[String] = Nil
 )
