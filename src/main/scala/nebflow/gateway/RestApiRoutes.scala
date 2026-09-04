@@ -355,25 +355,24 @@ class RestApiRoutes(
       }
 
     // GET /projects/<name>/agent.md — 项目 agent 指令读取（#27「点击查看」；仿 team rules.md）。
-    // 优先级（2026-09-03 裁定反转）：`.nebflow/Agent.md` 存在则优先读它（slideblocks 中文指令真文件；
-    // os.exists 跟随 symlink——已迁移项目 .nebflow/Agent.md → ../AGENTS.md 经链接读到根文件同一内容，
-    // 语义不变；悬空 symlink 兜底视为不存在），缺失回落工作区根 AGENTS.md。URL 不变。
+    // E.3 双轨移除（裁定 13）：只读工作区根 AGENTS.md（canonical）——旧位
+    // `.nebflow/Agent.md` 优先逻辑删除，迁移由 ProjectStore.load 统一执行
+    // （本路由先 load 再读，旧位真文件/symlink 在 load 时已落根）。响应形状
+    // {content} 不变（前端零改动）。URL 不变。
     case req @ GET -> Root / "projects" / name / "agent.md" =>
       withAuth(req) {
         ProjectStore.load(name).flatMap {
           case None => NotFound(Json.obj("error" -> s"project '$name' not found".asJson))
           case Some(pd) =>
-            val ws = os.Path(pd.workspace)
-            val legacy = ws / ".nebflow" / "Agent.md" // 优先位：真文件 / symlink（存在即命中）
-            val p = if os.exists(legacy) then legacy else ws / "AGENTS.md"
+            val p = os.Path(pd.workspace, PathUtil.dataRoot) / "AGENTS.md"
             if os.exists(p) then Ok(Json.obj("content" -> os.read(p).asJson))
             else NotFound(Json.obj("error" -> s"project '$name' has no AGENTS.md".asJson))
         }
       }
 
-    // PUT /projects/<name>/agent.md — 保存（落点与 GET 优先位置一致，2026-09-03 裁定反转：
-    // `.nebflow/Agent.md` 存在→写它——真文件直写（slideblocks），symlink 经链接解析写真实目标
-    // （不替换链接本身，落点内容一致）；缺失/悬空→写工作区根 AGENTS.md。仿 team rules.md）
+    // PUT /projects/<name>/agent.md — 保存。E.3 双轨移除（裁定 13）：只落工作区根
+    // AGENTS.md（canonical）；旧位优先/穿透写逻辑删除（旧位由 ProjectStore.load
+    // 迁移——本路由先 load，同请求内迁移先行完成）。响应形状 {saved:true} 不变。
     case req @ PUT -> Root / "projects" / name / "agent.md" =>
       withAuth(req) {
         ProjectStore.load(name).flatMap {
@@ -382,13 +381,7 @@ class RestApiRoutes(
             req.as[Json].flatMap { body =>
               val content = body.hcursor.downField("content").as[String].getOrElse("")
               IO.blocking {
-                val ws = os.Path(pd.workspace)
-                val legacy = ws / ".nebflow" / "Agent.md"
-                val p =
-                  if !os.exists(legacy) then ws / "AGENTS.md"
-                  else if os.isLink(legacy) then
-                    os.Path(java.nio.file.Files.readSymbolicLink(legacy.toNIO), legacy / os.up)
-                  else legacy
+                val p = os.Path(pd.workspace, PathUtil.dataRoot) / "AGENTS.md"
                 os.makeDir.all(p / os.up)
                 AtomicJson.writeSync(p, content)
               } *> Ok(Json.obj("saved" -> true.asJson))
@@ -1296,6 +1289,32 @@ class RestApiRoutes(
             req.params.get("q") match
               case None | Some("") => BadRequest(Json.obj("error" -> "Missing q".asJson))
               case Some(q)         => fs.lookupUser(q).flatMap(friendResult)
+      }
+
+    /** [U3] 自定义 NebLink 号。body: {neblinkId} → 200 {neblinkId}；上游 409
+      * taken / 422 invalid 由 NeblinkClient 折叠为 Left → 网关 502 + error 透传
+      * （web 端以 available 预检 + 本地正则兜底，409/422 仅竞态兜底面）。 */
+    case req @ PUT -> Root / "users" / "me" / "neblink-id" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.as[Json].flatMap { body =>
+              val id = body.hcursor.downField("neblinkId").as[String].getOrElse("").trim
+              if id.isEmpty then BadRequest(Json.obj("error" -> "Missing neblinkId".asJson))
+              else fs.setNeblinkId(id).flatMap(friendResult)
+            }
+      }
+
+    /** [U3] 号可用性实时检测（供 NL 号自定义 UI 即时反馈）。?q=... → {available, reason?} */
+    case req @ GET -> Root / "users" / "me" / "neblink-id" / "available" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.params.get("q") match
+              case None | Some("") => BadRequest(Json.obj("error" -> "Missing q".asJson))
+              case Some(q)         => fs.neblinkIdAvailable(q).flatMap(friendResult)
       }
 
   }

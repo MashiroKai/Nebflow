@@ -541,3 +541,41 @@
      cfg-fade-in 0.15s — squash only our instance, shared class untouched). */
   #fm-chat-overlay { animation-duration: 0.01s !important; }
 }
+
+/* ── 0904 批次打磨：加载更早消息 / 搜索态 / 申请行时间 ── */
+
+/* 「加载更早消息」— pinned above the bubbles inside the chat flow */
+.fm-load-more-row {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 4px;
+}
+.fm-load-more {
+  font-size: 12px;
+  padding: 5px 14px;
+  opacity: 0.85;
+}
+.fm-load-more:hover { opacity: 1; }
+.fm-load-more:disabled { opacity: 0.5; cursor: default; }
+
+/* 未找到态的常识提示行（主文案下方的次要说明） */
+.fm-empty-hint {
+  text-align: center;
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+  opacity: 0.8;
+  margin: -16px 12px 12px;
+  line-height: 1.5;
+}
+
+/* 申请行尾的请求时间（今天 HH:mm / 昨天 / M-D，复用会话行时间口径） */
+.fm-req-time {
+  flex-shrink: 0;
+  align-self: center;
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+  margin-left: 8px;
+}
+
+/* 搜索按钮 loading 态 */
+.fm-search-btn:disabled { opacity: 0.55; cursor: default; }

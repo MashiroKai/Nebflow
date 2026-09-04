@@ -37,7 +37,7 @@ private[agent] trait AgentCore:
    * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
    *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
    *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
-   * - Issue: 系统反馈收集仅编排者持有（2026-08-25 17:49 裁定）。
+   * - Issue 已退役（2026-09-04 作者终裁，随 CheckIssues 一并），不再在本集。
    */
   private val NebulaExclusiveTools = AgentCore.NebulaExclusiveTools
 
@@ -572,6 +572,7 @@ private[agent] trait AgentCore:
             teamCatalog = turnCtx.teamCatalog,
             memoryBlock = turnCtx.memoryBlock,
             rulesMd = turnCtx.rulesMd,
+            agentsMd = turnCtx.agentsMd,
             isSubTaskWorker = stateForLlm.isSubTaskWorker,
             guardrailsOn = guardrailsOn,
             isFlowNode = stateForLlm.isFlowNode,
@@ -2008,9 +2009,9 @@ object AgentCore:
    *   （Nebula 例外见 NebulaOrchestrationTools：阶段 2c 双轨期机制固定）。
    * - AgentControl: 后台 agent 管控（list/status/cancel/restart，spec §4 安全
    *   边界矩阵——危险能力只交给根调度者）。
-   * - Issue: 系统反馈收集仅编排者持有（user ruling 2026-08-25 17:49 工具体系
-   *   精简）——非 Nebula agent 声明了也不给（GitHub issue 上报是编排层职责，
-   *   worker 的系统性问题走 Mail 上报 Manager/Nebula 转达）。
+   * - Issue/CheckIssues（已退役，2026-09-04 作者终裁）：不再在本集——工具整体
+   *   退役，报 issue 走 gh cli 由节点代劳（定义层已归档 .archived-tools-2d/）。
+   *   未注册名无 schema、无执行路径，声明即惰性字符串，无须剥离。
    * - MemoryEdit（阶段 2c §C.1 记忆行）：记忆= Nebula 专属（2026-08-31 裁定①），
    *   非 Nebula agent 声明了也不给。
    */
@@ -2018,7 +2019,6 @@ object AgentCore:
     "Schedule",
     "Delegate",
     "AgentControl",
-    "Issue",
     "MemoryEdit"
   )
 
@@ -2032,9 +2032,10 @@ object AgentCore:
     *   - 用户面：AskUserQuestion / Pop；平台：Schedule / TransferFile
     *   - 记忆：MemoryEdit（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
     * 显式不含：六件文件工具（BaseTools，裁定 2/3：Nebula 不读不写不跑命令）、
-    * Web 系、TeamTask*、SubTask、NodeEdit/NodeCancel。Issue 不在本集——
-    * fixedToolsFor 派发处以 parity carry 形式追加（作者对重启后 Nebula 是否
-    * 保留 Issue/CheckIssues 尚未裁定，任务保护令；见 D.4 核查记录）。 */
+    * Web 系、TeamTask*、SubTask、NodeEdit/NodeCancel。Issue/CheckIssues 已整体
+    * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
+    * .archived-tools-2d/）——2c 的 + "Issue" parity carry 已删，本集即 Nebula
+    * 工具面唯一来源：恰十四件、零 Issue。 */
   val NebulaOrchestrationTools = Set(
     // 编排触发
     "Task",
@@ -2086,8 +2087,9 @@ object AgentCore:
    * Base tools always available to ALL agents regardless of category.
    * These are injected automatically — agent.json does not need to list them.
    *
-   * Issue was removed (user ruling 2026-08-25 17:49 工具体系精简): system
-   * feedback collection is orchestrator-only — see NebulaExclusiveTools.
+   * Issue was removed (user ruling 2026-08-25 17:49 工具体系精简), then fully
+   * retired with CheckIssues (2026-09-04 终裁: 报 issue 走 gh cli 由节点代劳) —
+   * no agent has it; NebulaExclusiveTools no longer lists it either.
    */
   val BaseTools = Set(
     "Read",
@@ -2127,11 +2129,12 @@ object AgentCore:
       case _ =>
         agentDef.name match
           case "Nebula" =>
-            // 静态集收口。+ "Issue"：2c 行为 parity carry——Issue 现由
-            // ~/.nebflow/tools/issue 外部 ScriptTool 提供（ToolLoader 注册），
-            // D.4 归档后该名自然失活；机制层条目与 agent.json CheckIssues/
-            // Issue 声明一并保留至作者裁定（任务保护令）。
-            AgentCore.NebulaOrchestrationTools + "Issue"
+            // 静态集收口：恰十四件、零 Issue。终裁记录（2026-09-04 作者裁定）：
+            // Issue/CheckIssues 退役，报 issue 走 gh cli 由节点代劳；定义层已
+            // 归档（agent.json CheckIssues 声明删除、~/.nebflow/tools/ 下
+            // issue/check-issues/screenshot 归档 .archived-tools-2d/）。
+            // 2c 的 + "Issue" parity carry 至此删除——本集即 Nebula 工具面唯一来源。
+            AgentCore.NebulaOrchestrationTools
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           case "general"            => AgentCore.GeneralFixedTools
           case _                    => legacyFixedTools(agentDef)
