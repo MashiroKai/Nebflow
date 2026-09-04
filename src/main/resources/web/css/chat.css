@@ -2200,6 +2200,12 @@
   text-overflow: ellipsis;
 }
 .turn-group[data-turn-state="failed"] .turn-summary { display: none; }
+/* Banner dedupe (2026-09-04): a session renders only its LATEST turn's
+   stats bar; superseded turns' bars keep their DOM (collapse structure, E10
+   search-expand) but stop stacking visually. The marker rides on the GROUP
+   element so closed groups' innerHTML stays byte-stable (#403 invariant,
+   turn-collapse-keep-text 验收 b). */
+.turn-group.turn-banner-superseded > .turn-summary { display: none; }
 .turn-steps { /* rows keep their own spacing; container is plain */ }
 @keyframes turnSummaryIn {
   from { opacity: 0; }

@@ -116,6 +116,26 @@
       await raf2();
     };
 
+    // E10 钩子：消息搜索命中折叠组时的展开入口（banner-dedupe spec 用：
+    // 被去重隐藏标语条的组仍可经此展开步骤区）。
+    window.__expandContaining = (el) => turnMod.expandGroupContaining(el);
+
+    // E5 纯文字 turn（banner-dedupe spec 用）：零过程行、不产标语条——
+    // 前一条最新标语必须保持可见不被顶掉。
+    window.__textOnlyTurn = async () => {
+      chatMod.renderUserBubble('纯文字追问', [], Date.now());
+      chatMod.appendAiText('纯文字收尾。');
+      chatMod.finishAi(1000, 'm-two');
+      turnMod.collapseTurn(view, {
+        durationMs: 1000,
+        model: 'm-two',
+        phrase: '',
+        title: '10:32',
+        sessionId: 'harness-session',
+      });
+      await raf2();
+    };
+
     // 历史重建（刷新后路径）：msgs 为真实 ui.json 形态。
     window.__history = async (msgs, opts = {}) => {
       chatEl.innerHTML = '';
