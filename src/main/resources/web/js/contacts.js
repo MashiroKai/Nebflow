@@ -8,7 +8,7 @@ import { getNeblinkState } from './neblink.js';
 import { setActivityBadge, openLoginModal } from './activityBar.js';
 import { onMessage } from './ws.js';
 import * as api from './friendsApi.js';
-import { openChatWithFriend } from './messages.js';
+import { openChatWithFriend, fmtTime } from './messages.js';
 import { showPopupMenu } from './contextMenu.js';
 
 let friends = [];
@@ -19,6 +19,23 @@ let lastSearchAt = 0;
 let searchResult = null;   // null | {found:false} | {found:true,...}
 let verifyFor = null;      // neblinkId awaiting verification-note input
 let sentTo = new Set();    // neblinkIds with a pending outgoing request (this load)
+let searching = false;     // search in flight → button loading state
+let searchQ = '';          // preserved across re-renders (panel rebuilds on state change)
+
+// ── 红点语义（0904 批次，微信常识）：未看过的请求才亮。展开「新的朋友」
+// 即视为已看（与查看后即清的微信口径一致），新 friend_event 再亮；同意/
+// 拒绝后条目离开 pending，自然熄灭。seen 集合持久化 localStorage。
+const LS_SEEN_REQ = 'fm_seen_requests';
+function loadSeenRequests() {
+  try { return new Set(JSON.parse(localStorage.getItem(LS_SEEN_REQ) || '[]')); } catch { return new Set(); }
+}
+function saveSeenRequests(set) {
+  try { localStorage.setItem(LS_SEEN_REQ, JSON.stringify([...set])); } catch { /* non-critical */ }
+}
+function unseenIncomingCount() {
+  const seen = loadSeenRequests();
+  return incoming.filter(r => r.status === 'pending' && !seen.has(r.requestId)).length;
+}
 
 // #290 §1.2 WeChat-style blacklist: blocked friends stay in the list, greyed.
 // The server (neblink-server list_friendships) currently excludes blocked
@@ -66,8 +83,8 @@ async function refresh() {
 }
 
 function updateBadge() {
-  const n = incoming.filter(r => r.status === 'pending').length;
-  setActivityBadge('contacts-btn', loggedIn() ? n : 0, t('contacts.ariaRequests', { n }));
+  const n = loggedIn() ? unseenIncomingCount() : 0;
+  setActivityBadge('contacts-btn', n, t('contacts.ariaRequests', { n }));
 }
 
 // ── Render ───────────────────────────────────────────────
@@ -110,8 +127,9 @@ function render() {
 
   body.appendChild(buildSearch());
 
-  // 「新的朋友」entry
-  const pendingN = incoming.filter(r => r.status === 'pending').length;
+  // 「新的朋友」entry — badge counts UNSEEN pending requests (WeChat-style:
+  // viewing the inbox clears the dot; a new request re-lights it).
+  const pendingN = unseenIncomingCount();
   const nf = el('div', 'fm-nf-entry');
   nf.setAttribute('role', 'button');
   nf.setAttribute('tabindex', '0');
@@ -122,7 +140,16 @@ function render() {
   if (pendingN > 0) nf.appendChild(el('span', 'fm-row-badge', String(pendingN)));
   nf.appendChild(el('span', 'fm-nf-chevron', ''));
   nf.querySelector('.fm-nf-chevron').innerHTML = `<i data-lucide="${requestsExpanded ? 'chevron-down' : 'chevron-right'}"></i>`;
-  const toggleReq = () => { requestsExpanded = !requestsExpanded; render(); };
+  const toggleReq = () => {
+    requestsExpanded = !requestsExpanded;
+    if (requestsExpanded) {
+      // Viewing the inbox = seen (WeChat-style red-dot semantics).
+      const seen = loadSeenRequests();
+      for (const r of incoming) if (r.status === 'pending') seen.add(r.requestId);
+      saveSeenRequests(seen);
+    }
+    render();
+  };
   nf.addEventListener('click', toggleReq);
   nf.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleReq(); } });
   body.appendChild(nf);
@@ -226,24 +253,33 @@ function buildSearch() {
   input.type = 'text';
   input.placeholder = t('contacts.searchPlaceholder');
   input.autocomplete = 'off';
+  input.value = searchQ; // preserved across panel re-renders
+  input.addEventListener('input', () => { searchQ = input.value; });
   const btn = el('button', 'glass-control fm-search-btn', t('contacts.search'));
   const submit = async () => {
     const q = input.value.trim();
-    if (!q) return;
+    if (!q || searching) return;
     const now = Date.now();
     if (now - lastSearchAt < 1000) return; // anti-crawl min interval
     lastSearchAt = now;
     verifyFor = null;
+    searching = true;
+    render(); // button → loading state (input value survives via searchQ)
     try {
-      searchResult = await api.lookupUser(q);
+      searchResult = await api.lookupUser(searchQ.trim());
     } catch { searchResult = { found: false }; }
+    searching = false;
     render();
   };
   btn.addEventListener('click', submit);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  if (searching) {
+    btn.disabled = true;
+    btn.textContent = t('contacts.searching');
+  }
   wrap.appendChild(input);
   wrap.appendChild(btn);
-  if (searchResult) wrap.appendChild(buildResultCard());
+  if (searchResult && !searching) wrap.appendChild(buildResultCard());
   return wrap;
 }
 
@@ -251,7 +287,9 @@ function buildResultCard() {
   const card = el('div', 'fm-result-card');
   const r = searchResult;
   if (!r.found) {
+    // 未找到态：主文案 + 常识提示（对方可能未设置 NL 号 / 号码有误）
     card.appendChild(el('div', 'fm-empty', t('contacts.notFound')));
+    card.appendChild(el('div', 'fm-empty-hint', t('contacts.notFoundHint')));
     return card;
   }
   card.appendChild(avatarEl(r, 36));
@@ -278,7 +316,7 @@ function buildResultCard() {
     input.maxLength = 50;
     input.placeholder = t('contacts.verifyMessagePlaceholder');
     const sendBtn = el('button', 'glass-control', t('messages.send'));
-    sendBtn.addEventListener('click', async () => {
+    const doSend = async () => {
       sendBtn.disabled = true;
       try {
         await api.sendFriendRequest(r.neblinkId, input.value.trim());
@@ -286,9 +324,15 @@ function buildResultCard() {
       } catch { /* keep state */ }
       verifyFor = null;
       render();
-    });
+    };
+    sendBtn.addEventListener('click', doSend);
+    // Enter 直发 + 取消回退（微信常识：附言后点发送；不想发可退出）
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doSend(); } });
+    const cancelBtn = el('button', 'glass-control fm-verify-cancel', t('contacts.cancelVerify'));
+    cancelBtn.addEventListener('click', () => { verifyFor = null; render(); });
     box.appendChild(input);
     box.appendChild(sendBtn);
+    box.appendChild(cancelBtn);
     card.appendChild(box);
     setTimeout(() => input.focus(), 0);
   } else {
@@ -320,8 +364,10 @@ function requestRow(rq, dir) {
   row.appendChild(avatarEl(person || {}, 36));
   const meta = el('div', 'fm-row-meta');
   meta.appendChild(el('div', 'fm-row-name', person?.name || person?.neblinkId || ''));
+  // 验证消息优先展示（微信常识），无附言回退号；行尾另附请求时间
   meta.appendChild(el('div', 'fm-row-sub', rq.note || person?.neblinkId || ''));
   row.appendChild(meta);
+  if (rq.createdAt) row.appendChild(el('span', 'fm-req-time', fmtTime(rq.createdAt)));
 
   const status = rq.status || 'pending';
   if (status !== 'pending') {
