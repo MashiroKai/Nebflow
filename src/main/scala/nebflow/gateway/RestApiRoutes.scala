@@ -1298,6 +1298,32 @@ class RestApiRoutes(
               case Some(q)         => fs.lookupUser(q).flatMap(friendResult)
       }
 
+    /** [U3] 自定义 NebLink 号。body: {neblinkId} → 200 {neblinkId}；上游 409
+      * taken / 422 invalid 由 NeblinkClient 折叠为 Left → 网关 502 + error 透传
+      * （web 端以 available 预检 + 本地正则兜底，409/422 仅竞态兜底面）。 */
+    case req @ PUT -> Root / "users" / "me" / "neblink-id" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.as[Json].flatMap { body =>
+              val id = body.hcursor.downField("neblinkId").as[String].getOrElse("").trim
+              if id.isEmpty then BadRequest(Json.obj("error" -> "Missing neblinkId".asJson))
+              else fs.setNeblinkId(id).flatMap(friendResult)
+            }
+      }
+
+    /** [U3] 号可用性实时检测（供 NL 号自定义 UI 即时反馈）。?q=... → {available, reason?} */
+    case req @ GET -> Root / "users" / "me" / "neblink-id" / "available" =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            req.params.get("q") match
+              case None | Some("") => BadRequest(Json.obj("error" -> "Missing q".asJson))
+              case Some(q)         => fs.neblinkIdAvailable(q).flatMap(friendResult)
+      }
+
   }
 
   /** Uniform A2A endpoint result mapping: upstream Left → 502 with error body. */

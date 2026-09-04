@@ -174,6 +174,11 @@ final class FriendService(
 
   def lookupUser(q: String): IO[Either[String, Json]] = client.lookupUser(q)
 
+  /** [U3] 自定义 NebLink 号 + 可用性检测（网关代理 → neblink-server）。 */
+  def setNeblinkId(neblinkId: String): IO[Either[String, Json]] = client.setNeblinkId(neblinkId)
+
+  def neblinkIdAvailable(q: String): IO[Either[String, Json]] = client.neblinkIdAvailable(q)
+
   def sendFriendRequest(query: String, note: Option[String] = None): IO[Either[String, Json]] =
     client.sendFriendRequest(query, note)
 

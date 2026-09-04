@@ -110,7 +110,7 @@ function mockError(message, status) {
   return e;
 }
 
-const delay = () => new Promise(r => setTimeout(r, 30));
+const delay = () => new Promise(r => setTimeout(r, Number((() => { try { return localStorage.getItem('fm_api_mock_delay'); } catch { return null; } })()) || 30));
 
 // ── Public API (same surface in both modes) ─────────────
 
@@ -185,11 +185,20 @@ export async function getConversations() {
   return mockStore().conversations.map(c => ({ ...c }));
 }
 
-/** GET /api/conversations/{id}/messages → [{id,senderId,kind,body,createdAt,agentSent?}] ascending */
-export async function getMessages(conversationId) {
-  if (!MOCK) return req('GET', `/api/conversations/${encodeURIComponent(conversationId)}/messages?limit=50`);
+/** GET /api/conversations/{id}/messages?after=&limit= → [{id,senderId,kind,body,createdAt,origin?}] ascending.
+ *  Server keyset is FORWARD-only (store.rs: id > after, ASC, limit clamp 1..200)
+ *  — 「load older」 history windows backwards client-side via id arithmetic
+ *  (messages.js HISTORY_WINDOW). */
+export async function getMessages(conversationId, { after = 0, limit = 50 } = {}) {
+  const a = Math.max(0, Math.floor(Number(after) || 0));
+  const l = Math.min(200, Math.max(1, Math.floor(Number(limit) || 50)));
+  if (!MOCK) return req('GET', `/api/conversations/${encodeURIComponent(conversationId)}/messages?after=${a}&limit=${l}`);
   await delay();
-  return [...(mockStore().messages[conversationId] || [])];
+  const m = mockStore();
+  const msgs = [...(m.messages[conversationId] || [])];
+  const numOf = (x) => (typeof x === 'number' ? x : parseInt(x, 10));
+  const filtered = a > 0 ? msgs.filter(x => !isNaN(numOf(x.id)) && numOf(x.id) > a) : msgs;
+  return filtered.slice(0, l);
 }
 
 /** POST /api/friends/{friendUserId}/messages {body} → {messageId, conversationId, createdAt} */
@@ -248,6 +257,31 @@ export async function markConversationRead(conversationId, lastReadMessageId) {
   if (conv) conv.unreadCount = 0;
 }
 
+/** PUT /api/users/me/neblink-id {neblinkId} → 200 {neblinkId} ([U3] 号自定义).
+ *  Upstream 409 taken / 422 invalid collapse to 502 + error string via the
+ *  gateway — the UI pre-validates (regex + available check) so these only
+ *  surface as rare races. */
+export async function setNeblinkId(neblinkId) {
+  if (!MOCK) return req('PUT', '/api/users/me/neblink-id', { neblinkId });
+  await delay();
+  const m = mockStore();
+  m.self.neblinkId = neblinkId;
+  return { neblinkId };
+}
+
+/** GET /api/users/me/neblink-id/available?q= → {available, reason?} ([U3]).
+ *  reason: 'taken' | 'invalid'; 20/min shared with lookup (server limiter). */
+export async function neblinkIdAvailable(q) {
+  if (!MOCK) return req('GET', `/api/users/me/neblink-id/available?q=${encodeURIComponent(q)}`);
+  await delay();
+  const m = mockStore();
+  const v = String(q || '').trim();
+  if (!/^[a-zA-Z0-9]{3,32}$/.test(v)) return { available: false, reason: 'invalid' };
+  // Server semantics: uniqueness excludes SELF (own current id stays available).
+  const taken = m.users.some(u => (u.neblinkId || '').toLowerCase() === v.toLowerCase());
+  return taken ? { available: false, reason: 'taken' } : { available: true };
+}
+
 /** Test/mock helper: inject an inbound message as if a friend_event arrived. */
 export function mockInjectMessage(conversationId, msg) {
   const m = mockStore();
@@ -255,4 +289,10 @@ export function mockInjectMessage(conversationId, msg) {
   if (!conv) return;
   (m.messages[conversationId] = m.messages[conversationId] || []).push(msg);
   conv.lastMessage = msg;
+}
+
+/** Test/mock helper: inject an incoming friend request (friend_event stand-in
+ *  — the WS event only notifies; REST is the source of truth for the list). */
+export function mockInjectIncomingRequest(entry) {
+  mockStore().incoming.push(entry);
 }
