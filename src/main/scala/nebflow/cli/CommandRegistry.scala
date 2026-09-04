@@ -32,6 +32,7 @@ object CommandRegistry:
       McpCommand,
       AgentCommand,
       SkillCommand,
+      PluginCommand,
       MemoryCommand
     ).map(c => c.name -> c).toMap
 

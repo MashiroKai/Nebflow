@@ -210,7 +210,11 @@ object ProjectActor:
               // projectTtlScanner 驱动的周期 tick 上；启动期根会话未 spawn 时扫描
               // 静默跳过（结果滞留 flow-map，下个 tick 再试），根会话可用后 30s 内
               // 补投。best-effort：扫描失败不影响 TTL sweep。
-              cfg.engine.redeliverUnconsumedNebulaResults()
+              // 阶段 2b（§B.5 信任运行时联动）：同 tick 挂 plugin 信任重验——
+              // digest 失效的运行中 plugin MCP 立即停用 + 持有会话收系统提醒。
+              cfg.engine.revalidatePluginTrust()
+                .handleErrorWith(e => logger.warn(s"plugin trust revalidation failed: ${e.getMessage}")) *>
+                cfg.engine.redeliverUnconsumedNebulaResults()
                 .handleErrorWith(e => logger.warn(s"Node redelivery scan failed: ${e.getMessage}").as(0)).void *>
                 cfg.engine.store.sweepExpired(System.currentTimeMillis()).flatMap { removed =>
                   removed.traverse_(id => cfg.engine.emitRemoved(id))
@@ -222,14 +226,20 @@ object ProjectActor:
       }
     }
 
+  /** Plugin Catalog 段（阶段 2b §B.4 第 2 步）：分发器 prompt 组装的注入源。
+    * 受信 plugin 目录（untrusted 不出现，§B.3）；flag 关 / 无受信插件 → ""。
+    * 对齐 skillCatalog order 800 注入先例——用注入目录段而非新增查询工具
+    * （分发器单次会话、目录规模小，不多造工具）。 */
+  private def pluginCatalogText(): IO[String] = nebflow.core.plugin.PluginRegistry.renderCatalog()
+
   /** 新任务形态 prompt（spawnDispatcher 双形态之一，现状文案保留）。 */
-  private def newTaskPrompt(project: ProjectDef, snapshot: FlowMapState, taskText: String): String =
+  private def newTaskPrompt(project: ProjectDef, snapshot: FlowMapState, taskText: String, pluginCatalog: String): String =
     s"""你是项目「${project.name}」的任务分发器。当前 Flow Map 快照（NodeList 数据源）：
        |```json
        |${snapshot.asJson.noSpaces}
        |```
        |
-       |任务：$taskText
+       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}任务：$taskText
        |
        |先 NodeList 读现状，再按需用 NodeEdit 建节点/接线/改接。所有 Node 工具调用必须带 project=${project.name} 参数。无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
@@ -246,7 +256,7 @@ object ProjectActor:
 
   /** 重入调整形态 prompt（spawnDispatcher 双形态之二，设计 §2.2 原文照抄——
     * 含节点名/id/blockCount/反馈三字段/Flow Map 快照注入/四动作选择/abandon 说明/「无需回报」）。 */
-  private def reentryPrompt(project: ProjectDef, snapshot: FlowMapState, node: NodeDef, feedback: BlockedFeedback, blockCount: Int): String =
+  private def reentryPrompt(project: ProjectDef, snapshot: FlowMapState, node: NodeDef, feedback: BlockedFeedback, blockCount: Int, pluginCatalog: String): String =
     s"""你是项目「${project.name}」的任务分发器——本轮是【节点反馈重入调整】，不是新任务。
        |
        |节点 ${node.name}（${node.id}）报告 blocked（第 $blockCount 轮）：
@@ -259,7 +269,7 @@ object ProjectActor:
        |${snapshot.asJson.noSpaces}
        |```
        |
-       |${reentryActions(project)}""".stripMargin
+       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${reentryActions(project)}""".stripMargin
 
   /** 注入现有会话的新任务文本（单例化裁定：标注「新任务到达」来源；与进行中
     * 工作按 turn 串行——处理中排 pendingUserInputs，turn 边界消费）。 */
@@ -349,7 +359,9 @@ object ProjectActor:
             .as(same)
       case None =>
         cfg.engine.store.snapshot.flatMap { snapshot =>
-          spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, snapshot, taskText), rootSessionId, "")
+          pluginCatalogText().flatMap { catalog =>
+            spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, snapshot, taskText, catalog), rootSessionId, "")
+          }
         }
     }
 
@@ -385,8 +397,10 @@ object ProjectActor:
                 .as(same)
           case None =>
             cfg.engine.store.snapshot.flatMap { snapshot =>
-              spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, snapshot, node, feedback, blockCount), rootSessionId,
-                s" (reentry round $blockCount: ${node.name})")
+              pluginCatalogText().flatMap { catalog =>
+                spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, snapshot, node, feedback, blockCount, catalog), rootSessionId,
+                  s" (reentry round $blockCount: ${node.name})")
+              }
             }
         }
     }

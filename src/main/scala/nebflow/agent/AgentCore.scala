@@ -1574,13 +1574,27 @@ private[agent] trait AgentCore:
     // always auto-allowed. Tool names are mcp__<serverId>__<tool>; dedicated
     // servers use serverId "agent-<agentName>-<serverName>".
     val agentOwnPrefix = s"mcp__agent-${agentDef.name}-"
+    // 阶段 2b Plugins（§B.4 第 4 步）：node 分配的 plugin MCP 前缀来源——
+    // serverId `plugin_<p>_<s>` → 工具名 `mcp__plugin_<p>_<s>__<t>`。分配链
+    // （NodeEdit plugins 参数 → 信任门解析 → PluginMcpManager 启动）是唯一授权
+    // 源；untrusted plugin 根本到不了这里（resolve 即 failNode）。
+    // 注：这是「追加」而非「保留」——base 宇宙（agentDef.tools + fixed）天然
+    // 不含 mcp__* 名，须从注册表按前缀捞取并入（蓝图 §B.4-③「追加对应前缀」）；
+    // 配额期间 server 未注册的工具名自然落空（注册表即事实源）。
+    val pluginPrefixes = agentDef.pluginMcpServers.map(sid => s"mcp__${sid}__")
+    val pluginAppended =
+      if pluginPrefixes.isEmpty then taskFiltered
+      else
+        val pluginMcpNames = ToolRegistry.registeredToolNames.filter(t => pluginPrefixes.exists(t.startsWith))
+        taskFiltered ++ pluginMcpNames
     val mcpFiltered =
       if agentDef.mcpServers.isEmpty then
-        taskFiltered.filter(t => !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix))
+        pluginAppended.filter(t => !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || pluginPrefixes.exists(t.startsWith))
       else
         val prefixes = agentDef.mcpServers.map(sid => s"mcp__${sid}__")
-        taskFiltered.filter(t =>
-          !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith)
+        pluginAppended.filter(t =>
+          !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith) ||
+            pluginPrefixes.exists(t.startsWith)
         )
     // SubTask workers are leaf agents: no Mail / no further delegation, no
     // FlowTrigger and no FlowExecute (workers don't trigger pipelines nor
@@ -1613,7 +1627,14 @@ private[agent] trait AgentCore:
       // Mail ask (flow callers cannot receive background notifications).
       else if agentDef.category == "flow" then mcpFiltered - "Mail"
       else mcpFiltered
-    categoryFiltered
+    // 阶段 2b Plugins（§B.6 内建工具授予）：org.nebflow/tools 申请的 builtin 工具
+    // 追加在全部角色过滤之后——信任门审批是授权权威（§B.3 审批清单必审区块），
+    // 审批通过 = 用户明确授予该节点此工具；白名单 {WebSearch, WebFetch, Curl, Pop}
+    // 在 PluginRegistry 装载层强制，此处再过滤一次（纵深防御：损坏的 AgentDef
+    // 也造不出白名单外授予）。编排类工具（Task/Mail/NodeEdit 等）永不进白名单，
+    // §C.1 静态矩阵不被 plugin 授予绕过。
+    val pluginGranted = categoryFiltered ++ agentDef.pluginTools.filter(nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist)
+    pluginGranted
 
   end buildAllowedToolSet
 
