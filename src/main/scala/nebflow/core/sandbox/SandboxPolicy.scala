@@ -21,9 +21,13 @@ import nebflow.core.PathUtil
  * 永不漂移（§A.1 dsh 教训）。写 ⊆ 读是不变量：任何可写根必须可读。
  *
  * readExtras（系统只读面，§A.2/H-10①/H-12①）：/usr /System /opt/homebrew
- * /private/etc /private/var + ~/.nebflow/{skills,prompts,docs} 三个子目录。
- * ~/.nebflow 根层（auth.json/device.json/logto-*.env 等凭据）不在任何白名单——
- * 读写均拒；~/.nebflow 整体不在可写根（裁定 3：agent 只在 project 内写）。
+ * /private/etc /private/var + ~/.nebflow 白名单子目录（skills/prompts/docs +
+ * 系统运行数据目录 tool-results/uploads/logs/sessions/projects/agents——节点读
+ * 自己的工具结果缓存/上传附件/日志/会话/项目元数据/agent 定义是正常工作需求）。
+ * ~/.nebflow 根层（auth.json/vps.env/nebflow.json/User.md 等凭据与私有态）不在
+ * 任何白名单——读写均拒；agents/ 目录开读后 agents/**/memory.md（agent 私有
+ * 记忆）由 readDenied 负向规则一票拒读（优先于白名单）；~/.nebflow 整体不在
+ * 可写根（裁定 3：agent 只在 project 内写）。
  *
  * enabled=false（nebflow.json sandbox.enabled=false 或非 project 会话）即回旧行为
  * （§G.1 回滚语义）：所有闸门短路过行，工具表现与沙箱引入前完全一致。
@@ -53,10 +57,34 @@ object SandboxPolicy:
   def systemReadExtras: List[os.Path] =
     List("/usr", "/System", "/opt/homebrew", "/private/etc", "/private/var").map(os.Path(_))
 
-  /** ~/.nebflow 读取白名单（H-12①）：仅 skills/prompts/docs 三子目录。取
-    * PathUtil.dataRoot（rebrand/测试 setDataRoot 均生效）。 */
+  /** ~/.nebflow 读取白名单（H-12① + 读白名单补全）：skills/prompts/docs 三子目录
+    * + 系统运行数据目录 tool-results/uploads/logs/sessions/projects/agents（只读，
+    * 不进可写根）。取 PathUtil.dataRoot（rebrand/测试 setDataRoot 均生效）。 */
   def nebflowReadExtras: List[os.Path] =
-    List("skills", "prompts", "docs").map(s => PathUtil.dataRoot / s)
+    List("skills", "prompts", "docs", "tool-results", "uploads", "logs", "sessions", "projects", "agents")
+      .map(s => PathUtil.dataRoot / s)
+
+  /** agents 子树根（负向规则锚点）。 */
+  private def agentsReadRoot: os.Path = PathUtil.dataRoot / "agents"
+
+  /**
+   * 文件级读负向规则（凭据红线，优先于 readableRoots——FileSandbox 先查本函数）：
+   * agents/ 子树内一切 memory.md（agent 私有记忆，Nebula 与 team agent 同规）。
+   * agents/ 目录级开读后，此例外保证「目录开读、记忆仍拒」两个断言同时成立。
+   * 输入必须是 canonical 路径（与 readableRoots 同一 canonical 域比较）。
+   */
+  def readDenied(canonical: Path): Boolean =
+    val agents = os.Path(canonicalize(agentsReadRoot.wrapped))
+    canonical.startsWith(agents.wrapped) && canonical.getFileName.toString == "memory.md"
+
+  /**
+   * Grep/Glob 遍历排除（红线覆盖遍历面）：搜索根落在 agents 子树内时，rg 追加
+   * basename 级排除（任意深度 memory.md）——文件级负向规则管不住 rg 目录遍历，
+   * 不排除则白名单内搜索会把 memory.md 内容扫进结果。返回 rg 参数片段（命中时）。
+   */
+  def memoryGlobExcludes(canonicalRoot: Path): List[String] =
+    val agents = os.Path(canonicalize(agentsReadRoot.wrapped))
+    if canonicalRoot.startsWith(agents.wrapped) then List("--glob", "!memory.md") else Nil
 
   def defaultReadExtras: List[os.Path] = systemReadExtras ++ nebflowReadExtras
 
