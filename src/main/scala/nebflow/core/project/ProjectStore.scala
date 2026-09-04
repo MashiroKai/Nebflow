@@ -23,7 +23,11 @@ object ProjectStore:
 
   def projectJsonPath(name: String): os.Path = projectDir(name) / "project.json"
 
-  /** Load a project definition by name. 名称非法（路径穿越）→ None。 */
+  /** Load a project definition by name. 名称非法（路径穿越）→ None。
+    *
+    * E.3 双轨移除（裁定 13）：加载即执行旧位迁移（幂等，见 migrateAgentMd）——
+    * 启动挂载/REST 首触后 canonical = 工作区根 AGENTS.md，注入面
+    * （ContextRefresher.resolveAgentsMd）读到稳定根文件。 */
   def load(name: String): IO[Option[ProjectDef]] =
     IO.blocking {
       if name.isEmpty || name.contains("/") || name.contains("\\") || name == "." || name == ".." then None
@@ -31,12 +35,41 @@ object ProjectStore:
         val p = projectJsonPath(name)
         if os.exists(p) then
           jsonParse(os.read(p)).flatMap(_.as[ProjectDef]) match
-            case Right(pd) => Some(pd)
+            case Right(pd) =>
+              // 迁移失败不阻断项目加载（失败态由 WARN 留痕，下次 load 重试）
+              try migrateAgentMd(os.Path(pd.workspace, PathUtil.dataRoot), name)
+              catch case e: Exception =>
+                logger.warnSync(s"Project '$name': Agent.md migration failed: ${e.getMessage}")
+              Some(pd)
             case Left(e) =>
               logger.warnSync(s"Failed to parse project '$name': $e")
               None
         else None
     }
+
+  /** E.3：`.nebflow/Agent.md` 旧位迁移到工作区根 AGENTS.md（三分支，幂等）：
+    * ① 仅旧位（真文件或 symlink）→ 内容落根 + 删旧位——symlink 只删链接本体、
+    *   目标文件不动（已迁移项目先例）；内容经链接读目标。
+    * ② 两者并存 → 根 AGENTS.md 胜出（canonical，裁定 13）+ WARN，旧位不动。
+    *   特例：旧位是 symlink 且解析到根文件本身（os.isSameFile）＝已迁移稳态，
+    *   no-op 不告警（否则主仓等 symlink 兼容项目每次 load 刷 WARN）。
+    * ③ 旧位不存在（含悬空 symlink——os.exists 跟随链接判存在）→ no-op。 */
+  private def migrateAgentMd(ws: os.Path, projectName: String): Unit =
+    val legacy = ws / ".nebflow" / "Agent.md"
+    val root = ws / "AGENTS.md"
+    if os.exists(legacy) then
+      val sameAsRoot =
+        try java.nio.file.Files.isSameFile(legacy.toNIO, root.toNIO)
+        catch case _: Exception => false
+      if sameAsRoot then () // 已迁移稳态（symlink → 根文件）
+      else if os.exists(root) then
+        logger.warnSync(
+          s"Project '$projectName': both AGENTS.md and legacy .nebflow/Agent.md exist — AGENTS.md (workspace root) wins (裁定 13), legacy left untouched"
+        )
+      else
+        os.write.over(root, os.read(legacy)) // symlink 场景经链接读目标内容
+        os.remove(legacy) // symlink 只删链接本体，目标不动
+        logger.infoSync(s"Project '$projectName': migrated legacy .nebflow/Agent.md -> workspace-root AGENTS.md (E.3 dual-track removal)")
 
   /** List all projects. 归档项目不在列（迁移方案 v2 §6.1）：本函数是全仓唯一列表源——
     * 面板 API（RestApiRoutes GET /projects）与启动挂载（GatewayMain startupMount）

@@ -39,7 +39,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // ===== D.1-1：三角色静态集收口，工具面逐件不变 =====
 
-  test("D.1-1: Nebula fixed set == §C.1 十四件 + Issue parity carry（逐件不变）"):
+  test("D.1-1: Nebula fixed set == §C.1 恰十四件、零 Issue（逐件不变）"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
       Set("Task", "ProjectCreate", "NodeList", "AgentControl",
@@ -47,8 +47,10 @@ class Phase2dToolRefactorSpec extends FunSuite:
         "Delegate", "FlowTrigger", "FlowExecute",
         "AskUserQuestion", "Pop",
         "Schedule", "TransferFile",
-        "MemoryEdit") + "Issue"
-    assertEquals(fixed, expected, "Nebula 静态集收口后逐件不变（+Issue 为 2c parity carry，作者未裁定）")
+        "MemoryEdit")
+    assertEquals(fixed, expected,
+      "Nebula 静态集恰十四件（2026-09-04 终裁：Issue/CheckIssues 退役，报 issue 走 gh cli 由节点代劳；+Issue parity carry 已删）")
+    assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
 
   test("D.1-1: dispatcher fixed set == Node 三件 + 读四件（逐件不变）"):
     assertEquals(
