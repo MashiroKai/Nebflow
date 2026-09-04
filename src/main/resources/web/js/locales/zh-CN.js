@@ -68,6 +68,8 @@ export default {
   'flowmap.blockedRawTitle': '节点输出原文',
   // deps 依赖连接（deps 设计 §1.4）：等待脚注 + 六档图例（输出边三态 × 依赖边三态）
   'flowmap.waitingFor': '等待',
+  // 等待脚注归档降级标记（裁定①：原 ✦ 字符换纯文字；含整链归档/到期出库/断链）
+  'flowmap.archivedTag': '（已归档）',
   'flowmap.legend.outDelivered': '输出已投递',
   'flowmap.legend.outWaiting': '输出等待中',
   'flowmap.legend.outIdle': '输出未投递',
