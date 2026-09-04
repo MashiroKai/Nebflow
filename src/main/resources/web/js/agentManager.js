@@ -4,7 +4,7 @@
 import state from './state.js';
 import { key } from './branding.js';
 import { sendWs } from './ws.js';
-import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas, registerCanvasPanelButton } from './canvas.js';
+import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas } from './canvas.js';
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import * as presets from './presets.js';
@@ -70,7 +70,11 @@ function shortModel(ref) {
 }
 
 // ── API ────────────────────────────────────────────────────
-async function fetchAgents() {
+// Fetchers + the skills/flows write-back are exported: plugins.js (the
+// agents entry's successor page, 2026-09-04) reuses the exact same data
+// paths instead of duplicating contracts. Single write path for
+// subscriptions stays here.
+export async function fetchAgents() {
   try {
     const resp = await fetch('/api/agents', { headers: authHeaders() });
     if (!resp.ok) return [];
@@ -79,7 +83,7 @@ async function fetchAgents() {
   } catch (e) { return []; }
 }
 
-async function fetchAgentDetail(name) {
+export async function fetchAgentDetail(name) {
   try {
     const resp = await fetch(`/api/agents/${encodeURIComponent(name)}`, { headers: authHeaders() });
     if (!resp.ok) return null;
@@ -87,7 +91,7 @@ async function fetchAgentDetail(name) {
   } catch (e) { return null; }
 }
 
-async function fetchAgentModel(name) {
+export async function fetchAgentModel(name) {
   try {
     const resp = await fetch(`/api/agents/${encodeURIComponent(name)}/model`, { headers: authHeaders() });
     if (!resp.ok) return null;
@@ -95,7 +99,7 @@ async function fetchAgentModel(name) {
   } catch (e) { return null; }
 }
 
-async function fetchSkills() {
+export async function fetchSkills() {
   try {
     const resp = await fetch('/api/skills', { headers: authHeaders() });
     if (!resp.ok) return [];
@@ -104,7 +108,7 @@ async function fetchSkills() {
   } catch (e) { return []; }
 }
 
-async function fetchFlows() {
+export async function fetchFlows() {
   try {
     const resp = await fetch('/api/flows/list', { headers: authHeaders() });
     if (!resp.ok) return [];
@@ -114,7 +118,7 @@ async function fetchFlows() {
 }
 
 /** PUT agent skills/flows config (persisted to agent.json). */
-async function setAgentSkillsFlows(name, field, value) {
+export async function setAgentSkillsFlows(name, field, value) {
   try {
     await fetch(`/api/agents/${encodeURIComponent(name)}`, {
       method: 'PUT',
@@ -294,8 +298,11 @@ async function populateModelTag(name) {
 
 // ── Canvas detail tab ──────────────────────────────────────
 
-/** Open a Canvas tab showing the agent detail page. */
-async function openAgentDetail(name, pin = false) {
+/** Open a Canvas tab showing the agent detail page.
+ *  Exported for plugins.js: the plugins page's subscription-map rows deep-
+ *  link here for full per-agent editing (tools / prompt / flows). The detail
+ *  tab is per-agent content, NOT the sealed standalone list entry. */
+export async function openAgentDetail(name, pin = false) {
   const tabId = `agent:${name}`;
   openTab(tabId, name, { type: 'agent', pinned: pin });
   const pane = getTabPane(tabId);
@@ -570,11 +577,13 @@ export function isAgentsTabOpen() {
   return hasTab('agents');
 }
 
-// Activity Bar toggle registration (author 2026-08-30 4-state machine):
-// pressed state strictly follows "this tab is the visible Canvas content" —
-// synced centrally by canvas.js (open/close/switch/restore all covered).
-registerCanvasPanelButton('agents', 'agents-btn', () => openAgents());
-
+// 2026-09-04 作者裁定：独立「智能体」面板入口移除，#agents-btn 由 plugins.js
+// 接管（改挂「插件」页）。本模块保留为封存实现：
+//   • openAgents / renderAgentManager / openAgentDetail 函数全部保留（隐藏
+//     入口 ≠ 删除），openAgentDetail 被插件页订阅映射行深链复用；
+//   • 不再 registerCanvasPanelButton——活动栏按钮的按下态同步归 plugins.js；
+//   • canvas-tab-restore 仍监听 'agents'：旧会话持久化的智能体标签页刷新后
+//     照常渲染（保留函数只藏入口，不悬挂已存在的标签页）。
 window.addEventListener('canvas-tab-restore', (e) => {
   if (e.detail?.id === 'agents') {
     renderAgentManager();

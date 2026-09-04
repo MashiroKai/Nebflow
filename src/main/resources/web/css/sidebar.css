@@ -2068,3 +2068,301 @@
   height: 84px;
   display: block;
 }
+
+/* ── Plugins page (2026-09-04 件 B：智能体入口融合) ──────────────────────
+   Canvas tab #plugins-content. Sections sit on glass-control material
+   (semi-transparent tint + backdrop blur + inner highlight/under-edge +
+   whisper border) — NO solid fills, per the sapphire glass standard. */
+#plugins-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+  scrollbar-color: var(--color-frame-border) transparent;
+}
+#plugins-content > .plugins-section,
+#plugins-content .plugins-topbar {
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.plugins-loading {
+  font: 400 12px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  padding: 24px 12px;
+  text-align: center;
+}
+.plugins-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.plugins-title {
+  font: 600 14px -apple-system, sans-serif;
+  color: var(--color-frame-text);
+  letter-spacing: -0.01em;
+}
+.plugins-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  color: var(--color-frame-text-muted);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.plugins-refresh-btn:hover {
+  background: var(--glass-control-bg-hover);
+  border-color: var(--glass-control-border);
+  color: var(--color-frame-text);
+}
+.plugins-section { margin-bottom: 18px; }
+.plugins-section-title {
+  font: 600 11px -apple-system, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-frame-text-muted);
+  padding: 4px 2px 6px;
+  user-select: none;
+}
+.plugins-section-hint {
+  font: 400 10px -apple-system, sans-serif;
+  color: var(--color-frame-text-dim);
+  padding: 0 2px 8px;
+}
+.plugins-subsection { margin-bottom: 12px; }
+.plugins-subsection-title {
+  font: 500 11px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  padding: 2px 2px 6px;
+}
+
+/* Skill catalog cards — glass panel material */
+.plugins-skill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.plugins-skill-card {
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plugins-skill-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.plugins-skill-name {
+  font: 600 12px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugins-skill-sub-label {
+  margin-left: auto;
+  flex-shrink: 0;
+  font: 400 9px -apple-system, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-frame-text-dim);
+}
+.plugins-skill-desc {
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.plugins-subscriber-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.plugins-subscriber-chip {
+  font: 500 9px -apple-system, sans-serif;
+  padding: 1px 7px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-frame-text-muted);
+  white-space: nowrap;
+}
+.plugins-none {
+  font: 400 10px -apple-system, sans-serif;
+  color: var(--color-frame-text-dim);
+  font-style: italic;
+}
+
+/* MCP server cards — one-line glass rows */
+.plugins-mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plugins-mcp-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 9px;
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  padding: 7px 12px;
+  min-width: 0;
+}
+.plugins-mcp-card.disabled { opacity: 0.6; }
+.plugins-mcp-name {
+  font: 600 12px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugins-mcp-cmd {
+  flex: 1;
+  min-width: 0;
+  font: 400 10px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugins-mcp-state {
+  flex-shrink: 0;
+  font: 500 9px -apple-system, sans-serif;
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: rgba(100, 200, 100, 0.15);
+  color: #6a6;
+  white-space: nowrap;
+}
+.plugins-mcp-state.off {
+  background: rgba(160, 160, 160, 0.14);
+  color: var(--color-frame-text-muted);
+}
+
+/* Subscription map rows */
+.plugins-map-list,
+.plugins-config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.plugins-map-row,
+.plugins-config-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  padding: 8px 12px;
+}
+.plugins-map-row { align-items: flex-start; }
+.plugins-agent-name {
+  flex-shrink: 0;
+  width: 110px;
+  font: 600 12px -apple-system, sans-serif;
+  color: var(--color-frame-text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.15s;
+}
+.plugins-agent-name:hover { color: rgb(91, 127, 191); }
+.plugins-sub-grid {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+/* Skill chips reuse the agent-detail chip language (toggle + persist) */
+.plugins-sub-check {
+  font: 500 10px ui-monospace, SFMono-Regular, monospace;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  color: var(--color-frame-text-muted);
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+.plugins-sub-check:hover {
+  border-color: rgba(91, 127, 191, 0.3);
+  color: var(--color-frame-text);
+}
+.plugins-sub-check.checked {
+  border-color: rgba(91, 127, 191, 0.35);
+  background: rgba(91, 127, 191, 0.08);
+  color: rgb(91, 127, 191);
+}
+
+/* Config rows — preset select + model pill (migrated controls) */
+.plugins-preset-select {
+  flex: 1;
+  min-width: 0;
+  max-width: 220px;
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-frame-text);
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 7px;
+  padding: 4px 8px;
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  outline: none;
+}
+.plugins-preset-select:focus { border-color: rgba(91, 127, 191, 0.4); }
+.plugins-model-tag {
+  margin-left: auto;
+  flex-shrink: 0;
+  font: 500 9px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+  background: var(--color-frame-border);
+  padding: 1px 6px;
+  border-radius: 4px;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
