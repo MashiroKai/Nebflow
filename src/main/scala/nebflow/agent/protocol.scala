@@ -789,6 +789,9 @@ case class TurnContext(
   systemPrefix: String,
   projectRoot: Option[String],
   rulesMd: Option[String],
+  /** §E.2: workspace-root AGENTS.md（每 turn 重读盘；仅 project 会话，gating 见
+    * ContextRefresher.agentsMdEnabledFor）。默认 None 保构造点兼容。 */
+  agentsMd: Option[String] = None,
   thinkingConfig: nebflow.llm.ThinkingConfig,
   branchChange: Option[SystemReminder] = None,
   currentBranch: Option[String] = None,
@@ -811,6 +814,9 @@ case class SessionContext(
   language: Option[String] = None,
   projectRoot: Option[String] = None,
   rulesMd: Option[String] = None,
+  /** §E.2: workspace-root AGENTS.md spawn 快照（消费权威在 refreshTurn 每 turn
+    * 重读盘的 TurnContext.agentsMd）。默认 None 保序列化/构造点兼容。 */
+  agentsMd: Option[String] = None,
   folderId: Option[String] = None,
   chatWidth: Int = 0,
   gitBranch: Option[String] = None,
@@ -1105,6 +1111,7 @@ object AgentState:
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
+    agentsMd: Option[String] = None,
     folderId: Option[String] = None,
     safetyMode: String = "confirm-edits",
     gitBranch: Option[String] = None,
@@ -1133,6 +1140,7 @@ object AgentState:
         folderId = folderId,
         projectRoot = projectRoot,
         rulesMd = rulesMd,
+        agentsMd = agentsMd,
         gitBranch = gitBranch,
         safetyMode = safetyMode,
         expectsMail = expectsMail,
@@ -1195,6 +1203,7 @@ extension (s: AgentState)
   def projectRoot: Option[String] = s.session.projectRoot
   def sandboxEnabled: Boolean = s.session.sandboxEnabled
   def rulesMd: Option[String] = s.session.rulesMd
+  def agentsMd: Option[String] = s.session.agentsMd
   def folderId: Option[String] = s.session.folderId
   def gitBranch: Option[String] = s.session.gitBranch
   def safetyMode: String = s.session.safetyMode

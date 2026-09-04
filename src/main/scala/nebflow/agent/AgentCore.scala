@@ -572,6 +572,7 @@ private[agent] trait AgentCore:
             teamCatalog = turnCtx.teamCatalog,
             memoryBlock = turnCtx.memoryBlock,
             rulesMd = turnCtx.rulesMd,
+            agentsMd = turnCtx.agentsMd,
             isSubTaskWorker = stateForLlm.isSubTaskWorker,
             guardrailsOn = guardrailsOn,
             isFlowNode = stateForLlm.isFlowNode,

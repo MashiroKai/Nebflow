@@ -109,6 +109,64 @@ object ContextRefresher:
       case (None, Some(f)) => Some(f)
       case (Some(p), Some(f)) => Some(s"$p\n\n---\n\n$f")
 
+  // ============================================================
+  // AGENTS.md 注入（§E.2，project-architecture phase2 设计 §E）
+  // ============================================================
+
+  private val logger = nebflow.core.NebflowLogger.forName("nebflow.agent")
+
+  /** E.2 长度护栏：>16KB（16*1024 字节）截断 + 尾注（提示词膨胀防护）。 */
+  val AgentsMdMaxBytes: Int = 16 * 1024
+
+  /** E.2 接收面 gating：注入对象 = project 分发器 + 全部 node 会话；Nebula 与
+    * 双轨 team/flow 会话不注入。
+    *
+    * 基准取舍（任务书建议 projectRoot.isDefined ± converged 名单，均否决留档）：
+    *  - projectRoot.isDefined 不可作主基准：WebSocketRoutes.doSpawnRootAgent 把
+    *    全部 WS 根会话（含 Nebula）的 projectRoot fallback 到 ~/.nebflow/projects
+    *    ——Nebula 恒 Some，单基准会误注入。
+    *  - converged 名单（project-dispatcher + general）不可作叠加/主基准：node
+    *    会话 agent 名 = NodeDef.agent 任意声明值（NodeEngine loadAgent(node.agent)），
+    *    名单覆盖不了「全部 node 会话」。
+    *  - 采用 sandboxEnabled（spawn 形态信号）：全仓唯二置位点 NodeEngine（节点
+    *    spawn）+ ProjectActor（分发器 spawn）＝接收面本身（2a §A.6 spec 钉死
+    *    「仅 project 节点/分发器置位」）；Nebula/team/flow/Delegate/SubTask 默认
+    *    false → 不注入。projectRoot 非空作读取源 + 空串护栏。
+    * 公开供 spec 断言（参照 skillCatalogEnabledFor 同文件先例）。 */
+  def agentsMdEnabledFor(sandboxEnabled: Boolean, projectRoot: Option[String]): Boolean =
+    sandboxEnabled && projectRoot.exists(_.nonEmpty)
+
+  /** E.2 读取：`<projectRoot>/AGENTS.md`，每 turn 重读盘（对齐 rulesMd 同机制）。
+    * 旧位 `.nebflow/Agent.md` 残留 → 仅 WARN + 回落读根文件——迁移动作本体在
+    * ProjectStore.load（E.3），此处置严禁文件搬家（每 turn 读路径带写副作用会
+    * 放大竞态面）；挂载即迁移，残留只出现在 load 不可达的异常态，WARN 暴露即可。
+    * >16KB 按字节截断 + 尾注 `[AGENTS.md truncated]`（截断切点若落在多字节
+    * UTF-8 序列内，残码由解码器替换，不回写盘面）。路径解析失败（脏 projectRoot
+    * 字符串）→ None，不中断 turn。 */
+  def resolveAgentsMd(projectRoot: Option[String]): IO[Option[String]] =
+    projectRoot.filter(_.trim.nonEmpty) match
+      case None => IO.pure(None)
+      case Some(root) =>
+        IO.blocking {
+          scala.util.Try(os.Path(root)).toOption.flatMap { base =>
+            val legacy = base / ".nebflow" / "Agent.md"
+            if os.exists(legacy) then
+              logger.warnSync(
+                s"[agents-md] '$legacy' still present (migration runs at ProjectStore.load) — reading workspace-root AGENTS.md"
+              )
+            val p = base / "AGENTS.md"
+            if os.exists(p) then
+              val bytes = java.nio.file.Files.readAllBytes(p.toNIO)
+              val text =
+                if bytes.length > AgentsMdMaxBytes then
+                  new String(bytes, 0, AgentsMdMaxBytes, java.nio.charset.StandardCharsets.UTF_8) +
+                    "\n\n[AGENTS.md truncated]"
+                else new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
+              Option(text.trim).filter(_.nonEmpty)
+            else None
+          }
+        }
+
   /**
    * Always returns the projects directory: ~/.nebflow/projects/<folderName>/
    *  This is where project-level config lives (NEBFLOW.md, agents/, flows/).
@@ -418,6 +476,15 @@ object ContextRefresher:
         case None => IO.pure(None)
       folderRules = resolveRules(state, resources)
       rulesMd = mergeRules(projectRules, folderRules)
+      // E.2 AGENTS.md 注入（每 turn 重读盘，对齐 rulesMd 同机制）。读取基准 =
+      // SessionContext.projectRoot（NodeEngine/ProjectActor spawn 写入的
+      // workspace/worktree 路径，§A.6 唯一权威）——node/分发器会话无 folderId，
+      // 上方 folderId 派生的 projectRoot 对它们恒 None，不可作基准（gating 取舍
+      // 见 agentsMdEnabledFor）。随 systemStable 在 lifecycle 节点生效。
+      agentsMd <-
+        if agentsMdEnabledFor(state.sandboxEnabled, state.projectRoot) then
+          resolveAgentsMd(state.projectRoot)
+        else IO.pure(None)
       thinkingConfig <- resources.thinkingConfigRef.get
       (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
       // D.1-12（阶段 2d）：skill 目录注入新模型停注——node/general 会话不再
@@ -445,6 +512,7 @@ object ContextRefresher:
       systemPrefix,
       projectRoot,
       rulesMd,
+      agentsMd,
       thinkingConfig,
       branchReminder,
       currentBranch,
