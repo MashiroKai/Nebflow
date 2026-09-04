@@ -1021,6 +1021,15 @@ body.canvas-open #canvas-panel {
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
 }
+/* HTML viewer: zoom bar joins the bottom-right chrome cluster (source/ref
+   toggles at right:16/64). The default top-right spot floats over arbitrary
+   HTML content — posters put interactive headers exactly there, blocking
+   clicks on both sides. Scoped to html panes; image/PDF keep top-right. */
+.canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
+  top: auto;
+  right: 112px;
+  bottom: 18px;
+}
 
 /* ── XLSX viewer ── */
 .canvas-xlsx-viewer {
