@@ -77,6 +77,10 @@ object ToolRegistry:
 
   def TOOL_MAP: Map[String, Tool] = tools.asScala.toMap
 
+  /** 动态注册名快照（阶段 2b：plugin MCP allowedSet 追加源；轻量——不经
+    * augmentSchema，纯键名）。 */
+  def registeredToolNames: List[String] = tools.keys.asScala.toList
+
   def ALL_TOOLS: List[ToolDefinition] = tools.asScala.values.map { t =>
     val schema = RemoteExecutor.augmentSchema(t.name, t.inputSchema)
     ToolDefinition(t.name, t.description, schema)
