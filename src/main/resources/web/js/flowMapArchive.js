@@ -21,6 +21,7 @@ import { esc, fmtTime } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { showToast } from './modal.js';
 import { renderMarkdownWithMath } from './utils.js';
+import { fetchNodeResult } from './nodeData.js';
 
 // ── 常量（规格 §3.5/§5.9）─────────────────────────────────
 /** 终态集合：链齐判定与归档口径（规格 §3.1）。 */
@@ -333,6 +334,8 @@ export function chainOfNode(project, nodeId) {
  * @property {boolean} panelOpen
  * @property {number=} closeTimer
  * @property {number=} detailCloseTimer
+ * @property {number} detailRenderSeq 详情渲染代：每次 renderDetail 递增；全文升级
+ *           响应按代守卫（换节点/关详情后的迟到响应直接丢弃）
  */
 
 /** @type {Set<LayerCtx>} 全部存活悬浮层（document 级管线遍历用）。 */
@@ -409,6 +412,7 @@ export function ensureArchiveLayer(host, container, project) {
       detailTitle: /** @type {HTMLElement} */ (layer.querySelector('.fm-detail-title')),
       detailBody: /** @type {HTMLElement} */ (layer.querySelector('.fm-detail-body')),
       panelOpen: false,
+      detailRenderSeq: 0,
     };
     ctxByLayer.set(layer, ctx);
     bindLayerEvents(ctx);
@@ -620,7 +624,18 @@ function closeDetail(/** @type {LayerCtx} */ ctx) {
   }
 }
 
+/** @param {string} text @returns {string} 非 blocked 结果正文渲染（markdown 优先，
+ *  渲染异常纯文本兜底 §5.8；同步渲染与全文升级换装共用，形态逻辑单点）。 */
+function resultInnerHtml(/** @type {string} */ text) {
+  try {
+    return renderMarkdownWithMath(text) || `<span class="md-empty">${esc(t('flowmap.archive.noResult'))}</span>`;
+  } catch (_) {
+    return `<pre>${esc(text)}</pre>`;
+  }
+}
+
 function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n) {
+  const seq = ++ctx.detailRenderSeq; // 全文升级响应竞态防护（见 upgradeDetailResult）
   const st = String(n.status || '');
   const stEl = ctx.detail.querySelector('.fm-detail-st');
   if (stEl) {
@@ -656,11 +671,7 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
   } else if (fb) {
     resultHtml = `<details class="flow-blocked-raw"><summary>${esc(t('flowmap.blockedRawTitle'))}</summary><div class="flow-agent-block-readonly">${esc(resultText)}</div></details>`;
   } else {
-    try {
-      resultHtml = renderMarkdownWithMath(resultText) || `<span class="md-empty">${esc(t('flowmap.archive.noResult'))}</span>`;
-    } catch (_) {
-      resultHtml = `<pre>${esc(resultText)}</pre>`; // 渲染异常纯文本兜底（§5.8）
-    }
+    resultHtml = resultInnerHtml(resultText);
   }
   const taskText = String(n.task || '');
   ctx.detailBody.innerHTML = `
@@ -669,6 +680,50 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
     ${taskText ? `<div class="fm-detail-sec">${esc(t('flowmap.archive.taskLabel'))}</div><div class="fm-detail-task">${esc(taskText)}</div>` : ''}
     <div class="fm-detail-sec">${esc(t('flowmap.archive.resultLabel'))}</div>
     <div class="fm-detail-result fm-md">${resultHtml}</div>`;
+  // 全文升级（20260904 作者反馈「节点结果要能完整显示」）：快照/事件载荷 result 为
+  // ≤500 字符摘要（NodePayload.buildNodeJson 单序列化点，契约零改动），≥500 视为可能
+  // 被截断 → 静默按需取全文换装（失败保持摘要；只替换 .fm-detail-result，不重建详情
+  // 窗）。blocked 原文走 feedback 面板语义，不参与；空结果无从升级。
+  if (!fb && resultText.length >= RESULT_SUMMARY_CAP) upgradeDetailResult(ctx, seq, n.id, resultText);
+}
+
+// ── 详情结果全文升级（20260904「归档详情窗节点结果完整显示」）─────────
+/** 载荷摘要截断阈值（NodePayload.buildNodeJson：>500 take(500)+「…」）。 */
+const RESULT_SUMMARY_CAP = 500;
+/** 全文缓存（project\x00nodeId → 全文；LRU 30 条防长会话内存膨胀）。 */
+const resultFullCache = new Map();
+const RESULT_FULL_CACHE_CAP = 30;
+
+/** 摘要可能被截断 → 按需取全文（nodeData.fetchNodeResult，活动区/归档区后端单点）
+ *  并只换装 .fm-detail-result。响应按 ctx.detailRenderSeq 守卫：换节点/关详情后的
+ *  迟到响应丢弃；404/网络异常静默保持摘要显示（升级失败不扰详情窗）。 */
+function upgradeDetailResult(/** @type {LayerCtx} */ ctx, /** @type {number} */ seq, /** @type {string} */ nodeId, /** @type {string} */ summary) {
+  const cacheKey = `${ctx.project}\u0000${nodeId}`;
+  const cached = resultFullCache.get(cacheKey);
+  if (cached !== undefined) {
+    resultFullCache.delete(cacheKey);
+    resultFullCache.set(cacheKey, cached); // LRU 触碰
+    applyFullResult(ctx, seq, cached);
+    return;
+  }
+  fetchNodeResult(ctx.project, nodeId)
+    .then((full) => {
+      if (typeof full !== 'string' || full.length <= summary.length) return; // 无更长全文
+      resultFullCache.set(cacheKey, full);
+      if (resultFullCache.size > RESULT_FULL_CACHE_CAP) {
+        resultFullCache.delete(resultFullCache.keys().next().value); // 最老淘汰
+      }
+      applyFullResult(ctx, seq, full);
+    })
+    .catch(() => { /* 全文不可达：保持摘要（后端未挂载/节点出库/网络故障） */ });
+}
+
+/** 全文换装：仅替换结果容器 innerHTML（渲染代守卫），详情窗本体与滚动状态零扰动。 */
+function applyFullResult(/** @type {LayerCtx} */ ctx, /** @type {number} */ seq, /** @type {string} */ full) {
+  if (seq !== ctx.detailRenderSeq || ctx.detail.hidden) return;
+  const box = ctx.detailBody.querySelector('.fm-detail-result');
+  if (!box) return;
+  box.innerHTML = resultInnerHtml(full);
 }
 
 // ── hover 联动（§5.6：条目 → 全员可见下游；成员行 → 该员下游）─────────

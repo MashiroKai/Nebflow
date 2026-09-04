@@ -331,6 +331,29 @@ class RestApiRoutes(
         }
       }
 
+    // GET /projects/<name>/flow-map/nodes/<nodeId>/result — 节点结果全文按需单点取
+    // （2026-09-04 作者反馈「归档详情窗节点结果要能完整显示」）。快照/WS 事件统一走
+    // NodePayload.buildNodeJson 的 result ≤500 字符摘要（契约零改动：载荷字段集断言、
+    // NodeList 工具语义、WS 广播体积均不动），全文只在详情窗打开时经本端点取——
+    // FlowMapStore.findNode 活动区优先、归档区兜底（两区磁盘均全文保留）。
+    // 未挂载/节点不存在 → 404 {error}（前端静默回退摘要显示）。
+    case req @ GET -> Root / "projects" / name / "flow-map" / "nodes" / nodeId / "result" =>
+      withAuth(req) {
+        ProjectRuntimeRegistry.get(name).flatMap {
+          case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+          case Some(rt) =>
+            rt.store.findNode(nodeId).flatMap {
+              case None => NotFound(Json.obj("error" -> s"node '$nodeId' not found".asJson))
+              case Some(n) => Ok(Json.obj(
+                "id" -> n.id.asJson,
+                "name" -> n.name.asJson,
+                "status" -> n.status.asJson,
+                "result" -> n.result.asJson
+              ))
+            }
+        }
+      }
+
     // GET /projects/<name>/agent.md — 项目 agent 指令读取（#27「点击查看」；仿 team rules.md）。
     // 优先级（2026-09-03 裁定反转）：`.nebflow/Agent.md` 存在则优先读它（slideblocks 中文指令真文件；
     // os.exists 跟随 symlink——已迁移项目 .nebflow/Agent.md → ../AGENTS.md 经链接读到根文件同一内容，

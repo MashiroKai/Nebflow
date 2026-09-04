@@ -19,6 +19,9 @@ export const API = {
   projects: '/api/projects',
   // 某项目 Flow Map 快照（契约 §3 NodeList 载荷）：GET /api/projects/<name>/flow-map；未挂载 404
   flowMap: (name) => `/api/projects/${encodeURIComponent(name)}/flow-map`,
+  // 节点结果全文（20260904 归档详情窗「全文完整显示」）：GET /api/projects/<name>/flow-map/nodes/<nodeId>/result；
+  // 快照/事件载荷 result 恒 ≤500 字符摘要（NodePayload 契约不动），全文仅此端点按需提供；未挂载/无节点 404
+  nodeResult: (name, nodeId) => `/api/projects/${encodeURIComponent(name)}/flow-map/nodes/${encodeURIComponent(nodeId)}/result`,
   // 项目 AGENTS.md（契约 §1）：GET 读 → {content} / PUT 存 → body {content} → {saved:true}；
   // URL 不变，磁盘读写工作区根 AGENTS.md（旧 .nebflow/Agent.md 由后端回落兼容）
   agentFile: (name) => `/api/projects/${encodeURIComponent(name)}/agent.md`,
@@ -66,6 +69,17 @@ export async function fetchFlowMap(projectName) {
   }
   if (!r.ok) throw new Error(`flow-map ${r.status}`);
   return await r.json();
+}
+
+/** 节点结果全文。GET /api/projects/<name>/flow-map/nodes/<nodeId>/result（需 auth）→ {id,name,status,result}。
+ *  20260904 归档详情窗全文显示：NodePayload 快照/事件只带 ≤500 字符摘要（后端契约不动），
+ *  详情窗打开时经本调用按需取全文；节点不存在/项目未挂载（404）返回 null——调用方
+ *  静默回退摘要显示，其余错误上抛由调用方自行兜底。result 为 null（节点无结果）→ null。 */
+export async function fetchNodeResult(projectName, nodeId) {
+  const r = await fetch(API.nodeResult(projectName, nodeId), { headers: authHeaders() });
+  if (!r.ok) return null;
+  const data = await r.json();
+  return typeof data?.result === 'string' ? data.result : null;
 }
 
 /** 从 NodeList 汇总项目简要状态（「当前后台运行 agent 数」+「简要状态」）。 */
