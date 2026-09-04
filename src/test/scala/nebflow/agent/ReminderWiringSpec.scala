@@ -285,7 +285,13 @@ class ReminderWiringSpec extends CatsEffectSuite:
         assert(textOf(req1).contains("Current time"), s"real-user turn injects time:\n${textOf(req1)}")
         assert(textOf(req1).contains("## Current Tasks (1 active)"), s"team member gets the full task render:\n${textOf(req1)}")
         assert(textOf(req1).contains("team task"), s"task line present:\n${textOf(req1)}")
-        assert(sys1.contains("## Task List Protocol"), s"team-category systemStable carries the protocol section:\n$sys1")
+        // 阶段 2d（§D.2）：order 630 Task List Protocol 段已下迁进 TeamTask 三件
+        // description——systemStable 不再携带协议段；协议经工具定义必达（wire 层）。
+        assert(!sys1.contains("## Task List Protocol"), s"order 630 section retired (2d §D.2):\n$sys1")
+        assert(
+          req1.tools.exists(_.exists(td => td.name == "TeamTaskList" && td.description.contains("auto-expire"))),
+          "protocol reaches the team member via TeamTaskList description (双轨期)"
+        )
       program.unsafeRunSync()
     finally
       nebflow.core.flow.TeamSessionRegistry.clear.unsafeRunSync()

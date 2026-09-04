@@ -6,50 +6,46 @@ import nebflow.core.PathUtil
 class PromptSectionsSpec extends munit.FunSuite:
 
   // ============================================================
-  // Tool-dependent sections
+  // 阶段 2d（§D.1-14/§D.2）：条件工具指南段已删除，内容下迁进工具
+  // description（自包含）。下列用例由「段注入断言」改钉新不变量：无论
+  // 工具是否可用，system prompt 都不再出现旧**内建**段；指南经工具定义
+  // 必达（自包含断言见 Phase2dToolRefactorSpec）。
+  // 数据根隔离：文件版条件段（~/.nebflow/prompts/sections/ask-user.md 等，
+  // 定义层退役走宿主命令）不得影响内建段删除的断言。
   // ============================================================
 
-  test("AskUserQuestion section included only when tool is available"):
-    val withTool = PromptContext(availableTools = Set("AskUserQuestion", "Read"))
-    val withoutTool = PromptContext(availableTools = Set("Read"))
-    val blocksWith = buildConditionalBlocks(withTool)
-    val blocksWithout = buildConditionalBlocks(withoutTool)
-    assert(blocksWith.contains("## Asking the User"), "AskUser section should be included when tool is available")
-    assert(!blocksWithout.contains("## Asking the User"), "AskUser section should NOT be included when tool is missing")
+  private def withIsolatedDataRoot[A](body: => A): A =
+    val prevRoot = PathUtil.dataRoot
+    val tempRoot = os.pwd / "target" / "test-2d-sections-isolation"
+    try
+      os.remove.all(tempRoot)
+      os.makeDir.all(tempRoot)
+      PathUtil.setDataRoot(tempRoot)
+      body
+    finally
+      PathUtil.setDataRoot(prevRoot)
+      os.remove.all(tempRoot)
 
-  test("AskUserQuestion section excluded for sub-agents (depth > 0)"):
-    // Sub-agents have AskUserQuestion stripped from their tool set by SubagentBlockedTools
-    val subAgentCtx = PromptContext(availableTools = Set("Read"), depth = 1)
-    val blocks = buildConditionalBlocks(subAgentCtx)
-    assert(!blocks.contains("## Asking the User"))
+  test("AskUserQuestion guide section no longer injected even when tool is available (2d §D.2 下迁)"):
+    withIsolatedDataRoot {
+      val withTool = PromptContext(availableTools = Set("AskUserQuestion", "Read"))
+      val blocks = buildConditionalBlocks(withTool)
+      assert(!blocks.contains("## Asking the User"), "order 400 内建段已删——指南在工具 description")
+    }
 
-  test("Read live-update section included when Read tool is available"):
-    val ctx = PromptContext(availableTools = Set("Read", "Write"))
-    val blocks = buildConditionalBlocks(ctx)
-    assert(
-      blocks.contains("## Read Tool — Live Results"),
-      "Read section should be included when Read tool is available"
-    )
+  test("Read live-update section no longer injected when Read tool is available (2d §D.2 下迁)"):
+    withIsolatedDataRoot {
+      val ctx = PromptContext(availableTools = Set("Read", "Write"))
+      val blocks = buildConditionalBlocks(ctx)
+      assert(!blocks.contains("## Read Tool"), "order 410 内建段已删——live 语义在 Read description")
+    }
 
-  test("Read live-update section excluded when Read tool is missing"):
-    val ctx = PromptContext(availableTools = Set("Write", "Grep"))
-    val blocks = buildConditionalBlocks(ctx)
-    assert(!blocks.contains("## Read Tool"), "Read section should NOT be included when Read tool is missing")
-
-  test("Visual reporting section included when Pop tool is available"):
-    val ctx = PromptContext(availableTools = Set("Pop", "Read"))
-    val blocks = buildConditionalBlocks(ctx)
-    assert(blocks.contains("## Visual Reporting"), "Visual reporting section should be included when Pop is available")
-    assert(blocks.contains("matplotlib"), "should mention professional tools")
-    assert(blocks.contains("SVG"), "should mention SVG format")
-
-  test("Visual reporting section excluded when Pop tool is missing"):
-    val ctx = PromptContext(availableTools = Set("Read", "Write", "Bash"))
-    val blocks = buildConditionalBlocks(ctx)
-    assert(
-      !blocks.contains("## Visual Reporting"),
-      "Visual reporting section should NOT be included when Pop is missing"
-    )
+  test("Visual reporting section no longer injected when Pop tool is available (2d §D.2 下迁)"):
+    withIsolatedDataRoot {
+      val ctx = PromptContext(availableTools = Set("Pop", "Read"))
+      val blocks = buildConditionalBlocks(ctx)
+      assert(!blocks.contains("## Visual Reporting"), "order 415 内建段已删——汇报工作流在 Pop description")
+    }
 
   // ============================================================
   // Feature-flag sections
@@ -140,9 +136,6 @@ class PromptSectionsSpec extends munit.FunSuite:
       rulesMd = Some("rule1")
     )
     val blocks = buildConditionalBlocks(ctx)
-    val askIdx = blocks.indexOf("## Asking the User")
-    val readIdx = blocks.indexOf("## Read Tool")
-    val popIdx = blocks.indexOf("## Visual Reporting")
     val voiceIdx = blocks.indexOf("## Voice Output")
     val devicesIdx = blocks.indexOf("# Devices")
     val sessionsIdx = blocks.indexOf("# Active Sessions")
@@ -150,10 +143,7 @@ class PromptSectionsSpec extends munit.FunSuite:
     val skillsIdx = blocks.indexOf("# Skills")
     val rulesIdx = blocks.indexOf("## Project Rules")
 
-    assert(askIdx >= 0, "AskUser section should be present")
-    assert(askIdx < readIdx, "AskUser should come before Read")
-    assert(readIdx < popIdx, "Read should come before Visual Reporting")
-    assert(popIdx < voiceIdx, "Visual Reporting should come before Voice")
+    assert(voiceIdx >= 0, "Voice section should be present")
     assert(voiceIdx < devicesIdx, "Voice should come before Devices")
     assert(devicesIdx < sessionsIdx, "Devices should come before Sessions")
     assert(sessionsIdx < langIdx, "Sessions should come before Language")
@@ -174,25 +164,15 @@ class PromptSectionsSpec extends munit.FunSuite:
   // from the per-turn tasks reminder into a cached systemStable section.
   // ============================================================
 
-  test("Task List Protocol section is team-category-only (2026-08-30 task redesign)"):
-    val team = buildConditionalBlocks(PromptContext(agentCategory = "team", agentName = "Backend"))
-    val nebula = buildConditionalBlocks(PromptContext(agentName = "Nebula"))
-    val standalone = buildConditionalBlocks(PromptContext(agentCategory = "standalone", agentName = "Explorer"))
-    assert(team.contains("## Task List Protocol"), "team agents get the task-list semantics")
-    assert(!nebula.contains("## Task List Protocol"), "Nebula no longer carries task semantics (tools removed)")
-    assert(!standalone.contains("## Task List Protocol"), "standalone agents never see it")
-    assert(team.contains("auto-expire"), "semantics must explain the TTL lifecycle")
-
-  test("Task List Protocol orders after Language and before Skills"):
-    val blocks = buildConditionalBlocks(
-      PromptContext(agentCategory = "team", agentName = "Backend", language = Some("English"), skillCatalog = "# Skills")
-    )
-    val protoIdx = blocks.indexOf("## Task List Protocol")
-    val langIdx = blocks.indexOf("# Language")
-    val skillsIdx = blocks.indexOf("# Skills")
-    assert(protoIdx >= 0, s"protocol missing: $blocks")
-    assert(langIdx < protoIdx, "Language (620) before Task List Protocol (630)")
-    assert(protoIdx < skillsIdx, "Task List Protocol (630) before Skills (800)")
+  test("Task List Protocol section no longer injected for team category (2d §D.2 下迁 TeamTask description)"):
+    withIsolatedDataRoot {
+      val team = buildConditionalBlocks(PromptContext(agentCategory = "team", agentName = "Backend"))
+      val nebula = buildConditionalBlocks(PromptContext(agentName = "Nebula"))
+      val standalone = buildConditionalBlocks(PromptContext(agentCategory = "standalone", agentName = "Explorer"))
+      assert(!team.contains("## Task List Protocol"), "order 630 段已删——协议在 TeamTask 三件 description（双轨期）")
+      assert(!nebula.contains("## Task List Protocol"), "Nebula 无任务语义（工具已移除）")
+      assert(!standalone.contains("## Task List Protocol"), "standalone agents never see it")
+    }
 
   // ============================================================
   // stripSection / stripAllMigrated

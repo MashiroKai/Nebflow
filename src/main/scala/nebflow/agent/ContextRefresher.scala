@@ -420,7 +420,14 @@ object ContextRefresher:
       rulesMd = mergeRules(projectRules, folderRules)
       thinkingConfig <- resources.thinkingConfigRef.get
       (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
-      skillCatalog <- SkillService.buildPerAgentCatalog(globalDef.skills)
+      // D.1-12（阶段 2d）：skill 目录注入新模型停注——node/general 会话不再
+      // 注入 skill 目录段（§B.4 plugin 全文注入取代「目录+自读」，裁定 8/9）。
+      // Nebula 保留（skill-creator alwaysVisible：Nebula 用目录造 skill）；
+      // legacy 会话保留至阶段 3。refreshTurn 是每轮（含首条消息）的唯一生产点，
+      // 置空后 order 800 section（condition=nonEmpty）自然不渲染。
+      skillCatalog <-
+        if skillCatalogEnabledFor(globalDef.name) then SkillService.buildPerAgentCatalog(globalDef.skills)
+        else IO.pure("")
       flowCatalog <-
         if isWorker then IO.pure("")
         else SkillService.buildPerAgentFlowCatalog(globalDef.flows)
@@ -454,6 +461,13 @@ object ContextRefresher:
     agentDef: AgentDef
   ): IO[Option[String]] =
     resolveProjectRoot(state.folderId, resources, agentDef.name)
+
+  /** D.1-12（阶段 2d）：skill 目录注入开关——收敛三角色中仅 Nebula 保留
+    * （skill-creator alwaysVisible，Nebula 用它造 skill）；general（node 会话
+    * 模版）与 project-dispatcher 停注（plugin 全文注入取代「目录+自读」，
+    * 裁定 8/9）；legacy agent 保留至阶段 3。公开供 spec 断言。 */
+  def skillCatalogEnabledFor(agentName: String): Boolean =
+    !AgentCore.ConvergedAgentNames.contains(agentName) || agentName == "Nebula"
 
   /**
    * Build Team catalog for system prompt injection.

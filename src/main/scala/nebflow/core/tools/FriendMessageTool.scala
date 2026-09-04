@@ -24,10 +24,11 @@ import java.time.format.DateTimeFormatter
  * 多命中/零命中一律返回候选列表让模型自行纠错（同 turn 内最便宜的修复点）。
  *
  * 接线：GatewayMain 启动时 FriendMessageTool.initialize(friendService)
- * （RemoteExecutor.initialize 同款单例模式）。授权（作者特批 2026-08-28）：
- * 仅全局 agents/Nebula/agent.json tools 显式声明注入，其他 agent 零注入——
- * 声明制，无机制层注入。
- */
+ * （RemoteExecutor.initialize 同款单例模式）。授权（阶段 2d，设计 D.1-11）：
+ * 机制固定唯一——仅 Nebula 的静态集 NebulaOrchestrationTools 携带（2c 起从
+ * 声明制迁机制固定）；agent.json tools 声明不再授能（buildAllowedToolSet 对
+ * base 一律剥离本工具名，"*" 亦然——the tool name IS the permission
+ * boundary）。 */
 object FriendMessageTool extends Tool:
 
   private val TimeFormat = DateTimeFormatter.ofPattern("HH:mm:ss")
