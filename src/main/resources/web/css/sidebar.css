@@ -2069,10 +2069,16 @@
   display: block;
 }
 
-/* ── Plugins page (2026-09-04 件 B：智能体入口融合) ──────────────────────
-   Canvas tab #plugins-content. Sections sit on glass-control material
-   (semi-transparent tint + backdrop blur + inner highlight/under-edge +
-   whisper border) — NO solid fills, per the sapphire glass standard. */
+/* ── Plugins page (2026-09-04 重设计：统一插件系统 + 每插件一开关) ─────
+   Canvas tab #plugins-content. One card per plugin = identity + description
+   summary + composition annotations (skills/MCP/tools as annotation chips,
+   NOT separate sections) + the enable switch (the page's only control).
+   Agent summary rows deep-link to the per-agent detail editor.
+   COLOR DISCIPLINE (2026-09-04 visual-review FAIL lesson: hand-made rgba
+   greens at :2265 didn't adapt to dark): every color below comes from the
+   Sapphire token system — glass-control material vars, rgb(var(--sapphire)
+   / α) tints, --amber warning family, frame text tokens. Zero hand-made
+   rgba/hex values in this section. */
 #plugins-content {
   flex: 1;
   min-height: 0;
@@ -2140,20 +2146,19 @@
   color: var(--color-frame-text-dim);
   padding: 0 2px 8px;
 }
-.plugins-subsection { margin-bottom: 12px; }
-.plugins-subsection-title {
-  font: 500 11px -apple-system, sans-serif;
-  color: var(--color-frame-text-muted);
-  padding: 2px 2px 6px;
+.plugins-none {
+  font: 400 10px -apple-system, sans-serif;
+  color: var(--color-frame-text-dim);
+  font-style: italic;
 }
 
-/* Skill catalog cards — glass panel material */
-.plugins-skill-list {
+/* Plugin cards — glass-control material; .on adds a sapphire whisper edge */
+.plugins-card-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.plugins-skill-card {
+.plugins-card {
   background: var(--glass-control-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
@@ -2167,29 +2172,96 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  transition: border-color 0.15s;
 }
-.plugins-skill-head {
+.plugins-card.on { border-color: rgb(var(--sapphire) / 0.28); }
+.plugins-card.rejected { opacity: 0.75; }
+.plugins-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.plugins-card-id {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: baseline;
   gap: 8px;
-  min-width: 0;
 }
-.plugins-skill-name {
+.plugins-card-name {
   font: 600 12px ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.plugins-skill-sub-label {
-  margin-left: auto;
-  flex-shrink: 0;
-  font: 400 9px -apple-system, sans-serif;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
+.plugins-card-meta {
+  font: 400 10px -apple-system, sans-serif;
   color: var(--color-frame-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.plugins-skill-desc {
+.plugins-card-state {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.plugins-state-pill {
+  font: 500 9px -apple-system, sans-serif;
+  padding: 1px 7px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  color: var(--color-frame-text-muted);
+  background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
+}
+.plugins-state-pill.on {
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.1);
+  border-color: rgb(var(--sapphire) / 0.22);
+}
+/* The enable switch — the page's only control. Sapphire accent when on. */
+.plugins-switch {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  border-radius: 9px;
+  padding: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  transition: background 0.15s, border-color 0.15s;
+}
+.plugins-switch .plugins-switch-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--color-frame-text-muted);
+  transition: left 0.15s ease, background 0.15s;
+}
+.plugins-switch.on {
+  background: rgb(var(--sapphire) / 0.35);
+  border-color: rgb(var(--sapphire) / 0.5);
+}
+.plugins-switch.on .plugins-switch-knob {
+  left: 14px;
+  background: rgb(var(--sapphire));
+}
+.plugins-switch:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+.plugins-switch:disabled { opacity: 0.5; cursor: default; }
+.plugins-card-desc {
   font: 400 11px -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
   line-height: 1.45;
@@ -2198,91 +2270,124 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.plugins-subscriber-row {
+/* Composition annotations — chips, not sections. skills/MCP/tools only
+   describe what the plugin contains; the switch acts on the whole. */
+.plugins-card-composition {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   align-items: center;
 }
-.plugins-subscriber-chip {
-  font: 500 9px -apple-system, sans-serif;
+.plugins-comp {
+  font: 500 9px ui-monospace, SFMono-Regular, monospace;
   padding: 1px 7px;
   border-radius: 8px;
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text-muted);
   white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.plugins-none {
+.plugins-comp-toggle {
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.plugins-comp-toggle:hover {
+  color: rgb(var(--sapphire));
+  border-color: rgb(var(--sapphire) / 0.3);
+}
+.plugins-comp-toggle.open {
+  color: rgb(var(--sapphire));
+  border-color: rgb(var(--sapphire) / 0.35);
+}
+.plugins-card-hint {
   font: 400 10px -apple-system, sans-serif;
+  line-height: 1.4;
+  color: rgb(var(--amber));
+  background: rgb(var(--amber) / 0.08);
+  border: 1px solid rgb(var(--amber) / 0.25);
+  border-radius: 7px;
+  padding: 5px 8px;
+}
+.plugins-card-hint.dim {
   color: var(--color-frame-text-dim);
-  font-style: italic;
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  cursor: help;
 }
-
-/* MCP server cards — one-line glass rows */
-.plugins-mcp-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.plugins-mcp-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border: 1px solid var(--glass-control-border);
-  border-radius: 9px;
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  padding: 7px 12px;
-  min-width: 0;
-}
-.plugins-mcp-card.disabled { opacity: 0.6; }
-.plugins-mcp-name {
-  font: 600 12px ui-monospace, SFMono-Regular, monospace;
-  color: var(--color-frame-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.plugins-mcp-cmd {
-  flex: 1;
-  min-width: 0;
-  font: 400 10px ui-monospace, SFMono-Regular, monospace;
-  color: var(--color-frame-text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.plugins-mcp-state {
+.plugins-rejected-pill {
   flex-shrink: 0;
   font: 500 9px -apple-system, sans-serif;
   padding: 1px 7px;
   border-radius: 8px;
-  background: rgba(76, 175, 80, 0.12);
-  color: var(--color-success);
+  color: rgb(var(--amber));
+  background: rgb(var(--amber) / 0.1);
+  border: 1px solid rgb(var(--amber) / 0.25);
   white-space: nowrap;
 }
-.plugins-mcp-state.off {
-  background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
-  color: var(--color-frame-text-muted);
-}
-
-/* Subscription map rows */
-.plugins-map-list,
-.plugins-config-list {
+/* Expandable per-skill previews (composition annotation's detail view) */
+.plugins-skill-expand {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
-.plugins-map-row,
-.plugins-config-row {
+.plugins-skill-item {
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.plugins-skill-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.plugins-skill-item-id {
+  flex-shrink: 0;
+  font: 600 10px ui-monospace, SFMono-Regular, monospace;
+  color: rgb(var(--sapphire));
+}
+.plugins-skill-item-desc {
+  min-width: 0;
+  font: 400 10px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugins-skill-preview {
+  margin: 0;
+  font: 400 9px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-dim);
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  max-height: 96px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Agent summary rows — name + description + preset/model 现状; the whole
+   row deep-links to the per-agent detail editor. Read-only by design:
+   no subscription chips, no inline config selects. */
+.plugins-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plugins-agent-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   background: var(--glass-control-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
@@ -2292,77 +2397,57 @@
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge);
   padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
 }
-.plugins-map-row { align-items: flex-start; }
+.plugins-agent-row:hover { background: var(--glass-control-bg-hover); }
+.plugins-agent-row:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
 .plugins-agent-name {
   flex-shrink: 0;
-  width: 110px;
+  width: 120px;
   font: 600 12px -apple-system, sans-serif;
   color: var(--color-frame-text);
-  cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   transition: color 0.15s;
 }
-.plugins-agent-name:hover { color: rgb(91, 127, 191); }
-.plugins-sub-grid {
+.plugins-agent-row:hover .plugins-agent-name { color: rgb(var(--sapphire)); }
+.plugins-agent-desc {
   flex: 1;
   min-width: 0;
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugins-agent-meta {
+  flex-shrink: 0;
   display: flex;
-  flex-wrap: wrap;
   gap: 4px;
   align-items: center;
 }
-/* Skill chips reuse the agent-detail chip language (toggle + persist) */
-.plugins-sub-check {
-  font: 500 10px ui-monospace, SFMono-Regular, monospace;
-  padding: 3px 9px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
-  color: var(--color-frame-text-muted);
-  background: transparent;
-  cursor: pointer;
-  user-select: none;
-  transition: all 0.15s ease;
-}
-.plugins-sub-check:hover {
-  border-color: rgba(91, 127, 191, 0.3);
-  color: var(--color-frame-text);
-}
-.plugins-sub-check.checked {
-  border-color: rgba(91, 127, 191, 0.35);
-  background: rgba(91, 127, 191, 0.08);
-  color: rgb(91, 127, 191);
-}
-
-/* Config rows — preset select + model pill (migrated controls) */
-.plugins-preset-select {
-  flex: 1;
-  min-width: 0;
-  max-width: 220px;
-  font: 400 11px -apple-system, sans-serif;
-  color: var(--color-frame-text);
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  border-radius: 7px;
-  padding: 4px 8px;
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  outline: none;
-}
-.plugins-preset-select:focus { border-color: rgba(91, 127, 191, 0.4); }
-.plugins-model-tag {
-  margin-left: auto;
-  flex-shrink: 0;
+.plugins-agent-meta-pill {
   font: 500 9px ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
   background: var(--color-frame-border);
   padding: 1px 6px;
   border-radius: 4px;
-  max-width: 180px;
+  max-width: 140px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.plugins-agent-chevron {
+  flex-shrink: 0;
+  color: var(--color-frame-text-dim);
+  transition: color 0.15s, transform 0.15s;
+}
+.plugins-agent-row:hover .plugins-agent-chevron {
+  color: rgb(var(--sapphire));
+  transform: translateX(1px);
 }
