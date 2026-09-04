@@ -1,9 +1,14 @@
 // viewers/html.js — HTML viewer (sandboxed iframe, full browser-grade rendering).
 // Migrated verbatim from fileViewers.js (viewHtml + its private iframe scripts).
+// Zoom (2026-09-04): the whole iframe is transformed translate+scale via the
+// shared viewers/zoom.js engine (glass toolbar, ⌘±/0, clamped 0.3–3.0);
+// ctrl/cmd+wheel and ⌘/ctrl key presses over the iframe reach the parent
+// through zoomBridgeScript postMessage (cross-frame events don't bubble).
 
 import { getToken, buildThemeVarsCSS, resolveLocalFiles, addSourceToggle, addElementRefToggle } from './shared.js';
 import { makeReference } from '../reference.js';
 import { t } from '../i18n.js';
+import { enableViewerZoom } from './zoom.js';
 
 /** Script injected into the iframe to listen for theme changes from the parent.
  *  When the parent switches light/dark, it posts the new CSS vars to all iframes. */
@@ -159,6 +164,29 @@ const refSelectScript = `<script>
 })();
 <\/script>`;
 
+/** Zoom bridge, injected into the srcdoc (same dormant-script pattern as the
+ *  sibling scripts above): forwards ctrl/cmd+wheel — preventDefault, that
+ *  combo is the viewer's zoom, plain wheel is left to the page's own
+ *  scrolling — and ⌘/ctrl +/−/0 key presses to the parent as
+ *  _nfZoomWheel/_nfZoomKey. Coordinates are iframe-document CSS px; the
+ *  parent maps them through the current transform (zoom-to-cursor). */
+const zoomBridgeScript = `<script>
+(function(){
+  function post(msg){ try{ parent.postMessage(msg,'*'); }catch(_){} }
+  document.addEventListener('wheel',function(e){
+    if(!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    post({_nfZoomWheel:{deltaY:e.deltaY,x:e.clientX,y:e.clientY}});
+  },{passive:false});
+  window.addEventListener('keydown',function(e){
+    if(!e.ctrlKey && !e.metaKey) return;
+    if(e.key!=='='&&e.key!=='+'&&e.key!=='-'&&e.key!=='0') return;
+    e.preventDefault();
+    post({_nfZoomKey:{key:e.key}});
+  });
+})();
+<\/script>`;
+
 /** Watch for system theme changes and propagate CSS vars to all Canvas HTML iframes.
  *  Initialized once on first viewHtml call. */
 let _canvasThemeWatcherInit = false;
@@ -283,6 +311,42 @@ function setupElementRefSelect(pane, iframe, ctx) {
   });
 }
 
+// ── Zoom bridge (parent side of zoomBridgeScript) ──────────────────────────
+// iframe-internal wheel/keydown never bubbles to the parent document, so the
+// in-frame bridge forwards ctrl/cmd+wheel and ⌘/ctrl +/−/0 via postMessage.
+// One parent listener total; the sender is verified against every live HTML
+// viewer iframe (same discipline as the _nfRefPick channel), then the hit
+// pane's zoom controls (stashed by viewHtml on the pane) perform the zoom.
+let _zoomBridgeBound = false;
+function bindZoomBridge() {
+  if (_zoomBridgeBound) return;
+  _zoomBridgeBound = true;
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || (!d._nfZoomWheel && !d._nfZoomKey)) return;
+    const frames = document.querySelectorAll('iframe[data-nf-canvas-html]');
+    for (const iframe of frames) {
+      if (!iframe.contentWindow || iframe.contentWindow !== e.source) continue;
+      const pane = iframe.closest('.canvas-tab-pane');
+      const ctl = pane && /** @type {any} */ (pane)._nfHtmlZoom;
+      if (!ctl) break;
+      const w = d._nfZoomWheel;
+      if (w) {
+        if (typeof w.deltaY === 'number' && isFinite(w.x) && isFinite(w.y)) {
+          const p = ctl.panePoint(w.x, w.y);
+          ctl.zoomBy(Math.pow(1.0015, -w.deltaY), p);
+        }
+      } else if (d._nfZoomKey) {
+        const k = d._nfZoomKey.key;
+        if (k === '0') ctl.reset();
+        else if (k === '-') ctl.zoomBy(1 / 1.25, null);
+        else if (k === '=' || k === '+') ctl.zoomBy(1.25, null);
+      }
+      break;
+    }
+  });
+}
+
 /** HTML viewer — full browser-grade rendering in sandboxed iframe.
  *  Mirrors Card's rendering pipeline: theme variables injected from parent,
  *  local file paths converted to /api/nf-file URLs, auth tokens added,
@@ -292,6 +356,7 @@ function setupElementRefSelect(pane, iframe, ctx) {
  *  scrolls internally — like a browser viewport. */
 function viewHtml(pane, { content, absPath, fileName }) {
   initCanvasThemeWatcher();
+  bindZoomBridge();
 
   // Content-unchanged guard (mirrors markdown.js viewMarkdown). Focus/visibility
   // refreshes re-fetch the same file and re-render every open tab; rebuilding
@@ -375,17 +440,58 @@ function viewHtml(pane, { content, absPath, fileName }) {
   <\/script>`;
 
   // 6. Assemble srcdoc with base styles (transparent bg, theme-aware, scrollable)
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${refSelectScript}${svgInlineScript}${imgClickScript}${anchorNavScript}${themePropScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${refSelectScript}${zoomBridgeScript}${svgInlineScript}${imgClickScript}${anchorNavScript}${themePropScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.style.width = '100%';
   iframe.style.height = '100%';
   iframe.style.border = 'none';
+  iframe.style.transformOrigin = '0 0';  // zoom math assumes top-left origin (default 50% 50% would offset by (1−s)·center)
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups');
   iframe.setAttribute('scrolling', 'auto');
   iframe.dataset.nfCanvasHtml = '1';
   iframe.srcdoc = srcdoc;
   pane.appendChild(iframe);
+
+  // ── Zoom (shared engine; transform the whole iframe, never its DOM) ───────
+  // translate+scale with origin 0 0 (same math as the image viewer): the inner
+  // document keeps its own layout and native scrolling; zoom pivots are
+  // pane-px points and keep the content under the cursor stationary.
+  /** @type {any} */ (pane)._nfZoomDestroy?.();  // source-mode round trip: the pane element persists — drop the previous engine's pane listeners first
+  const ZOOM_MIN = 0.3;
+  const ZOOM_MAX = 3.0;
+  let zs = 1, zx = 0, zy = 0;   // scale + translate (pane px)
+  let zoomApi = null;
+  const applyZoom = () => { iframe.style.transform = `translate(${zx}px, ${zy}px) scale(${zs})`; };
+  const zoomApply = (next, pivot) => {
+    const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next));
+    if (clamped === zs) return;
+    const old = zs;
+    zs = clamped;
+    if (pivot) {
+      // Zoom-to-cursor: keep the content point at the pivot stationary.
+      const k = zs / old;
+      zx = pivot.x - (pivot.x - zx) * k;
+      zy = pivot.y - (pivot.y - zy) * k;
+    }
+    applyZoom();
+    if (zoomApi) zoomApi.setPct(zs);
+  };
+  const zoomReset = () => { zs = 1; zx = 0; zy = 0; applyZoom(); if (zoomApi) zoomApi.setPct(zs); };
+  zoomApi = enableViewerZoom(pane, {
+    min: ZOOM_MIN, max: ZOOM_MAX,
+    getScale: () => zs,
+    applyScale: zoomApply,
+    reset: zoomReset,
+  });
+  /** @type {any} */ (pane)._nfZoomDestroy = zoomApi.destroy;
+  // Bridge-facing controls: panePoint maps iframe-document CSS px (as posted
+  // by zoomBridgeScript) into pane px through the current transform.
+  /** @type {any} */ (pane)._nfHtmlZoom = {
+    panePoint: (x, y) => ({ x: x * zs + zx, y: y * zs + zy }),
+    zoomBy: (factor, pivot) => zoomApply(zs * factor, pivot),
+    reset: zoomReset,
+  };
 
   // Restore the reader's position after a content-changed rebuild. The srcdoc
   // loads asynchronously — the scroll only exists once the new document has
@@ -412,6 +518,7 @@ function viewHtml(pane, { content, absPath, fileName }) {
     let href = null;
     try { href = iframe.contentWindow?.location?.href; } catch { /* cross-origin */ }
     if (!href || href === 'about:srcdoc') return;
+    /** @type {any} */ (pane)._nfZoomDestroy?.();  // frame navigated away — retire the zoom engine with it
     pane.innerHTML = '';
     const note = document.createElement('div');
     note.style.cssText = 'padding:32px;text-align:center;color:var(--color-text-muted);font-size:13px;line-height:1.6';
