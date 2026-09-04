@@ -1527,10 +1527,17 @@ private[agent] trait AgentCore:
     userFacingNode: Boolean = false,
     guardrailsOn: Boolean = false
   ): Set[String] =
-    val base = agentDef.tools match
-      case Nil => Set.empty[String]
-      case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
-      case names => names.toSet
+    // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
+    // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
+    // agent.json 里的文件工具声明（Nebula 六件 / dispatcher Write+Edit）由此
+    // 自动变 no-op（定义层与机制层解耦，改定义不破机制）。
+    val base =
+      if AgentCore.ConvergedAgentNames.contains(agentDef.name) then Set.empty[String]
+      else
+        agentDef.tools match
+          case Nil => Set.empty[String]
+          case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
+          case names => names.toSet
     // Fixed tools are auto-injected based on agent category — they don't
     // need to be listed in agent.json. Mail is team-only; FlowReport is
     // flow-only; all agents get base tools (file ops, search, shell). Issue
@@ -1541,9 +1548,15 @@ private[agent] trait AgentCore:
     // agent declaring flows in agent.json gets the tool; everyone else is
     // stripped of it (even via "*" or explicit listing — every call would
     // fail the whitelist check anyway).
-    val withFlowTrigger =
-      if agentDef.flows.nonEmpty then withBuiltin + "FlowTrigger" else withBuiltin - "FlowTrigger"
     val isNebula = agentDef.name == "Nebula"
+    // FlowTrigger is whitelist-driven (R1 split, NOT Nebula-exclusive): any
+    // agent declaring flows in agent.json gets the tool; everyone else is
+    // stripped of it (even via "*" or explicit listing — every call would
+    // fail the whitelist check anyway). 阶段 2c 例外：Nebula 双轨期机制固定
+    // （§C.1 过渡组 Delegate/FlowTrigger/FlowExecute 保留至阶段 3）——不再
+    // 依赖 flows 声明（旧 agent.json 的 flows:["*"] 由此退役为 no-op）。
+    val withFlowTrigger =
+      if agentDef.flows.nonEmpty || isNebula then withBuiltin + "FlowTrigger" else withBuiltin - "FlowTrigger"
     val nebulaFiltered = if isNebula then withFlowTrigger else withFlowTrigger -- NebulaExclusiveTools
     // Team task tools（任务工具重做 2026-08-30）：TeamTask 三件只配 team——
     // 注入源是 fixedToolsFor 的 category=team 分支（全体成员）。这里只做防
@@ -1574,13 +1587,27 @@ private[agent] trait AgentCore:
     // always auto-allowed. Tool names are mcp__<serverId>__<tool>; dedicated
     // servers use serverId "agent-<agentName>-<serverName>".
     val agentOwnPrefix = s"mcp__agent-${agentDef.name}-"
+    // 阶段 2b Plugins（§B.4 第 4 步）：node 分配的 plugin MCP 前缀来源——
+    // serverId `plugin_<p>_<s>` → 工具名 `mcp__plugin_<p>_<s>__<t>`。分配链
+    // （NodeEdit plugins 参数 → 信任门解析 → PluginMcpManager 启动）是唯一授权
+    // 源；untrusted plugin 根本到不了这里（resolve 即 failNode）。
+    // 注：这是「追加」而非「保留」——base 宇宙（agentDef.tools + fixed）天然
+    // 不含 mcp__* 名，须从注册表按前缀捞取并入（蓝图 §B.4-③「追加对应前缀」）；
+    // 配额期间 server 未注册的工具名自然落空（注册表即事实源）。
+    val pluginPrefixes = agentDef.pluginMcpServers.map(sid => s"mcp__${sid}__")
+    val pluginAppended =
+      if pluginPrefixes.isEmpty then taskFiltered
+      else
+        val pluginMcpNames = ToolRegistry.registeredToolNames.filter(t => pluginPrefixes.exists(t.startsWith))
+        taskFiltered ++ pluginMcpNames
     val mcpFiltered =
       if agentDef.mcpServers.isEmpty then
-        taskFiltered.filter(t => !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix))
+        pluginAppended.filter(t => !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || pluginPrefixes.exists(t.startsWith))
       else
         val prefixes = agentDef.mcpServers.map(sid => s"mcp__${sid}__")
-        taskFiltered.filter(t =>
-          !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith)
+        pluginAppended.filter(t =>
+          !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith) ||
+            pluginPrefixes.exists(t.startsWith)
         )
     // SubTask workers are leaf agents: no Mail / no further delegation, no
     // FlowTrigger and no FlowExecute (workers don't trigger pipelines nor
@@ -1613,7 +1640,14 @@ private[agent] trait AgentCore:
       // Mail ask (flow callers cannot receive background notifications).
       else if agentDef.category == "flow" then mcpFiltered - "Mail"
       else mcpFiltered
-    categoryFiltered
+    // 阶段 2b Plugins（§B.6 内建工具授予）：org.nebflow/tools 申请的 builtin 工具
+    // 追加在全部角色过滤之后——信任门审批是授权权威（§B.3 审批清单必审区块），
+    // 审批通过 = 用户明确授予该节点此工具；白名单 {WebSearch, WebFetch, Curl, Pop}
+    // 在 PluginRegistry 装载层强制，此处再过滤一次（纵深防御：损坏的 AgentDef
+    // 也造不出白名单外授予）。编排类工具（Task/Mail/NodeEdit 等）永不进白名单，
+    // §C.1 静态矩阵不被 plugin 授予绕过。
+    val pluginGranted = categoryFiltered ++ agentDef.pluginTools.filter(nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist)
+    pluginGranted
 
   end buildAllowedToolSet
 
@@ -1961,35 +1995,82 @@ object AgentCore:
    * - Schedule: session-scoped scheduled tasks
    * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
    *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
-   *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
+   *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入
+   *   （Nebula 例外见 NebulaOrchestrationTools：阶段 2c 双轨期机制固定）。
    * - AgentControl: 后台 agent 管控（list/status/cancel/restart，spec §4 安全
    *   边界矩阵——危险能力只交给根调度者）。
    * - Issue: 系统反馈收集仅编排者持有（user ruling 2026-08-25 17:49 工具体系
    *   精简）——非 Nebula agent 声明了也不给（GitHub issue 上报是编排层职责，
    *   worker 的系统性问题走 Mail 上报 Manager/Nebula 转达）。
+   * - MemoryEdit（阶段 2c §C.1 记忆行）：记忆= Nebula 专属（2026-08-31 裁定①），
+   *   非 Nebula agent 声明了也不给。
    */
   val NebulaExclusiveTools = Set(
     "Schedule",
     "Delegate",
     "AgentControl",
-    "Issue"
+    "Issue",
+    "MemoryEdit"
   )
 
-  /** Nebula 的 7 个编排工具（任务工具重做 2026-08-30：TaskCreate/TaskUpdate
-    * 退役——任务只配 team，Nebula 不再有任务工具；user ruling 2026-08-25
-    * 17:49 的 9 编排基数由此收缩）。机制层固定注入——不依赖 agent.json 声明
-    * （防面板编辑误删导致调度器失能），同时也意味着非 Nebula agent 声明这些
-    * 工具中的 Nebula 专属项无效。六件基础工具同样是机制固定（2026-08-28
-    * 00:55 用户裁定，见 BaseTools）。 */
+  /** Nebula 固定工具集（阶段 2c agent 收敛，设计文档 §C.1 角色-工具静态矩阵；
+    * 裁定 11：全部机制注入不可配置）。分组与矩阵行一一对应：
+    *   - 编排触发：Task / ProjectCreate / NodeList（§C.1：dispatcher 描述承诺的
+    *     Nebula 侧只读观测面）/ AgentControl（list/status/cancel/restart）
+    *   - 通信：Mail / SendFriendMessage（2c 起由 agent.json 声明制改机制固定）
+    *   - 双轨期过渡：Delegate / FlowTrigger / FlowExecute（旧 standalone/team/
+    *     flow 触达保留至阶段 3，裁定 1；FlowTrigger 对 Nebula 不再依赖 flows 声明）
+    *   - 用户面：AskUserQuestion / Pop；平台：Schedule / TransferFile
+    *   - 记忆：MemoryEdit（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
+    * 显式不含：六件文件工具（BaseTools，裁定 2/3：Nebula 不读不写不跑命令）、
+    * Web 系、TeamTask*、SubTask、NodeEdit/NodeCancel。Issue 维持现状（未在
+    * §C.1 矩阵处置；fixedToolsFor Nebula 分支单独保留，未注册故实际惰性）。 */
   val NebulaOrchestrationTools = Set(
+    // 编排触发
+    "Task",
+    "ProjectCreate",
+    "NodeList",
     "AgentControl",
-    "Delegate",
-    "Pop",
-    "AskUserQuestion",
+    // 通信
     "Mail",
+    "SendFriendMessage",
+    // 双轨期过渡（阶段 3 拆除）
+    "Delegate",
+    "FlowTrigger",
+    "FlowExecute",
+    // 用户面
+    "AskUserQuestion",
+    "Pop",
+    // 平台
     "Schedule",
-    "TransferFile"
+    "TransferFile",
+    // 记忆（§C.2 MemoryEdit）
+    "MemoryEdit"
   )
+
+  /** 阶段 2c 收敛的三个 agent 定义名（§C.1 总览）：其 agent.json tools 声明在
+    * buildAllowedToolSet 中整体失效（base=∅）——机制固定不可配置（裁定 11），
+    * 存量 agent.json 里的文件工具声明（8684acd Nebula 六件 / dispatcher Write/
+    * Edit）自动变 no-op，无需定义层先行迁移。 */
+  val ConvergedAgentNames = Set("Nebula", "project-dispatcher", "general")
+
+  /** 分发器固定工具集（§C.1）：Node 三件（List/Edit/Cancel）+ 读四件（Read/
+    * Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
+    * 分解不产内容）、不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）。 */
+  val DispatcherFixedTools = Set(
+    "NodeList",
+    "NodeEdit",
+    "NodeCancel",
+    "Read",
+    "Glob",
+    "Grep",
+    "Bash"
+  )
+
+  /** 通用模版固定工具集（§C.1/§C.5，裁定 5 原文 8 件）：BaseTools 六件 + 用户
+    * 面 AskUserQuestion/Pop。定义在 BaseTools 之后（val 初始化顺序依赖）。
+    * Web 系不在 8 件内——经 §B.6 plugin 扩展授予；MultiEdit 已从 ToolRegistry
+    * 删除（能力由 Edit replace_all 覆盖）。 */
 
   /** Team task tools（任务工具重做 2026-08-30：category=team 机制层注入
     * 全体成员——Manager 与成员同级可用，任务=进展展示语义；不再是 lead 专属
@@ -2012,17 +2093,27 @@ object AgentCore:
     "Bash"
   )
 
+  /** 通用模版固定工具集（§C.1/§C.5，裁定 5 原文 8 件）：BaseTools 六件 + 用户
+    * 面 AskUserQuestion/Pop。Web 系不在 8 件内——经 §B.6 plugin 扩展授予；
+    * MultiEdit 已从 ToolRegistry 删除（能力由 Edit replace_all 覆盖）。 */
+  val GeneralFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Pop"
+
   /**
    * Fixed tools for a given agent: base tools plus category-specific tools.
    * These are auto-injected and should NOT be stored in agent.json.
    *
-   * - ALL agents (including Nebula, 2026-08-28 00:55 用户裁定「6类工具还是
-   *   作为统一的agent都有的工具」— reverses #438): BaseTools (Read/Write/
-   *   Edit/Glob/Grep/Bash) are mechanism-fixed for every category. agent.json
-   *   tools declarations remain an additional source and coexist idempotently
-   *   (Set semantics — duplicates harmless). Nebula's file declaration of the
-   *   six (8684acd) stays as a belt-and-suspenders no-op.
-   * - Team agents: BaseTools + Mail + SubTask + FlowExecute (user ruling
+   * 阶段 2c agent 收敛（§C.1 角色-工具静态矩阵）后的分支结构：
+   *
+   * - Nebula（root orchestrator）: NebulaOrchestrationTools（§C.1 十四件固定，
+   *   含双轨期 Delegate/FlowTrigger/FlowExecute）+ Issue（现状保留，未注册故
+   *   惰性）。**不再含 BaseTools**——裁定 2/3：Nebula 无文件工具不跑命令（工具
+   *   面从机制上保证，提示词只需一句自我认知）。2c 前的 BaseTools 注入与
+   *   8684acd 文件声明一并退役。
+   * - project-dispatcher: DispatcherFixedTools（§C.1：Node 三件 + 读四件；
+   *   无 Write/Edit——分发器只分解不产内容；无 AskUserQuestion——单次会话
+   *   不阻塞等用户，§C.3）。
+   * - general: GeneralFixedTools（§C.5 裁定 5 原文 8 件）。
+   * - Team agents: BaseTools + Mail + SubTask + FlowExecute（user ruling
    *   2026-08-24: team members get SubTask at the mechanism layer — relying
    *   on manual agent.json declarations is error-prone; html-deck-studio
    *   missed it for all four members. #406 extends the same mechanism-layer
@@ -2030,11 +2121,6 @@ object AgentCore:
    *   capability, no agent.json declaration needed). SubTask workers and
    *   FlowExecute nodes are still stripped of it downstream (isSubTaskWorker
    *   / isFlowNode leaf rules in buildAllowedToolSet).
-   * - Nebula (root orchestrator): BaseTools + Issue + FlowExecute +
-   *   NebulaOrchestrationTools (#404/2026-08-25 17:49 ruling, unchanged;
-   *   the #438 "six are Nebula's configurable region" semantics was
-   *   reversed by user ruling 2026-08-28 00:55 — the six are uniformly
-   *   mechanism-fixed again). The root agent dynamically creates flows too.
    * - Flow agents: BaseTools + FlowReport (no Mail, no SubTask — flow nodes
    *   are leaves; FlowReport is injected by execution context for dynamic
    *   flows, see FlowDagExecutor.executeNode)
@@ -2048,10 +2134,17 @@ object AgentCore:
       case "team" => BaseTools + "Mail" + "SubTask" + "FlowExecute" ++ AgentCore.TeamTaskTools
       case "flow" => BaseTools + "FlowReport"
       case _ if agentDef.name == "Nebula" =>
-        // 2026-08-28 00:55 用户裁定：六件工具作为所有 agent 统一拥有的机制
-        // 固定工具（反转 #438 的 Nebula 默认不配）。agent.json 声明保留为
-        // 额外来源（幂等共存）；文件声明兜底（8684acd）不回滚。
-        BaseTools ++ Set("Issue", "FlowExecute") ++ NebulaOrchestrationTools
+        // 阶段 2c（§C.1）：Nebula 固定工具集机制化——编排触发 + 通信 + 双轨期
+        // 过渡三件 + 用户面 + 平台 + MemoryEdit。BaseTools 六件显式移除（裁定
+        // 2/3：无文件工具）；Issue 维持现状保留（未在 §C.1 矩阵处置，且未在
+        // ToolRegistry 注册——实际惰性，行为与 2c 前一致）。
+        AgentCore.NebulaOrchestrationTools + "Issue"
+      case _ if agentDef.name == "project-dispatcher" =>
+        // 阶段 2c（§C.1）：分发器固定工具集——Node 三件 + 读四件。
+        AgentCore.DispatcherFixedTools
+      case _ if agentDef.name == "general" =>
+        // 阶段 2c（§C.4/§C.5）：通用模版固定 8 件。
+        AgentCore.GeneralFixedTools
       case _ => BaseTools
 
 end AgentCore

@@ -125,8 +125,11 @@ let pendingConfirmCallback = null;
  * @param {string} title — dialog title
  * @param {string} message — dialog body text
  * @param {Function} onConfirm — called when user clicks Confirm
+ * @param {object} [opts] — { tone?: 'danger'|'neutral' }: 'neutral'（可逆动作，
+ *   如项目归档）→ 确认钮走 glass-control 中性材质（#delete-box.confirm-neutral）；
+ *   默认 'danger' 保留红色语义。状态在每次打开时重设，无残留。
  */
-export function showConfirm(title, message, onConfirm) {
+export function showConfirm(title, message, onConfirm, opts = {}) {
   const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
   if (!deleteBox) { onConfirm?.(); return; }
   modalBox.style.display = 'none';
@@ -137,6 +140,7 @@ export function showConfirm(title, message, onConfirm) {
   pendingBatchDelete = false;
   pendingFolderDelete = false;
   state.pendingDeleteId = null;
+  deleteBox.classList.toggle('confirm-neutral', opts.tone === 'neutral');
   modalOverlay.classList.add('on');
 }
 

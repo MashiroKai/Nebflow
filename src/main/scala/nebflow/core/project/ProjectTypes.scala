@@ -82,7 +82,12 @@ case class NodeDef(
   createdAt: Long,
   startedAt: Option[Long] = None,
   completedAt: Option[Long] = None,
-  ttlExpireAt: Option[Long] = None
+  ttlExpireAt: Option[Long] = None,
+  /** 阶段 2b Plugins（§B.4 第 3 步）：分配给本节点的能力包名列表（NodeEdit 的
+    * plugins 参数，replace-on-provide）。插件解析/注入/回收全链见 NodeEngine
+    * prepareNodePlugins / runWithAgent。放在末位带默认值——既有位置构造零破坏。
+    * 旧 flow-map.json 无此键 → 解码 Nil（零迁移）。 */
+  plugins: List[String] = Nil
 )
 
 object NodeDef:
@@ -132,7 +137,10 @@ object NodePayload:
       // hold 条件序列化（20260903 暂停/人在回路设计 §2.1；与 deps 条件字段同构）：
       // true 才带——无 hold 节点 payload 字段集不变（NodeEventPushSpec 零影响）。
       val holdFields = if node.hold then List("hold" -> node.hold.asJson) else Nil
-      Json.obj((baseFields ++ depsFields ++ feedbackFields ++ holdFields)*)
+      // plugins 条件序列化（阶段 2b §B.4 第 3 步 + H-3①用户可见性；与 deps 同构）：
+      // 非 Nil 才带——无分配节点的 payload 字段集零变化。
+      val pluginFields = if node.plugins.nonEmpty then List("plugins" -> node.plugins.asJson) else Nil
+      Json.obj((baseFields ++ depsFields ++ feedbackFields ++ holdFields ++ pluginFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(

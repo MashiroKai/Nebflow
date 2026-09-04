@@ -171,7 +171,8 @@ function bindProjectClicks(scroll) {
  *  window.__showConfirm 既有确认范式）→ POST /api/projects/<name>/archive →
  *  列表重渲（后端 ProjectStore.list 源头过滤归档项，卡片即时消失，无需刷新页面，
  *  对齐 WS 事件驱动的 rerenderProjectsTab 既有刷新机制）。
- *  零删除零移动：仅 project.json 打归档标记，workspace 与定义文件全部保留。 */
+ *  零删除零移动：仅 project.json 打归档标记，workspace 与定义文件全部保留。
+ *  tone:'neutral'——归档可逆（可取消归档），确认钮不用 danger 红。 */
 function archiveProject(name) {
   if (!name) return;
   window.__showConfirm?.(
@@ -189,7 +190,8 @@ function archiveProject(name) {
       } catch (e) {
         window.__showToast?.(t('project.archiveFail', { name }), 'error');
       }
-    }
+    },
+    { tone: 'neutral' }
   );
 }
 

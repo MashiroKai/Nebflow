@@ -111,5 +111,9 @@ case class SharedResources(
     * 加载（absent → enabled=true 默认）。经 AgentCore 派生 ToolContext.sandbox——
     * 但闸门激活还需会话级 SessionContext.sandboxEnabled=true（仅 project 节点/
     * 分发器 spawn 置位），故存量测试的默认构造不受影响。 */
-  sandboxConfig: nebflow.core.sandbox.SandboxConfig = nebflow.core.sandbox.SandboxConfig()
+  sandboxConfig: nebflow.core.sandbox.SandboxConfig = nebflow.core.sandbox.SandboxConfig(),
+  /** 阶段 2b Plugins（§B.5）：plugin 级 MCP 生命周期管理器（引用计数 + 信任运行时
+    * 联动）。独立于全局 mcpManager（不复用 enable/disable 面，§B.5）；默认实例
+    * 同步构造（Ref.unsafe 先例）——存量测试构造零改动，节点无分配时不触碰。 */
+  pluginMcp: nebflow.core.plugin.PluginMcpManager = nebflow.core.plugin.PluginMcpManager.unsafe()
 )
