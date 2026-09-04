@@ -668,6 +668,12 @@
 .fm-detail-result {
   font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text); word-break: break-word; overflow-wrap: anywhere;
+  /* 独立滚动（20260904 作者反馈「节点结果要能完整显示」）：全文换装后结果区自滚动，
+   * 滚动被 contain 在结果区内（不外链动摇详情窗本体——.fm-detail 为 absolute 定位
+   * 契约不变）；60vh 上限在任何视口高度下为正且不越窗，短结果不设固定高。外层
+   * .fm-detail-body 滚动保留为兜底（极矮视口下 meta/task 超窗仍可达）。 */
+  max-height: 60vh; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
 }
 /* markdown 正文（flow-mail-content 同语言）*/
 .fm-md p { margin: 4px 0; }
