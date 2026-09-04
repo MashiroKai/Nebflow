@@ -115,6 +115,15 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
   private def imms(recorded: Ref[IO, List[AgentCommand]]): IO[List[AgentCommand.ImmediateInput]] =
     recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
 
+  /** 有界轮询：等 recorder 收到预期条数（并发负载下 offer→actor 处理异步，直读有竞态）。 */
+  private def awaitMsgs(recorded: Ref[IO, List[AgentCommand]], min: Int): IO[List[AgentCommand.ImmediateInput]] =
+    def go(deadline: Long): IO[List[AgentCommand.ImmediateInput]] =
+      imms(recorded).flatMap { msgs =>
+        if msgs.size >= min || System.currentTimeMillis() >= deadline then IO.pure(msgs)
+        else IO.sleep(50.millis) >> go(deadline)
+      }
+    go(System.currentTimeMillis() + 10_000L)
+
   // 09-03 实证夹具命名家族（宿主 phd-notebook 归档逐字盘点）+ 自证标记
   private val FixtureTask = "（取消验证节点）第一步：获取 httpbin 延迟端点返回。"
 
@@ -185,7 +194,7 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
         _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map("n-manual-fx" -> fixture, "n-manual-ok" -> genuine)))
         _ <- engine.deliverOutTo(fixture, "Nebula", fixture.result.get)
         _ <- engine.deliverOutTo(genuine, "Nebula", genuine.result.get)
-        msgs <- imms(recorded)
+        msgs <- awaitMsgs(recorded, min = 1)
         fxLedger <- store.getNode("n-manual-fx").map(_.flatMap(_.nebulaDeliveredAt))
         okLedger <- store.getNode("n-manual-ok").map(_.flatMap(_.nebulaDeliveredAt))
       yield (msgs, fxLedger, okLedger)
