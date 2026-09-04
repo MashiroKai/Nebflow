@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import nebflow.core.sandbox.FileSandbox
+import nebflow.core.sandbox.{FileSandbox, SandboxPolicy}
 import io.circe.JsonObject
 import io.circe.syntax.*
 
@@ -134,7 +134,12 @@ Usage:
     // 遍历不逃逸（§A.8-4）。
     FileSandbox.checkReadRoot(ctx, os.Path(rawSearchRoot)) match
       case Left(err) => Left(err)
-      case Right(canonicalRoot) => runGrep(pattern, canonicalRoot.toString, mode, offset, effectiveLimit, workDir, workDirPath, input)
+      case Right(canonicalRoot) =>
+        // 凭据红线遍历排除（沙箱开时）：搜索根在 ~/.nebflow/agents 子树内 →
+        // rg 排除 agent 私有记忆（memory.md）——文件级负向规则管不住目录遍历。
+        val memExcludes =
+          if ctx.sandbox.enabled then SandboxPolicy.memoryGlobExcludes(canonicalRoot.wrapped) else Nil
+        runGrep(pattern, canonicalRoot.toString, mode, offset, effectiveLimit, workDir, workDirPath, input, memExcludes)
   }
 
   private def runGrep(
@@ -145,7 +150,8 @@ Usage:
     effectiveLimit: Int,
     workDir: String,
     workDirPath: os.Path,
-    input: JsonObject
+    input: JsonObject,
+    memoryExcludes: List[String] = Nil
   ): Either[ToolError, String] =
     val args = scala.collection.mutable.ListBuffer[String](
       "--color=never",
@@ -175,6 +181,10 @@ Usage:
 
     input("glob").flatMap(_.asString).foreach(g => args ++= List("--glob", g))
     input("type").flatMap(_.asString).foreach(t => args ++= List("--type", t))
+
+    // agent 私有记忆排除必须落在所有用户 glob 之后——rg glob 规则 last-match-wins，
+    // 排除若先于用户 include glob 会被其覆盖（如 glob="*.md" 重新放行 memory.md）
+    args ++= memoryExcludes
 
     if pattern.startsWith("-") then args ++= List("-e", pattern)
     else args += pattern

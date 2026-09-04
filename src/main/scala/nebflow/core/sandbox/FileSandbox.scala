@@ -73,9 +73,19 @@ object FileSandbox:
       checkCanonicalRead(policy, root.toString, canonical).map(os.Path(_))
 
   private def checkCanonicalRead(policy: SandboxPolicy, raw: String, canonical: Path): Either[ToolError, Path] =
-    val readable = SandboxPolicy.readableRoots(policy).map(_.wrapped)
-    if readable.exists(SandboxPolicy.contains(_, canonical)) then Right(canonical)
-    else Left(ToolError(deniedMessage("read", raw, canonical, policy)))
+    // 凭据红线负向规则一票优先：命中即拒，不看 readableRoots——agents/ 目录
+    // 白名单开读后，agents/**/memory.md（agent 私有记忆）仍拒。
+    if SandboxPolicy.readDenied(canonical) then
+      Left(
+        ToolError(deniedMessage(
+          "read", raw, canonical, policy,
+          reason = Some("path matches the private-memory deny rule (agents/**/memory.md is never readable)")
+        ))
+      )
+    else
+      val readable = SandboxPolicy.readableRoots(policy).map(_.wrapped)
+      if readable.exists(SandboxPolicy.contains(_, canonical)) then Right(canonical)
+      else Left(ToolError(deniedMessage("read", raw, canonical, policy)))
 
   /**
    * 入参解析：绝对路径原样；相对路径以沙箱根为基准（NIO resolve 保留 `..` 段，
@@ -88,13 +98,16 @@ object FileSandbox:
     if p.isAbsolute then p
     else policy.root.wrapped.resolve(p)
 
-  /** SANDBOX_DENIED 结构化错误（§A.5 模板）：canonical 路径 + 根列表 + 自纠指引， */
-  private def deniedMessage(op: String, raw: String, canonical: Path, policy: SandboxPolicy): String =
+  /** SANDBOX_DENIED 结构化错误（§A.5 模板）：canonical 路径 + 根列表 + 自纠指引。
+    * 根列表从 readableRoots/writableRoots 动态推导（无硬编码）——白名单扩充自动
+    * 反映进文案。reason：负向规则命中时的解释行（缺省无）。 */
+  private def deniedMessage(op: String, raw: String, canonical: Path, policy: SandboxPolicy, reason: Option[String] = None): String =
     val writable = SandboxPolicy.writableRoots(policy).mkString(", ")
     val readable = SandboxPolicy.readableRoots(policy).mkString(", ")
+    val reasonLine = reason.map(r => s"\nReason: $r").getOrElse("")
     s"""SANDBOX_DENIED
        |[sandbox: file access denied under workspace-write mode]
-       |cannot $op "$raw" (resolves to $canonical, outside sandbox root ${policy.root}).
+       |cannot $op "$raw" (resolves to $canonical, outside sandbox root ${policy.root}).$reasonLine
        |Writable roots: $writable. Readable roots: $readable.
        |Write within the sandbox root, or report to the dispatcher if the task genuinely requires a path outside the project.""".stripMargin
 

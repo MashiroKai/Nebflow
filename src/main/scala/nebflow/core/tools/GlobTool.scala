@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import nebflow.core.sandbox.FileSandbox
+import nebflow.core.sandbox.{FileSandbox, SandboxPolicy}
 import io.circe.JsonObject
 import io.circe.syntax.*
 
@@ -112,14 +112,20 @@ object GlobTool extends Tool:
     searchRootEither.flatMap { searchRootPath =>
       FileSandbox.checkReadRoot(ctx, searchRootPath) match
         case Left(err) => Left(err)
-        case Right(canonicalRoot) => runGlob(relPattern, canonicalRoot, workDir)
+        case Right(canonicalRoot) =>
+          // 凭据红线遍历排除（沙箱开时）：搜索根在 ~/.nebflow/agents 子树内 →
+          // rg 排除 agent 私有记忆（memory.md）——文件级负向规则管不住目录遍历。
+          val memExcludes =
+            if ctx.sandbox.enabled then SandboxPolicy.memoryGlobExcludes(canonicalRoot.wrapped) else Nil
+          runGlob(relPattern, canonicalRoot, workDir, memExcludes)
     }
   }
 
   private def runGlob(
     relPattern: String,
     searchRootPath: os.Path,
-    workDir: String
+    workDir: String,
+    memoryExcludes: List[String] = Nil
   ): Either[ToolError, String] =
     // Use ripgrep for file listing — much faster than Java NIO Files.walk
     // --no-ignore: match old behavior (Files.walk ignores .gitignore, so should we)
@@ -145,6 +151,8 @@ object GlobTool extends Tool:
       "--glob",
       "!.jj"
     )
+    // agent 私有记忆排除（后置 glob 规则优先级更高——rg last-match-wins）
+    args ++= memoryExcludes
 
     // Search from the resolved root
     args += searchRootPath.toString
