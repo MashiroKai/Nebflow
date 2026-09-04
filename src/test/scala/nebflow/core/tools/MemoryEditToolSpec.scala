@@ -207,4 +207,78 @@ class MemoryEditToolSpec extends FunSuite:
     assert(res.isRight)
     assertEquals(MemoryStore.loadUserMemory.map(_.contains("- 缓存可见性条目")), Some(true),
       "same write function → cache invalidated → next lifecycle injection sees it")
+
+  // ===== 条目模型防漂移（2c QC nits 2026-09-04）=====
+
+  test("append/update reject multi-line content (entry-model drift guard)"):
+    seedUser("- 既有条目")
+    val multi = call("target" -> "user".asJson, "action" -> "append".asJson,
+      "content" -> "- 第一行\n第二行不是条目".asJson)
+    val msg = multi.left.toOption.get.message
+    assert(msg.contains("MEMORYEDIT_ENTRY_FORMAT"), "multi-line content rejected at entry")
+    assert(msg.contains("replace_section"), "error names the actionable alternative")
+    assert(!os.read(userFile).contains("第一行"), "file untouched on rejection")
+
+    val multiUpdate = call("target" -> "user".asJson, "action" -> "update".asJson,
+      "match" -> "既有条目".asJson, "content" -> "- 替换行\n漂移行".asJson)
+    assert(multiUpdate.left.toOption.get.message.contains("MEMORYEDIT_ENTRY_FORMAT"))
+    assert(os.read(userFile).contains("- 既有条目"), "update rejection leaves file untouched")
+
+  test("append/update accept a single '- ' entry; non-entry single line is rejected"):
+    seedUser("- 既有条目")
+    val okAppend = call("target" -> "user".asJson, "action" -> "append".asJson,
+      "content" -> "- 单行条目（→id-1 详情在 ~/.nebflow/memory/id-1.md）".asJson)
+    assert(okAppend.isRight, "single '- ' entry passes")
+    assert(os.read(userFile).contains("- 单行条目"))
+
+    val prose = call("target" -> "user".asJson, "action" -> "append".asJson,
+      "content" -> "正文段落，不是条目".asJson)
+    assert(prose.left.toOption.get.message.contains("MEMORYEDIT_ENTRY_FORMAT"), "non '- ' single line rejected")
+
+    val okUpdate = call("target" -> "user".asJson, "action" -> "update".asJson,
+      "match" -> "既有条目".asJson, "content" -> "- 既有条目已更新".asJson)
+    assert(okUpdate.isRight, "single-entry update passes")
+
+  test("replace_section accepts multi-line body by design (guard does not apply)"):
+    seedUser("## Bulk\n\n- 旧一\n\n## Tail\n\n- 尾条目")
+    val res = call("target" -> "user".asJson, "action" -> "replace_section".asJson,
+      "section" -> "Bulk".asJson, "content" -> "- 新一\n- 新二\n正文续行按区段语义允许".asJson)
+    assert(res.isRight, "replace_section takes multi-line content")
+    val content = os.read(userFile)
+    assert(content.contains("- 新一") && content.contains("- 新二") && content.contains("正文续行按区段语义允许"))
+    assert(content.contains("## Tail") && content.contains("- 尾条目"), "next section untouched")
+
+  test("validation failure path performs zero filesystem reads (lazy target load)"):
+    // User.md 位形设为目录：任何一次实际读都会抛（MtimeCache: os.exists=true → stat →
+    // cache miss → os.read(目录) 抛）。lazy load 下失败路径根本不触 load——结构化报错
+    // 照常返回；若回归为 eager load，本测会以异常形式爆红。
+    os.remove.all(userFile)
+    os.makeDir.all(userFile)
+    try
+      val badAction = call("target" -> "user".asJson, "action" -> "no_such_action".asJson)
+      assert(badAction.left.toOption.get.message.contains("MEMORYEDIT_ACTION"),
+        "unknown action fails structurally with zero file reads")
+      val noParam = call("target" -> "user".asJson, "action" -> "append".asJson)
+      assert(noParam.left.toOption.get.message.contains("MEMORYEDIT_PARAM"),
+        "missing param fails structurally with zero file reads")
+      val badEntry = call("target" -> "user".asJson, "action" -> "append".asJson,
+        "content" -> "- a\nb".asJson)
+      assert(badEntry.left.toOption.get.message.contains("MEMORYEDIT_ENTRY_FORMAT"),
+        "entry-format failure fails structurally with zero file reads")
+    finally
+      os.remove.all(userFile)
+
+  test("concurrent same-file MemoryEdit calls serialize (per-file mutex, no lost update)"):
+    seedUser("- 基线条目\n")
+    val thunks: Seq[() => Either[ToolError, String]] = (1 to 8).map { i => () =>
+      call("target" -> "user".asJson, "action" -> "append".asJson,
+        "content" -> s"- 并发条目 $i".asJson)
+    }
+    val ec = scala.concurrent.ExecutionContext.global
+    val futures = thunks.map(t => scala.concurrent.Future(t())(ec))
+    val done = futures.map(f => scala.concurrent.Await.result(f, scala.concurrent.duration.Duration("30s")))
+    assert(done.forall(_.isRight), "every concurrent append succeeded")
+    val content = os.read(userFile)
+    val missing = (1 to 8).count(i => !content.contains(s"- 并发条目 $i"))
+    assertEquals(missing, 0, "no lost update: all 8 entries present after concurrent RMW")
 end MemoryEditToolSpec

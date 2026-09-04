@@ -56,8 +56,9 @@ object ToolRegistry:
       // Cross-device file transfer
       "TransferFile" -> TransferFileTool,
       // A2A 一期: agent sends a message to one of the user's NebLink friends
-      // (#290). Authorization: Nebula-only via agent.json tools declaration
-      // (author ruling 2026-08-28) — no mechanism-layer injection.
+      // (#290). Authorization (阶段 2d, D.1-11): mechanism-fixed for Nebula
+      // only (NebulaOrchestrationTools, 2c 起) — agent.json declaration
+      // channel removed (buildAllowedToolSet strips the name from base).
       "SendFriendMessage" -> FriendMessageTool,
       // Load Team/Flow from disk (validate + mount)
       "Load" -> LoadTool,
