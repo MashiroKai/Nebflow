@@ -93,13 +93,14 @@
 .project-open-btn svg { width: 15px; height: 15px; }
 
 /* 归档按钮（迁移方案 v2 §6.1）：卡片头部显式人工归档入口，尺寸/形态对齐
-   .project-open-btn（26×26 icon 按钮，位于 header 摘要右侧）；hover 用既有
-   --color-error 红提示半破坏性语义，实际动作经确认弹层二次防误触。 */
+   .project-open-btn（26×26 icon 按钮，位于 header 摘要右侧）。归档可逆
+   （可取消归档）→ 不用 danger 红语义；静态 ghost、hover 全玻璃材质，
+   走 sapphire.css Pattern A（同 .session-delete 等 icon 控件族，2026-09-05）。 */
 .project-archive-btn {
   flex: 0 0 auto;
   width: 26px;
   height: 26px;
-  border: 1px solid var(--color-border);
+  border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
   color: var(--color-text-muted);
@@ -107,12 +108,7 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
-}
-.project-archive-btn:hover {
-  color: var(--color-error, #e5484d);
-  border-color: var(--color-error, #e5484d);
-  background: rgba(229, 72, 77, 0.08);
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
 .project-archive-btn svg { width: 15px; height: 15px; }
 
