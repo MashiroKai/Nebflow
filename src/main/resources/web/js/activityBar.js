@@ -53,10 +53,30 @@ export function initActivityBar() {
 // The Teams/Flows buttons themselves are untouched (same ids, same
 // registerCanvasPanelButton wiring) — this only decides when they are VISIBLE,
 // so the old panels keep working exactly as before.
+//
+// 2026-09-04 作者裁定：Team/Flow 旧入口隐藏封存（阶段 3 提前落地）。模块级
+// feature flag——默认 false =「团队」「流程」入口整体撤下（#legacy-btn 归档
+// 按钮一并隐藏，它是两个旧入口的唯一父入口）；翻回 true 即恢复，popover 与
+// 两个按钮原样回归。面板本体（openTeams/openFlows、teams/flows Canvas tabs、
+// registerCanvasPanelButton 绑定）代码全部保留不删——隐藏 ≠ 删除，深链与
+// 程序化打开（canvas-tab-restore 恢复旧标签页）不受影响。
+const SIDEBAR_LEGACY_ENTRIES = false;
+
 function bindLegacyPanels() {
   const btn = document.getElementById('legacy-btn');
   const pop = document.getElementById('legacy-pop');
   if (!btn || !pop) return;
+
+  // Sealed (2026-09-04): hide the sole parent entry + popover, skip all
+  // wiring. Elements stay in the DOM — canvas.js binds teams-btn/flows-btn
+  // by id document-wide, and the i18n map styles them; neither may break.
+  if (!SIDEBAR_LEGACY_ENTRIES) {
+    btn.hidden = true;
+    btn.removeAttribute('aria-controls');
+    btn.setAttribute('aria-hidden', 'true');
+    pop.hidden = true;
+    return;
+  }
 
   const setOpen = (open) => {
     if (open) anchorLegacyPop(btn, pop);

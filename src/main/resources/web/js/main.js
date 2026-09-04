@@ -81,9 +81,11 @@ import * as planMode from './planMode.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initLightbox } from './lightbox.js';
 import * as flowCanvas from './flowCanvas.js';
-// Side-effect import: registers the agents-btn Canvas panel toggle
-// (registerCanvasPanelButton) and the agents tab restore renderer.
+// Side-effect import: agentManager.js keeps the sealed agents panel +
+// per-agent detail tabs alive (canvas-tab-restore for persisted 'agents'
+// tabs); plugins.js owns the activity-bar entry now (2026-09-04 件 B).
 import './agentManager.js';
+import { openPlugins } from './plugins.js';
 import { initColResizers } from './colResizer.js';
 import { initActivityBar, toggleSideBar } from './activityBar.js';
 
@@ -3169,16 +3171,16 @@ document.getElementById('canvas-toggle-btn')?.addEventListener('click', () => {
     openCanvas();
   }
 });
-// Teams/Flows/Agents button clicks are bound by canvas.js
-// registerCanvasPanelButton (registered from flowCanvas.js / agentManager.js).
+// Teams/Flows/Agents(Plugins) button clicks are bound by canvas.js
+// registerCanvasPanelButton (registered from flowCanvas.js / plugins.js).
 // Restore queued messages from localStorage (survives browser refresh)
 restoreQueue();
 // Restore Canvas tabs (server persisted, falls back to localStorage).
-// If no tabs restored (local + server both empty), auto-open Teams panel.
-// F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): restoreTabs 现为异步——优先生效服务端存档，
-// 故这里用 .then 决定是否 fallback，而非旧的同步 bool 判断。
+// 2026-09-04 件 A/件 B：空白启动 fallback 由 openTeams 改道 openPlugins——
+// Team/Flow 旧入口已隐藏封存，首次启动不应把用户带进被封存面板；「插件」页
+// 是智能体入口的继任默认页。restoreTabs 异步语义不变（F1, 2026-08-30）。
 restoreTabs().then((restored) => {
-  if (!restored) flowCanvas.openTeams();
+  if (!restored) openPlugins();
 });
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
