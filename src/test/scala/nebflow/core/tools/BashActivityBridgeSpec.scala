@@ -105,10 +105,11 @@ class BashActivityBridgeSpec extends CatsEffectSuite:
       ctx = ToolContext(projectRoot = "/tmp", sessionId = Some("bridge-session"), sharedResources = Some(resources))
       // 零 CPU 进程：sleep（<10ms/1s 采样窗口；原生 sleep 启动开销 <1ms）
       proc <- startSleepProc(30)
-      _ <- runBridge(proc, ctx)
+      // 异常路径销毁守卫：断言失败/中断/超时也杀进程（残留治理 2026-09-05——
+      // 尾部 destroyForcibly 只覆盖 happy path，中途抛错即泄漏）
+      _ <- runBridge(proc, ctx).guarantee(IO(proc.destroyForcibly()))
       last <- lastActivityOf(registry)
       _ <- IO(assert(last == 123456789L, s"lastActivityMs must NOT be touched: $last"))
-      _ <- IO(proc.destroyForcibly())
     yield ()
   }
 
@@ -125,12 +126,12 @@ class BashActivityBridgeSpec extends CatsEffectSuite:
       )
       resources = mkResources(registry)
       ctx = ToolContext(projectRoot = "/tmp", sessionId = Some("bridge-session"), sharedResources = Some(resources))
-      // CPU 忙进程：python busy loop（每 1s 窗口 CPU 增量 >> 10ms）
+      // CPU 忙进程：python busy loop（每 1s 窗口 CPU 增量 >> 10ms）——
+      // 永不自终止，断言失败/中断路径必须守卫销毁（作者手清的残留形态）
       proc <- startProc("python3 -c 'while True: pass'")
-      _ <- runBridge(proc, ctx)
+      _ <- runBridge(proc, ctx).guarantee(IO(proc.destroyForcibly()))
       last <- lastActivityOf(registry)
       _ <- IO(assert(last != 123456789L, s"lastActivityMs must be touched for busy process: $last"))
-      _ <- IO(proc.destroyForcibly())
     yield ()
   }
 

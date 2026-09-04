@@ -54,37 +54,50 @@ class ShellKillOnRestartSpec extends CatsEffectSuite:
   test("E-1: killSessionProcesses kills a hung foreground process tree") {
     for
       shell <- ShellSession.forSession("e1-session")
-      (health, fiber) <- startCmd(shell, "sleep 120 & wait")
-      pid = health.processRef.get().pid()
-      _ <- waitFor(procAlive(pid), 3000, "pid alive before kill")
-      _ <- ShellSession.killSessionProcesses(Some("e1-session"))
-      _ <- waitFor(procAlive(pid).map(!_), 10000, s"pid $pid dead after kill")
-      _ <- fiber.join.timeout(5.seconds).attempt.void
-      _ <- ShellSession.destroySession("e1-session")
+      // 异常路径销毁守卫（残留治理 2026-09-05）：waitFor 失败/中断时 sleep 120 也要被杀
+      _ <- (for
+        (health, fiber) <- startCmd(shell, "sleep 120 & wait")
+        pid = health.processRef.get().pid()
+        _ <- waitFor(procAlive(pid), 3000, "pid alive before kill")
+        _ <- ShellSession.killSessionProcesses(Some("e1-session"))
+        _ <- waitFor(procAlive(pid).map(!_), 10000, s"pid $pid dead after kill")
+        _ <- fiber.join.timeout(5.seconds).attempt.void
+      yield ())
+        .guarantee(
+          ShellSession.killSessionProcesses(Some("e1-session")).attempt.void *>
+            ShellSession.destroySession("e1-session").attempt.void
+        )
     yield ()
   }
 
   test("E-2: background job process + foreground process both killed; BgTaskRegistry unregistered") {
     for
       shell <- ShellSession.forSession("e2-session")
-      // 后台任务（run_in_background 等价）：sleep 300 零输出零 CPU
-      _ <- shell.executeBackground(
-        "sleep 300",
-        jobIdOverride = Some("e2-bg"),
-        healthCheckIntervalSec = 1
-      )
-      _ <- BgTaskRegistry.register("e2-bg", "e2-session", "e2-bg-desc", "local")
-      // 前台卡死进程
-      (health, fiber) <- startCmd(shell, "sleep 120 & wait")
-      fgPid = health.processRef.get().pid()
-      _ <- waitFor(procAlive(fgPid), 3000, "fg pid alive")
-      _ <- ShellSession.killSessionProcesses(Some("e2-session"))
-      _ <- waitFor(procAlive(fgPid).map(!_), 10000, s"fg pid $fgPid dead")
-      _ <- fiber.join.timeout(5.seconds).attempt.void
-      // BgTaskRegistry 注销（killSessionShellProcesses 的职责，此处验证 unregisterSession 契约）
-      removed <- BgTaskRegistry.unregisterSession(Some("e2-session"))
-      _ <- IO(assert(removed.map(_.jobId).contains("e2-bg"), s"bg task should be unregistered: $removed"))
-      _ <- ShellSession.destroySession("e2-session")
+      // 异常路径销毁守卫（残留治理 2026-09-05）：sleep 300 后台任务不能漏到测试外
+      _ <- (for
+        // 后台任务（run_in_background 等价）：sleep 300 零输出零 CPU
+        _ <- shell.executeBackground(
+          "sleep 300",
+          jobIdOverride = Some("e2-bg"),
+          healthCheckIntervalSec = 1
+        )
+        _ <- BgTaskRegistry.register("e2-bg", "e2-session", "e2-bg-desc", "local")
+        // 前台卡死进程
+        (health, fiber) <- startCmd(shell, "sleep 120 & wait")
+        fgPid = health.processRef.get().pid()
+        _ <- waitFor(procAlive(fgPid), 3000, "fg pid alive")
+        _ <- ShellSession.killSessionProcesses(Some("e2-session"))
+        _ <- waitFor(procAlive(fgPid).map(!_), 10000, s"fg pid $fgPid dead")
+        _ <- fiber.join.timeout(5.seconds).attempt.void
+        // BgTaskRegistry 注销（killSessionShellProcesses 的职责，此处验证 unregisterSession 契约）
+        removed <- BgTaskRegistry.unregisterSession(Some("e2-session"))
+        _ <- IO(assert(removed.map(_.jobId).contains("e2-bg"), s"bg task should be unregistered: $removed"))
+      yield ())
+        .guarantee(
+          shell.cancelBackgroundJob("e2-bg").attempt.void *>
+            ShellSession.killSessionProcesses(Some("e2-session")).attempt.void *>
+            ShellSession.destroySession("e2-session").attempt.void
+        )
     yield ()
   }
 
@@ -102,22 +115,28 @@ class ShellKillOnRestartSpec extends CatsEffectSuite:
     for
       shellA <- ShellSession.forSession("e4-a")
       shellB <- ShellSession.forSession("e4-b")
-      (hA, fA) <- startCmd(shellA, "sleep 60")
-      (hB, fB) <- startCmd(shellB, "sleep 60")
-      pidA = hA.processRef.get().pid()
-      pidB = hB.processRef.get().pid()
-      _ <- waitFor(procAlive(pidA), 3000, "A alive")
-      _ <- waitFor(procAlive(pidB), 3000, "B alive")
-      _ <- ShellSession.killSessionProcesses(Some("e4-a"))
-      _ <- waitFor(procAlive(pidA).map(!_), 10000, s"pid A $pidA dead")
-      _ <- procAlive(pidB).flatMap(b => IO(assert(b, s"session B pid $pidB must survive")))
-      // 清理：B 的前台进程
-      _ <- ShellSession.killSessionProcesses(Some("e4-b"))
-      _ <- waitFor(procAlive(pidB).map(!_), 10000, s"pid B $pidB dead (cleanup)")
-      _ <- fA.join.timeout(5.seconds).attempt.void
-      _ <- fB.join.timeout(5.seconds).attempt.void
-      _ <- ShellSession.destroySession("e4-a")
-      _ <- ShellSession.destroySession("e4-b")
+      // 异常路径销毁守卫（残留治理 2026-09-05）：两个 session 的 sleep 60 都不能漏到测试外
+      _ <- (for
+        (hA, fA) <- startCmd(shellA, "sleep 60")
+        (hB, fB) <- startCmd(shellB, "sleep 60")
+        pidA = hA.processRef.get().pid()
+        pidB = hB.processRef.get().pid()
+        _ <- waitFor(procAlive(pidA), 3000, "A alive")
+        _ <- waitFor(procAlive(pidB), 3000, "B alive")
+        _ <- ShellSession.killSessionProcesses(Some("e4-a"))
+        _ <- waitFor(procAlive(pidA).map(!_), 10000, s"pid A $pidA dead")
+        _ <- procAlive(pidB).flatMap(b => IO(assert(b, s"session B pid $pidB must survive")))
+        // 清理：B 的前台进程
+        _ <- ShellSession.killSessionProcesses(Some("e4-b"))
+        _ <- waitFor(procAlive(pidB).map(!_), 10000, s"pid B $pidB dead (cleanup)")
+        _ <- fA.join.timeout(5.seconds).attempt.void
+        _ <- fB.join.timeout(5.seconds).attempt.void
+      yield ())
+        .guarantee(
+          ShellSession.killSessionProcesses(Some("e4-b")).attempt.void *>
+            ShellSession.destroySession("e4-a").attempt.void *>
+            ShellSession.destroySession("e4-b").attempt.void
+        )
     yield ()
   }
 
