@@ -46,7 +46,8 @@ class AgentConvergenceSpec extends FunSuite:
       "MemoryEdit"
     )
     assertEquals(delivered, expected,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（Issue 未注册故不在交付面）")
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（2026-09-04 终裁：Issue/CheckIssues 退役——恰十四件、零 Issue）")
+    assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
 
   test("Nebula 清单零文件工具、零 Web 系、零 TeamTask/SubTask/NodeEdit/NodeCancel"):
     val delivered = CoreProbe.toolList(mkDef("Nebula")).toSet
