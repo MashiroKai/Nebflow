@@ -35,7 +35,8 @@ object TeamTaskCreateTool extends Tool:
 - The task starts with status `pending`. Use TeamTaskUpdate to advance it.
 - Team name is inferred from your context (you belong to exactly one team) — no cross-team writes possible.
 - Returns the new task ID, e.g. `Task created: Fix focus chain memory leak (ID: 7)`.
-- Changes are broadcast to the team panel via `teamTaskListUpdate`."""
+- Changes are broadcast to the team panel via `teamTaskListUpdate`.
+- Tasks auto-expire: completed/failed clear after 6h, pending/in_progress after 2d — create only tasks that will be worked within that horizon."""
 
   val inputSchema = JsonObject.fromIterable(
     List(

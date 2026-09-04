@@ -440,7 +440,8 @@ object FileTaskStore extends TaskStore:
    * Reminder refactor (2026-08-20, user ruling): subjects truncated to
    * [[MaxSubjectChars]]; pending lines beyond [[MaxPendingLines]] fold into a
    * count line (in_progress always renders); the instruction block (~300B)
-   * lives in the cached prompt (PromptSections.tasksGuideSection) —
+   * lives in the cached prompt — 阶段 2d（§D.2）起协议文本在 TeamTask 工具
+   * description（原 PromptSections.tasksGuideSection 段已下迁删除）——
    * semantics in the cache, data travels per turn.
    */
   def renderForPrompt(sessionId: String): IO[String] =

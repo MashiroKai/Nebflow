@@ -1538,12 +1538,16 @@ private[agent] trait AgentCore:
           case Nil => Set.empty[String]
           case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
           case names => names.toSet
+    // 阶段 2d（D.1-11）：SendFriendMessage 声明式注入通道删除——机制固定唯一
+    // 授权（NebulaOrchestrationTools，2c 起）。任何 agent.json 声明（含 "*"）
+    // 不再授能（TeamTaskTools 防逃逸先例：the tool name IS the permission
+    // boundary）。Nebula 的静态集照常携带该工具，行为零变化。
+    val declaredBase = base - "SendFriendMessage"
     // Fixed tools are auto-injected based on agent category — they don't
     // need to be listed in agent.json. Mail is team-only; FlowReport is
-    // flow-only; all agents get base tools (file ops, search, shell). Issue
-    // is Nebula-only (2026-08-25 17:49 裁定 — stripped below via
-    // NebulaExclusiveTools even when explicitly listed).
-    val withBuiltin = base ++ AgentCore.fixedToolsFor(agentDef)
+    // flow-only. 阶段 2d（D.1-1）：注入唯一入口 = fixedToolsForDef——收敛三角色
+    // 直接返回静态集常量（收口），team/flow/legacy standalone 走 legacy 分支。
+    val withBuiltin = declaredBase ++ AgentCore.fixedToolsFor(agentDef)
     // FlowTrigger is whitelist-driven (R1 split, NOT Nebula-exclusive): any
     // agent declaring flows in agent.json gets the tool; everyone else is
     // stripped of it (even via "*" or explicit listing — every call would
@@ -1587,6 +1591,11 @@ private[agent] trait AgentCore:
     // always auto-allowed. Tool names are mcp__<serverId>__<tool>; dedicated
     // servers use serverId "agent-<agentName>-<serverName>".
     val agentOwnPrefix = s"mcp__agent-${agentDef.name}-"
+    // 阶段 2d（D.1-9）：converged 三角色 agent.json mcpServers 声明退役——与
+    // tools 声明同批失效（裁定 11 机制固定零配置）。三角色的 MCP 唯一通道 =
+    // node.plugins 分配（pluginMcpServers，§B.4）；定义层 mcpServers 不再授能。
+    val effectiveMcpServers =
+      if AgentCore.ConvergedAgentNames.contains(agentDef.name) then Nil else agentDef.mcpServers
     // 阶段 2b Plugins（§B.4 第 4 步）：node 分配的 plugin MCP 前缀来源——
     // serverId `plugin_<p>_<s>` → 工具名 `mcp__plugin_<p>_<s>__<t>`。分配链
     // （NodeEdit plugins 参数 → 信任门解析 → PluginMcpManager 启动）是唯一授权
@@ -1601,10 +1610,10 @@ private[agent] trait AgentCore:
         val pluginMcpNames = ToolRegistry.registeredToolNames.filter(t => pluginPrefixes.exists(t.startsWith))
         taskFiltered ++ pluginMcpNames
     val mcpFiltered =
-      if agentDef.mcpServers.isEmpty then
+      if effectiveMcpServers.isEmpty then
         pluginAppended.filter(t => !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || pluginPrefixes.exists(t.startsWith))
       else
-        val prefixes = agentDef.mcpServers.map(sid => s"mcp__${sid}__")
+        val prefixes = effectiveMcpServers.map(sid => s"mcp__${sid}__")
         pluginAppended.filter(t =>
           !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith) ||
             pluginPrefixes.exists(t.startsWith)
@@ -2023,8 +2032,9 @@ object AgentCore:
     *   - 用户面：AskUserQuestion / Pop；平台：Schedule / TransferFile
     *   - 记忆：MemoryEdit（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
     * 显式不含：六件文件工具（BaseTools，裁定 2/3：Nebula 不读不写不跑命令）、
-    * Web 系、TeamTask*、SubTask、NodeEdit/NodeCancel。Issue 维持现状（未在
-    * §C.1 矩阵处置；fixedToolsFor Nebula 分支单独保留，未注册故实际惰性）。 */
+    * Web 系、TeamTask*、SubTask、NodeEdit/NodeCancel。Issue 不在本集——
+    * fixedToolsFor 派发处以 parity carry 形式追加（作者对重启后 Nebula 是否
+    * 保留 Issue/CheckIssues 尚未裁定，任务保护令；见 D.4 核查记录）。 */
   val NebulaOrchestrationTools = Set(
     // 编排触发
     "Task",
@@ -2067,11 +2077,6 @@ object AgentCore:
     "Bash"
   )
 
-  /** 通用模版固定工具集（§C.1/§C.5，裁定 5 原文 8 件）：BaseTools 六件 + 用户
-    * 面 AskUserQuestion/Pop。定义在 BaseTools 之后（val 初始化顺序依赖）。
-    * Web 系不在 8 件内——经 §B.6 plugin 扩展授予；MultiEdit 已从 ToolRegistry
-    * 删除（能力由 Edit replace_all 覆盖）。 */
-
   /** Team task tools（任务工具重做 2026-08-30：category=team 机制层注入
     * 全体成员——Manager 与成员同级可用，任务=进展展示语义；不再是 lead 专属
     * owner 集。SubTask workers / flow nodes / depth≥2 "*" agents 仍剥离）。 */
@@ -2099,52 +2104,48 @@ object AgentCore:
   val GeneralFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Pop"
 
   /**
-   * Fixed tools for a given agent: base tools plus category-specific tools.
-   * These are auto-injected and should NOT be stored in agent.json.
+   * Fixed tools for a given agent — 阶段 2d（D.1-1）后的唯一注入入口。
    *
-   * 阶段 2c agent 收敛（§C.1 角色-工具静态矩阵）后的分支结构：
+   * 收敛三角色（§C.1 角色-工具静态矩阵，裁定 11 机制固定零配置）直接返回
+   * 静态集常量（收口）：Nebula / project-dispatcher / general 不再经过任何
+   * legacy 分支路径——2c 建集、2d 删路，常量即唯一事实源。
    *
-   * - Nebula（root orchestrator）: NebulaOrchestrationTools（§C.1 十四件固定，
-   *   含双轨期 Delegate/FlowTrigger/FlowExecute）+ Issue（现状保留，未注册故
-   *   惰性）。**不再含 BaseTools**——裁定 2/3：Nebula 无文件工具不跑命令（工具
-   *   面从机制上保证，提示词只需一句自我认知）。2c 前的 BaseTools 注入与
-   *   8684acd 文件声明一并退役。
-   * - project-dispatcher: DispatcherFixedTools（§C.1：Node 三件 + 读四件；
-   *   无 Write/Edit——分发器只分解不产内容；无 AskUserQuestion——单次会话
-   *   不阻塞等用户，§C.3）。
-   * - general: GeneralFixedTools（§C.5 裁定 5 原文 8 件）。
-   * - Team agents: BaseTools + Mail + SubTask + FlowExecute（user ruling
-   *   2026-08-24: team members get SubTask at the mechanism layer — relying
-   *   on manual agent.json declarations is error-prone; html-deck-studio
-   *   missed it for all four members. #406 extends the same mechanism-layer
-   *   injection to FlowExecute: one-shot dynamic flows are a default team
-   *   capability, no agent.json declaration needed). SubTask workers and
-   *   FlowExecute nodes are still stripped of it downstream (isSubTaskWorker
-   *   / isFlowNode leaf rules in buildAllowedToolSet).
-   * - Flow agents: BaseTools + FlowReport (no Mail, no SubTask — flow nodes
-   *   are leaves; FlowReport is injected by execution context for dynamic
-   *   flows, see FlowDagExecutor.executeNode)
-   * - Standalone agents: BaseTools only (no Mail, no SubTask)
+   * 双轨期 legacy 路径（legacyFixedTools）保留至阶段 3：
+   * - team 成员：BaseTools + Mail + SubTask + FlowExecute + TeamTask 三件
+   *   （user ruling 2026-08-24 机制层注入 SubTask；#406 扩展 FlowExecute）
+   * - flow 节点：BaseTools + FlowReport（叶子，无 Mail/SubTask）
+   * - legacy standalone：BaseTools catch-all——Coder/Explorer/design-engineer
+   *   等存量 agent 的 agent.json 未声明文件工具，依赖此路径（删除即断活
+   *   agent 工具面），随阶段 2e/3 归档一并退役。
+   *
+   * category 分支优先保持 2c 行为逐字节 parity（converged 定义不设 category，
+   * 恒为默认 standalone）。
    */
   def fixedToolsFor(agentDef: AgentDef): Set[String] =
+    agentDef.category match
+      case "team" | "flow" => legacyFixedTools(agentDef)
+      case _ =>
+        agentDef.name match
+          case "Nebula" =>
+            // 静态集收口。+ "Issue"：2c 行为 parity carry——Issue 现由
+            // ~/.nebflow/tools/issue 外部 ScriptTool 提供（ToolLoader 注册），
+            // D.4 归档后该名自然失活；机制层条目与 agent.json CheckIssues/
+            // Issue 声明一并保留至作者裁定（任务保护令）。
+            AgentCore.NebulaOrchestrationTools + "Issue"
+          case "project-dispatcher" => AgentCore.DispatcherFixedTools
+          case "general"            => AgentCore.GeneralFixedTools
+          case _                    => legacyFixedTools(agentDef)
+
+  /** 双轨期 legacy 固定工具（team/flow 分支 + standalone BaseTools catch-all）。
+    * 阶段 3 随 team/flow 退役与 legacy agent 归档整体删除（D.1-1 残留面；
+    * 三角色 name 分支已删——收口进 fixedToolsFor 静态集派发）。 */
+  private[agent] def legacyFixedTools(agentDef: AgentDef): Set[String] =
     agentDef.category match
       // 任务工具重做（2026-08-30）：任务只配 team——TeamTask 三件机制层注入
       // 全体 team 成员（照 #381 SubTask 先例；ctx.teamName 把写域钉死在
       // 自己的 team，无跨 team 面）。
       case "team" => BaseTools + "Mail" + "SubTask" + "FlowExecute" ++ AgentCore.TeamTaskTools
       case "flow" => BaseTools + "FlowReport"
-      case _ if agentDef.name == "Nebula" =>
-        // 阶段 2c（§C.1）：Nebula 固定工具集机制化——编排触发 + 通信 + 双轨期
-        // 过渡三件 + 用户面 + 平台 + MemoryEdit。BaseTools 六件显式移除（裁定
-        // 2/3：无文件工具）；Issue 维持现状保留（未在 §C.1 矩阵处置，且未在
-        // ToolRegistry 注册——实际惰性，行为与 2c 前一致）。
-        AgentCore.NebulaOrchestrationTools + "Issue"
-      case _ if agentDef.name == "project-dispatcher" =>
-        // 阶段 2c（§C.1）：分发器固定工具集——Node 三件 + 读四件。
-        AgentCore.DispatcherFixedTools
-      case _ if agentDef.name == "general" =>
-        // 阶段 2c（§C.4/§C.5）：通用模版固定 8 件。
-        AgentCore.GeneralFixedTools
-      case _ => BaseTools
+      case _      => BaseTools
 
 end AgentCore

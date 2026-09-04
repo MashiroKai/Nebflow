@@ -45,6 +45,8 @@ object ReadTool extends Tool:
 
 You can access any file on the machine. If the user provides a path, assume it is valid.
 
+Live results: read results are live — if a file is modified on disk after you read it, the result in your conversation history is automatically updated to reflect the latest content. Never re-read a file you already read (its content is always current); never trust a Read result as a frozen snapshot. To compare the before/after states of a file (e.g. around an edit), use `git diff` or save the original content to a temporary variable. Edit safety: because results are live, the content you see before an Edit is always the latest version — Edit's exact-match requirement naturally guards against stale edits (if the file changed, the match fails with an error rather than writing to the wrong location). Multi-instance awareness: if another process (e.g. another Nebflow worktree instance) modifies a file you have read, your context reflects their changes — be cautious when reasoning about concurrently modified files.
+
 Parameters:
 - file_path (required): Absolute path to the file.
 - offset: Line number to start reading from (1-based). Defaults to 1.

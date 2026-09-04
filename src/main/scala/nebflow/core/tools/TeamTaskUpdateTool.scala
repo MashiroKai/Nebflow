@@ -32,6 +32,8 @@ object TeamTaskUpdateTool extends Tool:
 - `pending` may go directly to `completed` or `failed`.
 - Terminal states (`completed`/`failed`) cannot transition to any other state; re-open a failed task by creating a new one.
 - No needs_confirmation / dismissed / cancelled in the team domain.
+- Work through your tasks in order; when a task is fully done mark it `completed` (attach a note with the outcome), if it cannot be finished mark it `failed` (attach a note explaining why). Tasks marked [waiting-user] are human todos — never part of your own work loop.
+- Tasks auto-expire: completed/failed clear after 6h, pending/in_progress after 2d — keep the list current.
 
 ## Parameters
 - **taskId**: The team task ID to update.
