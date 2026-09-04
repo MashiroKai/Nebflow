@@ -42,8 +42,8 @@ class AgentDefSpec extends CatsEffectSuite:
     lib.seedDefaults().unsafeRunSync()
     assert(os.exists(tmpDir / "Nebula" / "agent.json"), "agent.json should be seeded")
     assert(os.exists(tmpDir / "Nebula" / "system.md"), "system.md should be seeded")
-    assert(os.exists(tmpDir / "Explorer" / "agent.json"), "Explorer agent.json should be seeded")
-    assert(os.exists(tmpDir / "Coder" / "agent.json"), "Coder agent.json should be seeded")
+    // Seeds.all is Nebula-only now — archived agents must not be re-seeded
+    // (resurrection sentinel lives in SeedDefaultsConvergeSpec).
 
   test("seedDefaults does not overwrite existing agent.json"):
     val tmpDir = os.temp.dir()
