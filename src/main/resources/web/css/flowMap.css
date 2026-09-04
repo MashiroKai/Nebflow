@@ -647,9 +647,12 @@
 .fm-detail-close:hover { opacity: 1; }
 .fm-detail-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: 4px; }
 .fm-detail-body {
-  flex: 1; overflow-y: auto; padding: 12px 14px;
+  flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px;
+  display: flex; flex-direction: column; /* 结果区独占剩余高度并区内滚动（20260904 全文显示） */
   scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
 }
+/* flex 列内 meta/blocked/task/标题不收缩（挤压守卫）；结果区 .fm-detail-result 例外 */
+.fm-detail-body > * { flex: 0 0 auto; }
 .fm-detail-meta {
   font: 400 11px/1.7 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); margin-bottom: 10px; word-break: break-all;
@@ -668,11 +671,12 @@
 .fm-detail-result {
   font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text); word-break: break-word; overflow-wrap: anywhere;
-  /* 独立滚动（20260904 作者反馈「节点结果要能完整显示」）：全文换装后结果区自滚动，
-   * 滚动被 contain 在结果区内（不外链动摇详情窗本体——.fm-detail 为 absolute 定位
-   * 契约不变）；60vh 上限在任何视口高度下为正且不越窗，短结果不设固定高。外层
-   * .fm-detail-body 滚动保留为兜底（极矮视口下 meta/task 超窗仍可达）。 */
-  max-height: 60vh; overflow-y: auto; overscroll-behavior: contain;
+  /* 独立滚动（20260904 作者反馈「节点结果要能完整显示」）：结果区吃满 body 剩余高度，
+   * 超出即区内滚动、滚动被 contain 在区内（不外链动摇详情窗本体——.fm-detail 为
+   * absolute 定位契约不变）。min-height 96px 为极矮视口保底：不足 96px 时结果区不再
+   * 收缩，由 body 的 overflow-y:auto 兜底滚动。短结果 flex-basis auto 不产生空盒。 */
+  flex: 1 1 auto; min-height: 96px;
+  overflow-y: auto; overscroll-behavior: contain;
   scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
 }
 /* markdown 正文（flow-mail-content 同语言）*/
