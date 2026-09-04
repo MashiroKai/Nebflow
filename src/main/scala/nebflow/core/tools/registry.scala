@@ -15,7 +15,9 @@ object ToolRegistry:
       "Read" -> ReadTool,
       "Write" -> WriteTool,
       "Edit" -> EditTool,
-      "MultiEdit" -> MultiEditTool,
+      // MultiEdit 已从注册表移除（阶段 2c §C.1/裁定 5：通用 agent 8 件之外；
+      // 能力由 Edit 的 replace_all 覆盖）。MultiEditTool 类保留（非物理删除），
+      // spec 与未来 plugin 扩展（§B.6 白名单扩展）仍可引用。
       // Search
       "Glob" -> GlobTool,
       "Grep" -> GrepTool,
@@ -70,7 +72,11 @@ object ToolRegistry:
       "NodeList" -> NodeListTool,
       "NodeCancel" -> NodeCancelTool,
       "ProjectCreate" -> ProjectCreateTool,
-      "Task" -> TaskTool
+      "Task" -> TaskTool,
+      // 阶段 2c（§C.2）：Nebula 专用记忆维护工具——target 白名单硬编码
+      // User.md + agents/Nebula/memory.md（H-1①：工具内建路径校验，非沙箱
+      // 对象）。Nebula-only 注入见 AgentCore.NebulaExclusiveTools。
+      "MemoryEdit" -> MemoryEditTool
     )
     tools.putAll(builtins.asJava)
   }
