@@ -2262,12 +2262,12 @@
   font: 500 9px -apple-system, sans-serif;
   padding: 1px 7px;
   border-radius: 8px;
-  background: rgba(100, 200, 100, 0.15);
-  color: #6a6;
+  background: rgba(76, 175, 80, 0.12);
+  color: var(--color-success);
   white-space: nowrap;
 }
 .plugins-mcp-state.off {
-  background: rgba(160, 160, 160, 0.14);
+  background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
   color: var(--color-frame-text-muted);
 }
 
