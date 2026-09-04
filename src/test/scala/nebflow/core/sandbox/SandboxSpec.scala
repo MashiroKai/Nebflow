@@ -42,6 +42,34 @@ class SandboxSpec extends CatsEffectSuite:
     os.makeDir.all(pinned / "agents")
     os.write.over(pinned / "agents" / "Nebula.md", "fixture agent")
     os.write.over(pinned / "auth.json", "\"fixture-token\"")
+    // 读白名单补全（tool-results/uploads/logs/sessions/projects/agents）+ 凭据层 fixture：
+    // 正向样本（系统运行数据目录）与负向样本（根层凭据 + agent 私有记忆）齐备。
+    os.makeDir.all(pinned / "tool-results" / "tr-001")
+    os.write.over(pinned / "tool-results" / "tr-001" / "result.json", """{"ok":true,"needle":"NBX_TR_OK"}""")
+    os.makeDir.all(pinned / "uploads" / "u-001")
+    os.write.over(pinned / "uploads" / "u-001" / "report.txt", "upload body NBX_UP_OK")
+    os.makeDir.all(pinned / "logs")
+    os.write.over(pinned / "logs" / "nb.log", "log line NBX_LOG_OK")
+    os.makeDir.all(pinned / "sessions" / "s-001")
+    os.write.over(pinned / "sessions" / "s-001" / "session.json", """{"id":"s-001","needle":"NBX_SES_OK"}""")
+    os.makeDir.all(pinned / "projects" / "proj-a")
+    os.write.over(pinned / "projects" / "proj-a" / "project.json", """{"name":"proj-a","needle":"NBX_PRJ_OK"}""")
+    os.write.over(pinned / "projects" / "proj-a" / "AGENTS.md", "# proj-a agents NBX_AGENTS_MD_OK")
+    os.makeDir.all(pinned / "agents" / "Nebula")
+    os.write.over(pinned / "agents" / "Nebula" / "agent.json", """{"name":"Nebula"}""")
+    os.write.over(pinned / "agents" / "Nebula" / "system.md", "Nebula system NBX_SYS_OK")
+    os.write.over(pinned / "agents" / "Nebula" / "memory.md", "secret memory NBX_MEM_SECRET")
+    os.makeDir.all(pinned / "agents" / "Coder")
+    os.write.over(pinned / "agents" / "Coder" / "agent.json", """{"name":"Coder"}""")
+    os.write.over(pinned / "agents" / "Coder" / "memory.md", "coder memory NBX_CODER_MEM_SECRET")
+    // 根层凭据负向样本（vps.env/*.env/*credentials*/stt-config/model-presets/nebflow.json/User.md）
+    os.write.over(pinned / "vps.env", "VPS_SECRET=1")
+    os.write.over(pinned / "nebflow.json", "{}")
+    os.write.over(pinned / "User.md", "# user private")
+    os.write.over(pinned / "model-presets.json", "{}")
+    os.write.over(pinned / "stt-config.json", "{}")
+    os.write.over(pinned / "host-credentials.txt", "creds")
+    os.write.over(pinned / "deploy.env", "KEY=1")
     PathUtil.setDataRoot(pinned)
     pinnedDataRoot = Some(pinned)
     super.beforeEach(context)
@@ -85,14 +113,18 @@ class SandboxSpec extends CatsEffectSuite:
     assertEquals(nested.toString, (realTmp / "sub" / "new.txt").toString)
   }
 
-  test("A.2: readExtras 含系统目录与 ~/.nebflow 三子目录（skills/prompts/docs），不含根层凭据") {
+  test("A.2: readExtras 含系统目录与 ~/.nebflow 白名单九子目录，不含根层凭据") {
     val p = policyIn(os.Path(Files.createTempDirectory("nb-sbx-extras")))
     val extras = SandboxPolicy.readableRoots(p)
     assert(extras.contains(os.Path("/usr")))
     assert(extras.contains(os.Path("/private/etc")))
-    val skills = PathUtil.dataRoot / "skills"
-    assert(extras.exists(_.toString == SandboxPolicy.canonicalize(skills.wrapped).toString),
-      s"~/.nebflow/skills must be readable: $extras")
+    // 九个白名单子目录（H-12① 三目录 + 读白名单补全六目录）
+    val expected = List("skills", "prompts", "docs", "tool-results", "uploads", "logs", "sessions", "projects", "agents")
+    expected.foreach { d =>
+      val dir = PathUtil.dataRoot / d
+      assert(extras.exists(_.toString == SandboxPolicy.canonicalize(dir.wrapped).toString),
+        s"~/.nebflow/$d must be readable: $extras")
+    }
     // ~/.nebflow 根层不在读面（auth.json 等凭据拒读）
     assert(!extras.exists(_.toString == SandboxPolicy.canonicalize(PathUtil.dataRoot.wrapped).toString),
       s"~/.nebflow 根层不得进读面: $extras")
@@ -203,9 +235,10 @@ class SandboxSpec extends CatsEffectSuite:
       case Left(err) => fail(s"Grep 应成功（无命中也是成功态）: ${err.message}")
 
     // 搜索根本身指向 readableRoots 之外（~/.nebflow 根层）→ SANDBOX_DENIED。
-    // 注：不能用 tempdir 当「外部」——/private/var 在读面内，语义上可读。
+    // 注：不能用 tempdir 当「外部」——/private/var 在读面内，语义上可读；
+    // 也不能再用 dataRoot/agents（读白名单补全后已可读）。
     val deny = GlobTool.call(
-      JsonObject("pattern" -> "*.txt".asJson, "path" -> (PathUtil.dataRoot / "agents").toString.asJson),
+      JsonObject("pattern" -> "*.txt".asJson, "path" -> PathUtil.dataRoot.toString.asJson),
       ctx
     ).unsafeRunSync()
     deny match
@@ -310,6 +343,170 @@ class SandboxSpec extends CatsEffectSuite:
       case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
       case Right(_) => fail("~/.nebflow/auth.json 必须拒写")
   }
+
+  // ------------------------------------------------------------------
+  // 读白名单补全（2026-09 沙箱批·单件）：系统运行数据目录可读、凭据层拒读不变
+  // ------------------------------------------------------------------
+
+  private val newReadDirs = List(
+    "tool-results" -> "tr-001/result.json",
+    "uploads" -> "u-001/report.txt",
+    "logs" -> "nb.log",
+    "sessions" -> "s-001/session.json",
+    "projects" -> "proj-a/project.json",
+    "agents" -> "Nebula/agent.json"
+  )
+
+  test("READLIST+: 新六目录逐个可读（checkRead 正向断言，代表文件取自 fixture）") {
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-readlist"))
+    val ctx = ctxIn(tmp)
+    newReadDirs.foreach { case (dir, file) =>
+      val res = FileSandbox.checkRead(ctx, (PathUtil.dataRoot / dir / file).toString)
+      assert(res.isRight, s"~/.nebflow/$dir 必须可读: ${res.left.map(_.message)}")
+    }
+    // 深层子路径同样可读（projects/proj-a/AGENTS.md）
+    val agentsMd = FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "projects" / "proj-a" / "AGENTS.md").toString)
+    assert(agentsMd.isRight, s"projects 下 AGENTS.md 必须可读: ${agentsMd.left.map(_.message)}")
+  }
+
+  test("READLIST+: ReadTool 端到端读 tool-results 内容成功") {
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-readlist-e2e"))
+    val res = ReadTool.call(
+      JsonObject("file_path" -> (PathUtil.dataRoot / "tool-results" / "tr-001" / "result.json").toString.asJson),
+      ctxIn(tmp)
+    ).unsafeRunSync()
+    res match
+      case Right(content) => assert(content.contains("NBX_TR_OK"), content)
+      case Left(err) => fail(s"tool-results ReadTool 必须读通: ${err.message}")
+  }
+
+  test("READLIST-: 根层凭据逐个仍 SANDBOX_DENIED（vps.env/auth.json/nebflow.json/User.md + 通配样本）") {
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-cred"))
+    val ctx = ctxIn(tmp)
+    val denied = List(
+      "vps.env", "auth.json", "nebflow.json", "User.md",
+      "model-presets.json", "stt-config.json",
+      "host-credentials.txt", // *credentials* 通配样本
+      "deploy.env" // *.env 通配样本
+    )
+    denied.foreach { f =>
+      FileSandbox.checkRead(ctx, (PathUtil.dataRoot / f).toString) match
+        case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+        case Right(_) => fail(s"~/.nebflow/$f 凭据层必须拒读")
+    }
+  }
+
+  test("READLIST-: agents/ 目录开读但 memory.md 文件级例外拒读（Nebula 与 team agent 同规）+ Reason 行") {
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-mem"))
+    val ctx = ctxIn(tmp)
+    // 同目录非记忆文件可读
+    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "system.md").toString).isRight)
+    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "agent.json").toString).isRight)
+    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Coder" / "agent.json").toString).isRight)
+    // 私有记忆拒读（Nebula 断言样本 + 通配同规样本）
+    List("agents/Nebula/memory.md", "agents/Coder/memory.md").foreach { rel =>
+      FileSandbox.checkRead(ctx, (PathUtil.dataRoot / os.RelPath(rel)).toString) match
+        case Left(err) =>
+          assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+          assert(err.message.contains("private-memory deny rule"), s"应含 Reason 解释行: ${err.message}")
+        case Right(_) => fail(s"~/.nebflow/$rel 私有记忆必须拒读")
+    }
+  }
+
+  test("READLIST-: memory.md 不进可写根（写闸不受白名单影响）") {
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-memw"))
+    val ctx = ctxIn(tmp)
+    FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString) match
+      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+      case Right(_) => fail("agent 私有记忆必须拒写")
+  }
+
+  test("MUT: 变异验红——readExtras 剔除 tool-results 条目即拒读，恢复条目复绿") {
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-mut"))
+    val ctx = ctxIn(tmp)
+    val trFile = (PathUtil.dataRoot / "tool-results" / "tr-001" / "result.json").toString
+    // 基线绿
+    assert(FileSandbox.checkRead(ctx, trFile).isRight, "基线：tool-results 应可读")
+    // 变异（红）：等价于源码删除该白名单条目——从派生源 readExtras 剔除后
+    // readableRoots 不再含 tool-results，拒读
+    val trCanonical = os.Path(SandboxPolicy.canonicalize((PathUtil.dataRoot / "tool-results").wrapped))
+    val mutated = ctx.sandbox.copy(readExtras = ctx.sandbox.readExtras.filterNot(_.toString == trCanonical.toString))
+    FileSandbox.checkRead(ctxIn(tmp, mutated), trFile) match
+      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
+      case Right(_) => fail("变异后 tool-results 必须变红（白名单条目承重）")
+    // 恢复（绿）：policy 恢复原样 → 复绿
+    assert(FileSandbox.checkRead(ctx, trFile).isRight, "恢复后 tool-results 应复绿")
+  }
+
+  test("MSG: SANDBOX_DENIED 文案的 Readable roots 动态反映新白名单（无硬编码清单）") {
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-msg2"))
+    val res = FileSandbox.checkRead(ctxIn(tmp), (PathUtil.dataRoot / "vps.env").toString)
+    res match
+      case Left(err) =>
+        val rootsSeg = err.message.split("Readable roots: ")(1)
+        List("tool-results", "uploads", "logs", "sessions", "projects", "agents", "skills").foreach { d =>
+          assert(rootsSeg.contains(d), s"文案 Readable roots 应含 $d: ${err.message}")
+        }
+      case Right(_) => fail("vps.env 必须拒读（该用例验证拒读文案的 roots 动态性）")
+  }
+
+  test("READLIST+: Grep/Glob 遍历面——agents 根搜索可跑但扫不出 memory.md；tool-results 正常命中") {
+    assume(rgAvailable, "rg 不可用则跳过（Glob/Grep 依赖 ripgrep）")
+    val tmp = os.Path(Files.createTempDirectory("nb-sbx-trav"))
+    val ctx = ctxIn(tmp)
+
+    // Grep agents/ 子树（content 模式——负向断言看的是命中文本，非文件名）：
+    // 私有记忆内容不得命中，system.md 内容命中
+    val grep = GrepTool.call(
+      JsonObject(
+        "pattern" -> "NBX_.*_OK|NBX_.*_SECRET".asJson,
+        "path" -> (PathUtil.dataRoot / "agents").toString.asJson,
+        "output_mode" -> "content".asJson
+      ),
+      ctx
+    ).unsafeRunSync()
+    grep match
+      case Right(out) =>
+        assert(out.contains("NBX_SYS_OK"), s"应命中 system.md 内容: $out")
+        assert(!out.contains("NBX_MEM_SECRET"), s"私有记忆内容不得泄入 Grep: $out")
+        assert(!out.contains("NBX_CODER_MEM_SECRET"), s"team agent 记忆内容不得泄入 Grep: $out")
+      case Left(err) => fail(s"agents 根 Grep 应成功: ${err.message}")
+
+    // Grep tool-results/：新目录遍历读通（本次实证缺口的正向）
+    val grepTr = GrepTool.call(
+      JsonObject("pattern" -> "NBX_TR_OK".asJson, "path" -> (PathUtil.dataRoot / "tool-results").toString.asJson),
+      ctx
+    ).unsafeRunSync()
+    grepTr match
+      case Right(out) => assert(out.contains("result.json"), s"tool-results Grep 应命中: $out")
+      case Left(err) => fail(s"tool-results Grep 必须读通: ${err.message}")
+
+    // Glob agents/ 根：memory.md 不列出
+    val glob = GlobTool.call(
+      JsonObject("pattern" -> "**/*.md".asJson, "path" -> (PathUtil.dataRoot / "agents").toString.asJson),
+      ctx
+    ).unsafeRunSync()
+    glob match
+      case Right(out) =>
+        assert(out.contains("system.md"), s"Glob 应列出 system.md: $out")
+        assert(!out.contains("memory.md"), s"Glob 不得列出 memory.md: $out")
+      case Left(err) => fail(s"agents 根 Glob 应成功: ${err.message}")
+
+    // 用户 include glob 不得压过记忆排除（rg last-match-wins：排除参数必须后置）
+    val grepGlob = GrepTool.call(
+      JsonObject(
+        "pattern" -> "SECRET".asJson,
+        "path" -> (PathUtil.dataRoot / "agents").toString.asJson,
+        "output_mode" -> "content".asJson,
+        "glob" -> "*.md".asJson
+      ),
+      ctx
+    ).unsafeRunSync()
+    grepGlob match
+      case Right(out) => assert(!out.contains("NBX_MEM_SECRET"), s"用户 glob 不得放行 memory.md: $out")
+      case Left(err) => fail(s"带用户 glob 的 Grep 应成功: ${err.message}")
+  }
+
 
   // ------------------------------------------------------------------
   // probe 失败：fail-closed（默认）/ 显式降级（§A.4-4）
