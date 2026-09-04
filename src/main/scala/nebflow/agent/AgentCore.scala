@@ -2067,11 +2067,6 @@ object AgentCore:
     "Bash"
   )
 
-  /** 通用模版固定工具集（§C.1/§C.5，裁定 5 原文 8 件）：BaseTools 六件 + 用户
-    * 面 AskUserQuestion/Pop。定义在 BaseTools 之后（val 初始化顺序依赖）。
-    * Web 系不在 8 件内——经 §B.6 plugin 扩展授予；MultiEdit 已从 ToolRegistry
-    * 删除（能力由 Edit replace_all 覆盖）。 */
-
   /** Team task tools（任务工具重做 2026-08-30：category=team 机制层注入
     * 全体成员——Manager 与成员同级可用，任务=进展展示语义；不再是 lead 专属
     * owner 集。SubTask workers / flow nodes / depth≥2 "*" agents 仍剥离）。 */
