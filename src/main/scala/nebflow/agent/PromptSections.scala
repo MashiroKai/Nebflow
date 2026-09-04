@@ -72,6 +72,9 @@ object PromptSections:
     taskListText: String = "",
     /** Inherited project rules text (from folder chain). */
     rulesMd: Option[String] = None,
+    /** Workspace-root AGENTS.md (§E.2; project dispatcher + node sessions only,
+      * resolved per turn in ContextRefresher.resolveAgentsMd). */
+    agentsMd: Option[String] = None,
     /** True when this agent is a SubTask worker (leaf execution pipeline). */
     isSubTaskWorker: Boolean = false,
     /** 轨道二 #5: dedicatedAgents guardrails flag (hot-read per turn). */
@@ -302,6 +305,15 @@ object PromptSections:
       810,
       condition = _.memoryBlock.nonEmpty,
       renderer = _.memoryBlock
+    ),
+
+    // --- Project instructions (§E.2, order 895) ---
+    // AGENTS.md 是工作指令、NEBFLOW.md/rules.md 是平台规则——工作指令在前，
+    // 规则优先级更高故靠后（order 900）。内容每 turn 由 ContextRefresher 重读盘。
+    PromptSection.dynamic(
+      895,
+      condition = _.agentsMd.isDefined,
+      renderer = ctx => s"# Project Instructions (AGENTS.md)\n\n${ctx.agentsMd.get}"
     ),
 
     // --- Project rules ---
