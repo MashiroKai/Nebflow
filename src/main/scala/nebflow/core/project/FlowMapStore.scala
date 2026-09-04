@@ -120,11 +120,24 @@ class FlowMapStore private (
   private def normalizeOut(n: NodeDef): NodeDef =
     n.copy(out = n.out.map(_.trim).filterNot(_.equalsIgnoreCase("null")).filter(_.nonEmpty))
 
+  /** H-11①（阶段 2b）：存量 flow-map 节点的旧 skill/mcp 字段——加载时告警 +
+    * 仅作展示（deprecated，NodeEdit 已拒写，无自动映射）。字段保留不动。 */
+  private def warnLegacySkillMcp(s: FlowMapState): Unit =
+    val legacy = s.nodes.values.filter(n => n.skill.isDefined || n.mcp.isDefined).toList
+    legacy.foreach(n =>
+      logger.warnSync(
+        s"Node '${n.name}' (${n.id}) carries deprecated skill/mcp fields (skill=${n.skill.getOrElse("-")}, mcp=${n.mcp.getOrElse("-")}) — " +
+          "deprecated since phase 2b (ruling H-11①): display only, NodeEdit no longer accepts them; allocate plugins instead"))
+    if legacy.nonEmpty then logger.warnSync(s"flow-map '$project': ${legacy.size} node(s) with legacy skill/mcp values (display only)")
+
   private def loadInitial(): IO[FlowMapState] =
     IO.blocking {
       if os.exists(statePath) then
         jsonParse(os.read(statePath)).flatMap(_.as[FlowMapState]) match
-          case Right(s) => s.copy(nodes = s.nodes.transform((_, n) => normalizeOut(n)))
+          case Right(s) =>
+            val normalized = s.copy(nodes = s.nodes.transform((_, n) => normalizeOut(n)))
+            warnLegacySkillMcp(normalized)
+            normalized
           case Left(e) =>
             logger.warnSync(s"flow-map.json corrupt: $e — starting empty")
             FlowMapState(project = project, updatedAt = System.currentTimeMillis())

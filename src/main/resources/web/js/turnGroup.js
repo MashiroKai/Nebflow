@@ -170,6 +170,31 @@ function fillSummary(built, meta) {
 }
 
 /**
+ * Banner dedupe (2026-09-04 user ruling): the decorative stats bar stacks
+ * one-per-turn in multi-turn sessions — the whole session must show only the
+ * LATEST turn's bar(s). Render-level only: superseded bars STAY in the DOM
+ * (collapse structure and E10 message-search expand keep working; #403
+ * closed groups keep byte-stable innerHTML) and are hidden by CSS through a
+ * marker class on the GROUP element — never on its children, so the closed-
+ * group innerHTML identity asserted by turn-collapse-keep-text 验收 b is
+ * untouched. `keep` = the groups whose bars stay visible (the live turn just
+ * completed, or the last banner-bearing history segment); every other
+ * summary-bearing group gets `turn-banner-superseded`.
+ *
+ * @param {HTMLElement} chat
+ * @param {HTMLElement[]} keep
+ */
+function applyLatestBannerOnly(chat, keep) {
+  const keepSet = new Set(keep);
+  const groups = Array.from(chat.children)
+    .filter(el => el.classList && el.classList.contains('turn-group'));
+  for (const g of groups) {
+    if (!g.querySelector('.turn-summary')) continue; // failed groups carry no bar
+    g.classList.toggle('turn-banner-superseded', !keepSet.has(g));
+  }
+}
+
+/**
  * Turn scope for a terminal event (#346 + #403): the rows that belong to the
  * turn now ending.
  *
@@ -251,6 +276,10 @@ export function collapseTurn(view, meta = {}) {
     if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80) {
       chat.scrollTop = chat.scrollHeight;
     }
+    // Banner dedupe (2026-09-04): this turn's bars replace all earlier
+    // turns' bars visually. A turn that built no bar (E5 text-only, lone
+    // injection) leaves the previous latest bar in place.
+    applyLatestBannerOnly(chat, builtGroups.map(b => b.group));
   }
   markClosed(chat); // #403: LLM ended — the turn is closed even when there
                     // was nothing to group (E5/E6); later arrivals are a new turn.
@@ -338,8 +367,15 @@ export function buildTurnGroupsForHistory(chat, opts = {}) {
   const { busyTail = false } = opts;
   const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
   let segStart = 0;
+  // Banner dedupe (2026-09-04): remember the LAST segment that produced
+  // summary bars — its bars stay visible, all earlier segments' bars are
+  // hidden after the rebuild (identical semantics to the live path).
+  let lastBannerGroups = null;
   const flush = (end) => {
-    if (end > segStart) groupSegment(chat, rows.slice(segStart, end));
+    if (end > segStart) {
+      const banners = groupSegment(chat, rows.slice(segStart, end));
+      if (banners.length) lastBannerGroups = banners;
+    }
   };
   rows.forEach((r, i) => {
     // Turn boundary = non-injected user row (injected messages are process).
@@ -364,13 +400,14 @@ export function buildTurnGroupsForHistory(chat, opts = {}) {
   } else {
     markClosed(chat);
   }
+  if (lastBannerGroups) applyLatestBannerOnly(chat, lastBannerGroups);
 }
 
 function groupSegment(chat, seg) {
-  if (!hasAgentWork(seg)) return; // lone injection / no agent work — leave flat
+  if (!hasAgentWork(seg)) return []; // lone injection / no agent work — leave flat
   const finalRow = findFinalRow(seg);
   const runs = collapsibleRuns(seg);
-  if (runs.length === 0) return; // E5: nothing collapsible (text-only turn)
+  if (runs.length === 0) return []; // E5: nothing collapsible (text-only turn)
   // E4 P0: success = some Ai row in the segment carries a done-badge
   // (SessionRecorder backfills durationMs on done — the implicit marker).
   // v1.2: footers are time + copy only, so phrase/model ride on the badge's
@@ -386,6 +423,8 @@ function groupSegment(chat, seg) {
   // A5: failed segments build the group WITHOUT a summary element.
   // 2026-09-03: one group per collapsible run — assistant text rows between
   // runs stay flat at their original positions (live/rebuild parity).
+  /** @type {HTMLElement[]} */
+  const bannerGroups = [];
   for (const run of runs) {
     const built = buildGroup(chat, run, finalRow, meta, success);
     if (!built) continue;
@@ -394,11 +433,13 @@ function groupSegment(chat, seg) {
       built.group.dataset.turnState = 'done';
       built.steps.style.display = 'none';
       built.summary.setAttribute('aria-expanded', 'false');
+      bannerGroups.push(built.group);
     } else {
       built.group.dataset.turnState = 'failed';
       built.group.classList.add('turn-failed');
     }
   }
+  return bannerGroups;
 }
 
 /** The turn's implicit done-marker: an AI footer badge carrying a duration
