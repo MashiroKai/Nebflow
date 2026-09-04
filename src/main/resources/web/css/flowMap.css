@@ -50,13 +50,36 @@
   background: var(--color-bg);
 }
 
-.flowmap-card .solar-scroll {
-  flex: 1;
-  overflow: auto;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 20px;
+/* ── 固定视口 + 相机（v1 交互壳规格 §2.1/§3.1：零滚动条，滚轮=CAD 式缩放）──
+   .fm-viewport 取代旧 .solar-scroll（overflow:auto 滚动范式退场）：overflow:hidden
+   固定视口，相机 transform 由 flowMapTab.js 单点写在世界（.solar-canvas）上。
+   就地视图宿主（.flowmap-view-body flex column 有界）：视口 flex:1 随卡填充；
+   legacy 独立标签页宿主（.team-scroll flex-wrap 无高度约束）：视口自带确定高度。 */
+.fm-viewport {
+  position: relative;
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none; /* 指针拖拽平移（C4）不被浏览器手势劫持 */
+}
+.flowmap-card .fm-viewport { height: clamp(420px, calc(100vh - 230px), 780px); }
+.flowmap-view-body .fm-viewport { height: auto; }
+
+/* 相机宿主（世界）：缩放以画布中心为 CSS origin——与 margin:0 auto 居中、
+   WS 重排 width/height 0.4s 过渡、animateGTranslate 同曲线补偿全部兼容，
+   「世界中心点屏幕位置不变」在任何 scale 下成立（CAD 锚点数学的前提）。 */
+.flowmap-card .solar-canvas {
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+/* fit/focus 相机动画（280ms）走此类；wheel/拖拽零动画（直接操作，§4）。
+   内联 width/height 过渡一并声明：transform 过渡期间不丢既有的重排过渡。 */
+.flowmap-card .solar-canvas.fm-cam-anim {
+  transition: transform 0.28s cubic-bezier(0.33, 0, 0.2, 1),
+    width 0.4s cubic-bezier(0.645, 0.045, 0.355, 1),
+    height 0.4s cubic-bezier(0.645, 0.045, 0.355, 1);
 }
 
 /* 节点卡片（复用 .solar-node，扩展字段）
@@ -320,8 +343,9 @@
 .flow-edge.fm-edge { transition: stroke 0.35s ease, stroke-width 0.35s ease, opacity 0.35s ease; }
 .fm-edge-arrow { transition: fill 0.35s ease, opacity 0.35s ease; }
 
-/* 画布尺寸：节点增删触发重排时宽度连续过渡（.solar-scroll 居中偏移随之连续，
-   配合节点 left 过渡整图不横跳）。仅限 flow-map 卡片，flow-run 不动。 */
+/* 画布尺寸：节点增删触发重排时宽度连续过渡（margin:0 auto 居中偏移随之连续，
+   配合节点 left 过渡整图不横跳；相机 transform-origin=中心故任意 scale 下同样成立）。
+   仅限 flow-map 卡片，flow-run 不动。相机动画期由 .fm-cam-anim 并入 transform 过渡。 */
 .flowmap-card .solar-canvas {
   transition: width 0.4s cubic-bezier(0.645, 0.045, 0.355, 1),
     height 0.4s cubic-bezier(0.645, 0.045, 0.355, 1);
@@ -710,6 +734,31 @@
   border-color: rgb(var(--sapphire) / 0.5);
 }
 
+/* ══ L1 hover 局部强调（v1 交互壳规格 §3.2 N1：focus+context 三级渐进中间级）══
+   自身 .fm-hi（scale 1.12 + 投影抬升）、直接邻居 .fm-nb（1.06 + 描边提色）、
+   其余 .fm-dim（opacity .15）；边按端点 .fm-edge-hi（加粗提亮）/ .fm-edge-dim（.06）。
+   过渡复用既有节点 transform/opacity 与边 stroke/width/opacity 过渡，零新增动画。
+   本块排在 .fm-adj/.terminal 之后：dim 需压过 terminal 的 .78 透明度（同特异度后胜）。 */
+.solar-node.fm-node.fm-hi {
+  transform: scale(1.12);
+  border-color: rgb(var(--sapphire) / 0.45);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);
+  z-index: 2;
+}
+.solar-node.fm-node.fm-nb {
+  transform: scale(1.06);
+  border-color: rgb(var(--sapphire) / 0.35);
+}
+.solar-node.fm-node.fm-dim { opacity: 0.15; }
+.flow-edge.fm-edge.fm-edge-hi { stroke-width: 2.5; opacity: 1; }
+.fm-edge-arrow.fm-edge-hi { opacity: 1; }
+.flow-edge.fm-edge.fm-edge-dim { opacity: 0.06; }
+.fm-edge-arrow.fm-edge-dim { opacity: 0.08; }
+
+/* 退场优先于 hover 强调（链齐退场瞬间 hover 残留类不得改变退场终态——
+   重申同值规则，靠源顺序压过上方 .fm-hi/.fm-nb 的 transform 与 .fm-dim 的 opacity） */
+.solar-node.fm-node.fm-exit { opacity: 0; transform: scale(0.8); pointer-events: none; }
+
 /* 图例：链未齐终态保留卡项（v3 取代锚点图例；A2 反向断言：无任何锚点项）*/
 .fm-legend-swatch.terminal {
   width: 14px; height: 10px; border-top: none;
@@ -723,4 +772,7 @@
   .fm-archive-badge.pulse, .fm-entry.flash { animation: none; }
   .fm-entry-chev { transition: none; }
   .solar-node.fm-node.fm-adj { transform: none; }
+  /* 相机/hover 降级：位移类强调取消（仅剩透明度），相机动画直达 */
+  .solar-node.fm-node.fm-hi, .solar-node.fm-node.fm-nb { transform: none; }
+  .flowmap-card .solar-canvas.fm-cam-anim { transition: none; }
 }
