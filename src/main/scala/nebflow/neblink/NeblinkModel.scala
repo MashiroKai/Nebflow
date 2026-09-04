@@ -307,26 +307,32 @@ end NeblinkConfig
 
 // ===== A2A 好友与消息域类型（spec §6.1 REST 响应，客户端侧解码） =====
 
-/** 好友/搜索结果卡（/api/users/lookup 与 /api/friends 共用形态）。 */
+/** 好友/搜索结果卡（/api/users/lookup 与 /api/friends 共用形态）。
+  * blocked：#290 §1.2 拉黑行透传（仅 GET /api/friends 的 friends 数组携带，
+  * absent = 未拉黑）——此前该字段被网关丢弃，web 端只能靠 localStorage 镜像。 */
 case class FriendSummary(
   userId: String,
   neblinkId: String,
   name: String,
   avatarUrl: Option[String] = None,
-  since: Option[Long] = None
+  since: Option[Long] = None,
+  blocked: Option[Boolean] = None
 )
 
-/** 收到的好友请求（incoming 分组）。 */
+/** 收到的好友请求（incoming 分组）。createdAt：请求时间透传（#290 0904 批次
+  * UI 打磨——申请行时间显示；旧上游无此字段时为 None）。 */
 case class FriendRequestSummary(
   requestId: String,
   from: FriendSummary,
-  note: Option[String] = None
+  note: Option[String] = None,
+  createdAt: Option[Long] = None
 )
 
 /** 发出的好友请求（outgoing 分组）。 */
 case class OutgoingRequestSummary(
   requestId: String,
-  to: FriendSummary
+  to: FriendSummary,
+  createdAt: Option[Long] = None
 )
 
 case class FriendListResponse(
@@ -356,11 +362,60 @@ case class ConversationCursor(conversationId: String, lastReadMessageId: Long, u
 object FriendCodecs:
   import io.circe.Decoder
   import io.circe.Encoder
+  import io.circe.HCursor
   import io.circe.generic.semiauto.*
 
-  given Decoder[FriendSummary] = deriveDecoder
-  given Decoder[FriendRequestSummary] = deriveDecoder
-  given Decoder[OutgoingRequestSummary] = deriveDecoder
+  // ── 容错解码（2026-09-04 审计修复：契约不对齐会毁掉整个列表） ──
+  // Rust 侧 wire 形态（neblink-server model.rs）与早先 spec 形态有三处偏差：
+  //  ① FriendRequestEntry/Outgoing 用 #[serde(flatten)] 把 profile 铺平
+  //     （无 from/to 嵌套）——deriveDecoder 的非 Option `from` 字段直接
+  //     DecodingFailure → 整个 GET /api/friends 折叠为空列表；
+  //  ② FriendPublic.neblink_id/name 均为 Option（存量 GitHub 账号 NULL）——
+  //     null 打到非 Option String 上同样整表失败；
+  //  ③ 请求条目带 created_at（新增透传）。
+  // 自定义 Decoder 同时吃两种形态（flat 优先兜底嵌套缺席），空值折叠为 ""，
+  // 单行坏数据不再毁整表；web 端本就有 `||` 回退显示。网关对 web 的出参
+  // 契约（from/to 嵌套）由 Encoder 保持不变。
+
+  private[neblink] def flatFriendSummary(c: HCursor): Decoder.Result[FriendSummary] =
+    c.get[String]("userId").map(userId =>
+      FriendSummary(
+        userId,
+        c.get[Option[String]]("neblinkId").getOrElse(None).getOrElse(""),
+        c.get[Option[String]]("name").getOrElse(None).getOrElse(""),
+        c.get[Option[String]]("avatarUrl").getOrElse(None),
+        c.get[Option[Long]]("since").getOrElse(None),
+        c.get[Option[Boolean]]("blocked").getOrElse(None)
+      ))
+
+  given Decoder[FriendSummary] = Decoder.instance { c =>
+    for
+      userId  <- c.get[String]("userId")
+      neblink <- c.get[Option[String]]("neblinkId")
+      name    <- c.get[Option[String]]("name")
+      avatar  <- c.get[Option[String]]("avatarUrl")
+      since   <- c.get[Option[Long]]("since")
+      blocked <- c.get[Option[Boolean]]("blocked")
+    yield FriendSummary(userId, neblink.getOrElse(""), name.getOrElse(""), avatar, since, blocked)
+  }
+
+  given Decoder[FriendRequestSummary] = Decoder.instance { c =>
+    for
+      requestId <- c.get[String]("requestId")
+      from      <- c.downField("from").as[FriendSummary].orElse(flatFriendSummary(c))
+      note      <- c.get[Option[String]]("note")
+      createdAt <- c.get[Option[Long]]("createdAt")
+    yield FriendRequestSummary(requestId, from, note, createdAt)
+  }
+
+  given Decoder[OutgoingRequestSummary] = Decoder.instance { c =>
+    for
+      requestId <- c.get[String]("requestId")
+      to        <- c.downField("to").as[FriendSummary].orElse(flatFriendSummary(c))
+      createdAt <- c.get[Option[Long]]("createdAt")
+    yield OutgoingRequestSummary(requestId, to, createdAt)
+  }
+
   given Decoder[FriendListResponse] = deriveDecoder
   given Decoder[MessageSummary] = deriveDecoder
   given Decoder[ConversationSummary] = deriveDecoder

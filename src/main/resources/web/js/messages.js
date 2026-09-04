@@ -22,6 +22,18 @@ let triggeringConvId = null;    // row may be re-rendered after open (unread cle
 const forwardedIds = new Set(); // session-persistent 「已转发」 chips (§3.3)
 let msgSeq = 0;
 
+// ── 历史分页（0904 批次：加载更早消息）────────────────
+// Server keyset is forward-only (store.rs list_messages: id > after ASC LIMIT
+// limit, clamp 1..200 — no before/desc). 「Load older」 therefore walks BACKWARD
+// in id-windows: after = oldestLoaded - 1 - WINDOW. Message ids are table-wide
+// AUTOINCREMENT (gaps possible when other conversations interleave) — an empty
+// window auto-steps further back (bounded). Window edge = id 1 → history start.
+const HISTORY_WINDOW = 200;
+let chatMsgs = [];              // ascending messages currently loaded in the modal
+let oldestLoadedId = 0;         // keyset anchor for load-more
+let hasMoreHistory = false;
+let loadingHistory = false;
+
 function loggedIn() { return !!getNeblinkState().loggedIn; }
 
 function el(tag, cls, text) {
@@ -202,12 +214,19 @@ async function openConversation(conversationId, rowEl) {
   openConvId = conversationId;
   renderChatModal(conv);
 
-  // Load history, then mark read at the newest rendered message (§4 read cursor)
+  // Initial window: anchor on the conversation list's cached newest message id
+  // and take one window backwards (after = anchor - WINDOW). Missing anchor
+  // (fresh/empty conversation) → from 0, which is then the entire history.
+  const anchor = Number(conv.lastMessage && conv.lastMessage.id);
+  const after = Number.isFinite(anchor) && anchor > HISTORY_WINDOW ? anchor - HISTORY_WINDOW : 0;
   let msgs = [];
-  try { msgs = await api.getMessages(conversationId); } catch { /* empty */ }
+  try { msgs = await api.getMessages(conversationId, { after, limit: HISTORY_WINDOW }); } catch { /* empty */ }
   if (openConvId !== conversationId) return; // replaced meanwhile
-  renderMessages(msgs);
-  const last = msgs[msgs.length - 1];
+  chatMsgs = msgs.slice();
+  oldestLoadedId = chatMsgs.length ? (Number(chatMsgs[0].id) || 0) : 0;
+  hasMoreHistory = chatMsgs.length > 0 && oldestLoadedId > 1;
+  renderMessages(chatMsgs);
+  const last = chatMsgs[chatMsgs.length - 1];
   if (last) {
     conv.unreadCount = 0;
     api.markConversationRead(conversationId, last.id).catch(() => {});
@@ -279,6 +298,12 @@ function renderChatModal(conv) {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
   modalEls = { overlay, flow, input, sendBtn, toast, offline, conv };
+  // Fresh modal → reset history-window state (a stale older conversation's
+  // tail must never leak into this one).
+  chatMsgs = [];
+  oldestLoadedId = 0;
+  hasMoreHistory = false;
+  loadingHistory = false;
 
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeChat(); });
   document.addEventListener('keydown', escClose);
@@ -363,14 +388,91 @@ function renderMessages(msgs) {
   const conv = currentConv();
   if (!conv) return;
   modalEls.flow.innerHTML = '';
+  updateLoadMoreRow();
   for (const m of msgs) modalEls.flow.appendChild(bubbleEl(m, conv));
   createIconsIn(modalEls.flow);
   modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
 }
 
+// ── 加载更早消息（keyset id-window backward walk）────────
+function updateLoadMoreRow() {
+  if (!modalEls) return;
+  modalEls.flow.querySelector('.fm-load-more-row')?.remove();
+  if (!hasMoreHistory) return;
+  const row = el('div', 'fm-load-more-row');
+  const btn = el('button', 'glass-control fm-load-more', t('messages.loadingOlder'));
+  btn.addEventListener('click', loadOlderMessages);
+  row.appendChild(btn);
+  modalEls.flow.insertBefore(row, modalEls.flow.firstChild);
+}
+
+function setLoadMoreState(state) {
+  const btn = modalEls && modalEls.flow.querySelector('.fm-load-more');
+  if (!btn) return;
+  btn.disabled = state === 'loading';
+  btn.textContent = state === 'loading' ? t('messages.loading') : t('messages.loadingOlder');
+}
+
+async function loadOlderMessages() {
+  if (!modalEls || !hasMoreHistory || loadingHistory) return;
+  const convId = openConvId;
+  if (!convId) return;
+  loadingHistory = true;
+  setLoadMoreState('loading');
+  try {
+    let fetched = [];
+    let after = Math.max(0, oldestLoadedId - 1 - HISTORY_WINDOW);
+    let steps = 0;
+    // Ids are table-wide AUTOINCREMENT — a window may contain zero messages of
+    // THIS conversation (ids owned by others). Auto-step further back, bounded.
+    while (steps < 20) {
+      fetched = await api.getMessages(convId, { after, limit: HISTORY_WINDOW });
+      if (openConvId !== convId) return; // modal replaced mid-flight
+      if (fetched.length > 0 || after <= 0) break;
+      after = Math.max(0, after - HISTORY_WINDOW);
+      steps++;
+    }
+    if (openConvId !== convId || !modalEls) return;
+    const existing = new Set(chatMsgs.map(x => String(x.id)));
+    const fresh = fetched.filter(m => !existing.has(String(m.id)));
+    if (fresh.length) {
+      chatMsgs = fresh.concat(chatMsgs);
+      oldestLoadedId = Number(chatMsgs[0].id) || oldestLoadedId;
+      hasMoreHistory = oldestLoadedId > 1;
+      prependMessages(fresh);
+    } else {
+      // Nothing found all the way to id 0 → this is the history start.
+      hasMoreHistory = after > 0;
+    }
+  } catch { /* keep state; button stays for retry */ }
+  loadingHistory = false;
+  if (modalEls) {
+    if (hasMoreHistory) setLoadMoreState('idle');
+    else updateLoadMoreRow(); // removes the row (history start reached)
+  }
+}
+
+/** Prepend older bubbles keeping the viewport anchored on the messages the
+ *  user is looking at (classic scrollHeight-delta compensation). */
+function prependMessages(older) {
+  if (!modalEls) return;
+  const conv = currentConv();
+  if (!conv) return;
+  const flow = modalEls.flow;
+  const prevHeight = flow.scrollHeight;
+  const prevTop = flow.scrollTop;
+  const frag = document.createDocumentFragment();
+  for (const m of older) frag.appendChild(bubbleEl(m, conv));
+  const anchor = flow.querySelector('.fm-load-more-row');
+  flow.insertBefore(frag, anchor ? anchor.nextSibling : flow.firstChild);
+  createIconsIn(flow);
+  flow.scrollTop = flow.scrollHeight - prevHeight + prevTop;
+}
+
 function appendMessage(m) {
   const conv = currentConv();
   if (!modalEls || !conv) return;
+  if (!chatMsgs.some(x => String(x.id) === String(m.id))) chatMsgs.push(m);
   modalEls.flow.appendChild(bubbleEl(m, conv));
   createIconsIn(modalEls.flow);
   modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
@@ -398,7 +500,14 @@ function forwardBubble(wrap, conv) {
     },
     content: { fullText: body.slice(0, 4000) },
   });
-  if (!ref || !appendRefToActiveView(ref)) return;
+  if (!ref) return;
+  // No ACTIVE chat view (nothing open in the main window) → appendRef returns
+  // false. Never silent: guide the user to open a session first (0904 audit
+  // break-point fix — previously a silent no-op).
+  if (!appendRefToActiveView(ref)) {
+    modalToast(t('messages.forwardNoSession'));
+    return;
+  }
   modalToast(t('messages.forwardToast'));
 }
 
