@@ -31,14 +31,15 @@ import {
   notifyChainRetained, notifyChainArchived,
 } from './flowMapArchive.js';
 
-// 布局常量（复用 flowDag 视觉节奏）
-// V_SPACING 150 → 180：节点卡片改为按内容伸展后（带 result 摘要的卡片可达 ~134px），
-// 150 的层间距只剩 16px 空隙，上下卡片几乎贴住；180 恢复呼吸感。
-const NODE_W = 150;
+// 布局常量（紧凑化：作者 2026-09-04 裁定「层级从上到下、连线竖直/曲线、压缩冗余空白」）
+// NODE_W 对齐真实卡宽（FLOW_CSS .solar-node width:124px）——旧值 150 让布局数学
+// 虚胖 26px/卡（水平净距虚增）；V_SPACING 150：典型卡高 88-105px 时层间净距 45-62px，
+// 最厚卡（result+等待脚注 ~134px）仍 +16px 不重叠；H_SPACING 168 → 水平净距 44px。
+const NODE_W = 124;
 const NODE_H = 108;
-const V_SPACING = 180;
-const H_SPACING = 210;
-const PAD = 70;
+const V_SPACING = 150;
+const H_SPACING = 168;
+const PAD = 48;
 
 // 增量动画节奏：节点位移走 CSS left/top 过渡、边端点跟随走 rAF 插值，两者同曲线
 // （easeInOutCubic ≙ cubic-bezier(0.645,0.045,0.355,1)）同时长，视觉上同步滑动。
@@ -69,6 +70,292 @@ const exitAnimating = new Set();
 
 function bumpGen(project) {
   genByProject.set(project, (genByProject.get(project) || 0) + 1);
+}
+
+// ══ 相机（固定视口 + CAD 式鼠标跟随缩放，v1 交互壳规格 §3.1 C1-C8）════
+// 视口 = .fm-viewport（overflow:hidden）；相机 transform 直接作用于 .solar-canvas：
+// translate(tx,ty) scale(s)，transform-origin 50% 50%（画布中心）。
+// 缩放不变量（作者裁定「缩放前后鼠标下的内容屏幕位置不变」，固定中心缩放已否决）：
+//   screen(L) = Wc + s·(L − C) + T   ——L 世界点（画布局部坐标）、C 画布中心（局部）、
+//   Wc = 画布未变换时中心在视口坐标的位置（由 offsetLeft/offsetWidth 得出，与相机无关）
+// 锚点缩放（C3）：P 点缩放前后命中的世界点不变 ⇒ T′ = P − Wc − (s′/s)(P − Wc − T)
+// 状态 = { s, tx, ty, autoFit, fitS }；autoFit 态布局变化跟随重算 fit（C1），
+// 任何 wheel/拖拽转入 userNav（C2）；双击空白回 fit（C5）。
+// WS 全量重渲（innerHTML 换画布）后按「视口中心世界点 q」恢复相机——userNav 不丢位。
+
+const camByViewport = new WeakMap();
+const CAM_MIN_FACTOR = 0.4;   // C8 触界下限：fitScale × 0.4
+const CAM_MAX_S = 4.0;        // C8 触界上限
+const FOCUS_S = 1.6;          // C6/N3 点击选中目标倍率：max(当前, 1.6)
+const CAM_ANIM_MS = 280;      // §4 fit/focus 相机动画；wheel/平移零动画（直接操作）
+
+const clampNum = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+/** 画布未变换时中心在视口坐标的位置——从 getBoundingClientRect 精确反解：
+ *  变换后 rect 中心（视口局部）= Wc + T（与 scale 无关），故 Wc = rect 中心 − T。
+ *  不用 offsetLeft/offsetWidth（整数取整），半像素误差经 (s′/s−1) 放大会破坏
+ *  CAD 锚点 ±1px 断言。 */
+function camWorldCenter(vp, canvas, cam) {
+  const r = canvas.getBoundingClientRect();
+  const vr = vp.getBoundingClientRect();
+  return {
+    x: r.left + r.width / 2 - vr.left - (cam ? cam.tx : 0),
+    y: r.top + r.height / 2 - vr.top - (cam ? cam.ty : 0),
+  };
+}
+
+/** 画布中心（局部坐标，style 宽高为我方写入的整数值，精确）。 */
+function camCanvasHalf(canvas) {
+  return { x: parseFloat(canvas.style.width || '') / 2 || canvas.offsetWidth / 2, y: parseFloat(canvas.style.height || '') / 2 || canvas.offsetHeight / 2 };
+}
+
+/** 视口坐标 → 世界点（画布局部坐标）。 */
+function camWorldAt(vp, canvas, cam, px, py) {
+  const wc = camWorldCenter(vp, canvas, cam);
+  const c = camCanvasHalf(canvas);
+  return { x: c.x + (px - wc.x - cam.tx) / cam.s, y: c.y + (py - wc.y - cam.ty) / cam.s };
+}
+
+/** 应用相机到画布。animate=true（fit/focus）走 280ms 相机曲线并落 .fm-cam-anim
+ *  类（与既有画布宽高 0.4s 过渡并存）；false（wheel/平移/恢复）直接写 style。 */
+function camApply(vp, canvas, cam, animate) {
+  vp.dataset.fmCamera = cam.autoFit ? 'autofit' : 'usernav';
+  vp.dataset.fitScale = cam.fitS.toFixed(3);
+  const reduced = prefersReducedMotion();
+  if (animate && !reduced) {
+    canvas.classList.add('fm-cam-anim');
+    clearTimeout(canvas.__fmCamAnimTimer);
+    canvas.__fmCamAnimTimer = setTimeout(() => canvas.classList.remove('fm-cam-anim'), CAM_ANIM_MS + 80);
+  } else {
+    canvas.classList.remove('fm-cam-anim');
+  }
+  canvas.style.transform = `translate(${cam.tx.toFixed(2)}px, ${cam.ty.toFixed(2)}px) scale(${cam.s.toFixed(4)})`;
+}
+
+/** 计算 fit 相机（世界居中收进视口，A2）：scale = min(视口内边距后宽高比, 1)。 */
+function camFit(vp, canvas, cur) {
+  const W = parseFloat(canvas.style.width || '') || 360, H = parseFloat(canvas.style.height || '') || 240;
+  const vw = vp.clientWidth, vh = vp.clientHeight;
+  if (vw <= 0 || vh <= 0) return null; // 隐藏 pane：无从 fit（打开/刷新路径会重算）
+  const fitS = clampNum(Math.min((vw - 64) / W, (vh - 64) / H, 1), 0.2, 1);
+  const wc = camWorldCenter(vp, canvas, cur);
+  return { s: fitS, tx: vw / 2 - wc.x, ty: vh / 2 - wc.y, autoFit: true, fitS };
+}
+
+/** 记住「当前视口中心对着的世界点」，供全量重渲后恢复（防 userNav 丢位）。 */
+function camRemember(vp, canvas, cam) {
+  cam.__q = camWorldAt(vp, canvas, cam, vp.clientWidth / 2, vp.clientHeight / 2);
+}
+
+/** 按记忆的世界点恢复相机（新画布尺寸下重新解 T）。无记忆（首次）→ fit。 */
+function camRestore(vp, canvas) {
+  const prev = camByViewport.get(vp);
+  if (prev && prev.__q && vp.clientWidth > 0) {
+    const wc = camWorldCenter(vp, canvas, null);
+    const c = camCanvasHalf(canvas);
+    const cam = {
+      s: prev.s, autoFit: false, fitS: prev.fitS,
+      tx: vp.clientWidth / 2 - wc.x - (prev.__q.x - c.x) * prev.s,
+      ty: vp.clientHeight / 2 - wc.y - (prev.__q.y - c.y) * prev.s,
+    };
+    cam.__q = prev.__q;
+    camByViewport.set(vp, cam);
+    camApply(vp, canvas, cam, false);
+    return cam;
+  }
+  const cam = camFit(vp, canvas);
+  if (!cam) return null;
+  camByViewport.set(vp, cam);
+  camApply(vp, canvas, cam, false);
+  return cam;
+}
+
+/** wheel 缩放（C3：锚点=光标，即时无动画）。 */
+function camZoomAt(vp, canvas, cam, px, py, deltaY) {
+  const k = Math.exp(-deltaY * 0.0015);
+  const s2 = clampNum(cam.s * k, cam.fitS * CAM_MIN_FACTOR, CAM_MAX_S);
+  if (Math.abs(s2 - cam.s) < 1e-6) return;
+  const wc = camWorldCenter(vp, canvas, cam);
+  // 缩放不变量：P 点世界点不动 ⇒ T′ = P − Wc − (s′/s)(P − Wc − T)
+  const rx = px - wc.x - cam.tx, ry = py - wc.y - cam.ty;
+  const f = s2 / cam.s;
+  cam.tx = px - wc.x - rx * f;
+  cam.ty = py - wc.y - ry * f;
+  cam.s = s2;
+  cam.autoFit = false; // C2：用户导航，autoFit 挂起
+  camApply(vp, canvas, cam, false);
+  camRemember(vp, canvas, cam);
+}
+
+/** 拖拽平移（C4，即时跟随）。 */
+function camPanBy(vp, canvas, cam, dx, dy) {
+  cam.tx += dx; cam.ty += dy;
+  cam.autoFit = false;
+  camApply(vp, canvas, cam, false);
+  camRemember(vp, canvas, cam);
+}
+
+/** 动画回 fit（C5：双击空白）。 */
+function camFitAnimated(vp, canvas) {
+  const cam = camFit(vp, canvas, camByViewport.get(vp));
+  if (!cam) return;
+  camByViewport.set(vp, cam);
+  camApply(vp, canvas, cam, true);
+}
+
+/** 相机聚焦节点（C6/N3 点击选中 + C7 跳转入口共用）：节点居中 + s′=max(s,1.6)。 */
+function camFocusNode(vp, canvas, el) {
+  const cam = camByViewport.get(vp);
+  if (!cam || vp.clientWidth <= 0) return;
+  const s2 = clampNum(Math.max(cam.s, FOCUS_S), cam.fitS * CAM_MIN_FACTOR, CAM_MAX_S);
+  const wc = camWorldCenter(vp, canvas, cam);
+  const vr = vp.getBoundingClientRect();
+  const nr = el.getBoundingClientRect();
+  // 节点中心当前屏幕位（视口局部）→ 精确世界点（rect 含当前相机变换，反解抵消）
+  const L = camWorldAt(vp, canvas, cam,
+    nr.left + nr.width / 2 - vr.left, nr.top + nr.height / 2 - vr.top);
+  const c = camCanvasHalf(canvas);
+  // 目标：世界点 L 落到视口中心（任意 s：T = P − Wc − s(L − C)）
+  cam.tx = vp.clientWidth / 2 - wc.x - s2 * (L.x - c.x);
+  cam.ty = vp.clientHeight / 2 - wc.y - s2 * (L.y - c.y);
+  cam.s = s2;
+  cam.autoFit = false;
+  camApply(vp, canvas, cam, true);
+  camRemember(vp, canvas, cam);
+}
+
+/** 相机聚焦节点（元素入口：点击选中 / 跳转高亮共用）。 */
+function camFocusNodeEl(el) {
+  const vp = el.closest('.fm-viewport');
+  const canvas = el.closest('.solar-canvas');
+  if (vp && canvas) camFocusNode(vp, canvas, el);
+}
+
+/** 相机与指针/滚轮/双击交互绑定（全量渲染后调用一次；增量路径画布存活不重绑）。 */
+function bindCamera(vp, canvas) {
+  if (vp.dataset.fmCamBound === '1') return;
+  vp.dataset.fmCamBound = '1';
+  let drag = null;      // {id, x, y, moved}
+  let suppressClick = false;
+
+  // C3：滚轮只做缩放（图无滚动语义），锚点=光标
+  vp.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const cam = camByViewport.get(vp);
+    const c = vp.querySelector('.solar-canvas');
+    if (!cam || !c || vp.clientWidth <= 0) return;
+    const rect = vp.getBoundingClientRect();
+    camZoomAt(vp, c, cam, e.clientX - rect.left, e.clientY - rect.top, e.deltaY);
+  }, { passive: false });
+
+  // C4：按下拖拽平移（节点上起拖同样平移；位移 ≤3px 仍是 click，不破坏选择）
+  vp.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    suppressClick = false; // 新按下序列重置（pointercancel 残留不吞下一次真点击）
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+  });
+  vp.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) <= 3) return;
+    const cam = camByViewport.get(vp);
+    const c = vp.querySelector('.solar-canvas');
+    if (!cam || !c) return;
+    if (!drag.moved) { drag.moved = true; try { vp.setPointerCapture(e.pointerId); } catch (_) { /* 隐藏态 */ } }
+    drag.x = e.clientX; drag.y = e.clientY;
+    camPanBy(vp, c, cam, dx, dy);
+  });
+  const endDrag = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    suppressClick = drag.moved; // 真拖拽：吞掉随后的 click（不选中/不收面板）
+    drag = null;
+  };
+  vp.addEventListener('pointerup', endDrag);
+  vp.addEventListener('pointercancel', endDrag);
+
+  // 拖拽后的 click 在捕获相位吞掉：节点选择与文档级空白收起都不触发
+  vp.addEventListener('click', (e) => {
+    if (!suppressClick) return;
+    suppressClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+
+  // C5：双击空白回 fit（节点上的双击=两次选择，不重置导航位）
+  vp.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.fm-node')) return;
+    const c = vp.querySelector('.solar-canvas');
+    if (c) camFitAnimated(vp, c);
+  });
+  camRestore(vp, canvas);
+}
+
+// ══ L1 hover 局部强调（N1/N2 focus+context：自身+邻居提亮，其余淡出）════
+// 邻接 map 每帧渲染后重建（O(V+E)），hover 时 O(deg) 查表；pointerover/out 委托在
+// 画布上，80ms 宽限跨缝隙不闪烁；链齐退场中的卡（.fm-exit）不参与强调。
+
+/** @type {WeakMap<HTMLElement, {nbrs: Map<string, Set<string>>, ends: Map<string, Set<string>>}>} */
+const adjByCanvas = new WeakMap();
+
+/** 由可见边集合构建邻接表（nbrs：节点→邻居 id 集；ends：edgeId→端点 id 集）。 */
+function rebuildAdjacency(canvas, fm, edgesMap) {
+  const nbrs = new Map();
+  const ends = new Map();
+  for (const n of visibleNodes(fm)) nbrs.set(n.id, new Set());
+  for (const [key] of edgesMap) {
+    const sep = key.includes('~>') ? '~>' : '=>';
+    const i = key.indexOf(sep);
+    const a = key.slice(0, i), b = key.slice(i + sep.length);
+    if (nbrs.has(a) && nbrs.has(b)) { nbrs.get(a).add(b); nbrs.get(b).add(a); }
+    ends.set(key, new Set([a, b]));
+  }
+  adjByCanvas.set(canvas, { nbrs, ends });
+}
+
+/** 应用 hover 强调态（hoverId=null 还原 L0）。自身 .fm-hi（1.12）、邻居 .fm-nb
+ *  （1.06）、其余 .fm-dim；边按端点分 .fm-edge-hi / .fm-edge-dim（N1 参数）。 */
+function applyHover(canvas, hoverId) {
+  const adj = adjByCanvas.get(canvas);
+  if (!adj) return;
+  canvas.querySelectorAll('.fm-hi, .fm-nb, .fm-dim')
+    .forEach((el) => el.classList.remove('fm-hi', 'fm-nb', 'fm-dim'));
+  if (!hoverId) return;
+  const set = adj.nbrs.get(hoverId);
+  for (const n of canvas.querySelectorAll('.fm-node')) {
+    if (n.classList.contains('fm-exit')) continue;
+    const id = n.getAttribute('data-node-id');
+    if (id === hoverId) n.classList.add('fm-hi');
+    else if (set && set.has(id)) n.classList.add('fm-nb');
+    else n.classList.add('fm-dim');
+  }
+  for (const p of canvas.querySelectorAll('[data-edge-id]')) {
+    const e = adj.ends.get(p.getAttribute('data-edge-id'));
+    if (e && e.has(hoverId)) p.classList.add('fm-edge-hi');
+    else p.classList.add('fm-edge-dim');
+  }
+}
+
+/** hover 事件绑定（画布级委托，全量渲染后一次；增量路径画布存活不重绑）。 */
+function bindHover(canvas) {
+  if (canvas.dataset.fmHoverBound === '1') return;
+  canvas.dataset.fmHoverBound = '1';
+  let hovered = null;
+  let graceTimer = 0;
+  canvas.addEventListener('pointerover', (e) => {
+    const el = e.target.closest?.('.fm-node');
+    if (!el || el.classList.contains('fm-exit')) return;
+    const id = el.getAttribute('data-node-id');
+    if (id === hovered) { clearTimeout(graceTimer); return; }
+    hovered = id;
+    clearTimeout(graceTimer);
+    applyHover(canvas, id);
+  });
+  canvas.addEventListener('pointerout', (e) => {
+    const el = e.target.closest?.('.fm-node');
+    if (!el || el.getAttribute('data-node-id') !== hovered) return;
+    clearTimeout(graceTimer);
+    graceTimer = setTimeout(() => { hovered = null; applyHover(canvas, null); }, 80); // N2 宽限
+  });
 }
 
 /** 当前打开的所有 flow-map 视图 → [{project, pane}]（DOM 即真相，恢复后同样成立）。
@@ -573,7 +860,8 @@ function applyNodeDiff(canvas, prevFm, fm, positions, width, projectName) {
       el = holder.firstElementChild;
       if (!el) continue;
       el.addEventListener('click', (e) => {
-        e.stopPropagation();
+        e.stopPropagation(); // §5.10：点节点 = 选择（开详情），不触发空白收起
+        camFocusNodeEl(el); // N3/C6：选中即相机聚焦（居中 + ≥1.6 倍）
         openNodeDetail(projectName, n.id);
       });
       canvas.appendChild(el);
@@ -682,6 +970,17 @@ function renderFlowMapDiff(container, baseline, fm, projectName) {
   container.dataset.fmState = 'nodes';
   container.dataset.fmVisible = String(visibleNodes(fm).length);
   container.dataset.fmTotal = String((fmByProject.get(projectName)?.nodes || []).length);
+  // 邻接 map 随边集重建（hover 强调数据源）+ autoFit 态布局变化跟随重算 fit（C1，
+  // 280ms 相机动画；userNav 不动——用户导航位挂起语义）
+  const vp = canvas.parentElement;
+  if (vp && vp.classList.contains('fm-viewport')) {
+    rebuildAdjacency(canvas, fm, collectEdges(fm, positions));
+    const cam = camByViewport.get(vp);
+    if (cam && cam.autoFit) {
+      const fit = camFit(vp, canvas, cam);
+      if (fit) { camByViewport.set(vp, fit); camApply(vp, canvas, fit, true); }
+    }
+  }
   return true;
 }
 
@@ -735,7 +1034,7 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
     ${nodes.length === 0
       ? `<div class="dag-empty"><div class="hint">${esc(emptyMsg)}</div></div>`
       : `<div class="solar-card flowmap-card">
-          <div class="solar-scroll">
+          <div class="fm-viewport">
             <div class="solar-canvas" style="width:${width}px;height:${height}px">
               ${edgesSvg(fm, positions, width, height)}
               ${nodesHtml}
@@ -745,6 +1044,13 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
         </div>`}
     `;
   renderedFmByContainer.set(container, fm);
+  const vp = container.querySelector('.fm-viewport');
+  const canvas = container.querySelector('.solar-canvas');
+  if (vp && canvas) {
+    bindCamera(vp, canvas);
+    bindHover(canvas);
+    rebuildAdjacency(canvas, fm, collectEdges(fm, positions));
+  }
   bindFlowMapClicks(container, projectName);
   if (opts.animateAll) animateAllIn(container);
   syncArchiveUi(container, projectName);
@@ -755,6 +1061,7 @@ function bindFlowMapClicks(container, projectName) {
   container.querySelectorAll('.fm-node').forEach((el) => {
     el.addEventListener('click', (e) => {
       e.stopPropagation(); // §5.10：点节点 = 选择（开详情），不触发空白收起
+      camFocusNodeEl(el); // N3/C6：选中即相机聚焦（居中 + ≥1.6 倍）
       openNodeDetail(projectName, el.getAttribute('data-node-id') || '', container);
     });
   });
@@ -824,13 +1131,14 @@ export function renderFlowMapInto(container, projectName, opts = {}) {
   });
 }
 
-/** 高亮定位某节点（任务列表节点条目点击跳转）：滚动到卡片并闪烁两轮状态环。
- *  节点不存在（已归档/视图空态）时静默——跳转本身仍然完成了（图已打开）。 */
+/** 高亮定位某节点（任务列表节点条目点击跳转）：相机聚焦居中并闪烁两轮状态环。
+ *  固定视口下无滚动语义——scrollIntoView 会错误滚动 overflow:hidden 容器，改为
+ *  相机 focusNode（v1 交互壳规格 §10⑦）。节点不存在（已归档/视图空态）时静默。 */
 export function highlightFlowMapNode(container, projectName, nodeId) {
   if (!container || !nodeId) return;
   const el = container.querySelector(`.fm-node[data-node-id="${CSS.escape(String(nodeId))}"]`);
   if (!el) return;
-  el.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'center' });
+  camFocusNodeEl(el);
   el.classList.remove('fm-node-flash');
   void el.offsetWidth; // 强制 reflow：连续点击也能重启动画
   el.classList.add('fm-node-flash');
@@ -1038,3 +1346,19 @@ for (const evt of ['nodeCreated', 'nodeUpdated', 'nodeCompleted', 'nodeRemoved']
 // 断线期间的事件有缺口：重连后对所有打开的 Flow Map 视图拉权威快照（diff 保证
 // 与现渲染一致时零 DOM 变更）。
 onReconnect(() => refreshFlowMapViews());
+
+// 视口尺寸变化（窗口缩放）：仅 autoFit 态重算 fit（userNav 保持用户导航位）。
+let camResizeTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(camResizeTimer);
+  camResizeTimer = setTimeout(() => {
+    for (const { pane } of openFlowMapPanes()) {
+      const vp = pane.querySelector('.fm-viewport');
+      const canvas = vp?.querySelector('.solar-canvas');
+      const cam = vp ? camByViewport.get(vp) : null;
+      if (!vp || !canvas || !cam || !cam.autoFit) continue;
+      const fit = camFit(vp, canvas, cam);
+      if (fit) { camByViewport.set(vp, fit); camApply(vp, canvas, fit, false); }
+    }
+  }, 150);
+});
