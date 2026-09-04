@@ -289,8 +289,10 @@ class AllowedToolSetSpec extends FunSuite:
     )
     val nebula = mkDef("Nebula", List("Read")).copy(flows = List("code-review"))
     assert(CoreProbe.allowed(nebula).contains("FlowTrigger"), "Nebula with flows keeps it")
-    val nebulaNoFlows = mkDef("Nebula", List("Read", "FlowTrigger"))
-    assert(!CoreProbe.allowed(nebulaNoFlows).contains("FlowTrigger"), "even Nebula needs flows declared")
+    // 阶段 2c（§C.1 双轨期过渡组）：FlowTrigger 对 Nebula 机制固定——不再依赖
+    // flows 声明（旧 agent.json flows:["*"] 退役为 no-op）。
+    val nebulaNoFlows = mkDef("Nebula", Nil)
+    assert(CoreProbe.allowed(nebulaNoFlows).contains("FlowTrigger"), "Nebula gets FlowTrigger without flows declaration (阶段 2c 固定)")
 
   test("SubTask workers never get FlowTrigger even with flows declared"):
     val worker = mkDef("backend", List("*")).copy(flows = List("code-review"))
@@ -463,43 +465,70 @@ class AllowedToolSetSpec extends FunSuite:
     val nebula = mkDef("Nebula", List("Read"))
     assert(CoreProbe.allowed(nebula).contains("Issue"), "Issue survives only for the orchestrator")
 
-  test("Nebula gets the 7 orchestration tools mechanism-fixed — no declaration needed"):
-    // 任务工具重做 (2026-08-30): TaskCreate/TaskUpdate retired from Nebula —
-    // orchestration tools shrink from 9 to 7. A stripped-down Nebula def
-    // (empty tools list) must still carry the full orchestration surface —
-    // panel edits / definition mistakes cannot disarm the scheduler.
+  test("Nebula gets the §C.1 fixed toolset mechanism-fixed — no declaration needed (阶段 2c)"):
+    // 阶段 2c agent 收敛（§C.1 角色-工具静态矩阵）：Nebula 工具面 = 固定十四件
+    // （编排触发/通信/双轨期过渡/用户面/平台/记忆），机制注入不可配置。裸定义
+    // （空 tools）必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
-      "AgentControl", "Delegate", "Pop", "AskUserQuestion",
-      "Mail", "Schedule", "TransferFile"
+      "Task", "ProjectCreate", "NodeList", "AgentControl", // 编排触发（NodeList=2c 新增观测面）
+      "Mail", "SendFriendMessage",                         // 通信（SendFriendMessage 2c 起机制固定）
+      "Delegate", "FlowTrigger", "FlowExecute",            // 双轨期过渡（保留至阶段 3）
+      "Pop", "AskUserQuestion",                            // 用户面
+      "Schedule", "TransferFile",                          // 平台
+      "MemoryEdit"                                         // 记忆（§C.2 新工具）
     )
     val bare = mkDef("Nebula", Nil)
     val allowed = CoreProbe.allowed(bare)
     orchestration.foreach(t =>
       assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
     )
-    assert(allowed.contains("FlowExecute"), "Nebula keeps FlowExecute (#406)")
-    assert(allowed.contains("Issue"), "Nebula keeps Issue (feedback collector)")
-    // 2026-08-28 00:55 用户裁定（reverses #438）: the six are mechanism-fixed
-    // for ALL agents — a bare Nebula def carries them without declaration.
+    assert(allowed.contains("Issue"), "Nebula keeps Issue (feedback collector — 现状保留，未在 §C.1 矩阵处置)")
+
+  test("Nebula 显式移除六件文件工具（§C.1 裁定 2/3）——声明也无效"):
+    // 阶段 2c：Nebula 不读不写不跑命令。8684acd 文件声明与机制注入一并退役；
+    // 收敛三定义的 tools 声明整体失效（ConvergedAgentNames base=∅）——即使
+    // agent.json 显式列出 Read/Write 也不给。
+    val legacyDeclared = mkDef("Nebula", List("Read", "Write", "Edit", "Glob", "Grep", "Bash"))
+    val allowed = CoreProbe.allowed(legacyDeclared)
     val six = Set("Read", "Write", "Edit", "Glob", "Grep", "Bash")
-    six.foreach(t => assert(allowed.contains(t), s"bare Nebula must get mechanism-fixed six: $t"))
+    six.foreach(t => assert(!allowed.contains(t), s"Nebula must NOT have file tool: $t"))
+    assert(!allowed.contains("MultiEdit"), "MultiEdit removed from ToolRegistry (阶段 2c)")
+    // Web 系同样不在 §C.1 矩阵
+    val webDeclared = mkDef("Nebula", List("WebSearch", "WebFetch", "Curl"))
+    val webAllowed = CoreProbe.allowed(webDeclared)
+    assert(!webAllowed.contains("WebSearch") && !webAllowed.contains("WebFetch") && !webAllowed.contains("Curl"),
+      "Nebula: Web 系声明无效")
 
-  test("Nebula's agent.json declaration of the six is idempotent with the mechanism layer"):
-    // agent.json tools declarations remain an additional source — duplicates
-    // with the mechanism-fixed six are harmless (Set semantics). The file
-    // declaration (8684acd) stays as belt-and-suspenders, not a requirement.
-    val defn = mkDef("Nebula", List("Read", "Grep", "Bash"))
-    val allowed = CoreProbe.allowed(defn)
-    assert(allowed.contains("Read") && allowed.contains("Grep") && allowed.contains("Bash"),
-      "declared six must be present for Nebula")
-    assert(allowed.contains("Delegate"), "orchestration fixed set unaffected by the declaration")
-    assert(allowed.contains("Write") && allowed.contains("Edit"),
-      "undeclared six members are still mechanism-injected")
+  test("project-dispatcher 固定工具集（§C.1）：Node 三件 + 读四件，声明无效"):
+    val declared = mkDef("project-dispatcher", List("Write", "Edit", "AskUserQuestion"))
+    val allowed = CoreProbe.allowed(declared, isFlowNode = true) // 分发器会话 spawn 即 isFlowNode=true
+    Set("NodeList", "NodeEdit", "NodeCancel", "Read", "Glob", "Grep", "Bash").foreach { t =>
+      assert(allowed.contains(t), s"dispatcher fixed tool missing: $t")
+    }
+    assert(!allowed.contains("Write"), "dispatcher 不给 Write（只分解不产内容，§C.1）")
+    assert(!allowed.contains("Edit"), "dispatcher 不给 Edit")
+    assert(!allowed.contains("AskUserQuestion"), "dispatcher 不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）")
+    assert(!allowed.contains("Mail"), "dispatcher 无 Mail")
 
-  test("the six are mechanism-fixed for ALL agents — cannot be configured away"):
+  test("general 固定 8 件（§C.4/§C.5 裁定 5）——BaseTools + AskUserQuestion/Pop"):
+    val bare = mkDef("general", Nil)
+    val allowed = CoreProbe.allowed(bare, isFlowNode = true) // general 节点会话 isFlowNode=true
+    val eight = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Pop")
+    eight.foreach(t => assert(allowed.contains(t), s"general fixed tool missing: $t"))
+    assert(!allowed.contains("Mail"), "general 无 Mail")
+    assert(!allowed.contains("MultiEdit"), "general 无 MultiEdit（已从 ToolRegistry 删除）")
+    // 声明无效（机制固定零配置）
+    val sneaky = mkDef("general", List("WebSearch", "Delegate"))
+    val sneakyAllowed = CoreProbe.allowed(sneaky)
+    assert(!sneakyAllowed.contains("WebSearch") && !sneakyAllowed.contains("Delegate"),
+      "general: tools 声明整体失效")
+
+  test("the six remain mechanism-fixed for non-converged agents — cannot be configured away"):
+    // 阶段 2c 只收敛 Nebula/dispatcher/general 三定义；team/flow/普通 standalone
+    // 的 BaseTools 机制注入不变（双轨回归安全）。
+    val six = Set("Read", "Write", "Edit", "Glob", "Grep", "Bash")
     val solo = mkDef("someone", Nil)
     val soloAllowed = CoreProbe.allowed(solo)
-    val six = Set("Read", "Write", "Edit", "Glob", "Grep", "Bash")
     six.foreach(t => assert(soloAllowed.contains(t), s"mechanism-fixed six missing for standalone: $t"))
     val team = mkDef("backend", Nil).copy(category = "team")
     val teamAllowed = CoreProbe.allowed(team)
@@ -507,9 +536,6 @@ class AllowedToolSetSpec extends FunSuite:
     val flow = mkDef("node", Nil).copy(category = "flow")
     val flowAllowed = CoreProbe.allowed(flow)
     six.foreach(t => assert(flowAllowed.contains(t), s"mechanism-fixed six missing for flow: $t"))
-    val nebula = mkDef("Nebula", Nil)
-    val nebulaAllowed = CoreProbe.allowed(nebula)
-    six.foreach(t => assert(nebulaAllowed.contains(t), s"mechanism-fixed six missing for Nebula: $t"))
 
   test("the 9 orchestration tools are NOT granted to ordinary standalone agents"):
     // Mechanism-fixed for Nebula ≠ auto-granted to everyone: a standalone agent
