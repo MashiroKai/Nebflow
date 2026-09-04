@@ -336,8 +336,13 @@
   transition: opacity 0.35s ease, border-color 0.35s ease;
 }
 
-/* 状态图标（✓/✗）随 head 重建时轻微浮现 */
+/* 状态图标随 head 重建时轻微浮现（图标本体已按裁定①从 ✓/✗/⚑/— 字符改为
+   flowMapTab.js 内联 SVG 描边，颜色经 currentColor 沿用 flowCss.js 色板） */
 .solar-node-status { animation: fm-fade-in 0.3s ease; }
+/* SVG 状态图标尺寸对齐旧 10px 字形；作用域限 .fm-node——flow-run 面板
+   （flowDag.js）同名字符字形不受影响。 */
+.fm-node .solar-node-status { display: inline-flex; align-items: center; }
+.fm-node .solar-node-status svg { width: 10px; height: 10px; display: block; }
 
 /* 边：状态档位（idle/inflight/delivered）颜色与线宽平滑变化 */
 .flow-edge.fm-edge { transition: stroke 0.35s ease, stroke-width 0.35s ease, opacity 0.35s ease; }
@@ -395,11 +400,24 @@
 .fm-edge-arrow.fm-edge-deps-arrow.deps-wait { stroke: var(--color-warning); }
 
 /* 「等待谁」脚注（deps 设计 §1.4）：pending/wiring 且持有 in/deps 的卡片显示等待对象
-   （名(id) / 归档降级 裸id✦）；单行截断，hover title 看全量。 */
+   （名(id) / 归档降级 i18n「已归档」纯文字，裁定①原 ✦ 字符下线）；flex 两段——
+   SVG 沙漏图标（替代 ⏳）不参与截断，文字段单独 ellipsis 单行截断在卡内，
+   hover title 看全量。 */
 .fm-wait-note {
+  display: flex;
+  /* 卡是 column-flex + align-items:center——脚注会收缩到 max-content 宽把盒子
+     撑出卡界（视觉截断了、盒宽没截断）。stretch 压回卡内容宽，文字段才真正截断。 */
+  align-self: stretch;
+  align-items: center;
+  gap: 3px;
   margin-top: 4px;
   font: 400 10px ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-text-muted);
+  min-width: 0;
+}
+.fm-wait-note-icon { flex: 0 0 auto; width: 9px; height: 9px; }
+.fm-wait-note-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

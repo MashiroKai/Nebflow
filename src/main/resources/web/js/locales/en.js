@@ -68,6 +68,9 @@ export default {
   'flowmap.blockedRawTitle': 'Node output (raw)',
   // deps 依赖连接（deps 设计 §1.4）：等待脚注 + 六档图例（输出边三态 × 依赖边三态）
   'flowmap.waitingFor': 'Waiting',
+  // Archived-downgrade marker for the wait note (ruling 1: was the ✦ glyph,
+  // now plain text; covers chain-archived / TTL-expired / dangling upstream)
+  'flowmap.archivedTag': ' (archived)',
   'flowmap.legend.outDelivered': 'Output delivered',
   'flowmap.legend.outWaiting': 'Output in-flight',
   'flowmap.legend.outIdle': 'Output idle',
