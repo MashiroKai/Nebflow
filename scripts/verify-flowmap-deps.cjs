@@ -52,10 +52,16 @@ const ok = (name, cond, extra) => {
 (async () => {
   // 静态服务（8097，非 8080；用完即清，kill 前 lsof 核对 PID）
   const server = spawn('python3', ['-m', 'http.server', String(PORT)], { cwd: WEB, stdio: 'ignore' });
-  await new Promise((r) => setTimeout(r, 800));
+  let browser = null;
+  // 信号兜底（残留治理 2026-09-05）：SIGINT/SIGTERM 时 Node 不走 finally——
+  // 显式清理 browser + 静态服务再退出，进程不漏到脚本外
+  const killServer = () => { try { server.kill('SIGKILL'); } catch {} };
+  process.on('SIGINT', () => { try { if (browser) browser.close(); } catch {} killServer(); process.exit(130); });
+  process.on('SIGTERM', () => { try { if (browser) browser.close(); } catch {} killServer(); process.exit(143); });
 
   try {
-    const browser = await chromium.launch();
+    await new Promise((r) => setTimeout(r, 800));
+    browser = await chromium.launch();
     for (const colorScheme of ['dark', 'light']) {
       const page = await browser.newPage({ viewport: { width: 1920, height: 1200 }, colorScheme });
       await page.addInitScript(() => {
@@ -176,12 +182,17 @@ const ok = (name, cond, extra) => {
       console.log(`SHOT ${out}`);
       await page.close();
     }
-    await browser.close();
 
     const failed = results.filter((r) => !r.pass);
     console.log(`\n${results.length - failed.length}/${results.length} PASS`);
     process.exitCode = failed.length ? 1 : 0;
   } finally {
+    // browser 异常路径也关（残留治理 2026-09-05）：waitForSelector 超时等中断
+    // 异常会跳过 happy-path 的 close，headless chromium 进程树会漏到脚本外。
+    // close 移入 finally（幂等，try 内不再重复调）
+    if (browser) {
+      try { await browser.close(); console.log('CLEANUP browser closed'); } catch { /* already closed */ }
+    }
     // 清理静态服务：lsof 核对 PID 非宿主（宿主 8080）后再 kill
     const { execSync } = require('node:child_process');
     try {
