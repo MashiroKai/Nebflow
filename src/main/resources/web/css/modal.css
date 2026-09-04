@@ -235,6 +235,29 @@
   color: #e55 !important;
 }
 
+/* Neutral confirm — reversible actions only (showConfirm opts.tone='neutral',
+   e.g. project archive). glass-control material instead of danger red; scoped
+   to #delete-box.confirm-neutral so irreversible flows (session/rules delete)
+   keep danger semantics above. */
+#delete-box.confirm-neutral #delete-confirm {
+  border: 1px solid var(--glass-control-border) !important;
+  color: var(--color-text) !important;
+  background: var(--glass-control-bg) !important;
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  transition: all 0.25s ease;
+}
+#delete-box.confirm-neutral #delete-confirm:hover {
+  background: var(--glass-control-bg-hover) !important;
+  border-color: var(--glass-control-border) !important;
+  color: var(--color-text) !important;
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight-hover),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 2px 8px var(--glass-control-glow-hover),
+    0 4px 12px var(--glass-control-shadow-hover) !important;
+}
+
 /* ── Confirm button (main modal — primary green) ──────────────────────── */
 #modal-confirm {
   padding: 8px 18px;

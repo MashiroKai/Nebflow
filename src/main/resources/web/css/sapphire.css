@@ -171,7 +171,8 @@
 .canvas-close-btn,
 .reminder-create-btn,
 .cfg-eye-btn,
-.agent-detail-prompt-toggle {
+.agent-detail-prompt-toggle,
+.project-archive-btn {
   border: 1px solid transparent;
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s, transform 0.1s;
@@ -186,7 +187,8 @@
 .canvas-close-btn:hover,
 .reminder-create-btn:hover,
 .cfg-eye-btn:hover,
-.agent-detail-prompt-toggle:hover {
+.agent-detail-prompt-toggle:hover,
+.project-archive-btn:hover {
   background: var(--glass-control-bg-hover);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
