@@ -56,7 +56,9 @@ Nebflow 是一个开源（Apache 2.0）AI Agent 编排平台。本仓为 **Scala
 4. 合并审查：简单改动（单文件、<50 行）直接审查合并；复杂改动（多文件、架构变更）先过 review 审查再合并（原 code-review flow 已蒸馏为 review skill，2026-09-03）。分支名与 worktree 目录名一致（`feat/<feature-name>` ↔ `/tmp/nb-<feature-name>`）
 
 ## 运行安全
-- **🔴 绝对禁止对 8080 宿主实例执行 kill、pkill、kill -INT/-TERM/-9 或任何信号发送**——8080 是运行所在的 Nebflow 宿主实例：kill 它=kill 自己和用户会话（2026-08-19 00:20 事故）
+- **🔴 环境表里的宿主 PID 绝对禁杀**（2026-09-05 裁定）：会话 Environment 注入了宿主 PID（GatewayMain 启动时 `ProcessHandle.current().pid()` 写入 system prop → environment/data.sh 渲染）——对它执行 kill/pkill/信号 = kill 宿主 = kill 自己和用户会话。宿主 PID 是第一道防线，逐字核对，无例外
+- **自己起的测试进程跑完即清**（2026-09-05 裁定）：e2e/冒烟/测试结束必须清理自己 spawn 的进程——脚本用 `trap 'cleanup' EXIT`（后台 PID 登记 → EXIT 逐个 kill + wait + 端口复查），REPL/手跑用完显式 kill。不得依赖「会自己退出」：`while True` 死循环/长 sleep 残留要手动清
+- **8080 端口识别仍是第二道防线**：**绝对禁止对 8080 宿主实例执行 kill、pkill、kill -INT/-TERM/-9 或任何信号发送**（2026-08-19 00:20 事故）
 - **非宿主进程可按需管理**：隔离测试实例（端口 ≠ 8080）、canary 实例、静态文件服务允许 kill/信号——它们不是宿主
 - **kill 前必须 PID 验身**：`lsof -ti :<端口>` 定位 + `lsof -p <pid> | grep cwd` 确认目标工作目录是目标实例，确认 PID ≠ 宿主再动手
 - **shutdown/Ctrl+C 行为验证必须用隔离进程**，绝不动真实运行的宿主进程
@@ -93,6 +95,7 @@ Nebflow 是一个开源（Apache 2.0）AI Agent 编排平台。本仓为 **Scala
 - 2026-08-20 ｜ 用户明确表示已亲自检查/无需 QA 时，QA 环节免除直接收尾
 - 2026-08-24 ｜ **Skill 创建流程 proposal 审批环节已废止**——新能力直接按 skill-creator 规范落地成 SKILL.md 或写入 memory；禁止再写 proposal 落盘
 - 2026-08-25 ｜ 进程保护边界=只保护 8080 宿主实例；非宿主进程（端口≠8080）可按需 kill/信号；kill 前必须 PID 验身
+- 2026-09-05 ｜ **宿主 PID 放进提示词作为系统环境**（绝对禁杀）+ e2e/测试跑完顺手 kill 遗留进程 + 脚本用 `trap 'cleanup' EXIT` 退出时自动清理——进程保护从「禁杀进程类型」细化为「环境里的宿主 PID 绝对禁杀；自起测试进程跑完即清」
 - 2026-08-23 ｜ 成员需要跨 team 协作，先报 Manager 确认路由，不得直触对方 team 成员；同 team 内产出者直触 QA 模式不变
 - 2026-08-26 ｜ ~~给 Nebula 的 RESULT/汇报邮件禁用 ask 模式~~ **已被 2026-08-27 裁定取代：Mail ask 模式整体移除**（delivery 只剩 immediate/queue）
 - 2026-09-01 ｜ **QC 429 降级策略**——merge 触发自动 QC 遇 API 429 时，接受人工 QA 覆盖（qa-frontend/qa-backend PASS 即等价覆盖），配额重置后不单独补跑
