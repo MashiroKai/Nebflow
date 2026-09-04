@@ -40,8 +40,6 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
 
   private def startMockServer: (HttpServer, String) =
     val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
-    val friendsJson =
-      """{"friends":[{"userId":"u1","neblinkId":"lin@example.com","name":"林小满"}],"incoming":[],"outgoing":[]}"""
     val conversationsJson =
       """[{"conversationId":"c1","friend":{"userId":"u1","neblinkId":"lin@example.com","name":"林小满"},"lastMessage":null,"unreadCount":2}]"""
     val messagesJson =
@@ -64,6 +62,14 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       "/api/device/login",
       ex => respond(ex, 200, """{"token":"tok-1","networkId":"n1","deviceId":"d1","peers":[]}""")
     )
+    // Rust 现行 wire 形态（neblink-server model.rs）：请求条目 #[serde(flatten)]
+    // 铺平（无 from/to 嵌套）、profile 字段可 null、拉黑行带 blocked 标志——
+    // 网关必须容错解码并把 from/to 嵌套出参契约维持给 web（0904 审计修复）。
+    val friendsJson =
+      """{"friends":[{"userId":"u1","neblinkId":"lin@example.com","name":"林小满","blocked":false},
+         {"userId":"u2","neblinkId":null,"name":null,"blocked":true}],
+         "incoming":[{"requestId":"rq-9","userId":"u-new","neblinkId":"newbie42","name":"新同学","note":"你好","createdAt":1234560000}],
+         "outgoing":[]}""".stripMargin.replaceAll("\\n\\s*", "")
     server.createContext(
       "/api/friends",
       ex =>
@@ -102,6 +108,20 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     server.createContext(
       "/api/users/lookup",
       ex => respond(ex, 200, """{"found":true,"neblinkId":"lin@example.com","name":"林小满"}""")
+    )
+    // [U3] NL 号自定义 + 可用性检测（0904 批次新增代理路由的上游形态）
+    server.createContext(
+      "/api/users/me/neblink-id/available",
+      ex =>
+        val q = Option(ex.getRequestURI.getQuery).getOrElse("")
+        if q.contains("takenid") then respond(ex, 200, """{"available":false,"reason":"taken"}""")
+        else respond(ex, 200, """{"available":true}""")
+    )
+    server.createContext(
+      "/api/users/me/neblink-id",
+      ex =>
+        if ex.getRequestMethod == "PUT" then respond(ex, 200, """{"neblinkId":"newid42"}""")
+        else respond(ex, 404, """{"error":"not found"}""")
     )
     server.start()
     val url = s"http://127.0.0.1:${server.getAddress.getPort}"
@@ -195,15 +215,37 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("GET /friends/requests (routing order: not swallowed by /friends/:id)") {
+  test("GET /friends/requests normalizes flat upstream into nested from-shape") {
     withMockServer { (_, client, fs) =>
       client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
         authed(Request[IO](Method.GET, Uri.unsafeFromString("/friends/requests")))
       ).flatMap { resp =>
         assertEquals(resp.status, Status.Ok)
-        resp.as[Json].map(body =>
-          assert(body.hcursor.downField("incoming").as[Vector[Json]].exists(_.isEmpty))
-        )
+        resp.as[Json].map { body =>
+          // 路由顺序：/friends/requests 不被 /friends/:id 吞掉（同时验证
+          // flat → from 嵌套的归一化——Rust flatten 形态不再毁掉解码）
+          val incoming = body.hcursor.downField("incoming").as[Vector[Json]].getOrElse(Vector.empty)
+          assertEquals(incoming.size, 1)
+          assertEquals(incoming.head.hcursor.downField("from").downField("userId").as[String].toOption, Some("u-new"))
+          assertEquals(incoming.head.hcursor.downField("createdAt").as[Long].toOption, Some(1234560000L))
+        }
+      }
+    }
+  }
+
+  test("GET /friends passes blocked flag and tolerates null profile fields") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
+        authed(Request[IO](Method.GET, Uri.unsafeFromString("/friends")))
+      ).flatMap { resp =>
+        assertEquals(resp.status, Status.Ok)
+        resp.as[Json].map { body =>
+          val friends = body.hcursor.downField("friends").as[Vector[Json]].getOrElse(Vector.empty)
+          assertEquals(friends.size, 2)
+          // null neblinkId/name 折叠为空串，不毁整表；blocked 透传给 web 灰显
+          assertEquals(friends(1).hcursor.downField("neblinkId").as[String].toOption, Some(""))
+          assertEquals(friends(1).hcursor.downField("blocked").as[Boolean].toOption, Some(true))
+        }
       }
     }
   }
@@ -288,6 +330,46 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
         authed(Request[IO](Method.GET, Uri.unsafeFromString("/users/lookup")))
       ).map(resp => assertEquals(resp.status, Status.BadRequest))
+    }
+  }
+
+  test("PUT /users/me/neblink-id proxies custom id ([U3])") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+      runWith(Some(fs))(
+        authed(Request[IO](Method.PUT, Uri.unsafeFromString("/users/me/neblink-id")))
+          .withEntity(Json.obj("neblinkId" -> "newid42".asJson))
+      ).flatMap { resp =>
+        assertEquals(resp.status, Status.Ok)
+        resp.as[Json].map(body =>
+          assertEquals(body.hcursor.downField("neblinkId").as[String].toOption, Some("newid42"))
+        )
+      }
+    }
+  }
+
+  test("PUT /users/me/neblink-id without neblinkId -> 400") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+      runWith(Some(fs))(
+        authed(Request[IO](Method.PUT, Uri.unsafeFromString("/users/me/neblink-id")))
+          .withEntity(Json.obj())
+      ).map(resp => assertEquals(resp.status, Status.BadRequest))
+    }
+  }
+
+  test("GET /users/me/neblink-id/available proxies availability ([U3])") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+      runWith(Some(fs))(
+        authed(Request[IO](Method.GET, Uri.unsafeFromString("/users/me/neblink-id/available?q=takenid")))
+      ).flatMap { resp =>
+        assertEquals(resp.status, Status.Ok)
+        resp.as[Json].map { body =>
+          assertEquals(body.hcursor.downField("available").as[Boolean].toOption, Some(false))
+          assertEquals(body.hcursor.downField("reason").as[String].toOption, Some("taken"))
+        }
+      }
     }
   }
 

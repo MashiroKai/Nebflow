@@ -337,6 +337,23 @@ class NeblinkClient(
         .map(_.flatMap(body => decode[Json](body).left.map(_.getMessage)))
     }
 
+  /** [U3] 自定义 NebLink 号（PUT /api/users/me/neblink-id）。200 {neblinkId} /
+    * 上游 409 taken / 422 invalid 折叠为 Left("HTTP <code>: <body>")。 */
+  def setNeblinkId(neblinkId: String): IO[Either[String, Json]] =
+    withSession { token =>
+      sendRequest("PUT", s"${config.url}/api/users/me/neblink-id",
+        Json.obj("neblinkId" -> neblinkId.asJson).noSpaces, Some(token))
+        .map(_.flatMap(body => decode[Json](body).left.map(_.getMessage)))
+    }
+
+  /** [U3] 号可用性实时检测（GET /api/users/me/neblink-id/available?q=）。
+    * 200 {available, reason?}（reason: taken | invalid）；限速与查号同桶。 */
+  def neblinkIdAvailable(q: String): IO[Either[String, Json]] =
+    withSession { token =>
+      sendRequest("GET", s"${config.url}/api/users/me/neblink-id/available?q=${java.net.URLEncoder.encode(q, "UTF-8")}", "", Some(token))
+        .map(_.flatMap(body => decode[Json](body).left.map(_.getMessage)))
+    }
+
   /** 好友列表（accepted + 双向 pending 分组）。 */
   def listFriends: IO[Either[String, FriendListResponse]] =
     withSessionJson[FriendListResponse]("GET", "/api/friends", "")
@@ -526,6 +543,9 @@ class NeblinkClient(
           builder.header("Content-Type", "application/json")
           if body.nonEmpty then builder.POST(HttpRequest.BodyPublishers.ofString(body))
           else builder.POST(HttpRequest.BodyPublishers.noBody())
+        else if method == "PUT" then
+          builder.header("Content-Type", "application/json")
+          builder.PUT(HttpRequest.BodyPublishers.ofString(body))
         else if method == "DELETE" then builder.DELETE()
         else builder.GET()
         val request = builder.build()

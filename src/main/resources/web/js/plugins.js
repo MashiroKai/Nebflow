@@ -1,35 +1,29 @@
 // plugins.js — Plugins page (Canvas tab, activity-bar entry «插件»/Plugins).
 //
-// 2026-09-04 作者裁定（方案 A×2）：
-//   • 件 A — Team/Flow 旧入口隐藏封存（见 activityBar.js SIDEBAR_LEGACY_ENTRIES）；
-//   • 件 B — 独立「智能体」面板入口移除，#agents-btn 改挂本「插件」页
-//     （作者原话：智能体现在没什么好配置，跟插件入口融合）。
-//
-// Page contents (scope per task, delivered over the verified API surface):
-//   1. Plugin catalog — skills (GET /api/skills: name + description) with
-//      subscriber agents computed client-side from GET /api/agents +
-//      per-agent GET /api/agents/:name (skills array), and MCP servers
-//      (live enabled state from state.mcpServers via WS serverConfig /
-//      mcpServersUpdate, command detail from GET /api/mcp).
-//   2. Agent subscription map — per agent, the skills it can use; chips
-//      toggle and persist via PUT /api/agents/:name {skills:[…]} (the exact
-//      write path agentManager.js already ships — setAgentSkillsFlows).
-//   3. Agent configuration block — preset select + resolved model pill,
-//      migrated 1:1 from the sealed agents panel (presets.setAgentPreset).
-//      Row name deep-links to the per-agent detail tab (openAgentDetail)
-//      for the full editor (tools / prompt / flows).
+// 2026-09-04 作者裁定（插件面板重设计——统一插件系统 + 每插件一开关）：
+//   • 统一插件系统：Skill 与 MCP 已统一为「插件」。页面只呈现插件卡片，
+//     skill/MCP 仅作卡片内的内容构成标注语（含 N 个技能·可展开 preview /
+//     MCP server 名+transport / 内建工具白名单 +N），不再是独立板块。
+//   • 每插件一个启停开关（页面唯一操作件）：
+//       on  = POST /api/plugins/:name/approve （trust 表记录当前目录 digest）
+//       off = POST /api/plugins/:name/revoke  （删 trust 条目，回落 untrusted）
+//     enabled ≡ trusted：不做独立 enabled 字段——trust digest 门底层语义
+//     （内容变更即回落待审）不删，开关即目录可见性（GET /plugins/catalog
+//     只列 trusted，分发器目录同源）。数据源 GET /api/plugins 全量注册表。
+//   • 智能体区块收缩为摘要行：名称/描述/preset 现状，点击进既有 agent
+//     详情编辑（openAgentDetail 深链复用）；订阅 chips（PUT skills 写回）
+//     与平铺 config row 移除——插件不再逐 agent 配置，每个插件一个开关。
+//   • 独立 MCP（state.mcpServers）展示从本页移除；其配置管理入口在设置页
+//     （renderSettings 的 settings.mcpServers 区，sidebar.js）——只移展示，
+//     不动底层 MCP 机制。
 // No new backend contract is invented anywhere; every endpoint above is
-// pre-existing and verified in RestApiRoutes.scala / WebSocketRoutes.scala.
+// pre-existing and verified in RestApiRoutes.scala (§B.3 面板审批清单) and
+// PluginRegistry.scala (approvalManifest).
 
-import state from './state.js';
 import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas, registerCanvasPanelButton } from './canvas.js';
 import { t } from './i18n.js';
-import { createIconsIn, escapeHtml } from './utils.js';
-import * as presets from './presets.js';
-import {
-  fetchAgents, fetchAgentDetail, fetchAgentModel, fetchSkills,
-  setAgentSkillsFlows, openAgentDetail,
-} from './agentManager.js';
+import { escapeHtml } from './utils.js';
+import { fetchAgents, fetchAgentModel, openAgentDetail } from './agentManager.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function esc(s) { return escapeHtml(s); }
@@ -41,49 +35,52 @@ function shortModel(ref) {
   return idx >= 0 ? ref.slice(idx + 1) : ref;
 }
 
-/** One-shot MCP config detail (id → {command?,…}) from GET /api/mcp.
- *  Best-effort enrichment only — the live list source is state.mcpServers. */
-async function fetchMcpConfigDetail() {
-  try {
-    const tok = localStorage.getItem('nebflow_token') || '';
-    const resp = await fetch('/api/mcp', tok ? { headers: { Authorization: `Bearer ${tok}` } } : {});
-    if (!resp.ok) return {};
-    const data = await resp.json();
-    return data.mcpServers || {};
-  } catch (e) { return {}; }
+/** Authorized JSON fetch (same token pattern as agentManager.js). */
+async function api(path, opts = {}) {
+  const tok = localStorage.getItem('nebflow_token') || '';
+  if (tok) opts.headers = { ...(opts.headers || {}), Authorization: `Bearer ${tok}` };
+  return fetch(path, opts);
+}
+
+/** GET /api/plugins — 注册表全量（approvalManifest + 拒载原因）。
+ *  Response: { plugins: [manifest…], rejected: [{name, reason}] } */
+async function fetchPluginRegistry() {
+  const resp = await api('/api/plugins');
+  if (!resp.ok) throw new Error(`GET /api/plugins ${resp.status}`);
+  return resp.json();
+}
+
+/** Classify a manifest's trust state for display.
+ *  • trusted → switch on.
+ *  • untrusted + digest-changed reason → off + 「内容已变更」 hint
+ *    （reason 文案为后端单一事实，前端按其稳定短语分类，仅作展示语义）。
+ *  • untrusted otherwise（never approved / 其他）→ off + 常规提示。 */
+function trustInfo(manifest) {
+  const trust = manifest.trust || { status: 'untrusted', reason: '' };
+  if (trust.status === 'trusted') return { on: true, changed: false, reason: '' };
+  const reason = String(trust.reason || '');
+  const changed = /never approved/i.test(reason)
+    ? false
+    : /digest|changed|re-approval/i.test(reason);
+  return { on: false, changed, reason };
 }
 
 // ── Data assembly ──────────────────────────────────────────
 /**
  * Load everything the page needs in one pass.
- * @returns {Promise<{skills: Array, subscribers: Map<string, string[]>, mcpServers: Array, agents: Array, details: Map<string, object>}>}
+ * @returns {Promise<{registry: object, agents: Array}>}
  */
 async function loadPluginsData() {
-  const [skills, agents] = await Promise.all([fetchSkills(), fetchAgents()]);
+  const [registry, agents] = await Promise.all([fetchPluginRegistry(), fetchAgents()]);
+  return { registry, agents };
+}
 
-  // Per-agent details in parallel → skill → subscriber names.
-  const details = new Map();
-  await Promise.all(agents.map(async a => {
-    const d = await fetchAgentDetail(a.name);
-    if (d) details.set(a.name, d);
-  }));
-  const subscribers = new Map(skills.map(s => [s.name, []]));
-  for (const [name, d] of details) {
-    for (const sk of (d.skills || [])) {
-      if (subscribers.has(sk)) subscribers.get(sk).push(name);
-    }
-  }
-
-  // MCP: live id+enabled pairs from the WS-fed state, enriched with config
-  // detail (command/args) from the REST endpoint when available.
-  const detailMap = await fetchMcpConfigDetail();
-  const mcpServers = (state.mcpServers || []).map(s => ({
-    id: s.id,
-    enabled: s.enabled !== false,
-    config: detailMap[s.id] || null,
-  }));
-
-  return { skills, subscribers, mcpServers, agents, details };
+/** Per-agent model snapshot for the summary row's preset/model pills. */
+async function loadAgentSummaries(agents) {
+  return Promise.all(agents.map(async a => ({
+    ...a,
+    model: await fetchAgentModel(a.name).catch(() => null),
+  })));
 }
 
 // ── Rendering ──────────────────────────────────────────────
@@ -115,65 +112,118 @@ function pluginsContentEl() {
   return content;
 }
 
-/** Skill catalog card: name + description + subscriber agent chips. */
-function renderSkillCard(skill, subscribers) {
-  const subs = subscribers || [];
-  const subsHtml = subs.length
-    ? subs.map(a => `<span class="plugins-subscriber-chip" data-subscriber="${esc(a)}">${esc(a)}</span>`).join('')
-    : `<span class="plugins-none">${esc(t('plugins.none'))}</span>`;
-  return `<div class="plugins-skill-card" data-skill="${esc(skill.name)}">
-    <div class="plugins-skill-head">
-      <span class="plugins-skill-name">${esc(skill.name)}</span>
-      <span class="plugins-skill-sub-label">${esc(t('plugins.subscribers'))}</span>
+/** Composition annotation: skill count (expandable → previews). */
+function compositionSkills(skills, id) {
+  if (!skills.length) return '';
+  return `<button type="button" class="plugins-comp plugins-comp-toggle" data-expand="${esc(id)}"
+    aria-expanded="false" title="${esc(t('plugins.skillPreviewTitle'))}">${esc(t('plugins.compositionSkills', { n: skills.length }))}</button>`;
+}
+
+/** Expandable per-skill blocks (id + description + preview excerpt). */
+function skillExpandHtml(id, skills) {
+  if (!skills.length) return '';
+  const items = skills.map(s => `
+    <div class="plugins-skill-item">
+      <div class="plugins-skill-item-head">
+        <span class="plugins-skill-item-id">${esc(s.id)}</span>
+        <span class="plugins-skill-item-desc">${esc(s.description || '')}</span>
+      </div>
+      ${s.preview ? `<pre class="plugins-skill-preview">${esc(s.preview)}</pre>` : ''}
+    </div>`).join('');
+  return `<div class="plugins-skill-expand" data-expand-for="${esc(id)}" hidden>${items}</div>`;
+}
+
+/** Composition annotation: MCP servers (name + transport, command/env in tooltip). */
+function compositionMcp(servers) {
+  if (!servers.length) return '';
+  const label = servers.map(s => `${s.server} (${s.transport || 'none'})`).join('、');
+  const tip = servers.map(s => {
+    const bits = [s.transport || 'none'];
+    if (s.command) bits.push([s.command, ...(s.args || [])].filter(Boolean).join(' '));
+    if (s.url) bits.push(s.url);
+    if (s.envKeys?.length) bits.push(`env: ${s.envKeys.join(', ')}`);
+    return `${s.server}: ${bits.join(' · ')}`;
+  }).join('\n');
+  return `<span class="plugins-comp" title="${esc(tip)}">${esc(t('plugins.compositionMcp', { servers: label }))}</span>`;
+}
+
+/** Composition annotation: builtin tools whitelist extension count. */
+function compositionTools(tools) {
+  if (!tools.length) return '';
+  return `<span class="plugins-comp" title="${esc(tools.join(', '))}">${esc(t('plugins.compositionTools', { n: tools.length }))}</span>`;
+}
+
+/** Plugin card: identity + description summary + composition annotations
+ *  + the enable switch (the page's only control). */
+function renderPluginCard(manifest) {
+  const { on, changed, reason } = trustInfo(manifest);
+  const skills = Array.isArray(manifest.skills) ? manifest.skills : [];
+  const servers = Array.isArray(manifest.mcpServers) ? manifest.mcpServers : [];
+  const tools = Array.isArray(manifest.toolsExtension) ? manifest.toolsExtension : [];
+  const expandId = `skills-${esc(manifest.name)}`;
+
+  const metaBits = [];
+  if (manifest.version) metaBits.push(`v${manifest.version}`);
+  if (manifest.author) metaBits.push(t('plugins.author', { author: manifest.author }));
+
+  const switchTitle = on
+    ? t('plugins.switchDisableTitle')
+    : (changed ? t('plugins.switchReenableTitle') : t('plugins.switchEnableTitle'));
+
+  return `<div class="plugins-card${on ? ' on' : ''}${changed ? ' changed' : ''}" data-plugin="${esc(manifest.name)}">
+    <div class="plugins-card-head">
+      <div class="plugins-card-id">
+        <span class="plugins-card-name">${esc(manifest.name)}</span>
+        ${metaBits.length ? `<span class="plugins-card-meta">${esc(metaBits.join(' · '))}</span>` : ''}
+      </div>
+      <div class="plugins-card-state">
+        <span class="plugins-state-pill${on ? ' on' : ''}">${esc(on ? t('plugins.stateOn') : t('plugins.stateOff'))}</span>
+        <button type="button" class="plugins-switch${on ? ' on' : ''}" role="switch"
+          aria-checked="${on ? 'true' : 'false'}" aria-label="${esc(t('plugins.switchLabel'))}"
+          data-plugin-switch="${esc(manifest.name)}" title="${esc(switchTitle)}">
+          <span class="plugins-switch-knob"></span>
+        </button>
+      </div>
     </div>
-    ${skill.description ? `<div class="plugins-skill-desc">${esc(skill.description)}</div>` : ''}
-    <div class="plugins-subscriber-row">${subsHtml}</div>
+    ${manifest.description ? `<div class="plugins-card-desc">${esc(manifest.description)}</div>` : ''}
+    ${(skills.length || servers.length || tools.length)
+      ? `<div class="plugins-card-composition">${compositionSkills(skills, expandId)}${compositionMcp(servers)}${compositionTools(tools)}</div>`
+      : ''}
+    ${changed ? `<div class="plugins-card-hint">${esc(t('plugins.changedHint'))}</div>` : ''}
+    ${(!on && !changed && reason) ? `<div class="plugins-card-hint dim" title="${esc(reason)}">${esc(t('plugins.offHint'))}</div>` : ''}
+    ${skillExpandHtml(expandId, skills)}
   </div>`;
 }
 
-/** MCP server card: id + enabled badge + command summary. */
-function renderMcpCard(server) {
-  const cfg = server.config || {};
-  const cmdBits = [cfg.command, ...(Array.isArray(cfg.args) ? cfg.args : [])].filter(Boolean);
-  const cmdHtml = cmdBits.length
-    ? `<span class="plugins-mcp-cmd" title="${esc(cmdBits.join(' '))}">${esc(cmdBits.join(' '))}</span>`
-    : '';
-  const on = server.enabled !== false;
-  return `<div class="plugins-mcp-card${on ? '' : ' disabled'}" data-mcp="${esc(server.id)}">
-    <span class="plugins-mcp-name">${esc(server.id)}</span>
-    ${cmdHtml}
-    <span class="plugins-mcp-state${on ? '' : ' off'}">${esc(on ? t('plugins.enabled') : t('plugins.disabled'))}</span>
+/** Rejected (load-failed) plugin card — informational only, no switch. */
+function renderRejectedCard(entry) {
+  return `<div class="plugins-card rejected" data-plugin="${esc(entry.name)}">
+    <div class="plugins-card-head">
+      <div class="plugins-card-id">
+        <span class="plugins-card-name">${esc(entry.name)}</span>
+        <span class="plugins-rejected-pill">${esc(t('plugins.rejected'))}</span>
+      </div>
+    </div>
+    <div class="plugins-card-desc">${esc(entry.reason || '')}</div>
   </div>`;
 }
 
-/** Subscription-map row: agent name + toggleable skill chips. */
-function renderMapRow(agent, detail, skills) {
-  const current = new Set(detail?.skills || []);
-  const chips = skills.length
-    ? skills.map(s => {
-      const checked = current.has(s.name);
-      return `<span class="plugins-sub-check${checked ? ' checked' : ''}" data-agent="${esc(agent.name)}" data-skill="${esc(s.name)}" title="${esc(s.description || s.name)}">${esc(s.name)}</span>`;
-    }).join('')
-    : `<span class="plugins-none">${esc(t('plugins.noSkills'))}</span>`;
-  return `<div class="plugins-map-row" data-agent="${esc(agent.name)}">
-    <span class="plugins-agent-name" data-detail-agent="${esc(agent.name)}" title="${esc(t('plugins.detail'))}">${esc(agent.displayName || agent.name)}</span>
-    <div class="plugins-sub-grid">${chips}</div>
-  </div>`;
-}
-
-/** Config row: preset select + resolved model pill (migrated from the
- *  sealed agents panel's detail view — same options, same write path). */
-function renderConfigRow(agent, model, presetData) {
-  const presetName = model?.preset || '';
-  const presetList = presetData?.presets || [];
-  const current = model?.preferred || model?.current || model?.default || '';
-  return `<div class="plugins-config-row" data-agent="${esc(agent.name)}">
-    <span class="plugins-agent-name" data-detail-agent="${esc(agent.name)}" title="${esc(t('plugins.detail'))}">${esc(agent.displayName || agent.name)}</span>
-    <select class="plugins-preset-select" data-agent="${esc(agent.name)}">
-      <option value="">${esc(t('preset.useDefault'))}</option>
-      ${presetList.map(p => `<option value="${esc(p.name)}"${p.name === presetName ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
-    </select>
-    <span class="plugins-model-tag" data-agent="${esc(agent.name)}">${current ? esc(shortModel(current)) : ''}</span>
+/** Agent summary row: name + description + preset/model 现状 — the whole row
+ *  deep-links into the per-agent detail editor (openAgentDetail). */
+function renderAgentRow(agent) {
+  const model = agent.model || {};
+  const preset = model.preset || '';
+  const resolved = model.preferred || model.current || model.default || '';
+  const meta = [
+    preset ? esc(preset) : '',
+    resolved ? esc(shortModel(resolved)) : '',
+  ].filter(Boolean).map(p => `<span class="plugins-agent-meta-pill">${p}</span>`).join('');
+  return `<div class="plugins-agent-row" data-detail-agent="${esc(agent.name)}" role="button" tabindex="0"
+    title="${esc(t('plugins.detail'))}">
+    <span class="plugins-agent-name">${esc(agent.displayName || agent.name)}</span>
+    <span class="plugins-agent-desc">${esc(agent.description || '')}</span>
+    <span class="plugins-agent-meta">${meta}</span>
+    <svg class="plugins-agent-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
   </div>`;
 }
 
@@ -183,44 +233,28 @@ export function renderPlugins() {
   if (!content) return;
   content.innerHTML = `<div class="plugins-loading">${esc(t('plugins.loading'))}</div>`;
 
-  Promise.all([loadPluginsData(), presets.fetchPresets()]).then(([{ skills, subscribers, mcpServers, agents, details }, presetData]) => {
+  Promise.all([loadPluginsData()]).then(async ([{ registry, agents }]) => {
     if (!content.isConnected) return; // tab closed while fetching
 
-    const models = new Map(); // filled async below (per-agent model fetch)
+    const plugins = (registry.plugins || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+    const rejected = (registry.rejected || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+    const summaries = await loadAgentSummaries(agents);
+    if (!content.isConnected) return;
 
-    const catalogHtml = `
-      <div class="plugins-section" id="plugins-section-catalog">
-        <div class="plugins-section-title">${esc(t('plugins.catalog'))}</div>
-        <div class="plugins-subsection">
-          <div class="plugins-subsection-title">${esc(t('plugins.skills'))}</div>
-          <div class="plugins-skill-list">${skills.length
-            ? skills.map(s => renderSkillCard(s, subscribers.get(s.name))).join('')
-            : `<span class="plugins-none">${esc(t('plugins.noSkills'))}</span>`}</div>
-        </div>
-        <div class="plugins-subsection">
-          <div class="plugins-subsection-title">${esc(t('plugins.mcp'))}</div>
-          <div class="plugins-mcp-list">${mcpServers.length
-            ? mcpServers.map(renderMcpCard).join('')
-            : `<span class="plugins-none">${esc(t('plugins.noMcp'))}</span>`}</div>
-        </div>
-      </div>`;
-
-    const mapHtml = `
-      <div class="plugins-section" id="plugins-section-map">
-        <div class="plugins-section-title">${esc(t('plugins.map'))}</div>
-        <div class="plugins-section-hint">${esc(t('plugins.mapHint'))}</div>
-        <div class="plugins-map-list">${agents.length
-          ? agents.map(a => renderMapRow(a, details.get(a.name), skills)).join('')
+    const listHtml = `
+      <div class="plugins-section" id="plugins-section-plugins">
+        <div class="plugins-section-title">${esc(t('plugins.list'))}</div>
+        <div class="plugins-section-hint">${esc(t('plugins.listHint'))}</div>
+        <div class="plugins-card-list">${(plugins.length || rejected.length)
+          ? plugins.map(renderPluginCard).join('') + rejected.map(renderRejectedCard).join('')
+          : `<span class="plugins-none">${esc(t('plugins.empty'))}</span>`}</div>
+      </div>
+      <div class="plugins-section" id="plugins-section-agents">
+        <div class="plugins-section-title">${esc(t('plugins.agents'))}</div>
+        <div class="plugins-section-hint">${esc(t('plugins.agentsHint'))}</div>
+        <div class="plugins-agent-list">${summaries.length
+          ? summaries.map(renderAgentRow).join('')
           : `<span class="plugins-none">${esc(t('plugins.noAgents'))}</span>`}</div>
-      </div>`;
-
-    const configHtml = `
-      <div class="plugins-section" id="plugins-section-config">
-        <div class="plugins-section-title">${esc(t('plugins.config'))}</div>
-        <div class="plugins-section-hint">${esc(t('plugins.configHint'))}</div>
-        <div class="plugins-config-list">${agents.length
-          ? agents.map(a => renderConfigRow(a, null, presetData)).join('')
-          : ''}</div>
       </div>`;
 
     content.innerHTML = `
@@ -230,62 +264,62 @@ export function renderPlugins() {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         </button>
       </div>
-      ${catalogHtml}${mapHtml}${configHtml}`;
+      ${listHtml}`;
 
-    bindPluginsEvents(content, agents, details, skills);
-
-    // Model pills: per-agent fetch, then fill (same pattern as the sealed
-    // panel's populateModelTag, scoped to this pane).
-    agents.forEach(a => {
-      fetchAgentModel(a.name).then(model => {
-        models.set(a.name, model);
-        if (!content.isConnected) return;
-        const tag = content.querySelector(`.plugins-model-tag[data-agent="${esc(a.name)}"]`);
-        const current = model?.preferred || model?.current || model?.default || '';
-        if (tag && current) tag.textContent = shortModel(current);
-        const sel = content.querySelector(`.plugins-preset-select[data-agent="${esc(a.name)}"]`);
-        if (sel && model?.preset) sel.value = model.preset;
-      });
-    });
+    bindPluginsEvents(content);
+  }).catch(err => {
+    if (!content.isConnected) return;
+    content.innerHTML = `<div class="plugins-loading">${esc(t('plugins.loadFailed', { error: err?.message || err }))}</div>`;
   });
 }
 
-/** Bind interactions: refresh, subscription toggles, preset selects,
- *  deep-links to the per-agent detail tab. */
-function bindPluginsEvents(content, agents, details, skills) {
+/** Enable/disable one plugin via the trust endpoints, then re-render —
+ *  the registry (GET /api/plugins) is the single source of truth for card
+ *  state, so a refresh (not a local flip) keeps UI ≡ backend semantics. */
+async function setPluginEnabled(name, enable) {
+  const path = `/api/plugins/${encodeURIComponent(name)}/${enable ? 'approve' : 'revoke'}`;
+  try {
+    const resp = await api(path, { method: 'POST' });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok || body.error) throw new Error(body.error || `HTTP ${resp.status}`);
+  } catch (e) {
+    window.__showToast?.(String(e?.message || e), 'error');
+  }
+  renderPlugins(); // even after an error — re-sync with the registry
+}
+
+/** Bind interactions: refresh, per-plugin switches, skill-expand toggles,
+ *  agent summary rows → per-agent detail tab. */
+function bindPluginsEvents(content) {
   content.querySelector('#plugins-refresh')?.addEventListener('click', () => renderPlugins());
 
-  // Subscription chips — toggle + persist via the proven PUT write path.
-  content.querySelectorAll('.plugins-sub-check').forEach(chip => {
-    chip.addEventListener('click', () => {
-      const agent = chip.dataset.agent;
-      const skill = chip.dataset.skill;
-      chip.classList.toggle('checked');
-      const current = new Set(details.get(agent)?.skills || []);
-      if (chip.classList.contains('checked')) current.add(skill);
-      else current.delete(skill);
-      // Keep the cached detail in sync so repeated toggles don't drift.
-      const d = details.get(agent);
-      if (d) d.skills = [...current];
-      setAgentSkillsFlows(agent, 'skills', [...current]);
+  // The one control on the page: per-plugin enable switch.
+  content.querySelectorAll('[data-plugin-switch]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      setPluginEnabled(btn.dataset.pluginSwitch, !btn.classList.contains('on'));
     });
   });
 
-  // Preset selects — same write path as the sealed panel's detail view.
-  content.querySelectorAll('.plugins-preset-select').forEach(sel => {
-    sel.addEventListener('change', async () => {
-      const agent = sel.dataset.agent;
-      await presets.setAgentPreset(agent, sel.value || null);
-      const model = await fetchAgentModel(agent);
-      const tag = content.querySelector(`.plugins-model-tag[data-agent="${esc(agent)}"]`);
-      const current = model?.preferred || model?.current || model?.default || '';
-      if (tag) tag.textContent = current ? shortModel(current) : '';
+  // Composition annotation: expand/collapse skill previews.
+  content.querySelectorAll('.plugins-comp-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const block = content.querySelector(`[data-expand-for="${btn.dataset.expand}"]`);
+      if (!block) return;
+      const show = block.hidden;
+      block.hidden = !show;
+      btn.setAttribute('aria-expanded', show ? 'true' : 'false');
+      btn.classList.toggle('open', show);
     });
   });
 
-  // Agent name → per-agent detail tab (full editor: tools / prompt / flows).
+  // Agent summary row → per-agent detail tab (full editor: tools/prompt/flows).
   content.querySelectorAll('[data-detail-agent]').forEach(el => {
     el.addEventListener('click', () => openAgentDetail(el.dataset.detailAgent));
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAgentDetail(el.dataset.detailAgent); }
+    });
   });
 }
 

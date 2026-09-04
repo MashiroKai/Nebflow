@@ -17,17 +17,15 @@ import org.http4s.dsl.io.*
 import scala.concurrent.duration.*
 
 /**
- * Project agent 指令 REST 端点契约测试（读取优先级反转，2026-09-03 裁定）。
+ * Project agent 指令 REST 端点契约测试（E.3 双轨移除，2026-09 裁定 13）。
  *
- * 背景：AGENTS.md 迁移（2a0dada0）后 slideblocks 偏差回滚——其根 AGENTS.md 是 GitHub 上游英文
- * 内容不可动，中文项目指令保留为 `.nebflow/Agent.md` 真文件。因此读取优先级反转为：
- * **`.nebflow/Agent.md` 存在则优先（symlink 算存在）；缺失回落工作区根 `AGENTS.md`**。钉死：
- *  1. GET：`.nebflow/Agent.md` 真文件存在 → 返回它，根 AGENTS.md 另有内容时不误读（slideblocks）
- *  2. GET：`.nebflow/Agent.md` → `../AGENTS.md` symlink → 经链接读到根内容（已迁移项目语义不变）
- *  3. GET：无 `.nebflow/Agent.md` → 回落根 AGENTS.md；悬空 symlink 同样回落；两处皆无 → 404
- *  4. PUT：落点与 GET 优先位置一致——真文件场景写 `.nebflow/Agent.md`（根不动）；
- *     symlink 场景经链接写真实目标（链接保留）；无文件场景写根 AGENTS.md
- *  5. auth 门禁（无 token → 403）
+ * 背景更新：canonical = 工作区根 `AGENTS.md`。旧位 `.nebflow/Agent.md` 优先逻辑
+ * （2026-09-03 裁定反转）废止——迁移统一在 ProjectStore.load 执行（仅旧位→落根+
+ * 删旧；并存→根胜出+旧位保留；symlink→根文件＝已迁移稳态 no-op）。本 spec 钉死：
+ *  1. GET：只读根 AGENTS.md——仅旧位项目经 load 迁移后返回迁移内容（旧位已删）
+ *  2. GET：两者并存 → 根胜出；symlink→根稳态 → 经链接读同一内容；悬空 symlink 回落根；两处皆无 → 404
+ *  3. PUT：只落根 AGENTS.md（仅旧位项目先迁移再写根；并存项目旧位不动）——响应形状不变
+ *  4. auth 门禁（无 token → 403）
  */
 class ProjectAgentFileRoutesSpec extends CatsEffectSuite:
 
@@ -106,23 +104,41 @@ class ProjectAgentFileRoutesSpec extends CatsEffectSuite:
       .map(resp => assertEquals(resp.status, Status.Forbidden))
   }
 
-  // ① 真文件优先：slideblocks 场景——.nebflow/Agent.md 中文真文件命中，根 AGENTS.md（上游英文）不误读
-  test("GET: real .nebflow/Agent.md takes priority over root AGENTS.md (slideblocks rollback)") {
+  // ① 仅旧位真文件：load 迁移先行（落根+删旧），GET 返回迁移后的根内容
+  test("GET: legacy-only project migrated on load -> returns migrated root content, legacy removed") {
     val ws = tempRoot / "ws-real-priority"
     os.makeDir.all(ws / ".nebflow")
     mkProject("af-real-priority", ws).flatMap { _ =>
-      os.write.over(ws / "AGENTS.md", "# upstream root content\n") // 根另有内容（不可动）
+      os.remove(ws / "AGENTS.md") // 仅旧位形态
       os.write.over(ws / ".nebflow" / "Agent.md", "# 中文项目指令\n")
       run(authed(Request[IO](Method.GET, Uri.unsafeFromString("/projects/af-real-priority/agent.md"))))
         .flatMap(getBody)
         .map { (status, content) =>
           assertEquals(status, Status.Ok)
           assertEquals(content, "# 中文项目指令\n")
+          assertEquals(os.exists(ws / ".nebflow" / "Agent.md"), false, "migration removed legacy")
         }
     }
   }
 
-  // ② symlink 命中：已迁移项目 .nebflow/Agent.md → ../AGENTS.md，经链接读到根文件同一内容
+  // ② 两者并存：根胜出（裁定 13，slideblocks 并存形态读根上游内容）
+  test("GET: both files exist -> root AGENTS.md wins (canonical)") {
+    val ws = tempRoot / "ws-both-win"
+    os.makeDir.all(ws / ".nebflow")
+    mkProject("af-both-win", ws).flatMap { _ =>
+      os.write.over(ws / "AGENTS.md", "# upstream root content\n")
+      os.write.over(ws / ".nebflow" / "Agent.md", "# 中文旧位内容\n")
+      run(authed(Request[IO](Method.GET, Uri.unsafeFromString("/projects/af-both-win/agent.md"))))
+        .flatMap(getBody)
+        .map { (status, content) =>
+          assertEquals(status, Status.Ok)
+          assertEquals(content, "# upstream root content\n")
+          assertEquals(os.read(ws / ".nebflow" / "Agent.md"), "# 中文旧位内容\n") // 并存不删旧位
+        }
+    }
+  }
+
+  // ③ symlink → ../AGENTS.md 稳态：经链接读到根文件同一内容（语义不变）
   test("GET: .nebflow/Agent.md symlink to ../AGENTS.md returns root content through the link") {
     val ws = tempRoot / "ws-symlink"
     os.makeDir.all(ws / ".nebflow")
@@ -182,20 +198,20 @@ class ProjectAgentFileRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  // PUT 落点①真文件场景：写 .nebflow/Agent.md（slideblocks 中文指令），根 AGENTS.md 不动；GET 读回一致
-  test("PUT: real .nebflow/Agent.md present -> writes legacy file, root AGENTS.md untouched") {
+  // PUT ①仅旧位：load 迁移先行（落根+删旧），随后 PUT 落根；旧位不复活
+  test("PUT: legacy-only project -> migrated to root first, save lands at root, no legacy revival") {
     val ws = tempRoot / "ws-put-real"
     os.makeDir.all(ws / ".nebflow")
     mkProject("af-put-real", ws).flatMap { _ =>
-      os.write.over(ws / "AGENTS.md", "# upstream root untouched\n")
-      os.write.over(ws / ".nebflow" / "Agent.md", "# 中文旧内容\n") // slideblocks：真文件已存在
+      os.remove(ws / "AGENTS.md")
+      os.write.over(ws / ".nebflow" / "Agent.md", "# 中文旧内容\n") // 仅旧位形态
       val body = io.circe.Json.obj("content" -> "# 中文已保存\n".asJson)
       run(authed(Request[IO](Method.PUT, Uri.unsafeFromString("/projects/af-put-real/agent.md")).withEntity(body)))
         .flatMap(resp => IO(assertEquals(resp.status, Status.Ok)))
         .flatMap { _ =>
           IO {
-            assertEquals(os.read(ws / ".nebflow" / "Agent.md"), "# 中文已保存\n")
-            assertEquals(os.read(ws / "AGENTS.md"), "# upstream root untouched\n")
+            assertEquals(os.read(ws / "AGENTS.md"), "# 中文已保存\n", "save lands at canonical root")
+            assertEquals(os.exists(ws / ".nebflow" / "Agent.md"), false, "legacy removed by migration")
           }
         }
         .flatMap { _ =>
@@ -209,8 +225,27 @@ class ProjectAgentFileRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  // PUT 落点②symlink 场景：经链接写真实目标（根 AGENTS.md 内容更新），链接本身保留不破坏
-  test("PUT: symlink .nebflow/Agent.md -> writes through link to root, link preserved") {
+  // PUT ②并存：只落根 AGENTS.md；旧位保留不动（迁移分支②语义：并存不删）
+  test("PUT: both exist -> writes root AGENTS.md only, legacy file untouched") {
+    val ws = tempRoot / "ws-put-both"
+    os.makeDir.all(ws / ".nebflow")
+    mkProject("af-put-both", ws).flatMap { _ =>
+      os.write.over(ws / "AGENTS.md", "# root before save\n")
+      os.write.over(ws / ".nebflow" / "Agent.md", "# legacy stays\n")
+      val body = io.circe.Json.obj("content" -> "# root after save\n".asJson)
+      run(authed(Request[IO](Method.PUT, Uri.unsafeFromString("/projects/af-put-both/agent.md")).withEntity(body)))
+        .flatMap(resp => IO(assertEquals(resp.status, Status.Ok)))
+        .flatMap { _ =>
+          IO {
+            assertEquals(os.read(ws / "AGENTS.md"), "# root after save\n")
+            assertEquals(os.read(ws / ".nebflow" / "Agent.md"), "# legacy stays\n")
+          }
+        }
+    }
+  }
+
+  // PUT ③symlink → 根稳态：写穿透到根文件内容，链接本身保留（稳态 no-op 后直写根）
+  test("PUT: symlink .nebflow/Agent.md -> writes root, link preserved") {
     val ws = tempRoot / "ws-put-link"
     os.makeDir.all(ws / ".nebflow")
     mkProject("af-put-link", ws).flatMap { _ =>
@@ -236,7 +271,7 @@ class ProjectAgentFileRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  // PUT 落点③无文件场景：写工作区根 AGENTS.md，GET 回落读到同一内容
+  // PUT ④无旧位：写工作区根 AGENTS.md，GET 读回一致
   test("PUT: no .nebflow/Agent.md -> writes root AGENTS.md; GET then returns it") {
     val ws = tempRoot / "ws-put-root"
     os.makeDir.all(ws)
