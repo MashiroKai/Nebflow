@@ -6,6 +6,10 @@ import io.circe.Json
 import io.circe.syntax.*
 import io.circe.JsonObject
 
+import java.util.concurrent.ConcurrentHashMap
+
+import scala.jdk.CollectionConverters.*
+
 import nebflow.service.MemoryStore
 
 /**
@@ -58,7 +62,8 @@ object MemoryEditTool extends Tool:
 - Entries are markdown list lines ("- ..."); convention: `- <fact>（→<id> detail at ~/.nebflow/memory/<id>.md）`.
 - `section` matches a "## Heading" line exactly (the "## " prefix is optional in the parameter).
 - No whole-file rewrite exists by design — memory cannot be wiped in one call.
-- On no match the error lists existing entry prefixes so you can self-correct in the same turn."""
+- append/update `content` must be ONE entry: a single line starting with "- ". Multi-line content is rejected (MEMORYEDIT_ENTRY_FORMAT) — drifted non-entry lines would be invisible to update/remove forever. Use replace_section for a multi-line section body.
+- Concurrency: same-file MemoryEdit calls are serialized per file within this process (a read-modify-write is atomic against other MemoryEdit calls). Cross-process writers and direct saves to these files from other subsystems are NOT locked — do not race them."""
 
   val inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
@@ -101,15 +106,27 @@ object MemoryEditTool extends Tool:
   // Target whitelist（唯一写面：两个文件，别无他径）
   // ------------------------------------------------------------------
 
-  private case class Target(path: os.Path, load: Option[String], save: String => IO[Unit])
+  // load 为懒 thunk（QC nit 2）：resolveTarget 只拼路径/装 thunk，不触文件系统——
+  // target/参数/条目格式校验失败路径（MEMORYEDIT_TARGET / PARAM / ACTION /
+  // ENTRY_FORMAT）零文件系统读（不再有 MtimeCache 读副作用）。
+  private case class Target(path: os.Path, load: () => Option[String], save: String => IO[Unit])
 
   private def resolveTarget(target: String): Either[ToolError, Target] =
     target match
-      case "user"  => Right(Target(MemoryStore.userMemoryPath, MemoryStore.loadUserMemory, MemoryStore.saveUserMemory))
-      case "agent" => Right(Target(MemoryStore.agentMemoryPath("Nebula"), MemoryStore.loadAgentMemory("Nebula"), MemoryStore.saveAgentMemory("Nebula", _)))
+      case "user"  => Right(Target(MemoryStore.userMemoryPath, () => MemoryStore.loadUserMemory, MemoryStore.saveUserMemory))
+      case "agent" => Right(Target(MemoryStore.agentMemoryPath("Nebula"), () => MemoryStore.loadAgentMemory("Nebula"), MemoryStore.saveAgentMemory("Nebula", _)))
       case other =>
         Left(ToolError(
           s"MemoryEdit: unknown target '$other' — only \"user\" (~/.nebflow/User.md) and \"agent\" (~/.nebflow/agents/Nebula/memory.md) exist. (MEMORYEDIT_TARGET)"))
+
+  // per-file 互斥（QC nit 3）：单进程内同一目标文件的整段读-改-写串行化（见 call）。
+  // 取舍：锁放工具侧而非 MemoryStore.saveFile——读（readLines）也在本工具，锁住
+  // 整段 RMW 才能消丢更新；store 侧锁只能串行写、护不住读-改-写窗口。跨进程
+  // 写入与 WS-route 等工具外直写不在锁面内，工具 description 已明示。
+  private val fileLocks = new ConcurrentHashMap[String, AnyRef]()
+
+  private def lockFor(path: os.Path): AnyRef =
+    fileLocks.asScala.getOrElseUpdate(path.toString, new Object)
 
   // ------------------------------------------------------------------
   // 行模型：sections = "## " 标题行；entries = "- " 列表行
@@ -145,8 +162,21 @@ object MemoryEditTool extends Tool:
   private def normalizeContent(content: String): Vector[String] =
     content.trim.linesIterator.toVector
 
-  private def readLines(path: os.Path, load: Option[String]): Vector[String] =
-    load.getOrElse("").linesIterator.toVector
+  /** 条目模型防漂移（QC nit 6）：append/update 的 content 必须是「单条目」——恰一行
+    * 且以 "- " 开头。多行 content 经 normalizeContent 切行插入后，非条目行 locate
+    * 永远扫不到（只认 isEntry 行）——在入口拒绝并给可行动出路。选校验而非仅写
+    * description：校验可执行、可测，防漂移强度高于文档约定。replace_section 按设计
+    * 语义允许多行区段体，不走此校验。 */
+  private def singleEntryGuard(action: String, content: String): Option[ToolError] =
+    val ls = normalizeContent(content)
+    if ls.lengthIs > 1 then Some(ToolError(
+      s"""MemoryEdit: $action content must be ONE entry line, got ${ls.length} lines — multi-line content drifts out of the entry model (locate scans "- " lines only; extra lines would be invisible to update/remove). Use replace_section for a multi-line section body, or append each entry separately. (MEMORYEDIT_ENTRY_FORMAT)"""))
+    else if !ls.headOption.exists(_.startsWith("- ")) then Some(ToolError(
+      s"""MemoryEdit: $action content must start with "- " (markdown list entry); got "${content.trim.take(60)}" — non-entry text is invisible to update/remove. (MEMORYEDIT_ENTRY_FORMAT)"""))
+    else None
+
+  private def readLines(load: () => Option[String]): Vector[String] =
+    load().getOrElse("").linesIterator.toVector
 
   /** 结果文本：动作 + 文件 + 变更摘要 + 生效提示（§C.2 结果语义）。 */
   private def ok(action: String, path: os.Path, detail: String): Either[ToolError, String] =
@@ -155,9 +185,10 @@ object MemoryEditTool extends Tool:
          |$detail
          |Takes effect at the next lifecycle node — no need to re-read to verify.""".stripMargin)
 
-  /** update/remove 共用定位：可选 section 限域 + 条目内精确子串（首个命中）。
+  /** update/remove 共用定位：可选 section 限域 + 条目内精确子串（首个命中），
+    * 返回命中条目的文件级行下标（QC nit 4：lines 恒等于输入，冗余 tuple 已裁撤）。
     * Left = 结构化报错（缺节/无命中，附可行动线索）。 */
-  private def locate(lines: Vector[String], section: Option[String], matchStr: String): Either[ToolError, (Vector[String], Int)] =
+  private def locate(lines: Vector[String], section: Option[String], matchStr: String): Either[ToolError, Int] =
     section match
       case Some(sec) =>
         findSection(lines, sec) match
@@ -171,14 +202,14 @@ object MemoryEditTool extends Tool:
                 Left(ToolError(
                   s"""MemoryEdit: no entry containing "$matchStr" in section '## ${canonicalSection(sec)}'. Existing entry prefixes:
                      |${entryPrefixes(lines.slice(b0, b1))} (MEMORYEDIT_NO_MATCH)""".stripMargin))
-              case Some(abs) => Right((lines, abs))
+              case Some(abs) => Right(abs)
       case None =>
         lines.indices.find(i => isEntry(lines(i)) && lines(i).contains(matchStr)) match
           case None =>
             Left(ToolError(
               s"""MemoryEdit: no entry containing "$matchStr". Existing entry prefixes:
                  |${entryPrefixes(lines)} (MEMORYEDIT_NO_MATCH)""".stripMargin))
-          case Some(abs) => Right((lines, abs))
+          case Some(abs) => Right(abs)
 
   // ------------------------------------------------------------------
   // call
@@ -192,70 +223,85 @@ object MemoryEditTool extends Tool:
       val matchStr = input("match").flatMap(_.asString)
       val content  = input("content").flatMap(_.asString)
 
+      // 条目模型防漂移（QC nit 6）：append/update 的 content 单条目校验（提前算一次，
+      // 由下方 guard 消费；replace_section 不在列——区段替换按设计允许多行）。
+      val entryFormatError: Option[ToolError] = (action, content) match
+        case ("append", Some(c)) => singleEntryGuard("append", c)
+        case ("update", Some(c)) => singleEntryGuard("update", c)
+        case _                   => None
+
       val outcome: Either[ToolError, String] =
         resolveTarget(target).flatMap { t =>
-          action match
-            case "append" if content.isEmpty =>
-              Left(ToolError("MemoryEdit: append requires `content` (the entry to add). (MEMORYEDIT_PARAM)"))
-            case "update" if matchStr.isEmpty || content.isEmpty =>
-              Left(ToolError("MemoryEdit: update requires `match` (locator) and `content` (replacement). (MEMORYEDIT_PARAM)"))
-            case "remove" if matchStr.isEmpty =>
-              Left(ToolError("MemoryEdit: remove requires `match` (locator). (MEMORYEDIT_PARAM)"))
-            case "replace_section" if section.isEmpty || content.isEmpty =>
-              Left(ToolError("MemoryEdit: replace_section requires `section` and `content` (full new body). (MEMORYEDIT_PARAM)"))
-            case "append" =>
-              val lines = readLines(t.path, t.load)
-              val add   = normalizeContent(content.getOrElse(""))
-              section match
-                case None =>
-                  val out  = if lines.forall(_.trim.isEmpty) then add else lines ++ add
-                  t.save(out.mkString("\n") + "\n").unsafeRunSync()
-                  ok("append (file end)", t.path, s"+ ${add.mkString(" ⏎ ")}")
-                case Some(sec) =>
-                  findSection(lines, sec) match
-                    case None =>
-                      Left(ToolError(
-                        s"MemoryEdit: no section '## ${canonicalSection(sec)}'. Existing sections: ${existingSectionNames(lines)} (MEMORYEDIT_NO_SECTION)"))
-                    case Some(h) =>
-                      val (b0, b1) = sectionBodyRange(lines, h)
-                      t.save(lines.patch(b1, add, 0).mkString("\n") + "\n").unsafeRunSync()
-                      ok(s"append (section '$sec')", t.path, s"+ ${add.mkString(" ⏎ ")}")
+          // per-file 锁（QC nit 3）：整段读-改-写（readLines → 计算 → save）持锁串行，
+          // 并发 MemoryEdit 对同一文件不再互相丢更新。
+          lockFor(t.path).synchronized {
+            action match
+              case "append" if content.isEmpty =>
+                Left(ToolError("MemoryEdit: append requires `content` (the entry to add). (MEMORYEDIT_PARAM)"))
+              case "append" if entryFormatError.isDefined =>
+                Left(entryFormatError.get)
+              case "update" if matchStr.isEmpty || content.isEmpty =>
+                Left(ToolError("MemoryEdit: update requires `match` (locator) and `content` (replacement). (MEMORYEDIT_PARAM)"))
+              case "update" if entryFormatError.isDefined =>
+                Left(entryFormatError.get)
+              case "remove" if matchStr.isEmpty =>
+                Left(ToolError("MemoryEdit: remove requires `match` (locator). (MEMORYEDIT_PARAM)"))
+              case "replace_section" if section.isEmpty || content.isEmpty =>
+                Left(ToolError("MemoryEdit: replace_section requires `section` and `content` (full new body). (MEMORYEDIT_PARAM)"))
+              case "append" =>
+                val lines = readLines(t.load)
+                val add   = normalizeContent(content.getOrElse(""))
+                section match
+                  case None =>
+                    val out  = if lines.forall(_.trim.isEmpty) then add else lines ++ add
+                    t.save(out.mkString("\n") + "\n").unsafeRunSync()
+                    ok("append (file end)", t.path, s"+ ${add.mkString(" ⏎ ")}")
+                  case Some(sec) =>
+                    findSection(lines, sec) match
+                      case None =>
+                        Left(ToolError(
+                          s"MemoryEdit: no section '## ${canonicalSection(sec)}'. Existing sections: ${existingSectionNames(lines)} (MEMORYEDIT_NO_SECTION)"))
+                      case Some(h) =>
+                        val (b0, b1) = sectionBodyRange(lines, h)
+                        t.save(lines.patch(b1, add, 0).mkString("\n") + "\n").unsafeRunSync()
+                        ok(s"append (section '$sec')", t.path, s"+ ${add.mkString(" ⏎ ")}")
 
-            case "update" =>
-              val lines = readLines(t.path, t.load)
-              locate(lines, section, matchStr.getOrElse("")).flatMap { case (ls, abs) =>
-                val old = ls(abs)
-                val rep = normalizeContent(content.getOrElse(""))
-                t.save(ls.patch(abs, rep, 1).mkString("\n") + "\n").unsafeRunSync()
-                ok("update", t.path, s"- ${old.trim.take(80)}\n+ ${rep.mkString(" ⏎ ")}")
-              }
+              case "update" =>
+                val lines = readLines(t.load)
+                locate(lines, section, matchStr.getOrElse("")).flatMap { abs =>
+                  val old = lines(abs)
+                  val rep = normalizeContent(content.getOrElse(""))
+                  t.save(lines.patch(abs, rep, 1).mkString("\n") + "\n").unsafeRunSync()
+                  ok("update", t.path, s"- ${old.trim.take(80)}\n+ ${rep.mkString(" ⏎ ")}")
+                }
 
-            case "remove" =>
-              val lines = readLines(t.path, t.load)
-              locate(lines, section, matchStr.getOrElse("")).flatMap { case (ls, abs) =>
-                val old = ls(abs)
-                t.save(ls.patch(abs, Nil, 1).mkString("\n") + "\n").unsafeRunSync()
-                ok("remove", t.path, s"- ${old.trim.take(80)}")
-              }
+              case "remove" =>
+                val lines = readLines(t.load)
+                locate(lines, section, matchStr.getOrElse("")).flatMap { abs =>
+                  val old = lines(abs)
+                  t.save(lines.patch(abs, Nil, 1).mkString("\n") + "\n").unsafeRunSync()
+                  ok("remove", t.path, s"- ${old.trim.take(80)}")
+                }
 
-            case "replace_section" =>
-              val lines = readLines(t.path, t.load)
-              val sec   = section.getOrElse("")
-              findSection(lines, sec) match
-                case None =>
-                  Left(ToolError(
-                    s"MemoryEdit: no section '## ${canonicalSection(sec)}'. Existing sections: ${existingSectionNames(lines)} (MEMORYEDIT_NO_SECTION)"))
-                case Some(h) =>
-                  val (b0, b1)  = sectionBodyRange(lines, h)
-                  val oldBody   = lines.slice(b0, b1)
-                  val add       = normalizeContent(content.getOrElse(""))
-                  t.save(lines.patch(b0, add, b1 - b0).mkString("\n") + "\n").unsafeRunSync()
-                  ok(s"replace_section '$sec'", t.path,
-                    s"replaced ${oldBody.count(isEntry)} entries with ${add.count(isEntry)} entries")
+              case "replace_section" =>
+                val lines = readLines(t.load)
+                val sec   = section.getOrElse("")
+                findSection(lines, sec) match
+                  case None =>
+                    Left(ToolError(
+                      s"MemoryEdit: no section '## ${canonicalSection(sec)}'. Existing sections: ${existingSectionNames(lines)} (MEMORYEDIT_NO_SECTION)"))
+                  case Some(h) =>
+                    val (b0, b1)  = sectionBodyRange(lines, h)
+                    val oldBody   = lines.slice(b0, b1)
+                    val add       = normalizeContent(content.getOrElse(""))
+                    t.save(lines.patch(b0, add, b1 - b0).mkString("\n") + "\n").unsafeRunSync()
+                    ok(s"replace_section '$sec'", t.path,
+                      s"replaced ${oldBody.count(isEntry)} entries with ${add.count(isEntry)} entries")
 
-            case other =>
-              Left(ToolError(
-                s"MemoryEdit: unknown action '$other' — one of append/update/remove/replace_section. (MEMORYEDIT_ACTION)"))
+              case other =>
+                Left(ToolError(
+                  s"MemoryEdit: unknown action '$other' — one of append/update/remove/replace_section. (MEMORYEDIT_ACTION)"))
+          }
         }
       outcome
     }
