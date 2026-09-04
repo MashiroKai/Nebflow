@@ -101,7 +101,9 @@ export function applyLocaleToHtml() {
     'legacy-item-teams': ['text', 'activity.teams'],
     'legacy-item-flows': ['text', 'activity.flows'],
     'projects-btn': ['title', 'project.title'],
-    'agents-btn': ['title', 'activity.agents'],
+    // 2026-09-04 件 B：#agents-btn 改挂「插件」页（原「智能体」入口移除，
+    // key 换成 activity.plugins；activity.agents 保留给封存面板恢复的旧标签页）。
+    'agents-btn': ['title', 'activity.plugins'],
     'settings-btn': ['title', 'activity.settings'],
     'explorer-new-file-btn': ['title', 'activity.newFile'],
     'explorer-new-folder-btn': ['title', 'activity.newFolder'],
