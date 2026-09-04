@@ -61,6 +61,16 @@ class NodeEngine(
   /** 运行中节点 → cancel 信号（NodeCancel 用）。 */
   private val running: Ref[IO, Map[String, Deferred[IO, Unit]]] = Ref.unsafe[IO, Map[String, Deferred[IO, Unit]]](Map.empty)
 
+  /** 缺口4（2026-09-04 重复投递去重）：同 (identity, status) 60s 窗口内重复
+    * Nebula 通知抑制——进程内时间窗 map（固定窗，顺路淘汰过期条目）。与 V8
+    * nebulaDeliveredAt 账本**正交**：账本管跨重启 at-least-once（持久化，管
+    * 「结果是否到达过 Nebula」），本表管秒级抖动（内存，管「同一通知短窗内
+    * 重复轰炸」——09-03 ProjectCreate 合并回报三连投实证）。窗口内重复被抑制
+    * 时仍 markNebulaDelivered，账本一致性不破坏。identity = nodeId（无 nodeId
+    * 的 fire-and-forget 通道用 nodeName——held/escalate 各节点独立窗口）。 */
+  private[project] val recentNebulaDeliveries: Ref[IO, Map[(String, String), Long]] =
+    Ref.unsafe[IO, Map[(String, String), Long]](Map.empty)
+
   /** 节点是否正在运行（ProjectActor 状态查询用）。 */
   def isRunning(nodeId: String): IO[Boolean] = running.get.map(_.contains(nodeId))
 
@@ -112,10 +122,16 @@ class NodeEngine(
     emitEvent("nodeUpdated", node.id, NodePayload.buildNodeJson(node, System.currentTimeMillis()))
 
   /** 显式投递（改接投递 §2.3：已完成节点结果 → 指定目标）。V8: Nebula 分支
-    * 同样记账——人工改接重投后刷新账本，避免周期扫描对同一结果再补投。 */
+    * 同样记账——人工改接重投后刷新账本，避免周期扫描对同一结果再补投。
+    * 缺口3（2026-09-04）：人工改接重投通道同样过夹具信封排除——名字 ∧ 载荷
+    * 双确认 → WARN + 不投（结果滞留节点不删，真实工作不受影响）。 */
   def deliverOutTo(node: NodeDef, target: String, resultText: String): IO[Unit] =
     target match
-      case "Nebula" => deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
+      case "Nebula" =>
+        if NodeEngine.isFixtureEnvelope(node) then
+          logger.warn(
+            s"[fixture-guard] excluded fixture envelope from manual redelivery: node '${node.name}' (${node.id}) status=${node.status} — name matches fixture family and task carries fixture marker")
+        else deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
       case t =>
         for
           targetOpt <- store.findNode(t)
@@ -258,23 +274,6 @@ class NodeEngine(
             IO.raiseError(new RuntimeException(
               s"Node '$nodeName' ($nodeId) start aborted — node vanished or in-barrier not settled (concurrent rewiring)"))
       resultDeferred <- Deferred[IO, Either[FailOutcome, List[Message]]]
-      // Bridge actor：捕获 Completed/Failed/Cancelled → Deferred（同步 complete，
-      // 防 Behaviors.stopped 竞态——同 FlowDagExecutor 教训）。
-      bridgeRef <- system.spawn(
-        Behaviors.receive[AgentEvent] { (_, event) =>
-          event match
-            case AgentEvent.Completed(_, messages) =>
-              resultDeferred.complete(Right(messages)).void.as(Behaviors.stopped)
-            case AgentEvent.Failed(_, err) =>
-              resultDeferred
-                .complete(Left(FailOutcome(Option(err.message).getOrElse("unknown error"))))
-                .void
-                .as(Behaviors.stopped)
-            case AgentEvent.Cancelled(_, reason) =>
-              resultDeferred.complete(Left(FailOutcome(s"cancelled: $reason"))).void.as(Behaviors.stopped)
-        },
-        s"nodebridge-${sessionId.take(8)}"
-      )
       agentDef = entry.toAgentDef
       ref <- NodeRunner.spawnAgentActor(
         system,
@@ -298,6 +297,49 @@ class NodeEngine(
           // merge 节点 root=workspace——物理隔离，最小权限。
           sandboxEnabled = true
         )
+      )
+      // Bridge actor：捕获 Completed/Failed/Cancelled → Deferred（同步 complete，
+      // 防 Behaviors.stopped 竞态——同 FlowDagExecutor 教训）。
+      // 缺口1（2026-09-04 会话死亡假尸修复，EphemeralAgentRunner 先例同款）：
+      // bridge ctx.watch(agentRef)——会话无终态事件死亡（processing.onError 静默
+      // 回 idle 后被 Stop、裸崩溃退出 loop、外部 fiber cancel）时 Terminated 在此
+      // 兜底完成 deferred，engine fiber 不再永久挂在 race 上、节点不再滞留 running
+      // 成假尸。Terminated-without-event 只可能是异常死亡：全部合法取消路径
+      // （NodeCancel→cancelSig、AgentControl/TaskStuckWatcher giveUp→
+      // AgentEvent.Cancelled）都先于死亡到达 bridge——故按 **failed** 语义终态化
+      // （failNode 既有链：WARN + deliverFailed；下游 barrier/deps 按既有 failed
+      // 语义零改动，不伪造结果投递）。WARN 含 sessionId+nodeId+失败原因。
+      bridgeRef <- system.spawn(
+        Behaviors.setup[AgentEvent] { bctx =>
+          bctx.watch(ref) *>
+            IO.pure(new Behavior[AgentEvent]:
+              def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
+                event match
+                  case AgentEvent.Completed(_, messages) =>
+                    resultDeferred.complete(Right(messages)).void.as(Behaviors.stopped)
+                  case AgentEvent.Failed(_, err) =>
+                    resultDeferred
+                      .complete(Left(FailOutcome(Option(err.message).getOrElse("unknown error"))))
+                      .void
+                      .as(Behaviors.stopped)
+                  case AgentEvent.Cancelled(_, reason) =>
+                    resultDeferred.complete(Left(FailOutcome(s"cancelled: $reason"))).void.as(Behaviors.stopped)
+
+              override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
+                signal match
+                  case SystemSignal.Terminated(_) =>
+                    logger.warn(
+                      s"Node '$nodeName' ($nodeId) session '$sessionId' terminated WITHOUT a terminal event " +
+                        "(crashed or stopped unexpectedly) — finalizing node as failed")
+                    resultDeferred
+                      .complete(Left(FailOutcome(
+                        s"node session '$sessionId' terminated without a terminal event (session crashed or was stopped unexpectedly)")))
+                      .void
+                      .handleErrorWith(_ => IO.unit) // 与正常终态事件竞争时败方静默
+                      .as(Behaviors.stopped)
+            )
+        },
+        s"nodebridge-${sessionId.take(8)}"
       )
       // 卡死处置接线（与 ProjectActor 分发器注册同款）：supervisorRef=bridgeRef
       // ——bridge 的 Cancelled 分支（resultDeferred.complete(Left(cancelled))）
@@ -695,15 +737,38 @@ class NodeEngine(
   private def deliverToNebula(text: String, nodeName: String, status: String, nodeId: Option[String] = None): IO[Unit] =
     resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
       case Some(ref) =>
-        (ref ! AgentCommand.ImmediateInput(
-          text,
-          source = Some("node"),
-          eventType = Some(status),
-          sender = Some(s"$projectName/$nodeName")
-        )) *> nodeId.traverse_(id => markNebulaDelivered(id)).void
+        // 缺口4：同 (identity, status) 60s 窗口去重——抑制重复 offer（首投已入
+        // 根会话队列），仍刷新账本（账本与通知解耦：本表只压秒级抖动，V8
+        // at-least-once 语义不变）。不同 status 天然独立窗口（held→released、
+        // running→completed 互不挡）。
+        dedupeNebulaDelivery(nodeId.getOrElse(nodeName), status).flatMap {
+          case true =>
+            logger.warn(
+              s"[dedup] suppressed duplicate Nebula delivery (identity=${nodeId.getOrElse(nodeName)}, status=$status, window=${NodeEngine.NebulaDedupWindowMs}ms, rootSession=$rootSessionId)") *>
+              nodeId.traverse_(id => markNebulaDelivered(id)).void
+          case false =>
+            (ref ! AgentCommand.ImmediateInput(
+              text,
+              source = Some("node"),
+              eventType = Some(status),
+              sender = Some(s"$projectName/$nodeName")
+            )) *> nodeId.traverse_(id => markNebulaDelivered(id)).void
+        }
       case None =>
         logger.warn(s"Root session '$rootSessionId' not found — node result parked for redelivery scan (nodeName=$nodeName)")
         IO.unit
+    }
+
+  /** 缺口4：去重判定+登记（固定窗：首投时间戳起算 60s，不滑动；过期条目顺路
+    * 淘汰=时间窗淘汰）。true = 窗口内重复（应抑制 offer）。 */
+  private def dedupeNebulaDelivery(identity: String, status: String): IO[Boolean] =
+    IO(System.currentTimeMillis()).flatMap { now =>
+      recentNebulaDeliveries.modify { m =>
+        val live = m.view.filter { case (_, ts) => now - ts < NodeEngine.NebulaDedupWindowMs }.toMap
+        live.get((identity, status)) match
+          case Some(_) => (live, true)
+          case None    => (live.updated((identity, status), now), false)
+      }
     }
 
   /** V8: 写 nebulaDeliveredAt 记账（活动区优先，归档区兜底——TTL 归档的
@@ -739,20 +804,62 @@ class NodeEngine(
         for
           active <- store.snapshot
           arch <- store.archiveSnapshot
-          pending = (active.nodes.values ++ arch.nodes.values)
+          now <- IO(System.currentTimeMillis())
+          unpaid = (active.nodes.values ++ arch.nodes.values)
             .filter(n =>
               (n.status == NodeLifecycle.Completed || n.status == NodeLifecycle.Failed) &&
                 n.out.contains("Nebula") &&
                 n.result.exists(_.trim.nonEmpty) &&
                 n.nebulaDeliveredAt.isEmpty
             )
-            .toList
-          _ <- pending.traverse_(n =>
+          // 缺口3（2026-09-04 夹具信封排除）：名字命中夹具家族 ∧ 任务载荷带夹具
+          // 自证标记 → 排除投递 + WARN（09-03 实证 cancel-test-* 夹具家族轰炸根
+          // 会话）。排除后照常记账（nebulaDeliveredAt 置位=通知通道对该信封关闭）
+          // ——否则 30s 周期扫描每轮重复 WARN。结果不删不改，滞留节点可查。
+          fixtures = unpaid.filter(NodeEngine.isFixtureEnvelope).toList
+          _ <- fixtures.traverse_(n =>
+            logger.warn(
+              s"[fixture-guard] excluded fixture envelope from redelivery scan: node '${n.name}' (${n.id}) status=${n.status} — name matches fixture family and task carries fixture marker")
+              *> markNebulaDelivered(n.id))
+          pending = unpaid.filterNot(NodeEngine.isFixtureEnvelope).toList
+          // 缺口2（2026-09-04 补投新鲜度门控）：completedAt 距今 ≤24h（与节点显示
+          // TTL 同口径）= 新鲜欠账 → 逐条投（既有形态零改动）；>24h = 历史欠账 →
+          // 同批合并单条汇总通知（结果照投不丢：每节点 id+状态+摘要入汇总并逐节点
+          // 记账）。completedAt 缺失 = 无法判旧 → 按新鲜逐条（宁投勿丢）。首次实时
+          // 投递（completeNode/deliverOut）不走此路径，零改动。
+          // MUTATION-2 已恢复：新鲜度门控（缺口2）——completedAt 距今 ≤24h 逐条、>24h 合并
+          (fresh, stale) = pending.partition(n => n.completedAt.forall(c => now - c <= NodeEngine.StaleRedeliveryMs))
+          _ <- fresh.traverse_(n =>
             deliverToNebula(s"[Node '${n.name}' ${n.status}]\n${n.result.get}", n.name, n.status, Some(n.id)))
+          _ <- if stale.nonEmpty then deliverStaleSummary(stale) else IO.unit
           _ <- if pending.nonEmpty then
-            logger.info(s"Node redelivery scan: re-delivered ${pending.size} unconsumed out=Nebula result(s) to root '$rootSessionId'")
+            logger.info(s"Node redelivery scan: re-delivered ${pending.size} unconsumed out=Nebula result(s) to root '$rootSessionId' (fresh=${fresh.size} stale-merged=${stale.size} fixture-excluded=${fixtures.size})")
           else IO.unit
         yield pending.size
+    }
+
+  /** 缺口2：历史欠账（completedAt >24h）同批合并单条汇总通知（形态 (a) 取舍：
+    * 纯后端立即生效，不依赖前端改动——形态 (b) 载荷打标记需后续前端批才可见）。
+    * 一条文本含 N 条 nodeId+状态+结果摘要（160 字/条）。eventType：混含 failed →
+    * "failed"（强提醒），全 completed → "completed"。**绕过缺口4 去重直投**——
+    * 汇总文本每批唯一，若走 deliverToNebula 会与 60s 前一批汇总同 key 相撞被
+    * 误抑制（节点已被记账=通知丢失）。offer 后逐节点记账（at-least-once：offer
+    * 与记账间崩溃 → 下轮扫描重汇总，宁重复不丢失）。 */
+  private def deliverStaleSummary(stale: List[NodeDef]): IO[Unit] =
+    val eventType = if stale.exists(_.status == NodeLifecycle.Failed) then NodeLifecycle.Failed else NodeLifecycle.Completed
+    val lines = stale.zipWithIndex
+      .map((n, i) => s"${i + 1}. [${n.status}] ${n.name} (${n.id}): ${n.result.get.trim.take(NodeEngine.StaleSummaryPerNodeChars)}")
+      .mkString("\n")
+    val text = s"[Node 历史欠账汇总补投 ×${stale.size}（>${NodeEngine.StaleRedeliveryMs / 3600000}h 未消费，项目 $projectName）]\n$lines"
+    resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
+      case Some(ref) =>
+        (ref ! AgentCommand.ImmediateInput(
+          text,
+          source = Some("node"),
+          eventType = Some(eventType),
+          sender = Some(s"$projectName/stale-redelivery-summary")
+        )) *> stale.traverse_(n => markNebulaDelivered(n.id))
+      case None => IO.unit // 根不可达 → 不记账不丢账，下轮扫描重汇总
     }
 
   private def extractLastAssistantText(messages: List[Message]): String =
@@ -768,6 +875,35 @@ class NodeEngine(
 object NodeEngine:
   /** 终态节点显示 TTL（24h——2026-09-02 作者裁定；测试档可缩短——ProjectActor 注入）。 */
   val TtlDisplayMs: Long = 24 * 60 * 60 * 1000L
+
+  // ── 投递可靠性批次常量（2026-09-04 四缺口）──────────────────
+
+  /** 缺口2：补投/重投新鲜度阈值（24h，取 TtlDisplayMs 同口径——超过一个显示
+    * 周期未被消费的欠账即「历史欠账」，合并汇总降噪；结果照投不丢）。 */
+  val StaleRedeliveryMs: Long = TtlDisplayMs
+
+  /** 缺口2：汇总通知每节点结果摘要截断长度。 */
+  val StaleSummaryPerNodeChars: Int = 160
+
+  /** 缺口3：测试夹具信封家族（宁窄勿宽——09-03 实证宿主真实数据唯一可确证
+    * 夹具家族：cancel-test 取消语义验证节点，见 phd-notebook 归档 cancel-test、
+    * cancel-test-3..11；精确锚定全名，真实节点名巧合含 test 不命中）。 */
+  val FixtureFamilyRegex = "^(cancel-test|cancel-test-\\d+)$".r
+
+  /** 缺口3：夹具载荷自证标记（09-03 实证夹具任务正文均带此前缀）。双条件
+    * 缺一不可：名字 ∧ 载荷双确认才排除——真实节点名巧合命中家族但载荷是
+    * 真实工作 → 照常投递。 */
+  val FixtureTaskMarker = "取消验证节点"
+
+  /** 缺口3：夹具信封判定（纯函数便于单测）。 */
+  def isFixtureEnvelope(node: NodeDef): Boolean =
+    FixtureFamilyRegex.matches(node.name) && node.task.exists(_.contains(FixtureTaskMarker))
+
+  /** 缺口4：同 (identity, status) 重复通知去重窗口（60s——秒级抖动口径：挂载
+    * 扫描与周期扫描竞态、ProjectCreate 合并回报三连投实证 09-03）。进程内
+    * 内存窗，与 V8 nebulaDeliveredAt 持久账本正交（账本管跨重启 at-least-once）。 */
+  val NebulaDedupWindowMs: Long = 60_000L
+
 
   /** release note 注入段标记（20260903 暂停/人在回路设计 §2.4）：releaseNode 把
     * 用户补充以本标记为头追加进 out 目标 task，buildInput 天然携带进下游输入。 */
