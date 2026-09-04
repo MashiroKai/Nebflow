@@ -16,7 +16,9 @@ cleanup() {
   lsof -nP -tiTCP:$PORT -sTCP:LISTEN 2>/dev/null | xargs kill -KILL 2>/dev/null
   pgrep -f -- "--port $PORT" | xargs kill -KILL 2>/dev/null
 }
-trap cleanup EXIT
+# EXIT+INT+TERM 全覆盖：Ctrl+C/被 kill 也要清残留（残留治理 2026-09-05——
+# 裸 EXIT trap 在信号退出路径不触发，隔离实例 sbt 进程会漏到脚本外）
+trap cleanup EXIT INT TERM
 
 # --- isolated instance with real provider config (copy from main home) ---
 rm -rf "$HOME_DIR"; mkdir -p "$HOME_DIR"
