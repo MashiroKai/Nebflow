@@ -141,19 +141,39 @@ function layoutNodes(fm) {
 }
 
 /** 上游 id → 显示名解析器（deps 设计 §1.4「wiring 节点等待谁」脚注）：
- *  图内可见 → `名(id)`；已随整链归档/到期出库 → `名✦`（诚实降级，规格 §3.3/§8.4）；
- *  不在快照 → `裸id✦`（断链诊断教训的低成本可见性）。 */
+ *  图内可见 → `名(id)`；已随整链归档/到期出库 → `名（已归档）`（诚实降级，规格
+ *  §3.3/§8.4；原字符标记 ✦ 按裁定①节点域禁符号字符换 i18n 纯文字）；
+ *  不在快照 → `裸id（已归档）`（断链诊断教训的低成本可见性）。 */
 function nameResolverOf(project) {
   const fm = fmByProject.get(project);
   const byId = new Map((fm?.nodes || []).map((n) => [n.id, n]));
   const store = getStore(project);
+  const archTag = t('flowmap.archivedTag');
   return (id) => {
     const n = byId.get(id);
-    if (!n) return `${id}✦`;
-    if (store && (store.archivedIds.has(id) || store.expiredIds.has(id))) return `${n.name}✦`;
+    if (!n) return `${id}${archTag}`;
+    if (store && (store.archivedIds.has(id) || store.expiredIds.has(id))) return `${n.name}${archTag}`;
     return `${n.name}(${id})`;
   };
 }
+
+// ── 内联 SVG 图标（裁定①：节点域禁 emoji/符号字符，状态图标用 SVG 描边绘制）──
+// 描边风格统一：viewBox 12×12、stroke currentColor（随 .ok/.err/.warn 色板取色）、
+// 圆头圆角；cancelled 减号线沿用原「—」语义。
+const FM_STATUS_SVG = {
+  ok: '<path d="M2.5 6.5 5 9l4.5-5.5"/>',
+  err: '<path d="M3 3l6 6M9 3l-6 6"/>',
+  warn: '<path d="M3.5 1.5v9M3.5 2.5H9L7.5 4.75 9 7H3.5"/>',
+  cancelled: '<path d="M3 6h6"/>',
+};
+const fmSvgIcon = (cls, inner, sw) =>
+  `<span class="solar-node-status ${cls}"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor"`
+  + ` stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg></span>`;
+// 等待脚注图标：沙漏（替代 ⏳，描边风格与状态图标一致）
+const FM_WAIT_ICON =
+  '<svg class="fm-wait-note-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor"'
+  + ' stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M3 1.5h6M3 10.5h6M3.8 2.6h4.4L6 6 3.8 2.6ZM3.8 9.4h4.4L6 6 3.8 9.4Z"/></svg>';
 
 // ── 节点卡片（复用 solar 视觉）────────────────────────────
 function nodeHtml(n, pos, originX, nameOf) {
@@ -162,22 +182,24 @@ function nodeHtml(n, pos, originX, nameOf) {
   const term = isTerminalStatus(st); // v3 链未齐终态保留卡（规格 §3.2 终态色卡）
   const left = pos.x - NODE_W / 2 + originX;
   const top = pos.y - NODE_H / 2 + PAD;
-  const statusIcon = st === 'completed' ? '<span class="solar-node-status ok">✓</span>'
-    : st === 'failed' ? '<span class="solar-node-status err">✗</span>'
-    : st === 'blocked' ? '<span class="solar-node-status warn">⚑</span>'
-    : st === 'cancelled' ? '<span class="solar-node-status cancelled">—</span>' : '';
+  const statusIcon = st === 'completed' ? fmSvgIcon('ok', FM_STATUS_SVG.ok, 1.5)
+    : st === 'failed' ? fmSvgIcon('err', FM_STATUS_SVG.err, 1.5)
+    : st === 'blocked' ? fmSvgIcon('warn', FM_STATUS_SVG.warn, 1.4)
+    : st === 'cancelled' ? fmSvgIcon('cancelled', FM_STATUS_SVG.cancelled, 1.5) : '';
   const worktreeBadge = n.hasWorktree || n.worktree
     ? `<span class="fm-worktree-badge" title="${esc(n.worktree || '')}">wt</span>` : '';
   const result = n.result
     ? `<div class="fm-result-summary" title="${esc(n.result)}">${esc(n.result.slice(0, 46))}${n.result.length > 46 ? '…' : ''}</div>`
     : (st === 'running' ? `<div class="fm-result-summary running">${esc(t('flowmap.cardRunning'))}</div>` : '');
   // 等待脚注（deps 设计 §1.4）：pending/wiring 且持有 in/deps → 列出全部等待对象
-  //（in = 等结果投递，deps = 等完成信号；上游已归档 → 裸 id ✦ 诚实降级）
+  //（in = 等结果投递，deps = 等完成信号；上游已归档 → i18n 纯文字诚实降级，
+  //  原 ⏳ 图标按裁定①换内联 SVG 沙漏，文字单独 ellipsis 截断）
   const waitParts = (st === 'pending' || st === 'wiring')
     ? [...(n.in || []), ...(n.deps || [])].map((id) => nameOf ? nameOf(id) : id)
     : [];
   const waitNote = waitParts.length
-    ? `<div class="fm-wait-note" title="${esc(`${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}`)}">⏳ ${esc(t('flowmap.waitingFor'))}: ${esc(waitParts.join(' · '))}</div>`
+    ? `<div class="fm-wait-note" title="${esc(`${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}`)}">`
+      + `${FM_WAIT_ICON}<span class="fm-wait-note-text">${esc(t('flowmap.waitingFor'))}: ${esc(waitParts.join(' · '))}</span></div>`
     : '';
   return `
     <div class="solar-node fm-node ${cls}${term ? ' terminal' : ''}" data-node-id="${esc(n.id)}" data-agent="${esc(n.agent)}"
@@ -210,7 +232,7 @@ function edgeStateOf(n) {
 /** 边只画在「可见」节点之间（fm 已是可见派生视图，§3.1）。三态语义按 §2.7：
  *  delivered/inflight/idle。deps 边按下游 n.deps 反向渲染（上游→下游画箭头，
  *  deps 设计 §1.4），边 id 用 `~>` 与输出边 `=>` 区分。已归档链（整链消失）的
- *  上游不画边、不画锚点（v3 锚点废除，反馈②；等待脚注 ✦ 兜底）。
+ *  上游不画边、不画锚点（v3 锚点废除，反馈②；等待脚注 i18n「已归档」文字兜底）。
  *  v3 补 in 边代理渲染（规格 §3.3）：barrier 输入在上游 out 未指向本节点时补画
  *  同语言边（源=上游卡，态=上游状态三态）——「边天然连着」，out 已覆盖不双画。 */
 function collectEdges(fm, positions) {
