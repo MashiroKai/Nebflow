@@ -107,6 +107,15 @@ class NebulaDeliveryDedupSpec extends FunSuite:
   private def imms(recorded: Ref[IO, List[AgentCommand]]): IO[List[AgentCommand.ImmediateInput]] =
     recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
 
+  /** 有界轮询：等 recorder 收到预期条数（并发负载下 offer→actor 处理异步，直读有竞态）。 */
+  private def awaitMsgs(recorded: Ref[IO, List[AgentCommand]], min: Int): IO[List[AgentCommand.ImmediateInput]] =
+    def go(deadline: Long): IO[List[AgentCommand.ImmediateInput]] =
+      imms(recorded).flatMap { msgs =>
+        if msgs.size >= min || System.currentTimeMillis() >= deadline then IO.pure(msgs)
+        else IO.sleep(50.millis) >> go(deadline)
+      }
+    go(System.currentTimeMillis() + 10_000L)
+
   test("P1 GREEN: three same-(nodeId,status) deliveries within window → exactly one reaches root") {
     withFixture("p1") { (store, engine, resources, recorded, rootSid) =>
       val n = node("n-triple", "triple-node", NodeLifecycle.Completed, "TRIPLE_RESULT")
@@ -154,7 +163,7 @@ class NebulaDeliveryDedupSpec extends FunSuite:
         _ <- engine.recentNebulaDeliveries.update(
           _ + (("n-expired", "completed") -> (now - NodeEngine.NebulaDedupWindowMs - 1000L)))
         _ <- engine.deliverOutTo(n, "Nebula", n.result.get)
-        msgs <- imms(recorded)
+        msgs <- awaitMsgs(recorded, min = 1)
       yield msgs
       val msgs = io.unsafeRunSync()
       assertEquals(clue(msgs.size), 1, "expired window entry must not suppress delivery")
