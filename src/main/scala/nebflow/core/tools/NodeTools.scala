@@ -260,7 +260,9 @@ object NodeEditTool extends Tool:
 - **in** (optional): upstream node id(s) to add as barrier inputs (multi-in = barrier; each upstream's out is rewired to this node).
 - **deps** (optional, replace-on-provide): upstream node id(s) this node waits on for COMPLETION SIGNAL only — no result is injected (downstream input = its own task, self-sufficient). Needs a result? Use in. Only needs "run after upstream completes"? Use deps. Need both? Write both. Not passed = unchanged; passed (any form, including [] / null) = whole-list replacement. Upstream failed/cancelled/blocked never triggers a deps waiter (it stays pending and visible). A running upstream is legal to depend on (waiting for it IS the semantics); editing deps on a RUNNING node is rejected (input frozen).
 - **out** (required on create, single value): node id or "Nebula" (flow exit). Single-value semantics: setting replaces the old out (rewire); arrays are rejected (1-to-many not supported); null (disconnect) is REJECTED — nodes must keep their out edge, rewire to a new target instead.
-- **skill** / **mcp** / **worktree** / **preset** (optional): node configuration. worktree: bare directory name under workspace/.nebflow/worktrees/ (must exist) — e.g. "micorb-config-hide", NOT "worktrees/micorb-config-hide"; no path separators, no absolute paths, no "..". Prefix forms ("worktrees/<name>" / ".nebflow/<name>") are tolerated but the bare name is canonical. Create via: git worktree add <workspace>/.nebflow/worktrees/<name> -b <branch>.
+- **plugins** (optional, replace-on-provide like deps): plugin package name(s) allocated to this node (phase 2b) — a plugin = skills + mcp.json (either alone is valid). Allocation injects the plugin's skills full-text into the node's first message, starts its MCP servers (tools named mcp__plugin_<plugin>_<server>__<tool>), and grants its declared builtin tools. Names must exist in the Plugin Catalog (see your prompt) AND be approved — unapproved (untrusted) allocation is refused (trust gate default-deny).
+- **worktree** / **preset** (optional): node configuration. worktree: bare directory name under workspace/.nebflow/worktrees/ (must exist) — e.g. "micorb-config-hide", NOT "worktrees/micorb-config-hide"; no path separators, no absolute paths, no "..". Prefix forms ("worktrees/<name>" / ".nebflow/<name>") are tolerated but the bare name is canonical. Create via: git worktree add <workspace>/.nebflow/worktrees/<name> -b <branch>.
+- **skill** / **mcp** (DEPRECATED — rejected): use plugins instead. Existing flow-map nodes keep their old values for display only.
 - **maxRetries** (optional, default 1).
 - **hold** (optional, default false): human-gate flag (human-in-the-loop) — when this node completes it does NOT deliver downstream and does NOT settle deps: status becomes HELD (result saved in full; never expires; stays on the main map), the full result is announced to Nebula, and the chain waits for NodeEdit(release=true). Requires out to be a NODE id — out="Nebula" is refused (Nebula-bound results deliver directly, nothing to hold). Settable/withdrawable while wiring/pending/running (a running node may be gated: the switch takes effect at completion); refused on completed/terminal/held.
 - **release** (optional, default false): release a HELD node (the ONLY way out of held) — a STANDALONE action: combining it with task/agent/in/deps/out/abandon/hold/skill/mcp/worktree/preset/maxRetries refuses the whole call (no half-release-half-rewire; release first, then issue a separate NodeEdit to rewire). held → completed: the downstream delivery chain runs (deliverOut → deps settlement); display TTL restarts from release; completedAt keeps the held moment (when the work actually finished).
@@ -296,8 +298,12 @@ object NodeEditTool extends Tool:
           Json.obj("type" -> "string".asJson),
           Json.obj("type" -> "null".asJson)
         ).asJson, "description" -> "Single out target: node id or \"Nebula\" (required on create). Arrays rejected (1-to-many); null (disconnect) rejected — rewire instead".asJson),
-        "skill" -> Json.obj("type" -> "string".asJson),
-        "mcp" -> Json.obj("type" -> "string".asJson),
+        "skill" -> Json.obj("type" -> "string".asJson, "description" -> "DEPRECATED (2b §B.4/H-11①): rejected — use plugins instead. Existing flow-map values display only".asJson),
+        "mcp" -> Json.obj("type" -> "string".asJson, "description" -> "DEPRECATED (2b §B.4/H-11①): rejected — use plugins instead. Existing flow-map values display only".asJson),
+        "plugins" -> Json.obj("oneOf" -> Json.arr(
+          Json.obj("type" -> "string".asJson),
+          Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
+        ).asJson, "description" -> "Plugin package name(s) allocated to this node (§B.4): skills injected into the first message + plugin MCP servers + builtin tool grants. Replace-on-provide (like deps). Names must exist in the Plugin Catalog AND be approved (trust gate default-deny) — unapproved allocation is refused".asJson),
         "worktree" -> Json.obj("type" -> "string".asJson, "description" -> "Bare directory name under workspace/.nebflow/worktrees/ (must exist). e.g. \"micorb-config-hide\" — NOT \"worktrees/micorb-config-hide\"; no path separators, no absolute paths".asJson),
         "preset" -> Json.obj("type" -> "string".asJson),
         "maxRetries" -> Json.obj("type" -> "integer".asJson),
@@ -337,47 +343,91 @@ object NodeEditTool extends Tool:
     val inJson = input("in")
     val depsJson = input("deps")
     val outJson = input("out")
-
+    // 阶段 2b（§B.4 第 3 步）：plugins 参数。Option 区分「未传」（编辑不改动 /
+    // 创建 Nil）与「已传」（整列表替换，replace-on-provide 与 deps 同款）；
+    // 解析复用 parseIn 三形态宽容（string / array / 逗号串）。
+    val pluginsJson = input("plugins")
+    val pluginsProvided = pluginsJson.exists(j => !j.isNull)
+    val pluginsParsed: Either[String, List[String]] =
+      if !pluginsProvided then Right(Nil)
+      else NodeTools.parseIn(pluginsJson).left.map(err => err.replace("'in'", "'plugins'"))
     if nodename.isEmpty then IO.pure(Left(ToolError("Missing 'nodename'")))
+    // H-11①（裁定）：旧字段 skill/mcp 已 deprecated——NodeEdit 拒绝再写，
+    // 错误给可行动指引（迁移到 plugins / 存量值仅展示）。存量 flow-map 中的
+    // 值不受影响（NodeDef 字段保留 + FlowMapStore 加载告警）。
+    else if skill.isDefined || mcp.isDefined then
+      IO.pure(Left(ToolError(
+        "'skill'/'mcp' node params are DEPRECATED and no longer accepted (phase 2b, ruling H-11①) — " +
+          "capability allocation now goes through 'plugins' (a plugin = skills + mcp.json, either alone is valid; " +
+          "see the Plugin Catalog in your prompt). Existing flow-map nodes keep their old skill/mcp values for display only. " +
+          "(NODE_SKILL_MCP_DEPRECATED)")))
+    else if pluginsProvided && pluginsParsed.isLeft then
+      IO.pure(Left(ToolError(pluginsParsed.swap.toOption.getOrElse("invalid plugins"))))
     else
-      NodeTools.resolveProject(project, ctx).flatMap {
-        case Left(err) => IO.pure(Left(ToolError(err)))
-        case Right(rt) =>
-          rt.store.snapshot.flatMap { s =>
-            s.nodes.values.find(_.name == nodename) match
-              case Some(existing) => editNode(rt, existing, agent, task, abandon, holdProvided, hold, release, note, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson, ctx)
-              case None =>
-                // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
-                // 活动区按名未命中 → 归档区按名兜底。归档节点只支持 out 改接（悬空
-                // 完成结果的补投递——「悬空节点后来被接线」的归档变体：editNode 的
-                // completed+newOut 投递分支沿 deliverOutTo 补投，barrier 随之结算）；
-                // 其余编辑域（task/agent/in/deps/配置/abandon）拒绝——归档是显示过期
-                //（TTL 满、结果保留可投递），不是重激活通道（重激活只属于 Blocked 态）。
-                // 修复前：归档名落 createNode → 同名重复节点（拓扑污染）或静默失败。
-                rt.store.archiveSnapshot.flatMap { arch =>
-                  arch.nodes.values.find(_.name == nodename) match
-                    case Some(archived) =>
-                      val forbidden =
-                        agent.isDefined || task.isDefined || skill.isDefined || mcp.isDefined ||
-                          worktree.isDefined || preset.isDefined || maxRetries.isDefined ||
-                          abandon || inJson.isDefined || depsJson.isDefined ||
-                          holdProvided.isDefined || release || note.isDefined
-                      if abandon then
-                        IO.pure(Left(ToolError(s"Node '$nodename' is archived (display TTL expired) — abandon is not applicable; it already ages out of views on its own.")))
-                      else if release || note.isDefined || holdProvided.isDefined then
-                        IO.pure(Left(ToolError(
-                          s"Node '$nodename' is archived (display TTL expired) — hold/release do not apply: held is a non-terminal state and is never archived; archived nodes are terminal. Only 'out' rewiring is supported.")))
-                      else if !outJson.isDefined then
-                        IO.pure(Left(ToolError(
-                          s"Node '$nodename' is archived (display TTL expired, result retained). Only 'out' rewiring is supported for archived nodes (result re-delivery).")))
-                      else if forbidden then
-                        IO.pure(Left(ToolError(
-                          s"Node '$nodename' is archived — only 'out' rewiring is supported (result re-delivery); task/agent/in/deps/config/hold edits are not.")))
-                      else editNode(rt, archived, agent, task, abandon, holdProvided, hold, release, note, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson, ctx)
-                    case None =>
-                      if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
-                      else createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, inJson, depsJson, outJson, hold)
+      val plugins = pluginsParsed.getOrElse(Nil)
+      // flag off（§G.2 回滚语义）：NodeEdit 忽略 plugins 参数——不校验不存储
+      val pluginsEffective: IO[Option[List[String]]] =
+        if !pluginsProvided then IO.pure(None)
+        else nebflow.core.plugin.PluginsConfig.enabled.map(enabled => if enabled then Some(plugins) else None)
+
+      pluginsEffective.flatMap { pluginsOpt =>
+        val pluginsForCall = pluginsOpt.getOrElse(Nil)
+        // 插件存在性 + 信任门白名单校验（0 spawn 快速失败，§B.4 第 3 步）；
+        // flag off → pluginsOpt=None → 跳过校验（参数被忽略）。
+        val pluginValidation: IO[Either[String, Unit]] =
+          pluginsOpt match
+            case None => IO.pure(Right(()))
+            case Some(names) =>
+              if names.isEmpty then IO.pure(Right(()))
+              else
+                names.traverse(nebflow.core.plugin.PluginRegistry.resolve).map { results =>
+                  results.find(_.isLeft) match
+                    case Some(Left(err)) => Left(err)
+                    case _ => Right(())
                 }
+        pluginValidation.flatMap {
+          case Left(err) => IO.pure(Left(ToolError(err)))
+          case Right(_) =>
+            NodeTools.resolveProject(project, ctx).flatMap {
+              case Left(err) => IO.pure(Left(ToolError(err)))
+              case Right(rt) =>
+                rt.store.snapshot.flatMap { s =>
+                  s.nodes.values.find(_.name == nodename) match
+                    case Some(existing) => editNode(rt, existing, agent, task, abandon, holdProvided, hold, release, note, skill, mcp, worktree, preset, maxRetries, pluginsOpt, inJson, depsJson, outJson, ctx)
+                    case None =>
+                      // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
+                      // 活动区按名未命中 → 归档区按名兜底。归档节点只支持 out 改接（悬空
+                      // 完成结果的补投递——「悬空节点后来被接线」的归档变体：editNode 的
+                      // completed+newOut 投递分支沿 deliverOutTo 补投，barrier 随之结算）；
+                      // 其余编辑域（task/agent/in/deps/配置/abandon）拒绝——归档是显示过期
+                      //（TTL 满、结果保留可投递），不是重激活通道（重激活只属于 Blocked 态）。
+                      // 修复前：归档名落 createNode → 同名重复节点（拓扑污染）或静默失败。
+                      rt.store.archiveSnapshot.flatMap { arch =>
+                        arch.nodes.values.find(_.name == nodename) match
+                          case Some(archived) =>
+                            val forbidden =
+                              agent.isDefined || task.isDefined || skill.isDefined || mcp.isDefined ||
+                                worktree.isDefined || preset.isDefined || maxRetries.isDefined ||
+                                abandon || inJson.isDefined || depsJson.isDefined ||
+                                holdProvided.isDefined || release || note.isDefined || pluginsProvided
+                            if abandon then
+                              IO.pure(Left(ToolError(s"Node '$nodename' is archived (display TTL expired) — abandon is not applicable; it already ages out of views on its own.")))
+                            else if release || note.isDefined || holdProvided.isDefined then
+                              IO.pure(Left(ToolError(
+                                s"Node '$nodename' is archived (display TTL expired) — hold/release do not apply: held is a non-terminal state and is never archived; archived nodes are terminal. Only 'out' rewiring is supported.")))
+                            else if !outJson.isDefined then
+                              IO.pure(Left(ToolError(
+                                s"Node '$nodename' is archived (display TTL expired, result retained). Only 'out' rewiring is supported for archived nodes (result re-delivery).")))
+                            else if forbidden then
+                              IO.pure(Left(ToolError(
+                                s"Node '$nodename' is archived — only 'out' rewiring is supported (result re-delivery); task/agent/in/deps/config/hold edits are not.")))
+                            else editNode(rt, archived, agent, task, abandon, holdProvided, hold, release, note, skill, mcp, worktree, preset, maxRetries, pluginsOpt, inJson, depsJson, outJson, ctx)
+                          case None =>
+                            if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
+                            else createNode(rt, nodename, agent, task, skill, mcp, worktree, preset, maxRetries, pluginsForCall, inJson, depsJson, outJson, hold)
+                      }
+                  }
+              }
           }
       }
 
@@ -393,6 +443,7 @@ object NodeEditTool extends Tool:
     worktree: Option[String],
     preset: Option[String],
     maxRetries: Option[Int],
+    plugins: List[String],
     inJson: Option[Json],
     depsJson: Option[Json],
     outJson: Option[Json],
@@ -451,8 +502,8 @@ object NodeEditTool extends Tool:
                         IO.pure(Left(ToolError(
                           s"Worktree '$bare' not found under ${rt.project.workspace}/.nebflow/worktrees/ (nor top-level .nebflow/) — " +
                             s"create it first via: git worktree add ${rt.project.workspace}/.nebflow/worktrees/$bare -b <branch>")))
-                      else proceed(rt, nodename, agentName, task, skill, mcp, Some(bare), preset, maxRetries, ins, deps, out, hold)
-                case None => proceed(rt, nodename, agentName, task, skill, mcp, worktree, preset, maxRetries, ins, deps, out, hold)
+                      else proceed(rt, nodename, agentName, task, skill, mcp, Some(bare), preset, maxRetries, plugins, ins, deps, out, hold)
+                case None => proceed(rt, nodename, agentName, task, skill, mcp, worktree, preset, maxRetries, plugins, ins, deps, out, hold)
           }
 
   private def proceed(
@@ -465,6 +516,7 @@ object NodeEditTool extends Tool:
     worktree: Option[String],
     preset: Option[String],
     maxRetries: Option[Int],
+    plugins: List[String],
     ins: List[String],
     deps: List[String],
     out: Option[String],
@@ -526,7 +578,8 @@ object NodeEditTool extends Tool:
             status = if task.isDefined && ins.isEmpty then NodeLifecycle.Pending else NodeLifecycle.Wiring,
             retries = 0,
             maxRetries = maxRetries.getOrElse(1),
-            createdAt = now
+            createdAt = now,
+            plugins = plugins
           )
           // 单事务：加节点（deps 单侧持有，无上游侧镜像边要写）+ in 边（上游 out → 本节点）+ out 边
           val mutateIO = rt.store.mutate { s =>
@@ -678,6 +731,7 @@ object NodeEditTool extends Tool:
     worktree: Option[String],
     preset: Option[String],
     maxRetries: Option[Int],
+    pluginsOpt: Option[List[String]],
     inJson: Option[Json],
     depsJson: Option[Json],
     outJson: Option[Json],
@@ -705,7 +759,7 @@ object NodeEditTool extends Tool:
           outJson.isDefined -> "'out'", skill.isDefined -> "'skill'",
           mcp.isDefined -> "'mcp'", worktree.isDefined -> "'worktree'",
           preset.isDefined -> "'preset'", maxRetries.isDefined -> "'maxRetries'",
-          hold -> "'hold'"
+          hold -> "'hold'", pluginsOpt.isDefined -> "'plugins'"
         ).collect { case (true, name) => name }
       if conflicts.nonEmpty then
         IO.pure(Left(ToolError(
@@ -901,6 +955,20 @@ object NodeEditTool extends Tool:
                                             s.nodes.get(node.id) match
                                               case Some(fresh) =>
                                                 s.copy(nodes = s.nodes.updated(node.id, fresh.copy(deps = newDeps)))
+                                              case None => s
+                                          }.void
+                                        else IO.unit
+                                      // plugins 替换写回（阶段 2b §B.4 第 3 步，replace-on-provide
+                                      // 与 deps 同款）：passed（any form, including []）= 整列表
+                                      // 替换；未传 = 不改动。存在性+信任门校验已在 call() 前置
+                                      // 拦截；这里纯写。对运行中节点仅改元数据——已运行会话的
+                                      // 注入/MCP 不回溯（能力集 spawn 时冻结），下次运行生效。
+                                      _ <-
+                                        if pluginsOpt.isDefined then
+                                          rt.store.mutate { s =>
+                                            s.nodes.get(node.id) match
+                                              case Some(fresh) =>
+                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(plugins = pluginsOpt.get)))
                                               case None => s
                                           }.void
                                         else IO.unit
