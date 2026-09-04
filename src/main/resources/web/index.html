@@ -78,7 +78,9 @@
          DOM 会让旧面板静默失联（点了没反应）。 -->
     <button id="projects-btn" class="activity-btn" title="Projects"><i data-lucide="folder-kanban"></i></button>
     <button id="legacy-btn" class="activity-btn" title="Legacy panels" aria-haspopup="menu" aria-expanded="false" aria-controls="legacy-pop"><i data-lucide="archive"></i></button>
-    <button id="agents-btn" class="activity-btn" title="Agents"><i data-lucide="bot"></i></button>
+    <!-- 2026-09-04 件 B：原「智能体」独立面板入口移除，按钮改挂「插件」页
+         （plugins.js 接管注册，id/按下态机制不变；i18n 标题走 activity.plugins）。 -->
+    <button id="agents-btn" class="activity-btn" title="Plugins"><i data-lucide="puzzle"></i></button>
     <button id="settings-btn" class="activity-btn" title="Settings"><i data-lucide="settings"></i></button>
   </div>
 
@@ -422,7 +424,11 @@
        48px column (verified: panel present in the DOM, invisible on screen).
        activityBar.js anchors it to #legacy-btn on open.
        teams-btn / flows-btn keep their original ids: canvas.js binds the
-       Teams/Flows panels by id, document-wide. -->
+       Teams/Flows panels by id, document-wide.
+       2026-09-04 作者裁定（件 A）：Team/Flow 旧入口隐藏封存——#legacy-btn /
+       #legacy-pop 由 activityBar.js 的 SIDEBAR_LEGACY_ENTRIES flag（默认
+       false）置 hidden；按钮留在 DOM 内（canvas.js 按 id 绑定 + i18n map
+       引用，移除会悬挂）。翻回 true 即恢复。 -->
   <div class="legacy-pop glass" id="legacy-pop" role="menu" aria-labelledby="legacy-btn" hidden>
     <div class="legacy-pop-title" id="legacy-pop-title">Legacy panels</div>
     <button id="teams-btn" class="legacy-item" role="menuitem" title="Teams"><i data-lucide="users"></i><span class="legacy-item-label" id="legacy-item-teams">Teams</span></button>
