@@ -1,3 +1,19 @@
+// v8.4.1 (2026-09-04): VOICE DEFORMATION RETUNE — softer response (author
+// feedback 2026-09-04: 幅度太大、太尖锐). Parameter layer only, zero
+// structural change (shader shape, smoothing mechanism, states, presets,
+// premultiplied pipeline all untouched):
+//  - amp 0.062 → 0.032: uVol=1 max radial displacement ≈9% → ≈4.9% of the
+//    body radius; the deformation read as exaggerated at normal dictation
+//    levels.
+//  - weights [0.46,0.34,0.20] → [0.54,0.34,0.12]: the 8th harmonic carried
+//    the high-frequency "sharp" feel; its share moves to the base (k=3).
+//    Wavenumber set {3,5,8}, drift 4.7/-6.9/11.3 and jitter rates/depth
+//    unchanged — the organic multi-harmonic motion is preserved, only its
+//    spectral balance is softened (single-sine rejection still holds).
+//  - τ_attack 70ms → 110ms (softer onset), τ_release 280ms → 340ms (the
+//    fall stays natural next to the smaller amplitude and slower attack).
+//    Design band restated: attack 50-120ms / release 200-400ms.
+//
 // v8.4.0 (2026-09-03): VOICE-RESPONSIVE DEFORMATION — the listening orb now
 // deforms with the LIVE dictation loudness (author 2026-09-03: 说话声音越大，
 // 边缘震动/形变幅度越大；波形要有机、不要整齐正弦).
@@ -12,7 +28,8 @@
 //    fixed base amplitude; STT and rendering are unaffected.
 //  - Amplitude pipeline: setVoiceLevel(v) injects the raw level; drawFrame
 //    smooths it with frame-rate-independent attack/release exponentials
-//    (τ_attack 70ms / τ_release 280ms) into voiceLevel = the uVol uniform.
+//    (τ_attack 110ms / τ_release 340ms since v8.4.1) into voiceLevel =
+//    the uVol uniform.
 //    Non-listening states force the smoothing target to 0, so injected
 //    levels can never leak into any other state (frozen stays frozen).
 //  - Organic waveform: the edge displacement is a 3-harmonic angular field
@@ -192,13 +209,13 @@ const PULSE_TABLE = { 'listening': [0.06, 1.6], 'nebula-busy': [0.05, 2.2], 'bg-
    uVol (smoothed mic level) and rides on top of the pre-existing noise
    deformation inside draw() (w-field + r0 nEdge wobble). */
 export const VOICE_WAVE = {
-  amp: 0.062, // max radial displacement (uv units) at voiceLevel 1
+  amp: 0.032, // max radial displacement (uv units) at voiceLevel 1 (v8.4.1: 0.062 → 0.032, ≈4.9% of body radius — author: 幅度太大)
   harmonics: [
     { k: 3, drift: 4.7,  phase: 0.0, jitterRate: 1.31, jitterPhase: 0.7 },
     { k: 5, drift: -6.9, phase: 1.7, jitterRate: 2.09, jitterPhase: 2.1 },
     { k: 8, drift: 11.3, phase: 4.2, jitterRate: 3.73, jitterPhase: 0.3 },
   ],
-  weights: [0.46, 0.34, 0.20], // sums to 1
+  weights: [0.54, 0.34, 0.12], // sums to 1 (v8.4.1: 8th-harmonic share 0.20 → 0.12 given to the base k=3 — author: 太尖锐)
   jitterDepth: 0.28,
 };
 
@@ -242,12 +259,13 @@ const VOICE_GLSL = (() => {
 })();
 
 /* Attack/release time constants for the voice amplitude (frame-rate
-   independent exponential smoothing, factor = 1-exp(-dt/τ)). Attack 70ms
-   tracks speech onset fast; release 280ms lets it fall off softly (both
-   inside the design band: attack 50-100ms / release 200-400ms). dt shares
-   the F1 clamp (≤0.05) so a background tab can never jump the amplitude. */
-export const VOICE_TAU_ATTACK = 0.07;
-export const VOICE_TAU_RELEASE = 0.28;
+   independent exponential smoothing, factor = 1-exp(-dt/τ)). v8.4.1
+   (author: 起振放柔、回落自然): attack 110ms gives a softer onset, release
+   340ms a slower, more natural fall beside the halved amplitude (design
+   band restated: attack 50-120ms / release 200-400ms). dt shares the F1
+   clamp (≤0.05) so a background tab can never jump the amplitude. */
+export const VOICE_TAU_ATTACK = 0.11;
+export const VOICE_TAU_RELEASE = 0.34;
 
 /** One smoothing step (pure, exported for node-level assertions).
  *  @param {number} cur current smoothed level

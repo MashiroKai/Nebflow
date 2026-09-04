@@ -6,10 +6,10 @@
 // over the mic sources; NO microphone needed):
 //   T1 幅度单调跟随 — synthetic level steps 0.15→0.5→0.9: the smoothed
 //      uVol amplitude (renderer.voiceLevel) follows monotonically and
-//      settles inside a ±0.06 band of each target (attack τ=70ms).
+//      settles inside a ±0.06 band of each target (attack τ=110ms).
 //      Also proves the production setVolume alias lands on the same raw.
 //   T2 电平归零回落 — from a settled 0.9, zeroing the level decays the
-//      amplitude back to the base (≤0.04 after 1.4s; release τ=280ms).
+//      amplitude back to the base (≤0.04 after 1.4s; release τ=340ms).
 //   T3 非 listening 态注入不生效 — injecting 0.9 in every non-listening
 //      state leaves the amplitude at ≤0.02 (target forced to 0); the
 //      listening control in the same session still rises (mechanism alive).
@@ -119,7 +119,7 @@ test('T1: 幅度单调跟随 — synthetic level steps drive the uVol amplitude 
 
   // Production feed path (voiceEngine → setVolume alias) lands identically.
   await page.evaluate(() => window.__volTest.injectAlias(0.7));
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(700); // v8.4.1: release τ=340ms → 700ms to settle inside the ±0.06 band (400ms left ~0.061 residual)
   const viaAlias = await page.evaluate('window.__volTest.snapVoice()');
   expect(viaAlias.raw).toBe(0.7);
   expect(Math.abs(viaAlias.level - 0.7)).toBeLessThanOrEqual(0.06);
@@ -131,7 +131,7 @@ test('T2: 电平归零回落 — zeroed level decays back to the base amplitude 
   expect(loud.level).toBeGreaterThan(0.8);
 
   await page.evaluate(() => window.__volTest.inject(0));
-  await page.waitForTimeout(1400); // e^(-1400/280) ≈ 0.007 → level ≈ 0.006
+  await page.waitForTimeout(1400); // e^(-1400/340) ≈ 0.016 → level ≈ 0.015 (v8.4.1 τ_release)
   const rest = await page.evaluate('window.__volTest.snapVoice()');
   expect(rest.raw).toBe(0);
   expect(rest.level, 'released to the fixed base amplitude').toBeLessThanOrEqual(0.04);
@@ -183,7 +183,12 @@ async function waveMetrics(page, times) {
     const avg = energy.map((e) => e / profiles.length);
     const emax = Math.max(...avg);
     const etot = avg.reduce((s, x) => s + x, 0);
-    const strongBins = avg.map((e, i) => ({ k: i + 1, e })).filter((x) => x.e >= 0.12 * emax).map((x) => x.k);
+    // v8.4.1: detection floor 0.03*emax — the 8th-harmonic weight drop
+    // (0.20 → 0.12) puts its time-averaged energy at ~5% of the top bin, so
+    // the old 0.12 floor went blind to it. 0.03 keeps exactly {3,5,8}
+    // detected (off-bins are numerically ~0: integer k → zero leakage) and
+    // stays discriminative vs the neat-sine control (>99% in one bin).
+    const strongBins = avg.map((e, i) => ({ k: i + 1, e })).filter((x) => x.e >= 0.03 * emax).map((x) => x.k);
     const top3 = avg.map((e, i) => ({ k: i + 1, e })).sort((a, b) => b.e - a.e).slice(0, 3).map((x) => x.k);
     return { profiles, topShare: emax / etot, strongBins, top3 };
   }, times);
@@ -369,8 +374,9 @@ test('T6: 约束保全 — F1 phase continuity, F5 pulse, premultiplied annulus,
     const ctx = cv.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(img, 0, 0);
     let worst = 0;
-    // Annulus past the max displaced edge: body r0 ≤ 0.66 + voice 0.085 →
-    // sample uv radii 0.78/0.86/0.94 (box fraction r/2), 24 angles each.
+    // Annulus past the max displaced edge: body r0 ≤ 0.66 + voice 0.029
+    // (v8.4.1: 0.9 × amp 0.032; was 0.085 at amp 0.062) → sample uv radii
+    // 0.78/0.86/0.94 (box fraction r/2), 24 angles each.
     for (const r of [0.78, 0.86, 0.94]) {
       for (let a = 0; a < 24; a++) {
         const u = 0.5 + (r / 2) * Math.cos((a / 24) * 2 * Math.PI);
