@@ -312,6 +312,21 @@ body.sidebar-collapsed #activity-bar {
 /* Spacer pushes settings to the bottom of the bar. */
 .activity-spacer { flex: 1; }
 
+/* Update-available dot on the settings button (updateCheck.js silent auto
+   checks). Success token only — no hand-mixed colors (视觉评审先例). The
+   halo ring keeps it legible on hover/active backgrounds in both themes. */
+.settings-update-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-success);
+  box-shadow: 0 0 0 2px var(--color-nav-bg);
+  pointer-events: none;
+}
+
 /* ── Legacy panels (Teams / Flows) — v5 §3.5 二级入口 ──────
    The Project button took over this slot; the old panels live one click
    deeper until 阶段 3 removes them. The popover is a glass panel with NO

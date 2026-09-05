@@ -742,30 +742,11 @@
   vertical-align: 1px;
 }
 
-/* Toggle switch */
-.toggle {
-  width: 36px;
-  height: 20px;
-  background: var(--color-frame-border);
-  border-radius: 10px;
-  position: relative;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-.toggle.on { background: #22c55e; }
-.toggle::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  transition: left 0.2s;
-}
-.toggle.on::after { left: 18px; }
-.toggle.disabled { opacity: 0.45; pointer-events: none; }
+/* (2026-09-05 sidebar-restructure) The legacy hand-rolled `.toggle` switch
+   (div + hand-mixed #22c55e/#fff) is retired — every settings-page switch now
+   renders the shared nb-toggle component (js/toggle.js); its styles live in
+   the «nb-toggle — shared switch component» section at the bottom of this
+   file (glass-control material + sapphire accent, both themes auto-adapt). */
 /* Config editor */
 .config-editor-wrap {
   margin-top: 8px;
@@ -811,7 +792,65 @@
   line-height: 1.6;
 }
 
-/* ── Config Cards (Providers, MCP Servers) ─────────────────────────────── */
+/* ── Settings avatar entry (Account section — 09-05 五项裁定④) ──────────
+   Dual state: logged out → product logo (bright/dark via <picture>);
+   logged in with account avatar → photo. Same decision source as the
+   Activity Bar avatar (neblink.js avatarViewState). Tokens only. */
+.settings-avatar-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px;
+  background: var(--color-frame-input-bg);
+  border: 1px solid var(--color-frame-input-border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+.settings-avatar-entry:hover { border-color: rgba(91, 127, 191, 0.35); }
+.settings-avatar-frame {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--color-frame-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.settings-avatar-logo {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  /* Pixel-art logo v4: 30px = whole 7.5px blocks at 224px source scale —
+     keep pixelated so stems stay even (same rule as .activity-avatar-logo). */
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+.settings-avatar-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  pointer-events: none;
+}
+/* Author display rules must not defeat the hidden attribute. */
+.settings-avatar-logo[hidden],
+.settings-avatar-photo[hidden] { display: none; }
+.settings-avatar-text {
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+/* ── Config Cards (Providers) ──────────────────────────────────────────── */
 .cfg-card {
   background: var(--color-frame-input-bg);
   border: 1px solid var(--color-frame-input-border);
@@ -2109,29 +2148,6 @@
   color: var(--color-frame-text);
   letter-spacing: -0.01em;
 }
-.plugins-refresh-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  color: var(--color-frame-text-muted);
-  background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-.plugins-refresh-btn:hover {
-  background: var(--glass-control-bg-hover);
-  border-color: var(--glass-control-border);
-  color: var(--color-frame-text);
-}
 .plugins-section { margin-bottom: 18px; }
 .plugins-section-title {
   font: 600 11px -apple-system, sans-serif;
@@ -2208,6 +2224,8 @@
   align-items: center;
   gap: 8px;
 }
+/* The enable switch — now the shared nb-toggle component (js/toggle.js);
+   styles live in the «nb-toggle» section below. The pill stays panel-local. */
 .plugins-state-pill {
   font: 500 9px -apple-system, sans-serif;
   padding: 1px 7px;
@@ -2222,45 +2240,6 @@
   background: rgb(var(--sapphire) / 0.1);
   border-color: rgb(var(--sapphire) / 0.22);
 }
-/* The enable switch — the page's only control. Sapphire accent when on. */
-.plugins-switch {
-  position: relative;
-  width: 30px;
-  height: 17px;
-  border-radius: 9px;
-  padding: 0;
-  flex-shrink: 0;
-  cursor: pointer;
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  transition: background 0.15s, border-color 0.15s;
-}
-.plugins-switch .plugins-switch-knob {
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: var(--color-frame-text-muted);
-  transition: left 0.15s ease, background 0.15s;
-}
-.plugins-switch.on {
-  background: rgb(var(--sapphire) / 0.35);
-  border-color: rgb(var(--sapphire) / 0.5);
-}
-.plugins-switch.on .plugins-switch-knob {
-  left: 14px;
-  background: rgb(var(--sapphire));
-}
-.plugins-switch:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 1px;
-}
-.plugins-switch:disabled { opacity: 0.5; cursor: default; }
 .plugins-card-desc {
   font: 400 11px -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
@@ -2450,4 +2429,67 @@
 .plugins-agent-row:hover .plugins-agent-chevron {
   color: rgb(var(--sapphire));
   transform: translateX(1px);
+}
+
+/* ── nb-toggle — shared switch component (js/toggle.js) ──────────────────
+   2026-09-05 插件面板体验批。One class for every panel that renders a
+   switch: the Plugins page adopts it now; the Settings page adopts it in
+   the sidebar-restructure batch (replacing the legacy .toggle / .cfg-toggle
+   pair). Contract: markup from toggleHTML(options) — a real <button> with
+   role="switch", so Space/Enter click is native; knob drawn by ::after.
+   TOKEN DISCIPLINE: track = glass-control material, accent = sapphire
+   family, motion = the app-wide 0.15s control-transition convention,
+   enter/exit = the shared --panel-ease curve. Zero hand-made color values;
+   both themes auto-adapt (sapphire.css / base.css dark blocks). */
+.nb-toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border-radius: 10px;
+  flex-shrink: 0;
+  cursor: pointer;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  transition: background 0.15s, border-color 0.15s;
+}
+.nb-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-frame-text-muted);
+  transition: transform 0.15s ease, background 0.15s;
+}
+.nb-toggle.on {
+  background: rgb(var(--sapphire) / 0.35);
+  border-color: rgb(var(--sapphire) / 0.5);
+}
+.nb-toggle.on::after {
+  transform: translateX(16px);
+  background: rgb(var(--sapphire));
+}
+.nb-toggle:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+.nb-toggle:disabled { opacity: 0.5; cursor: default; }
+
+/* New plugin card entering the list via live registry sync (plugins.js
+   poller) — short slide+fade on the shared panel ease; the class is removed
+   on animationend so repeat inserts retrigger cleanly. */
+.plugins-card.plugins-card-entering {
+  animation: plugins-card-enter 0.25s var(--panel-ease, ease);
+}
+@keyframes plugins-card-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
 }

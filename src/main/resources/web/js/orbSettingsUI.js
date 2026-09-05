@@ -18,6 +18,7 @@
 // mount the section without the app shell.
 
 import { t, getLocale } from './i18n.js';
+import { toggleHTML, setToggleState } from './toggle.js';
 import { OrbRenderer } from './micOrb.js';
 import {
   PRESETS, ASH, DEFAULT_BASE, DEFAULT_STATE_MAP,
@@ -98,7 +99,7 @@ export function renderAppearanceSection() {
     <div class="cfg-hint">${t('settings.appearance.stateMapHint')}</div>
     <div class="settings-row">
       <span class="settings-label">${t('settings.appearance.custom')}</span>
-      <div class="toggle ${customOn ? 'on' : ''}" id="orb-custom-toggle" role="switch" aria-checked="${customOn}" tabindex="0"></div>
+      ${toggleHTML({ on: customOn, id: 'orb-custom-toggle', label: t('settings.appearance.custom') })}
     </div>
     <div class="cfg-hint">${t('settings.appearance.customHint')}</div>
     <div id="orb-custom-body" ${customOn ? '' : 'hidden'}>
@@ -197,10 +198,12 @@ export function bindAppearanceEvents(root) {
     });
   });
 
-  // 3. Custom palette.
+  // 3. Custom palette. Shared nb-toggle component (js/toggle.js): real
+  // <button> → native Space/Enter clicks; the old div's manual keydown wiring
+  // is gone (would double-toggle now).
   body.querySelector('#orb-custom-toggle')?.addEventListener('click', function () {
-    const on = this.classList.toggle('on');
-    this.setAttribute('aria-checked', String(on));
+    const on = !this.classList.contains('on');
+    setToggleState(this, on);
     if (on) {
       if (!sel.custom) sel.custom = { base: sel.base, dark: {}, light: {} };
       sel.custom.base = sel.base;
@@ -209,12 +212,6 @@ export function bindAppearanceEvents(root) {
     }
     commit();
     refresh();
-  });
-  body.querySelector('#orb-custom-toggle')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      body.querySelector('#orb-custom-toggle').click();
-    }
   });
 
   body.querySelector('#orb-custom-source')?.addEventListener('change', function () {
