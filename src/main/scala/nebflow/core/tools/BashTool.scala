@@ -736,6 +736,10 @@ Git safety:
           io.circe.Json.obj(
             "type" -> "backgroundTaskUpdate".asJson,
             "sessionId" -> ctx.sessionId.asJson,
+            // 权威分键（2026-09-05 计数/列表分叉修复）：前端直接按 rootSessionId
+            // 分桶，替代已删除的 bgTaskRootFor 启发式逆向分键。缺省回退执行者
+            // sessionId（根会话自己的任务 root==sessionId，分桶不变）。
+            "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
             "taskId" -> jobId.asJson,
             "description" -> description.asJson,
             "status" -> eventType.asJson
@@ -756,13 +760,20 @@ Git safety:
 
   /** Emit a WS event so the frontend shows the background task indicator. */
   private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
-    BgTaskRegistry.register(jobId, ctx.sessionId.getOrElse(""), description, "local") *>
+    BgTaskRegistry.register(
+      jobId,
+      ctx.sessionId.getOrElse(""),
+      description,
+      "local",
+      ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
+    ) *>
       (ctx.wsSend.fold(
         logger.debug(s"Cannot notify frontend for background job $jobId: no wsSend (remote execution)")
       ) { send =>
         val json = io.circe.Json.obj(
           "type" -> "backgroundTaskUpdate".asJson,
           "sessionId" -> ctx.sessionId.asJson,
+          "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
           "status" -> "running".asJson,
@@ -802,6 +813,7 @@ Git safety:
           io.circe.Json.obj(
             "type" -> "backgroundTaskUpdate".asJson,
             "sessionId" -> ctx.sessionId.asJson,
+            "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
             "taskId" -> jobId.asJson,
             "description" -> description.asJson,
             "status" -> "running".asJson,
