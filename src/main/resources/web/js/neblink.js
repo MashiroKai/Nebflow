@@ -38,6 +38,13 @@ let neblinkState = {
   deviceCode: ''
 };
 
+// ── NL 号（Username）入口说明 ────────────────────────────
+// 2026-09-05 10:54 裁定：NL 号 = 官网 Username，客户端不提供修改入口——
+// 原 [U3] NL 号自定义 UI（查看/修改/available 实时检测，走 PUT
+// /api/users/me/neblink-id）已整体移除；Username 统一经官网账号中心设置，
+// 旧 neblink-id 端点同 release 退役（friend-search-contract §4.7）。
+// contacts 列表/搜索卡片的 username 展示保持（friendsApi 契约归一）。
+
 // ── 头像双态判定（共享）─────────────────────────────────
 // 设置页头像区（sidebar.js renderSettings 的账号区）与 Activity Bar 头像
 // （activityBar.js renderAvatar）共用同一套「登录且账号头像可用 → 显示照片，
@@ -281,7 +288,8 @@ export function neblinkSettingsHTML() {
 
   // NL 号入口已移除（作者 2026-09-05 裁定：NL 号统一 = 官网 Username，官网
   // 已有修改功能，客户端不再重复提供）——原「查看 + 修改 + live 可用性检测」
-  // 区块连同 friendsApi 的 setNeblinkId/neblinkIdAvailable 一并删除。
+  // 区块连同 friendsApi 的 setNeblinkId/neblinkIdAvailable 一并删除；旧
+  // neblink-id 端点同 release 退役（friend-search-contract §4.7）。
 
   return `
     <div class="neblink-logged-in">

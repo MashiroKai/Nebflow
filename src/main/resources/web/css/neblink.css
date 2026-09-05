@@ -186,44 +186,5 @@
 #neblink-btn:hover { color: var(--color-text); background: var(--color-bg); }
 #neblink-btn.hidden { display: none; }
 
-/* ── NL 号（[U3]）自定义 UI ─────────────────────────────── */
-.neblink-nlid {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 28px;
-}
-.neblink-nlid-value {
-  font-size: 13px;
-  font-weight: 500;
-  word-break: break-all;
-}
-.neblink-nlid-edit-btn {
-  flex-shrink: 0;
-  font-size: 11px;
-  padding: 3px 10px;
-}
-
-.neblink-nlid-editing {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.neblink-nlid-input {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  padding: 5px 8px;
-}
-
-.neblink-nlid-statusline {
-  min-height: 18px;
-  margin-top: 4px;
-}
-.neblink-nlid-status {
-  font-size: 11px;
-  line-height: 18px;
-}
-.neblink-nlid-status.ok { color: var(--color-success, #34c759); }
-.neblink-nlid-status.bad { color: var(--color-error, #ff3b30); }
-.neblink-nlid-status.checking { color: var(--color-text-muted, #888); }
+/* （NL 号（[U3]）自定义 UI 样式已随 2026-09-05 10:54 裁定的入口移除一并删除
+   —— 客户端不提供修改入口，Username 经官网账号中心设置。） */
