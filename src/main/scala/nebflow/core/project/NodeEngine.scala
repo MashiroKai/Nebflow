@@ -65,6 +65,15 @@ class NodeEngine(
     escalate = (text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Blocked)
   )
 
+  /** dispatch-notify 通道（2026-09-05 批）：节点终态结果回流分发器的单一通知入口
+    * （completion 接线 / failed-blocked 预留；防循环+预算+持久去重见 DispatchNotify）。
+    * 挂接点仅两处：completedNode 尾部直触发 + ProjectActor.TtlTick 周期补投。 */
+  private[project] val dispatchNotify: DispatchNotify = DispatchNotify.forEngine(
+    store, workspace, projectName, rootSessionId,
+    escalate = (text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Blocked),
+    emitUpdated = emitUpdated
+  )
+
   /** 运行中节点 → cancel 信号（NodeCancel 用）。 */
   private val running: Ref[IO, Map[String, Deferred[IO, Unit]]] = Ref.unsafe[IO, Map[String, Deferred[IO, Unit]]](Map.empty)
 
@@ -595,7 +604,10 @@ class NodeEngine(
             // completed 分叉，deps 结算只挂 completed 分支尾部——blocked ∉ completed
             // 不触发；failed（failNode）/cancelled（cancelNode）不挂 settleDeps，
             // 下游保持 pending 可见（裁定③差异语义，NodeDepsSpec T5 锁定）。
-            settleDeps(completed)
+            settleDeps(completed) *>
+            // dispatch-notify（2026-09-05 批）：终态落库+投递+结算完成后，回流通知
+            // 分发器（仅 notifyDispatcher 显式开启的节点；内部 best-effort 不上抛）。
+            dispatchNotify.notifyTerminal(completed, NotifyReason.Completion)
         case None =>
           logger.warn(s"Node '$nodeId' vanished before completion — result not persisted")
     yield ()
@@ -947,7 +959,7 @@ class NodeEngine(
     * escalate 复用通道）保持 fire-and-forget——blocked 反馈本体已持久化在节点上，
     * 升级消息不进重投扫描（避免对已处置的 blocked 再升级）。根 ref 缺失时不丢弃：
     * 不记账 → 周期重投扫描在根会话可用后补投。 */
-  private def deliverToNebula(text: String, nodeName: String, status: String, nodeId: Option[String] = None): IO[Unit] =
+  private[project] def deliverToNebula(text: String, nodeName: String, status: String, nodeId: Option[String] = None): IO[Unit] =
     resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
       case Some(ref) =>
         // 缺口4：同 (identity, status) 60s 窗口去重——抑制重复 offer（首投已入
