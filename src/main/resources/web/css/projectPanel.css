@@ -114,7 +114,8 @@
 
 /* ── Flow Map 就地视图（同标签页切换，projectTab.openFlowMapInPlace）────────── */
 
-/* 顶部导航条：左上角「返回项目列表」入口 */
+/* 顶部导航条：左上角「← 项目名」单元素返回入口（20260905 作者报告合并：
+   原「返回项目列表」文本按钮与项目名合并；整元素可点回列表，名字 ellipsis） */
 .flowmap-nav-bar {
   display: flex;
   align-items: center;
@@ -128,6 +129,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  max-width: min(100%, 420px); /* 长项目名不撑横 nav-bar，超出由名字 span ellipsis 承接 */
+  min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: transparent;
@@ -142,7 +145,13 @@
   border-color: rgb(var(--sapphire) / 0.45);
   background: rgb(var(--sapphire) / 0.08);
 }
-.flowmap-back-btn svg { width: 14px; height: 14px; }
+.flowmap-back-btn svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.flowmap-back-btn .flowmap-back-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Flow Map 渲染体：撑满 nav-bar 以下空间，内部由 flowMapTab 渲染
    (.flowmap-card flex:1 填满；.dag-empty height:100% 居中)
