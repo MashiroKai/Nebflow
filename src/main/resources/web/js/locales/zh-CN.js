@@ -45,6 +45,8 @@ export default {
   'project.archiveFail': '归档「{name}」失败',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': '运行中…',
+  // 节点卡 Agent 退役（node-flowmap-slim）：preset 未配置的克制空态文案
+  'flowmap.presetDefault': '默认预设',
   'flowmap.loading': '加载 Flow Map…',
   'flowmap.loadFail': 'Flow Map 加载失败',
   'flowmap.empty': '暂无节点，项目空闲',

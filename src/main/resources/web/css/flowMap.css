@@ -630,7 +630,9 @@
   flex: 0 1 auto; min-width: 0; font: 500 11.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.fm-member-agent {
+/* Agent 退役（node-flowmap-slim）：原 .fm-member-agent 槽位改显节点元数据
+   （preset 常显 + plugins 并列），仅改类名——规则原样保留。 */
+.fm-member-meta {
   flex: 1 1 auto; min-width: 20px; font: 400 10.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
 }
