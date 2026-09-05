@@ -46,7 +46,7 @@
 ## 3. 归档与待裁定
 
 ### 归档（随宿主命令 ③ 删除，git 历史可复活）
-- **flow-execute**（244 行）：flows 体系退役证据 ①编排主链路已迁 Project+Node 分发器（AGENTS.md:24「按方向组建节点」、20260902 phase2 设计全链路五步）；②flows/ 仅存量封存（`presentation-prep.archived` 改名归档先例，无新增 flow 开发）；③FlowExecuteTool.scala 虽在役（向后兼容），但其受众「FlowExecute DAG 编写者」已不存在于主链路——flow 执行为引擎内部行为，flow 定义内 agent 不经 skill 目录注入。244 行注入体量 vs 零受众，不占插件目录。
+- **flow-execute**（244 行）：flows 体系退役证据 ①编排主链路已迁 Project+Node 分发器（AGENTS.md:24「按方向组建节点」、20260902 phase2 设计全链路五步）；②flows/ 仅存量封存（`presentation-prep.archived` 改名归档先例，无新增 flow 开发）；③~~FlowExecuteTool.scala 虽在役（向后兼容）~~ **【2026-09-06 增补】FlowExecuteTool.scala 已物理删除（flow 三工具退役批）**，其受众「FlowExecute DAG 编写者」已不存在于主链路——flow 执行为引擎内部行为，flow 定义内 agent 不经 skill 目录注入。244 行注入体量 vs 零受众，不占插件目录。归档判定被本批进一步坐实
 
 ### 待裁定（保留 skills/ 不删，不迁移）
 - **skill-creator**（94 行）：涉 meta 系统——skill 体系并入 plugins 后，「skill 创作规范」本身需重写为 plugin-skill 规范（承载层从 skills/ 白名单层变为 plugins/<name>/skills/，目录/frontmatter 语义变化），超出纯蒸馏迁移批次，留作者裁定。

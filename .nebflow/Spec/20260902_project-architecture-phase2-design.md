@@ -312,7 +312,7 @@ plugin = **skill + mcp.json 的可分配能力包**（裁定 12：可只用其�
 
 | 组 | 工具 | 说明 |
 |---|---|---|
-| 编排触发 | `Task`、`ProjectCreate`、`NodeList`（只读观测）、`AgentControl`（list/status/cancel/restart） | Task/Mail(→project) 同内核双入口（TaskTool.scala:8-20）——**✅ Task 已落地 `e53ebde9`**（Nebula agent.json 声明注入，机制固定化仍属 2c）；NodeList 是 dispatcher 描述承诺的观测面（"Nebula 用 NodeList 只读查看"，现状 NebulaOrchestrationTools 缺它，补上） |
+| 编排触发 | `Task`、`ProjectCreate`、`NodeList`（只读观测）、`AgentControl`（list/status/cancel/restart） | Task/Mail(→project) 同内核双入口（TaskTool.scala:8-20）——**✅ Task 已落地 `e53ebde9`**（Nebula agent.json 声明注入，机制固定化仍属 2c）；NodeList 是 dispatcher 描述承诺的观测面（"Nebula 用 NodeList 只读查看"，现状 NebulaOrchestrationTools 缺它，补上）。**【2026-09-06 00:48 增补】NodeList 已从 Nebula 工具面摘除**（作者裁定：节点结果沿 out 边自动投递 Nebula，主动查图与「全量派发 + pending 节点、不维护状态清单」的裁定职责重叠；dispatcher 自身面/服务端 API/前端 Flow Map 不受影响）——NebulaOrchestrationTools 恰十三件 |
 | 通信 | `Mail`、`SendFriendMessage` | SendFriendMessage 从"agent.json 声明注入"（FriendMessageTool.scala:28，现状仅 Nebula 声明）改为机制固定 |
 | 双轨期过渡 | `Delegate`、`FlowTrigger`、`FlowExecute` | 旧 standalone/team/flow 触达保留至阶段 3（裁定 1），阶段 3 拆除（去留 H-7 已确认①：Delegate 退役） |
 | 用户面 | `AskUserQuestion`、`Pop` | 不变 |
@@ -329,7 +329,7 @@ plugin = **skill + mcp.json 的可分配能力包**（裁定 12：可只用其�
 **提示词要点清单**（重写 `agents/Nebula/system.md`，现 210 行含大量已退役机制描述）：
 
 1. **身份与边界**：你是编排者，不执行。所有执行通过 Project（Task/ProjectCreate）触达 project-dispatcher；你不读文件、不写文件、不跑命令（工具集已从机制上保证——提示词只需一句自我认知，无需恳求式约束）。
-2. **项目生命周期协议**：理解意图 → 无对应 project 则 ProjectCreate（workspace 路径与意图对齐）→ Task(project, 任务文本) → NodeList 观测拓扑与状态 → 节点 out=Nebula 的结果接收与综合 → 完成后向用户汇报；失败节点优先 AgentControl restart / 重新 Task 补充上下文，两次失败升级 AskUserQuestion。
+2. **项目生命周期协议**：理解意图 → 无对应 project 则 ProjectCreate（workspace 路径与意图对齐）→ Task(project, 任务文本) → NodeList 观测拓扑与状态 → 节点 out=Nebula 的结果接收与综合 → 完成后向用户汇报；失败节点优先 AgentControl restart / 重新 Task 补充上下文，两次失败升级 AskUserQuestion。**【2026-09-06 00:48 增补】「NodeList 观测拓扑」一步已随 00:48 裁定从 Nebula 工具面退役**——拓扑观测由 out 边结果自动投递承接，Nebula 不再主动查图。
 3. **memory 维护纪律**（裁定 2 的完整闭环）：
    - 写什么：用户事实（身份/偏好/工作风格/环境）→ `target=user`（User.md）；路由经验/技术教训/领域知识 → `target=agent`（agents/Nebula/memory.md）。条目格式沿用现状：`- <fact>（→<id> 详情在 ~/.nebflow/memory/<id>.md）`（ContextRefresher buildMemoryBlock 头注同款）。
    - 何时写：用户明示偏好、任务中验证的新路由知识、压缩前 NebulaMemoryHook 继续负责自动抽取（NebulaMemoryHook.scala:17-47 不受本裁定影响，其写路径切换到 MemoryStore 同一写函数）。
@@ -481,7 +481,7 @@ AGENTS.md 是 **project workspace 的项目级 agent 指令**（【盘点】§3.
 
 1. **读取**：`ContextRefresher.refreshTurn`（ContextRefresher.scala:372-443）内、rulesMd 读取点旁，新增 `resolveAgentsMd(projectRoot)`：`<projectRoot>/.nebflow/Agent.md` 存在 → **迁移**（见 E.3）后回落；否则读 `<projectRoot>/AGENTS.md`；结果进 `PromptContext.agentsMd`。
 2. **注入**：`PromptSections` 注册表（:312-416）新增 **order 895** `# Project Instructions (AGENTS.md)`，置于 rulesMd（900）之前——AGENTS.md 是工作指令、NEBFLOW.md/rules.md 是平台规则，规则优先级更高故靠后。每个 turn 重读盘（对齐"数据源每 turn 刷新"机制，【盘点】§9），随 systemStable 在 lifecycle 节点生效。
-3. **接收面**：该 project 的分发器会话 + 全部 node 会话（有 projectRoot 的新模型会话）。**不注入 Nebula**（跨多 project 编排，单 project 指令对它无意义；它需要的是 NodeList 状态与节点结果摘要）。双轨期 team/flow 会话不注入（保持旧体系行为不变）。
+3. **接收面**：该 project 的分发器会话 + 全部 node 会话（有 projectRoot 的新模型会话）。**不注入 Nebula**（跨多 project 编排，单 project 指令对它无意义；它需要的是 NodeList 状态与节点结果摘要）。双轨期 team/flow 会话不注入（保持旧体系行为不变）。**【2026-09-06 00:48 增补】「Nebula 需要 NodeList 状态」已过时**——00:48 裁定摘除 Nebula 面的 NodeList，节点状态经 out 边自动投递；仅分发器会话仍持 NodeList。
 4. 长度护栏：>16KB 截断 + 尾注 `[AGENTS.md truncated]`（提示词膨胀防护，与 skill 目录截 200 字符同思路）。
 
 ### E.3 不留两套（裁定 13）——迁移映射

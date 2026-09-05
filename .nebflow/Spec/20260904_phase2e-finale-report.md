@@ -76,7 +76,7 @@
 实例：assembly jar `nebflow-assembly-1.4.1-beta.54.jar`（sha1 fa470404520d95b9e7150a9b58c260f440c1eda2，合并后 main 构建）｜`--home /tmp/nb-finale-home --port 8295 --no-browser` + `-Duser.home` 同指临时 HOME（LlmLogWriter 按 user.home 落 `logs/router/`，保证取证日志入隔离盘）｜LLM 配置拷自宿主 nebflow.json（真实模型调用，kimi/kimi-k3 实通）｜用毕 `lsof` 验 PID 41799 ≠ 宿主 94384 → kill → 端口释放 → `rm -rf` 临时 HOME 与工作区 ✓
 
 ### a. Nebula 恰十四件零 Issue — **PASS**
-REST `GET /api/agents/Nebula` → `fixedTools` = Task/ProjectCreate/NodeList/AgentControl/Mail/SendFriendMessage/Delegate/FlowTrigger/FlowExecute/AskUserQuestion/Pop/Schedule/TransferFile/MemoryEdit，**恰 14 件**；`Issue` ∉、`CheckIssues` ∉（程序化比对 True）。
+REST `GET /api/agents/Nebula` → `fixedTools` = Task/ProjectCreate/NodeList/AgentControl/Mail/SendFriendMessage/Delegate/FlowTrigger/FlowExecute/AskUserQuestion/Pop/Schedule/TransferFile/MemoryEdit，**恰 14 件**；`Issue` ∉、`CheckIssues` ∉（程序化比对 True）。**【2026-09-06 增补】FlowTrigger/FlowExecute 现已全局退役**（工具面裁撤批，Nebula 面本批前就含此二件、fin 批后移除）——Nebula fixedTools 现为恰 12 件；本行取证反映 2026-09-04 时点快照。**【2026-09-06 00:48 再增补·计数纠偏】上句「恰 12 件」与代码实况不符**：23:34 裁定后 NebulaOrchestrationTools 恰 14 件（读三件/Card 在，spec size==14 绿为证）；00:48 裁定摘 NodeList 后**现恰 13 件**
 
 ### b. AGENTS.md 注入三态 — **PASS**
 试点 project（workspace=/tmp/nb-finale-ws，根 AGENTS.md 含标记串 `NB2E-FINALE-AGENTSMD-MARKER-8f3a1c`）→ Nebula 会话 turn「Task(project=pilot)」驱动分发器建 probe 节点（agent=general）：
