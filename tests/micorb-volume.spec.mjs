@@ -1,6 +1,7 @@
 // micorb-volume.spec.mjs — regression spec for the micOrb listening-state
 // voice-responsive deformation (v8.4.0; author request 2026-09-03: 听写中
-// 音量越大形变越大，波形有机、不要整齐正弦).
+// 音量越大形变越大，波形有机、不要整齐正弦; v8.4.2 2026-09-05 口径: 波纹
+// 加密 k{3,5,8}→{5,8,13}、amp 0.032→0.016、波峰柔化 weights/jitterDepth).
 //
 // Verifies (levels injected through renderer.setVoiceLevel — the test seam
 // over the mic sources; NO microphone needed):
@@ -16,7 +17,7 @@
 //   T4 非整齐正弦 — the shared waveform source-of-truth (VOICE_WAVE →
 //      voiceWaveAt, mirrored 1:1 into the generated GLSL block):
 //      (a) multi-harmonic: time-averaged angular DFT energy sits in exactly
-//          the {3,5,8} wavenumber bins (integer k → zero bin leakage), top
+//          the {5,8,13} wavenumber bins (integer k → zero bin leakage), top
 //          bin share < 0.75 — a single-frequency control concentrates >99%
 //          in one bin (criterion discriminative);
 //      (b) non-fixed waveform: profile correlation across 1.07s / 2.41s
@@ -24,16 +25,22 @@
 //      (c) geometric soundness: |w(π)−w(−π)| < 1e-6 (integer wavenumbers
 //          keep the rim 2π-continuous — no seam at the atan2 wrap).
 //   T5 e2e 渲染 + 截图 — listening @0.15 vs @0.9 screenshots differ on
-//      ≥3% of orb pixels (V10-consistent visible response); both frames
-//      land in ~/.nebflow/docs/Nebflow/20260903_micorb-volume-{small,large}.png.
+//      ≥3% of orb pixels (V10-consistent visible response; v8.4.2 复核:
+//      amp 再降后实测仍 ~29%，该指标由 wobble 相位漂移主导，阈值不调);
+//      both frames land in the redirected HOME docs dir under CI/sandbox.
 //   T6 约束保全 — F1: phaseTime monotonic with no jump >0.5 per 50ms across
 //      idle→listening→frozen→processing switches; frozen converges to a
 //      plateau (Δ<0.08 over the final 350ms). F5: theme flip while
 //      listening+voice never re-triggers the pulse. 预乘: at max deformation
-//      the annulus past the displaced silhouette (uv r≥0.78 > 0.66+0.085)
+//      the annulus past the displaced silhouette (uv r≥0.78 > 0.66+0.014)
 //      composites pure background. VoiceTap: with the harness disable flag
 //      cleared, entering listening attempts the real getUserMedia and
 //      degrades gracefully (no uncaught error, renderer stays alive).
+//   T7 F1 红线补充 — the waveform output itself is time-continuous under a
+//      fixed frame-step grid: |w(t+dt)−w(t)| stays inside the analytic
+//      Lipschitz bound derived from VOICE_WAVE (any per-frame time reset or
+//      quantization would produce O(1) jumps and fail). Complements T6's
+//      phaseTime continuity (the time BASE) with the waveform OUTPUT.
 //   Every test also asserts zero uncaught page errors (降级不抛异常).
 //
 // Self-contained: spins up its own static server on an ephemeral port
@@ -168,9 +175,9 @@ async function waveMetrics(page, times) {
       for (let i = 0; i < N; i++) p.push(w((i / N) * Math.PI * 2, t));
       return p;
     });
-    const energy = new Array(12).fill(0);
+    const energy = new Array(14).fill(0);
     for (const prof of profiles) {
-      for (let k = 1; k <= 12; k++) {
+      for (let k = 1; k <= 14; k++) {
         let re = 0, im = 0;
         for (let i = 0; i < N; i++) {
           const th = (i / N) * Math.PI * 2;
@@ -183,11 +190,12 @@ async function waveMetrics(page, times) {
     const avg = energy.map((e) => e / profiles.length);
     const emax = Math.max(...avg);
     const etot = avg.reduce((s, x) => s + x, 0);
-    // v8.4.1: detection floor 0.03*emax — the 8th-harmonic weight drop
-    // (0.20 → 0.12) puts its time-averaged energy at ~5% of the top bin, so
-    // the old 0.12 floor went blind to it. 0.03 keeps exactly {3,5,8}
-    // detected (off-bins are numerically ~0: integer k → zero leakage) and
-    // stays discriminative vs the neat-sine control (>99% in one bin).
+    // v8.4.2: floor stays 0.03*emax — the k=13 share 0.14 puts its
+    // time-averaged energy at ~6.5% of the top bin (0.14²/0.55²), above the
+    // floor with >2× margin; off-bins are numerically ~0 (integer k → zero
+    // leakage), so exactly {5,8,13} is detected. The floor remains far below
+    // the neat-sine control (>99% in one bin) — criterion discriminative.
+    // (Bin range 12→14: v8.4.2's k=13 needs bin 13.)
     const strongBins = avg.map((e, i) => ({ k: i + 1, e })).filter((x) => x.e >= 0.03 * emax).map((x) => x.k);
     const top3 = avg.map((e, i) => ({ k: i + 1, e })).sort((a, b) => b.e - a.e).slice(0, 3).map((x) => x.k);
     return { profiles, topShare: emax / etot, strongBins, top3 };
@@ -209,8 +217,8 @@ test('T4: 非整齐正弦 — multi-harmonic spectrum, evolving shape, 2π-conti
 
   // (a) 单频拒绝: time-averaged energy spread across the designed bins.
   expect(m.topShare, `time-averaged top DFT bin share ${m.topShare.toFixed(3)} must be < 0.75`).toBeLessThan(0.75);
-  expect(m.strongBins, 'exactly the 3 designed wavenumbers {3,5,8} carry energy').toEqual([3, 5, 8]);
-  expect(m.top3, 'dominant bins ordered by weight: 3, 5, 8').toEqual([3, 5, 8]);
+  expect(m.strongBins, 'exactly the 3 designed wavenumbers {5,8,13} carry energy').toEqual([5, 8, 13]);
+  expect(m.top3, 'dominant bins ordered by weight: 5, 8, 13').toEqual([5, 8, 13]);
 
   // Criterion discriminative: a "neat sine" control concentrates >99%.
   const ctrlShare = await page.evaluate(() => {
@@ -374,9 +382,9 @@ test('T6: 约束保全 — F1 phase continuity, F5 pulse, premultiplied annulus,
     const ctx = cv.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(img, 0, 0);
     let worst = 0;
-    // Annulus past the max displaced edge: body r0 ≤ 0.66 + voice 0.029
-    // (v8.4.1: 0.9 × amp 0.032; was 0.085 at amp 0.062) → sample uv radii
-    // 0.78/0.86/0.94 (box fraction r/2), 24 angles each.
+    // Annulus past the max displaced edge: body r0 ≤ 0.66 + voice 0.014
+    // (v8.4.2: 0.9 × amp 0.016; v8.4.1 was 0.029 at amp 0.032) → sample uv
+    // radii 0.78/0.86/0.94 (box fraction r/2), 24 angles each.
     for (const r of [0.78, 0.86, 0.94]) {
       for (let a = 0; a < 24; a++) {
         const u = 0.5 + (r / 2) * Math.cos((a / 24) * 2 * Math.PI);
@@ -402,4 +410,36 @@ test('T6: 约束保全 — F1 phase continuity, F5 pulse, premultiplied annulus,
   await page.waitForTimeout(400);
   const after = await page.evaluate('window.__volTest.snapVoice()');
   expect(after.level, 'level injection still works after tap failure').toBeGreaterThan(0.4);
+});
+
+test('T7: F1 红线数值断言 — 波形输出时间连续（同 dt 步进序列无跳变）', async ({ page }) => {
+  // voiceWaveAt 是绝对时间 t 的纯函数（单源 VOICE_WAVE 的 JS 镜像）。F1 的
+  // 机制保障是 phaseTime 连续累积 + dt 钳制 ≤0.05（micOrb.js draw()）——T6
+  // 已在真实渲染器上数值断言时间基（phaseTime）跨状态切换连续无跳变；本条
+  // 补充形变【输出】侧：按固定帧步 dt=0.05 网格采样波形，相邻帧差必须落在
+  // 解析 Lipschitz 界内——任何逐帧时间重置/量化回归都会产生 O(1) 跳变而爆界。
+  // 界推导：|dw/dt| ≤ Σ w_i·(|drift_i| + depth·jitterRate_i)
+  //   （|sin'|≤1 且 jit∈[1−depth,1]；v8.4.2 常数 → L = 6.6463）
+  // 断言阈 = 2×L×dt ≈ 0.665：正常运行实测 << 界（相位不对齐），重置跳变 ~O(1) 必爆。
+  const DT = 0.05, SPAN = 60; // 1200 步，覆盖全部漂移/抖动周期
+  const r = await page.evaluate(({ DT, SPAN }) => {
+    const w = window.__volTest.voiceWaveAt;
+    let worst = 0, worstAt = null;
+    for (const th of [0.3, 1.7, 4.4]) { // 三个固定角位（含非对称位置）
+      let prev = w(th, 0);
+      for (let t = DT; t <= SPAN; t += DT) {
+        const cur = w(th, t);
+        const d = Math.abs(cur - prev);
+        if (d > worst) { worst = d; worstAt = { th, t }; }
+        prev = cur;
+      }
+    }
+    // 纯度哨兵：|w| ≤ Σweights（有界），防止波形发散类回归
+    let peak = 0;
+    for (let i = 0; i < 144; i++) peak = Math.max(peak, Math.abs(w((i / 144) * Math.PI * 2, 12.34)));
+    return { worst, worstAt, peak };
+  }, { DT, SPAN });
+  const bound = 2 * 6.6463 * DT; // 2× Lipschitz × dt
+  expect(r.worst, `waveform step |Δw| over dt=${DT} is ${r.worst.toFixed(4)} at t=${r.worstAt.t.toFixed(2)}s — must stay continuous (F1 red line: no per-frame time reset/jump; bound ${bound.toFixed(3)})`).toBeLessThan(bound);
+  expect(r.peak, 'waveform stays bounded by Σweights (no divergence)').toBeLessThanOrEqual(1.0000001);
 });
