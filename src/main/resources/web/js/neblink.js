@@ -37,86 +37,12 @@ let neblinkState = {
   deviceCode: ''
 };
 
-// ── NL 号（[U3]）自定义 UI ──────────────────────────────
-// 服务端 API：PUT /api/users/me/neblink-id（字母+数字 3-32、唯一、大小写不敏感）
-// + GET .../available?q= 实时检测（网关 0904 批次新增代理）。
-// 当前号显示源：server 暂无 GET 自身号的端点（S1 缺口，已上报）——以最近一次
-// PUT 成功值为准缓存 localStorage；无缓存时提示「默认为注册邮箱」。
-const NLID_RE = /^[a-zA-Z0-9]{3,32}$/;
-const LS_NLID = 'neblink_id_custom';
-let nlIdEdit = false;          // 编辑态
-let nlIdValue = '';            // 编辑框当前值（跨重渲染存活）
-let nlIdSaving = false;
-let nlIdSeq = 0;               // 防抖响应竞态防护
-let nlIdTimer = null;
-
-function cachedNeblinkId() {
-  try { return localStorage.getItem(LS_NLID) || ''; } catch { return ''; }
-}
-
-function nlidStatusSpan(cls, text) {
-  return `<span class="neblink-nlid-status ${cls}">${escapeHtml(text)}</span>`;
-}
-
-/** 编辑输入 → 客户端正则即时判定；合法值防抖 450ms 后走 available 实时检测。
- *  状态只就地更新 statusline/save 按钮，不整面重渲染（保输入焦点）。 */
-function scheduleNlIdCheck() {
-  if (nlIdTimer) clearTimeout(nlIdTimer);
-  const v = nlIdValue.trim();
-  const statusline = document.getElementById('neblink-nlid-statusline');
-  const saveBtn = document.getElementById('neblink-nlid-save');
-  const setStatus = (html, canSave) => {
-    if (statusline) statusline.innerHTML = html;
-    if (saveBtn) saveBtn.disabled = !canSave;
-  };
-  if (!v) { setStatus('', false); return; }
-  if (!NLID_RE.test(v)) {
-    setStatus(nlidStatusSpan('bad', t('neblink.nlIdInvalid')), false);
-    return;
-  }
-  setStatus(nlidStatusSpan('checking', t('neblink.nlIdChecking')), false);
-  const seq = ++nlIdSeq;
-  nlIdTimer = setTimeout(async () => {
-    try {
-      // Dynamic import — P2-4 cycle cut (neblink <-> friendsApi mutual import).
-      const api = await import('./friendsApi.js');
-      const r = await api.neblinkIdAvailable(v);
-      if (seq !== nlIdSeq) return; // stale response
-      const ok = !!(r && r.available);
-      const reason = r && r.reason;
-      setStatus(
-        nlidStatusSpan(ok ? 'ok' : 'bad', ok ? t('neblink.nlIdAvailable')
-          : (reason === 'invalid' ? t('neblink.nlIdInvalid') : t('neblink.nlIdTaken'))),
-        ok);
-    } catch {
-      if (seq !== nlIdSeq) return;
-      setStatus(nlidStatusSpan('bad', t('messages.networkError')), false);
-    }
-  }, 450);
-}
-
-async function saveNeblinkId(rerender) {
-  const v = nlIdValue.trim();
-  if (!NLID_RE.test(v) || nlIdSaving) return;
-  nlIdSaving = true;
-  const saveBtn = document.getElementById('neblink-nlid-save');
-  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = t('neblink.nlIdSaving'); }
-  try {
-    const api = await import('./friendsApi.js');
-    const resp = await api.setNeblinkId(v);
-    try { localStorage.setItem(LS_NLID, (resp && resp.neblinkId) || v); } catch { /* non-critical */ }
-    nlIdEdit = false;
-    nlIdValue = '';
-    nlIdSaving = false;
-    rerender();
-    showLoginSuccessBanner(t('neblink.nlIdSaved'));
-  } catch {
-    nlIdSaving = false;
-    const statusline = document.getElementById('neblink-nlid-statusline');
-    if (statusline) statusline.innerHTML = nlidStatusSpan('bad', t('neblink.nlIdSaveFailed'));
-    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = t('neblink.save'); }
-  }
-}
+// ── NL 号（Username）入口说明 ────────────────────────────
+// 2026-09-05 10:54 裁定：NL 号 = 官网 Username，客户端不提供修改入口——
+// 原 [U3] NL 号自定义 UI（查看/修改/available 实时检测，走 PUT
+// /api/users/me/neblink-id）已整体移除；Username 统一经官网账号中心设置，
+// 旧 neblink-id 端点同 release 退役（friend-search-contract §4.7）。
+// contacts 列表/搜索卡片的 username 展示保持（friendsApi 契约归一）。
 
 /** Read-only accessor for the current NebLink state (used by the Activity Bar). */
 export function getNeblinkState() {
@@ -320,35 +246,12 @@ export function neblinkSettingsHTML() {
     ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure the device link service is configured on both devices.'}</div>`
     : '';
 
-  // NL 号（[U3]）区：查看 + 修改 + live 可用性检测
-  const cur = cachedNeblinkId();
-  let nlSection;
-  if (!nlIdEdit) {
-    nlSection = `
-      <div class="neblink-section-label">${t('neblink.nlIdLabel')}</div>
-      <div class="neblink-nlid">
-        <span class="neblink-nlid-value">${cur ? escapeHtml(cur) : escapeHtml(t('neblink.nlIdDefault'))}</span>
-        <button class="neblink-ch-btn neblink-nlid-edit-btn" id="neblink-nlid-edit">${t('neblink.nlIdEdit')}</button>
-      </div>
-      <div class="cfg-hint">${t('neblink.nlIdRules')}</div>`;
-  } else {
-    nlSection = `
-      <div class="neblink-section-label">${t('neblink.nlIdLabel')}</div>
-      <div class="neblink-nlid-editing">
-        <input class="cfg-input neblink-nlid-input" id="neblink-nlid-input" type="text"
-          maxlength="32" autocomplete="off" spellcheck="false"
-          placeholder="${escapeHtml(t('neblink.nlIdPlaceholder'))}" value="${escapeHtml(nlIdValue)}" />
-        <button class="neblink-ch-btn" id="neblink-nlid-save" disabled>${t('neblink.save')}</button>
-        <button class="neblink-ch-cancel" id="neblink-nlid-cancel">${t('neblink.cancel')}</button>
-      </div>
-      <div class="neblink-nlid-statusline" id="neblink-nlid-statusline"></div>
-      <div class="cfg-hint">${t('neblink.nlIdRules')}</div>`;
-  }
+  // （NL 号/Username 设置区已按 2026-09-05 10:54 裁定移除——客户端不提供
+  // 修改入口，Username 经官网账号中心设置。）
 
   return `
     <div class="neblink-logged-in">
-      ${nlSection}
-      <div class="neblink-section-label" style="margin-top:12px">${t('neblink.devices')}</div>
+      <div class="neblink-section-label">${t('neblink.devices')}</div>
       <div class="neblink-peers-list">${deviceRows}</div>
       ${peerHint}
       <button class="neblink-logout-btn" id="neblink-logout-btn">退出登录</button>
@@ -568,43 +471,7 @@ export function bindNeblinkEvents(rerender) {
     });
   }
 
-  // NL 号（[U3]）：进入编辑 / 取消 / 保存 + 输入防抖可用性检测
-  const nlidEditBtn = document.getElementById('neblink-nlid-edit');
-  if (nlidEditBtn) {
-    nlidEditBtn.addEventListener('click', () => {
-      nlIdEdit = true;
-      nlIdValue = '';
-      rerender();
-    });
-  }
-  const nlidCancelBtn = document.getElementById('neblink-nlid-cancel');
-  if (nlidCancelBtn) {
-    nlidCancelBtn.addEventListener('click', () => {
-      nlIdEdit = false;
-      nlIdValue = '';
-      if (nlIdTimer) clearTimeout(nlIdTimer);
-      nlIdSeq++; // invalidate any in-flight check
-      rerender();
-    });
-  }
-  const nlidInput = document.getElementById('neblink-nlid-input');
-  if (nlidInput) {
-    nlidInput.focus();
-    nlidInput.addEventListener('input', () => {
-      nlIdValue = nlidInput.value;
-      scheduleNlIdCheck();
-    });
-    nlidInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        document.getElementById('neblink-nlid-save')?.click();
-      }
-    });
-  }
-  const nlidSaveBtn = document.getElementById('neblink-nlid-save');
-  if (nlidSaveBtn) {
-    nlidSaveBtn.addEventListener('click', () => saveNeblinkId(rerender));
-  }
+  // （NL 号编辑/保存事件绑定已随 10:54 裁定的 UI 移除一并删除。）
 
   // Peer update buttons
   document.querySelectorAll('.neblink-peer-update-btn').forEach(btn => {
