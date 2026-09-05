@@ -4,7 +4,7 @@
 
 Self-hosted AI coding assistant with multi-agent orchestration and cross-device collaboration.
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Scala](https://img.shields.io/badge/Scala-3.5.2-red.svg)](https://www.scala-lang.org/)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
 
@@ -218,4 +218,4 @@ Nebflow is actively migrating from Scala to Rust.
 
 ## License
 
-[Apache License 2.0](LICENSE)
+[MIT License](LICENSE)
