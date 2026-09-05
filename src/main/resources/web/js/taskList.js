@@ -1,99 +1,22 @@
 // taskList.js — Collapsible task panel (floats above the input area)
-// 任务工具重做 (2026-08-30 作者规格) + #15 补齐 (2026-08-30): 纯进展可视化
-// 四态状态机 pending → in_progress → completed / failed。needs_confirmation /
-// dismissed / cancelled / 待办 全部退役：#15 作者三条强调「不再有待办——纯 team
-// 任务进展可视化」——待办区 (.task-section-todo) 与 human pending CIRCLE
-// (completeTask 用户确认通道) 移除，无用户确认/打回/取消环节。
-//   - 任务区 (.task-section-progress): agent pending/in_progress — read-only
-//     glyphs (pending=静态小方框 / in_progress=独立 spinner), status word +
-//     relative time + team/member meta (谁在执行)
-// 裁定②: team 域任务统一并入 Nebula 会话的本面板（Teams 标签页任务区已删）；
-// 裁定④ + #15: 三级分组 team → member → tasks（member=assignee 契约字段，
-// 每任务标注 Team+成员名）。
+// 任务面板 = 纯 Flow Map 节点视图（作者 2026-09-05 10:54 裁定，taskpanel-audit
+// 批落地；推翻 67e69bf1 的「旧任务路径保留」取舍）：
+//   - 旧任务区整体退役：taskListUpdate / teamTaskListUpdate 数据路径（渲染层
+//     + main.js handler + state 字段 + ws.js 路由表项）、.task-section-progress
+//     区块、旧任务行/三级分组、统计中的旧任务计数，全部移除。
+//   - 头部统计 = 仅节点数（键复用 task.statsProgress）。
+//   - 节点视图机制（2026-09-02 作者裁定 + 2026-09-05 徽章裁定）保留不动：
+//     WS nodeCreated/Updated/Completed/Removed 自包含订阅 + REST 快照对齐
+//     （_wsTs 防回滚）+ 八态徽章映射 + 点击行 → Flow Map 跳转聚焦。
+//   - 主图同源过滤（2026-09-05 12:59 作者裁定）：整链已归档（批内全终态）的
+//     节点不显示——判据与 Flow Map 主图同一 clusterBatches 单点（flowMapArchive
+//     .deriveArchivedIds 纯派生），任务列表 = 主图当前集合口径。
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import state from './state.js';
 import { onMessage, onReconnect } from './ws.js';
 import { fetchProjects, fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
-
-/** 任务工具重做: visible set = pending + in_progress ONLY（「列表只显
- *  pending+in_progress」——completed/failed 完成即消失，6h/2d TTL 管磁盘
- *  清理不管可见性）。legacy 状态由后端解码映射（needs_confirmation→
- *  completed 等），到不了这里。 */
-function isVisible(tk) {
-  return !!tk && (tk.status === 'pending' || tk.status === 'in_progress');
-}
-
-/** C1: missing taskKind (pre-upgrade server) defaults to 'agent'. */
-function kindOf(tk) {
-  return tk && tk.taskKind === 'human' ? 'human' : 'agent';
-}
-
-// ── Zone partitioning ────────────────────────────────────────────────────
-// #15 不再有待办——面板纯任务进展可视化，单一任务区（progress），todo/progress
-// 双区块划分退役。
-
-/** Sort key: updatedAt refreshed on every mutation and always present;
- *  defensive fallback to createdAt. */
-function taskTs(tk) {
-  const raw = tk.updatedAt || tk.createdAt;
-  const ms = Date.parse(raw);
-  return isNaN(ms) ? 0 : ms;
-}
-
-function sortByActiveDesc(a, b) {
-  return taskTs(b) - taskTs(a);
-}
-
-/** 任务区: updatedAt desc (visible set is active-only — no failed sinking). */
-function sortProgress(a, b) {
-  return sortByActiveDesc(a, b);
-}
-
-// ── Team grouping (第七件 裁定④, 2026-08-30 + #15 补齐) ───────────────────
-// 任务区 groups team → member → tasks. ACCESSOR ISOLATION: the Backend data
-// contract hooks up HERE and nowhere else. 契约字段（TaskModel.scala）：
-// team 归属 = `teamId`（scope=='team' 的 team 域任务携带；session 域无此键）；
-// member 归属 = `assignee`（成员责任归属——#15 修正：此前 taskMember 误读
-// `member` 字段（不存在）致三级分组的 member 层永不填充）。
-function taskTeam(tk) { return (tk && typeof tk.teamId === 'string' && tk.teamId) || null; }
-function taskMember(tk) { return (tk && typeof tk.assignee === 'string' && tk.assignee) || null; }
-
-// ── [team 区块 · 退役边界] ────────────────────────────────────────────────
-// 以下至 buildEmpty() 为 team 任务域（作者 2026-09-02：team 任务后期退役）。
-// 退役时整体删除本域函数 + redraw() 的 progress 分组段 + 对应 CSS，节点区块
-// （.task-node-* 命名空间）零依赖本域。可操作清单：
-// docs/Nebflow/20260902_tasklist-team-retirement-cleanup.md
-
-/** 裁定②: team 域任务（teamTaskListUpdate, 无 sessionId）统一并入 Nebula
- *  会话的任务列表面板。Only the Nebula session shows the unified list —
- *  member/agent sessions keep showing only their own session tasks. */
-export function sessionShowsTeamTasks(sid) {
-  if (!sid) return false;
-  const agent = state.sessionAgentMap ? state.sessionAgentMap[sid] : null;
-  return !agent || agent === 'Nebula';
-}
-
-/** Merge team-domain tasks (state.teamTasks, keyed by team) into the panel
- *  list for Nebula sessions. Stamped copies carry teamId (grouping hook) and
- *  a namespaced display id — team tasks live in their own store directory
- *  with their own id space, so a bare id could collide with a session task
- *  (row dataset/zone-diff keyed by id). Team tasks are read-only here, so the
- *  stamped id never goes back on the wire. */
-function mergeTeamTasks(tasks, sessionId) {
-  const base = Array.isArray(tasks) ? tasks : [];
-  if (!sessionShowsTeamTasks(sessionId)) return base;
-  const teamMap = state.teamTasks || {};
-  const stamped = [];
-  for (const [team, arr] of Object.entries(teamMap)) {
-    if (!Array.isArray(arr)) continue;
-    for (const tk of arr) {
-      if (!tk) continue;
-      stamped.push({ ...tk, id: `team:${team}:${tk.id}`, teamId: tk.teamId || team });
-    }
-  }
-  return stamped.length ? base.concat(stamped) : base;
-}
+import { deriveArchivedIds } from './flowMapArchive.js';
 
 // ── Flow Map 节点条目（2026-09-02 作者裁定：节点作为条目并入任务列表）──────
 // [节点区块 · 独立命名空间] 数据 = WS 节点广播帧（nodeCreated/Updated/Completed/
@@ -103,8 +26,8 @@ function mergeTeamTasks(tasks, sessionId) {
 // 与上方 team 区块零交叉引用（v2 解耦，2026-09-02 作者反馈③）。终态节点在 5min
 // TTL 窗口内仍显示（与 Flow Map 一致），到期由 nodeRemoved 移除。
 
-/** 节点区块自有判定：Nebula 统一面板才显示节点条目。语义与 sessionShowsTeamTasks
- *  相同（统一面板），但独立命名——team 退役删除其判定后节点区块不受影响。 */
+/** 节点区块自有判定：Nebula 统一面板才显示节点条目。独立命名空间（不复用
+ *  已退役的旧任务域判定）——team/旧任务区退役不影响节点区块。 */
 function sessionShowsNodeEntries(sid) {
   if (!sid) return false;
   const agent = state.sessionAgentMap ? state.sessionAgentMap[sid] : null;
@@ -133,12 +56,18 @@ function nodeIsLive(n) {
   return true;
 }
 
-/** 面板节点条目数据：全部项目的活跃节点，最近活动在前。 */
+/** 面板节点条目数据：全部项目的活跃节点，最近活动在前。主图同源过滤
+ *  （2026-09-05 12:59 作者裁定）在此唯一咽喉生效：快照刷新与 WS 增量都汇入
+ *  renderTaskList → 本函数——按项目跑与主图同一 clusterBatches 链判定
+ *  （deriveArchivedIds，flowMapArchive.js 导出）得 archivedIds，整链全终态
+ *  （已归档）节点整链排除（含该链已完成成员）；链内任一非终态（含 blocked/
+ *  held）→ 整链保留。过滤后无节点 = 主图空 = 面板收起（既有空态兜底）。 */
 function collectNodes() {
   const out = [];
   for (const [project, byId] of nodeCache) {
+    const archivedIds = deriveArchivedIds(Array.from(byId.values()));
     for (const n of byId.values()) {
-      if (n && n.id && nodeIsLive(n)) out.push({ node: n, project });
+      if (n && n.id && !archivedIds.has(n.id) && nodeIsLive(n)) out.push({ node: n, project });
     }
   }
   out.sort((a, b) => nodeTs(b.node) - nodeTs(a.node));
@@ -165,7 +94,7 @@ export function applyNodeWsEvent(msg) {
 function rerenderWithNodes() {
   const sid = lastPanelSessionId;
   if (!sid || !sessionShowsNodeEntries(sid)) return;
-  renderTaskList(state.sessionTasks[sid] || [], undefined, sid);
+  renderTaskList([], undefined, sid); // 首参占位——旧任务入参已退役（纯节点视图）
 }
 
 /** NodeList 全量快照对齐（连接建立首渲一次 + 断线重连收敛事件缺口）。逐项目容错：
@@ -214,16 +143,15 @@ function formatLastActive(updatedAt) {
   return `${Math.floor(diff / 86_400_000)}d`;
 }
 
-/** §15.7: 60s interval, only while the panel has visible tasks; textContent
+/** §15.7: 60s interval, only while the panel has visible rows; textContent
  *  direct update, no animation. */
 let lastActiveTimer = null;
 function refreshLastActive() {
   const container = document.getElementById('task-list');
   if (!container) return;
   const els = /** @type {NodeListOf<HTMLElement>} */ (
-    // 面板级 ticker 基建：同时服务任务行（.task-last-active）与节点行
-    // （.task-node-time）。team 区块退役后选择器保留节点类即可。
-    container.querySelectorAll('.task-last-active, .task-node-time'));
+    // 纯节点视图（2026-09-05 裁定）：面板行只剩节点行（.task-node-time）
+    container.querySelectorAll('.task-node-time'));
   els.forEach((el) => {
     const ts = el.dataset.ts;
     if (ts) el.textContent = formatLastActive(ts);
@@ -241,105 +169,10 @@ function ensureLastActiveTimer(running) {
 const REDUCED_MOTION = typeof matchMedia === 'function' &&
   matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-// ── Row builders (§15.5/§15.6) ──────────────────────────────────────────
-
-/**
- * Zone-leading glyph per status (纯进展可视化 — single progress zone):
- *  pending  = 静态小方框 (.task-check-box, #15 更小 —— 观感「排队/等待执行」)
- *  in_progress = 独立 spinner 圆环本体 (裁定⑤; spinner 在方框中转禁).
- *  All read-only (aria-hidden); row aria-label carries the status.
- */
-function buildCheck(task, row) {
-  const check = document.createElement('span');
-  check.className = 'task-check';
-
-  // 任务区 — read-only glyph (§15.6: no hover feedback, no tab stop).
-  // in_progress -> standalone spinner (base 20px); pending -> small static box.
-  if (task.status === 'in_progress') {
-    // 第七件 裁定⑤ (2026-08-30): the spinner IS the glyph — a standalone
-    // ring, no surrounding box ("spinner 在方框中转" combo is forbidden).
-    // No .task-check-box so it keeps the base 20px slot (not the small box).
-    check.classList.add('task-check-spin');
-    check.setAttribute('aria-hidden', 'true');
-    row.setAttribute('aria-label',
-      `${task.subject || ''} — ${t('task.inProgressShort')}`.trim());
-  } else {
-    // agent pending — decorative hollow small square (#15 更小)
-    check.classList.add('task-check-box');
-    check.setAttribute('aria-hidden', 'true');
-    row.setAttribute('aria-label',
-      `${task.subject || ''} — ${t('task.pendingShort')}`.trim());
-  }
-  return check;
-}
-
-function buildRow(task, sessionId) {
-  const row = document.createElement('div');
-  row.className = 'task-item' +
-    (task.status === 'in_progress' ? ' task-active' : '');
-  row.dataset.taskId = task.id;
-  if (sessionId) row.dataset.sessionId = sessionId;
-
-  row.appendChild(buildCheck(task, row));
-
-  const text = document.createElement('div');
-  text.className = 'task-item-text';
-  const label = document.createElement('span');
-  label.className = 'task-label';
-  label.textContent = task.subject || '';
-  text.appendChild(label);
-  // #37: render the description under the subject so tasks with similar
-  // subjects stay distinguishable. Truncated to 2 lines; full text in title.
-  const descText = (task.description || '').trim();
-  if (descText) {
-    row.classList.add('task-has-desc');
-    const desc = document.createElement('span');
-    desc.className = 'task-desc';
-    desc.textContent = descText;
-    desc.title = descText;
-    text.appendChild(desc);
-  }
-  // #15 三级分组: annotate every task with its Team · member (谁在执行). Quiet
-  // meta line under the subject/desc; grouped tasks read clearly. 无归属的全局
-  // 任务在 Nebula 统一面板标注「Nebula（全局）」来源（#16，Nebula 拍板 08-30）——
-  // 成员会话面板的无归属任务不标注（那是成员自己的任务）。
-  const team = taskTeam(task);
-  const member = taskMember(task);
-  let meta = [team, member].filter(Boolean).join(' · ');
-  // #16 全局任务来源标注: 无 team 无 assignee 的全局任务在 Nebula 统一面板
-  // （sessionShowsTeamTasks true）标注来源「Nebula（全局）」；成员会话面板不标。
-  if (!meta && sessionShowsTeamTasks(sessionId)) meta = t('task.globalSource');
-  if (meta) {
-    row.classList.add('task-has-meta');
-    const metaEl = document.createElement('span');
-    metaEl.className = 'task-meta';
-    metaEl.setAttribute('aria-hidden', 'true');
-    metaEl.textContent = meta;
-    text.appendChild(metaEl);
-  }
-  row.appendChild(text);
-
-  // 任务区 (§15.6): status word + relative time (D6). Both aria-hidden —
-  // the row's aria-label carries the status for AT users (§15.9).
-  const word = document.createElement('span');
-  word.className = 'task-status-word';
-  word.setAttribute('aria-hidden', 'true');
-  word.textContent = t(task.status === 'in_progress'
-    ? 'task.inProgressShort' : 'task.pendingShort');
-
-  const time = document.createElement('span');
-  time.className = 'task-last-active';
-  time.setAttribute('aria-hidden', 'true');
-  const ts = task.updatedAt || task.createdAt || '';
-  if (ts) {
-    time.dataset.ts = ts;
-    time.textContent = formatLastActive(ts);
-  }
-
-  row.appendChild(word);
-  if (ts) row.appendChild(time);
-  return row;
-}
+// ── Row builders ────────────────────────────────────────────────────────
+// 旧任务行构建器（buildCheck/buildRow：四态 glyph + subject/desc/meta + 状态词 +
+// 相对时间）随旧任务区退役整体移除（2026-09-05 10:54 裁定）——面板行只剩
+// 节点行 buildNodeRow。
 
 // ── Flow Map 节点行（2026-09-02）：复用任务行设计语言 ────────────────────
 
@@ -486,28 +319,9 @@ function buildNodeSection(nodes) {
   return section;
 }
 
-function buildGroupHeader(label, section) {
-  const h = document.createElement('div');
-  // Dual class: .task-group-header is the implementation class (CSS hooks),
-  // .task-section-title is the frozen spec assertion selector (§10 A6).
-  // data-section carries the zone ('progress') — D1 assertion hook.
-  h.className = 'task-group-header task-section-title';
-  h.dataset.section = section;
-  h.textContent = label;
-  return h;
-}
-
-/** Grouping headers (裁定④): level-1 team / level-2 member. Visual grouping
- *  aids only — each row keeps carrying its own status via aria-label. */
-function buildSubgroupHeader(label, level) {
-  const h = document.createElement('div');
-  h.className = 'task-subgroup-header task-subgroup-' + level;
-  h.textContent = label;
-  return h;
-}
-
-/** Empty-state row (§15.5/§15.6, C27): rendered only when the panel is visible
- *  with no visible tasks; non-interactive, aria-hidden (§15.9). */
+/** Empty-state builder（兜底保留，2026-09-05 10:54 裁定「空态兜底保留」）：
+ *  主路径不接——无节点时面板整体收起（.has-tasks 才展开，与 67e69bf1 行为
+ *  一致）。键 task.progressEmpty 保留（zh/en 成对），供后续区块复用。 */
 function buildEmpty(label) {
   const empty = document.createElement('div');
   empty.className = 'task-empty';
@@ -516,20 +330,21 @@ function buildEmpty(label) {
   return empty;
 }
 
-// ── Main render (v3 single-zone: pure progress) ─────────────────────────
+// ── Main render（纯节点视图，2026-09-05 10:54 裁定）─────────────────────
 
 /**
- * @param {Array} tasks
+ * 渲染任务面板 = 纯 Flow Map 节点视图。首参为旧任务入参占位（_tasks 忽略，
+ * 调用方兼容——旧任务数据路径已退役，无消费方再传真实旧任务）。
+ * @param {Array} [_tasks] 旧任务入参——2026-09-05 裁定退役，忽略
  * @param {HTMLElement} [container]
- * @param {string} [sessionId] owning session — stamped onto rows
+ * @param {string} [sessionId] owning session — gates node visibility
  */
-export function renderTaskList(tasks, container, sessionId) {
+export function renderTaskList(_tasks, container, sessionId) {
   if (!container) container = document.getElementById('task-list');
   if (!container) return;
 
   lastPanelSessionId = sessionId || null;
-  // 2026-09-02: Nebula 统一面板并入 Flow Map 节点条目（成员会话面板不显示）。
-  // 判定用节点区块自有 gate（与 team 域 sessionShowsTeamTasks 解耦）。
+  // 2026-09-02: Nebula 统一面板显示 Flow Map 节点条目（成员会话面板不显示）。
   // 首渲全量对齐一次快照（此后事件驱动），补齐页面打开前已在跑的节点。
   const showNodes = sessionShowsNodeEntries(sessionId);
   if (showNodes && !nodeSnapshotLoaded) {
@@ -538,46 +353,35 @@ export function renderTaskList(tasks, container, sessionId) {
   }
   const nodes = showNodes ? collectNodes() : [];
 
-  // 裁定②: Nebula 会话的任务列表 = 统一视图——session 域任务 + team 域任务
-  // （state.teamTasks，teamTaskListUpdate 帧维护）。非 Nebula 会话不变。
-  const visible = mergeTeamTasks(tasks, sessionId).filter(isVisible);
-  container.classList.toggle('has-tasks', visible.length > 0 || nodes.length > 0);
+  // 纯节点视图：统计/行全节点口径。无节点 → 面板收起（.has-tasks 才展开）。
+  container.classList.toggle('has-tasks', nodes.length > 0);
   container.classList.toggle('task-ws-down', !state.connected);
-  ensureLastActiveTimer(visible.length > 0 || nodes.length > 0);
-  if (visible.length === 0 && nodes.length === 0) {
+  ensureLastActiveTimer(nodes.length > 0);
+  if (nodes.length === 0) {
     container.innerHTML = '';
     return;
   }
 
-  // 裁定 3 (跨区移动) 已退役（#15 单一 progress 区，无跨区）——普通更新直接
-  // 重绘，新行带 v1 task-entering（裁定 2 状态过渡）。
-  const oldById = collectZoneById(container);
-  redraw(visible, container, sessionId, oldById, nodes);
+  redraw(container, nodes);
 }
 
-/** Map taskId/nodeKey → zone ('progress') from the current DOM (entry-animation
- *  comparison only — a #15 single-zone panel always resolves 'progress').
- *  节点行用 .task-node 类（不携带 .task-item——节点区块独立命名空间）。 */
-function collectZoneById(container) {
-  const m = new Map();
-  container.querySelectorAll('.task-item[data-task-id], .task-node[data-node-key]').forEach((el) => {
-    m.set(el.dataset.taskId || el.dataset.nodeKey, 'progress');
+/** Map nodeKey → 存在性 from the current DOM (entry-animation comparison:
+ *  已存在的行不重播入场动画；纯节点视图单区，zone-diff 概念随旧任务区退役)。 */
+function collectRowKeys(container) {
+  const keys = new Set();
+  container.querySelectorAll('.task-node[data-node-key]').forEach((el) => {
+    keys.add(el.dataset.nodeKey);
   });
-  return m;
+  return keys;
 }
 
-function redraw(visible, container, sessionId, oldById, nodes) {
-  // #15: 单一 progress 区，四态进展展示（无 todo 子块、无 failed 沉底，visible
-  // 集本就只含 pending+in_progress）: agent active (updatedAt desc), 裁定④
-  // 三级分组 team → member → tasks 在排序之后。
-  const progress = visible.filter(tk => kindOf(tk) === 'agent').sort(sortProgress);
-
+function redraw(container, nodes) {
   container.innerHTML = '';
   const card = document.createElement('div');
   card.className = 'task-card' + (container.dataset.collapsed === '1' ? ' collapsed' : '');
 
-  // ── Header: toggle + stats (C26 + 2026-09-05 裁定：节点=真实工作单元，
-  //  计数 = 旧任务 + 节点合计——「Flow Map 有活跃节点却显示 0 任务」根因之一) ──
+  // ── Header: toggle + stats（统计 = 仅节点数，2026-09-05 10:54 裁定；
+  //  键复用 task.statsProgress「{progress} 任务」——语义仍成立）──
   const header = document.createElement('div');
   header.className = 'task-header';
 
@@ -589,59 +393,18 @@ function redraw(visible, container, sessionId, oldById, nodes) {
 
   const stats = document.createElement('span');
   stats.className = 'task-stats';
-  stats.textContent = t('task.statsProgress', { progress: progress.length + nodes.length });
+  stats.textContent = t('task.statsProgress', { progress: nodes.length });
 
   header.appendChild(toggle);
   header.appendChild(stats);
 
-  // ── Body: single progress zone ──
+  // ── Body: 节点区块（面板唯一内容区）──
   const body = document.createElement('div');
   body.className = 'task-body';
   const inner = document.createElement('div');
   inner.className = 'task-body-inner';
 
-  // 2026-09-05 裁定：节点=任务主列表（真实工作单元）。progress 区块只在有
-  // 旧任务时渲染——无旧任务时不再出现「任务 / 暂无任务」误导性空态（症状
-  // 另一半）。空态 builder（buildEmpty + task.progressEmpty 键）保留兜底不删
-  // （裁定「不删不破坏」：member 会话等无节点面板与后续区块可复用）。
-  if (progress.length > 0) {
-    const progressSection = document.createElement('div');
-    progressSection.className = 'task-section task-section-progress';
-    progressSection.appendChild(buildGroupHeader(t('task.sectionProgress'), 'progress'));
-    // 裁定④ + #15 grouping: ungrouped (session-local) tasks flat first, then
-    // team → member → tasks. First-appearance order preserves sortProgress.
-    const ungrouped = [];
-    const teamOrder = [];
-    const byTeam = new Map(); // team → Map(member → tasks)
-    for (const tk of progress) {
-      const team = taskTeam(tk);
-      if (!team) { ungrouped.push(tk); continue; }
-      let g = byTeam.get(team);
-      if (!g) { g = new Map(); byTeam.set(team, g); teamOrder.push(team); }
-      const member = taskMember(tk) || '';
-      if (!g.has(member)) g.set(member, []);
-      g.get(member).push(tk);
-    }
-    ungrouped.forEach(tk => progressSection.appendChild(buildRow(tk, sessionId)));
-    for (const team of teamOrder) {
-      const teamEl = document.createElement('div');
-      teamEl.className = 'task-subgroup';
-      teamEl.appendChild(buildSubgroupHeader(team, 'team'));
-      for (const [member, memberTasks] of byTeam.get(team)) {
-        const memEl = document.createElement('div');
-        memEl.className = 'task-member-group';
-        if (member) memEl.appendChild(buildSubgroupHeader(member, 'member'));
-        memberTasks.forEach(tk => memEl.appendChild(buildRow(tk, sessionId)));
-        teamEl.appendChild(memEl);
-      }
-      progressSection.appendChild(teamEl);
-    }
-    inner.appendChild(progressSection);
-  }
-
-  // ── Flow Map 节点条目区（节点区块单一调用点）：装配在 buildNodeSection 内
-  // 全程使用 .task-node-* 命名空间，与上方 team 分组段零交叉。team 区块退役时
-  // 删除 progress 段 + 本调用点上方所有任务行代码即可，节点区不受影响。 ──
+  // 节点区块装配在 buildNodeSection 内全程使用 .task-node-* 命名空间。
   const nodesSection = buildNodeSection(nodes);
   if (nodesSection) inner.appendChild(nodesSection);
 
@@ -660,16 +423,16 @@ function redraw(visible, container, sessionId, oldById, nodes) {
     createIconsIn(toggle);
   });
 
-  // 裁定 2: entry animation for brand-new rows. 修复：key 取 taskId || nodeKey
-  // ——旧代码只取 taskId，节点行（只有 nodeKey）每帧误判为新行反复重播入场动画。
+  // Entry animation for brand-new node rows（旧任务行 task-entering 随退役
+  // 移除——节点行动画名独立 task-node-entering）。
   if (!REDUCED_MOTION) {
+    const existingKeys = collectRowKeys(container);
     const items = /** @type {NodeListOf<HTMLElement>} */ (
-      container.querySelectorAll('.task-item, .task-node'));
+      container.querySelectorAll('.task-node'));
     items.forEach((el) => {
-      if (oldById.has(el.dataset.taskId || el.dataset.nodeKey)) return;
-      const anim = el.classList.contains('task-node') ? 'task-node-entering' : 'task-entering';
-      el.classList.add(anim);
-      el.addEventListener('animationend', () => el.classList.remove(anim), { once: true });
+      if (existingKeys.has(el.dataset.nodeKey)) return;
+      el.classList.add('task-node-entering');
+      el.addEventListener('animationend', () => el.classList.remove('task-node-entering'), { once: true });
     });
   }
 }

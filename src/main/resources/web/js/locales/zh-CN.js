@@ -679,18 +679,17 @@ export default {
   'time.yesterday': '昨天',
 
   // === Task list ===
-  // 任务工具重做（2026-08-30）：进展展示语义——只显 pending+in_progress；
-  // needs_confirmation/cancel/return/archive 键随退役路径一并清除。
+  // 任务面板 = 纯 Flow Map 节点视图（2026-09-05 10:54 裁定）：旧任务区退役，
+  // sectionProgress/pendingShort/globalSource 键随退役路径一并清除；节点视图
+  // 键（nodePending/nodeHeld/nodeBlocked/inProgressShort/statsProgress/expand/
+  // collapse/justNow/progressEmpty）保留。
   'task.expand': '展开',
   'task.collapse': '收起',
-  // #15 纯进展可视化（§15.11）：单一任务区，todo/确认键随退役路径清除。
-  'task.sectionProgress': '任务',
+  // progressEmpty：空态兜底键（builder 保留未接主路径，无节点时面板收起）
   'task.progressEmpty': '暂无任务',
   'task.justNow': '刚刚',
-  'task.pendingShort': '排队中',
   'task.statsProgress': '{progress} 任务',
   'task.inProgressShort': '进行中',
-  'task.globalSource': 'Nebula（全局）',
   'task.nodePending': '待处理',
   'task.nodeHeld': '待放行',
   'task.nodeBlocked': '阻塞',
