@@ -12,9 +12,14 @@ import nebflow.core.PathUtil
 /**
  * 阶段 2a 沙箱（设计文档 §A.2）：单一策略源。
  *
- * root = 节点 projectRoot（worktree 或 workspace，NodeEngine.scala 已算出；分发器
- * = project workspace，H-5①），会话级不可变、构造时即 canonicalize（worktree 布局
- * 可能含 symlink → 采用 canonicalize 代替拒绝，§A.6）。
+ * root = 会话沙箱根（sessionRoot 唯一推导）。[2026-09-05 21:05 作者裁定——worktree
+ * 节点继承项目沙箱]：worktree 节点 root = 所属项目工作区根（不再收窄到 worktree
+ * 目录自身——主仓 .git/worktrees/<name>/ 元数据在工作区内，git commit 可直写），
+ * 由 NodeEngine spawn 点把工作区根作为独立信号（SessionContext.sandboxRoot）传入，
+ * 不按路径形态硬猜 workspace 布局；分发器 = project workspace（H-5①，本就是
+ * 继承态）。root 语义只放宽「可写边界」，节点 cwd / projectRoot 工具语义不动。
+ * 会话级不可变、构造时即 canonicalize（worktree 布局可能含 symlink → 采用
+ * canonicalize 代替拒绝，§A.6）。
  *
  * writableRoots()/readableRoots() 是全部根集合的唯一推导点——JVM 围栏
  * （FileSandbox）与 Seatbelt profile（SandboxBackend.Seatbelt）都从这里取根，
@@ -160,8 +165,16 @@ object SandboxPolicy:
    * 会话沙箱根推导（AgentCore sandboxPolicy 构造唯一调用点）：Nebula 根会话 →
    * PathUtil.dataRoot（数据根，与 nebflowReadExtras 同源——NEBFLOW_HOME /
    * CLI --home / setDataRoot 重定向自动跟随，绝不硬编码 os.home）；其余会话 →
-   * projectRoot（节点 worktree / 分发器 workspace，§A.6 唯一权威；空回落
-   * effectiveProjectRoot 既有语义不变）。
+   * 显式 sandboxRoot（worktree 节点继承项目工作区根，2026-09-05 21:05 作者裁定
+   * ——NodeEngine spawn 点直接传入，禁止按路径形态硬猜 workspace 布局）优先，
+   * 缺省回落 projectRoot（分发器 workspace / 未接线节点，§A.6 既有语义零变化），
+   * 再缺省回落 effectiveProjectRoot 既有语义不变。
+   *
+   * 优先级次序（Nebula 特判 > sandboxRoot > projectRoot > fallback）零回归约束：
+   * Nebula 分支在前保证 depth==0 根会话不被节点信号误覆盖（节点会话 depth=1
+   * 不命中 Nebula 判据，两分支天然不相交）；sandboxRoot 仅由 NodeEngine /
+   * ProjectActor 两个 sandboxEnabled=true 置位点传入，其余调用方缺省 None =
+   * 旧行为逐字节不变。
    *
    * 公开供 spec 断言：root 跟随 setDataRoot 的断言即「隔离实例写真 ~/.nebflow
    * 不可能」的机制证明（spec beforeEach 钉 dataRoot 到一次性目录，断言 root ==
@@ -172,10 +185,15 @@ object SandboxPolicy:
     depth: Int,
     agentName: String,
     projectRoot: Option[String],
-    fallbackProjectRoot: String
+    fallbackProjectRoot: String,
+    sandboxRoot: Option[String] = None
   ): String =
     if isNebulaRootSession(sandboxEnabled, depth, agentName) then PathUtil.dataRoot.toString
-    else projectRoot.filter(_.nonEmpty).getOrElse(fallbackProjectRoot)
+    else
+      sandboxRoot
+        .filter(_.nonEmpty)
+        .orElse(projectRoot.filter(_.nonEmpty))
+        .getOrElse(fallbackProjectRoot)
 
   /**
    * 从节点 projectRoot + 配置构造会话策略（AgentCore 每次 spawn 调一次）。
