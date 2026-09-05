@@ -988,7 +988,6 @@ export default {
   'plugins.skillPreviewTitle': 'Expand skill previews',
   'plugins.rejected': 'Rejected',
   'plugins.noAgents': 'No agents configured',
-  'plugins.refresh': 'Refresh',
   'plugins.loading': 'Loading...',
   'plugins.loadFailed': 'Failed to load plugin registry: {error}',
   'plugins.detail': 'Details',

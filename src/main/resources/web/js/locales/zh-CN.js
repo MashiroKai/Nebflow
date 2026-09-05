@@ -991,7 +991,6 @@ export default {
   'plugins.skillPreviewTitle': '展开技能预览',
   'plugins.rejected': '拒载',
   'plugins.noAgents': '未配置智能体',
-  'plugins.refresh': '刷新',
   'plugins.loading': '加载中...',
   'plugins.loadFailed': '插件清单加载失败：{error}',
   'plugins.detail': '详情',
